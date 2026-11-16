@@ -129,7 +129,10 @@ const CARDLINE = {
     single_robot: c => ((c.staging || c.parkOld)
         ? [c.staging && 'Robot 1 moves in', c.parkOld && 'Robot 1 clears old'].filter(Boolean).join(' · ')
         : 'One robot, parks and swaps'),
-    sequential: c => 'One robot, A/B flip' + (c.paired ? ' · with ' + c.paired : ''),
+    // TWO ORDERS, ONE AFTER THE OTHER (sequential_backfill.go): Order A takes
+    // the old bin out, and Order B, made at A's release, brings the new one,
+    // each the robot Core sends; the work list names them Robot 1 and Robot 2.
+    sequential: c => 'Robot 1 pulls old · Robot 2 brings new' + (c.paired ? ' · with ' + c.paired : ''),
 };
 
 // The four short texts of SPEC S8, keyed by the claim field the server names.
@@ -1292,7 +1295,7 @@ function legFields(mode) {
 // per surface: a surface that guessed would eventually disagree with one that
 // derived.
 function usesTwoRobots(state) {
-    return activeCells(state).some(([, c]) => c.mode === 'two_robot' || c.mode === 'two_robot_press_index');
+    return activeCells(state).some(([, c]) => c.mode === 'two_robot' || c.mode === 'two_robot_press_index' || c.mode === 'sequential');
 }
 
 // refillRobotOf is the robot an index press's Advanced says brings its back
@@ -1314,10 +1317,12 @@ function refillRobotOf(a) {
 // ROBOT 1, which lifts it off the front and takes it out (the builders,
 // composePressIndexPair); its Robot 2 only indexes, and this said Robot 2. A
 // press index's inbound trip is whoever its refill setting names (a, the
-// cell's Advanced: Robot 1, 2 or 3). Every other inbound trip is Robot 1's.
+// cell's Advanced: Robot 1, 2 or 3). A sequential line's new bin is its Order
+// B's, the second order (the work list's Robot 2). Every other inbound trip is
+// Robot 1's.
 function dockRobotsOf(c, a) {
     return {
-        in: c.mode === 'two_robot_press_index' ? refillRobotOf(a) : 1,
+        in: c.mode === 'two_robot_press_index' ? refillRobotOf(a) : c.mode === 'sequential' ? 2 : 1,
         out: c.mode === 'two_robot' ? 2 : 1,
     };
 }

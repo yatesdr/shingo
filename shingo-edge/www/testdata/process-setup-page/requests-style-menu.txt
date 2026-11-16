@@ -9,7 +9,7 @@
   2  GET /api/processes
   3  GET /api/processes/1/composer?map_rev=map-r1
   4  GET /api/processes/1/styles
-  5  POST /api/processes/1/flow/preview
+  5  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
@@ -24,7 +24,7 @@
   2  GET /api/processes
   3  GET /api/processes/1/composer?map_rev=map-r1
   4  GET /api/processes/1/styles
-  5  POST /api/processes/1/flow/preview
+  5  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
@@ -36,7 +36,7 @@
   2  GET /api/processes
   3  GET /api/processes/1/composer?map_rev=map-r1
   4  GET /api/processes/1/styles
-  5  POST /api/processes/1/flow/preview
+  5  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
@@ -48,7 +48,7 @@
   2  GET /api/processes
   3  GET /api/processes/1/composer?map_rev=map-r1
   4  GET /api/processes/1/styles
-  5  POST /api/processes/1/flow/preview
+  5  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
@@ -61,7 +61,7 @@
   3  GET /api/processes
   4  GET /api/processes/1/composer?map_rev=map-r1
   5  GET /api/processes/1/styles
-  6  POST /api/processes/1/flow/preview
+  6  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed
 
@@ -70,6 +70,6 @@
   2  GET /api/processes
   3  GET /api/processes/1/composer?map_rev=map-r1
   4  GET /api/processes/1/styles
-  5  POST /api/processes/1/flow/preview
+  5  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed

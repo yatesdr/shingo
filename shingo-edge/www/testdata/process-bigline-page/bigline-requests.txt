@@ -6,7 +6,7 @@ GET /api/catid-health  12 B
 GET /api/processes/1/composer  59986 B
 GET /api/operator-stations/61/claimed-nodes  268 B
 GET /api/operator-stations/62/claimed-nodes  21 B
-POST /api/processes/1/flow/preview  53 B
+POST /api/processes/1/flow/preview?steps=1  53 B
 -- 4 requests, 60328 B of answers
 
 == the Styles poll, once (it runs every 10 s and on focus)
@@ -28,7 +28,7 @@ GET /api/plcs  37 B
 GET /api/processes/1/presets  4719 B
 GET /api/processes/1/auto-reorder  33 B
 GET /api/core-nodes  4755 B
-POST /api/processes/1/flow/preview  53 B
+POST /api/processes/1/flow/preview?steps=1  53 B
 -- 15 requests, 79933 B of answers
 
 == Settings, opened, with one station counter
@@ -46,5 +46,5 @@ GET /api/plcs  37 B
 GET /api/processes/1/presets  4719 B
 GET /api/processes/1/auto-reorder  33 B
 GET /api/core-nodes  4755 B
-POST /api/processes/1/flow/preview  53 B
+POST /api/processes/1/flow/preview?steps=1  53 B
 -- 15 requests, 80063 B of answers

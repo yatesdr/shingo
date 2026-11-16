@@ -990,8 +990,35 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-fsnamefld { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
 .pd-fsnamefld .pd-inp { width: 280px; }
 .pd-fsgo { color: var(--text-muted); font-size: 13px; }
-.pd-fsgrid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 28px; align-items: start; }
-@media (max-width: 1000px) { .pd-fsgrid { grid-template-columns: minmax(0, 1fr); } }
+.pd-fsgrid { display: grid; grid-template-columns: 250px minmax(0, 1.15fr) minmax(0, 1.05fr); gap: 24px; align-items: start; }
+@media (max-width: 1200px) { .pd-fsgrid { grid-template-columns: 250px minmax(0, 1fr); } .pd-fswork { grid-column: 2; } }
+@media (max-width: 1000px) { .pd-fsgrid { grid-template-columns: minmax(0, 1fr); } .pd-fswork { grid-column: auto; } }
+
+/* Robot work lists (workListHTML): per robot its dot, name and words, then
+   its steps in three aligned columns, glyph, verb and node. The robot's
+   colour is the picture's own (--robot-N). */
+.pd-wl { display: flex; flex-direction: column; min-width: 0; }
+.pd-wlhd { margin-bottom: 6px; }
+.pd-wlhd h2 { margin: 0; font-size: 15px; }
+.pd-wlhd small { display: block; margin-top: 2px; color: var(--text-muted); font-size: 12px; }
+.pd-wlrobot { padding: 10px 0; border-top: 1px solid var(--sub-1); --robot: var(--robot-1); }
+.pd-wlrobot.r2 { --robot: var(--robot-2); }
+.pd-wlrobot.r3 { --robot: var(--robot-3); }
+.pd-wlname { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.pd-wlname small { color: var(--text-muted); font-size: 12px; }
+.pd-wldot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--robot); align-self: center; }
+.pd-wlsteps { display: grid; grid-template-columns: 26px 112px minmax(0, 1fr); gap: 6px 10px; align-items: center; }
+.pd-wlg {
+    display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px;
+    border: 1.5px solid var(--robot); color: var(--robot); font-weight: var(--fw-bold); font-size: 13px;
+}
+.pd-wln { min-width: 0; }
+.pd-wln .setpick-chip { min-height: 24px; }
+.pd-wln .setpick-dot { display: inline-block; }
+.pd-wlerr { color: var(--chip-ink-below); font-size: 13px; }
+/* On the Styles tab the list is a row of its own under the selected row. */
+.pd-workrow td { padding: 6px 12px 14px; background: var(--surface); }
+.pd-workrow .pd-wl { max-width: 640px; }
 .pd-fslist { display: flex; flex-direction: column; gap: 8px; }
 .pd-fslhd { color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .pd-fslist ol { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }

@@ -1,0 +1,2292 @@
+[
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "clearing_robot",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "index_robot",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "own_robot",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_B1",
+          "kind": "retrieve",
+          "retrieve": {
+            "source": "GRP_A",
+            "delivery": "POS_B1",
+            "payload_code": "PART-1",
+            "empty": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B3"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "clearing_robot",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B3"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "index_robot",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B3"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "own_robot",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_B3",
+          "kind": "retrieve",
+          "retrieve": {
+            "source": "GRP_A",
+            "delivery": "POS_B3",
+            "payload_code": "PART-2",
+            "empty": true
+          }
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-3",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_1",
+      "outbound_destination": "DST_1",
+      "key_route": [
+        "LM_2",
+        "LM_3"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_1",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "STG_1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A3"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A3",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A3"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-4",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_2",
+      "outbound_destination": "DST_2"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_2",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "STG_2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_2"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A4"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A4",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A4"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_2"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A5",
+      "role": "consume",
+      "swap_mode": "single_robot",
+      "payload_code": "PART-5",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_1",
+      "outbound_staging": "STG_2",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A5",
+      "role": "consume",
+      "swap_mode": "single_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_1",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "POS_A5",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A5"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_2",
+              "exclusive_slot": true
+            },
+            {
+              "action": "pickup",
+              "node": "STG_1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A5"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A6",
+      "role": "produce",
+      "swap_mode": "single_robot",
+      "payload_code": "PART-6",
+      "inbound_source": "SRC_1",
+      "inbound_staging": "STG_2",
+      "outbound_staging": "STG_3",
+      "outbound_destination": "ULD_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A6",
+      "role": "produce",
+      "swap_mode": "single_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "SRC_1",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_2",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "POS_A6",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A6"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_3",
+              "exclusive_slot": true
+            },
+            {
+              "action": "pickup",
+              "node": "STG_2"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A6"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_3"
+            },
+            {
+              "action": "dropoff",
+              "node": "ULD_1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-7",
+      "paired_core_node": "POS_A8",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A7",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A7"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A7",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-8",
+      "paired_core_node": "POS_A7",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A8",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A8"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A8",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A8"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-9",
+      "paired_core_node": "POS_A10",
+      "inbound_source": "SRC_1",
+      "outbound_destination": "DST_2"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A9",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A9"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_2"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A9",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "SRC_1",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A9"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-10",
+      "paired_core_node": "POS_A9",
+      "inbound_source": "SRC_1",
+      "outbound_destination": "DST_2"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A10",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A10"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_2"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A10",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "SRC_1",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A10"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "clearing_robot",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "index_robot",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-1",
+      "paired_core_node": "POS_B1",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "own_robot",
+    "steady": {
+      "core_node_name": "POS_A1",
+      "role": "consume",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A1"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A1"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_B1",
+          "kind": "retrieve",
+          "retrieve": {
+            "source": "GRP_A",
+            "delivery": "POS_B1",
+            "payload_code": "PART-1",
+            "empty": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B3"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "clearing_robot",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B3"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "index_robot",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            },
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B3"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "payload_code": "PART-2",
+      "paired_core_node": "POS_B2",
+      "second_paired_core_node": "POS_B3",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "own_robot",
+    "steady": {
+      "core_node_name": "POS_A2",
+      "role": "produce",
+      "swap_mode": "two_robot_press_index",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_B2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B2",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A2"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_B3",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_B2"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_B3",
+          "kind": "retrieve",
+          "retrieve": {
+            "source": "GRP_A",
+            "delivery": "POS_B3",
+            "payload_code": "PART-2",
+            "empty": true
+          }
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-3",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_1",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ],
+      "key_route": [
+        "LM_2",
+        "LM_3"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_1",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "STG_1",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A3"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A3",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A3"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-4",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_2",
+      "outbound_destination": "DST_2",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_2",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "STG_2",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_2"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A4"
+            }
+          ]
+        },
+        {
+          "leg": "B",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A4",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A4"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_2"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A5",
+      "role": "consume",
+      "swap_mode": "single_robot",
+      "payload_code": "PART-5",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_1",
+      "outbound_staging": "STG_2",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A5",
+      "role": "consume",
+      "swap_mode": "single_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_1",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "POS_A5",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A5"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_2",
+              "exclusive_slot": true
+            },
+            {
+              "action": "pickup",
+              "node": "STG_1"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A5"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_2"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A6",
+      "role": "produce",
+      "swap_mode": "single_robot",
+      "payload_code": "PART-6",
+      "inbound_source": "SRC_1",
+      "inbound_staging": "STG_2",
+      "outbound_staging": "STG_3",
+      "outbound_destination": "ULD_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A6",
+      "role": "produce",
+      "swap_mode": "single_robot",
+      "follow_ons": 0,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "SRC_1",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_2",
+              "exclusive_slot": true
+            },
+            {
+              "action": "wait",
+              "node": "POS_A6",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A6"
+            },
+            {
+              "action": "dropoff",
+              "node": "STG_3",
+              "exclusive_slot": true
+            },
+            {
+              "action": "pickup",
+              "node": "STG_2"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A6"
+            },
+            {
+              "action": "pickup",
+              "node": "STG_3"
+            },
+            {
+              "action": "dropoff",
+              "node": "ULD_1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-7",
+      "paired_core_node": "POS_A8",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A7",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A7",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A7"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A7",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "payload_code": "PART-8",
+      "paired_core_node": "POS_A7",
+      "inbound_source": "GRP_A",
+      "outbound_destination": "DST_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A8",
+      "role": "consume",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A8",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A8"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_1"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A8",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "GRP_A"
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A8"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-9",
+      "paired_core_node": "POS_A10",
+      "inbound_source": "SRC_1",
+      "outbound_destination": "DST_2",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A9",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A9",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A9"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_2"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A9",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "SRC_1",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A9"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "payload_code": "PART-10",
+      "paired_core_node": "POS_A9",
+      "inbound_source": "SRC_1",
+      "outbound_destination": "DST_2",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A10",
+      "role": "produce",
+      "swap_mode": "sequential",
+      "follow_ons": 1,
+      "legs": [
+        {
+          "leg": "A",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "wait",
+              "node": "POS_A10",
+              "wait_kind": "station",
+              "purpose": "swap"
+            },
+            {
+              "action": "pickup",
+              "node": "POS_A10"
+            },
+            {
+              "action": "dropoff",
+              "node": "DST_2"
+            }
+          ]
+        },
+        {
+          "leg": "follow_on",
+          "position": "POS_A10",
+          "kind": "complex",
+          "steps": [
+            {
+              "action": "pickup",
+              "node": "SRC_1",
+              "empty": true
+            },
+            {
+              "action": "dropoff",
+              "node": "POS_A10"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

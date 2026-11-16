@@ -388,7 +388,7 @@ const NOT_RUN = pg => { pg.processes[0].active_style_id = 0; pg.processes[0].flo
 // A request as one line: a write with its body, but a flow preview's or
 // save's (their cells are the table's goldens).
 const lines = (page, from) => page.since(from).map(c => c.method + ' ' + c.url.replace('/api/processes/1', '…') +
-    (c.method !== 'GET' && c.body !== undefined && !/\/flow\/(preview|save)$/.test(c.url) ? ' ' + JSON.stringify(c.body) : ''));
+    (c.method !== 'GET' && c.body !== undefined && !/\/flow\/(preview|save)(\?steps=1)?$/.test(c.url) ? ' ' + JSON.stringify(c.body) : ''));
 // Setup's own re-read of the screens (SETUP_POLL_MS, 5 s); the rail's 10 s
 // re-read of the styles runs on every tab and is not Setup's.
 const setupTicks = page => page.intervals().filter(t => t.ms === 5000);
@@ -560,6 +560,20 @@ async function pinFirstStyle() {
     say();
     check('Save style waits for every position', /data-act="fs-save" disabled/.test(html()), 'enabled');
     const startMode = on(/<button class="pd-fsmode on" data-act="fs-mode" data-mode="([^"]*)"/g)[0];
+    // THE ROBOT WORK LISTS ARE THE THIRD COLUMN, for the open position, from
+    // the preview it asks with ?steps=1 (round 4).
+    check('the open position\'s robot work lists are drawn beside it', /<div class="pd-fswork"><div class="pd-wl"><div class="pd-wlhd"><h2>Robot work lists · POS_A1<\/h2>/.test(html()),
+        (/<div class="pd-fswork">[\s\S]{0,200}/.exec(html()) || ['no work column'])[0]);
+    // INDEX SWAP OFFERS NO STAGING PICK: its steady swap reads none (a tool
+    // change's is set on the Styles table). Found by its card's name, so no
+    // mode is spelled here.
+    const labels = page.pd('M')().modeLabels();
+    const indexMode = Object.keys(labels).find(m => labels[m] === 'Index Swap');
+    page.click('root', { act: 'fs-mode', mode: indexMode });
+    await page.settle();
+    check('Index Swap offers no inbound or outbound staging pick', !/data-act="fs-pick" data-pick="(staging|parkOld)"/.test(html()), fields().join(' · '));
+    page.click('root', { act: 'fs-mode', mode: startMode });
+    await page.settle();
     // THE OPEN POSITION'S SWAP AND ROLE: another swap, produce.
     let from = page.mark();
     const mode = (/data-act="fs-mode" data-mode="([^"]*)"/.exec(html().replace(/<button class="pd-fsmode on"[^>]*>/g, '')) || [])[1];

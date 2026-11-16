@@ -176,8 +176,8 @@ ok   a Core loader's process has no Setup, and nothing to skip
 
 ## the Setup tab's actions (each on a fresh page; its requests)
   Pick them (step 1, a new process with positions) → tab setup, sheet "Edit process" · GET /api/core-nodes, GET …/payloads, GET /api/process-nodes, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog, GET /api/process-nodes
-  Start (step 2, a routing set and no style: one is made, named by the first part) → tab setup (style step) · POST /api/styles {"name":"PART-1","description":"","process_id":1,"expected_catid":""}, GET /api/processes, GET …/composer?map_rev=map-r1, GET …/styles, POST …/flow/preview
-  Start (step 2, a style with no flow yet) → tab setup (style step) · POST …/flow/preview
+  Start (step 2, a routing set and no style: one is made, named by the first part) → tab setup (style step) · POST /api/styles {"name":"PART-1","description":"","process_id":1,"expected_catid":""}, GET /api/processes, GET …/composer?map_rev=map-r1, GET …/styles, POST …/flow/preview?steps=1
+  Start (step 2, a style with no flow yet) → tab setup (style step) · POST …/flow/preview?steps=1
   Production counter (Later, on Settings) → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
 
 ## Setup › First style on Press A (a style with no flow yet): one position at a time, then its Save
@@ -187,13 +187,15 @@ ok   no "Your line so far" on this step: the checklist is the line so far
   open: POS_A1 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Outbound staging=STG_2 · Goes to=DST_1 · role consume · swap single_robot
   top: "12 positions to go" · Save style disabled
 ok   Save style waits for every position
-# POS_A1 on another swap, produce: POST …/flow/preview, POST …/flow/preview
+ok   the open position's robot work lists are drawn beside it
+ok   Index Swap offers no inbound or outbound staging pick
+# POS_A1 on another swap, produce: POST …/flow/preview?steps=1, POST …/flow/preview?steps=1
   checklist: POS_A1 now · POS_A2 todo · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
   open: POS_A1 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Goes to=DST_1 · role produce · swap two_robot
   top: "12 positions to go" · Save style disabled
 # POS_A1's Inbound staging offers: STG_1, STG_2, STG_3
 ok   the draft holds the pick
-# Done · next position: POST …/flow/preview
+# Done · next position: POST …/flow/preview?steps=1
   checklist: POS_A1 done (PART-1 · 2‑Robot Swap) · POS_A2 now · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
   open: POS_A2 · Part=PART-10 · Comes from=GRP_A · Inbound staging=STG_3 · Goes to=DST_1 · role produce · swap two_robot
   top: "11 positions to go" · Save style disabled
@@ -205,15 +207,15 @@ ok   a ticked position reopens, changes, and stays ticked
   top: "12 positions to go" · Save style disabled
 ok   the part moved, and the position it left is not done
 # + Add a position offers (free): DST_9, LANE_1, NEW_1, NEW_2, NEW_3, OTH_1 …
-# + Add a position DST_9: PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A3","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11","DST_9"]}, POST …/flow/preview
+# + Add a position DST_9: PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A3","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11","DST_9"]}, POST …/flow/preview?steps=1
 ok   it writes the screen's positions with the node, through Settings' door (PUT …/claimed-nodes)
-# Take POS_A3 off this line: POST /api/operator-stations/11/claimed-nodes/impact {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, POST …/flow/preview
+# Take POS_A3 off this line: POST /api/operator-stations/11/claimed-nodes/impact {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, POST …/flow/preview?steps=1
 ok   taking one off asks what still names it first (…/claimed-nodes/impact), as Settings does
   checklist: POS_A1 out (not in this style) · POS_A2 done (PART-1 · 2‑Robot Swap) · POS_A3 out (not in this style) · POS_A4 done (PART-2 · 2‑Robot Swap) · POS_A5 done (PART-3 · 2‑Robot Swap) · POS_A6 done (PART-4 · 2‑Robot Swap) · POS_A7 done (PART-5 · 2‑Robot Swap) · POS_A8 done (PART-6 · 2‑Robot Swap) · POS_A9 done (PART-7 · 2‑Robot Swap) · POS_A10 done (PART-8 · 2‑Robot Swap) · POS_A11 done (PART-9 · 2‑Robot Swap) · ULD_1 out (not in this style)
   open: none ·  · role  · swap 
   top: "" · Save style enabled
 ok   every position done or not in this style: Save style is live
-# Save style: PUT /api/styles/1 {"name":"FG-7731 finished","description":"","process_id":1,"expected_catid":"CAT-A"}, POST …/flow/save, POST …/flow/preview · then tab setup
+# Save style: PUT /api/styles/1 {"name":"FG-7731 finished","description":"","process_id":1,"expected_catid":"CAT-A"}, POST …/flow/save, POST …/flow/preview?steps=1 · then tab setup
 ok   a changed name is the rename (PUT /api/styles/1), written before the Styles save
 ok   Save style is the Styles save (flow/save) of the step's draft
 

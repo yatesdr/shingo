@@ -60,6 +60,10 @@ Deploy: no migration. Edge only; Core is unchanged.
 - A running style with no changeover on record no longer reads "never run here" beside its running tag
 - Settings shows the positions each screen holds, and offers the positions on no screen to each screen
 - The Styles tab has one + Add a position, under the table, and an Advanced settings button for what a position sets
+- First style and the Styles tab show a position's robot work lists: each robot and the steps the Edge sends it
+- Sequential A/B reads as two robots, one after the other; Index Swap's card holds for every Next carrier
+- First style offers no staging on Index Swap or Sequential A/B, whose swaps never stop there
+- The Add sheet's "Picking …" line stays in view under the four boxes
 - Settings names a single back position in the singular
 - A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks
 

@@ -10,21 +10,21 @@
     sheet: open "Edit Screen A", status "the Edge refused it" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### PUT /api/operator-stations/11  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Edit Screen A", status "Server error (500)" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### PUT /api/operator-stations/11  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Edit Screen A", status "No answer from the server" (bad), OK "Save" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: PUT /api/operator-stations/11 · GET /api/operator-stations · GET /api/operator-stations/11/claimed-nodes · GET /api/processes · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/styles · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### PUT /api/operator-stations/11  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out

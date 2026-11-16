@@ -221,16 +221,17 @@ characterise('single robot — in and out on one robot', singlePath, {
 
 // ── sequential — the A/B pair ───────────────────────────────────────────────
 // One TWO-CARD module: one press bar over both, one move from A up into B and
-// one out of B. The cards read the A/B flip sentence with each other's name.
-// One robot end to end — the dock and legend say Robot 1.
+// one out of B. Two orders, one after the other, as the work list names them
+// (round 4): Robot 1, Order A, takes the old bin out, and Robot 2, Order B,
+// brings the new one — the cards, the dock and the legend say both.
 characterise('sequential — the A/B pair', seqPath, {
-    moves: 2, r1Chevrons: 4, r2Chevrons: 0,
-    cardLines: ['One robot, A/B flip', 'with PLN_06', 'with PLN_03', 'front position', 'back position'],
-    noCardLines: ['Robot 1 moves in', 'Robot 2 indexes'],
-    dock: ['Inbound source · Robot 1 → PLN_03, PLN_06', 'Outbound destination · Robot 1 ← PLN_03, PLN_06'],
+    moves: 2, r1Chevrons: 2, r2Chevrons: 2,
+    cardLines: ['Robot 1 pulls old', 'Robot 2 brings new', 'with PLN_06', 'with PLN_03', 'front position', 'back position'],
+    noCardLines: ['One robot, A/B flip', 'Robot 1 moves in', 'Robot 2 indexes'],
+    dock: ['Inbound source · Robot 2 → PLN_03, PLN_06', 'Outbound destination · Robot 1 ← PLN_03, PLN_06'],
     stagingSlots: 0,
     strips: 0,
-    legend: 1, legendRobots: [1],
+    legend: 2, legendRobots: [1, 2],
 });
 
 // ── a mixed flow — one single_robot cell beside one two_robot cell ──────────

@@ -43,21 +43,21 @@
     sheet: open "Name this recipe", status "the Edge refused it" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: Server error (500)
     sheet: open "Name this recipe", status "Server error (500)" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: .layer-scrim span.layer-status.is-bad: No answer from the server
     sheet: open "Name this recipe", status "No answer from the server" (bad), OK "Save recipe" enabled
     state: no message set
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out
@@ -77,7 +77,7 @@
     sheet: open "Save recipe Recipe One", status "the Edge refused it" (bad), OK "Save recipe" enabled
     state: shapeDraft.refusal="the Edge refused it"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### POST /api/processes/1/presets  ←  500, no body (chi Recoverer)
     then: nothing
     new text: #pd-root div#pd-grefusal.pd-refusal: Server error (500)
@@ -85,7 +85,7 @@
     sheet: open "Save recipe Recipe One", status "Server error (500)" (bad), OK "Save recipe" enabled
     state: shapeDraft.refusal="Server error (500)"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### POST /api/processes/1/presets  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: #pd-root div#pd-grefusal.pd-refusal: No answer from the server
@@ -93,7 +93,7 @@
     sheet: open "Save recipe Recipe One", status "No answer from the server" (bad), OK "Save recipe" enabled
     state: shapeDraft.refusal="No answer from the server"
     unhandled rejection: none
-    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview → sheet: closed
+    pressed again: POST /api/processes/1/presets · GET /api/processes/1/composer?map_rev=map-r1 · GET /api/processes/1/composer?map_rev=map-r1 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 ### POST /api/processes/1/presets  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
     new text: .notice-root span.notice-text: Signed out

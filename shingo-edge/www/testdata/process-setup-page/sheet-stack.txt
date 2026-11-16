@@ -24,12 +24,12 @@ Keep editing: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, 
 
 ## runSheet: OK pressed twice before the first write answers
 between the presses: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none, OK disabled
-requests: PUT /api/styles/2 · POST /api/processes/1/flow/preview
+requests: PUT /api/styles/2 · POST /api/processes/1/flow/preview?steps=1
 after: sheet closed, #pd-scrim markup empty, layers 0, body overflow "", S.sheet null, question none
 
 ## runSheet: a refused run, then OK again
 first press: PUT /api/styles/2 → sheet: open "Rename Style B", status "the Edge refused it" (bad), OK "Rename" enabled
-second press: PUT /api/styles/2 · POST /api/processes/1/flow/preview → sheet: closed
+second press: PUT /api/styles/2 · POST /api/processes/1/flow/preview?steps=1 → sheet: closed
 
 ## closeSheet: what it clears (Add process on Settings)
 open Add process, a name typed: sheet open (the layer's shell), #pd-scrim markup empty, layers 1, body overflow "hidden", S.sheet set, question none; pickers parts, scr-11, scr-12, scr-none

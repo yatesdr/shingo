@@ -158,6 +158,7 @@ const S = {
     pickers: {},         // every open node picker, by key — see pickerInit
     setPicks: {},        // every set pick drawn, by key: {pid, api} — see mountSetPick
     looseOnto: '',       // Settings' draft puts the positions on no screen onto this screen (its id)
+    steady: null,        // the last preview's steady state (flow/preview?steps=1): {styleId, cells}
     stSet: null,         // Settings' set picker's place: {pid, station, warnedFor}
     stShell: null,       // Settings' shell for one visit: {pid, top, sheet, body, page} (settingsShell)
     stPickersPid: 0,     // the process Settings' pickers were declared for (settingsPickers)
@@ -1075,7 +1076,8 @@ function drawFirstStyle(f) {
     const body = d.cur ? firstPositionHTML(d.cur, rows) : firstAllDoneHTML(rows);
     root().innerHTML = appbar() + '<div class="pd-sheet pd-setup">' + top +
         (d.error ? '<div class="pd-refusal">' + esc(d.error) + '</div>' : '') +
-        '<div class="pd-fsgrid">' + list + '<div class="pd-fspos">' + body + '</div></div>' +
+        '<div class="pd-fsgrid">' + list + '<div class="pd-fspos">' + body + '</div>' +
+        (d.cur ? '<div class="pd-fswork">' + workListHTML(d.cur, firstWorkWait(d.cur)) + '</div>' : '') + '</div>' +
         '<div class="pd-pop" id="pd-pop" hidden></div></div>';
     const name = $('pd-fsname');
     if (name && name.addEventListener) {
@@ -1102,7 +1104,13 @@ function firstPositionHTML(n, rows) {
         '" data-act="fs-role" data-role="' + r[0] + '">' + esc(r[1]) + '</button>').join('') + '</div>';
     const cards = order.map(m => '<button class="pd-fsmode' + (e.mode === m ? ' on' : '') + '" data-act="fs-mode" data-mode="' + esc(m) + '">' +
         gl(m, 26, {}) + '<span><b>' + esc(labels[m]) + '</b><small>' + esc(MODE_WORDS[m]) + '</small></span></button>').join('');
-    const picks = FIRST_PICKS.map(p => [p, firstUse(S.model, e.role, e.mode, p)]).filter(x => x[1]).map(x => {
+    // A STAGING PICK ONLY WHERE THE SWAP READS IT. flowspec marks staging
+    // `used` on Index Swap and Sequential A/B for a tool change, which holds
+    // the incoming carrier there (changeover_tooling.go); their steady swap
+    // never reads it (the work list beside shows no stop there), and First
+    // style marks no tool change. The Styles table keeps both.
+    const picks = FIRST_PICKS.map(p => [p, firstUse(S.model, e.role, e.mode, p)])
+        .filter(x => x[1] && (x[0].box !== 'staging' || x[1] === 'required')).map(x => {
         const p = x[0];
         // What the position runs with, in the draft or (a position with no
         // part yet, not in the draft) as it would. No colour on the box: the
@@ -1141,6 +1149,14 @@ function firstAllDoneHTML(rows) {
         '<button class="pd-btn" data-act="fs-back">Back</button></div>';
 }
 
+// firstWorkWait is what the work list says while position n has none: it
+// has no part yet, so it is not in the draft, or the preview is on its way.
+function firstWorkWait(n) {
+    const d = S.firstStyle;
+    if (!d.parts[n]) return 'Give ' + n + ' a part to see what its robots do.';
+    return d.out[n] ? n + ' is not in this style.' : 'Checking…';
+}
+
 // firstSaveWords is the top line's word beside Save style.
 function firstSaveWords() {
     const togo = firstToGo().length;
@@ -1174,11 +1190,12 @@ function firstStyleReady() {
 async function previewFirstStyle() {
     if (!S.model || !S.firstStyle) return;
     const forStyle = S.model.styleId;
-    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview', {
+    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview?steps=1', {
         to_style_id: forStyle, cells: M().toCells(S.model), taken_off: M().takenOff(S.model),
     }, { notice: false });
     if (!S.model || S.model.styleId !== forStyle || S.setupView !== 'style') return;
     S.model = M().applyPreview(S.model, answerBody(res));
+    keepSteady(forStyle, answerBody(res));
     if (S.tab === 'setup') drawSetup();
 }
 
@@ -3015,9 +3032,14 @@ function positionsTable() {
     // use a drawn column leaves its cell empty. An empty table keeps them all:
     // there is no row to judge by.
     const columns = tableColumns().filter(col => !col.uses || !drawn.length || drawn.some(col.uses));
+    // THE SELECTED POSITION'S ROBOTS are a row of their own under its row
+    // (workRow): where the engineer just clicked, and only there.
+    const workAt = workRowNode();
     const rows = drawn.map(n => '<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
         columns.map(col => '<td' + (col.td ? ' class="' + col.td + '"' : '') + '>' +
-            (!col.uses || col.uses(n) ? col.cell(n, S.model.cells[n]) : '') + '</td>').join('') + '</tr>');
+            (!col.uses || col.uses(n) ? col.cell(n, S.model.cells[n]) : '') + '</td>').join('') + '</tr>' +
+        (n === workAt ? '<tr class="pd-workrow"><td colspan="' + columns.length + '" id="pd-workrow">' +
+            workListHTML(S.selected, 'Checking…') + '</td></tr>' : ''));
     const rowless = rowlessRoles(used);
     const free = freePositions();
     let tail = '';
@@ -3557,15 +3579,17 @@ async function runPreview() {
     // blocks on it; no answer at all says so the same way rather than keeping
     // the last preview's words. The preview's own abort, when a newer edit
     // replaced it, is `aborted` and draws nothing.
-    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview', {
+    const res = await send('POST', '/api/processes/' + S.processID + '/flow/preview?steps=1', {
         to_style_id: S.model.styleId, cells: M().toCells(S.model),
         taken_off: M().takenOff(S.model),
     }, { notice: false, signal: S.previewAbort.signal });
     if (res.aborted) return;
     if (!S.model || S.model.styleId !== forStyle) return;
     S.model = M().applyPreview(S.model, answerBody(res));
+    keepSteady(forStyle, answerBody(res));
     drawBar();
     drawPicture();
+    drawWorkRow();
 }
 
 // ── save ─────────────────────────────────────────────────────────────────────
@@ -4716,7 +4740,8 @@ const SET_COPY = {
     partial_dest: ['partial_destination', 'where a bin released short goes; a node group holds it to be finished, an unloader unloads it'],
     // WHICH ROBOT, FOR THIS PART. It said "the same for every part on this
     // press", and it is stored per style and differs by part (owner,
-    // 2026-11-14); what each answer does is beside the choice (REFILL_NOTE).
+    // 2026-11-14); what each answer does is the position's work list
+// (workListHTML), and on a recipe group, which builds none, REFILL_NOTE.
     refill_by: ['refill_by', 'which robot brings this part’s next carrier'],
     curtain_required: ['curtain_required', 'a full-bin release here waits for the node’s light curtain'],
     auto_confirm: ['auto_confirm', 'on here, whatever the plant setting'],
@@ -5001,8 +5026,15 @@ function setCells(key, p, d) {
             return ['on', '<span class="k">' + esc(W('pack_tolerance_pct')) + '</span> ' + setNumber('pack_tolerance_pct', p, d, 'strict_pack') + ' %'];
         case 'refill_by': {
             const v = d.a.refill_by || 'clearing_robot';
+            // WHAT EACH ANSWER DOES IS THE POSITION'S WORK LIST, from the
+            // builders (workListHTML). A recipe group has no part and so no
+            // steps to build: its note is the one hand-written answer kept.
+            if (p.g !== undefined) {
+                return [setSeg(key, p, v, Object.keys(REFILL_ROBOT).map(k => [k, REFILL_ROBOT[k]])),
+                    '<span class="pd-dim">' + esc(REFILL_NOTE[v] || REFILL_NOTE.clearing_robot) + '</span>'];
+            }
             return [setSeg(key, p, v, Object.keys(REFILL_ROBOT).map(k => [k, REFILL_ROBOT[k]])),
-                '<span class="pd-dim">' + esc(REFILL_NOTE[v] || REFILL_NOTE.clearing_robot) + '</span>'];
+                '<button class="pd-dimlink" data-act="work-goto" data-node="' + esc(p.node) + '">see what its robots do</button>'];
         }
         case 'evac_nodes': {
             const own = toolChangeOwn(p.node);
@@ -5175,6 +5207,121 @@ function onSetNumber(e) {
     const p = setPlace(el);
     keepRow(el.dataset.key, p);
     setWrite(p, el.dataset.setnum, digits ? Number(digits) : 0, true);
+}
+
+// ── robot work lists ─────────────────────────────────────────────────────────
+//
+// WHAT EACH ROBOT IS SENT, FROM THE ONE BUILDER. The preview's steady state
+// (flow/preview?steps=1, engine.SteadyCell) is the orders a position makes
+// when it asks for a swap, as the Edge's request-time builders make them: the
+// pair from BuildSwapDispatch, a sequential line's Order B from
+// BuildSequentialBackfillSteps, Robot 3's carrier from carrierSpec. Nothing
+// here decides a step: it draws the server's, one robot per order, in the
+// order the server lists them (A, B, then the follow-ons), as Robot 1, 2, 3.
+//
+// THE SWAP AS CONFIGURED. What a REQUEST can change is not drawn: an empty
+// line (the clear and prime), an index press's back positions being primed, a
+// keep-staged spot with no spare (it fetches from the market), and a partial
+// held for the line (its bin named on the steps).
+
+// WORK_STEP is a step's glyph and verb, by the action Core receives.
+const WORK_STEP = { pickup: ['↑', 'Pick up'], dropoff: ['↓', 'Drop'], wait: ['‖', 'Wait'] };
+
+// keepSteady keeps a preview's steady state for the style it was asked for,
+// and, when it carries none (a refusal), the preview's own words for why.
+function keepSteady(styleId, body) {
+    S.steady = { styleId: styleId, cells: (body && Array.isArray(body.steady)) ? body.steady : null, error: (body && body.error) || '' };
+}
+
+// steadyOf is node's entry in the last preview's steady state: its own cell's,
+// or, for an index press's back position, the press's (the entry whose legs
+// work it).
+function steadyOf(node) {
+    const st = S.steady;
+    if (!node || !st || !st.cells || !S.model || st.styleId !== S.model.styleId) return null;
+    const touches = e => (e.legs || []).some(l => (l.steps || []).some(s => s.node === node) ||
+        (l.retrieve && l.retrieve.delivery === node));
+    return st.cells.find(e => e.core_node_name === node) || st.cells.find(touches) || null;
+}
+
+// workRowNode is the table row the selected position's work list goes under:
+// the selection's own row, or its press's.
+function workRowNode() {
+    if (!S.selected || !S.model) return '';
+    if (S.model.cells[S.selected] && S.model.cells[S.selected].on) return S.selected;
+    const e = steadyOf(S.selected);
+    return e ? e.core_node_name : '';
+}
+
+// drawWorkRow redraws the open work list once a preview answers.
+function drawWorkRow() {
+    const td = $('pd-workrow');
+    if (td) td.innerHTML = workListHTML(S.selected, 'Checking…');
+}
+
+// workRole is the role dot a step's node wears: a position, or the routing
+// box it is named in; none for a node the process does not name.
+function workRole(node) {
+    if (isPositionRow(node)) return 'positions';
+    const r = (S.composer.routing || []).find(x => x.core_node_name === node);
+    return r ? ROLE_OF[r.role] || '' : '';
+}
+
+// workWords is a robot's two or three words, read off its own steps: a bin
+// lifted at a position and set down off it is the old one out, one set down
+// at a position from off it the new one in, and position to position an
+// index.
+function workWords(steps) {
+    let from = null, out = false, inn = false, idx = false;
+    for (const s of steps) {
+        if (s.action === 'pickup') { from = s.node; continue; }
+        if (s.action !== 'dropoff' || from === null) continue;
+        const a = isPositionRow(from), b = isPositionRow(s.node);
+        if (a && b) idx = true; else if (a) out = true; else if (b) inn = true;
+        from = null;
+    }
+    if (idx) return inn ? 'indexes, refills' : 'indexes';
+    if (out && inn) return 'out, then in';
+    return out ? 'old bin out' : inn ? 'new bin in' : '';
+}
+
+// workListHTML is position node's robot work lists: per robot its name, its
+// dot and its words, then its steps as glyph, verb and node. wait is what it
+// says when the answered preview has no entry for node (it is not in the
+// draft); before the style's first answer it says Checking…, and after an
+// answer with no steady state, the preview's refusal.
+function workListHTML(node, wait) {
+    const e = steadyOf(node);
+    const label = e ? (M().modeLabels()[e.swap_mode] || e.swap_mode) : '';
+    // Named for the cell whose list it is: a back position's is its press's.
+    const head = '<div class="pd-wlhd"><h2>Robot work lists · ' + esc(e ? e.core_node_name : node) + '</h2>' +
+        (label ? '<small>' + esc(label) + ' · the steps sent to Core</small>' : '') + '</div>';
+    if (!e) {
+        const st = S.steady && S.model && S.steady.styleId === S.model.styleId ? S.steady : null;
+        const why = !st ? 'Checking…' : !st.cells ? (st.error || 'The preview sent no work list.') : wait;
+        return '<div class="pd-wl">' + head + '<p class="pd-dim">' + esc(why) + '</p></div>';
+    }
+    if (e.error) return '<div class="pd-wl">' + head + '<p class="pd-wlerr">' + esc(e.error) + '</p></div>';
+    if (!(e.legs || []).length) return '<div class="pd-wl">' + head + '<p class="pd-dim">This swap sends no robot.</p></div>';
+    const step = s => {
+        const g = WORK_STEP[s.action] || ['·', s.action];
+        const role = s.node ? workRole(s.node) : '';
+        return '<span class="pd-wlg">' + g[0] + '</span><span class="pd-wlv">' + esc(g[1] + (s.action === 'pickup' && s.empty ? ' empty' : '')) +
+            '</span><span class="pd-wln">' + (s.node ? '<span class="setpick-chip">' +
+                (role ? '<i class="setpick-dot" data-role="' + role + '"></i>' : '') + esc(s.node) + '</span>' : '<span class="pd-wlerr">no node</span>') + '</span>';
+    };
+    const robots = e.legs.map((leg, i) => {
+        // A plain retrieve is its spec, from its source to its delivery.
+        const steps = leg.kind === 'retrieve' && leg.retrieve
+            ? [{ action: 'pickup', node: leg.retrieve.source, empty: leg.retrieve.empty }, { action: 'dropoff', node: leg.retrieve.delivery }]
+            : (leg.steps || []);
+        const n = i + 1;
+        return '<div class="pd-wlrobot r' + n + '"><div class="pd-wlname"><i class="pd-wldot"></i><b>Robot ' + n + '</b>' +
+            '<small>' + esc(workWords(steps)) + '</small></div><div class="pd-wlsteps">' + steps.map(step).join('') + '</div></div>';
+    });
+    const owed = e.follow_ons - e.legs.filter(l => l.leg === 'follow_on').length;
+    return '<div class="pd-wl">' + head + robots.join('') +
+        (owed > 0 ? '<p class="pd-dim">+' + nOf(owed, 'follow-on order') + '</p>' : '') + '</div>';
 }
 
 // REFILL_ROBOT is the refill setting's stored words (protocol.RefillBy) as the
@@ -8213,8 +8360,8 @@ function addFreePosition(btn) {
 const MODE_WORDS = {
     single_robot: 'One robot, parks and swaps',
     two_robot: 'Robot 1 stages the new bin, Robot 2 pulls old',
-    two_robot_press_index: 'Robot 1 supplies the on-deck spot, Robot 2 indexes',
-    sequential: 'One robot, A/B flip with its pair',
+    two_robot_press_index: 'Robot 1 takes the front out, Robot 2 indexes',
+    sequential: 'Robot 1 pulls old, then Robot 2 brings new',
 };
 
 // pickFreeMode adds node with the mode the flow already runs, or asks for one
@@ -9926,6 +10073,7 @@ function onClick(e) {
             }
             case 'ar-toggle': S.arLine = !S.arLine; drawSettings(); return;
             case 'loose-onto': S.looseOnto = btn.dataset.station || ''; settingsSetMoved(); return;
+            case 'work-goto': gotoFinding(btn.dataset.node); return;
             case 'preset-older':
                 S.presets.older = !S.presets.older;
                 drawPresets();

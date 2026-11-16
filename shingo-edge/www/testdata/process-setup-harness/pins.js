@@ -33,6 +33,20 @@ const path = require('path');
 const H = require('./page-harness.js');
 
 const FX = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
+// THE STEADY STATE IS THE BUILDERS', NOT THIS FILE'S. steady.json is written by
+// engine's TestSteady_PageHarnessFixture from the fixture's own claims, through
+// the preview's draft path and the request-time builders; a preview asked with
+// ?steps=1 gets, for each cell that matches one of its entries field for
+// field (and on its Next carrier), that entry's legs, and nothing for any other
+// cell. No step is written here.
+const STEADY = JSON.parse(fs.readFileSync(path.join(__dirname, 'steady.json'), 'utf8'));
+const STEADY_KEYS = ['core_node_name', 'role', 'swap_mode', 'payload_code', 'paired_core_node', 'second_paired_core_node',
+    'inbound_source', 'inbound_staging', 'outbound_staging', 'outbound_destination'];
+function steadyFor(body) {
+    return ((body && body.cells) || []).map(c => STEADY.find(e => e.style_id === body.to_style_id &&
+        STEADY_KEYS.every(k => (e.cell[k] || '') === (c[k] || '')) &&
+        e.refill_by === ((c.advanced && c.advanced.refill_by) || ''))).filter(Boolean).map(e => e.steady);
+}
 // A RUNNING PRESS'S SCREENS HAVE BEEN OPENED. Setup is finished once the line
 // can run and its screen has been opened, the screen's last_seen_at (owner
 // ruling 2026-11-15); until then a process opens on Setup. Press A runs Style
@@ -54,10 +68,11 @@ function server(extra) {
     // A preview of the RUNNING style is validated and fingerprinted and never
     // planned, so it answers no order_count (owner ruling R3; applyPreview
     // reads the absence); any other style's plans to four orders.
-    const preview = body => {
+    const preview = (body, url) => {
         const running = (FX.page.processes.find(p => p.id === 1) || {}).active_style_id === (body && body.to_style_id);
         const out = { fingerprint: 'fp-' + (++previews), findings: [] };
         if (running) out.running = true; else out.order_count = 4;
+        if (/[?&]steps=1(&|$)/.test(url)) out.steady = steadyFor(body);
         return out;
     };
     return (method, url, body) => {
@@ -72,7 +87,7 @@ function server(extra) {
                 const c = pid === '1' ? FX.composer : EMPTY_COMPOSER;
                 return { styles: c.styles, presets: c.presets };
             }],
-            ['POST', /^\/api\/processes\/\d+\/flow\/preview$/, () => preview(body)],
+            ['POST', /^\/api\/processes\/\d+\/flow\/preview(\?steps=1)?$/, () => preview(body, url)],
             ['POST', /^\/api\/processes\/\d+\/flow\/save$/, () => ({ status: 'ok' })],
             ['POST', /^\/api\/processes\/\d+\/flow\/mint$/, () => ({ style_id: 9, style_name: 'PART-1 PART-3', minted: true })],
             ['GET', /^\/api\/processes$/, () => FX.page.processes],
@@ -707,7 +722,7 @@ async function actOpenProcess() {
     const page = await openPage();
     out['requests-open-process.txt'] = actLines('boot on ?process=1: the composer read, each screen\'s claimed nodes, ' +
         'then the first preview', page, 0).join('\n') + '\n';
-    const pv = page.calls.find(c => /\/flow\/preview$/.test(c.url));
+    const pv = page.calls.find(c => /\/flow\/preview(\?steps=1)?$/.test(c.url));
     if (!pv) throw new Error('boot sent no preview');
     bootPreview = { url: pv.url, raw: JSON.stringify(pv.body) };
 }
@@ -912,6 +927,7 @@ const P0 = require('./p0-page.js');
         setCurrent: n => { CURRENT = n; }, SEEN,
     });
     await require('./s4-table.js').run({ out, openPage, pickRow, pickChip });
+    await require('./work-lists.js').run({ out, openPage, decode, text });
     if (process.argv.includes('--sites')) {
         process.stdout.write(P0.sitesTable(SEEN));
         return;

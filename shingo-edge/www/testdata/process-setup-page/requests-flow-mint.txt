@@ -26,6 +26,6 @@
   5  GET /api/processes
   6  GET /api/processes/1/composer?map_rev=map-r1
   7  GET /api/processes/1/styles
-  8  POST /api/processes/1/flow/preview
+  8  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed

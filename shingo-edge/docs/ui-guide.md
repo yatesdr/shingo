@@ -206,16 +206,19 @@ is needed; Create makes the process and its screen, with the positions on it, an
 Opening a process gives two tabs, Styles and Settings, with Setup before them until the line is set up:
 
 - **Setup**: a short path to a first line, in three steps — **Nodes and part** (the Add process sheet; Change…
-  opens it again, filled in), **First style** (a part on each position, consume or produce, and one way they
-  all swap; inbound, outbound and staging are filled from the routing set and saved through the Styles tab's
-  save), and **Run it** (open the operator screen; start the first changeover or make the first call). Beside
+  opens it again, filled in), **First style** (one position at a time: its part, consume or produce, its swap
+  and the routing names it reads, filled from the routing set; beside it, the position's robot work lists;
+  saved through the Styles tab's save), and **Run it** (open the operator screen; start the first changeover or make the first call). Beside
   them, the line so far and what can wait for Settings. It is finished when the line can run and its screen
   has been opened, then says so and goes. **Skip setup, use Settings** hides it in this browser; **Show setup**
   brings it back while the process cannot run.
 - **Styles**: a rail of the recipes and styles, and each style's flow, as the same picture and model the
   operator station uses, with its positions table, one dashed **+ Add a position** row closing it, and, under it, the
   **Advanced settings** button and *Set for this style* (what a position sets for this style, only where it
-  differs from the default). Changes are saved with **Save style**; **+ New style**
+  differs from the default). A row clicked opens its **robot work lists** under it: each robot, and the steps
+  it is sent, as the Edge's own builders make them for the draft (the preview's `?steps=1`). The list is the
+  swap as configured: an empty line, an index press's back positions being primed, a keep-staged spot with no
+  spare and a held partial change what a request sends, and are not drawn. Changes are saved with **Save style**; **+ New style**
   puts parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as
   running**, the admin's style switch for when the plant changed parts without shingo. A position's reorder
   point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never

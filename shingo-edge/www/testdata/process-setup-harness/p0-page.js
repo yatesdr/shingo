@@ -178,14 +178,14 @@ const FINDING = { core_node_name: 'POS_A1', side: 'to', field: 'inbound_source',
 // later call too, so that answer is STICKY: the refused write and every admin
 // call after it get the login page.
 const PUBLIC = [
-    /^\/api\/processes\/\d+\/flow\/(preview|save|mint)$/, /^\/api\/processes\/\d+\/changeover\/(start|gate-status)$/,
+    /^\/api\/processes\/\d+\/flow\/(preview|save|mint)(\?steps=1)?$/, /^\/api\/processes\/\d+\/changeover\/(start|gate-status)$/,
     /^\/api\/processes\/\d+\/catid-health$/, /^\/api\/catid-health$/, /^\/api\/core-nodes$/, /^\/api\/payload-catalog$/,
 ];
 const isPublic = url => PUBLIC.some(re => re.test(url.split('?')[0]));
 function answersFor(method, url) {
     const u = url.split('?')[0];
     let four;
-    if (/\/flow\/preview$/.test(u)) {
+    if (/\/flow\/preview(\?steps=1)?$/.test(u)) {
         four = [
             ['409 {"error"} (writeFlowRefusal)', { status: 409, body: { error: MSG } }],
             ['400 {"error", order_count:0, findings, fingerprint} (no orders)', { status: 400, body: { error: MSG, order_count: 0, findings: [FINDING], unresolved: [], fingerprint: 'fp-refused' } }],
@@ -1230,7 +1230,7 @@ const DOOR_BUGS = [
     },
     {
         title: '"Preview OK · null orders" (processes-desktop.js:2400): the flow edit\'s preview answers a 500 with no body',
-        spec: () => Object.assign({ previews: true }, T.DRIVE.flowEdit), target: { method: 'POST', url: '/api/processes/1/flow/preview', k: 0 },
+        spec: () => Object.assign({ previews: true }, T.DRIVE.flowEdit), target: { method: 'POST', url: '/api/processes/1/flow/preview?steps=1', k: 0 },
         answer: BODILESS_500,
         checks: [checks.notSays('Preview OK · null orders'), checks.says('Server error (500)')],
     },

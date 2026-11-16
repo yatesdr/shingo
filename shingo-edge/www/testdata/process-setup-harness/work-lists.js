@@ -1,0 +1,87 @@
+// work-lists.js — the robot work lists on the Styles tab (round 4), pinned on
+// the fixture's Style A: a position's row clicked, its robots' steps drawn
+// under it from the preview's steady state (flow/preview?steps=1).
+//
+// The steps are the builders' (steady.json, written by engine's
+// TestSteady_PageHarnessFixture); this pins what the page draws of them: the
+// robots in the order the server lists the orders, each with its words, and
+// each step's glyph, verb, node and the role the node is named in.
+//
+// One position per swap, and an Index Swap on each Next carrier, set as an
+// engineer sets it: Advanced settings, Next carrier, the position, the answer.
+'use strict';
+
+let T;
+
+// workText is the open work list as lines: its head, then per robot its name
+// and words, then its steps.
+function workText(page) {
+    const td = page.byId('pd-workrow');
+    if (!td) return ['  (no work list under the row)'];
+    const h = String(td.innerHTML);
+    const out = [];
+    const head = /<h2>([\s\S]*?)<\/h2>(?:<small>([\s\S]*?)<\/small>)?/.exec(h);
+    if (head) out.push('  ' + T.decode(head[1]) + (head[2] ? ' — ' + T.decode(head[2]) : ''));
+    for (const m of h.matchAll(/<p class="(pd-dim|pd-wlerr)">([\s\S]*?)<\/p>/g)) out.push('  ' + (m[1] === 'pd-wlerr' ? '! ' : '') + T.text(m[2]));
+    for (const r of h.split('<div class="pd-wlrobot').slice(1)) {
+        const name = /<b>([^<]*)<\/b><small>([^<]*)<\/small>/.exec(r) || [];
+        out.push('  ' + T.decode(name[1] || '?') + ' · ' + T.decode(name[2] || ''));
+        for (const s of r.matchAll(/<span class="pd-wlg">([^<]*)<\/span><span class="pd-wlv">([^<]*)<\/span><span class="pd-wln">([\s\S]*?)<\/span><\/span>/g)) {
+            const role = (/data-role="([^"]*)"/.exec(s[3]) || [])[1];
+            out.push('    ' + T.decode(s[1]) + ' ' + T.decode(s[2]).padEnd(13) + ' ' + T.text(s[3]) + (role ? ' (' + role + ')' : ''));
+        }
+    }
+    return out;
+}
+
+async function select(page, node) {
+    page.click('root', { row: node });
+    await page.settle();
+}
+
+// nextCarrier sets node's Next carrier to v through Advanced settings (the
+// setting added at its default, then the answer pressed).
+async function nextCarrier(page, node, v) {
+    const listed = String(page.root.innerHTML).indexOf('data-act="set-seg" data-key="refill_by" data-node="' + node + '"') >= 0;
+    if (!listed) {
+        page.click('root', { act: 'set-add' });
+        await page.settle();
+        const pick = val => {
+            const r = page.byId('pd-pop').querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === val);
+            if (!r) throw new Error('Advanced settings offers no ' + val);
+            r.click();
+        };
+        pick('refill_by');
+        await page.settle();
+        pick(node);
+        await page.settle();
+    }
+    page.click('root', { act: 'set-seg', key: 'refill_by', node: node, v: v });
+    await page.settle();
+}
+
+async function run(t) {
+    T = t;
+    const L = ['# The Styles tab on Press A\'s Style A: a row clicked, its robot work lists drawn under it. The steps',
+        '# are the builders\' (steady.json); each line is glyph, verb, node and the role it is named in.'];
+    const page = await T.openPage({ hash: '#style=1' });
+    await page.settle();
+    const asked = page.calls.filter(c => /\/flow\/preview/.test(c.url)).map(c => c.url);
+    L.push('', '## the Styles tab\'s previews ask for the steps: ' + [...new Set(asked)].join(' · '));
+    for (const [node, what] of [['POS_A5', '1-Robot Swap'], ['POS_A3', '2-Robot Swap'], ['POS_A7', 'Sequential A/B'],
+        ['POS_A1', 'Index Swap, Next carrier as stored (Robot 1)']]) {
+        await select(page, node);
+        L.push('', '## ' + node + ' (' + what + ')', ...workText(page));
+    }
+    for (const [v, robot] of [['index_robot', 'Robot 2'], ['own_robot', 'Robot 3']]) {
+        await nextCarrier(page, 'POS_A1', v);
+        L.push('', '## POS_A1, Next carrier ' + robot + ' (Advanced settings › Next carrier)', ...workText(page));
+    }
+    // A back position's click opens its press's list, under the press's row.
+    await select(page, 'POS_A1');
+    await select(page, 'POS_B1');
+    L.push('', '## POS_B1 clicked (POS_A1\'s back position)', ...workText(page));
+    T.out['work-lists.txt'] = L.join('\n') + '\n';
+}
+
+module.exports = { run };

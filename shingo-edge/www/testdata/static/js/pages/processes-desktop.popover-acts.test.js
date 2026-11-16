@@ -2392,7 +2392,7 @@ async function mainAsync() {
         const page = loadPage({
             composer, timers,
             fetch: (url, init) => {
-                if (/\/flow\/preview$/.test(url)) {
+                if (/\/flow\/preview\?steps=1$/.test(url)) {
                     const body = JSON.parse(init.body);
                     previews.push(body);
                     const off = body.taken_off || [];
@@ -3476,7 +3476,9 @@ async function recipeGroupPins(h) {
         if (plain(list).indexOf('1 of 2 positions') < 0) throw new Error('the summary is not "1 of 2 positions": ' + plain(list));
         if (!/<td class="exc-pos">PLN_010<\/td>/.test(list) || /exc-pos">PLN_012/.test(list)) throw new Error('the rows are not PLN_010 alone: ' + plain(list));
         if (!/class="on" data-act="set-seg" data-key="refill_by" data-node="PLN_010" data-v="index_robot"/.test(list)) throw new Error('Robot 2 is not the answer on: ' + list);
-        if (plain(list).indexOf('Robot 1 evacuates and leaves') < 0) throw new Error('what Robot 2 means is not beside it');
+        // What Robot 2 means is the position's work list (round 4), one click
+        // away: the link selects PLN_010, whose row the list opens under.
+        if (!/data-act="work-goto" data-node="PLN_010">see what its robots do</.test(list)) throw new Error('the way to what Robot 2 means is not beside it: ' + plain(list));
         const row = n => between(h, 'data-row="' + n + '"', '</tr>');
         if (row('PLN_010').indexOf('data-act="set-goto"') < 0 || plain(row('PLN_010')).indexOf('1 set') < 0) throw new Error('PLN_010\'s row has no "1 set" chip');
         if (row('PLN_012').indexOf('set-goto') >= 0) throw new Error('PLN_012 sets nothing and carries a chip');
