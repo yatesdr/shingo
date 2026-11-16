@@ -123,8 +123,10 @@ type FlowAdvanced struct {
 	ReorderPoint          int  `json:"reorder_point,omitempty"`
 	AutoReorder           bool `json:"auto_reorder,omitempty"`
 	LinesideSoftThreshold int  `json:"lineside_soft_threshold,omitempty"`
-	// AutoRequestPayload is a PAYLOAD CODE, not a flag: it names which payload
-	// a vacated position asks for. Blank is off.
+	// AutoRequestPayload is a part code that NOTHING READS: the vacated-
+	// position request that named it went in decffaa0 (2026-04-10). flowspec
+	// offers it on no row; a stored value is carried through as it was, and
+	// still counts in the flow fingerprint, until the column is removed.
 	AutoRequestPayload string `json:"auto_request_payload,omitempty"`
 	AutoPush           bool   `json:"auto_push,omitempty"`
 	// CarryoverDisposition is the changeover special that is not a position on

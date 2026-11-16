@@ -68,6 +68,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - First style asks for an Index Swap's or Sequential A/B's paired position, so both can be finished there
 - First style's Done waits until the position has nothing to fix, and says what it lacks in plain words
 - Allowed parts reads "other parts this position counts as its own"
+- Auto request part is no longer offered on any position: nothing reads it; a value already stored stays as it was
 - The Add sheet and Settings say Parts once
 - Settings names a single back position in the singular
 - A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks

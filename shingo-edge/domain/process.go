@@ -423,7 +423,9 @@ type NodeClaim struct {
 	// a claim with no tolerance, every claim today, spends no bytes on it.
 	PackTolerancePct    int      `json:"pack_tolerance_pct,omitempty"`
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
-	AutoRequestPayload  string   `json:"auto_request_payload"`
+	// AutoRequestPayload has no reader (see FlowAdvanced's); stored and
+	// carried, offered nowhere.
+	AutoRequestPayload string `json:"auto_request_payload"`
 	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
 	// the full or the empty for this line comes from, instead of the inbound
 	// source, with one spare kept standing on it. Naming one is what turns

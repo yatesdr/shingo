@@ -14,12 +14,11 @@ POS_A9 sequential/produce  setCount=0  control "Advanced"
 POS_A10 sequential/produce  setCount=0  control "Advanced"
 
 ## Style B
-POS_A1 two_robot_press_index/consume  setCount=7  control "Advanced · 7 set"
+POS_A1 two_robot_press_index/consume  setCount=6  control "Advanced · 6 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
       Lineside soft threshold = 
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -29,11 +28,10 @@ POS_A1 two_robot_press_index/consume  setCount=7  control "Advanced · 7 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A2 two_robot_press_index/produce  setCount=8  control "Advanced · 8 set"
+POS_A2 two_robot_press_index/produce  setCount=7  control "Advanced · 7 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -46,12 +44,11 @@ POS_A2 two_robot_press_index/produce  setCount=8  control "Advanced · 8 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A3 two_robot/consume  setCount=7  control "Advanced · 7 set"
+POS_A3 two_robot/consume  setCount=6  control "Advanced · 6 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
       Lineside soft threshold = 
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -59,11 +56,10 @@ POS_A3 two_robot/consume  setCount=7  control "Advanced · 7 set"
       Curtain required = Off On
     · Station policy
       Auto confirm = Off On
-POS_A4 two_robot/produce  setCount=8  control "Advanced · 8 set"
+POS_A4 two_robot/produce  setCount=7  control "Advanced · 7 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -74,12 +70,11 @@ POS_A4 two_robot/produce  setCount=8  control "Advanced · 8 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A5 single_robot/consume  setCount=7  control "Advanced · 7 set"
+POS_A5 single_robot/consume  setCount=6  control "Advanced · 6 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
       Lineside soft threshold = 
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -87,11 +82,10 @@ POS_A5 single_robot/consume  setCount=7  control "Advanced · 7 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A6 single_robot/produce  setCount=8  control "Advanced · 8 set"
+POS_A6 single_robot/produce  setCount=7  control "Advanced · 7 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -102,12 +96,11 @@ POS_A6 single_robot/produce  setCount=8  control "Advanced · 8 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A7 sequential/consume  setCount=7  control "Advanced · 7 set"
+POS_A7 sequential/consume  setCount=6  control "Advanced · 6 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
       Lineside soft threshold = 
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -115,12 +108,11 @@ POS_A7 sequential/consume  setCount=7  control "Advanced · 7 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A8 sequential/consume  setCount=7  control "Advanced · 7 set"
+POS_A8 sequential/consume  setCount=6  control "Advanced · 6 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
       Lineside soft threshold = 
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -128,11 +120,10 @@ POS_A8 sequential/consume  setCount=7  control "Advanced · 7 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A9 sequential/produce  setCount=8  control "Advanced · 8 set"
+POS_A9 sequential/produce  setCount=7  control "Advanced · 7 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
@@ -143,11 +134,10 @@ POS_A9 sequential/produce  setCount=8  control "Advanced · 8 set"
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
     · Station policy
       Auto confirm = Off On
-POS_A10 sequential/produce  setCount=8  control "Advanced · 8 set"
+POS_A10 sequential/produce  setCount=7  control "Advanced · 7 set"
     · Part identity
       Allowed parts = PART-1 × PART-11 × + add
     · Replenishment
-      Auto request part = PART-11
       Keep staged node = STG_3
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.

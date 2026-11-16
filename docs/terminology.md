@@ -670,7 +670,7 @@ calls it"); these are the nouns around the fields.
 
 | Say | Never | Why |
 |---|---|---|
-| **part** | payload (in UI text) | the plant's word on every surface, from the picker to the finding pill. `payload_code` stays the field name in code and on the wire; field labels and refusals say *part* (*Auto request part*; a claim with none is asked for a part) |
+| **part** | payload (in UI text) | the plant's word on every surface, from the picker to the finding pill. `payload_code` stays the field name in code and on the wire; field labels and refusals say *part* (*Allowed parts*; a claim with none is asked for a part) |
 | **flow** | — | what one part does on this process: which positions it works, how each swaps, where its bins come from and go |
 | **recipe** | preset (in UI text) | a named **shape** of flow, listed under the Processes page's *Settings › Operator setup* and drawn from the Styles tab's rail; there is no Recipes tab. The code calls it a preset (`flow_presets`). A recipe is never a part and never names one; parts are applied to it |
 | **recipe group** | — | one side of a recipe (Left Hand, Right Hand on a two-off): its spots, and its own list on its card, **Set for this group**, which every style the floor makes from the recipe takes there. A group carries no carry-over: it marks nothing for a Tool change |

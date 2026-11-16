@@ -4800,7 +4800,7 @@ async function openSettings(kept) {
 // (protocol.ConfigurableSwapModes).
 const SET_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
-    ['Replenishment', ['reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
+    ['Replenishment', ['reorder', 'lineside_soft_threshold', 'auto_push', 'keep_staged_node']],
     ['Tool change', ['evac_nodes']],
     ['Finished goods', ['strict_pack', 'partial_dest']],
     ['Press hardware', ['refill_by']],
@@ -4819,7 +4819,6 @@ const SET_COPY = {
     allowed_payload_codes: ['allowed_payload_codes', 'other parts this position counts as its own'],
     reorder: ['auto_reorder', REORDER_WORDS],
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
-    auto_request_payload: ['auto_request_payload', 'the part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
     keep_staged_node: ['keep_staged_node', 'a spare waits here, and the full or empty comes from it instead of the market'],
     evac_nodes: ['changeover_evac_nodes', 'cleared for a setup; the changeover waits for Tooling done'],
@@ -4963,7 +4962,7 @@ function setDefault(key) {
     if (key === 'allowed_payload_codes' || key === 'evac_nodes') return [];
     if (key === 'refill_by') return 'clearing_robot';
     if (key === 'changeover_carryover_disposition') return 'replace';
-    if (key === 'auto_request_payload' || key === 'keep_staged_node' || key === 'partial_dest') return '';
+    if (key === 'keep_staged_node' || key === 'partial_dest') return '';
     if (SET_SWITCHES.indexOf(key) >= 0) return false;
     return 0;
 }
@@ -5096,10 +5095,6 @@ function setCells(key, p, d) {
         case 'allowed_payload_codes':
             return [(d.a.allowed_payload_codes || []).map(c => setChip(key, p, c, M().shortPart(c))).join('') +
                 '<button class="pd-chip add" data-act="set-pick"' + setData(key, p) + '>+ add</button>'];
-        case 'auto_request_payload': {
-            const v = d.a.auto_request_payload;
-            return [setPickBtn(key, p, esc(v ? M().shortPart(v) : 'pick one'), v ? '' : 'bad')];
-        }
         case 'keep_staged_node':
         case 'partial_dest': {
             const v = advValue(key, d);
@@ -5223,15 +5218,6 @@ function openSetPick(btn, key, p) {
             openRowPicker(pop, btn, rows, list => setWrite(p, key, have.concat(list)), { multi: true, placeholder: 'find parts' });
             return;
         }
-        case 'auto_request_payload': {
-            // THE ROW'S PART FIRST, and the one the list opens on when none is
-            // set: the setting takes a part, and the row already holds one.
-            const own = rowPart(p);
-            const parts = own ? [own].concat(S.model.parts.filter(c => c !== own)) : S.model.parts;
-            openRowPicker(pop, btn, none.concat(parts.map(c => ({ value: c, label: M().shortPart(c), search: c }))),
-                c => setWrite(p, key, val(c)), { placeholder: 'find a part', selected: d.a.auto_request_payload || own || undefined });
-            return;
-        }
         // The staging nodes of the routing set: a spot is a node a robot sets
         // one bin down on and lifts it from, which is what a staging node is.
         // It may be this position's own inbound staging (the robot waits under
@@ -5264,9 +5250,8 @@ function openSetPick(btn, key, p) {
 // THE POSITION AND ITS PART ARE THE ROW'S. Nothing in it asks for the
 // position, and a setting that takes a part starts from the row's: Allowed
 // parts lists the row's part until another is added (an empty list is the
-// row's part alone, NodeClaim.AllowedPayloads), and Auto request part's list
-// opens on it. The list under the table asked for the position on every add,
-// and started both empty.
+// row's part alone, NodeClaim.AllowedPayloads). The list under the table asked
+// for the position on every add, and started it empty.
 
 // rowPart is a position's part, the row's.
 function rowPart(p) {
@@ -5299,10 +5284,6 @@ function advControl(key, p, d) {
         case 'allowed_payload_codes':
             return advList(key, p).map(c => setChip(key, p, c, M().shortPart(c))).join('') +
                 '<button class="pd-chip add" data-act="set-pick"' + setData(key, p) + '>+ add</button>';
-        case 'auto_request_payload': {
-            const v = d.a.auto_request_payload;
-            return setPickBtn(key, p, esc(v ? M().shortPart(v) : 'off'), '');
-        }
         case 'keep_staged_node':
         case 'partial_dest':
             return setPickBtn(key, p, esc(advValue(key, d) || 'none'), '');

@@ -280,6 +280,13 @@ func steadyBase() map[Field]Need {
 	// modeArmViolation), so the editor must clear it on a mode change rather
 	// than carry a value that will not save.
 	out[KeepStagedNode] = Forbidden
+	// AutoRequestPayload has had no reader since decffaa0 (2026-04-10): the
+	// vacated-position request that named it was rewritten to ask for every
+	// allowed part, and later deleted. Unused in every row, not Forbidden: the
+	// editor offers it nowhere and carries a stored value through untouched,
+	// and the save refuses none, so a claim that holds one saves, and is
+	// fingerprinted, exactly as before.
+	out[AutoRequestPayload] = Unused
 	return out
 }
 
@@ -428,7 +435,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
-		AutoConfirm, AutoRequestPayload,
+		AutoConfirm,
 	} {
 		ms[f] = Unused
 	}

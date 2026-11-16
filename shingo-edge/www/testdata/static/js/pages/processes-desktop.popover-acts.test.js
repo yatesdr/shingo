@@ -3550,6 +3550,26 @@ async function recipeGroupPins(h) {
         if ((cellOf(body, 'PLN_012').advanced || {}).strict_pack) throw new Error('PLN_012 saved a strict pack nobody set');
     });
 
+    // AUTO REQUEST PART HAS NO READER (none since decffaa0, 2026-04-10), so
+    // flowspec offers it nowhere. A claim that stores one keeps it: the row
+    // does not count it, the sheet does not draw it, and a save made after an
+    // edit in the sheet sends it back as it was.
+    await pin('Auto request part is on no row\'s sheet or count; a stored one saves as it was', async () => {
+        const ctx = setPage(withAdvanced({ PLN_010: { auto_request_payload: 'PART-AR' } }));
+        await settle();
+        const row = between(ctx.root.innerHTML, 'data-row="PLN_010"', '</tr>');
+        if (!/data-act="adv-open" data-node="PLN_010">Advanced</.test(row)) throw new Error('PLN_010 counts a setting nobody can see: ' + plain(row));
+        const sheet = await advSheet(ctx, 'PLN_010');
+        if (sheetKeys(sheet.html()).indexOf('auto_request_payload') >= 0 || plain(sheet.html()).indexOf(lbl(ctx.win, 'auto_request_payload')) >= 0) {
+            throw new Error('the sheet offers Auto request part: ' + plain(sheet.html()));
+        }
+        sheet.click({ act: 'set-switch', key: 'strict_pack', node: 'PLN_010', v: '1' });
+        await settle();
+        const a = cellOf(await savedBody(ctx), 'PLN_010').advanced || {};
+        if (a.strict_pack !== true) throw new Error('setup: the sheet edit did not reach the save: ' + JSON.stringify(a));
+        if (a.auto_request_payload !== 'PART-AR') throw new Error('the stored Auto request part did not save as it was: ' + JSON.stringify(a));
+    });
+
     await pin('Partials go to says what each kind of home does, once, with its home', async () => {
         const ctx = setPage(withAdvanced({}, { PLN_012: { partial_destination: 'ULN_005' } }));
         await settle();
