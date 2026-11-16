@@ -681,6 +681,30 @@
   {
     "style_id": 1,
     "cell": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-3",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_1",
+      "key_route": [
+        "LM_2",
+        "LM_3"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "error": "node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "follow_ons": 0,
+      "legs": []
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
       "core_node_name": "POS_A4",
       "role": "produce",
       "swap_mode": "two_robot",
@@ -747,6 +771,26 @@
           ]
         }
       ]
+    }
+  },
+  {
+    "style_id": 1,
+    "cell": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-4",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_2"
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "error": "node POS_A4: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "follow_ons": 0,
+      "legs": []
     }
   },
   {
@@ -1830,6 +1874,34 @@
   {
     "style_id": 2,
     "cell": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-3",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_1",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ],
+      "key_route": [
+        "LM_2",
+        "LM_3"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A3",
+      "role": "consume",
+      "swap_mode": "two_robot",
+      "error": "node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "follow_ons": 0,
+      "legs": []
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
       "core_node_name": "POS_A4",
       "role": "produce",
       "swap_mode": "two_robot",
@@ -1900,6 +1972,30 @@
           ]
         }
       ]
+    }
+  },
+  {
+    "style_id": 2,
+    "cell": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "payload_code": "PART-4",
+      "inbound_source": "GRP_A",
+      "inbound_staging": "STG_2",
+      "partial_destination": "DST_1",
+      "changeover_evac_nodes": [
+        "POS_A11"
+      ]
+    },
+    "refill_by": "",
+    "steady": {
+      "core_node_name": "POS_A4",
+      "role": "produce",
+      "swap_mode": "two_robot",
+      "error": "node POS_A4: two-robot swap requires outbound destination (the evac leg's dropoff)",
+      "follow_ons": 0,
+      "legs": []
     }
   },
   {

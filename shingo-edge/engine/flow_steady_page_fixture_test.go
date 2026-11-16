@@ -34,8 +34,9 @@ type steadyPageEntry struct {
 // unedited (domain.Collapse, then the preview's own draftFlow path: Expand and
 // MaterializeClaim over the claim as prior) and, on an index press, once more
 // per Next carrier (the cell's Advanced, as the page sends it once Next
-// carrier is set). The harness serves an entry only for a cell that matches it
-// field for field; any other draft gets no steady state.
+// carrier is set); a 2-Robot Swap once more with its destination cleared, the
+// builder's refusal. The harness serves an entry only for a cell that matches
+// it field for field; any other draft gets no steady state.
 func TestSteady_PageHarnessFixture(t *testing.T) {
 	dir := filepath.Join("..", "www", "testdata", "process-setup-harness")
 	raw, err := os.ReadFile(filepath.Join(dir, "fixture.json"))
@@ -54,22 +55,31 @@ func TestSteady_PageHarnessFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out []steadyPageEntry
+	add := func(styleID int64, prior processes.NodeClaim, cell domain.FlowCell, r protocol.RefillBy) {
+		if r != "" {
+			a := domain.AdvancedOf(&prior)
+			a.RefillBy = r
+			cell.Advanced = a
+		}
+		claim := domain.MaterializeClaim(domain.Expand(cell, &prior, domain.ClaimSourceHMI, ""), &prior)
+		cell.Advanced = nil
+		out = append(out, steadyPageEntry{StyleID: styleID, Cell: cell, RefillBy: string(r), Steady: steadyCell(&claim)})
+	}
 	for _, st := range fx.Composer.Styles {
 		for i := range st.Claims {
 			prior := st.Claims[i]
-			refills := []protocol.RefillBy{""}
+			add(st.ID, prior, domain.Collapse(prior), "")
 			if prior.IsPressIndex() {
-				refills = append(refills, protocol.RefillByClearingRobot, protocol.RefillByIndexRobot, protocol.RefillByOwnRobot)
-			}
-			for _, r := range refills {
-				cell := domain.Collapse(prior)
-				if r != "" {
-					a := domain.AdvancedOf(&prior)
-					a.RefillBy = r
-					cell.Advanced = a
+				for _, r := range []protocol.RefillBy{protocol.RefillByClearingRobot, protocol.RefillByIndexRobot, protocol.RefillByOwnRobot} {
+					add(st.ID, prior, domain.Collapse(prior), r)
 				}
-				claim := domain.MaterializeClaim(domain.Expand(cell, &prior, domain.ClaimSourceHMI, ""), &prior)
-				out = append(out, steadyPageEntry{StyleID: st.ID, Cell: domain.Collapse(prior), RefillBy: string(r), Steady: steadyCell(&claim)})
+			}
+			// A swap not complete: a 2-Robot Swap drafted with its
+			// destination cleared, which BuildSwapDispatch refuses.
+			if prior.SwapMode == protocol.SwapModeTwoRobot {
+				cell := domain.Collapse(prior)
+				cell.OutboundDestination = ""
+				add(st.ID, prior, cell, "")
 			}
 		}
 	}

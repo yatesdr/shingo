@@ -5301,7 +5301,13 @@ function workListHTML(node, wait) {
         const why = !st ? 'Checking…' : !st.cells ? (st.error || 'The preview sent no work list.') : wait;
         return '<div class="pd-wl">' + head + '<p class="pd-dim">' + esc(why) + '</p></div>';
     }
-    if (e.error) return '<div class="pd-wl">' + head + '<p class="pd-wlerr">' + esc(e.error) + '</p></div>';
+    // A SWAP NOT COMPLETE SENDS NO ROBOT. The builder's refusal names the
+    // mode and the field in code (two_robot_press_index, paired_core_node);
+    // the bar says the same in the page's words, so this points there and
+    // keeps the refusal on hover.
+    if (e.error) {
+        return '<div class="pd-wl">' + head + '<p class="pd-dim" title="' + esc(e.error) + '">No robot is sent until this swap is complete: the bar below says what it needs.</p></div>';
+    }
     if (!(e.legs || []).length) return '<div class="pd-wl">' + head + '<p class="pd-dim">This swap sends no robot.</p></div>';
     const step = s => {
         const g = WORK_STEP[s.action] || ['·', s.action];

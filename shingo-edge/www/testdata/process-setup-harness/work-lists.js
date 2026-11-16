@@ -22,7 +22,9 @@ function workText(page) {
     const out = [];
     const head = /<h2>([\s\S]*?)<\/h2>(?:<small>([\s\S]*?)<\/small>)?/.exec(h);
     if (head) out.push('  ' + T.decode(head[1]) + (head[2] ? ' — ' + T.decode(head[2]) : ''));
-    for (const m of h.matchAll(/<p class="(pd-dim|pd-wlerr)">([\s\S]*?)<\/p>/g)) out.push('  ' + (m[1] === 'pd-wlerr' ? '! ' : '') + T.text(m[2]));
+    for (const m of h.matchAll(/<p class="(pd-dim|pd-wlerr)"( title="[^"]*")?>([\s\S]*?)<\/p>/g)) {
+        out.push('  ' + (m[1] === 'pd-wlerr' ? '! ' : '') + T.text(m[3]) + (m[2] ? ' [hover: ' + T.decode(m[2].slice(8, -1)) + ']' : ''));
+    }
     for (const r of h.split('<div class="pd-wlrobot').slice(1)) {
         const name = /<b>([^<]*)<\/b><small>([^<]*)<\/small>/.exec(r) || [];
         out.push('  ' + T.decode(name[1] || '?') + ' · ' + T.decode(name[2] || ''));
@@ -77,8 +79,14 @@ async function run(t) {
         await nextCarrier(page, 'POS_A1', v);
         L.push('', '## POS_A1, Next carrier ' + robot + ' (Advanced settings › Next carrier)', ...workText(page));
     }
+    // A swap not complete sends no robot: POS_A3's destination cleared.
+    await select(page, 'POS_A3');
+    page.pd('apply')({ type: 'setDest', node: 'POS_A3', dest: '' });
+    await page.settle();
+    L.push('', '## POS_A3 with its Outbound destination cleared (the builder refuses it)', ...workText(page));
     // A back position's click opens its press's list, under the press's row.
-    await select(page, 'POS_A1');
+    // (POS_A3 let go first: a click on the selected row lets go of it.)
+    await select(page, 'POS_A3');
     await select(page, 'POS_B1');
     L.push('', '## POS_B1 clicked (POS_A1\'s back position)', ...workText(page));
     T.out['work-lists.txt'] = L.join('\n') + '\n';

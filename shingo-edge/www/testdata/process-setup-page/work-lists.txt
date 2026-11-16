@@ -79,6 +79,10 @@
     ↑ Pick up       GRP_A (inbound)
     ↓ Drop          POS_B1 (positions)
 
+## POS_A3 with its Outbound destination cleared (the builder refuses it)
+  Robot work lists · POS_A3 — 2‑Robot Swap · the steps sent to Core
+  No robot is sent until this swap is complete: the bar below says what it needs. [hover: node POS_A3: two-robot swap requires outbound destination (the evac leg's dropoff)]
+
 ## POS_B1 clicked (POS_A1's back position)
   Robot work lists · POS_A1 — Index Swap · the steps sent to Core
   Robot 1 · old bin out
