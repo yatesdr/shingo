@@ -553,6 +553,10 @@ async function pinFirstStylePartner() {
         await page.settle();
         return offered;
     };
+    // The open position's line under its picks, the bar, and where a part is.
+    const note = () => T.text((/<p class="pd-fsnote">([\s\S]*?)<\/p>/.exec(html()) || [])[1] || '');
+    const bar = () => T.text((/<div id="pd-bar" class="pd-fsbar">([\s\S]*?)<\/div>/.exec(html()) || [])[1] || '');
+    const onPos = code => Object.keys(page.S.firstStyle.parts).filter(n => page.S.firstStyle.parts[n] === code && !page.S.firstStyle.out[n]);
     L.push('  1-Robot Swap (as it opens): ' + fields().join(' · '));
     check('a 1-Robot Swap is offered no partner', !fields().some(f => /^Paired core node=/.test(f)), fields().join(' · '));
     page.click('root', { act: 'fs-mode', mode: mode('Index Swap') });
@@ -560,15 +564,30 @@ async function pinFirstStylePartner() {
     L.push('  Index Swap: ' + fields().join(' · '));
     check('Index Swap offers Paired core node, starting at the map\'s free back position', fields().indexOf('Paired core node=POS_B1') >= 0, fields().join(' · '));
     check('no second paired node is offered', !fields().some(f => /^Second/.test(f)), fields().join(' · '));
+    const backPart = page.S.firstStyle.parts.POS_A2;
     const offered = await pick('paired', 'POS_A2');
     L.push('  its list: ' + offered.slice(0, 6).join(', ') + (offered.length > 6 ? ' …' : ''));
     check('the list is the Styles table\'s: the back positions first', offered[0] === 'POS_B1' && offered.indexOf('POS_A2') >= 0, offered.join(', '));
     L.push('  POS_A2 picked: ' + fields().join(' · ') + ' · POS_A2 ' + item('POS_A2')[1] + ' (' + T.decode(item('POS_A2')[2] || '') + ')');
     check('a row picked as the press\'s partner is its back, off the checklist', page.S.model.cells.POS_A1.paired === 'POS_A2' &&
         item('POS_A2')[1] === 'out' && T.decode(item('POS_A2')[2] || '') === 'back of POS_A1', JSON.stringify(item('POS_A2').slice(1)));
+    // THE BACK'S PART IS NEVER DROPPED SILENTLY (round 10): POS_A2 had a part;
+    // the pick says so in one line, naming it, and the part moves to the next
+    // position with none, so no part is left without a position.
+    L.push('  POS_A2 had ' + backPart + ': line "' + note() + '" · ' + backPart + ' on ' + (onPos(backPart).join(', ') || 'no position') +
+        ' · bar "' + bar() + '"');
+    check('the back\'s part is said on the pick, in one line, naming it', note().indexOf(backPart) >= 0 && note().indexOf('POS_A2') >= 0, JSON.stringify(note()));
+    check('the back\'s part stays for the next position: on a position, not dropped', onPos(backPart).length === 1 &&
+        !/needs? a position/.test(bar()), JSON.stringify({ on: onPos(backPart), bar: bar() }));
     page.click('root', { act: 'fs-mode', mode: mode('Sequential A/B') });
     await page.settle();
     check('another swap gives the back its row again', item('POS_A2')[1] !== 'out', JSON.stringify(item('POS_A2').slice(1)));
+    // The back given its row again has its part back, from where it moved.
+    const a2 = page.S.firstStyle.own.POS_A2 || {};
+    L.push('  Sequential A/B, POS_A2 kept: POS_A2 runs ' + (labels[a2.mode] || '—') + ' paired with ' + ((a2.picks || {}).paired || '—') +
+        ' · its part ' + (page.S.firstStyle.parts.POS_A2 || 'none') + ' · line "' + note() + '"');
+    check('the back given its row again has its part again', page.S.firstStyle.parts.POS_A2 === backPart && onPos(backPart).join() === 'POS_A2' && !note(),
+        JSON.stringify({ on: onPos(backPart), note: note() }));
     await pick('paired', 'POS_A3');
     const a3 = page.S.firstStyle.own.POS_A3 || {};
     L.push('  Sequential A/B, POS_A3 picked: ' + fields().join(' · ') + ' · POS_A3 runs ' + labels[a3.mode] + ' paired with ' + ((a3.picks || {}).paired || '—'));
@@ -581,6 +600,21 @@ async function pinFirstStylePartner() {
     L.push('  POS_A4 opened: ' + fields().join(' · '));
     check('the next position opened does not take the partner of the one before it', a4.mode === mode('Sequential A/B') &&
         (a4.picks || {}).paired === undefined, JSON.stringify(a4));
+    // EVERY OTHER POSITION HAS A PART: the back's part is on none, and the line
+    // says so rather than letting it go.
+    const full = await T.openPage(pressA(c => { NO_FLOW(c); c.palette = c.palette.concat(['PART-12']); }, NOT_RUN));
+    full.click('root', { act: 'setup-style' });
+    await full.settle();
+    full.click('root', { act: 'fs-mode', mode: mode('Index Swap') });
+    await full.settle();
+    const had = full.S.firstStyle.parts.POS_A2;
+    full.click('root', { act: 'fs-pick', pick: 'paired' });
+    await full.settle();
+    T.pickerRow(full, 'pd-pop', 'POS_A2');
+    await full.settle();
+    const fullNote = T.text((/<p class="pd-fsnote">([\s\S]*?)<\/p>/.exec(full.root.innerHTML) || [])[1] || '');
+    L.push('  every other position with a part, POS_A2 picked: line "' + fullNote + '"');
+    check('with no position free, the line says the back\'s part is on none', fullNote.indexOf(had) >= 0 && /no position/.test(fullNote), JSON.stringify(fullNote));
 }
 
 async function pinFirstStyle() {

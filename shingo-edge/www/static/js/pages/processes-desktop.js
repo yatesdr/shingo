@@ -963,7 +963,7 @@ async function startFirstStyle() {
     // A NAME SOMEBODY CHOSE IS KEPT (named): only a part-code name follows.
     S.firstStyle = {
         styleID: st.id, name: st.name || '', named: palette.indexOf(st.name) < 0, parts: parts,
-        own: {}, done: {}, out: {}, backOf: {}, cur: '', error: '', warned: '',
+        own: {}, done: {}, out: {}, backOf: {}, backPart: {}, cur: '', error: '', warned: '',
     };
     if (rows.length) openFirstPosition(rows[0]);
     S.setupView = 'style';
@@ -1146,9 +1146,12 @@ function firstPositionHTML(n, rows) {
         const value = (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
         const shown = value || (x[1] === 'required' ? (firstChoices(p, n).length ? 'pick one'
             : p.box === 'partner' ? 'no other position on this line' : 'none in the ' + boxWord(p.box) + ' box') : 'none');
+        // The partner pick's one line: a back's part, and where it went.
+        const note = p.box === 'partner' ? firstBackNote(n) : '';
         return '<div class="pd-fsfield"><span class="pd-fsflbl"><i class="setpick-dot" data-role="' + p.role + '"></i>' + esc(p.label || W(p.field)) + '</span>' +
             '<button class="pd-sel" data-act="fs-pick" data-pick="' + p.key + '">' +
-            '<span class="t">' + esc(shown) + '</span><i class="car"></i></button></div>';
+            '<span class="t">' + esc(shown) + '</span><i class="car"></i></button></div>' +
+            (note ? '<p class="pd-fsnote">' + esc(note) + '</p>' : '');
     }).join('');
     const warn = d.warned === n && S.firstWarn ? '<div class="pd-warn">' + esc(S.firstWarn) + '</div>' : '';
     return '<div class="pd-fsposhd"><h2>' + esc(n) + '</h2><span class="pd-spacer"></span>' +
@@ -1334,6 +1337,12 @@ function openFirstPick(btn) {
 // ITS OWN: its bin is the press's (Robot 2 indexes it forward), so v leaves
 // the checklist as "back of n". A SEQUENTIAL PARTNER IS ITS OWN LINE, paired
 // back: v starts as n's swap with n as its partner, unless it is done.
+//
+// A BACK'S PART IS NEVER DROPPED SILENTLY (round 10). A press's back takes no
+// part of its own, so the part v had moves to the next position with none
+// (firstPartFor), and the pick says so in one line (firstBackNote); with no
+// such position it is on none, and the line says that. backPart remembers
+// where it went, so the part comes back with v's row (firstBacksKept).
 function firstPartnered(n, v) {
     const d = S.firstStyle;
     if (!v || firstStyleRows().indexOf(v) < 0) return;
@@ -1342,7 +1351,14 @@ function firstPartnered(n, v) {
         d.backOf[v] = n;
         d.out[v] = true;
         d.done[v] = false;
+        const part = d.parts[v];
         delete d.parts[v];
+        delete d.backPart[v];
+        if (part) {
+            const to = firstPartFor(n);
+            if (to) d.parts[to] = part;
+            d.backPart[v] = { part: part, to: to };
+        }
         return;
     }
     if (e.mode === 'sequential' && !d.done[v]) {
@@ -1350,8 +1366,32 @@ function firstPartnered(n, v) {
     }
 }
 
+// firstPartFor is the position a back's part moves to: the next one to do
+// after n with no part, in the order Done · next position opens them (after
+// n, then before it), or none.
+function firstPartFor(n) {
+    const d = S.firstStyle;
+    const rows = firstStyleRows();
+    const i = rows.indexOf(n);
+    const free = firstToGo().filter(x => x !== n && !d.parts[x]);
+    return free.find(x => rows.indexOf(x) > i) || free[0] || '';
+}
+
+// firstBackNote is the line under the open position's partner pick when
+// that partner is its back and had a part: the part, and where it is now.
+function firstBackNote(n) {
+    const d = S.firstStyle;
+    const v = firstValue(S.model, n, FIRST_PICKS[0]);
+    const kept = d.backOf[v] === n && d.backPart[v];
+    if (!kept) return '';
+    const on = firstStyleRows().find(x => d.parts[x] === kept.part && !d.out[x]);
+    return v + '’s part, ' + M().shortPart(kept.part) + ', ' + (on ? 'is on ' + on + ' now.'
+        : 'is on no position now: pick it in a position’s Part field.');
+}
+
 // firstBacksKept puts a back position back on the checklist once its press
-// no longer names it (another partner, another swap).
+// no longer names it (another partner, another swap), with the part it had
+// if that is still where the pick moved it (a position not done yet, or none).
 function firstBacksKept() {
     const d = S.firstStyle;
     for (const v of Object.keys(d.backOf)) {
@@ -1360,6 +1400,14 @@ function firstBacksKept() {
         if (e.mode === 'two_robot_press_index' && !d.out[owner] && firstValue(S.model, owner, FIRST_PICKS[0]) === v) continue;
         delete d.backOf[v];
         d.out[v] = false;
+        const kept = d.backPart[v];
+        delete d.backPart[v];
+        if (!kept || d.parts[v]) continue;
+        const where = Object.keys(d.parts).filter(x => d.parts[x] === kept.part);
+        if (kept.to ? where.join() === kept.to && !d.done[kept.to] : !where.length) {
+            if (kept.to) delete d.parts[kept.to];
+            d.parts[v] = kept.part;
+        }
     }
 }
 
