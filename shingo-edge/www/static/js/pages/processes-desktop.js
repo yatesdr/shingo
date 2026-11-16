@@ -5725,6 +5725,13 @@ function screensSection() {
 // round 7's "Put them on" does, and the one Save writes the screen. No pick.
 // A dedicated loader's buffer spots are never added: the board draws them
 // from the loader.
+//
+// SINCE ROUND 10 THE EDGE TAKES WHAT IT CAN ITSELF (station_loader_take.go),
+// so where it took something the screen's chips are simply right and no line
+// is drawn. The lines left are what it could not take: a window no single
+// screen holds the loader's others, or one a running order keeps (core_kept,
+// which has no button: taking it off by hand meets the same order). Above
+// them, one line per loader says which Edge Core names for it (core_loaders).
 function coreChangeRows() {
     const p = process() || {};
     if (!coreBoards(p)) return '';
@@ -5742,8 +5749,13 @@ function coreChangeRows() {
                     esc(n) + '" data-station="' + st.id + '">Put it on ' + esc(st.name) + '</button>').join('') + '</span>'
                 : '<p class="pd-note">+ Add a screen, then put it on.</p>');
     });
+    const kept = p.core_kept || [];
     const removed = (p.core_removed || []).map(n => {
         const was = stored(n);
+        if (kept.indexOf(n) >= 0) {
+            return line('Core removed ' + n, 'an order is still running there', '<p class="pd-note">' +
+                esc(n + ' comes off' + (was ? ' ' + was.name : '') + ' by itself when its order ends.') + '</p>');
+        }
         const still = drafted(n) || (pickerValue(LOOSE).indexOf(n) >= 0 ? { name: '' } : null);
         const from = was ? ' ' + was.name : '';
         return line('Core removed ' + n, 'its board no longer shows it', still
@@ -5751,7 +5763,19 @@ function coreChangeRows() {
                 esc(from) + '</button></span>'
             : '<p class="pd-note">' + esc(n + ' comes off' + (from || ' this process') + ' when this is saved.') + '</p>');
     });
-    return added.join('') + removed.join('');
+    return (p.core_loaders || []).map(corePickRow).join('') + added.join('') + removed.join('');
+}
+
+// corePickRow is one loader's line: which Edge Core names to work it.
+function corePickRow(l) {
+    const row = (what, sub, note) => '<div class="pd-sfld pd-scrrow"><label>' + esc(what) + '<small>' + esc(sub) +
+        '</small></label><div class="v col">' + (note ? '<p class="pd-note">' + esc(note) + '</p>' : '') + '</div></div>';
+    if (l.gone) return row(l.name, 'Core no longer sends this loader; its screen stays here', '');
+    if (l.case === 'here') {
+        return row(l.name, "Core's pick: this Edge", l.note ? 'Not taken: ' + l.note + '.' : '');
+    }
+    if (l.case === 'elsewhere') return row('Core moved ' + l.name + ' to ' + l.edge, 'this Edge takes nothing of it; the screen stays', '');
+    return row(l.name, 'No Edge picked: set on Core, under Loaders', '');
 }
 
 // coreAdd puts a window Core added onto screen id, in the draft.

@@ -2731,7 +2731,7 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 		{
 			// v56 (2026-11-16): process_nodes.loader_window, 1 once a Core
 			// loader has held the position's node as a window or home while
-			// the row lived (StationService.MarkLoaderWindows). 0 on every
+			// the row lived (StationService.TakeLoaders). 0 on every
 			// existing row; the engine marks the held ones at its next start,
 			// from Core's loaders as this Edge holds them. It is what keeps a
 			// loader's process Core's after Core removes one of its windows.
@@ -2757,7 +2757,50 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return err == nil && n == 1
 			},
 		},
+		{
+			// v57 (2026-11-16): Core names the Edge that works a loader.
+			// core_loaders caches the pick (edge_station_uid) and that Edge's
+			// display name; operator_stations.core_loader_key is the loader a
+			// screen was made or taken for (StationService.TakeLoaders), so a
+			// screen whose windows all came off is still that loader's. Blank
+			// on every existing row: no loader names an Edge until Core's next
+			// send says so, and no screen names a loader until the Edge acts
+			// for one. Column-check guarded per column, like v54.
+			Version: 57,
+			Name:    "core_loader_edge_and_screen_loader",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v57Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return fmt.Errorf("v57 %s.%s: %w", c.table, c.column, err)
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+						return fmt.Errorf("v57 %s.%s: %w", c.table, c.column, err)
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				for _, c := range v57Columns {
+					var n int
+					if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil || n != 1 {
+						return false
+					}
+				}
+				return true
+			},
+		},
 	}
+}
+
+// v57Columns are v57's columns, each TEXT NOT NULL and empty by default.
+var v57Columns = []struct{ table, column string }{
+	{"core_loaders", "edge_station_uid"},
+	{"core_loaders", "edge_display_name"},
+	{"operator_stations", "core_loader_key"},
 }
 
 // v54Columns are v54's columns (each TEXT, NULL on every existing row).

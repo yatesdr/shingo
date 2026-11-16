@@ -173,6 +173,11 @@ CREATE TABLE core_loaders (
     -- 1 = a dedicated loader whose Clear partials is off: the board offers
     -- no home clear (Edge v46). Core owns it (bin_loaders.no_clear_partials).
     no_clear_partials INTEGER NOT NULL DEFAULT 0,
+    -- The station uid of the Edge Core names to work this loader, and that
+    -- Edge's display name (Edge v57). '' = Core names none (or predates the
+    -- field). Core owns both (bin_loaders.edge_station_uid).
+    edge_station_uid  TEXT NOT NULL DEFAULT '',
+    edge_display_name TEXT NOT NULL DEFAULT '',
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );
@@ -337,6 +342,9 @@ CREATE TABLE operator_stations (
     last_seen_at       TEXT,
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    -- The Core loader this screen was made or taken for (Edge v57), its
+    -- loader_key; '' = none. Written by the Edge, never by a screen's edit.
+    core_loader_key    TEXT NOT NULL DEFAULT '',
     UNIQUE(process_id, code)
 );
 

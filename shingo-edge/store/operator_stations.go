@@ -39,6 +39,12 @@ func (db *DB) UpdateOperatorStation(id int64, in stations.Input) error {
 	return stations.Update(db.DB, id, in)
 }
 
+// SetOperatorStationLoader names the Core loader a station works
+// (stations.SetLoader).
+func (db *DB) SetOperatorStationLoader(id int64, loaderKey string) error {
+	return stations.SetLoader(db.DB, id, loaderKey)
+}
+
 // DeleteOperatorStation removes an operator_station.
 func (db *DB) DeleteOperatorStation(id int64) error {
 	return stations.Delete(db.DB, id)

@@ -19,6 +19,10 @@ type Station struct {
 	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+	// CoreLoaderKey is the Core loader this screen was made or taken for
+	// (operator_stations.core_loader_key, v57): "Make a screen" and the Edge's
+	// own take write it. Blank on a screen a person made.
+	CoreLoaderKey string `json:"core_loader_key,omitempty"`
 	// Joined fields
 	ProcessName string `json:"process_name"`
 }
@@ -35,4 +39,7 @@ type StationInput struct {
 	Sequence         int    `json:"sequence"`
 	ControllerNodeID string `json:"controller_node_id"`
 	Enabled          bool   `json:"enabled"`
+	// CoreLoaderKey is written on create only, and never from a request: a
+	// screen's edit cannot set or clear which loader it was made for.
+	CoreLoaderKey string `json:"-"`
 }

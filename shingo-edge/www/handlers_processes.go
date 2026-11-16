@@ -45,6 +45,12 @@ type processListRow struct {
 	// page says each as one line, with the way onto the screen or off it.
 	CoreAdded   []string `json:"core_added,omitempty"`
 	CoreRemoved []string `json:"core_removed,omitempty"`
+	// CoreKept is the removed positions a running order keeps on their
+	// screen until it ends; the page says why they are still there.
+	CoreKept []string `json:"core_kept,omitempty"`
+	// CoreLoaders is which Edge Core names for each loader the process
+	// works (this Edge, another, or none picked), one line each.
+	CoreLoaders []service.CoreLoaderPick `json:"core_loaders,omitempty"`
 }
 
 // processListRows is every process as the list draws it. The page's first
@@ -67,8 +73,14 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 		return nil, err
 	}
 	curtained := service.CurtainedNodeNames(nodes)
-	coreBoards := h.engine.StationService().CoreBoardProcesses(nodes)
-	coreChanges := h.engine.StationService().CoreLoaderChanges(nodes, coreBoards)
+	// The screens that name a loader: a loader's process keeps its page when
+	// every window has come off it (Core moved the loader, or removed them).
+	links, err := h.engine.StationService().ScreenLoaderLinks()
+	if err != nil {
+		return nil, err
+	}
+	coreBoards := h.engine.StationService().CoreBoardProcesses(nodes, links)
+	coreChanges := h.engine.StationService().CoreLoaderChanges(nodes, coreBoards, links)
 	rows := make([]processListRow, len(processes))
 	for i, p := range processes {
 		rows[i] = processListRow{Process: p}
@@ -80,6 +92,8 @@ func (h *Handlers) processListRows() ([]processListRow, error) {
 		rows[i].CoreBoards = coreBoards[p.ID]
 		rows[i].CoreAdded = coreChanges[p.ID].Added
 		rows[i].CoreRemoved = coreChanges[p.ID].Removed
+		rows[i].CoreKept = coreChanges[p.ID].Kept
+		rows[i].CoreLoaders = coreChanges[p.ID].Loaders
 	}
 	return rows, nil
 }

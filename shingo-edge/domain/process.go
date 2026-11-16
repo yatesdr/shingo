@@ -192,7 +192,7 @@ type Node struct {
 	CurtainSafeValue *bool  `json:"curtain_safe_value,omitempty"`
 	// LoaderWindow is true once a Core loader has held this position's node
 	// as a window or a home while the row lived (process_nodes.loader_window,
-	// StationService.MarkLoaderWindows). Not on the wire: every node rides
+	// StationService.TakeLoaders marks it). Not on the wire: every node rides
 	// the station poll, and only the process list reads it, server side.
 	LoaderWindow bool `json:"-"`
 	// Joined fields

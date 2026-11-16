@@ -4675,6 +4675,33 @@ async function settingsPositionsPins(h) {
         if (ctx.reads.slice(before).indexOf('/api/processes') < 0) throw new Error('the process rows were not read again: ' + JSON.stringify(ctx.reads.slice(before)));
     });
 
+    // WHICH EDGE CORE NAMES, ONE LINE PER LOADER (round 10). The Edge takes
+    // Core's windows itself, so the lines left are the case each loader is in
+    // and what could not be taken: a window a running order keeps has no
+    // button, and says it comes off by itself when the order ends.
+    await pin('a Core loader\'s page says which Edge Core names for each loader, and a window an order keeps has no button', async () => {
+        const ctx = page('#tab=settings', { process: { core_boards: true, core_removed: ['PLN_006BCD'], core_kept: ['PLN_006BCD'],
+            core_loaders: [
+                { key: 'loader:1', name: 'Bin Loader', case: 'here' },
+                { key: 'loader:2', name: 'Unloader', case: 'elsewhere', edge: 'EDGE 2' },
+                { key: 'loader:3', name: 'Empty Loader', case: 'none' },
+                { key: 'loader:4', name: 'Odd Loader', case: 'here', note: 'a process named "Odd Loader" is already here' },
+            ] } });
+        await settle();
+        const text = plain(ctx.root.innerHTML);
+        for (const want of [
+            "Bin LoaderCore's pick: this Edge",
+            'Core moved Unloader to EDGE 2this Edge takes nothing of it; the screen stays',
+            'Empty LoaderNo Edge picked: set on Core, under Loaders',
+            'Not taken: a process named &quot;Odd Loader&quot; is already here.',
+            'Core removed PLN_006BCDan order is still running there',
+            'PLN_006BCD comes off Press 6 Operator Screen by itself when its order ends.',
+        ]) {
+            if (text.indexOf(want) < 0) throw new Error('no "' + want + '": ' + text.slice(0, 900));
+        }
+        if (/data-act="core-off"/.test(ctx.root.innerHTML)) throw new Error('a window an order keeps offers Take it off');
+    });
+
     // ONE DOOR TAKES A POSITION OFF THE LINE: the Positions box. Save asks
     // what still names the position first, and Save again takes it off. THE
     // WRITE IS THE SERVER'S LIST: PLN_009BCD, which the page was not loaded

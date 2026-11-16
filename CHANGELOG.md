@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v55–v56. Edge only; Core is unchanged.
+Deploy: Edge v55–v57. Edge only; Core is unchanged.
 
 - The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
 - Add process is one sheet: name, group, operator screen, the coloured node pick and the parts
@@ -74,6 +74,11 @@ Deploy: Edge v55–v56. Edge only; Core is unchanged.
 - A loader's process says Core added <window> with Put it on <screen>, and Core removed <window> with Take it off
 - A window Core removes from a loader no longer turns its process into a line; Edge v56 remembers Core's windows
 - Make a screen puts a dedicated loader's homes on the new screen, not its buffer spots, which the board draws already
+- With no Edge picked on Core, a window Core adds to a loader goes onto the one screen here holding its others, and one it removes comes off
+- A window Core removes while an order runs there stays on its screen, saying so, and comes off once the order ends
+- When Core names this Edge for a loader, the Edge makes its process and screen and keeps its windows on it, with nobody at the Edge
+- A loader Core gives another Edge is not offered here; a screen of it from before stays, says where Core moved it, and loses its windows
+- A loader's process says which Edge Core names for each of its loaders, or "No Edge picked: set on Core, under Loaders"
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
 - The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once

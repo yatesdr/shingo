@@ -635,7 +635,7 @@ var ErrCurtainPointersMissing = errors.New("a PLC name and a tag name are requir
 
 // MarkLoaderWindows sets loader_window on the given process_nodes rows: a
 // Core loader holds each one's node as a window or a home
-// (StationService.MarkLoaderWindows decides which). It only ever sets the
+// (StationService.TakeLoaders decides which). It only ever sets the
 // mark, so a window Core later removes is still known as one. One statement;
 // no ids, no statement.
 func MarkLoaderWindows(db *sql.DB, ids []int64) error {

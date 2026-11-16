@@ -34,7 +34,7 @@ type (
 
 const stationSelect = `s.id, s.process_id, s.code, s.name, s.note, s.area_label, s.sequence,
 	s.controller_node_id, s.enabled, s.health_status,
-	COALESCE(s.last_seen_at, ''), s.created_at, s.updated_at, COALESCE(p.name, '')`
+	COALESCE(s.last_seen_at, ''), s.created_at, s.updated_at, s.core_loader_key, COALESCE(p.name, '')`
 
 const stationJoin = `FROM operator_stations s
 	LEFT JOIN processes p ON p.id = s.process_id`
@@ -45,7 +45,7 @@ func scanStation(scanner interface{ Scan(...any) error }) (Station, error) {
 	err := scanner.Scan(
 		&s.ID, &s.ProcessID, &s.Code, &s.Name, &s.Note, &s.AreaLabel, &s.Sequence,
 		&s.ControllerNodeID, &s.Enabled, &s.HealthStatus,
-		&lastSeen, &createdAt, &updatedAt, &s.ProcessName,
+		&lastSeen, &createdAt, &updatedAt, &s.CoreLoaderKey, &s.ProcessName,
 	)
 	if err != nil {
 		return s, err
@@ -118,9 +118,9 @@ func Create(db *sql.DB, in Input) (int64, error) {
 		in.Sequence = next
 	}
 	res, err := db.Exec(`INSERT INTO operator_stations (
-		process_id, code, name, note, area_label, sequence, controller_node_id, enabled
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.Enabled)
+		process_id, code, name, note, area_label, sequence, controller_node_id, enabled, core_loader_key
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.Enabled, in.CoreLoaderKey)
 	if err != nil {
 		return 0, err
 	}
@@ -146,6 +146,15 @@ func Update(db *sql.DB, id int64, in Input) error {
 		process_id=?, code=?, name=?, note=?, area_label=?, sequence=?, controller_node_id=?, enabled=?, updated_at=datetime('now')
 		WHERE id=?`,
 		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.Enabled, id)
+	return err
+}
+
+// SetLoader names the Core loader a station works (core_loader_key): the
+// Edge's take writes it on a screen it acts on for that loader. Update never
+// touches the column, so a screen's edit keeps it.
+func SetLoader(db *sql.DB, id int64, loaderKey string) error {
+	_, err := db.Exec(`UPDATE operator_stations SET core_loader_key=?, updated_at=datetime('now') WHERE id=? AND core_loader_key<>?`,
+		loaderKey, id, loaderKey)
 	return err
 }
 
