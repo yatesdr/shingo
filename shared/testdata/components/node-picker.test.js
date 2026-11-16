@@ -332,4 +332,14 @@ test('quiet: a field marks the rows whose reason it says once, above the list', 
     eq(rows.filter((r) => r.quiet).map((r) => r.value).every((v) => v.indexOf('GRP') === 0), true, 'only the groups are quiet');
 });
 
+test('shelves: a group sits under Groups, a node under the letters its name starts with', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const rows = N.nodeRows(s.rows(), { shelves: true });
+    const shelf = (v) => (rows.find((r) => r.value === v) || {}).shelf;
+    eq([shelf('GRP-A'), shelf('PRESS-1'), shelf('LANE-1')], ['Groups', 'PRESS', 'LANE']);
+    eq(shelf('SLOT-A2'), undefined, 'a member of a group sits under its group, on no shelf of its own');
+    eq(N.nodeRows(s.rows(), {}).some((r) => r.shelf), false, 'no shelves unless the field asks');
+});
+
 run();

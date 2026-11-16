@@ -19,6 +19,13 @@ field but `value` optional:
 - `reason` is why a row **cannot** be picked. The row is drawn greyed with the
   reason beside it, and neither a click nor the keyboard reaches it. A picker
   shows what it excludes and why; it never drops a row in silence.
+- `shelf`, with the picker's `shelves`: the folded line the row sits under
+  (a name's prefix, or Groups). A shelf is closed until it is pressed, Expand
+  all is pressed, or the search finds a row in it; open, its rows are a grid
+  of ticks. `shelfNote(shelf, values)` puts a short note on its line. The
+  picker's `views` (`[{key, label, keep(row)}]`) are buttons beside the filters,
+  one on at a time: All, Groups only, Free only. "All" is a view, never a
+  tick-all.
 - `quiet`, with a `reason`: the reason is said once above the list by the
   caller (the set pick's `hint`), so the row is greyed with its `note` instead
   of repeating it. Every group row of a Positions list is one: "a group is one

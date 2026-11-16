@@ -191,6 +191,15 @@ function zoneOf(n) {
     return '';
 }
 
+// shelfOf is the folded line a top node sits under: Groups for a group, else
+// the letters its name starts with before an underscore, a hyphen or a digit
+// (ALN_011, SLN-015 and PLN_006BCD are ALN, SLN and PLN), else Other.
+function shelfOf(n) {
+    if (n && n.type === 'NGRP') return 'Groups';
+    const m = /^([A-Za-z]+)[_\-0-9]/.exec(String((n && n.name) || ''));
+    return m ? m[1].toUpperCase() : 'Other';
+}
+
 function kindOf(n) {
     if (n.type === 'NGRP') return 'group';
     if (n.type === 'LANE') return 'lane';
@@ -220,6 +229,8 @@ function kindOf(n) {
 //                "show" (opts.later) — a node another process holds
 //   quiet(node)  true: the rule's reason is said once above the list, so the
 //                row is greyed without it (the shell's quiet)
+//   shelves      true: each top row names its shelf (the shell's shelves):
+//                Groups for a group, else its name's prefix (shelfOf)
 export function nodeRows(nodes, field) {
     const f = field || {};
     if (!Array.isArray(nodes)) return [];
@@ -246,6 +257,7 @@ export function nodeRows(nodes, field) {
         if (section !== undefined) row.section = section;
         if (why) row.reason = why;
         if (why && f.quiet && f.quiet(n)) row.quiet = true;
+        if (f.shelves && depth === 0) row.shelf = shelfOf(n);
         if (depth === 0 && f.later && f.later(n)) row.later = true;
         const tags = f.tags ? f.tags(n) : null;
         if (tags && tags.length) row.tags = tags;

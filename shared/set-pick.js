@@ -10,13 +10,22 @@
 // chips (× takes one out); one the host says is still needed has a dashed
 // outline in its colour and says "needed", an optional empty one says
 // "optional". The colour is the box's data-role (shared/components.css, the
-// --role-* tokens) and always comes with the box's name.
+// --role-* tokens): its dot, and the dashed outline of a box still needed,
+// always with the box's name.
 //
 // THE LIST IS THE PICKER'S SHELL over the page's node list (node-picker.js),
 // always open, with the field the host gives for the box that is open: its
 // rule, notes, which rows wait under a group's "show" and which go behind
 // "In use by other processes". A row in another box carries that box's name
 // as a tag, in that box's colour.
+//
+// THE LIST IS FOLDED (owner, 2026-11-15: "the nodes list takes scrolling …
+// maybe the nodes should be a bit more grouped or compounded and expanded"):
+// one line per name prefix (ALN, PLN, SMN …) with Groups first, each opening
+// to a grid of ticks, and its line saying what is already picked from it ("3
+// in Positions", "1 here"). All · Groups only · Free only sit beside the name
+// filter, with Expand all. Nodes other processes hold stay under one line at
+// the foot.
 //
 // IT HOLDS A DRAFT. Nothing here writes: the host reads value(box) on its own
 // Save, and onChange tells it a box moved (a host may move names between
@@ -27,6 +36,14 @@ import { mountPicker, nodeRows } from '/static/shared/node-picker.js';
 
 // How many chips a box shows before "+ N more".
 const BOX_CHIPS = 8;
+
+// The list's views. Free is what this box may take now: not refused by its
+// rule, and not held by another process.
+const VIEWS = [
+    { key: 'all', label: 'All' },
+    { key: 'groups', label: 'Groups only', keep: (r) => r.shelf === 'Groups' },
+    { key: 'free', label: 'Free only', keep: (r) => !r.reason && !r.later },
+];
 
 // createSetPick draws the set pick into host (its content replaced).
 // opts:
@@ -44,7 +61,8 @@ const BOX_CHIPS = 8;
 //   hint(key)  one line above the list while that box is open, or '': what
 //              holds for many of its rows, said once (a group's rows in
 //              Positions), so the rows need not each repeat it
-//   filters    the list's prefix filters, or a function returning them
+//   filters    buttons that put a query in the search box (with the folded
+//              list, the prefixes are its lines, so a host need give none)
 //   later      the shell's { label } for the rows field.later sends behind
 //   placeholder the list's search hint
 //   onChange(key, set) after a box's picks moved
@@ -91,6 +109,9 @@ export function createSetPick(host, opts) {
             placeholder: o.placeholder || 'filter by name',
             filters,
             later: o.later || undefined,
+            shelves: true,
+            shelfNote,
+            views: VIEWS,
             onChange: (v) => {
                 sel[active] = list(v);
                 moved(active);
@@ -102,9 +123,23 @@ export function createSetPick(host, opts) {
     const unwatch = typeof o.filters === 'function' && o.source
         ? o.source.watch(() => { if (!filtered && o.source.rows()) mountList(); }) : () => {};
 
+    // shelfNote is what a folded line says is picked from it already: in the
+    // open box ("2 here"), then in each other box ("3 in Positions").
+    function shelfNote(shelf, values) {
+        const n = (key) => values.filter((v) => sel[key].indexOf(v) >= 0).length;
+        const here = n(active);
+        const parts = here ? [here + ' here'] : [];
+        for (const b of boxes) {
+            if (b.key === active) continue;
+            const k = n(b.key);
+            if (k) parts.push(k + ' in ' + b.label);
+        }
+        return parts.join(' · ');
+    }
+
     // fieldFor is the host's field for a box, with the other boxes' tags.
     function fieldFor(key) {
-        const f = Object.assign({}, o.field ? o.field(key) : {});
+        const f = Object.assign({ shelves: true }, o.field ? o.field(key) : {});
         const own = f.tags;
         f.tags = (n) => boxes.filter((b) => b.key !== key && sel[b.key].indexOf(n.name) >= 0)
             .map((b) => ({ label: b.label, tone: b.role || b.key }))

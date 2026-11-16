@@ -28,6 +28,8 @@
 //   later    drawn after every other row, behind one "show" (opts.later):
 //            the nodes another process holds, which a list of free ones
 //            should not have to scroll past
+//   shelf    with opts.shelves, the folded row this one sits under (a name's
+//            prefix, ALN or PLN, or Groups)
 //
 // ONE LIST OPEN AT A TIME. A dropdown picker's list is a popover on the layer
 // (layer.js), so Escape and a press outside close it before the sheet under
@@ -72,6 +74,17 @@ let dropped = null;   // the picker whose dropdown list is open
 //                above its own search box); "fold them" puts them back
 //   later        { label }: the line the later rows fold under ("In use by
 //                other processes"); its count and show/hide are the shell's
+//   shelves      true: the rows fold onto one line per shelf (row.shelf), in
+//                the order the shelves first appear, each closed until it is
+//                pressed, "Expand all" pressed, or the search finds something
+//                in it. An open shelf lays its rows out as a grid of ticks,
+//                several across: a list of 100 nodes is a dozen lines to
+//                scroll past, not 100. Sections are not drawn under shelves.
+//   shelfNote(shelf, values)  a short note on a shelf's line, or '': what is
+//                already picked from it ("3 in Positions")
+//   views        [{key, label, keep(row)}]: buttons beside the filters, one
+//                on at a time (the first at the start); a row the view's keep
+//                refuses is not drawn ("Groups only", "Free only")
 //   empty(q)     the line when nothing matches; loading, the not-read-yet line
 //   add          the "Add and use" slot: { label(q), run(q) }. run makes the
 //                thing typed and resolves its value or row (null: nothing was
@@ -98,7 +111,7 @@ export function createPicker(host, opts) {
     const multi = !!o.multi;
     const always = !!o.open;
     const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '', allChips: false,
-        unfolded: new Set(), later: false };
+        unfolded: new Set(), later: false, view: o.views && o.views.length ? o.views[0].key : '', shelvesOpen: new Set(), allOpen: false };
     st.was = st.sel.slice();
 
     const root = el('div', { className: 'picker' + (multi ? ' picker--multi' : '') + (always ? ' picker--open' : '') });
@@ -113,7 +126,8 @@ export function createPicker(host, opts) {
     const field = always ? input : el('div', { className: 'picker-field' }, [
         input, el('i', { className: 'picker-car', 'aria-hidden': 'true' }),
     ]);
-    const filters = o.filters && o.filters.length ? el('div', { className: 'picker-filters' }) : null;
+    const filters = (o.filters && o.filters.length) || (o.views && o.views.length) || o.shelves
+        ? el('div', { className: 'picker-filters' }) : null;
     const box = el('div', { className: 'picker-list', id, role: 'listbox', 'aria-multiselectable': multi ? 'true' : null });
     box.hidden = !always;
     // A write-through pick's refusal, beside the chips it left as they were.
@@ -167,6 +181,14 @@ export function createPicker(host, opts) {
     // on a list that had gone.
     box.addEventListener('mousedown', (ev) => ev.preventDefault());
     box.addEventListener('click', (ev) => {
+        // A shelf's line opens or closes it and picks nothing.
+        const shelf = ev.target.closest ? ev.target.closest('[data-shelf]') : null;
+        if (shelf) {
+            const k = shelf.getAttribute('data-shelf');
+            if (st.shelvesOpen.has(k)) st.shelvesOpen.delete(k); else st.shelvesOpen.add(k);
+            drawRows();
+            return;
+        }
         // A fold's show/hide opens or closes it and picks nothing.
         const fold = ev.target.closest ? ev.target.closest('[data-fold], [data-later]') : null;
         if (fold) {
@@ -194,6 +216,10 @@ export function createPicker(host, opts) {
     }
     if (filters) {
         filters.addEventListener('click', (ev) => {
+            const view = ev.target.closest ? ev.target.closest('[data-view]') : null;
+            if (view) { st.view = view.getAttribute('data-view'); st.active = -1; draw(); return; }
+            const expand = ev.target.closest ? ev.target.closest('[data-expand]') : null;
+            if (expand) { st.allOpen = !st.allOpen; if (!st.allOpen) st.shelvesOpen.clear(); draw(); return; }
             const b = ev.target.closest ? ev.target.closest('[data-query]') : null;
             if (!b) return;
             const q = b.getAttribute('data-query');
@@ -254,11 +280,27 @@ export function createPicker(host, opts) {
     function drawFilters() {
         if (!filters) return;
         filters.textContent = '';
-        for (const f of o.filters) {
+        for (const v of o.views || []) {
+            filters.appendChild(el('button', {
+                type: 'button', className: st.view === v.key ? 'is-on' : null, 'data-view': v.key,
+                'aria-pressed': st.view === v.key ? 'true' : 'false',
+            }, v.label));
+        }
+        for (const f of o.filters || []) {
             filters.appendChild(el('button', {
                 type: 'button', className: st.q === f.query ? 'is-on' : null, 'data-query': f.query,
             }, f.label));
         }
+        if (o.shelves) {
+            filters.appendChild(el('button', { type: 'button', className: 'picker-expand', 'data-expand': '' },
+                st.allOpen ? 'Fold all' : 'Expand all'));
+        }
+    }
+
+    // keeps is the view's word on a row (every row while no view is set).
+    function keeps(r) {
+        const v = (o.views || []).find((x) => x.key === st.view);
+        return !v || !v.keep || !!v.keep(r);
     }
 
     function drawRows() {
@@ -275,9 +317,10 @@ export function createPicker(host, opts) {
         let section = null;
         let shown = 0;
         let drawn = 0;
-        const rows = all.concat(st.extra.filter((x) => !seen.has(String(x.value))));
+        const rows = all.concat(st.extra.filter((x) => !seen.has(String(x.value)))).filter(keeps);
         const now = rows.filter((r) => !r.later);
         const later = rows.filter((r) => r.later);
+        let into = box;
         // THE LATER ROWS FOLD UNDER ONE LINE, open while searching: a node
         // typed by name is found wherever it is.
         const laterOpen = st.later || !!q;
@@ -289,17 +332,20 @@ export function createPicker(host, opts) {
             // A FOLDED ROW'S MEMBERS wait for its show, unless the search is
             // what found them.
             const closed = !!r.fold && kids.length > 0 && !st.unfolded.has(String(r.value)) && !(q && !self);
-            if (r.section && r.section !== section) {
+            if (!o.shelves && r.section && r.section !== section) {
                 section = r.section;
                 box.appendChild(el('div', { className: 'picker-sect', role: 'presentation' }, r.section));
             }
-            row(r, false, r.fold && kids.length ? { open: !closed, n: kids.length } : null);
-            const drawnMembers = closed ? [] : members;
-            for (const m of drawnMembers) row(m, true);
+            row(r, false, r.fold && kids.length ? { open: !closed, n: kids.length } : null, into);
+            const drawnMembers = closed ? [] : members.filter(keeps);
+            for (const m of drawnMembers) row(m, true, null, into);
             shown++;
             drawn += 1 + drawnMembers.length;
         };
-        now.forEach(one);
+        // A closed shelf's rows are there, folded: they count as shown.
+        const folded = (rs) => { shown += rs.length; for (const r of rs) drawn += 1 + (r.members || []).filter(keeps).length; };
+        if (o.shelves) drawShelves(now, q, one, (t) => { into = t; }, folded); else now.forEach(one);
+        into = box;
         if (later.length) {
             const label = (o.later && o.later.label) || 'More';
             box.appendChild(el('div', { className: 'picker-later', role: 'presentation' }, [
@@ -330,7 +376,45 @@ export function createPicker(host, opts) {
         mark();
     }
 
-    function row(r, member, fold) {
+    // drawShelves lays the rows out one line per shelf, in the order the
+    // shelves first appear. A shelf opens when pressed, on Expand all, or when
+    // the search finds a row in it; open, its rows are a grid of ticks.
+    function drawShelves(now, q, one, setInto, folded) {
+        const order = [];
+        const byShelf = new Map();
+        for (const r of now) {
+            const k = r.shelf || 'Other';
+            if (!byShelf.has(k)) { byShelf.set(k, []); order.push(k); }
+            byShelf.get(k).push(r);
+        }
+        for (const k of order) {
+            const rs = byShelf.get(k);
+            const found = !!q && rs.some((r) => hits(r, q) || (r.members || []).some((m) => hits(m, q)));
+            if (q && !found) continue;
+            const isOpen = st.allOpen || st.shelvesOpen.has(k) || found;
+            const values = [];
+            for (const r of rs) { values.push(String(r.value)); for (const m of r.members || []) values.push(String(m.value)); }
+            const note = o.shelfNote ? o.shelfNote(k, values) : '';
+            const groups = k === 'Groups';
+            box.appendChild(el('button', {
+                type: 'button', className: 'picker-shelf' + (isOpen ? ' is-open' : ''), 'data-shelf': k,
+                'aria-expanded': isOpen ? 'true' : 'false',
+            }, [
+                el('i', { className: 'picker-shelf-car', 'aria-hidden': 'true' }),
+                el('b', null, k),
+                el('small', null, rs.length + (groups ? (rs.length === 1 ? ' group' : ' groups') : (rs.length === 1 ? ' node' : ' nodes'))),
+                note ? el('span', { className: 'picker-shelf-note' }, note) : null,
+            ]));
+            if (!isOpen) { folded(rs); continue; }
+            const grid = el('div', { className: 'picker-shelf-grid', role: 'group', 'aria-label': k });
+            box.appendChild(grid);
+            setInto(grid);
+            rs.forEach(one);
+            setInto(box);
+        }
+    }
+
+    function row(r, member, fold, target) {
         const vals = valuesOf(r);
         const on = vals.length > 0 && vals.every((v) => st.sel.indexOf(v) >= 0);
         const off = !!r.reason;
@@ -350,7 +434,7 @@ export function createPicker(host, opts) {
             fold ? el('button', { type: 'button', className: 'picker-fold', 'data-fold': String(r.value), 'aria-expanded': fold.open ? 'true' : 'false' },
                 fold.open ? 'hide' : 'show ' + fold.n) : null,
         ]);
-        box.appendChild(node);
+        (target || box).appendChild(node);
         if (!off) st.keys.push({ row: r, node });
     }
 
