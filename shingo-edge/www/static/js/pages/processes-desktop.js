@@ -914,7 +914,16 @@ const FIRST_ROLES = [['consume', 'Consume'], ['produce', 'Produce']];
 // FIRST_PICKS is what the step fills in, in the order it is said: the cell
 // key, the claim field, its word, its role's colour, the routing box its
 // choices come from, and the model's action with its argument.
+//
+// THE PARTNER (round 5): Index Swap and Sequential A/B need a Paired core
+// node (flowspec Required), and without one the step dead-ended on a line
+// whose map marks no back position. It is offered only where flowspec
+// requires it, from the Styles table's own list (partnerChoices); it starts
+// as the model pairs a new row, the map's free back position (addPosition).
+// The second paired node is never Required (flowspec's Index Swap row leaves
+// it Used), so it is not offered here.
 const FIRST_PICKS = [
+    { key: 'paired', field: 'paired_core_node', label: '', role: 'positions', box: 'partner', act: 'setPartner', arg: 'partner' },
     { key: 'source', field: 'inbound_source', label: 'Comes from', role: 'inbound', box: 'source', act: 'setSource', arg: 'source' },
     { key: 'staging', field: 'inbound_staging', label: 'Inbound staging', role: 'staging', box: 'staging', act: 'setStaging', arg: 'staging' },
     { key: 'parkOld', field: 'outbound_staging', label: 'Outbound staging', role: 'staging', box: 'staging', act: 'setParkOld', arg: 'staging' },
@@ -952,7 +961,7 @@ async function startFirstStyle() {
     // A NAME SOMEBODY CHOSE IS KEPT (named): only a part-code name follows.
     S.firstStyle = {
         styleID: st.id, name: st.name || '', named: palette.indexOf(st.name) < 0, parts: parts,
-        own: {}, done: {}, out: {}, cur: '', error: '', warned: '',
+        own: {}, done: {}, out: {}, backOf: {}, cur: '', error: '', warned: '',
     };
     if (rows.length) openFirstPosition(rows[0]);
     S.setupView = 'style';
@@ -970,7 +979,15 @@ function firstEff(n) {
     const d = S.firstStyle;
     if (d.own[n]) return d.own[n];
     const rows = firstStyleRows();
-    for (let i = rows.indexOf(n) - 1; i >= 0; i--) if (d.own[rows[i]]) return d.own[rows[i]];
+    for (let i = rows.indexOf(n) - 1; i >= 0; i--) {
+        if (!d.own[rows[i]]) continue;
+        // THE PARTNER IS THE POSITION'S OWN: copied, the position after a
+        // press would be paired with the press's back (or with itself).
+        const e = d.own[rows[i]];
+        const picks = Object.assign({}, e.picks);
+        delete picks.paired;
+        return { role: e.role, mode: e.mode, picks: picks };
+    }
     return { role: 'consume', mode: 'single_robot', picks: {} };
 }
 
@@ -986,9 +1003,11 @@ function openFirstPosition(n) {
     d.warned = '';
 }
 
-// firstChoices is a pick's choices: its routing box's names, in order. A
+// firstChoices is a pick's choices at position n: the partner's from the
+// Styles table's list, the rest their routing box's names, in order. A
 // staging spot is never one of this process's positions.
-function firstChoices(p) {
+function firstChoices(p, n) {
+    if (p.box === 'partner') return partnerChoices(n);
     return (S.composer.routing || []).filter(r => r.role === p.box && r.enabled !== false &&
         (p.box !== 'staging' || !isPositionRow(r.core_node_name)))
         .sort((a, b) => (a.sequence || 0) - (b.sequence || 0)).map(r => r.core_node_name);
@@ -1007,7 +1026,8 @@ function firstUse(state, role, mode, p) {
 function firstValue(state, n, p) {
     const e = firstEff(n);
     if (e.picks[p.key] !== undefined) return e.picks[p.key];
-    const choices = firstChoices(p);
+    if (p.box === 'partner') return ((state.cells || {})[n] || {}).paired || '';
+    const choices = firstChoices(p, n);
     if (p.box !== 'staging') return choices[0] || '';
     if (firstUse(state, e.role, e.mode, p) !== 'required') return '';
     return (p.key === 'parkOld' ? choices[1] || choices[0] : choices[0]) || '';
@@ -1033,6 +1053,11 @@ function buildFirstStyle() {
         m = M().reduce(m, { type: 'setPart', node: n, payloadCode: part });
         for (const p of FIRST_PICKS) {
             if (!firstUse(m, e.role, e.mode, p)) continue;
+            // The partner is the model's own pairing until one is picked.
+            if (p.box === 'partner') {
+                if (e.picks.paired !== undefined) m = M().reduce(m, { type: 'setPartner', node: n, partner: e.picks.paired });
+                continue;
+            }
             const a = { type: p.act, node: n };
             a[p.arg] = firstValue(m, n, p);
             m = M().reduce(m, a);
@@ -1059,7 +1084,7 @@ function drawFirstStyle(f) {
     const item = (n, i) => {
         const e = firstEff(n);
         const state = d.out[n] ? 'out' : n === d.cur ? 'now' : d.done[n] ? 'done' : 'todo';
-        const sub = d.out[n] ? 'not in this style'
+        const sub = d.out[n] ? (d.backOf[n] ? 'back of ' + d.backOf[n] : 'not in this style')
             : d.done[n] ? (d.parts[n] ? M().shortPart(d.parts[n]) + ' · ' : '') + (labels[e.mode] || e.mode)
                 : n === d.cur ? 'now' : 'to do';
         return '<li class="pd-fsitem ' + state + (d.done[n] ? ' is-done' : '') + '"><button data-act="fs-open" data-node="' + esc(n) + '">' +
@@ -1110,15 +1135,16 @@ function firstPositionHTML(n, rows) {
     // never reads it (the work list beside shows no stop there), and First
     // style marks no tool change. The Styles table keeps both.
     const picks = FIRST_PICKS.map(p => [p, firstUse(S.model, e.role, e.mode, p)])
-        .filter(x => x[1] && (x[0].box !== 'staging' || x[1] === 'required')).map(x => {
+        .filter(x => x[1] && ((x[0].box !== 'staging' && x[0].box !== 'partner') || x[1] === 'required')).map(x => {
         const p = x[0];
         // What the position runs with, in the draft or (a position with no
         // part yet, not in the draft) as it would. No colour on the box: the
         // bar says what is missing.
         const cell = S.model.cells[n];
         const value = (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
-        const shown = value || (x[1] === 'required' ? (firstChoices(p).length ? 'pick one' : 'none in the ' + boxWord(p.box) + ' box') : 'none');
-        return '<div class="pd-fsfield"><span class="pd-fsflbl"><i class="setpick-dot" data-role="' + p.role + '"></i>' + esc(p.label) + '</span>' +
+        const shown = value || (x[1] === 'required' ? (firstChoices(p, n).length ? 'pick one'
+            : p.box === 'partner' ? 'no other position on this line' : 'none in the ' + boxWord(p.box) + ' box') : 'none');
+        return '<div class="pd-fsfield"><span class="pd-fsflbl"><i class="setpick-dot" data-role="' + p.role + '"></i>' + esc(p.label || W(p.field)) + '</span>' +
             '<button class="pd-sel" data-act="fs-pick" data-pick="' + p.key + '">' +
             '<span class="t">' + esc(shown) + '</span><i class="car"></i></button></div>';
     }).join('');
@@ -1216,6 +1242,7 @@ function firstStyleChanged() {
         if (first) d.name = first;
     }
     d.error = '';
+    firstBacksKept();
     buildFirstStyle();
     drawSetup();
     void previewFirstStyle();
@@ -1286,14 +1313,50 @@ function openFirstPick(btn) {
     if (!pop || !d || !p || !n || !S.model) return;
     const e = firstEff(n);
     const use = firstUse(S.model, e.role, e.mode, p);
-    const rows = (use === 'used' ? [{ value: '-', label: 'none' }] : []).concat(firstChoices(p).map(x => ({ value: x, label: x })));
+    const rows = (use === 'used' ? [{ value: '-', label: 'none' }] : []).concat(firstChoices(p, n).map(x => ({ value: x, label: x })));
     openRowPicker(pop, btn, rows, v => {
         d.own[n].picks[p.key] = v === '-' ? '' : v;
+        if (p.box === 'partner') firstPartnered(n, v === '-' ? '' : v);
         firstStyleChanged();
     }, {
-        selected: firstValue(S.model, n, p) || '-', placeholder: 'find a name', head: esc(p.label),
-        empty: 'The ' + boxWord(p.box) + ' box is empty. Add one with Change… on step 1.',
+        selected: firstValue(S.model, n, p) || '-', placeholder: 'find a name', head: esc(p.label || W(p.field)),
+        empty: p.box === 'partner' ? 'No other position on this line to pair with.'
+            : 'The ' + boxWord(p.box) + ' box is empty. Add one with Change… on step 1.',
     });
+}
+
+// firstPartnered is what picking v as position n's partner does to the
+// checklist, where v is one of its rows. AN INDEX PRESS'S BACK IS NOT A ROW OF
+// ITS OWN: its bin is the press's (Robot 2 indexes it forward), so v leaves
+// the checklist as "back of n". A SEQUENTIAL PARTNER IS ITS OWN LINE, paired
+// back: v starts as n's swap with n as its partner, unless it is done.
+function firstPartnered(n, v) {
+    const d = S.firstStyle;
+    if (!v || firstStyleRows().indexOf(v) < 0) return;
+    const e = firstEff(n);
+    if (e.mode === 'two_robot_press_index') {
+        d.backOf[v] = n;
+        d.out[v] = true;
+        d.done[v] = false;
+        delete d.parts[v];
+        return;
+    }
+    if (e.mode === 'sequential' && !d.done[v]) {
+        d.own[v] = { role: e.role, mode: e.mode, picks: { paired: n } };
+    }
+}
+
+// firstBacksKept puts a back position back on the checklist once its press
+// no longer names it (another partner, another swap).
+function firstBacksKept() {
+    const d = S.firstStyle;
+    for (const v of Object.keys(d.backOf)) {
+        const owner = d.backOf[v];
+        const e = firstEff(owner);
+        if (e.mode === 'two_robot_press_index' && !d.out[owner] && firstValue(S.model, owner, FIRST_PICKS[0]) === v) continue;
+        delete d.backOf[v];
+        d.out[v] = false;
+    }
 }
 
 // firstDone ticks the open position and opens the next one to do after it
@@ -3672,6 +3735,19 @@ function stationIDForSave() {
 }
 
 // ── pickers ──────────────────────────────────────────────────────────────────
+// partnerChoices is the positions a swap's partner may be, in the order the
+// Styles table's partner chip offers them and First style's pick too: the
+// map's back positions first, then this station's other positions (or those
+// on no station).
+function partnerChoices(node) {
+    const backs = S.model.positions.filter(p => p.kind === 'back').map(p => p.core_node_name);
+    const stationOf = n => (S.model.positions.find(p => p.core_node_name === n) || {}).station_id || 0;
+    const mine = stationOf(node);
+    const others = S.model.positions.map(p => p.core_node_name)
+        .filter(n => n !== node && (!stationOf(n) || stationOf(n) === mine));
+    return backs.filter(n => n !== node).concat(others.filter(n => backs.indexOf(n) < 0));
+}
+
 function optionsFor(node, kind) {
     const c = S.model.cells[node];
     const routing = S.composer.routing;
@@ -3709,10 +3785,6 @@ function optionsFor(node, kind) {
             if (!chip) return [];
             // A PAIR IS THIS SCREEN'S OR NO SCREEN'S (B4): another station's
             // position (an unloader's window) is never a press row's pair.
-            const stationOf = n => (S.model.positions.find(p => p.core_node_name === n) || {}).station_id || 0;
-            const mine = stationOf(node);
-            const others = S.model.positions.map(p => p.core_node_name)
-                .filter(n => n !== node && (!stationOf(n) || stationOf(n) === mine));
             // A PARTNER IS A POSITION; STAGING IS A ROUTING ROLE. These four
             // keys used to share one list — the back positions plus every
             // other position of this process — and for `paired` and
@@ -3734,7 +3806,7 @@ function optionsFor(node, kind) {
             // those slots under Staging as "always available".
             const partnering = key === 'paired' || key === 'secondPaired';
             const list = partnering
-                ? backs.concat(others.filter(n => backs.indexOf(n) < 0))
+                ? partnerChoices(node)
                 : [...new Set(routing.filter(r => r.role === 'staging')
                     .map(r => r.core_node_name).concat(backs))];
             const act = { paired: 'setPartner', secondPaired: 'setSecondPartner', staging: 'setStaging', parkOld: 'setParkOld' }[key];

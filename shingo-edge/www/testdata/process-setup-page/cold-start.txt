@@ -219,6 +219,22 @@ ok   every position done or not in this style: Save style is live
 ok   a changed name is the rename (PUT /api/styles/1), written before the Styles save
 ok   Save style is the Styles save (flow/save) of the step's draft
 
+## Setup › First style on Press A: the Paired core node pick
+  1-Robot Swap (as it opens): Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Outbound staging=STG_2 · Goes to=DST_1
+ok   a 1-Robot Swap is offered no partner
+  Index Swap: Part=PART-1 · Paired core node=POS_B1 · Comes from=GRP_A · Goes to=DST_1
+ok   Index Swap offers Paired core node, starting at the map's free back position
+ok   no second paired node is offered
+  its list: POS_B1, POS_B2, POS_B3, POS_B4, POS_A2, POS_A3 …
+ok   the list is the Styles table's: the back positions first
+  POS_A2 picked: Part=PART-1 · Paired core node=POS_A2 · Comes from=GRP_A · Goes to=DST_1 · POS_A2 out (back of POS_A1)
+ok   a row picked as the press's partner is its back, off the checklist
+ok   another swap gives the back its row again
+  Sequential A/B, POS_A3 picked: Part=PART-1 · Paired core node=POS_A3 · Comes from=GRP_A · Goes to=DST_1 · POS_A3 runs Sequential A/B paired with POS_A1
+ok   a Sequential partner is paired back
+  POS_A4 opened: Part=PART-2 · Paired core node=POS_B1 · Comes from=GRP_A · Goes to=DST_1
+ok   the next position opened does not take the partner of the one before it
+
 ## Setup › Change… (Edit process): Save writes only what moved, through Settings' doors
   the sheet: "Edit process" · boxes hold positions 16, source 2, staging 3, destination 2 · name "Press A" · screens "Operator screens each set on Settings Screen A · Unloader A "
   nothing changed, Save: no write · sheet closed · notices ["Nothing had changed."]

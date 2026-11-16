@@ -64,6 +64,10 @@ Deploy: no migration. Edge only; Core is unchanged.
 - Sequential A/B reads as two robots, one after the other; Index Swap's card holds for every Next carrier
 - First style offers no staging on Index Swap or Sequential A/B, whose swaps never stop there
 - The Add sheet's "Picking …" line stays in view under the four boxes
+- First style asks for an Index Swap's or Sequential A/B's paired position, so both can be finished there
+- First style's Done waits until the position has nothing to fix, and says what it lacks in plain words
+- Allowed parts reads "other parts this position counts as its own"
+- The Add sheet and Settings say Parts once
 - Settings names a single back position in the singular
 - A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks
 

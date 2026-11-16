@@ -207,7 +207,8 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
 
 - **Setup**: a short path to a first line, in three steps — **Nodes and part** (the Add process sheet; Change…
   opens it again, filled in), **First style** (one position at a time: its part, consume or produce, its swap
-  and the routing names it reads, filled from the routing set; beside it, the position's robot work lists;
+  and the routing names it reads, filled from the routing set, and on Index Swap and Sequential A/B its Paired
+  core node, from the Styles table's list; beside it, the position's robot work lists;
   saved through the Styles tab's save), and **Run it** (open the operator screen; start the first changeover or make the first call). Beside
   them, the line so far and what can wait for Settings. It is finished when the line can run and its screen
   has been opened, then says so and goes. **Skip setup, use Settings** hides it in this browser; **Show setup**

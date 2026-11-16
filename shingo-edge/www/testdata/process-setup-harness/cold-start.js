@@ -527,6 +527,62 @@ async function pinSetup() {
 // this style" leaves it free; Save style is live once every position is one
 // or the other. + Add a position and Take … off this line are Settings'
 // positions write (savePositions).
+// ── Setup · First style: the partner (round 5) ──────────────────────────────
+//
+// Index Swap and Sequential A/B need a Paired core node. The pick is offered
+// only there, from the Styles table's own list, and starts at the map's free
+// back position. A row picked as an Index Swap's partner is that press's back,
+// off the checklist until the press names another; a Sequential partner is
+// paired back. Modes are found by their card's name, never spelled here.
+async function pinFirstStylePartner() {
+    L.push('', '## Setup › First style on Press A: the Paired core node pick');
+    const page = await T.openPage(pressA(NO_FLOW, NOT_RUN));
+    page.click('root', { act: 'setup-style' });
+    await page.settle();
+    const html = () => page.root.innerHTML;
+    const labels = page.pd('M')().modeLabels();
+    const mode = name => Object.keys(labels).find(m => labels[m] === name);
+    const fields = () => [...html().matchAll(/<div class="pd-fsfield"><span class="pd-fsflbl">(?:<i [^>]*><\/i>)?([^<]*)<\/span><button class="pd-sel" data-act="fs-(?:pick|part)"[^>]*><span class="t">([^<]*)<\/span>/g)]
+        .map(m => T.decode(m[1]) + '=' + T.decode(m[2]));
+    const item = n => (new RegExp('<li class="pd-fsitem ([a-z]+)[^"]*"><button data-act="fs-open" data-node="' + n + '">.*?<small>([^<]*)</small>').exec(html()) || []);
+    const pick = async (key, value) => {
+        page.click('root', { act: 'fs-pick', pick: key });
+        await page.settle();
+        const offered = (page.byId('pd-pop') ? page.byId('pd-pop').querySelectorAll('.picker-row') : []).map(r => r.getAttribute('data-value'));
+        if (value) T.pickerRow(page, 'pd-pop', value);
+        await page.settle();
+        return offered;
+    };
+    L.push('  1-Robot Swap (as it opens): ' + fields().join(' · '));
+    check('a 1-Robot Swap is offered no partner', !fields().some(f => /^Paired core node=/.test(f)), fields().join(' · '));
+    page.click('root', { act: 'fs-mode', mode: mode('Index Swap') });
+    await page.settle();
+    L.push('  Index Swap: ' + fields().join(' · '));
+    check('Index Swap offers Paired core node, starting at the map\'s free back position', fields().indexOf('Paired core node=POS_B1') >= 0, fields().join(' · '));
+    check('no second paired node is offered', !fields().some(f => /^Second/.test(f)), fields().join(' · '));
+    const offered = await pick('paired', 'POS_A2');
+    L.push('  its list: ' + offered.slice(0, 6).join(', ') + (offered.length > 6 ? ' …' : ''));
+    check('the list is the Styles table\'s: the back positions first', offered[0] === 'POS_B1' && offered.indexOf('POS_A2') >= 0, offered.join(', '));
+    L.push('  POS_A2 picked: ' + fields().join(' · ') + ' · POS_A2 ' + item('POS_A2')[1] + ' (' + T.decode(item('POS_A2')[2] || '') + ')');
+    check('a row picked as the press\'s partner is its back, off the checklist', page.S.model.cells.POS_A1.paired === 'POS_A2' &&
+        item('POS_A2')[1] === 'out' && T.decode(item('POS_A2')[2] || '') === 'back of POS_A1', JSON.stringify(item('POS_A2').slice(1)));
+    page.click('root', { act: 'fs-mode', mode: mode('Sequential A/B') });
+    await page.settle();
+    check('another swap gives the back its row again', item('POS_A2')[1] !== 'out', JSON.stringify(item('POS_A2').slice(1)));
+    await pick('paired', 'POS_A3');
+    const a3 = page.S.firstStyle.own.POS_A3 || {};
+    L.push('  Sequential A/B, POS_A3 picked: ' + fields().join(' · ') + ' · POS_A3 runs ' + labels[a3.mode] + ' paired with ' + ((a3.picks || {}).paired || '—'));
+    check('a Sequential partner is paired back', a3.mode === mode('Sequential A/B') && (a3.picks || {}).paired === 'POS_A1', JSON.stringify(a3));
+    // THE PARTNER IS NOT COPIED to the next position opened: it starts the
+    // same swap, unpaired, and pairs by its own pick.
+    page.click('root', { act: 'fs-open', node: 'POS_A4' });
+    await page.settle();
+    const a4 = page.S.firstStyle.own.POS_A4 || {};
+    L.push('  POS_A4 opened: ' + fields().join(' · '));
+    check('the next position opened does not take the partner of the one before it', a4.mode === mode('Sequential A/B') &&
+        (a4.picks || {}).paired === undefined, JSON.stringify(a4));
+}
+
 async function pinFirstStyle() {
     L.push('', '## Setup › First style on Press A (a style with no flow yet): one position at a time, then its Save');
     // Once saved, the composer read holds the flow (the fixture's Style A).
@@ -757,6 +813,7 @@ async function run(t) {
     await pinStyleFirst();
     await pinSetup();
     await pinFirstStyle();
+    await pinFirstStylePartner();
     await pinEditProcess();
     await pinAddProcess();
     T.out['cold-start.txt'] = L.join('\n') + '\n';
