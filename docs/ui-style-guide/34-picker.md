@@ -41,6 +41,10 @@ field but `value` optional:
   members. Groups only is the group rows (the node adapter marks each
   `group`), listed with nothing to open first; Free only is what the open box
   may take. "All" is a view, never a tick-all.
+- **Top.** `top: <element>` draws the search box, the views and the filters
+  there instead of over the list. The set pick passes a slot in its sticky
+  "Picking …" head, so the head, the filter and the views stick as one band
+  and none of them scrolls half under it.
 - **Keyboard.** The arrows move through the rows that can be picked, Enter
   picks, and the box names the active row for a screen reader.
 - **Single or multi.** A single picker's pick replaces its value and closes

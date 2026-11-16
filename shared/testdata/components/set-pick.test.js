@@ -123,6 +123,23 @@ test('a box\'s hint is one line above the list while that box is open, and none 
     eq(hints(), []);
 });
 
+// THE FILTER STICKS WITH THE HEAD (round 6): drawn under the list's padding it
+// scrolled up under the stuck head, and at one scroll a strip of its border
+// was all that showed, a box collapsed to a line. It is in the head now, with
+// the views and the prefixes, and a box switched (the head drawn again) keeps
+// it and what was typed in it.
+test('the name filter and the views are in the sticky head, and stay there when another box opens', async () => {
+    const f = await setPick({ filters: ['ALN', 'SMN'] });
+    const head = () => f.s.el.querySelector('.setpick-head');
+    const inHead = (sel) => !!head().querySelector(sel);
+    eq([inHead('.picker-q'), inHead('[data-view="groups"]'), inHead('.picker-filters')], [true, true, true]);
+    eq(f.s.el.querySelector('.setpick-picker .picker-q'), null, 'no second filter by the list');
+    const q = head().querySelector('.picker-q');
+    q.value = 'ALN';
+    f.s.open('source');
+    eq([head().querySelector('b').textContent, head().querySelector('.picker-q') === q, q.value], ['Picking Inbound', true, 'ALN']);
+});
+
 test('the list is one list: a row a line, every row drawn, nothing to open before a tick', async () => {
     const f = await setPick({ selected: { positions: ['ALN_01'], source: ['Supermarket Area'] } });
     eq(f.rows(), ['Supermarket Area [Inbound]', 'ALN_01', 'ALN_02', 'ALN_03', 'SLN_01', 'SMN_023']);

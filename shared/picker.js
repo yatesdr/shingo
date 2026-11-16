@@ -77,6 +77,9 @@ let dropped = null;   // the picker whose dropdown list is open
 //                list as the search does: a row its keep refuses is drawn
 //                only for a member it keeps, and a kept row brings its
 //                members. The list stays one list ("Groups only", "Free only")
+//   top          an element: the search box and the views and filters are
+//                drawn in it instead of over the list, so a host can hold
+//                them where it holds its own head (the set pick's sticky one)
 //   empty(q)     the line when nothing matches; loading, the not-read-yet line
 //   add          the "Add and use" slot: { label(q), run(q) }. run makes the
 //                thing typed and resolves its value or row (null: nothing was
@@ -124,7 +127,10 @@ export function createPicker(host, opts) {
     // A write-through pick's refusal, beside the chips it left as they were.
     const refusal = o.onPick ? el('div', { className: 'picker-refused', role: 'status' }) : null;
     if (refusal) refusal.hidden = true;
-    for (const part of [chips, refusal, field, filters, box]) if (part) root.appendChild(part);
+    const top = o.top || null;
+    for (const part of [chips, refusal, field, filters, box]) {
+        if (part) (top && (part === field || part === filters) ? top : root).appendChild(part);
+    }
     host.textContent = '';
     host.appendChild(root);
 
@@ -144,7 +150,11 @@ export function createPicker(host, opts) {
         open: () => openList(),
         close: () => closeList(),
         focus: () => input.focus(),
-        destroy() { closeList(); root.remove(); },
+        destroy() {
+            closeList();
+            root.remove();
+            if (top) for (const part of [field, filters]) if (part) part.remove();
+        },
     };
 
     input.addEventListener('input', () => {

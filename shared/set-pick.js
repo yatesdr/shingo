@@ -83,7 +83,16 @@ export function createSetPick(host, opts) {
     const root = el('div', { className: 'setpick' });
     const row = el('div', { className: 'setpick-boxes' });
     const pane = el('div', { className: 'setpick-list' });
+    // THE HEAD IS ONE STICKY BAND: which box a tick goes in (headText, drawn
+    // again on every box switch), and under it the list's name filter, views
+    // and prefixes (tools, the picker's own, drawn there by its `top`). Over
+    // the list they scrolled up under the stuck head, and at one scroll only
+    // a strip of the filter's border showed below it.
     const head = el('div', { className: 'setpick-head' });
+    const headText = el('div', { className: 'setpick-headt' });
+    const tools = el('div', { className: 'setpick-tools' });
+    head.appendChild(headText);
+    head.appendChild(tools);
     const listHost = el('div', { className: 'setpick-picker' });
     pane.appendChild(head);
     pane.appendChild(listHost);
@@ -112,6 +121,7 @@ export function createSetPick(host, opts) {
             filters,
             later: o.later || undefined,
             views: VIEWS,
+            top: tools,
             onChange: (v) => {
                 sel[active] = list(v);
                 moved(active);
@@ -170,13 +180,13 @@ export function createSetPick(host, opts) {
             ]));
         }
         const b = boxOf(active);
-        head.textContent = '';
+        headText.textContent = '';
         if (b) {
-            head.appendChild(el('i', { className: 'setpick-dot', 'aria-hidden': 'true' }));
-            head.appendChild(el('b', null, 'Picking ' + b.label));
-            head.appendChild(el('small', null, b.sub || ''));
+            headText.appendChild(el('i', { className: 'setpick-dot', 'aria-hidden': 'true' }));
+            headText.appendChild(el('b', null, 'Picking ' + b.label));
+            headText.appendChild(el('small', null, b.sub || ''));
             const hint = o.hint ? o.hint(b.key) : '';
-            if (hint) head.appendChild(el('small', { className: 'setpick-hint' }, hint));
+            if (hint) headText.appendChild(el('small', { className: 'setpick-hint' }, hint));
         }
         pane.setAttribute('data-role', b ? (b.role || b.key) : '');
         root.setAttribute('data-active', active || '');

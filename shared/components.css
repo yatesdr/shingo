@@ -1461,16 +1461,20 @@ nav {
     display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3);
     border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--bg);
 }
-/* The "Picking …" head sticks just under the boxes, over the list's padding. */
+/* The "Picking …" head sticks just under the boxes, over the list's padding,
+ * and holds the list's name filter, views and prefixes (.setpick-tools): one
+ * band, so nothing of the list's top slides half under it. */
 .setpick-head {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2);
+    display: flex; flex-direction: column; gap: var(--sp-2);
     position: sticky; top: calc(var(--setpick-boxes-h, 0px) + var(--setpick-top, 0px)); z-index: var(--z-sticky);
     margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0; padding: var(--sp-3) var(--sp-3) var(--sp-2); background: var(--bg);
     border-radius: calc(var(--radius) + 4px) calc(var(--radius) + 4px) 0 0;
 }
-.setpick-head .setpick-hint { flex-basis: 100%; }
-.setpick-head .setpick-dot { align-self: center; }
-.setpick-head small { color: var(--text-muted); font-size: var(--font-xs); }
+.setpick-headt { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); }
+.setpick-headt .setpick-hint { flex-basis: 100%; }
+.setpick-headt .setpick-dot { align-self: center; }
+.setpick-headt small { color: var(--text-muted); font-size: var(--font-xs); }
+.setpick-tools { display: flex; flex-direction: column; gap: var(--sp-1); }
 /* THE SET PICK HAS ONE SCROLL, ITS PAGE'S (owner, 2026-11-15: "its hard to
  * scroll the page and the new thing"). The list is never a scroll box of its
  * own. Capped at 360 px inside Settings' scrolling column it was two scrolls

@@ -70,6 +70,7 @@ Deploy: no migration. Edge only; Core is unchanged.
 - Allowed parts reads "other parts this position counts as its own"
 - Auto request part is no longer offered on any position: nothing reads it; a value already stored stays as it was
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
+- The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once
 - Settings names a single back position in the singular
 - A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks
