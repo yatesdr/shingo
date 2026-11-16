@@ -121,6 +121,17 @@ func (h *Handlers) apiProcessContainmentSetting(w http.ResponseWriter, r *http.R
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// writeNameTaken answers a create or rename to a name another process holds:
+// 409, in plain words, and as the name field's error ("errors", the shape
+// handlers_config_save answers and shared/http.js reads as fieldErrors) so a
+// page draws it on that field.
+func writeNameTaken(w http.ResponseWriter, name string) {
+	msg := `another process is already called "` + name + `"`
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "errors": map[string]string{"name": msg}})
+}
+
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name              string `json:"name"`
@@ -154,6 +165,10 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
+	if errors.Is(err, service.ErrProcessNameTaken) {
+		writeNameTaken(w, req.Name)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -212,6 +227,15 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// A TAKEN NAME BEFORE ANY WRITE: the counter edit below lands first, so
+	// the name's UNIQUE refusal alone would leave it written and the name not.
+	if taken, err := h.engine.ProcessService().NameTaken(req.Name, id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if taken {
+		writeNameTaken(w, req.Name)
+		return
+	}
 	// The counter and identity first: the engine refuses a re-point while a
 	// changeover is open, and a refused save writes nothing. It re-points the
 	// reporting point by tag (blank names disable it) and re-primes the CATID
@@ -228,6 +252,10 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.ProcessService().Update(id, req.Name, req.Description); err != nil {
+		if errors.Is(err, service.ErrProcessNameTaken) {
+			writeNameTaken(w, req.Name)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

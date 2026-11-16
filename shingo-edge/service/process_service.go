@@ -158,6 +158,16 @@ func (s *ProcessService) Update(id int64, name, description string) error {
 // process_groups.name, for the same www classification pattern.
 var ErrDuplicateGroupName = process_groups.ErrDuplicateGroupName
 
+// ErrProcessNameTaken re-exports the store's refusal of a name another process
+// holds, from Create and Update.
+var ErrProcessNameTaken = processes.ErrNameTaken
+
+// NameTaken reports whether a process other than exceptID is called name.
+// A rename asks it before its first write (apiUpdateProcess).
+func (s *ProcessService) NameTaken(name string, exceptID int64) (bool, error) {
+	return s.db.ProcessNameTaken(name, exceptID)
+}
+
 // Delete removes a process row by id, retiring the rows that are meaningless
 // without it, its lineside piles included.
 //

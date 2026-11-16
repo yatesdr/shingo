@@ -147,6 +147,7 @@ const S = {
     graph: null,         // the travel graph, built once per map
     settings: null,      // D5's draft; nothing is written until Save settings
     settingsError: '',
+    nameTaken: '',        // the name Settings › Line was refused as another process's (nameTaken)
     settingsNotice: '',   // a success, which is not a refusal and is not drawn as one
     notice: '',          // the same, on the Flows and Presets tabs: what the last write saved
     flowSaved: null,     // {styleID, at}: the last Save style, which the bar names until the next edit
@@ -1543,6 +1544,7 @@ async function openProcess(id) {
     // decodes. Found by the audit; the door the tab click uses never reset it.
     S.settings = null;
     S.settingsError = '';
+    S.nameTaken = '';
     S.settingsNotice = '';
     S.notice = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
@@ -6253,8 +6255,13 @@ function processSection(label, keys, save, validate) {
 }
 
 const SETTINGS_SECTIONS = {
-    process: processSection('line, counter and changeover', PROCESS_KEYS, async () =>
-        doorOut(await send('PUT', '/api/processes/' + S.processID, B().processSettings(process(), S.settings), NO_NOTICE))),
+    // A taken name is said on the Name field (nameTaken), so the bar's part is
+    // `shown`: it adds "Not saved." and nothing more.
+    process: processSection('line, counter and changeover', PROCESS_KEYS, async () => {
+        const out = await send('PUT', '/api/processes/' + S.processID, B().processSettings(process(), S.settings), NO_NOTICE);
+        S.nameTaken = nameTaken(out) ? S.settings.name : '';
+        return S.nameTaken ? { ok: false, shown: true } : doorOut(out);
+    }),
     // Before the routing set: a node moving off a screen into a role has to
     // stop being a position first, and one moving the other way stops being a
     // routing name when its screen claims it (SetNodes).
@@ -7129,7 +7136,7 @@ function drawSettings() {
     const group = S.groups.find(g => g.id === S.settings.group_id);
 
     const line = '<div class="pd-sect"><h2>Line</h2></div>' +
-        stField('Name', '', stText('name')) +
+        stField('Name', '', stText('name') + (S.nameTaken ? fieldLine('name', NAME_TAKEN(S.nameTaken)) : '')) +
         stField('Description', '', stText('description', true)) +
         stField('Group', 'groups processes on the list',
             '<button class="pd-sel" data-act="st-group">' + esc(group ? group.name : 'Ungrouped') + '<i class="car"></i></button>');
@@ -7279,7 +7286,14 @@ function drawSettings() {
     // same input, after this listener.
     for (const el of body.querySelectorAll('[data-st]')) {
         if (el.tagName !== 'INPUT') continue;
-        el.addEventListener('input', () => { S.settings[el.dataset.st] = el.value; });
+        el.addEventListener('input', () => {
+            S.settings[el.dataset.st] = el.value;
+            if (el.dataset.st === 'name' && S.nameTaken) {
+                S.nameTaken = '';
+                const line = body.querySelector('.pd-ferr[data-ferr="name"]');
+                if (line) { line.textContent = ''; line.hidden = true; }
+            }
+        });
     }
     for (const el of body.querySelectorAll('input[data-cn]')) {
         el.addEventListener('input', () => { S.curtain[el.dataset.cn][el.dataset.cf] = el.value; });
@@ -7862,10 +7876,11 @@ function sheetValue(name) {
     return el.type === 'checkbox' ? el.checked : el.value;
 }
 
-function sheetField(label, sub, name, value) {
+// more is markup under the control, in its value box (a field's own line).
+function sheetField(label, sub, name, value, more) {
     return '<div class="pd-fld"><label>' + esc(label) + (sub ? '<small>' + esc(sub) + '</small>' : '') +
         '</label><div class="v"><input class="pd-inp wide" type="text" data-f="' + name +
-        '" value="' + esc(value || '') + '"></div></div>';
+        '" value="' + esc(value || '') + '">' + (more || '') + '</div></div>';
 }
 
 // ONE READ OF A WRITE'S ANSWER: what came back when it landed, and the
@@ -7891,6 +7906,34 @@ function bodyOf(out) {
 // refused stays open as it was.
 function said(out, lead) {
     return out.shown ? '' : (lead || '') + out.error;
+}
+
+// A TAKEN NAME IS THE NAME FIELD'S. The server answers a create or rename to
+// another process's name 409 with the name field's error (writeNameTaken),
+// which the door reads as fieldErrors.name; the page says it under the Name
+// field, in its own words, and nowhere else. Typing in the field takes it away.
+function nameTaken(out) {
+    return !out.ok && out.status === 409 && !!(out.fieldErrors || {}).name;
+}
+const NAME_TAKEN = name => 'Another process is already called ' + name + '.';
+function fieldLine(key, text) {
+    return '<p class="pd-ferr" data-ferr="' + key + '" role="alert"' + (text ? '' : ' hidden') + '>' + esc(text) + '</p>';
+}
+// The process sheet draws its Name field's line empty (fieldLine('name', ''))
+// and a refusal fills it: the field and what was typed in it stay as they are.
+// sheetNameTaken is false when the sheet draws no such line.
+function sheetNameTaken(name) {
+    const line = sheetEl().querySelector('.pd-ferr[data-ferr="name"]');
+    if (!line) return false;
+    line.textContent = NAME_TAKEN(name);
+    line.hidden = false;
+    return true;
+}
+function sheetNameFree() {
+    const line = sheetEl().querySelector('.pd-ferr[data-ferr="name"]');
+    if (!line) return;
+    line.textContent = '';
+    line.hidden = true;
 }
 
 // A write that goes through a sheet, with the server's refusal shown BY NAME
@@ -8749,7 +8792,7 @@ function processSheet(edit) {
     const unread = what => '<p class="pd-note pd-warn">This process’s ' + what + ' could not be read, so Save leaves it alone. ' +
         'Reload the page to change it.</p>';
     const body = '<div class="pd-addproc pd-procsheet">' +
-        '<div class="pd-two">' + sheetField('Name', 'what this process is called here', 'name', edit ? edit.p.name : '') +
+        '<div class="pd-two">' + sheetField('Name', 'what this process is called here', 'name', edit ? edit.p.name : '', fieldLine('name', '')) +
         screenField + '</div>' +
         '<div class="pd-fld"><label>Group<small>groups processes on the list</small></label>' +
         '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
@@ -8784,6 +8827,7 @@ function processSheet(edit) {
     for (const f of ['name', 'screen']) {
         const el = sheetEl().querySelector('[data-f="' + f + '"]');
         if (el) el.addEventListener('input', () => {
+            if (f === 'name') sheetNameFree();
             if (S.add && S.add.refused) { S.add.refused = false; sheetStatus('', false); }
         });
     }
@@ -8825,6 +8869,7 @@ async function submitAddProcess() {
     const chain = chainMade();
     if (!chain.processID) {
         const made = await send('POST', '/api/processes', B().processCreate({ name: name, description: '', group_id: S.add.groupID }), NO_NOTICE);
+        if (nameTaken(made) && sheetNameTaken(name)) { S.add.refused = true; sheetStatus('', false); return; }
         if (!made.ok) { sheetStatus(said(made), true); return; }
         chain.processID = Number(bodyOf(made).id);
         chain.done = ['The process was created'];
@@ -8897,6 +8942,11 @@ async function submitEditProcess() {
     const draft = Object.assign(settingsDraftFor(p), { name: name, group_id: S.add.groupID || 0 });
     if (JSON.stringify(draft) !== JSON.stringify(before.process)) {
         const out = await send('PUT', '/api/processes/' + p.id, B().processSettings(p, draft), NO_NOTICE);
+        if (nameTaken(out) && sheetNameTaken(name)) {
+            S.add.refused = true;
+            sheetStatus(done.length ? done.join('; ') + '.' : '', false);
+            return;
+        }
         if (!out.ok) { stop('The process', out); return; }
         before.process = draft;
         done.push('The process was saved');

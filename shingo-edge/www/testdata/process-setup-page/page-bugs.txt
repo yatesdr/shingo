@@ -106,5 +106,24 @@ ok   no position at all: the block offers the loader
 ok   no recipe chooser
 ok   the line says why, and goes to Positions and routing
 
+## round 6: Add process with a taken name says so on the Name field
+ok   the Name field says "Another process is already called Press B."
+ok   no database words on screen
+ok   the status line adds nothing
+ok   typing a name takes the line away
+
+## round 6: Setup's Change… with a taken name says so on the Name field
+ok   the Name field says "Another process is already called Press B."
+ok   no database words on screen
+ok   the status line adds nothing
+ok   typing a name takes the line away
+
+## round 6: Settings › Line renamed to a taken name says so on the Name field
+ok   the Name field says "Another process is already called Press B."
+ok   no database words on screen
+ok   the bar says "Not saved." and no more
+ok   typing a name takes the line away
+ok   the typed name stays in the field
+
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
 ok   no refusal block leaves the page silent

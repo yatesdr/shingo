@@ -92,7 +92,7 @@ func Create(db *sql.DB, name, description string, counterPLC, counterTag string,
 	res, err := db.Exec(`INSERT INTO processes (name, description, counter_plc_name, counter_tag_name, counter_enabled) VALUES (?, ?, ?, ?, ?)`,
 		name, description, counterPLC, counterTag, counterEnabled)
 	if err != nil {
-		return 0, err
+		return 0, nameTakenOr(err)
 	}
 	return res.LastInsertId()
 }
@@ -100,7 +100,31 @@ func Create(db *sql.DB, name, description string, counterPLC, counterTag string,
 // Update modifies a process row.
 func Update(db *sql.DB, id int64, name, description string) error {
 	_, err := db.Exec(`UPDATE processes SET name=?, description=? WHERE id=?`, name, description, id)
+	return nameTakenOr(err)
+}
+
+// ErrNameTaken is a create or a rename to a name another process holds
+// (processes.name is UNIQUE). A person's to fix, so it is said as one; the
+// handler answers it 409 on the name field.
+var ErrNameTaken = errors.New("another process already has that name")
+
+// nameTakenOr is err, or ErrNameTaken when err is the name's UNIQUE refusal.
+// modernc.org/sqlite has no sentinel to errors.Is against, so it is read off
+// the message, as process_groups' isUniqueViolation does.
+func nameTakenOr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: processes.name") {
+		return ErrNameTaken
+	}
 	return err
+}
+
+// NameTaken reports whether a process other than exceptID is called name,
+// by the column's own comparison. A rename asks it before any of its writes:
+// the counter edit lands first, and the UNIQUE refusal alone would come after it.
+func NameTaken(db *sql.DB, name string, exceptID int64) (bool, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM processes WHERE name = ? AND id <> ?`, name, exceptID).Scan(&n)
+	return n > 0, err
 }
 
 // SetCounter writes the process's counter and part-identity configuration.

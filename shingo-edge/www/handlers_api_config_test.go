@@ -134,6 +134,70 @@ func TestApiConfig_CreateProcess_MissingName(t *testing.T) {
 	assertJSONPath(t, resp, "error", "name is required")
 }
 
+// A TAKEN NAME IS THE PERSON'S TO FIX, not a fault: 409, said in plain words,
+// and as the name field's error so the page can draw it there. Not SQLite's
+// "UNIQUE constraint failed: processes.name (2067)".
+func TestApiConfig_CreateProcess_NameTaken(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	seedProcess(t, db, "Press 6")
+
+	resp := doRequest(t, router, "POST", "/api/processes", map[string]any{"name": "Press 6"}, cookie)
+	assertStatus(t, resp, http.StatusConflict)
+	var got struct {
+		Error  string            `json:"error"`
+		Errors map[string]string `json:"errors"`
+	}
+	decodeJSON(t, resp, &got)
+	if want := `another process is already called "Press 6"`; got.Error != want || got.Errors["name"] != want {
+		t.Errorf("a taken name answered %+v", got)
+	}
+	list, err := db.ListProcesses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Errorf("a refused create left %d processes, want 1", len(list))
+	}
+}
+
+// A rename to a taken name writes NOTHING: the counter and identity edit runs
+// before the name's, so a refusal found only at the name's write left the
+// identity switched and the name as it was.
+func TestApiConfig_UpdateProcess_NameTakenWritesNothing(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	seedProcess(t, db, "Press 6")
+	pid := seedProcess(t, db, "Press 7")
+
+	body := map[string]any{"name": "Press 6", "description": "renamed", "identity_none": true}
+	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), body, cookie)
+	assertStatus(t, resp, http.StatusConflict)
+	var got struct {
+		Error  string            `json:"error"`
+		Errors map[string]string `json:"errors"`
+	}
+	decodeJSON(t, resp, &got)
+	if want := `another process is already called "Press 6"`; got.Error != want || got.Errors["name"] != want {
+		t.Errorf("a taken name answered %+v", got)
+	}
+	p, err := db.GetProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "Press 7" || p.Description != "test process" || p.IdentityNone {
+		t.Errorf("a refused rename wrote: name %q, description %q, identity_none %v", p.Name, p.Description, p.IdentityNone)
+	}
+
+	// Its own name is not taken from it: a save that keeps the name saves.
+	resp = doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), map[string]any{"name": "Press 7", "description": "kept"}, cookie)
+	assertStatus(t, resp, http.StatusOK)
+}
+
 func TestApiConfig_UpdateProcess(t *testing.T) {
 	t.Parallel()
 	h, router := newAdminRouter(t)

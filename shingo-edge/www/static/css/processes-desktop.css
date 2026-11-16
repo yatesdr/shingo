@@ -682,6 +682,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
 .pd-fld label { font-size: 13px; }
 .pd-fld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
 .pd-fld .v { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* A field's own refusal (a taken name): one line under its control, on its own row of the value box. */
+.pd-ferr { flex: 1 0 100%; margin: 2px 0 0; color: var(--chip-ink-below); font-size: 12.5px; line-height: 1.35; }
 /* .pd-inp moved to shared/components.css (U1), grouped with .set-inp; .wide went with it. */
 .pd-inp.dflt { color: var(--text-muted); }
 /* .pd-note (both definitions, in order) and .pd-chk moved to shared/components.css (U1),

@@ -926,7 +926,7 @@ const P0 = require('./p0-page.js');
         H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, stSave, pickRow, pickerRow, pickRecipe, typeSetting, decode, text,
         bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
     });
-    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, stSave, holdRows, text, setCurrent: n => { CURRENT = n; }, SEEN });
+    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, stSave, holdRows, typeSetting, text, setCurrent: n => { CURRENT = n; }, SEEN });
     await require('./cold-start.js').run({
         H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, pickerRow, typeSetting, decode, text,
         setCurrent: n => { CURRENT = n; }, SEEN,

@@ -653,6 +653,79 @@ block({
     ],
 });
 
+// ROUND 6: A TAKEN NAME (owner's walk). The server answers it 409 on the name
+// field (writeNameTaken); before, the page drew SQLite's "constraint failed:
+// UNIQUE constraint failed: processes.name (2067)" on the sheet's status line.
+// It is one plain line on the Name field, and typing takes it away.
+const TAKEN = name => { const msg = 'another process is already called "' + name + '"'; return { status: 409, body: { error: msg, errors: { name: msg } } }; };
+const DB_WORDS = /constraint|UNIQUE|2067|processes\.name/;
+const nameLine = host => {
+    // A hidden line is no line: the page hides it, empty, once the name is typed again.
+    const el = host && host.querySelector('.pd-ferr[data-ferr="name"]');
+    return el && !el.hidden ? (el.textContent || T.text(el.innerHTML)) : '';
+};
+const dbWordsShown = page => page.segments().some(s => DB_WORDS.test(s)) || DB_WORDS.test(statusText(page)) ||
+    page.notices.some(n => DB_WORDS.test(n.text)) ||
+    DB_WORDS.test((page.S.stShell && page.S.stShell.page.state.refusal) || '');
+const typeIn = (page, el, value) => { el.value = value; page.fire(el, 'input'); };
+const nameChecks = (want, after) => [
+    r => ['the Name field says ' + JSON.stringify(want), r.line === want, 'Name field ' + JSON.stringify(r.line)],
+    r => ['no database words on screen', !r.dbWords, 'status ' + JSON.stringify(r.status) + ', bar ' + JSON.stringify(r.bar)],
+    r => [after, r.status === r.wantStatus, 'status ' + JSON.stringify(r.status)],
+    r => ['typing a name takes the line away', r.lineAfterTyping === '', 'still ' + JSON.stringify(r.lineAfterTyping)],
+];
+block({
+    title: 'round 6: Add process with a taken name says so on the Name field',
+    open: () => ({ answer: every('POST', /^\/api\/processes$/, TAKEN('Press B')) }),
+    act: async page => {
+        page.click('root', { act: 'add-process' });
+        await page.settle();
+        page.type('name', 'Press B');
+        await pressOK(page);
+        const r = { line: nameLine(page.scrim), status: statusText(page), dbWords: dbWordsShown(page), bar: '', wantStatus: '' };
+        typeIn(page, page.scrim.querySelector('[data-f="name"]'), 'Press C');
+        r.lineAfterTyping = nameLine(page.scrim);
+        return r;
+    },
+    checks: nameChecks('Another process is already called Press B.', 'the status line adds nothing'),
+});
+block({
+    title: 'round 6: Setup\'s Change… with a taken name says so on the Name field',
+    open: () => ({ answer: every('PUT', /^\/api\/processes\/1$/, TAKEN('Press B')) }),
+    act: async page => {
+        await page.pd('openEditProcess')();
+        await page.settle();
+        page.type('name', 'Press B');
+        await pressOK(page);
+        const r = { line: nameLine(page.scrim), status: statusText(page), dbWords: dbWordsShown(page), bar: '', wantStatus: '' };
+        typeIn(page, page.scrim.querySelector('[data-f="name"]'), 'Press C');
+        r.lineAfterTyping = nameLine(page.scrim);
+        return r;
+    },
+    checks: nameChecks('Another process is already called Press B.', 'the status line adds nothing'),
+});
+block({
+    title: 'round 6: Settings › Line renamed to a taken name says so on the Name field',
+    open: () => ({ hash: '#tab=settings', answer: every('PUT', /^\/api\/processes\/1$/, TAKEN('Press B')) }),
+    act: async page => {
+        const field = () => page.root.querySelectorAll('[data-st]').find(el => el.dataset.st === 'name' && el.tagName === 'INPUT');
+        T.typeSetting(page, '[data-st]', el => el.dataset.st === 'name' && el.tagName === 'INPUT', 'Press B');
+        // The browser bubbles the input to the shared page, which marks the bar;
+        // the harness fires it on the field alone (page.update is that mark).
+        page.S.stShell.page.update();
+        await T.stSave(page);
+        const bar = (page.S.stShell && page.S.stShell.page.state.refusal) || '';
+        const r = { line: nameLine(page.root), status: bar, bar: bar, dbWords: dbWordsShown(page), wantStatus: 'Not saved.' };
+        r.kept = field() ? field().value : '';
+        typeIn(page, field(), 'Press C');
+        r.lineAfterTyping = nameLine(page.root);
+        return r;
+    },
+    checks: nameChecks('Another process is already called Press B.', 'the bar says "Not saved." and no more').concat([
+        r => ['the typed name stays in the field', r.kept === 'Press B', 'field ' + JSON.stringify(r.kept)],
+    ]),
+});
+
 async function run(t) {
     T = t;
     T.setCurrent('page-bugs.txt');
