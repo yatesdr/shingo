@@ -68,11 +68,8 @@ import { createSceneView, svgNode } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
 import { sceneOfRows } from '/static/components/scene-rows.js';
 // When a robot is moving, the calm's limit and the pickup radius: the same
-// numbers the Edge's robot panel reads (shared/robot-motion.js). MOVE_LINGER_MS
-// is also the stall pins' door (dashboard-map.stall.test.js reads it here).
-import {
-  COMET_LIMIT, MOVE_LINGER_MS, PICKUP_RADIUS, movedFrom, movingAt
-} from '/static/shared/robot-motion.js';
+// numbers the Edge's robot panel reads (shared/robot-motion.js).
+import { COMET_LIMIT, PICKUP_RADIUS } from '/static/shared/robot-motion.js';
 
 (function () {
   var body = document.body;
@@ -336,32 +333,26 @@ import {
       // The route RDS has planned for the robot, as the scene's point names,
       // its current point first; `path` on both the frame and /api/robots
       // (lowercase there too), and absent when there is none.
-      path: Array.isArray(r.path) ? r.path : []
+      path: Array.isArray(r.path) ? r.path : [],
+      // Whether the robot is driving: Core's robot poll's word, `moving` on
+      // both the frame and /api/robots (shingo-core/engine/robot_motion.go).
+      moving: r.moving === true
     };
   }
 
-  // Motion detection from position deltas. The fleet's Busy flag (SEER
-  // ProcBusiness) stays false for direct/manual moves, so a driving robot
-  // would render as idle if we trusted flags alone. If the robot physically
-  // displaced more than a jitter threshold between updates, it's moving;
-  // the state lingers briefly so turn pauses don't flicker disc/chevron. The
-  // jitter threshold and the linger are shared/robot-motion.js's (movedFrom,
-  // movingAt), the Edge's robot panel's too.
+  // mergeRobot holds the latest word on a robot, replacing the last.
   function mergeRobot(rb) {
-    var prev = robots[rb.id];
-    rb.lastMoveAt = prev ? (prev.lastMoveAt || 0) : 0;
-    if (prev && isFinite(prev.x) && isFinite(rb.x) && movedFrom(prev, rb, graphScale)) rb.lastMoveAt = Date.now();
     robots[rb.id] = rb;
   }
-  // DELIBERATELY Date.now(), not serverNow. lastMoveAt and the
-  // activity feed's ts are stamped BY THIS BROWSER when a frame arrives, and
-  // compared against this browser's clock. They measure how long since this tab
-  // observed something, which is a real wall-time question about the SSE feed
-  // and not a question about the plant's clock. Converting them would compare a
-  // browser stamp against a server now, which is the defect serverNow exists to
-  // remove — pointed the other way.
+  // isMoving is Core's word on whether robot r is driving. Core's poll judges
+  // it from every sample: a move past the fleet's jitter within the last few
+  // seconds, so a turn or a traffic stop does not flicker it. The fleet's Busy
+  // flag (SEER ProcBusiness) stays false for direct and manual moves, which is
+  // why a position is what decides. Judged on the poll, not from this tab's
+  // frames, so a page just loaded draws a driving robot driving on its first
+  // frame, not its second.
   function isMoving(r) {
-    return movingAt(r.lastMoveAt, Date.now());
+    return r.moving === true;
   }
 
   // Which bay (charge/park point) a robot is docked on, if any. Robots park
@@ -1432,6 +1423,13 @@ import {
 
   // ── status rail + activity feed ────────────────────────────────────
 
+  // DELIBERATELY Date.now(), not serverNow. The activity feed's ts is stamped
+  // BY THIS BROWSER when a frame arrives, and compared against this browser's
+  // clock. It measures how long since this tab observed something, which is a
+  // real wall-time question about the SSE feed and not a question about the
+  // plant's clock. Converting it would compare a browser stamp against a
+  // server now, which is the defect serverNow exists to remove — pointed the
+  // other way.
   function pushFeedEvent(text, level, extra) {
     var e = Object.assign({ text: text, level: level || 'info', ts: Date.now() }, extra || {});
     activityFeed.unshift(e);

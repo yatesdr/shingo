@@ -1407,3 +1407,15 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### DEAD — `TestRobotMotionSaysWhenARobotMoves`
+- test: `TestRobotMotionSaysWhenARobotMoves` · pkg `shingo/shared` · run `-run '^TestRobotMotionSaysWhenARobotMoves$'` · `shared/scene_geom_test.go:148` @ `02439175` · tags `none`
+- code: DEAD
+- assertion map: the test ran `shared/testdata/js/robot-motion.test.js` over `movedFrom` and `movingAt`, which "feat(core,edge): both robot maps read Core's word on which robots move" removes from every module: whether a robot moves is judged on Core's robot poll since "feat(core): Core's robot poll says which robots are moving", and `TestRobotMotion_OneDefinitionForBothSurfaces` (`shared/scene_geom_test.go:153`, the check at `:170`) fails a page that names either. Each case moves to the Go rule, `TestRobotMotion_AMovePastTheJitterWithinTheLinger`:
+  - `robot-motion.test.js:32-39` (the jitter: 19 cm and 21 cm at 10 m rows, both axes, the 5 cm floor at 1 m rows, no scene, standing still) → `shingo-core/engine/robot_motion_test.go:37-44`, the same cases by name (the no-scene case split in two).
+  - `:24-26` (moving at the move, within the linger, not once it has run out) → `:67-75`, on the poll's clock (moving at once, still 4 s on, not at 5 s).
+  - `:27-28` (never seen moving, 0 and absent) → `:64-65` (a first sight is no move) and `:77-78` (a robot back after a poll that did not list it).
+- mutation: the jitter share 2% → 3%, at the base in `shared/robot-motion.js` `movedFrom` (`scale * 0.02` → `scale * 0.03`), at the tip in `shingo-core/engine/robot_motion.go` (`robotMoveShare = 0.02` → `0.03`) · old red at base: `go test -count=1 -run '^TestRobotMotionSaysWhenARobotMoves$' .` in `shared` → `FAIL 10 m rows: 21 cm is a move`, `FAIL the move is a distance, both axes counted`, `--- FAIL: TestRobotMotionSaysWhenARobotMoves (0.08s)` · survivor red at tip: `go test -count=1 -run '^TestRobotMotion_AMovePastTheJitterWithinTheLinger$' ./engine/` in `shingo-core` → `robot_motion_test.go:47: 10 m rows: 21 cm is a move: moving = false, want true`, `--- FAIL: TestRobotMotion_AMovePastTheJitterWithinTheLinger (0.00s)`
+- coverage Δ: not measured (no before/after profile); the test ran Node over a JS file and covered no Go statement of its own, and `runSceneJS` stays, read by the other scene tests
+- citations rewritten: none (nothing outside its own file named it)
+- verified at: the commit that adds this row

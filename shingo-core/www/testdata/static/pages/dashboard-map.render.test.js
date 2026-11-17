@@ -137,9 +137,8 @@ function drawList(n) {
 
 function load(opts) {
     opts = opts || {};
-    // A real epoch, not a small number: a robot never seen moving has
-    // lastMoveAt 0, and isMoving compares Date.now() against it, so a clock
-    // near zero would read every robot as moving.
+    // A real epoch, not a small number, for the page's clocks (the activity
+    // feed's ages, the comets' laps).
     const clock = { t: Date.UTC(2026, 10, 14, 12, 0, 0) };
     let frameSeq = 0;
     let frames = [];
@@ -341,16 +340,18 @@ async function setOrders(m, orders) {
 }
 
 // drive feeds each robot twice, `from` then `to`, a second apart, through the
-// page's SSE handler: a displacement past the jitter threshold is motion, and
-// a robot fed the same place twice is standing still. A robot given a `path`
-// carries it on both frames, as Core sends it on every one.
+// page's SSE handler. A robot given a `to` is driving, and both its frames say
+// so (`moving`, Core's poll's word); a robot fed the same place twice is
+// standing still. A robot given a `path` carries it on both frames, as Core
+// sends it on every one.
 function drive(m, robots) {
-    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.from, 0, r.path); }));
+    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.from, 0, r.path, !!r.to); }));
     m.clock.t += 1000;
-    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.to || r.from, r.angle, r.path); }));
+    m.onRobotUpdate(robots.map(function (r) { return frameOf(r.id, r.to || r.from, r.angle, r.path, !!r.to); }));
 }
-function frameOf(id, at, angle, path) {
-    const f = { vehicle_id: id, state: 'busy', x: at[0], y: at[1], angle: angle || 0, charging: false, connected: true };
+function frameOf(id, at, angle, path, moving) {
+    const f = { vehicle_id: id, state: 'busy', x: at[0], y: at[1], angle: angle || 0, charging: false, connected: true,
+        moving: !!moving };
     if (path) f.path = path.slice();
     return f;
 }
@@ -1229,15 +1230,15 @@ async function glyphFloor() {
     ].concat(staged));
     function feed(t) {
         const list = [
-            robotFrame('AMR-A', t ? [0.5, 0.3] : [0.3, 0.2], { state: 'busy', angle: 0.3, path: PATH_A }),
-            robotFrame('AMR-B', t ? [25.5, 10] : [25, 10], { state: 'busy', path: PATH_ISLAND }),
+            robotFrame('AMR-A', t ? [0.5, 0.3] : [0.3, 0.2], { state: 'busy', angle: 0.3, path: PATH_A, moving: true }),
+            robotFrame('AMR-B', t ? [25.5, 10] : [25, 10], { state: 'busy', path: PATH_ISLAND, moving: true }),
             robotFrame('AMR-F', [0, 0], { path: PATH_A }),
             robotFrame('AMR-E', [12, 8], { state: 'error' }),
             robotFrame('AMR-C', [22.05, 6.02]),
             robotFrame('AMR-K', [28, 2], { charging: true }),
             robotFrame('AMR-P', [24.03, 3.01], { state: 'paused' }),
             robotFrame('AMR-O', [30, 4], { state: 'offline' }),
-            robotFrame('AMR-I', t ? [8.5, 6] : [8, 6], { angle: 1.2 }),
+            robotFrame('AMR-I', t ? [8.5, 6] : [8, 6], { angle: 1.2, moving: true }),
         ];
         ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].forEach(function (s) { list.push(robotFrame('AMR-' + s, [20, 2])); });
         m.onRobotUpdate(list);
@@ -1328,9 +1329,9 @@ function sameAsFresh(m) {
 function tick(m, k) {
     m.clock.t += 1000;
     m.onRobotUpdate([
-        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3, path: PATH_A }),
-        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy', path: PATH_ISLAND }),
-        robotFrame('AMR-I', [8.5 + 0.1 * k, 6], { angle: 1.2 }),
+        robotFrame('AMR-A', [0.5 + 0.1 * k, 0.3], { state: 'busy', angle: 0.3, path: PATH_A, moving: true }),
+        robotFrame('AMR-B', [25.5 + 0.1 * k, 10], { state: 'busy', path: PATH_ISLAND, moving: true }),
+        robotFrame('AMR-I', [8.5 + 0.1 * k, 6], { angle: 1.2, moving: true }),
     ]);
     paint(m);
 }

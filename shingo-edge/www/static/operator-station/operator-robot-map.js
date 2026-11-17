@@ -10,11 +10,14 @@
 // comet-layer.js's dots. Nothing comes from Core's dashboard-map.js, and the
 // panel works out no route: an empty path, or one with a hop the scene has
 // no row for, is no route and no comet. The look is shared/scene-view.css,
-// and when a robot is moving, the busy-floor calm and the pickup radius are
-// shared/robot-motion.js, both Core's map's too. What the page decides it
-// decides as Core's map does: a robot's colour is its order's status hue, a
-// comet runs only while it is moving (motion means motion), a faulted order's
-// robot draws its path as a static grey lane and the fault flare. The leg
+// the busy-floor calm and the pickup radius are shared/robot-motion.js, and
+// whether a robot is moving is Core's word on each position (`moving`: Core's
+// robot poll sees every sample, so a robot is drawn driving from its first
+// position, not its second), all as Core's map has them. What the page
+// decides it decides as Core's map does: a robot's colour is its order's
+// status hue, a comet runs only while it is moving (motion means motion), a
+// faulted order's robot draws its path as a static grey lane and the fault
+// flare. The leg
 // (fetch hollow, carry solid) is the panel's own orderLeg, since Core's reads
 // the board's `carrying`, which the panel does not have.
 //
@@ -26,8 +29,8 @@
 // DRIVING IS THE POSITIONS' WORD, NOT THE EDGE STATUS'S (owner's F4). After a
 // Core-side release (lane gate, table turn, vacate, hard release) Core moves
 // the order on and tells the Edge nothing, so the Edge order stays staged
-// while its robot drives. So a robot is driving when its positions say it
-// moves (movingAt) and its order is not faulted, whatever the status: it gets
+// while its robot drives. So a robot is driving when its position says it is
+// moving and its order is not faulted, whatever the status: it gets
 // its route and comet when RDS's path for it draws, counts for the calm, and
 // its row gives the tile's in-transit words, not Arrived. A faulted robot
 // keeps its static grey lane. Core's map reads Core's status and is not
@@ -85,7 +88,7 @@ import { sceneNet } from '/static/shared/scene-net.js';
 import { pathWorld } from '/static/shared/scene-path.js';
 import { createSceneView } from '/static/shared/scene-view.js';
 import { createCometLayer } from '/static/shared/comet-layer.js';
-import { COMET_LIMIT, PICKUP_RADIUS, movedFrom, movingAt } from '/static/shared/robot-motion.js';
+import { COMET_LIMIT, PICKUP_RADIUS } from '/static/shared/robot-motion.js';
 import { formatETA } from './operator-util.js';
 
 // The map's box in CSS px (operator.css .os-robot-panel, .os-rp-map), read
@@ -99,8 +102,8 @@ const NODE_PX = 5;
 const FONT_PX = 12;
 // Position lost after this many intervals with no position (D13).
 const LOST_AFTER = 3;
-// When a robot is moving (movedFrom, movingAt), the calm's COMET_LIMIT and the
-// PICKUP_RADIUS are shared/robot-motion.js's, Core's robot map's too.
+// The calm's COMET_LIMIT and the PICKUP_RADIUS are shared/robot-motion.js's,
+// Core's robot map's too.
 // The crop: the set padded by FIT_SLACK of its extent on every side, by
 // LEAVE_SLACK when a robot has left it; never narrower than MIN_PLANT of the
 // plant's larger extent (Core's map keeps 55% of it; the panel is a crop), or
@@ -308,12 +311,10 @@ export function createRobotMap(opts) {
             return;
         }
         const now = Date.now();
-        const net = scene ? sceneNet(scene) : null;
-        const scale = net ? net.scale : 0;
         (d.orders || []).forEach(function (p) {
             if (!p || !isCoord(p.x) || !isCoord(p.y)) return;
-            const rec = recs[p.order_id] || (recs[p.order_id] = { lastMoveAt: 0, interval: 0 });
-            if (isCoord(rec.x) && movedFrom(rec, p, scale)) rec.lastMoveAt = now;
+            const rec = recs[p.order_id] || (recs[p.order_id] = { interval: 0 });
+            rec.moving = p.moving === true;
             rec.robot = String(p.robot_id || '');
             rec.x = p.x;
             rec.y = p.y;
@@ -362,9 +363,10 @@ export function createRobotMap(opts) {
     }
 
     // shown is the robots drawn: each order with a position, once per robot,
-    // by robot id. driving is the positions' word (F4): the robot moving, on
-    // an order that is not faulted, whatever the Edge status; path or not, as
-    // the calm counts it (robot-motion.js COMET_LIMIT).
+    // by robot id. driving is the positions' word (F4): the robot moving as
+    // its last position says, on an order that is not faulted, whatever the
+    // Edge status; path or not, as the calm counts it (robot-motion.js
+    // COMET_LIMIT). A lost robot is not moving, whatever its last word was.
     function shown(now) {
         const seen = {}, out = [];
         orders.forEach(function (o) {
@@ -372,7 +374,7 @@ export function createRobotMap(opts) {
             if (!rec || !rec.robot || seen[rec.robot]) return;
             seen[rec.robot] = true;
             const lost = rec.interval > 0 && now - rec.seenAt > LOST_AFTER * rec.interval;
-            const moving = !lost && movingAt(rec.lastMoveAt, now);
+            const moving = !lost && rec.moving;
             out.push({ o: o, rec: rec, lost: lost, moving: moving, driving: moving && o.status !== 'faulted' });
         });
         return out.sort(function (a, b) { return a.rec.robot < b.rec.robot ? -1 : a.rec.robot > b.rec.robot ? 1 : 0; });

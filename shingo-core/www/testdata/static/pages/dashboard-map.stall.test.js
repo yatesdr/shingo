@@ -1,10 +1,10 @@
-// Unit tests for the robot-map dashboard's static route lane and the motion
-// clock under it. Run under plain Node via the Go wrapper
+// Unit tests for the robot-map dashboard's static route lane and the word on
+// motion it reads from Core. Run under plain Node via the Go wrapper
 // dashboard_map_stall_test.go. Exit 0 on pass, 1 on any assertion failure.
 //
 // The lane's history, each step a regression these pin:
-//   1. It was drawn for any robot with an order that had not moved for
-//      MOVE_LINGER_MS (five seconds, the chevron-flicker threshold), so every
+//   1. It was drawn for any robot with an order that had not moved for five
+//      seconds (the chevron-flicker threshold), so every
 //      traffic-point wait, lift call and jack cycle painted a route across the
 //      plant.
 //   2. It then keyed off a 45 s stall threshold, and a robot stuck in traffic
@@ -12,8 +12,11 @@
 //      2026-11-12).
 //   3. Now a robot standing still draws no lane at all, however long. The lane
 //      is drawn only where a comet cannot carry the route: a blocked/faulted
-//      order, or prefers-reduced-motion. And a freshly loaded fleet, every robot
-//      with lastMoveAt 0, draws none.
+//      order, or prefers-reduced-motion. And a freshly loaded fleet standing
+//      still draws none.
+//
+// Whether a robot is moving is Core's robot poll's word (`moving`, engine
+// robot_motion.go), pinned there; the page takes it as it comes.
 
 'use strict';
 
@@ -92,7 +95,7 @@ function load() {
     const file = path.join(SRC_DIR, 'dashboard-map.js');
     const raw = fs.readFileSync(file, 'utf8');
     const INJECT = '  __export({ mergeRobot: mergeRobot, isMoving: isMoving,' +
-        ' laneVisible: laneVisible, robots: robots, MOVE_LINGER_MS: MOVE_LINGER_MS,' +
+        ' laneVisible: laneVisible, robots: robots,' +
         ' alarmWords: alarmWords, STATUS_COLOR: STATUS_COLOR, restDisc: restDisc });\n})();\n';
     const src = raw.replace(/\}\)\(\);\s*$/, INJECT);
     if (src === raw) {
@@ -108,38 +111,26 @@ function load() {
     return exported;
 }
 
-// A robot as the module holds it, with its motion history stated outright.
-// msSinceMove null means "never observed moving".
-function robotAged(msSinceMove) {
-    const now = Date.now();
-    return {
-        id: 'AMR-01', x: 10, y: 10, angle: 0, state: 'busy',
-        lastMoveAt: msSinceMove == null ? 0 : now - msSinceMove,
-    };
-}
-
-// --- isMoving and mergeRobot: the motion clock ----------------------------
+// --- isMoving and mergeRobot: Core's word -------------------------------
 
 console.log('isMoving');
 
-(function movingWithinTheLinger() {
+(function movingIsCoresWord() {
     const m = load();
-    check('just displaced: moving', m.isMoving(robotAged(0)) === true);
-    check('still past the linger: not moving', m.isMoving(robotAged(m.MOVE_LINGER_MS + 1000)) === false);
-    check('never observed moving: not moving', m.isMoving(robotAged(null)) === false);
+    const robot = moving => ({ id: 'AMR-01', x: 10, y: 10, angle: 0, state: 'busy', moving: moving });
+    check('Core says moving: moving, on the first frame', m.isMoving(robot(true)) === true);
+    check('Core says still: not moving', m.isMoving(robot(false)) === false);
+    check('no word (a Core predating it): not moving', m.isMoving(robot(undefined)) === false);
 })();
 
 console.log('mergeRobot');
 
-(function mergeStampsMotion() {
+(function mergeTakesTheLatestWord() {
     const m = load();
-    m.mergeRobot({ id: 'AMR-08', x: 1, y: 1 });
-    check('first merge leaves lastMoveAt unset', m.robots['AMR-08'].lastMoveAt === 0,
-        'lastMoveAt=' + m.robots['AMR-08'].lastMoveAt);
-    m.mergeRobot({ id: 'AMR-08', x: 1, y: 1 });
-    check('the same place again: not moving', m.isMoving(m.robots['AMR-08']) === false);
-    m.mergeRobot({ id: 'AMR-08', x: 9, y: 9 });
-    check('a displacement reads as moving', m.isMoving(m.robots['AMR-08']) === true);
+    m.mergeRobot({ id: 'AMR-08', x: 1, y: 1, moving: true });
+    check('a robot Core says is driving: moving from its first merge', m.isMoving(m.robots['AMR-08']) === true);
+    m.mergeRobot({ id: 'AMR-08', x: 9, y: 9, moving: false });
+    check('the next word replaces it: not moving', m.isMoving(m.robots['AMR-08']) === false);
 })();
 
 // --- laneVisible: where a static lane is drawn -----------------------------
@@ -163,8 +154,8 @@ console.log('laneVisible');
 
 (function freshlyLoadedFleetDrawsNoLanes() {
     const m = load();
-    // After a kiosk reload every robot has lastMoveAt 0; none may paint a lane
-    // on the first frame.
+    // After a kiosk reload a fleet standing still paints no lane on the first
+    // frame.
     m.mergeRobot({ id: 'AMR-11', x: 1, y: 1 });
     m.mergeRobot({ id: 'AMR-12', x: 5, y: 5 });
     const lanes = Object.keys(m.robots).filter(function () { return m.laneVisible(false, false); });

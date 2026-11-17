@@ -142,21 +142,18 @@ func sceneSheetClasses(css string) map[string]bool {
 	return out
 }
 
-// TestRobotMotionSaysWhenARobotMoves runs robot-motion.test.js:
-// shared/robot-motion.js's moving test (the jitter threshold and the linger),
-// which Core's robot map and the Edge's robot panel both read.
-func TestRobotMotionSaysWhenARobotMoves(t *testing.T) {
-	runSceneJS(t, "robot-motion.test.js")
-}
-
 // TestRobotMotion_OneDefinitionForBothSurfaces: neither page that draws a
-// scene defines the calm's limit, the linger or the pickup radius of its own,
-// and both take the moving test from shared/robot-motion.js (owner: one
-// machinery in shared/; lead ruling on U10, 4). orderLeg stays per page: its
-// inputs differ (Core reads the board's carrying), and each copy says so.
+// scene defines the calm's limit or the pickup radius of its own, both take
+// them from shared/robot-motion.js (owner: one machinery in shared/; lead
+// ruling on U10, 4), and neither judges for itself whether a robot is moving:
+// that is Core's robot poll's word (shingo-core/engine/robot_motion.go), which
+// both read, so no page draws a robot parked until it has seen it move.
+// orderLeg stays per page: its inputs differ (Core reads the board's
+// carrying), and each copy says so.
 func TestRobotMotion_OneDefinitionForBothSurfaces(t *testing.T) {
 	t.Parallel()
-	own := regexp.MustCompile(`(?m)^\s*(?:var|let|const)\s+(COMET_LIMIT|MOVE_LINGER_MS|PICKUP_RADIUS)\b`)
+	own := regexp.MustCompile(`(?m)^\s*(?:var|let|const)\s+(COMET_LIMIT|PICKUP_RADIUS)\b`)
+	judge := regexp.MustCompile(`\b(MOVE_LINGER_MS|movedFrom|movingAt|lastMoveAt)\b`)
 	imp := regexp.MustCompile(`(?s)import\s*\{([^}]*)\}\s*from\s*'/static/shared/robot-motion\.js'`)
 	for _, page := range []string{
 		filepath.Join("..", "shingo-core", "www", "static", "pages", "dashboard-map.js"),
@@ -170,12 +167,15 @@ func TestRobotMotion_OneDefinitionForBothSurfaces(t *testing.T) {
 		for _, m := range own.FindAllStringSubmatch(src, -1) {
 			t.Errorf("%s declares its own %s: it is shared/robot-motion.js's", page, m[1])
 		}
+		if m := judge.FindString(src); m != "" {
+			t.Errorf("%s names %s: whether a robot moves is Core's poll's word, read as `moving`", page, m)
+		}
 		m := imp.FindStringSubmatch(src)
 		if m == nil {
 			t.Errorf("%s does not import shared/robot-motion.js", page)
 			continue
 		}
-		for _, want := range []string{"COMET_LIMIT", "PICKUP_RADIUS", "movedFrom", "movingAt"} {
+		for _, want := range []string{"COMET_LIMIT", "PICKUP_RADIUS"} {
 			if !regexp.MustCompile(`\b` + want + `\b`).MatchString(m[1]) {
 				t.Errorf("%s does not take %s from shared/robot-motion.js", page, want)
 			}

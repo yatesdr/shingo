@@ -448,19 +448,21 @@ async function shownPage(v, opts) {
     await h.flush();
     return h;
 }
-// pos is one robot-pos order entry.
+// pos is one robot-pos order entry, standing still as Core's poll says.
 function pos(orderID, robot, x, y, pathNames, heading) {
-    const p = { order_id: orderID, order_uuid: 'u-' + orderID, robot_id: robot, x: x, y: y, heading: heading || 0 };
+    const p = { order_id: orderID, order_uuid: 'u-' + orderID, robot_id: robot, x: x, y: y, heading: heading || 0, moving: false };
     if (pathNames) p.path = pathNames;
     return p;
 }
+// moving is position p with Core's word that its robot is driving.
+function moving(p) { return Object.assign({}, p, { moving: true }); }
 function frameOf(list) { return { t: '2026-11-14T12:00:00.000Z', interval_ms: 2000, orders: list }; }
 // drive sends a frame now and another `ms` later with each robot moved by
-// (dx, dy): two positions apart, so the panel sees the robot moving.
+// dx, both saying the robot is moving, as Core's poll says of a driving one.
 async function drive(h, list, dx, ms) {
-    h.frame(frameOf(list));
+    h.frame(frameOf(list.map(moving)));
     await h.advance(ms || 2000);
-    h.frame(frameOf(list.map(p => Object.assign({}, p, { x: p.x + (dx || 1) }))));
+    h.frame(frameOf(list.map(p => Object.assign(moving(p), { x: p.x + (dx || 1) }))));
     await h.flush();
 }
 function attrsOf(n) { return n.attrs; }
@@ -684,15 +686,19 @@ function tap(h, under) {
     for (const [path, head, label] of cases) {
         const h = await shownPage(coming);
         // Seen first at (10, 30): 11 m from its source, 31 m from PLN_03, so
-        // Core's inference alone reads it fetching.
-        h.frame(frameOf([pos(661, 'AMR-06', 10, 30, path, 0)]));
-        await h.advance(2000);
-        eq(h.cometLayer() ? h.cometLayer().children.length : 0, 0, 'one position: not seen moving, no comet yet');
-        h.frame(frameOf([pos(661, 'AMR-06', 11, 30, path, 0)]));
+        // Core's inference alone reads it fetching. Core's poll says it is
+        // moving on this first position, so its comet runs from it: no second
+        // position is waited for.
+        h.frame(frameOf([moving(pos(661, 'AMR-06', 10, 30, path, 0))]));
         await h.flush();
         h.vsync(3000);
+        eq(h.cometLayer() ? h.cometLayer().children.length : 0, 10, 'one position Core says is moving: its comet at once');
         eq(h.cometLayer().children[0].attrs['class'], head, 'a robot first seen 11 m past its source: ' + label);
     }
+    const h = await shownPage(coming);
+    h.frame(frameOf([pos(661, 'AMR-06', 10, 30, cases[0][0], 0)]));
+    await h.flush();
+    eq(h.cometLayer() ? h.cometLayer().children.length : 0, 0, 'one position Core says is still: no comet');
 }
 
 // ── 6. The crop: the cell and the robots, not the path; refit only when the set changes.
@@ -1206,7 +1212,7 @@ await zeroWork('{available: false} first', async h => {
         '/static/shared/scene-path.js:pathWorld',
         '/static/shared/scene-view.js:createSceneView',
         '/static/shared/comet-layer.js:createCometLayer',
-        '/static/shared/robot-motion.js:COMET_LIMIT,PICKUP_RADIUS,movedFrom,movingAt',
+        '/static/shared/robot-motion.js:COMET_LIMIT,PICKUP_RADIUS',
         './operator-util.js:formatETA',
     ], 'the drawing imports the shared scene, path, view, comet and motion modules and the ETA words: no route model (sceneRoute), nothing of dashboard-map.js');
     eq(/canvas|getContext|stroke-dasharray|animateMotion|<animate/.test(src), false, 'no canvas, no dash, no browser-driven motion: the comets are the shared layer\'s dots');
