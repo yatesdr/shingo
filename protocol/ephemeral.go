@@ -119,6 +119,11 @@ type RobotPosition struct {
 	Y float64 `json:"y"`
 	// Heading is the robot's heading, radians, as the fleet reports it.
 	Heading float64 `json:"heading"`
+	// Moving is Core's word on whether the robot is driving, decided on its
+	// robot poll from every sample (engine robot_motion.go), so a reader knows
+	// on its first message. A Core predating it sends false, so deploy Core
+	// first.
+	Moving bool `json:"moving"`
 	// Path is the route the fleet has left the robot to drive, as scene point
 	// names, the robot's current point first. Absent when there is none to
 	// draw: no plan, an id the scene cannot name, or no synced scene.

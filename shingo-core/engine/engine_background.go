@@ -50,11 +50,15 @@ func (e *Engine) robotRefreshLoop() {
 				e.dbg("engine: robot refresh: %v", err)
 				continue
 			}
-			// Name each robot's planned route before anything reads this poll:
-			// the cache, the hash below and the robot-update frame all carry it.
-			e.resolveRobotPaths(robots, routesNotDrawn)
-			// Update robot position cache (used for telemetry snapshots)
+			// Name each robot's planned route, and say which robots are moving,
+			// before anything reads this poll: the cache, the hash below, the
+			// robot-update frame and the robot feed all carry both. Moving is in
+			// the hash, so a robot coming to rest moves it once, as its linger
+			// runs out.
 			now := time.Now()
+			e.resolveRobotPaths(robots, routesNotDrawn)
+			e.markRobotMotion(robots, now)
+			// Update robot position cache (used for telemetry snapshots)
 			e.robotsMu.Lock()
 			e.latestPoll, e.latestPollAt = robots, now
 			for _, r := range robots {

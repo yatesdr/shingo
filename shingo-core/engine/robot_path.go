@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"math"
+
 	"shingocore/fleet"
 	"shingocore/scenesync"
 )
@@ -41,6 +43,7 @@ func (e *Engine) rebuildPointIndex() {
 		return
 	}
 	e.pointIndex.Store(scenesync.NewPointIndex(points, edges))
+	e.rowScale.Store(math.Float64bits(medianRowLength(edges)))
 }
 
 // routeNotDrawn is the last "no route drawn" line one robot was given: the

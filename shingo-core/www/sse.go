@@ -425,6 +425,9 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			// yet, as scene point names, current point first; omitted when
 			// there is none to draw (fleet.RobotStatus.Path).
 			Path []string `json:"path,omitempty"`
+			// Whether the robot is driving, as Core's poll judged it
+			// (fleet.RobotStatus.Moving).
+			Moving bool `json:"moving"`
 			// The order this robot is on, and the alarm that began with its
 			// fault. See RobotOrderLine.
 			RobotOrderLine
@@ -472,6 +475,7 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 				Y:               r.Y,
 				Angle:           r.Angle,
 				Path:            r.Path,
+				Moving:          r.Moving,
 				RobotOrderLine:  orderLines[r.VehicleID],
 			}
 			if line := out[i].RobotOrderLine; line.FaultSince != nil {

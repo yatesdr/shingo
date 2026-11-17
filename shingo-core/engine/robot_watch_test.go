@@ -69,10 +69,10 @@ func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 
 // TestBuildRobotPositions_OwnedOrdersOnAPolledRobot pins what one poll sends
 // each watching station: the watched orders that are its own and whose robot
-// the poll listed connected, with the robot's position, heading and named
-// route; nothing for another station's order, an order with no robot row, or
-// a robot absent from the poll or disconnected; and an empty orders list, not
-// no message, for a station with none.
+// the poll listed connected, with the robot's position, heading, whether it is
+// moving and its named route; nothing for another station's order, an order
+// with no robot row, or a robot absent from the poll or disconnected; and an
+// empty orders list, not no message, for a station with none.
 func TestBuildRobotPositions_OwnedOrdersOnAPolledRobot(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 14, 9, 0, 0, 987_654_321, time.UTC)
@@ -87,7 +87,7 @@ func TestBuildRobotPositions_OwnedOrdersOnAPolledRobot(t *testing.T) {
 		{UUID: "u-down", StationID: "edge.a", RobotID: "AMR-03"},
 	}
 	robots := []fleet.RobotStatus{
-		{VehicleID: "AMR-01", Connected: true, X: 12.5, Y: -3.25, Angle: 1.5708, Path: []string{"LM7", "LM31", "AP32"}},
+		{VehicleID: "AMR-01", Connected: true, X: 12.5, Y: -3.25, Angle: 1.5708, Moving: true, Path: []string{"LM7", "LM31", "AP32"}},
 		{VehicleID: "AMR-02", Connected: true, X: 1, Y: 1},
 		{VehicleID: "AMR-03", Connected: false, X: 4, Y: 4},
 	}
@@ -101,10 +101,10 @@ func TestBuildRobotPositions_OwnedOrdersOnAPolledRobot(t *testing.T) {
 		t.Errorf("edge.a's t/interval = %s/%d, want the poll's time to the ms and %d", a.T, a.IntervalMS, protocol.RobotPollInterval.Milliseconds())
 	}
 	want := protocol.RobotPosition{OrderUUID: "u-mine", RobotID: "AMR-01", X: 12.5, Y: -3.25, Heading: 1.5708,
-		Path: []string{"LM7", "LM31", "AP32"}}
+		Moving: true, Path: []string{"LM7", "LM31", "AP32"}}
 	if len(a.Orders) != 1 || a.Orders[0].OrderUUID != want.OrderUUID || a.Orders[0].RobotID != want.RobotID ||
 		a.Orders[0].X != want.X || a.Orders[0].Y != want.Y || a.Orders[0].Heading != want.Heading ||
-		!slices.Equal(a.Orders[0].Path, want.Path) {
+		a.Orders[0].Moving != want.Moving || !slices.Equal(a.Orders[0].Path, want.Path) {
 		t.Errorf("edge.a's orders = %+v, want only %+v", a.Orders, want)
 	}
 	if b := got[1].body; b.Orders == nil || len(b.Orders) != 0 {

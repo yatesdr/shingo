@@ -245,6 +245,11 @@ type RobotStatus struct {
 	// a wrong one, and nothing estimates one in its place (owner ruling,
 	// shared-map 2026-11-14).
 	Path []string `json:"path,omitempty"`
+	// Moving says the robot is driving, written by the engine's poll
+	// (Engine.markRobotMotion) beside Path: it moved past the fleet's jitter
+	// within the last few seconds. Every reader takes it from here, so none has
+	// to watch two of its own samples first.
+	Moving bool `json:"moving"`
 }
 
 // Undispatchable is the fleet's own account of why a robot is not taking

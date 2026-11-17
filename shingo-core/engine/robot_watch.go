@@ -178,7 +178,7 @@ func buildRobotPositions(watches []stationWatch, rows []orders.OrderRobot, robot
 				continue
 			}
 			sp.body.Orders = append(sp.body.Orders, protocol.RobotPosition{
-				OrderUUID: u, RobotID: o.RobotID, X: r.X, Y: r.Y, Heading: r.Angle, Path: r.Path,
+				OrderUUID: u, RobotID: o.RobotID, X: r.X, Y: r.Y, Heading: r.Angle, Moving: r.Moving, Path: r.Path,
 			})
 		}
 		out = append(out, sp)

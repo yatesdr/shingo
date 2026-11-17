@@ -228,6 +228,15 @@ type Engine struct {
 	// a slower one cannot store an older read over a newer one.
 	pointIndex   atomic.Pointer[scenesync.PointIndex]
 	pointIndexMu lockcheck.Mutex[lockorder.PointIndex]
+	// rowScale is the stored scene's median row length, metres, as
+	// math.Float64bits: the jitter a robot's move is judged against
+	// (robot_motion.go). Stored by rebuildPointIndex from the same read; 0
+	// until the first.
+	rowScale atomic.Uint64
+	// motion is each robot's last polled place and move (robot_motion.go).
+	// Single-writer like confidence: only markRobotMotion, from
+	// robotRefreshLoop's goroutine.
+	motion robotMotion
 
 	// robotWatches is every Edge's live robot.watch, and robotPositionsPub
 	// the direct publish the poll answers them on (robot_watch.go). The
