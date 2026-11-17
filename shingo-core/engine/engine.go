@@ -244,6 +244,11 @@ type Engine struct {
 	// while the poll may already be reading it.
 	robotWatches      robotWatches
 	robotPositionsPub atomic.Pointer[func(*protocol.Envelope) error]
+	// robotWatchAsked wakes robotRefreshLoop to answer a watch that is new or
+	// changed from the latest poll (HandleRobotWatch); buffered one, never
+	// blocks the ephemeral reader. Nil in an Engine built without New: then
+	// nothing is woken and the next poll answers.
+	robotWatchAsked chan struct{}
 
 	// lastSceneSync is when the previous scene observation landed, so a diff
 	// row can record the WINDOW an edit happened in rather than only the
@@ -314,6 +319,7 @@ func New(c Config) *Engine {
 		// in Start(); see the field's comment.
 		cmsPoster: newCMSPoster(c.AppConfig, c.DB, logFn),
 	}
+	e.robotWatchAsked = make(chan struct{}, 1)
 	e.reconciliation = newReconciliationService(e.db, e.logFn)
 	// confirmDelivered late-binds to e.dispatcher. Engine.New leaves
 	// dispatcher nil; Start() constructs it (engine_lifecycle.go) and the

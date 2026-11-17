@@ -53,7 +53,7 @@ func TestRobotPositions_NoLeaseNoWork(t *testing.T) {
 	watchOn(unwired, "edge.a", "u-a1")
 	counter.Reset()
 	for range 3 {
-		unwired.publishRobotPositions(robots, time.Now())
+		unwired.publishRobotPositions(robots, time.Now(), nil)
 	}
 	if n := counter.Count(); n != 0 {
 		t.Fatalf("with no verified topic, three polls ran %d statements, want 0", n)
@@ -65,7 +65,7 @@ func TestRobotPositions_NoLeaseNoWork(t *testing.T) {
 	watch := func(station string, uuids ...string) { watchOn(e, station, uuids...) }
 	poll := func(n int, at time.Time) {
 		for range n {
-			e.publishRobotPositions(robots, at)
+			e.publishRobotPositions(robots, at, nil)
 		}
 	}
 
@@ -101,5 +101,68 @@ func TestRobotPositions_NoLeaseNoWork(t *testing.T) {
 	poll(3, time.Now().Add(protocol.RobotWatchLease))
 	if n := counter.Count(); n != 0 || len(sent) != 0 {
 		t.Errorf("leases lapsed: three polls ran %d statements and sent %d messages, want 0 and 0", n, len(sent))
+	}
+}
+
+// TestRobotPositions_ANewWatchIsAnsweredFromTheLatestPoll pins the ask path
+// (answerAskedRobotWatches): a station's first watch is answered from the
+// latest poll, one statement and one message, to that station alone, with the
+// poll's time and its word on motion; a resend of the same watch asks nothing;
+// and a watch whose latest poll is older than polledRobotFresh is left to the
+// next poll.
+func TestRobotPositions_ANewWatchIsAnsweredFromTheLatestPoll(t *testing.T) {
+	t.Parallel()
+	db, dbCfg := testdb.OpenWithConfig(t)
+	order := &domain.Order{EdgeUUID: "u-a1", StationID: "edge.a", OrderType: "move",
+		Status: protocol.StatusInTransit, Quantity: 1, SourceNode: "S", DeliveryNode: "D"}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create u-a1")
+	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "v-u-a1", "RUNNING", "AMR-01"), "robot on u-a1")
+	cdb, counter, err := store.OpenCounting(dbCfg)
+	testutil.MustNoErr(t, err, "open counting db")
+	t.Cleanup(func() { cdb.Close() })
+
+	cfg := config.Defaults()
+	cfg.Messaging.StationID = "core"
+	e := &Engine{db: cdb, cfg: cfg}
+	var sent []*protocol.Envelope
+	e.SetRobotPositionsPublisher(func(env *protocol.Envelope) error { sent = append(sent, env); return nil })
+	watch := func(station string, uuids ...string) {
+		e.HandleRobotWatch(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: station}},
+			&protocol.RobotWatch{StationID: station, OrderUUIDs: uuids})
+	}
+	polledAt := time.Now().Add(-time.Second)
+	e.latestPoll = []fleet.RobotStatus{{VehicleID: "AMR-01", Connected: true, X: 1, Y: 2, Moving: true}}
+	e.latestPollAt = polledAt
+
+	// edge.b watches already, answered by a poll: edge.a's ask is not its.
+	watch("edge.b", "u-none")
+	e.robotWatches.takeAsked()
+	watch("edge.a", "u-a1")
+	counter.Reset()
+	e.answerAskedRobotWatches(time.Now())
+	if n := counter.Count(); n != 1 || len(sent) != 1 {
+		t.Fatalf("a first watch: answered with %d statements and %d messages, want 1 and 1", n, len(sent))
+	}
+	var body protocol.RobotPositions
+	testutil.MustNoErr(t, sent[0].DecodePayload(&body), "decode")
+	if sent[0].Dst.Station != "edge.a" || !body.T.Equal(polledAt.UTC().Truncate(time.Millisecond)) ||
+		len(body.Orders) != 1 || body.Orders[0].OrderUUID != "u-a1" || !body.Orders[0].Moving {
+		t.Errorf("sent %q t=%s orders %+v, want edge.a, the latest poll's time and u-a1 moving", sent[0].Dst.Station, body.T, body.Orders)
+	}
+
+	sent = nil
+	watch("edge.a", "u-a1")
+	counter.Reset()
+	e.answerAskedRobotWatches(time.Now())
+	if n := counter.Count(); n != 0 || len(sent) != 0 {
+		t.Errorf("a resend: answered with %d statements and %d messages, want 0 and 0", n, len(sent))
+	}
+
+	watch("edge.a", "u-a1", "u-a2")
+	e.latestPollAt = time.Now().Add(-polledRobotFresh - time.Second)
+	counter.Reset()
+	e.answerAskedRobotWatches(time.Now())
+	if n := counter.Count(); n != 0 || len(sent) != 0 {
+		t.Errorf("a changed watch on a stale poll: answered with %d statements and %d messages, want 0 and 0", n, len(sent))
 	}
 }

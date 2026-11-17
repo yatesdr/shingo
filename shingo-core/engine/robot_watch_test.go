@@ -67,6 +67,55 @@ func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 	}
 }
 
+// TestRobotWatches_ANewOrChangedWatchAsksForAnAnswer pins which watches the
+// poll answers at once from its latest robots (answerAskedRobotWatches): a
+// station's first watch, one naming other orders, and one after its lease
+// lapsed. A resend of the same watch, every RobotWatchInterval, asks nothing.
+// HandleRobotWatch wakes the poll for an ask only, and a take forgets the asks.
+func TestRobotWatches_ANewOrChangedWatchAsksForAnAnswer(t *testing.T) {
+	t.Parallel()
+	var w robotWatches
+	t0 := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name    string
+		station string
+		uuids   []string
+		at      time.Duration
+		ask     bool
+	}{
+		{"edge.a's first watch", "edge.a", []string{"u-1"}, 0, true},
+		{"the same watch resent", "edge.a", []string{"u-1"}, protocol.RobotWatchInterval, false},
+		{"another order on it", "edge.a", []string{"u-1", "u-2"}, 2 * protocol.RobotWatchInterval, true},
+		{"edge.b's first watch", "edge.b", []string{"u-9"}, 2 * protocol.RobotWatchInterval, true},
+		{"edge.a back after its lease lapsed", "edge.a", []string{"u-1", "u-2"}, 2*protocol.RobotWatchInterval + protocol.RobotWatchLease, true},
+	} {
+		if got := w.renew(c.station, c.uuids, t0.Add(c.at)); got != c.ask {
+			t.Errorf("%s: asks = %v, want %v", c.name, got, c.ask)
+		}
+	}
+	if got := w.takeAsked(); len(got) != 2 {
+		t.Errorf("asked = %v, want edge.a and edge.b", got)
+	}
+	if got := w.takeAsked(); got != nil {
+		t.Errorf("asked again after a take = %v, want none", got)
+	}
+
+	e := &Engine{robotWatchAsked: make(chan struct{}, 1)}
+	from := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}}
+	e.HandleRobotWatch(from, &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1"}})
+	select {
+	case <-e.robotWatchAsked:
+	default:
+		t.Fatal("a first watch did not wake the poll")
+	}
+	e.HandleRobotWatch(from, &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1"}})
+	select {
+	case <-e.robotWatchAsked:
+		t.Error("a resend woke the poll")
+	default:
+	}
+}
+
 // TestBuildRobotPositions_OwnedOrdersOnAPolledRobot pins what one poll sends
 // each watching station: the watched orders that are its own and whose robot
 // the poll listed connected, with the robot's position, heading, whether it is

@@ -18,7 +18,10 @@ import (
 // is showing, every protocol.RobotWatchInterval. Core keeps each station's
 // latest watch for protocol.RobotWatchLease (robotWatches) and, on every robot
 // poll while at least one is live, sends each watching station one
-// robot.positions built from that poll (publishRobotPositions).
+// robot.positions built from that poll (publishRobotPositions). A watch that
+// is new, or names other orders than the station's last, is answered at once
+// from the latest poll instead of on the next (answerAskedRobotWatches): a
+// robot panel just opened shows its robots without waiting out a poll.
 //
 // NO LEASE, NO WORK. With no live watch the poll reads no database row, builds
 // no message and publishes nothing: one map length under a leaf lock is the
@@ -29,6 +32,9 @@ import (
 type robotWatches struct {
 	mu     lockcheck.Mutex[lockorder.RobotWatches]
 	leases map[string]robotLease
+	// asked is the stations whose watch was new or changed since the poll
+	// last answered it, for the poll to answer from its latest robots.
+	asked map[string]struct{}
 }
 
 // robotLease is one station's latest watch and when it lapses.
@@ -43,14 +49,36 @@ type stationWatch struct {
 	uuids   []string
 }
 
-// renew replaces station's watch and runs its lease from now.
-func (w *robotWatches) renew(station string, uuids []string, now time.Time) {
+// renew replaces station's watch and runs its lease from now. It reports
+// whether the watch asks for an answer before the next poll: the station had
+// no live lease, or watches other orders now. A resend of the same watch does
+// not.
+func (w *robotWatches) renew(station string, uuids []string, now time.Time) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.leases == nil {
 		w.leases = map[string]robotLease{}
 	}
+	old, had := w.leases[station]
+	ask := !had || !now.Before(old.expires) || !slices.Equal(old.uuids, uuids)
 	w.leases[station] = robotLease{uuids: uuids, expires: now.Add(protocol.RobotWatchLease)}
+	if ask {
+		if w.asked == nil {
+			w.asked = map[string]struct{}{}
+		}
+		w.asked[station] = struct{}{}
+	}
+	return ask
+}
+
+// takeAsked is the stations asked since the last take, and forgets them; nil
+// when there are none.
+func (w *robotWatches) takeAsked() map[string]struct{} {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	asked := w.asked
+	w.asked = nil
+	return asked
 }
 
 // live is every lease live at now, by station, and forgets the lapsed ones.
@@ -83,7 +111,9 @@ func (w *robotWatches) live(now time.Time) []stationWatch {
 // envelope's, as every Edge-sent count's is (messaging.HandleProductionTicks);
 // a watch whose body names another station is dropped. Whether each order is
 // that station's is checked where the orders are read, on the poll
-// (buildRobotPositions), so a watch costs nothing but the map write.
+// (buildRobotPositions), so a watch costs nothing but the map write. A watch
+// that asks for an answer (renew) wakes the poll's goroutine, which answers
+// it from the latest poll.
 func (e *Engine) HandleRobotWatch(env *protocol.Envelope, w *protocol.RobotWatch) {
 	station := env.Src.Station
 	if station == "" || w.StationID != station {
@@ -92,7 +122,29 @@ func (e *Engine) HandleRobotWatch(env *protocol.Envelope, w *protocol.RobotWatch
 	}
 	uuids := slices.Clone(w.OrderUUIDs)
 	slices.Sort(uuids)
-	e.robotWatches.renew(station, slices.Compact(uuids), time.Now())
+	if e.robotWatches.renew(station, slices.Compact(uuids), time.Now()) {
+		select {
+		case e.robotWatchAsked <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// answerAskedRobotWatches answers the watches asked since the last poll
+// (renew) from the latest poll, when it is fresh (polledRobotFresh); an older
+// one is no answer, and the next poll gives it. Called on robotRefreshLoop's
+// goroutine only, the one that publishes every poll, so an answer never
+// follows a newer poll's onto the topic.
+func (e *Engine) answerAskedRobotWatches(now time.Time) {
+	asked := e.robotWatches.takeAsked()
+	if len(asked) == 0 {
+		return
+	}
+	robots, at := e.latestPolledRobots()
+	if at.IsZero() || now.Sub(at) > polledRobotFresh {
+		return
+	}
+	e.publishRobotPositions(robots, at, asked)
 }
 
 // SetRobotPositionsPublisher wires the direct publish to the ephemeral topic
@@ -103,15 +155,22 @@ func (e *Engine) SetRobotPositionsPublisher(fn func(*protocol.Envelope) error) {
 }
 
 // publishRobotPositions is the poll's feed step: one robot.positions per
-// station with a live watch, built from this poll. at is the poll's sample
-// time. One statement reads every watched order's station and robot
-// (store.OrderRobotsByUUID); nothing at all runs with no live watch.
-func (e *Engine) publishRobotPositions(robots []fleet.RobotStatus, at time.Time) {
+// station with a live watch, built from this poll; only the stations in only,
+// when it is not nil. at is the poll's sample time. One statement reads every
+// watched order's station and robot (store.OrderRobotsByUUID); nothing at all
+// runs with no live watch.
+func (e *Engine) publishRobotPositions(robots []fleet.RobotStatus, at time.Time, only map[string]struct{}) {
 	pub := e.robotPositionsPub.Load()
 	if pub == nil || *pub == nil {
 		return
 	}
 	watches := e.robotWatches.live(at)
+	if only != nil {
+		watches = slices.DeleteFunc(watches, func(w stationWatch) bool {
+			_, ok := only[w.station]
+			return !ok
+		})
+	}
 	if len(watches) == 0 {
 		return
 	}

@@ -23,7 +23,9 @@ import (
 
 // robotRefreshLoop polls robot status every 2 seconds, answers each live robot
 // watch from the poll, and emits EventRobotsUpdated only when the robot state
-// has actually changed.
+// has actually changed. A watch that is new or changed between polls is
+// answered at once from the latest poll (answerAskedRobotWatches), on this
+// goroutine, so no answer can reach an Edge after a newer poll's.
 //
 // Its cadence is protocol.RobotPollInterval, the interval every
 // robot.positions says it was sampled at. The hourly robot record caps the
@@ -37,6 +39,8 @@ func (e *Engine) robotRefreshLoop() {
 		select {
 		case <-e.stopChan:
 			return
+		case <-e.robotWatchAsked:
+			e.answerAskedRobotWatches(time.Now())
 		case <-ticker.C():
 			if !e.fleetConnected.Load() {
 				continue
@@ -88,8 +92,11 @@ func (e *Engine) robotRefreshLoop() {
 			// watch, from this poll. Before the hash short-circuit, because a
 			// reader counts the polls it missed (interval_ms) and a robot that
 			// stands still is still answered; with no live watch it does nothing
-			// at all (robot_watch.go).
-			e.publishRobotPositions(robots, now)
+			// at all (robot_watch.go). This poll answers every watch asked for
+			// since the last, so the asks are cleared first: one that lands after
+			// the clear is answered from this poll straight after it.
+			e.robotWatches.takeAsked()
+			e.publishRobotPositions(robots, now, nil)
 
 			data, _ := json.Marshal(robots)
 			hash := sha256.Sum256(data)
