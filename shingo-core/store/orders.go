@@ -939,17 +939,18 @@ func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode 
 	onlyTag, reservedBy string) (int64, error) {
 	var holder int64
 	var status string
+	var holderIsLeg bool
 	// THE HOLDER'S ORDER ROW IS LOCKED BEFORE ITS SLOT ROW (OF o, r: Postgres
 	// takes a statement's row locks in the order its FOR UPDATE list names them).
 	// The take writes that order row below, and a terminalize takes the same two
 	// rows order first (TerminalizeOrderWithReason, then ReleaseByOrder): locked
 	// the other way round, a take and a terminalize of one holder each waited for
 	// the other until Postgres aborted one (LOCKS.md §3).
-	err := tx.QueryRow(`SELECT r.order_id, o.status FROM reservations r JOIN orders o ON o.id = r.order_id
+	err := tx.QueryRow(`SELECT r.order_id, o.status, o.parent_order_id IS NOT NULL FROM reservations r JOIN orders o ON o.id = r.order_id
 		WHERE r.node_id = $1 AND r.resource_kind = 'slot' AND r.state = $2 AND r.order_id <> $3
 		  AND `+orders.AwaitingFleetSQL("o")+`
 		  AND ($4::text = '' OR COALESCE(r.reserved_by, '') = $4::text)
-		FOR UPDATE OF o, r`, nodeID, string(reservations.StatePending), takerID, onlyTag).Scan(&holder, &status)
+		FOR UPDATE OF o, r`, nodeID, string(reservations.StatePending), takerID, onlyTag).Scan(&holder, &status, &holderIsLeg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoSlotTake
 	}
@@ -975,8 +976,13 @@ func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode 
 		return 0, fmt.Errorf("release order %d's hold on slot %d: %w", holder, nodeID, err)
 	}
 	now := clock.Now().UTC()
-	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$2, queue_code=$3, queue_cause=$4, updated_at=$5
-		WHERE id=$1`, holder, note.Reason, string(note.Code), note.Cause, now); err != nil {
+	// The holder is told its new wait when it is waiting and not a leg, and
+	// the write that tells it bumps its version (orders.WaitTells's rule; a
+	// take always changes the wait).
+	tells := !holderIsLeg && protocol.IsWaiting(protocol.Status(status))
+	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$2, queue_code=$3, queue_cause=$4, updated_at=$5,
+		version=version+CASE WHEN $6 THEN 1 ELSE 0 END
+		WHERE id=$1`, holder, note.Reason, string(note.Code), note.Cause, now, tells); err != nil {
 		return 0, fmt.Errorf("tell order %d its slot was taken: %w", holder, err)
 	}
 	ref, _ := json.Marshal(map[string]int64{"taken_by": named})
@@ -1226,7 +1232,8 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 // reason for the history row (migration 55). The →queued row is the important
 // caller: orders.queue_code is overwritten in place, so the history row is the
 // only place a queue reason becomes a time series.
-func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string, reason HistoryReason) (bool, error) {
+// It returns the version the write left (orders.version).
+func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string, reason HistoryReason) (int64, bool, error) {
 	return orders.UpdateStatusFromWithReason(db.DB, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
 }
 
@@ -1238,7 +1245,7 @@ func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string) (bool, erro
 
 // UpdateOrderStatusFromWithReasonTx is UpdateOrderStatusFromWithReason on the
 // caller's transaction (dispatch.acquireHand's status CAS).
-func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail string, reason HistoryReason) (bool, error) {
+func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail string, reason HistoryReason) (int64, bool, error) {
 	return orders.UpdateStatusFromWithReasonTx(tx, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
 }
 
@@ -1576,7 +1583,8 @@ func (r HistoryReason) refJSON() any {
 }
 
 func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) (bool, error) {
-	return db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{})
+	_, won, err := db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{})
+	return won, err
 }
 
 // TerminalizeOrderWithReason is TerminalizeOrder plus the typed reason for the
@@ -1584,10 +1592,13 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 // and Skip call site and dropped in transition(), which passed only the prose
 // detail down here — so the categories existed in memory and never reached
 // disk.
-func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason) (bool, error) {
+//
+// It returns the version the winner's write left (orders.version), 0 for a
+// loser.
+func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason) (int64, bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	defer tx.Rollback()
 
@@ -1632,17 +1643,14 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 	// The history row keeps it. The order waited for that reason, and ending does
 	// not unmake the fact; what is cleared is only the live column that claims it
 	// is STILL waiting.
-	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5,
+	var version int64
+	err = tx.QueryRow(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5, version=version+1,
 		queue_reason='', queue_code=NULL, queue_cause=NULL
-		WHERE id=$3 AND status <> ALL($4)`, string(status), errDetail, orderID, terminalNames, clock.Now().UTC())
-	if err != nil {
-		return false, err
+		WHERE id=$3 AND status <> ALL($4) RETURNING version`, string(status), errDetail, orderID, terminalNames, clock.Now().UTC()).Scan(&version)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, err
 	}
-	moved, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	won := moved > 0
+	won := err == nil
 	// History only for the winner — a losing terminalize must not add a second
 	// terminal row to the order's audit trail.
 	if won {
@@ -1651,7 +1659,7 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 			 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7)`,
 			orderID, string(status), detail,
 			reason.Code, reason.Actor, reason.refJSON(), clock.Now().UTC()); err != nil {
-			return false, err
+			return 0, false, err
 		}
 	}
 	// EVERYTHING BELOW RUNS FOR THE LOSER TOO, and commits.
@@ -1673,15 +1681,18 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
 		WHERE claimed_by=$1
 		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
-		return false, err
+		return 0, false, err
 	}
 	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
-		return false, err
+		return 0, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return false, err
+		return 0, false, err
 	}
-	return won, nil
+	if !won {
+		version = 0
+	}
+	return version, won, nil
 }
 
 // releaseOrderHoldingsTx gives an order's acquisitions back: its hard bin

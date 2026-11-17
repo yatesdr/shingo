@@ -40,7 +40,7 @@ func TestWaitEndsWhenTheOrderMoves(t *testing.T) {
 	}
 
 	// Still waiting: pending→queued keeps the wait.
-	moved, err := orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusPending), string(protocol.StatusQueued),
+	_, moved, err := orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusPending), string(protocol.StatusQueued),
 		"Waiting for an empty bin in AMR Supermarket", string(protocol.QueueWaitingForMaterial), "", nil)
 	testutil.MustNoErr(t, err, "pending→queued")
 	if !moved {

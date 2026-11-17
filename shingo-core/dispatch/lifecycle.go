@@ -228,6 +228,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	// means a future terminal status can't silently skip release the way the
 	// success terminal 'confirmed' used to on the old status switch.
 	var err error
+	var version int64
 	if protocol.IsTerminal(to) {
 		detail := ev.ErrorDetail
 		if detail == "" {
@@ -238,7 +239,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// status write and the history row belong to the winner — so a refusal
 		// here never strands a hold.
 		var won bool
-		won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev))
+		version, won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev))
 		if err == nil && !won {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 		}
@@ -254,7 +255,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// fulfillment tick's queued→sourcing resurrected an order the
 		// recovery op had just cancelled.
 		var moved bool
-		moved, err = s.db.UpdateOrderStatusFromWithReason(ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
+		version, moved, err = s.db.UpdateOrderStatusFromWithReason(ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
 		if err == nil && !moved {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 		}
@@ -262,7 +263,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	if err != nil {
 		return fmt.Errorf("persist %s→%s: %w", from, to, err)
 	}
-	s.afterTransition(ord, from, to, ev)
+	s.afterTransition(ord, from, to, version, ev)
 	return nil
 }
 
@@ -291,21 +292,22 @@ func (s *LifecycleService) transitionTx(tx *sql.Tx, ord *orders.Order, to protoc
 	if detail == "" {
 		detail = fmt.Sprintf("%s → %s by %s", from, to, ev.Actor)
 	}
-	moved, err := s.db.UpdateOrderStatusFromWithReasonTx(tx, ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
+	version, moved, err := s.db.UpdateOrderStatusFromWithReasonTx(tx, ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
 	if err != nil {
 		return nil, fmt.Errorf("persist %s→%s: %w", from, to, err)
 	}
 	if !moved {
 		return nil, ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 	}
-	return func() { s.afterTransition(ord, from, to, ev) }, nil
+	return func() { s.afterTransition(ord, from, to, version, ev) }, nil
 }
 
 // afterTransition is what a transition does once its write has committed: the
-// in-memory order catches up, the futility detector sees the step, and the
-// transition's actions run.
-func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.Status, ev Event) {
+// in-memory order catches up (its status and the version the write left), the
+// futility detector sees the step, and the transition's actions run.
+func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.Status, version int64, ev Event) {
 	ord.Status = to
+	ord.Version = version
 	// The store cleared the wait in the same write (waitEndsSQL; terminalize
 	// always). Mirror it, or the copy in hand still holds the old sentence and
 	// setQueueReason's unchanged-cause short-circuit would refuse to re-write it

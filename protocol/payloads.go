@@ -501,6 +501,15 @@ type OrderUpdate struct {
 	// Edge calls FormatFaultSentence itself, with the same code Core calls, and
 	// crosses the threshold on its own clock.
 	FaultRef *TermRef `json:"fault_ref,omitempty"`
+	// Version is the order's version at Core when this was written
+	// (orders.version): one counter, bumped in the same statement as every
+	// write Core tells the station about (its status, its robot, its wait).
+	// A station applies a message only when its version is newer than the
+	// one it last applied, so a late or repeated copy cannot move the row
+	// back. Every order Core holds is at 1 or more; 0 (absent) is an older
+	// Core that does not version, and the station then applies as it always
+	// did. Additive: an older Edge ignores it.
+	Version int64 `json:"version,omitempty"`
 }
 
 // OrderDelivered signals fleet delivery complete. It closes the order; the
@@ -1483,6 +1492,10 @@ type OrderProjection struct {
 	// arrives for a queued order explains the wait without a second round trip.
 	QueueReason string `json:"queue_reason,omitempty"`
 	QueueCode   string `json:"queue_code,omitempty"`
+	// Version is the row's orders.version, as on OrderUpdate: a projection
+	// that lands after a newer status was applied is older, and the station
+	// keeps what it has. 0 is an older Core.
+	Version int64 `json:"version,omitempty"`
 	// NO FAULT FIELDS HERE, deliberately — see OrderUpdate and
 	// OrderStatusSnapshot, which carry them.
 	//
@@ -1528,6 +1541,10 @@ type OrderStatusSnapshot struct {
 	FaultNotice       bool       `json:"fault_notice,omitempty"`
 	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
 	FaultRef          *TermRef   `json:"fault_ref,omitempty"`
+	// Version is the row's orders.version, as on OrderUpdate: the reconcile
+	// applies a snapshot only when it is newer than what the station last
+	// applied. 0 is an older Core.
+	Version int64 `json:"version,omitempty"`
 }
 
 // OrderStatusResponse carries the authoritative Core-side state for requested orders.

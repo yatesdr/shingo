@@ -64,7 +64,7 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 	if !moved {
 		t.Fatal("queued→dispatched was refused")
 	}
-	moved, err = orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusDispatched), string(protocol.StatusQueued),
+	_, moved, err = orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusDispatched), string(protocol.StatusQueued),
 		"fleet refused", string(protocol.QueueFleetUnavailable), "", nil)
 	testutil.MustNoErr(t, err, "dispatched→queued")
 	if !moved {

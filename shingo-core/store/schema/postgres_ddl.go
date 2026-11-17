@@ -277,7 +277,14 @@ CREATE TABLE IF NOT EXISTS orders (
     -- the block subscriber advances it as each block finishes the plan's next
     -- open step (an order with no stored plan counts its two implied steps).
     -- The route strip reads where the robot is from it. Added by migration 167.
-    steps_done INTEGER NOT NULL DEFAULT 0
+    steps_done INTEGER NOT NULL DEFAULT 0,
+    -- One counter for everything the order's station is told: bumped in the
+    -- same statement as a status write, a robot write that names a new robot,
+    -- and a change of wait the station is told. It rides the order.update, the
+    -- reconcile snapshot and the projection, and the station applies only a
+    -- newer one. Born 1, so a 0 on the wire is an older Core. Added by
+    -- migration 179.
+    version BIGINT NOT NULL DEFAULT 1
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

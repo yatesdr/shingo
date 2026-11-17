@@ -1669,6 +1669,7 @@ Sent on `order.status_response`: the answer, plus `unlisted` — orders for that
 | `fault_notice` | boolean | omitempty |  |
 | `fault_notice_after_s` | integer | omitempty |  |
 | `fault_ref` | [`TermRef`](#termref) | omitempty |  |
+| `version` | integer | omitempty | Version is the row's orders.version, as on OrderUpdate: the reconcile applies a snapshot only when it is newer than what the station last applied. 0 is an older Core. |
 
 <!-- /generated -->
 
@@ -1694,6 +1695,7 @@ Sent on `order.projected`: a whole order row, so an order the Edge did not creat
 | `origin_class` | string | omitempty | See `origin_id`. |
 | `queue_reason` | string | omitempty | QueueReason / QueueCode mirror OrderStatusSnapshot's, so a projection that arrives for a queued order explains the wait without a second round trip. |
 | `queue_code` | string | omitempty | See `queue_reason`. |
+| `version` | integer | omitempty | Version is the row's orders.version, as on OrderUpdate: a projection that lands after a newer status was applied is older, and the station keeps what it has. 0 is an older Core. |
 
 <!-- /generated -->
 
@@ -2050,6 +2052,7 @@ Status change or ETA update for an in-progress order. May be sent multiple times
 | `fault_notice` | boolean | omitempty | FaultNotice is Core's decision AT PUSH TIME about whether this is a replan or a fault worth the word. Always false on the push that creates the fault, because nothing has been faulted for a minute at the instant it faults — which is exactly why FaultNoticeAfterS rides along. |
 | `fault_notice_after_s` | integer | omitempty | FaultNoticeAfterS is Core's threshold in whole seconds (config rds.fault_notice_after). It is echoed rather than hard-coded so the Edge can flip its own sentence from "Replanning" to "Fault" as the clock passes it, without owning the rule or waiting for another push. Same reasoning as DisplayConstants() on Core's own pages: the number that decides what an operator is told lives in one config file, and every surface is told what it is. Whole seconds because it crosses to a browser that does millisecond arithmetic on it, and a duration string would need a parser at the far end for a number nobody sets below a second. |
 | `fault_ref` | [`TermRef`](#termref) | omitempty | FaultRef is the fleet's reason, the same reference stored on the faulted history row. Nil when the fleet gave none, which is the common case. THE REFERENCE CROSSES, NOT THE SENTENCE, and that is what makes one formatter possible. Detail carries the sentence as it stood at push time, and at push time an order has just faulted, so it always reads "Replanning" — the vendor reason is deliberately withheld under the threshold. An Edge given only Detail could therefore never show the reason, because no second push arrives to reveal it. Given the ref, the Edge calls FormatFaultSentence itself, with the same code Core calls, and crosses the threshold on its own clock. |
+| `version` | integer | omitempty | Version is the order's version at Core when this was written (orders.version): one counter, bumped in the same statement as every write Core tells the station about (its status, its robot, its wait). A station applies a message only when its version is newer than the one it last applied, so a late or repeated copy cannot move the row back. Every order Core holds is at 1 or more; 0 (absent) is an older Core that does not version, and the station then applies as it always did. Additive: an older Edge ignores it. |
 
 <!-- /generated -->
 

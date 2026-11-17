@@ -45,5 +45,6 @@ func ProjectionFor(o *orders.Order) protocol.OrderProjection {
 		OriginClass:   o.OriginClass,
 		QueueReason:   o.QueueReason,
 		QueueCode:     o.QueueCode,
+		Version:       o.Version,
 	}
 }

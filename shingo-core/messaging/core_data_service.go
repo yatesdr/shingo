@@ -636,6 +636,7 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 			snap.ErrorDetail = order.ErrorDetail
 			snap.QueueReason = order.QueueReason
 			snap.QueueCode = order.QueueCode
+			snap.Version = order.Version
 			s.attachFaultWindow(&snap, order.ID, order.Status)
 		}
 		resp.Orders = append(resp.Orders, snap)

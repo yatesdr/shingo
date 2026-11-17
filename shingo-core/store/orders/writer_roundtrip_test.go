@@ -146,6 +146,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		// it. Round-tripping a probe value through Create would assert the
 		// opposite -- that a caller can hand openness in at creation.
 		"OpenForChildren": "open_for_children",
+		// Born 1 by the column's DEFAULT; only the writes the station is told
+		// about bump it. Create does not take it from the struct.
+		"Version": "version",
 	}
 
 	// Every excluded field must be excluded for a reason that is written down,

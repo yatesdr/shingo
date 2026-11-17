@@ -49,7 +49,11 @@ type Order struct {
 	// plan's next open step (StepsDoneAfter), and the route strip reads where
 	// the robot is from it (RouteStops). An order with no stored plan counts
 	// its two implied steps, the lift and the drop.
-	StepsDone   int    `json:"steps_done"`
+	StepsDone int `json:"steps_done"`
+	// Version is orders.version: bumped in the same statement as every write
+	// the order's station is told about (status, robot, wait), and carried on
+	// what it is told, so the station keeps only the newest. 1 at birth.
+	Version     int64  `json:"version"`
 	QueueReason string `json:"queue_reason,omitempty"`
 	// QueueCode is the structured category behind QueueReason — one of the
 	// protocol.QueueCode values (waiting_for_material, waiting_for_slot, …).

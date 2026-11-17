@@ -141,6 +141,10 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 - `named_bin_id` is the one bin the asker named the order for, if any — a constraint, not a record.
 - `parent_order_id` is the parent compound order (for reshuffle child orders); `sequence` the step sequence within
   it.
+- `version` is one counter for everything the order's station is told: it is bumped in the same statement as a
+  status write, a robot write that changes the robot to a named one, and a change of wait the station is told
+  (`orders.WaitTells`). It rides `order.update`, the reconcile snapshot and the projection, and the station applies
+  only a newer one. Every row starts at 1 (v179), so a 0 on the wire is an older Core.
 
 The bins an order carries are not a column of the order: they are its rows in
 `order_bins` ([Order carts](#order-carts-order_bins)).
@@ -480,7 +484,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`order_bins`](#core-order_bins) | 6 | `id` | [`bins`](#core-bins), [`orders`](#core-orders) |
 | [`order_history`](#core-order_history) | 8 | `id` | [`orders`](#core-orders) |
 | [`order_intake_refusals`](#core-order_intake_refusals) | 5 | `edge_uuid` |  |
-| [`orders`](#core-orders) | 45 | `id` | `orders` |
+| [`orders`](#core-orders) | 46 | `id` | `orders` |
 | [`outbox`](#core-outbox) | 8 | `id` |  |
 | [`parts`](#core-parts) | 6 | `id` |  |
 | [`payload_bin_types`](#core-payload_bin_types) | 2 | `payload_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`payloads`](#core-payloads) |
@@ -1418,6 +1422,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `named_bin_id` | `bigint` |  |  |  |
 | `want` | `text` | yes | `''` |  |
 | `steps_done` | `integer` | yes | `0` |  |
+| `version` | `bigint` | yes | `1` |  |
 
 - Unique (edge_uuid) where `edge_uuid <> ''`
 

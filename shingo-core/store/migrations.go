@@ -4577,7 +4577,25 @@ func migrationList() []migration {
 		{178, "bin_loaders.edge_station_uid - the station uid of the Edge that works the loader; blank on every existing loader, and blank means no Edge picked",
 			v178LoaderEdgeStationUID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "edge_station_uid") }},
+		{179, "orders.version - one counter per order, bumped with every write the station is told (status, robot, wait); 1 on every existing order",
+			v179OrderVersion,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "version") }},
 	}
+}
+
+// v179OrderVersion adds orders.version: one counter per order, bumped in the
+// same statement as every write Core tells the order's station about (its
+// status, its robot, its wait). It rides the status tell, the reconcile
+// snapshot and the projection, so the station applies a message only when it
+// is newer than the one it last applied, and a late copy cannot move the row
+// back. The default is 1, on every existing order and every new one, so a
+// version of 0 on the wire can only mean an older Core. ROLLBACK is the
+// previous binary plus DROP COLUMN. Pin: TestOrderMigration_V179_EveryOrderStartsAtOne.
+func v179OrderVersion(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("v179 orders.version: %w", err)
+	}
+	return nil
 }
 
 // v178LoaderEdgeStationUID adds bin_loaders.edge_station_uid: the Edge that
