@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.10.0 — 2026-11-17
+
 Deploy: Edge v55–v57 first, at every Edge of the plant; then Core v178. An Edge from before this release ignores the Edge Core names for a loader and keeps its screens as they are, so pick an Edge under Loaders only once every Edge at the plant runs this release.
 
 - The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
