@@ -691,6 +691,16 @@ async function pinFirstStyleRepick() {
         ix.S.firstStyle.parts.POS_A2 === had && !ix.S.firstStyle.backOf.POS_A2, JSON.stringify({ item: item(ix, 'POS_A2').slice(1), part: ix.S.firstStyle.parts.POS_A2 }));
     check('and the new one is the press\'s back', ix.S.model.cells.POS_A1.paired === 'POS_A3' && item(ix, 'POS_A3')[1] === 'out' &&
         T.decode(item(ix, 'POS_A3')[2] || '') === 'back of POS_A1', JSON.stringify(item(ix, 'POS_A3').slice(1)));
+    // THE NEW BACK'S PART TAKES THE PLACE THE OLD BACK GIVES BACK (round 11):
+    // the old back is released first, so its part leaves the position it had
+    // moved to, and the new back's part can go there; it is on no position
+    // only where every position still to do has a part.
+    const fs = ix.S.firstStyle;
+    const freeRows = ix.pd('firstStyleRows')().filter(n => !fs.out[n] && !fs.done[n] && !fs.parts[n]);
+    const went = (fs.backPart.POS_A3 || {});
+    L.push('  POS_A3\'s part ' + (went.part || 'none') + ' went to ' + (went.to || 'no position') + '; positions to do with no part: ' + (freeRows.join(', ') || 'none'));
+    check('the new back\'s part is on no position only when no position is free', !went.part || !!went.to || !freeRows.length,
+        JSON.stringify({ went: went, free: freeRows }));
 
     // SEQUENTIAL A/B: POS_A2 is given a swap of its own first, so "the swap
     // it had before it was paired" is one it chose (2-Robot Swap).

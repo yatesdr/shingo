@@ -249,6 +249,8 @@ ok   a partner kept through the change to Index Swap is the press's back, as if 
   Index Swap, POS_A2 then POS_A3 picked: POS_A1 paired with POS_A3 · POS_A2 todo, its part PART-10 · POS_A3 out (back of POS_A1)
 ok   an Index Swap back picked again hands the old back its row back, with its part
 ok   and the new one is the press's back
+  POS_A3's part PART-11 went to ULD_1; positions to do with no part: none
+ok   the new back's part is on no position only when no position is free
   Sequential A/B, POS_A2 picked: POS_A1 names POS_A2 · POS_A2 names POS_A1, runs Sequential A/B paired with POS_A1
 ok   a Sequential partner picked is paired both ways
   then POS_A3 picked: POS_A1 names POS_A3 · POS_A3 names POS_A1, runs Sequential A/B paired with POS_A1 · POS_A2 names none, runs 2‑Robot Swap (todo)

@@ -1353,6 +1353,12 @@ function firstPartnered(n, v) {
     const d = S.firstStyle;
     pairPartner(firstRows(), n);
     if (!v || firstStyleRows().indexOf(v) < 0 || firstEff(n).mode !== 'two_robot_press_index') return;
+    // The press's back before this one is released FIRST (round 11), so the
+    // place its part had moved to is free again for v's part; released after,
+    // v's part went to no position with that place standing empty.
+    for (const old of Object.keys(d.backOf)) {
+        if (d.backOf[old] === n && old !== v) firstReleaseBack(old);
+    }
     d.backOf[v] = n;
     d.out[v] = true;
     d.done[v] = false;
@@ -1454,16 +1460,23 @@ function firstBacksKept() {
         const owner = d.backOf[v];
         const e = firstEff(owner);
         if (e.mode === 'two_robot_press_index' && !d.out[owner] && firstValue(S.model, owner, FIRST_PICKS[0]) === v) continue;
-        delete d.backOf[v];
-        d.out[v] = false;
-        const kept = d.backPart[v];
-        delete d.backPart[v];
-        if (!kept || d.parts[v]) continue;
-        const where = Object.keys(d.parts).filter(x => d.parts[x] === kept.part);
-        if (kept.to ? where.join() === kept.to && !d.done[kept.to] : !where.length) {
-            if (kept.to) delete d.parts[kept.to];
-            d.parts[v] = kept.part;
-        }
+        firstReleaseBack(v);
+    }
+}
+
+// firstReleaseBack gives back v its row, and its part where the part is still
+// where it moved (backPart), or on no position.
+function firstReleaseBack(v) {
+    const d = S.firstStyle;
+    delete d.backOf[v];
+    d.out[v] = false;
+    const kept = d.backPart[v];
+    delete d.backPart[v];
+    if (!kept || d.parts[v]) return;
+    const where = Object.keys(d.parts).filter(x => d.parts[x] === kept.part);
+    if (kept.to ? where.join() === kept.to && !d.done[kept.to] : !where.length) {
+        if (kept.to) delete d.parts[kept.to];
+        d.parts[v] = kept.part;
     }
 }
 
