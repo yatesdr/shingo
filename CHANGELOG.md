@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.11.0 — 2026-11-17
+
 Deploy: no migration. Core first, then every Edge: an Edge on this release shows no robot moving until its Core runs it too.
 
 - A robot panel shows its robots already moving within about half a second, pressed or shown again
