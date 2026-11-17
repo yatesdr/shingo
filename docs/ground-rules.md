@@ -88,9 +88,9 @@ A stream writes its lines under `## Unreleased` in `CHANGELOG.md`: a `Deploy:` l
 `scripts/check-changelog.sh` fails the gate without them. The merge to `main` cuts the release:
 `.github/workflows/auto-release.yml` computes the number from the changes since the last tag, runs the gates on that
 commit, commits `release: vX.Y.Z` with its tag and publishes the binaries, with that section as the notes. A plant
-installs a tag when the owner says: `sudo bash install-core.sh --tag vX.Y.Z` on the Core server first, then
-`sudo bash install-edge.sh --tag vX.Y.Z` on each Edge, and both Logs pages (`/diagnostics`) then show
-`vX.Y.Z · <commit>`.
+installs a release when the owner says: `sudo bash install-core.sh` on the Core server and
+`sudo bash install-edge.sh` on each Edge install the newest (`--tag vX.Y.Z` names one), in the order the `Deploy:`
+lines they print give, and both Logs pages (`/diagnostics`) then show `vX.Y.Z · <commit>`.
 
 ## The order layer
 

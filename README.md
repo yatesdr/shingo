@@ -73,20 +73,20 @@ Docker is the only prerequisite. [README.dev.md](README.dev.md) covers tuning, t
 
 ## Deploy to a plant
 
-The installers build from source at a release tag, install the unit and its log and journal retention, and restart the service:
+The installers build the newest release from source, install the unit and its log and journal retention, and restart the service:
 
 ```sh
-sudo bash install-core.sh --tag vX.Y.Z    # on the Core server, first
-sudo bash install-edge.sh --tag vX.Y.Z    # then on each Edge
+sudo bash install-core.sh    # on the Core server
+sudo bash install-edge.sh    # on each Edge
 ```
 
-Without `--tag` an installer sets the box's branch to origin's and builds that. A plant checkout is a build input, so local edits and commits origin does not have are saved under `~/shingo-backups/dirty-checkout-<time>/` and then discarded (run by hand it asks first). A box on a branch other than `main` still builds, with a warning on the run and its summary ([deploy/sync-checkout.sh](deploy/sync-checkout.sh)).
+`--tag vX.Y.Z` installs one release instead (to pin a plant or roll it back), and `--main` builds origin's `main` (a change merged and not yet released). Before it asks to go on, an installer prints the `Deploy:` line of every release the install brings or takes off; where one puts Core or the Edges first, that side goes first at every box of the plant. A plant checkout is a build input, so whatever the box was on, local edits and commits origin does not have are saved under `~/shingo-backups/dirty-checkout-<time>/` and then discarded (run by hand it asks first) ([deploy/sync-checkout.sh](deploy/sync-checkout.sh)).
 
 First-time setup, configuration and the operator pages are in [shingo-core/README.md](shingo-core/README.md) and [shingo-edge/README.md](shingo-edge/README.md); what the Core installer puts on the host is in [shingo-core/deploy/README.md](shingo-core/deploy/README.md).
 
 ## Releases and versioning
 
-Core and Edge share one version, `v0.MINOR.PATCH`: a **MINOR** release adds a migration, changes the wire protocol or adds or removes a config key (migrate first and ship both binaries together, Core before the Edges); a **PATCH** release needs neither. Every change writes its lines under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md), opened by a `Deploy:` line, and the gate fails without them. Each merge to `main` then cuts a release by itself: the number is computed from the changes, and the GitHub release carries both binaries for every platform, their `SHA256SUMS`, and that changelog section as its notes. A plant installs a tag when the owner says (the installers above), and both Logs pages (`/diagnostics`) show the running version and commit.
+Core and Edge share one version, `v0.MINOR.PATCH`: a **MINOR** release adds a migration, changes the wire protocol or adds or removes a config key (migrate first and ship both binaries together, Core before the Edges); a **PATCH** release needs neither. Every change writes its lines under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md), opened by a `Deploy:` line, and the gate fails without them. Each merge to `main` then cuts a release by itself: the number is computed from the changes, and the GitHub release carries both binaries for every platform, their `SHA256SUMS`, and that changelog section as its notes. A plant installs a release when the owner says (the installers above), and both Logs pages (`/diagnostics`) show the running version and commit.
 
 ## Documentation
 

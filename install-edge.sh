@@ -23,14 +23,18 @@ set -euo pipefail
 #                            overwrite an unknown setup (the safety check
 #                            for "running process but no discoverable config"
 #                            is an error exit, not a confirm).
-#   --tag <vX.Y.Z>, vX.Y.Z   Install that release: fetch the tags, check the
-#                            tag out (a detached HEAD), build it, and stamp the
-#                            binary's version with the tag. Without it the
-#                            installer sets the branch it is on to origin's
+#   (neither of the next)    Install the newest release: fetch origin, check
+#                            its tag out (a detached HEAD), build it, and stamp
+#                            the binary's version with the tag.
+#   --tag <vX.Y.Z>, vX.Y.Z   Install that release instead: to pin a plant to
+#                            one, or roll it back.
+#   --main                   Build origin's main instead: a change merged and
+#                            not yet released. Either way the checkout is set
+#                            to it first, whatever it was on
 #                            (deploy/sync-checkout.sh: local edits and commits
-#                            are saved, then discarded; a branch other than
-#                            main is built with a warning); on the detached
-#                            HEAD a tag install leaves, it stops and says so.
+#                            are saved, then discarded), and the Deploy: line
+#                            of every release it brings or takes off is shown
+#                            before the "Proceed?".
 
 # Remember the invocation before the arg loop consumes it and before the `cd`
 # below, so the re-exec after `git pull` is faithful.
@@ -54,8 +58,10 @@ EDGE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "Americ
 # instruction: without this there is no way to set the zone in an unattended
 # install, which is the plant-rollout case.
 EDGE_TIMEZONE_EXPLICIT=no
-# The release to install; empty = pull the current branch.
+# What to build: INSTALL_TAG, or main when INSTALL_MAIN; neither = the newest
+# release, which the checkout step names into INSTALL_TAG.
 INSTALL_TAG=""
+INSTALL_MAIN=no
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
@@ -67,16 +73,21 @@ while [[ $# -gt 0 ]]; do
         --tag)             INSTALL_TAG="$2"; shift 2 ;;
         --tag=*)           INSTALL_TAG="${1#*=}"; shift ;;
         v[0-9]*)           INSTALL_TAG="$1"; shift ;;
+        --main)            INSTALL_MAIN=yes; shift ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes] [--timezone IANA_ZONE] [--tag vX.Y.Z | vX.Y.Z]"
-            echo "Releases are cut automatically on each merge to main; --tag is how a plant picks one."
+            echo "Usage: $0 [--legacy-config /path/to/shingoedge.yaml] [--reinstall] [--yes] [--timezone IANA_ZONE] [--tag vX.Y.Z | vX.Y.Z | --main]"
+            echo "With no --tag or --main it installs the newest release (one is cut on each merge to main)."
             exit 1
             ;;
     esac
 done
 if [ -n "$INSTALL_TAG" ] && ! [[ "$INSTALL_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "ERROR: '$INSTALL_TAG' is not a release tag (vMAJOR.MINOR.PATCH, e.g. v0.1.0)."
+    exit 1
+fi
+if [ -n "$INSTALL_TAG" ] && [ "$INSTALL_MAIN" = "yes" ]; then
+    echo "ERROR: --tag and --main name different builds; give one."
     exit 1
 fi
 
@@ -217,7 +228,7 @@ read_db_path() {
     echo "$raw" | sed -E "s/^[[:space:]]*//; s/[[:space:]]*\$//; s/^\"//; s/\"\$//; s/^'//; s/'\$//"
 }
 
-# Pull, then re-exec if this script itself changed.
+# Set the checkout, then re-exec if this script itself changed.
 #
 # Without this the installer pulls a new version of ITSELF and then finishes
 # the run as the OLD one. git replaces a tracked file by writing a temp and
@@ -234,54 +245,35 @@ read_db_path() {
 # loop. Verified at 72 KB with a mid-run pull: args preserved, one pass, the
 # post-pull logic is what executes.
 #
-# A TAG IS CHECKED OUT, NOT PULLED, and the same rule holds: the tag's own
+# A RELEASE IS CHECKED OUT, NOT PULLED, and the same rule holds: the tag's own
 # installer finishes the run, so it is the one that matches the tag's unit,
-# deploy files and build. That installer is re-executed with these same
-# arguments, --tag among them, so it must take --tag: one that does not (any
-# tag before the installers took one) is refused here, before anything has
-# changed, rather than half-run. A tag install leaves HEAD detached at the tag,
-# where `git pull` has no branch to pull; a later run without --tag says so
-# instead.
+# deploy files and build. That installer is re-executed with these arguments
+# and the tag named by --tag (the newest-release default is resolved once,
+# here), so it must take --tag: a tag whose installer does not (any tag before
+# the installers took one) is refused before anything has changed, rather than
+# half-run. The re-executed run is told where the checkout was, for the deploy
+# notes.
 if [ -z "${SHINGO_INSTALL_REEXEC:-}" ]; then
     self_before=$(sha256sum "$SELF" | cut -d' ' -f1)
-    if [ -n "$INSTALL_TAG" ]; then
-        echo "==> Fetching tags..."
-        git fetch --tags origin
-        if ! git rev-parse -q --verify "refs/tags/${INSTALL_TAG}^{commit}" >/dev/null; then
-            echo "ERROR: no tag $INSTALL_TAG on origin."
-            exit 1
-        fi
-        # Read into a variable, not piped to grep -q: grep exiting at the first
-        # match would SIGPIPE git show, and pipefail would read that as "no".
-        tag_installer=$(git show "refs/tags/${INSTALL_TAG}:install-edge.sh" 2>/dev/null || true)
-        case "$tag_installer" in
-            *'--tag)'*) ;;
-            *)
-                echo "ERROR: $INSTALL_TAG has no install-edge.sh that takes --tag (it predates"
-                echo "       tag installs), so it cannot install itself this way. Nothing has changed."
-                exit 1
-                ;;
-        esac
-        echo "==> Checking out $INSTALL_TAG..."
-        git checkout -q --detach "refs/tags/${INSTALL_TAG}"
-        fetched="checkout of $INSTALL_TAG"
-    else
-        if ! git symbolic-ref -q HEAD >/dev/null; then
-            echo "ERROR: the checkout is on a detached HEAD ($(git describe --tags --always 2>/dev/null || echo unknown)),"
-            echo "       which a tag install leaves, so there is no branch to pull. Install a"
-            echo "       release with --tag vX.Y.Z, or go back to the branch first: git checkout main"
-            exit 1
-        fi
-        sync_checkout
-        fetched=sync
+    sync_checkout_pick install-edge.sh "$INSTALL_TAG" "$INSTALL_MAIN"
+    sync_checkout "$SYNC_TARGET"
+    if [ "$SYNC_TARGET" != "main" ]; then
+        INSTALL_TAG="$SYNC_TARGET"
     fi
     self_after=$(sha256sum "$SELF" | cut -d' ' -f1)
     if [ "$self_before" != "$self_after" ]; then
-        echo "==> That $fetched updated the installer -- restarting with the new version."
-        export SHINGO_INSTALL_REEXEC=1
+        echo "==> That checkout changed the installer -- restarting with its version."
+        export SHINGO_INSTALL_REEXEC=1 SHINGO_INSTALL_FROM="$SYNC_FROM"
+        if [ -n "$INSTALL_TAG" ]; then
+            exec bash "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} --tag "$INSTALL_TAG"
+        fi
         exec bash "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
     fi
 fi
+# Where the checkout was before this run: SYNC_FROM in the run that set it,
+# SHINGO_INSTALL_FROM in the one it re-executed, neither when an older
+# installer set the checkout and re-executed this one.
+SYNC_FROM="${SYNC_FROM:-${SHINGO_INSTALL_FROM:-}}"
 # Whichever run gets here builds what HEAD is, so a tag install proves HEAD is
 # the tag before it stamps the binary with the tag's name.
 if [ -n "$INSTALL_TAG" ] && \
@@ -510,6 +502,7 @@ case "$MODE" in
 esac
 echo ""
 
+sync_checkout_notes "$SYNC_FROM"
 confirm "Proceed?" || { echo "Aborted."; exit 0; }
 
 # NOTE: the backup is taken further down, AFTER the service is stopped.
@@ -1084,7 +1077,7 @@ echo " Binary:  /opt/shingo/shingoedge"
 echo " Config:  /etc/shingo/shingoedge.yaml"
 echo " DB:      /var/lib/shingo-edge/shingoedge.db"
 echo " Backup:  $BACKUP_PATH"
-sync_checkout_branch_line
+sync_checkout_source_line
 echo " Logs:    sudo journalctl -u shingo-edge -f"
 if [ "$MODE" = "FRESH" ]; then
     echo ""

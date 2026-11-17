@@ -16,6 +16,12 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration; Core and Edges in either order. A box an earlier tag install left on a release needs `--tag` this once.
+
+- A plain install run installs the newest release; `--tag vX.Y.Z` picks one, `--main` builds main
+- A box an earlier tag install left on a release takes a plain run instead of stopping
+- Before it asks to go on, an installer prints the Deploy line of every release it brings or takes off
+
 ## v0.11.0 — 2026-11-17
 
 Deploy: no migration. Core first, then every Edge: an Edge on this release shows no robot moving until its Core runs it too.
