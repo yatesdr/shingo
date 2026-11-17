@@ -118,4 +118,13 @@ func TestBlockRecord_TheCreateReplacesAndTheAppendMerges(t *testing.T) {
 	if !owed || raw.Valid {
 		t.Errorf("the old order's claim answered %v and left block_actions %q, want claimed and NULL", owed, raw.String)
 	}
+
+	// An order born before the record and sent after it (it queued across the
+	// deploy) is recorded by its create: every block of the new vendor order is
+	// sent now, so the create's write replaces the NULL.
+	testutil.MustNoErr(t, db.NameFleetOrder(old.ID, "V-old2", "CREATED", "", map[string]string{"V-old2-b1": "pickup"}),
+		"the create of an order born before the record")
+	if got := read(old.ID); len(got) != 1 || got["V-old2-b1"] != "pickup" {
+		t.Errorf("an order sent after the record reads %v, want the one block its create sent", got)
+	}
 }
