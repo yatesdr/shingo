@@ -1,6 +1,6 @@
 # Sweeps, monitors and re-evaluation paths
 
-Verified against: 74c3eb77
+Verified against: 61ebd7ef
 
 The inventory of every recurring or event-driven thing that can cause
 replenishment to be re-evaluated, or that sweeps state on a timer. This is the

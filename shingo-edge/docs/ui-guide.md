@@ -1,6 +1,6 @@
 # UI Guide
 
-Verified against: 74c3eb77
+Verified against: 61ebd7ef
 
 Shingo Edge serves its browser interface at `http://<host>:8081` (`web.port`). The navigation bar carries
 **Production**, an **Operations** menu (Orders, Changeover, Processes, Quality Containment) and,

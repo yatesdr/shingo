@@ -1,6 +1,6 @@
 # Shingo Local Dev Environment
 
-Verified against: 74c3eb77
+Verified against: 61ebd7ef
 
 **LOCAL DEV / SIMULATION ONLY — never run this against production data or hosts.**
 

@@ -1,6 +1,6 @@
 ## Event handling — delegated actions
 
-Verified against: 74c3eb77
+Verified against: 61ebd7ef
 
 **No inline event handlers in templates. Every
 DOM event is mediated through `data-action[-event]` attributes and a
