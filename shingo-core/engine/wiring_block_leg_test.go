@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
@@ -61,7 +62,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 		BinTask:       "Load",
 		StartTime:     1784956669,
 		TerminateTime: 1784956774,
-	}, legOrder(t, db, orderID))
+	}, legOrder(t, db, orderID), protocol.ActionPickup)
 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")
@@ -70,6 +71,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 		BlockID         string `json:"blockId"`
 		Location        string `json:"location"`
 		BinTask         string `json:"binTask"`
+		Action          string `json:"action"`
 		StartTime       int64  `json:"startTime"`
 		TerminateTime   int64  `json:"terminateTime"`
 		DurationSeconds int64  `json:"durationSeconds"`
@@ -84,6 +86,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 			BlockID         string `json:"blockId"`
 			Location        string `json:"location"`
 			BinTask         string `json:"binTask"`
+			Action          string `json:"action"`
 			StartTime       int64  `json:"startTime"`
 			TerminateTime   int64  `json:"terminateTime"`
 			DurationSeconds int64  `json:"durationSeconds"`
@@ -98,7 +101,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 		t.Fatalf("no %s row written; events=%d", BlockLegState, len(events))
 	}
 
-	if leg.BlockID != "b-pickup" || leg.Location != "AP-SOURCE" || leg.BinTask != "Load" {
+	if leg.BlockID != "b-pickup" || leg.Location != "AP-SOURCE" || leg.BinTask != "Load" || leg.Action != protocol.ActionPickup {
 		t.Errorf("leg identity wrong: %+v", *leg)
 	}
 	if leg.StartTime != 1784956669 || leg.TerminateTime != 1784956774 {
@@ -130,7 +133,7 @@ func TestRecordBlockLeg_MissingTimesLeaveDurationZero(t *testing.T) {
 		OrderID: orderID, VendorOrderID: "sg-leg-2",
 		BlockID: "b1", Location: "L", BinTask: "Load",
 		// no StartTime / TerminateTime
-	}, legOrder(t, db, orderID))
+	}, legOrder(t, db, orderID), protocol.ActionPickup)
 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")
@@ -165,7 +168,7 @@ func TestRecordBlockLeg_InvertedTimesDoNotProduceNegativeDuration(t *testing.T) 
 		OrderID: orderID, VendorOrderID: "sg-leg-3",
 		BlockID: "b1", Location: "L", BinTask: "Unload",
 		StartTime: 1784956774, TerminateTime: 1784956669,
-	}, legOrder(t, db, orderID))
+	}, legOrder(t, db, orderID), protocol.ActionDropoff)
 
 	events, err := db.ListMissionEvents(orderID)
 	testutil.MustNoErr(t, err, "list mission events")

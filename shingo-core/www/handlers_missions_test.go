@@ -416,3 +416,50 @@ func TestApiListMissions_InFlightAndState(t *testing.T) {
 		t.Errorf("station_id=line-y: got total %d, want 0", r.Total)
 	}
 }
+
+// TestApiGetMission_ALegRowCarriesWhatEachBlockDid: a leg row is served with
+// each block's action, in blocks_json's order, for the page to label it by: the
+// action recorded with the leg, whatever the block's name, and for a leg written
+// before legs carried one, what the name rule reads its binTask as.
+func TestApiGetMission_ALegRowCarriesWhatEachBlockDid(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	o := &orders.Order{EdgeUUID: "mission-leg-2", StationID: "line-x", OrderType: "move",
+		Status: "pending", Quantity: 1, SourceNode: "ALN_002"}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	for _, blocks := range []string{
+		`[{"blockId":"b1","location":"ALN_002","binTask":"jacklift_4548","action":"pickup"}]`,
+		`[{"blockId":"b1-1","location":"ALN_002","binTask":"preload_turn","action":""}]`,
+		`[{"blockId":"b2","location":"UTN_013","binTask":"JackUnload"}]`,
+	} {
+		testutil.MustNoErr(t, db.InsertMissionEvent(&telemetry.Event{
+			OrderID: o.ID, NewState: "BLOCK_FINISHED", RobotID: "AMR-01", ErrorsJSON: "[]", BlocksJSON: blocks,
+		}), "insert leg event")
+	}
+
+	req := chiReq(http.MethodGet, fmt.Sprintf("/api/missions/%d", o.ID),
+		map[string]string{"orderID": fmt.Sprint(o.ID)})
+	rec := httptest.NewRecorder()
+	h.apiGetMission(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Events []struct {
+			BlocksJSON string   `json:"blocks_json"`
+			Actions    []string `json:"actions"`
+		} `json:"events"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
+	want := map[string]string{"jacklift_4548": "pickup", "preload_turn": "", "JackUnload": "dropoff"}
+	if len(resp.Events) != len(want) {
+		t.Fatalf("events: got %d, want %d", len(resp.Events), len(want))
+	}
+	for _, ev := range resp.Events {
+		for name, action := range want {
+			if strings.Contains(ev.BlocksJSON, name) && (len(ev.Actions) != 1 || ev.Actions[0] != action) {
+				t.Errorf("the leg of %s is served actions %v, want [%q]", name, ev.Actions, action)
+			}
+		}
+	}
+}

@@ -6,11 +6,17 @@
 // step onto the synthetic _TRANSIT node so the source slot is freed
 // immediately — the slot-vacancy signal queued orders need to unblock.
 //
+// WHAT A BLOCK WAS is read from Core's own record, never from its binTask: the
+// order's block_actions, written as the blocks were sent (the create's vendor
+// write and the append's claim), names each block's action by its id. An order
+// sent before the record existed (block_actions NULL) is read by its block names
+// for its whole life (legacyBlockAction); a block the record does not name does
+// nothing but its leg row.
+//
 // Block-kind routing:
 //
-//   - pickup-shaped (BinTask=Load, "pickup", or any operation that
-//     loads a goods onto the robot): bin transitions to _TRANSIT.
-//   - dropoff-shaped: INTERMEDIATE dropoffs (a midway storage slot, not the
+//   - pickup: bin transitions to _TRANSIT.
+//   - dropoff: INTERMEDIATE dropoffs (a midway storage slot, not the
 //     order's final delivery) fire bin arrival immediately via
 //     handleStoreBlockCompleted, so the slot reflects the physical bin the
 //     moment the store completes — and a mid-flight cancel leaves the bin at
@@ -19,7 +25,8 @@
 //     handleOrderDelivered when the whole order reaches FINISHED (that path
 //     is robust, idempotent, and also sends the Edge OrderDelivered
 //     notification), so we deliberately do not race it here.
-//   - waits, scripts, navigation-only: no-op.
+//   - wait, or a block of no step's kind (the turns of an advanced load
+//     sequence around its lift): no arm; a wait counts its step.
 //
 // Idempotence: BinService.Lift moves nothing (Lift.Moved false) when the bin is
 // already at _TRANSIT, so duplicate or replayed events are safe; the tote hook
@@ -39,7 +46,6 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
-	"shingocore/fleet/seerrds"
 	"shingocore/service"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
@@ -47,16 +53,18 @@ import (
 )
 
 // handleBlockCompleted is called from wiring.go's EventBlockCompleted
-// subscription. Routes the block by kind and drives the corresponding
-// bin lifecycle transition: pickups free the source slot (→ _TRANSIT),
-// intermediate storage dropoffs record the bin at its slot immediately.
+// subscription. Routes the block by what Core sent it to do (finishedAction)
+// and drives the corresponding bin lifecycle transition: pickups free the
+// source slot (→ _TRANSIT), intermediate storage dropoffs record the bin at its
+// slot immediately.
 func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
-	// The order, read once for the leg and the count below. nil when it cannot
-	// be read: the leg is still recorded, without its robot.
+	// The order, read once for the leg, the count and the record below. nil
+	// when it cannot be read: the leg is still recorded, without its robot.
 	order, err := e.db.GetOrder(ev.OrderID)
 	if err != nil {
 		order = nil
 	}
+	action := e.finishedAction(ev, order)
 	// Record the observation before routing it. This handler was the sole
 	// subscriber and it threw the block away after moving the bin, so every
 	// leg the fleet reported — travel-to-source, load, travel-to-dest, unload —
@@ -66,16 +74,38 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 	// finished block again): it is counted once, the first time. The bin
 	// handlers below see it again, as they always did; they are idempotent on
 	// the bin's own state.
-	if e.recordBlockLeg(ev, order) {
-		e.countStepDone(ev, order)
+	if e.recordBlockLeg(ev, order, action) {
+		e.countStepDone(ev, order, action)
 	}
 
-	switch {
-	case IsPickupBlock(ev.BinTask):
+	switch action {
+	case protocol.ActionPickup:
 		e.handlePickupBlockCompletedFor(ev, order)
-	case IsDropoffBlock(ev.BinTask):
+	case protocol.ActionDropoff:
 		e.handleStoreBlockCompleted(ev)
 	}
+}
+
+// finishedAction is what a finished block was sent to do: the action the
+// order's record (orders.block_actions) names for its block id. No statement:
+// the record rides the order's own read.
+//
+//   - An order whose record is NULL was sent before the record existed, so its
+//     blocks are read by their binTask names, the rule every block was read by
+//     until then (legacyBlockAction), for the order's whole life. So is an
+//     order that could not be read: there is no record to read.
+//   - A block the record does not name is no step's: it moves nothing and
+//     counts nothing, its leg row is still written, and it says so.
+func (e *Engine) finishedAction(ev BlockCompletedEvent, order *orders.Order) string {
+	if order == nil || order.BlockActions == nil {
+		return legacyBlockAction(ev.BinTask)
+	}
+	action, ok := order.BlockActions[ev.BlockID]
+	if !ok {
+		e.logFn("block: order %d block %s @ %s (binTask=%s) finished and the order's record of what it sent does not name it; nothing moved, nothing counted",
+			order.ID, ev.BlockID, ev.Location, ev.BinTask)
+	}
+	return action
 }
 
 // BlockLegState is the mission_events.new_state marker for a per-block
@@ -99,50 +129,66 @@ const BlockLegState = "BLOCK_FINISHED"
 
 // blockLeg is the per-block record stored in mission_events.blocks_json.
 // Epoch seconds, verbatim from the vendor; DurationSeconds is derived and 0
-// when either endpoint is missing.
+// when either endpoint is missing. Action is what the handler read the block as
+// (finishedAction); nil on a leg written before legs carried it, which its
+// readers read by the block's name (LegBlocks).
 type blockLeg struct {
-	BlockID         string `json:"blockId"`
-	Location        string `json:"location"`
-	BinTask         string `json:"binTask"`
-	StartTime       int64  `json:"startTime"`
-	TerminateTime   int64  `json:"terminateTime"`
-	DurationSeconds int64  `json:"durationSeconds"`
+	BlockID         string  `json:"blockId"`
+	Location        string  `json:"location"`
+	BinTask         string  `json:"binTask"`
+	Action          *string `json:"action,omitempty"`
+	StartTime       int64   `json:"startTime"`
+	TerminateTime   int64   `json:"terminateTime"`
+	DurationSeconds int64   `json:"durationSeconds"`
+}
+
+// LegBlock is one block of a BLOCK_FINISHED leg row as its readers outside
+// the handler need it: where it finished and what it did.
+type LegBlock struct {
+	Location string
+	Action   string
+}
+
+// LegBlocks reads a leg row's blocks_json: each block's location and the
+// action recorded with it, or, for a leg written before legs carried one, the
+// action legacyBlockAction reads its binTask as. Its readers: the stranded
+// sweep's pickup leg (pickupAt), soakstat's bin residence check and the
+// mission page.
+func LegBlocks(blocksJSON string) ([]LegBlock, error) {
+	var legs []blockLeg
+	if err := json.Unmarshal([]byte(blocksJSON), &legs); err != nil {
+		return nil, err
+	}
+	out := make([]LegBlock, 0, len(legs))
+	for _, l := range legs {
+		action := legacyBlockAction(l.BinTask)
+		if l.Action != nil {
+			action = *l.Action
+		}
+		out = append(out, LegBlock{Location: l.Location, Action: action})
+	}
+	return out, nil
 }
 
 // countStepDone advances the order's steps_done when the block finished the
-// plan's next open step (domain.StepsDoneAfter): one write for such a block,
-// none for any other. The route strip reads where the robot is from it, and
+// plan's next open step (domain.StepsDoneAfter), the block's action being what
+// finishedAction read it as: one write for such a block, none for any other. The
+// route strip reads where the robot is from it, and
 // TestBlockFinished_EveryBlockSentReachesTheSubscriber is why it can: every
 // block the dispatcher sends reaches this handler as FINISHED. Best-effort,
 // like the leg: a lost count draws the robot a stop behind until its next
 // block, and must never stop a bin from moving.
-func (e *Engine) countStepDone(ev BlockCompletedEvent, order *orders.Order) {
+func (e *Engine) countStepDone(ev BlockCompletedEvent, order *orders.Order, action string) {
 	if order == nil {
 		return
 	}
-	n, ok := domain.StepsDoneAfter(order, ev.Location, blockAction(ev.BinTask))
+	n, ok := domain.StepsDoneAfter(order, ev.Location, action)
 	if !ok || n <= order.StepsDone {
 		return
 	}
 	if err := e.db.AdvanceOrderStepsDone(order.ID, n); err != nil {
 		e.logFn("route: count %d steps done for order %d: %v", n, order.ID, err)
 	}
-}
-
-// blockAction is the plan action a block of binTask does, as this handler
-// reads the vendor's vocabulary: IsPickupBlock, IsDropoffBlock, and the Wait
-// binTask a wait at a node is sent as. "" for a block of no step's kind, such
-// as the turns of an advanced load sequence around its one load.
-func blockAction(binTask string) string {
-	switch {
-	case IsPickupBlock(binTask):
-		return protocol.ActionPickup
-	case IsDropoffBlock(binTask):
-		return protocol.ActionDropoff
-	case strings.EqualFold(binTask, seerrds.BinTaskForAction(protocol.ActionWait)):
-		return protocol.ActionWait
-	}
-	return ""
 }
 
 // recordBlockLeg writes one mission_events row per completed block — roughly
@@ -158,13 +204,17 @@ func blockAction(binTask string) string {
 // the block's row, the replay of a block counted before. A row that cannot be
 // written is new, so a lost telemetry row never stops a step from counting.
 //
+// The leg carries action, what the handler read the block as, so its readers
+// never read the block's name for it (LegBlocks).
+//
 // Best-effort: a failure here logs and returns. Losing a telemetry row must
 // never stop the bin from moving.
-func (e *Engine) recordBlockLeg(ev BlockCompletedEvent, order *orders.Order) bool {
+func (e *Engine) recordBlockLeg(ev BlockCompletedEvent, order *orders.Order, action string) bool {
 	leg := blockLeg{
 		BlockID:       ev.BlockID,
 		Location:      ev.Location,
 		BinTask:       ev.BinTask,
+		Action:        &action,
 		StartTime:     ev.StartTime,
 		TerminateTime: ev.TerminateTime,
 	}
@@ -712,53 +762,40 @@ func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64,
 	return bin, ok
 }
 
-// IsPickupBlock returns true when a block's BinTask designates a
-// pickup-shaped operation. The vendor's BinTask vocabulary is
-// roboshop-configurable (the storage-bin-location action key), so we
-// match on common patterns rather than an exact set.
+// legacyBlockAction is the action a block of binTask did, read from the name:
+// the rule every finished block was read by before Core recorded what it sent
+// (orders.block_actions), kept for the one population that predates the record
+// and changed by nothing since. It reads:
 //
-// EXPORTED FOR ONE READER, AND THE REASON IS THE VOCABULARY. soakstat's
-// bin-residence check reads the same BLOCK_FINISHED ledger rows this handler
-// writes and has to classify them the same way. A second copy of a
-// roboshop-CONFIGURABLE match would drift the moment a plant renames an action
-// key — and it would drift silently, because the instrument would go on
-// answering, just wrongly. One definition, two readers.
-func IsPickupBlock(binTask string) bool {
+//   - the blocks of an order whose block_actions is NULL (sent before v179, or
+//     unreadable), for that order's whole life: finishedAction;
+//   - a leg row written before legs carried their action: LegBlocks, for the
+//     stranded sweep, soakstat and the mission page.
+//
+// Both can only hold names Core sent before the record, JackLoad, JackUnload,
+// Wait and a load sequence's names, which this reads exactly as the handler
+// did. No live path reads a name for meaning. Pickup: one of the exact names,
+// or a name holding "load" or "pick" and none of "unload", "drop", "release";
+// dropoff: one of the exact names, or a name holding one of those three; wait:
+// Wait, ignoring case; "" otherwise. Pinned by TestLegacyBlockAction.
+func legacyBlockAction(binTask string) string {
 	if binTask == "" {
-		return false
+		return ""
 	}
 	t := strings.ToLower(binTask)
 	switch t {
 	case "load", "pickup", "pick", "jackload", "jack_load", "fork_load", "rollerload":
-		return true
+		return protocol.ActionPickup
+	case "unload", "dropoff", "drop", "jackunload", "jack_unload", "fork_unload", "rollerunload", "release":
+		return protocol.ActionDropoff
+	case "wait":
+		return protocol.ActionWait
 	}
-	// Substring fallback: any binTask containing "load" or "pick" but
-	// NOT "unload" / "drop" / "release" is treated as pickup-shaped.
 	if strings.Contains(t, "unload") || strings.Contains(t, "drop") || strings.Contains(t, "release") {
-		return false
+		return protocol.ActionDropoff
 	}
 	if strings.Contains(t, "load") || strings.Contains(t, "pick") {
-		return true
+		return protocol.ActionPickup
 	}
-	return false
-}
-
-// IsDropoffBlock returns true when a block's BinTask designates a
-// dropoff-shaped operation — the store/deliver dual of IsPickupBlock. Same
-// roboshop-configurable-vocabulary caveat, so it mixes exact-match with a
-// substring fallback on "unload"/"drop"/"release". Exported for the same one
-// reader, for the same reason.
-func IsDropoffBlock(binTask string) bool {
-	if binTask == "" {
-		return false
-	}
-	t := strings.ToLower(binTask)
-	switch t {
-	case "unload", "dropoff", "drop", "jackunload", "jack_unload", "fork_unload", "rollerunload", "release":
-		return true
-	}
-	if strings.Contains(t, "unload") || strings.Contains(t, "drop") || strings.Contains(t, "release") {
-		return true
-	}
-	return false
+	return ""
 }

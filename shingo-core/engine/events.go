@@ -329,15 +329,17 @@ type CMSTransactionEvent struct {
 }
 
 // BlockCompletedEvent fires when a single block within a vendor order
-// transitions to FINISHED while the order is still mid-flight. Phase 2
-// of the bin-transit-state project: pickup blocks (BinTask=Load /
-// retrieve / "pickup") drive the bin onto the synthetic _TRANSIT node
-// so the source slot is freed immediately. Other block types (waits,
-// drops) are observable but not currently acted on at this layer.
+// transitions to FINISHED while the order is still mid-flight. Its subscriber
+// (handleBlockCompleted) reads what the block was from the order's record of
+// the blocks Core sent (orders.block_actions), by BlockID: a pickup drives the
+// bin onto the synthetic _TRANSIT node so the source slot is freed immediately,
+// an intermediate dropoff records the bin at its slot.
 //
 // Location is the vendor's physical location string (e.g., the dot-name
-// of the pickup node). BinTask carries the vendor's binTask field
-// ("Load", "Unload", "Wait", or empty for navigation-only blocks).
+// of the pickup node). BinTask is the key the vendor reports the block ran
+// (JackLoad, JackUnload, Wait, a load sequence's names, or empty for a
+// navigation-only block); it is written to the block's leg row and read for
+// meaning only on an order sent before the record (legacyBlockAction).
 type BlockCompletedEvent struct {
 	eventbus.PayloadBase
 	OrderID       int64

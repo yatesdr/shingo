@@ -1428,3 +1428,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: `shingo-core/fleet/simulator/deck_sim.go` (the comment that named the parity test is deleted with the copy)
 - verified at: the commit that adds this row
+
+### FOLD — `TestIsPickupBlock`
+- test: `TestIsPickupBlock` · pkg `shingocore/engine` · run `-run '^TestIsPickupBlock$'` · `shingo-core/engine/wiring_block_completed_test.go:13` @ `82c487ff` · tags `none`
+- code: FOLD
+- assertion map: `IsPickupBlock` and `IsDropoffBlock` are folded into `legacyBlockAction`, the name rule kept for the orders sent before `orders.block_actions` and the leg rows written before legs carried their action. Its 21 cases are rows of `TestLegacyBlockAction` (`shingo-core/engine/wiring_block_completed_test.go:20`), each name with the action it reads as: the 10 pickups as `pickup`, the 8 non-pickups as the action the dual table gave them (`dropoff` for the unload, drop and release names, `wait` for Wait, `""` for Script and Navigate), the 3 substring cases as before.
+- mutation: the substring precedence swapped, so "load" is tested before "unload" (`shingo-core/engine/wiring_block_completed.go`, `legacyBlockAction`) · survivor red: `go test -count=1 -run '^TestLegacyBlockAction$' ./engine/` in `shingo-core` → `legacyBlockAction("unloadCustomA") = "pickup", want "dropoff" — unload substring beats load`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/cmd/soakstat/bin_residence_overlap_docker_test.go` (`mustBlock`'s comment), `shingo-core/engine/stranded_transit.go` (`pickupAt`'s comment)
+- verified at: the commit that adds this row
+
+### FOLD — `TestIsDropoffBlock`
+- test: `TestIsDropoffBlock` · pkg `shingocore/engine` · run `-run '^TestIsDropoffBlock$'` · `shingo-core/engine/wiring_block_completed_test.go:57` @ `82c487ff` · tags `none`
+- code: FOLD
+- assertion map: folded with `TestIsPickupBlock` into `TestLegacyBlockAction` (`shingo-core/engine/wiring_block_completed_test.go:20`): its 19 cases are rows there, each name with its one action, so the disjointness it checked (no name read as both) holds by construction: a name has one action.
+- mutation: as `TestIsPickupBlock`'s row · survivor red: `legacyBlockAction("customUnloadSpecial") = "pickup", want "dropoff" — substring match on 'unload'`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as `TestIsPickupBlock`'s row
+- verified at: the commit that adds this row

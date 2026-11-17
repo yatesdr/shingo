@@ -2416,23 +2416,20 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 		if err := rows.Scan(&orderID, &at, &blocksJSON, &cartsJSON); err != nil {
 			return []string{failedToRun("bin residence overlap (block ledger)", err)}
 		}
-		var legs []struct {
-			Location string `json:"location"`
-			BinTask  string `json:"binTask"`
-		}
-		if err := json.Unmarshal([]byte(blocksJSON), &legs); err != nil {
+		legs, err := engine.LegBlocks(blocksJSON)
+		if err != nil {
 			continue
 		}
 		for _, leg := range legs {
 			if leg.Location == "" || leg.Location == "_TRANSIT" {
 				continue
 			}
-			switch {
-			case engine.IsDropoffBlock(leg.BinTask):
+			switch leg.Action {
+			case protocol.ActionDropoff:
 				events[leg.Location] = append(events[leg.Location],
 					ev{at: at, arrival: true, orderID: orderID, binID: cartAt(cartsJSON, leg.Location, 2)})
 				ledgerDropoff[orderNode{orderID, leg.Location}] = true
-			case engine.IsPickupBlock(leg.BinTask):
+			case protocol.ActionPickup:
 				events[leg.Location] = append(events[leg.Location],
 					ev{at: at, arrival: false, orderID: orderID, binID: cartAt(cartsJSON, leg.Location, 1)})
 			}

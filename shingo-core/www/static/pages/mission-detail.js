@@ -148,13 +148,13 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
     return blk && blk.startTime > 0 && blk.terminateTime >= blk.startTime;
   }
 
-  function legLabel(blk) {
-    var task = (blk.binTask || '').toLowerCase();
-    var verb = 'handle';
-    if (task.indexOf('wait') >= 0) verb = 'wait';
-    else if (task.indexOf('unload') >= 0 || task.indexOf('drop') >= 0 || task.indexOf('release') >= 0) verb = 'unload';
-    else if (task.indexOf('load') >= 0 || task.indexOf('pick') >= 0) verb = 'load';
-    return verb + (blk.location ? ' @ ' + blk.location : '');
+  // A leg is labelled by what its block did, as the server answers it (the
+  // event's actions): Core's own record, never the block's binTask name.
+  var LEG_VERBS = { pickup: 'load', dropoff: 'unload', wait: 'wait' };
+
+  function legLabel(leg) {
+    var verb = LEG_VERBS[leg.action] || 'handle';
+    return verb + (leg.block.location ? ' @ ' + leg.block.location : '');
   }
 
   // A leg's duration is one of three answers and they render three ways:
@@ -202,7 +202,8 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
       }
       var blocks = [];
       try { blocks = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('mission leg parse', e); }
-      for (var b = 0; b < blocks.length; b++) legs.push({ ev: ev, block: blocks[b] });
+      var actions = ev.actions || [];
+      for (var b = 0; b < blocks.length; b++) legs.push({ ev: ev, block: blocks[b], action: actions[b] || '' });
     }
     classifyLegs(legs, events.some(function(e) { return e && e.new_state === STOPPED_STATE; }));
     for (var k = 0; k < legs.length; k++) {
@@ -408,7 +409,7 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
     if (leg.form === 'not run') took = '<span class="text-muted" title="the fleet stopped this mission before this leg">not run</span>';
     else if (leg.form === 'unknown') took = '<span class="text-muted" title="duration not reported by the fleet">unknown</span>';
     else took = '<span class="tnum">' + formatDuration(leg.tookMs) + '</span>';
-    return escapeHtml(legLabel(leg.block)) + ' · ' + took;
+    return escapeHtml(legLabel(leg)) + ' · ' + took;
   }
 
   // renderActions fills the closed disclosure: every recorded robot action,

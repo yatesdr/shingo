@@ -497,11 +497,11 @@ func (e *Engine) wireEventHandlers() {
 	// because it must observe the mouth row that handler releases. See there.
 
 	// ── Per-block completion → transit transition ───────────────────
-	// Phase 2 of the bin-transit-state project: pickup blocks (BinTask=Load
-	// or "pickup"-flavoured operations) drive the bin claimed at that step
-	// onto the synthetic _TRANSIT node. The poller diffs per-block state
-	// and fires EventBlockCompleted on the transition into FINISHED; this
-	// handler routes by block kind.
+	// Phase 2 of the bin-transit-state project: a pickup block drives the bin
+	// claimed at that step onto the synthetic _TRANSIT node. The poller diffs
+	// per-block state and fires EventBlockCompleted on the transition into
+	// FINISHED; this handler routes by what the order's record says the block
+	// was sent to do (finishedAction).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
 		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)

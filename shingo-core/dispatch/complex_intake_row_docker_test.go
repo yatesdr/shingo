@@ -54,6 +54,9 @@ func TestComplexIntake_TheRowAsWritten(t *testing.T) {
 		SiblingOrderUUID: "cir-sibling", KeyRoute: []string{"R1", "R2"}, KeyTask: "T1",
 		OriginID: origin, OriginClass: protocol.OriginClassAttached,
 		CreatedAt: got.CreatedAt, UpdatedAt: got.UpdatedAt,
+		// Born with an empty record of the blocks sent (block_actions DEFAULT
+		// '{}'): nothing has gone to the fleet yet.
+		BlockActions: map[string]string{},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the complex row\n got %+v\nwant %+v", got, want)
