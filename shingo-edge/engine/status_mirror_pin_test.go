@@ -11,12 +11,14 @@ package engine
 // (EventOrderStatusChanged, EventOrderDelivered, EventOrderCompleted,
 // EventOrderFailed) and, where it matters, Core's-cancel toast and the
 // position's reorder hold. Every pin passes at this tree, and each says which
-// change is expected to flip it. The RELEASE tap's own write is pinned beside
+// change is expected to flip it, or which change already flipped it and what it
+// pinned before. The RELEASE tap's own write is pinned beside
 // it in orders/status_mirror_pin_test.go; the subscribers of those four events
 // in status_event_census_test.go.
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"sort"
 	"testing"
@@ -225,24 +227,26 @@ func TestStatusMirrorPin_ACoreSideReleaseLeavesTheRowStaged(t *testing.T) {
 	r.expect("order.delivered", "status staged->delivered", "delivered")
 }
 
-// TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack: the operator confirms
-// a delivered order (the receipt is queued, not yet at Core) and the
+// TestStatusMirrorPin_TheReconcileLeavesAConfirmedRowConfirmed: the operator
+// confirms a delivered order (the receipt is queued, not yet at Core) and the
 // completion chain's event fires. A reconcile snapshot taken before Core has
-// the receipt says delivered, and the reconcile has no terminal guard: it
-// forces the confirmed row back to delivered, firing EventOrderDelivered a
-// second time. Core's next word that it is confirmed, by snapshot or by push,
-// confirms it again: EventOrderCompleted fires twice for one order, and Core's
-// confirm is not answered with a second receipt.
+// the receipt says delivered, and the reconcile leaves the confirmed row as it
+// ended: no status write, no history row, no event. Core's later word that it
+// is confirmed, by snapshot or by push, finds the row ended and changes nothing
+// either. EventOrderDelivered and EventOrderCompleted each fire once for the
+// order, its history is the two rows it made, and Core's confirm is not
+// answered with a second receipt.
 //
-// Expected to flip when the reconcile gets the live path's terminal guard
-// (ApplyCoreStatus never moves a terminal row): the delivered snapshot then
-// leaves the row confirmed, and each event fires once.
-func TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack(t *testing.T) {
+// Flipped from TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack when the
+// reconcile got the live path's terminal guard (ApplyCoreStatusSnapshot now
+// returns on a terminal row before any write, as ApplyCoreStatus does). Before
+// it, the delivered snapshot forced the row back to delivered and Core's
+// confirmed confirmed it again, so both events fired twice.
+func TestStatusMirrorPin_TheReconcileLeavesAConfirmedRowConfirmed(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name       string
-		confirm    func(r *mirrorRig)
-		wantDetail string
+		name    string
+		confirm func(r *mirrorRig)
 	}{
 		{
 			name: "a second snapshot says confirmed",
@@ -250,7 +254,6 @@ func TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack(t *testing.T) {
 				r.eng.HandleOrderStatusSnapshots([]protocol.OrderStatusSnapshot{
 					{OrderUUID: "confirm-leg", Found: true, Status: string(protocol.StatusConfirmed)}})
 			},
-			wantDetail: "startup reconciliation with core",
 		},
 		{
 			name: "Core's push says confirmed",
@@ -258,7 +261,6 @@ func TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack(t *testing.T) {
 				r.h.HandleOrderUpdate(wire, &protocol.OrderUpdate{OrderUUID: "confirm-leg",
 					Status: string(protocol.StatusConfirmed), Detail: "confirmed at Core"})
 			},
-			wantDetail: "confirmed at Core",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -274,22 +276,20 @@ func TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack(t *testing.T) {
 
 			r.eng.HandleOrderStatusSnapshots([]protocol.OrderStatusSnapshot{
 				{OrderUUID: "confirm-leg", Found: true, Status: string(protocol.StatusDelivered)}})
-			if st := r.row(id).Status; st != protocol.StatusDelivered {
-				t.Errorf("after the delivered snapshot the row reads %s; pinned: moved back to delivered", st)
+			if st := r.row(id).Status; st != protocol.StatusConfirmed {
+				t.Errorf("after the delivered snapshot the row reads %s, want confirmed: an ended row is not moved", st)
 			}
-			r.expect("the delivered snapshot", "status confirmed->delivered", "delivered")
+			r.expect("the delivered snapshot")
 
 			tc.confirm(r)
 			if st := r.row(id).Status; st != protocol.StatusConfirmed {
 				t.Errorf("after Core's confirmed the row reads %s, want confirmed", st)
 			}
-			r.expect("Core's confirmed", "status delivered->confirmed", "completed")
+			r.expect("Core's confirmed")
 
 			expectRows(t, "history", r.history(id), []string{
 				"in_transit->delivered: " + at.Format(time.RFC3339),
 				"delivered->confirmed: confirmed with count 1",
-				"confirmed->delivered: startup reconciliation with core",
-				"delivered->confirmed: " + tc.wantDetail,
 			})
 			receipts, err := r.db.ListUnsentOutboxByType([]string{protocol.TypeOrderReceipt})
 			testutil.MustNoErr(t, err, "read the receipts")
@@ -300,19 +300,23 @@ func TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack(t *testing.T) {
 	}
 }
 
-// TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionSetACancelledRowLive:
+// TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionLeaveACancelledRowCancelled:
 // the operator aborts an in_transit order; the row ends cancelled and the
 // order.cancel is queued, then lost before Core has it. The reconcile request
 // does not name a cancelled row, so Core, still holding the order live, sends
-// it back as Unlisted, and the projection writes in_transit over the cancelled
-// row: no status event, no history row, nothing an operator or a subscriber is
-// told.
+// it back as Unlisted, and the projection finds the row ended and updates
+// nothing: the row still reads cancelled, every column as the abort left it
+// (the projection's quantity and blank payload do not land), with no status
+// event and no history row beyond the abort's.
 //
-// Expected to flip when the projection's status write goes through the
-// applier's guard (a terminal row is not moved, or the move is a transition
-// with its history and events), or when the reconcile request names a cancelled
-// row.
-func TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionSetACancelledRowLive(t *testing.T) {
+// Flipped from TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionSetACancelledRowLive
+// when the projection upsert got the live path's terminal guard
+// (UpsertProjection's conflict arm updates no row that has ended, as
+// ApplyCoreStatus moves none). Before it, the projection wrote in_transit over
+// the cancelled row and nothing an operator or a subscriber was told. It holds
+// if the reconcile request comes to name a cancelled row too: the snapshot
+// path carries the same guard.
+func TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionLeaveACancelledRowCancelled(t *testing.T) {
 	t.Parallel()
 	r := newMirrorRig(t)
 	id := r.leg("lost-cancel-leg", protocol.StatusInTransit)
@@ -344,12 +348,18 @@ func TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionSetACancelledRowLive
 		t.Errorf("the reconcile request names the cancelled row (%v); pinned: it does not", named)
 	}
 	before := r.history(id)
+	ended := r.row(id)
 
 	r.eng.HandleUnlistedOrders([]protocol.OrderProjection{{OrderUUID: "lost-cancel-leg", OrderType: protocol.OrderTypeRetrieve,
 		Status: string(protocol.StatusInTransit), StationID: "edge.test", SourceNode: "SRC", DeliveryNode: "TEST-NODE"}})
 
-	if st := r.row(id).Status; st != protocol.StatusInTransit {
-		t.Errorf("after the Unlisted projection the row reads %s; pinned: in_transit, live again", st)
+	after := r.row(id)
+	if after.Status != protocol.StatusCancelled {
+		t.Errorf("after the Unlisted projection the row reads %s, want cancelled: an ended row is not moved", after.Status)
+	}
+	if !reflect.DeepEqual(after, ended) {
+		t.Errorf("the Unlisted projection changed the cancelled row: quantity %d, payload %q, updated %v; want %d, %q, %v",
+			after.Quantity, after.PayloadCode, after.UpdatedAt, ended.Quantity, ended.PayloadCode, ended.UpdatedAt)
 	}
 	r.expect("the Unlisted projection")
 	expectRows(t, "history after the projection", r.history(id), before)

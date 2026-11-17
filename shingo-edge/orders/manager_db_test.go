@@ -894,11 +894,11 @@ func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 // The Core→Edge status mapping (orders.ApplyCoreStatus).
 //
-// ApplyCoreStatus is the one function used by both the live-push path
-// (HandleOrderUpdate) and the boot-reconcile path (ApplyCoreStatusSnapshot).
-// It maps Core's pushed status vocabulary fully onto Edge — closing the gap
-// where Edge previously discarded sourcing/dispatched/faulted and only
-// branched on queued. These tests pin each arm.
+// ApplyCoreStatus is the live-push path's mapping (HandleOrderUpdate); the
+// reconcile snapshot is a second function, ApplyCoreStatusSnapshot, that shares
+// its terminal guard. It maps Core's pushed status vocabulary fully onto Edge —
+// closing the gap where Edge previously discarded sourcing/dispatched/faulted
+// and only branched on queued. These tests pin each arm.
 // ═══════════════════════════════════════════════════════════════════════
 
 // TestApplyCoreStatus_Sourcing_TransitionsRow asserts the central case: a

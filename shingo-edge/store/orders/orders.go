@@ -395,7 +395,8 @@ type ProjectionRow struct {
 const AuthoredByEdge = "edge"
 
 // UpsertProjection writes a Core-authored order row, creating it or updating it
-// in place. Returns whether the row was newly created.
+// in place, unless the stored row has already ended (below). Returns whether
+// the row was newly created.
 //
 // IDEMPOTENT BY UUID, which is the property the whole projection depends on.
 // Core re-sends a projection freely — once when it authors the order, and again
@@ -458,6 +459,16 @@ const AuthoredByEdge = "edge"
 // and Core's view of the order does not contain them. Overwriting them with zero
 // values on every re-projection would erase what the Edge learned by doing the
 // work.
+//
+// A ROW THAT HAS ALREADY ENDED IS NOT UPDATED AT ALL: the conflict arm's WHERE
+// leaves a stored terminal status, and every other column, as it ended. The
+// live status path never moves a terminal row (orders.ApplyCoreStatus), and a
+// repair path must not have weaker guards than the path it repairs. Without it
+// the statement wrote status=excluded.status over any row, with no history row
+// and no event: an operator's abort whose order.cancel was lost before Core had
+// it came back through the reconcile's Unlisted list, and the projection set
+// the cancelled row live again. A new row (the INSERT arm) is unchanged, and
+// created still reads whether the row existed before this call.
 func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 	// A terminal projection lands with no queue text, as UpdateStatus clears it:
 	// an ended order is not waiting for anything.
@@ -487,7 +498,8 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 			queue_code=excluded.queue_code,
 			origin_id=COALESCE(NULLIF(excluded.origin_id, ''), orders.origin_id),
 			origin_class=COALESCE(NULLIF(excluded.origin_class, ''), orders.origin_class),
-			updated_at=datetime('now')`,
+			updated_at=datetime('now')
+		WHERE orders.status NOT IN (`+protocol.TerminalStatusSQLList()+`)`,
 		r.UUID, r.OrderType, r.Status, r.ProcessNodeID, r.RetrieveEmpty, r.Quantity,
 		r.SourceNode, r.DeliveryNode, r.PayloadCode, r.PayloadDesc, r.QueueReason, r.QueueCode,
 		r.OriginID, r.OriginClass)

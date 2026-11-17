@@ -84,11 +84,12 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 	return s.applyTransition(order, newStatus, detail, true)
 }
 
-// ApplyCoreStatus maps a status Core pushes onto the Edge order row. It is the
-// one function shared by the live-push path (HandleOrderUpdate →
-// HandleCoreStatusPush) and the boot-reconcile path (ApplyCoreStatusSnapshot),
-// so live and boot can never diverge. It replaces the older partial mapping
-// that branched on `queued` alone and discarded every other status.
+// ApplyCoreStatus maps a status Core pushes onto the Edge order row, on the
+// live-push path (HandleOrderUpdate → HandleCoreStatusPush). The reconcile
+// snapshot is a second function, ApplyCoreStatusSnapshot, with its own arms;
+// what the two share is this one's terminal guard: neither moves a row that has
+// already ended. It replaces the older partial mapping that branched on
+// `queued` alone and discarded every other status.
 //
 // The operator is shown the truth of whichever machine owns the order at that
 // moment: the pre-fleet status (queued) reflects Core's planning, fleet
@@ -281,6 +282,18 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 	order, err := s.db.GetOrderByUUID(snapshot.OrderUUID)
 	if err != nil {
 		return err
+	}
+	// A row that has ended is left exactly as it ended: no status write, and
+	// none of the side writes below either (the fault clock, the queue reason).
+	// This is the live path's guard (ApplyCoreStatus never moves a terminal
+	// row), and a repair path must not have weaker guards than the path it
+	// repairs. Without it every arm below forced its status over an ended row: a
+	// snapshot taken before Core had the operator's receipt moved a confirmed row
+	// back to delivered, so EventOrderDelivered and then EventOrderCompleted fired
+	// a second time for one order, and a snapshot still saying in_transit set a
+	// cancelled row live again.
+	if IsTerminal(order.Status) {
+		return nil
 	}
 	snapStatus := protocol.Status(snapshot.Status)
 	// An old Core's `sourcing` is `queued` here, with the cause the snapshot

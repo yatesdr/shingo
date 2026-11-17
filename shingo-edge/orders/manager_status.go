@@ -304,16 +304,17 @@ func (m *Manager) mirrorTransition(orderID int64, target protocol.Status, detail
 	return m.lifecycle.ForceTransition(orderID, target, jump)
 }
 
-// ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative status.
+// ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative
+// status. A local row that has already ended is left as it ended.
 func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ApplyCoreStatusSnapshot(snapshot)
 }
 
-// ApplyCoreStatus is the Core→Edge status mapping — the one function used by
-// both the live-push path (HandleCoreStatusPush, driven by HandleOrderUpdate)
-// and the boot-reconcile path (ApplyCoreStatusSnapshot). See
-// LifecycleService.ApplyCoreStatus for the arm-by-arm mapping.
+// ApplyCoreStatus is the Core→Edge status mapping on the live-push path
+// (HandleCoreStatusPush, driven by HandleOrderUpdate). The reconcile snapshot
+// is a second function (ApplyCoreStatusSnapshot) that shares its terminal
+// guard. See LifecycleService.ApplyCoreStatus for the arm-by-arm mapping.
 func (m *Manager) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ApplyCoreStatus(order, coreStatus, detail)
