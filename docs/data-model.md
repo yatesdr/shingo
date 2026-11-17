@@ -468,7 +468,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`lane_robot_confidence_daily`](#core-lane_robot_confidence_daily) | 16 | `day`, `area_name`, `lane`, `version_id`, `vehicle_id` | [`scene_lane_versions`](#core-scene_lane_versions) |
 | [`lineside_buckets`](#core-lineside_buckets) | 8 | `id` |  |
 | [`lineside_drain_ledger`](#core-lineside_drain_ledger) | 6 | `id` |  |
-| [`load_sequences`](#core-load_sequences) | 3 | `name` |  |
+| [`load_sequences`](#core-load_sequences) | 4 | `name` |  |
 | [`mission_events`](#core-mission_events) | 15 | `id` |  |
 | [`mission_telemetry`](#core-mission_telemetry) | 21 | `id` |  |
 | [`node_bin_types`](#core-node_bin_types) | 3 | `node_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
@@ -480,7 +480,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`order_bins`](#core-order_bins) | 6 | `id` | [`bins`](#core-bins), [`orders`](#core-orders) |
 | [`order_history`](#core-order_history) | 8 | `id` | [`orders`](#core-orders) |
 | [`order_intake_refusals`](#core-order_intake_refusals) | 5 | `edge_uuid` |  |
-| [`orders`](#core-orders) | 45 | `id` | `orders` |
+| [`orders`](#core-orders) | 46 | `id` | `orders` |
 | [`outbox`](#core-outbox) | 8 | `id` |  |
 | [`parts`](#core-parts) | 6 | `id` |  |
 | [`payload_bin_types`](#core-payload_bin_types) | 2 | `payload_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`payloads`](#core-payloads) |
@@ -1212,6 +1212,9 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `name` | `text` | yes |  | PK |
 | `task_names` | `text` | yes | `'[]'` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+| `lift_at` | `integer` | yes |  |  |
+
+- Check `((lift_at >= 0) AND (lift_at < GREATEST(json_array_length((task_names)::json), 1)))`
 
 #### Core: `mission_events`
 
@@ -1418,6 +1421,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `named_bin_id` | `bigint` |  |  |  |
 | `want` | `text` | yes | `''` |  |
 | `steps_done` | `integer` | yes | `0` |  |
+| `block_actions` | `jsonb` |  | `'{}'::jsonb` |  |
 
 - Unique (edge_uuid) where `edge_uuid <> ''`
 

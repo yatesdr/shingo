@@ -49,8 +49,16 @@ type Order struct {
 	// plan's next open step (StepsDoneAfter), and the route strip reads where
 	// the robot is from it (RouteStops). An order with no stored plan counts
 	// its two implied steps, the lift and the drop.
-	StepsDone   int    `json:"steps_done"`
-	QueueReason string `json:"queue_reason,omitempty"`
+	StepsDone int `json:"steps_done"`
+	// BlockActions is what each block Core sent the fleet for this order is,
+	// by block id: protocol.ActionPickup, ActionDropoff, ActionWait, or "" for
+	// a block of no step's kind (the turns of an advanced load sequence around
+	// its lift). Core's own record, written as the blocks are sent (the create's
+	// vendor write and orders.ClaimAppend) and read when one finishes; never on
+	// the wire. nil is an order sent before the record existed (the column is
+	// NULL): its blocks are read by their binTask names for its whole life.
+	BlockActions map[string]string `json:"-"`
+	QueueReason  string            `json:"queue_reason,omitempty"`
 	// QueueCode is the structured category behind QueueReason — one of the
 	// protocol.QueueCode values (waiting_for_material, waiting_for_slot, …).
 	// The sentence is generated FROM this code by the dispatch formatter, so the

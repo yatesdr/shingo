@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -4577,7 +4578,101 @@ func migrationList() []migration {
 		{178, "bin_loaders.edge_station_uid - the station uid of the Edge that works the loader; blank on every existing loader, and blank means no Edge picked",
 			v178LoaderEdgeStationUID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "edge_station_uid") }},
+		{179, "orders.block_actions - what each block Core sent was, by block id, NULL on every order sent before it; load_sequences.lift_at - which of a sequence's names lifts",
+			v179BlockRecord,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "block_actions") && schema.ColumnExists(q, "load_sequences", "lift_at")
+			}},
 	}
+}
+
+// v179BlockRecord is where Core keeps what each block it sends is, so a block
+// that finishes is read from Core's own record and never from its binTask name.
+//
+//   - orders.block_actions: block id -> protocol action (pickup, dropoff, wait,
+//     or "" for a block of no step's kind), written by the create and by each
+//     append (dispatch's handover and orders.ClaimAppend). Added NULL, then
+//     defaulted to '{}', so every order that exists at the deploy stays NULL: its
+//     blocks were sent before the record, and the block subscriber reads them by
+//     the old name rule for the order's whole life (engine.legacyBlockAction).
+//   - load_sequences.lift_at: the 0-based index of the name in task_names that
+//     lifts the cart. Filled here by v179LiftAt, a frozen copy of the rule the
+//     block subscriber read a name by; this is the last time a name is read for
+//     what it does. The CHECK keeps it inside task_names.
+//
+// ROLLBACK is the previous binary: it reads neither column. Pin:
+// TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad.
+func v179BlockRecord(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS block_actions JSONB`,
+		`ALTER TABLE orders ALTER COLUMN block_actions SET DEFAULT '{}'::jsonb`,
+		`ALTER TABLE load_sequences ADD COLUMN IF NOT EXISTS lift_at INTEGER`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v179 block record: %w", err)
+		}
+	}
+	rows, err := tx.Query(`SELECT name, task_names FROM load_sequences WHERE lift_at IS NULL ORDER BY name`)
+	if err != nil {
+		return fmt.Errorf("v179 read load sequences: %w", err)
+	}
+	type seq struct {
+		name   string
+		liftAt int
+	}
+	var fill []seq
+	for rows.Next() {
+		var name, raw string
+		if err := rows.Scan(&name, &raw); err != nil {
+			rows.Close()
+			return fmt.Errorf("v179 scan load sequence: %w", err)
+		}
+		var names []string
+		if err := json.Unmarshal([]byte(raw), &names); err != nil {
+			rows.Close()
+			return fmt.Errorf("v179: load sequence %q has task_names %q, which is not a JSON list of names: "+
+				"correct or delete the row (UPDATE load_sequences SET task_names = '[...]' WHERE name = '%s'); "+
+				"no payload naming it loads by it today: %w", name, raw, name, err)
+		}
+		fill = append(fill, seq{name: name, liftAt: v179LiftAt(names)})
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("v179 read load sequences: %w", err)
+	}
+	for _, s := range fill {
+		if _, err := tx.Exec(`UPDATE load_sequences SET lift_at = $2 WHERE name = $1`, s.name, s.liftAt); err != nil {
+			return fmt.Errorf("v179 fill lift_at of %q: %w", s.name, err)
+		}
+	}
+	for _, s := range []string{
+		`ALTER TABLE load_sequences ALTER COLUMN lift_at SET NOT NULL`,
+		`ALTER TABLE load_sequences DROP CONSTRAINT IF EXISTS load_sequences_lift_at_in_task_names`,
+		`ALTER TABLE load_sequences ADD CONSTRAINT load_sequences_lift_at_in_task_names
+			CHECK (lift_at >= 0 AND lift_at < GREATEST(json_array_length(task_names::json), 1))`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v179 load_sequences.lift_at: %w", err)
+		}
+	}
+	return nil
+}
+
+// v179LiftAt is the index of the name that lifts in a load sequence, by the
+// rule the block subscriber read every finished block's binTask by before
+// orders.block_actions existed, copied here and frozen: the first name holding
+// "load" or "pick" and none of "unload", "drop" or "release", ignoring case;
+// else the last name. An empty sequence expands to no block, and reads 0.
+func v179LiftAt(names []string) int {
+	for i, n := range names {
+		t := strings.ToLower(n)
+		if strings.Contains(t, "unload") || strings.Contains(t, "drop") || strings.Contains(t, "release") {
+			continue
+		}
+		if strings.Contains(t, "load") || strings.Contains(t, "pick") {
+			return i
+		}
+	}
+	return max(len(names)-1, 0)
 }
 
 // v178LoaderEdgeStationUID adds bin_loaders.edge_station_uid: the Edge that

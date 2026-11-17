@@ -49,7 +49,7 @@ type History = domain.OrderHistory
 // the same statement over idx_order_bins_order: every reader of an order has
 // its carts for no further statement. It names the outer row as orders.id, so
 // a statement using SelectCols reads FROM orders unaliased (all of them do).
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, ` + CartsColSQL
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, block_actions, ` + CartsColSQL
 
 // CartsColSQL is the order's carts as one JSON text column: an array of
 // [bin_id, pick_step, drop_step], in plan order (a carried-over row, with no
@@ -107,6 +107,8 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var planJSON string
 	// want is the stated height in its one spelling (protocol.Height, v166).
 	var want string
+	// block_actions is JSONB (v179); NULL is an order sent before the record.
+	var blockActions sql.NullString
 	// carts is CartsColSQL's text, the order's order_bins rows.
 	var carts string
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
@@ -116,7 +118,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &carts)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &blockActions, &carts)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +126,16 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	// know which carts the order carries must not go on as if it carried none.
 	if err := scanCarts(&o, carts); err != nil {
 		return nil, err
+	}
+	if blockActions.Valid {
+		// Only Core writes the column, from the blocks it sent, so an
+		// unreadable value is a hand edit. It reads as NULL: the block
+		// subscriber then reads this order's blocks by their names, as it
+		// read every block before the record.
+		if err := json.Unmarshal([]byte(blockActions.String), &o.BlockActions); err != nil || o.BlockActions == nil {
+			log.Printf("orders: order %d has unreadable block_actions %q: %v — read by block names", o.ID, blockActions.String, err)
+			o.BlockActions = nil
+		}
 	}
 	if err := o.Want.UnmarshalText([]byte(want)); err != nil {
 		// Only Core writes the column, from a want the wire decoded, so this is

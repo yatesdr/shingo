@@ -753,7 +753,9 @@ ALTER SEQUENCE public.lineside_drain_ledger_id_seq OWNED BY public.lineside_drai
 CREATE TABLE public.load_sequences (
     name text NOT NULL,
     task_names text DEFAULT '[]'::text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lift_at integer NOT NULL,
+    CONSTRAINT load_sequences_lift_at_in_task_names CHECK (((lift_at >= 0) AND (lift_at < GREATEST(json_array_length((task_names)::json), 1))))
 );
 
 CREATE TABLE public.mission_events (
@@ -987,7 +989,8 @@ CREATE TABLE public.orders (
     recovers_order_id bigint,
     named_bin_id bigint,
     want text DEFAULT ''::text NOT NULL,
-    steps_done integer DEFAULT 0 NOT NULL
+    steps_done integer DEFAULT 0 NOT NULL,
+    block_actions jsonb DEFAULT '{}'::jsonb
 );
 
 CREATE SEQUENCE public.orders_id_seq

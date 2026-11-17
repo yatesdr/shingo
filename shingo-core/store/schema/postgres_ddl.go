@@ -86,7 +86,9 @@ CREATE TABLE IF NOT EXISTS payload_containment (
 -- name; task_names is a JSON array of binTask names in execution order. Editable
 -- data (a plant names its RDS-side binTask keys differently); seeded by v50 with
 -- "Child cart interlock". A payload selects a sequence by name via
--- payloads.advanced_load_sequence.
+-- payloads.advanced_load_sequence. lift_at, the index of the name that lifts,
+-- is added by migration 179 and not declared here: v50's seed inserts the row
+-- without it, after this DDL, on a fresh database.
 CREATE TABLE IF NOT EXISTS load_sequences (
     name        TEXT PRIMARY KEY,
     task_names  TEXT NOT NULL DEFAULT '[]',
@@ -277,7 +279,13 @@ CREATE TABLE IF NOT EXISTS orders (
     -- the block subscriber advances it as each block finishes the plan's next
     -- open step (an order with no stored plan counts its two implied steps).
     -- The route strip reads where the robot is from it. Added by migration 167.
-    steps_done INTEGER NOT NULL DEFAULT 0
+    steps_done INTEGER NOT NULL DEFAULT 0,
+    -- What each block Core sent the fleet for this order is, by block id: a
+    -- plan action (pickup, dropoff, wait) or '' for a block of no step's kind.
+    -- Written by the create and by each append; the block subscriber reads a
+    -- finished block's meaning from it. NULL on an order sent before migration
+    -- 179, which added it, and read by the old name rule for its whole life.
+    block_actions JSONB DEFAULT '{}'::jsonb
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every
