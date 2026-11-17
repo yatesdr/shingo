@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/fleet"
@@ -94,7 +95,7 @@ func TestDriverStagedOrderWaitsForRelease(t *testing.T) {
 
 	res, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: "staged",
-		Blocks:     []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+		Blocks:     []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad", Action: protocol.ActionPickup}},
 		Complete:   false,
 	})
 	if err != nil {
@@ -111,7 +112,7 @@ func TestDriverStagedOrderWaitsForRelease(t *testing.T) {
 	}
 
 	// Release the final leg.
-	if err := s.ReleaseOrder(vid, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload"}}, true); err != nil {
+	if err := s.ReleaseOrder(vid, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload", Action: protocol.ActionDropoff}}, true); err != nil {
 		t.Fatalf("ReleaseOrder: %v", err)
 	}
 	runTicks(d, m, 20)
@@ -141,7 +142,7 @@ func TestReleaseOrderIdempotentForSettledOrder(t *testing.T) {
 	// Settled (terminal) order still in the map → no-op. Create, cancel (→ STOPPED),
 	// then release.
 	res, err := s.CreateOrder(fleet.CreateOrderRequest{
-		ExternalID: "settled", Blocks: []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+		ExternalID: "settled", Blocks: []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad", Action: protocol.ActionPickup}},
 		Complete: false,
 	})
 	if err != nil {
@@ -150,7 +151,7 @@ func TestReleaseOrderIdempotentForSettledOrder(t *testing.T) {
 	if err := s.CancelOrder(res.VendorOrderID); err != nil {
 		t.Fatalf("CancelOrder: %v", err)
 	}
-	if err := s.ReleaseOrder(res.VendorOrderID, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload"}}, true); err != nil {
+	if err := s.ReleaseOrder(res.VendorOrderID, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload", Action: protocol.ActionDropoff}}, true); err != nil {
 		t.Errorf("release of a settled (STOPPED) order should be a no-op, got %v", err)
 	}
 }
@@ -294,7 +295,7 @@ func TestDriverDeferredWaitingDoesNotLatchStaged(t *testing.T) {
 	// drains it and dwells at the wait point, where it drives WAITING.
 	created, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: "waiter",
-		Blocks:     []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}},
+		Blocks:     []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad", Action: protocol.ActionPickup}},
 		Complete:   false,
 	})
 	if err != nil {

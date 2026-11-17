@@ -45,7 +45,7 @@ func driveLegRunToFinish(t *testing.T, db *store.DB, sim *simulator.SimulatorBac
 	sim.DriveState(vendorID, "RUNNING")
 	if fresh, err := db.GetOrder(childID); err == nil && fresh != nil && dispatch.IsGateStaged(fresh) {
 		for _, b := range sim.BlocksForOrder(vendorID) {
-			if IsPickupBlock(b.BinTask) {
+			if b.Action == protocol.ActionPickup {
 				sim.CompleteBlock(vendorID, b.BlockID, b.Location, b.BinTask, 0, 0)
 				break
 			}

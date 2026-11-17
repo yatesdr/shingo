@@ -16,6 +16,8 @@ type BlockView struct {
 	BlockID  string
 	Location string
 	BinTask  string
+	// Action is the block's fleet.OrderBlock.Action as Core sent it.
+	Action string
 }
 
 // GetOrder returns a snapshot of the simulated order by vendor order ID.
@@ -72,25 +74,9 @@ func (s *SimulatorBackend) BlocksForOrder(vendorOrderID string) []BlockView {
 	}
 	blocks := make([]BlockView, len(order.blocks))
 	for i, b := range order.blocks {
-		blocks[i] = BlockView{BlockID: b.blockID, Location: b.location, BinTask: b.binTask}
+		blocks[i] = BlockView{BlockID: b.blockID, Location: b.location, BinTask: b.binTask, Action: b.action}
 	}
 	return blocks
-}
-
-// FindOrdersWithBinTask returns all orders containing a block with the given bin task.
-func (s *SimulatorBackend) FindOrdersWithBinTask(binTask string) []*OrderView {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var results []*OrderView
-	for _, order := range s.orders {
-		for _, b := range order.blocks {
-			if b.binTask == binTask {
-				results = append(results, orderToView(order))
-				break
-			}
-		}
-	}
-	return results
 }
 
 // VendorOrderIDs returns all vendor order IDs in creation order.
@@ -111,7 +97,7 @@ func orderToView(o *simulatedOrder) *OrderView {
 		Vehicle:       o.vehicle,
 	}
 	for _, b := range o.blocks {
-		v.Blocks = append(v.Blocks, BlockView{BlockID: b.blockID, Location: b.location, BinTask: b.binTask})
+		v.Blocks = append(v.Blocks, BlockView{BlockID: b.blockID, Location: b.location, BinTask: b.binTask, Action: b.action})
 	}
 	return v
 }

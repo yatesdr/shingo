@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/fleet"
 )
@@ -22,7 +23,7 @@ func TestReleaseOrderNeverIssuedIsAnError(t *testing.T) {
 	s := New()
 
 	err := s.ReleaseOrder("sim-does-not-exist", []fleet.OrderBlock{
-		{BlockID: "b1", Location: "A", BinTask: "JackUnload"},
+		{BlockID: "b1", Location: "A", BinTask: "JackUnload", Action: protocol.ActionDropoff},
 	}, true)
 	if err == nil {
 		t.Fatal("release of a never-issued mission must fail, not report success")
@@ -52,7 +53,7 @@ func TestReleaseOrderSettledAndEvictedStaysIdempotent(t *testing.T) {
 	}
 
 	if err := s.ReleaseOrder(id, []fleet.OrderBlock{
-		{BlockID: "late", Location: "B", BinTask: "JackUnload"},
+		{BlockID: "late", Location: "B", BinTask: "JackUnload", Action: protocol.ActionDropoff},
 	}, true); err != nil {
 		t.Fatalf("release of a settled-and-evicted order must stay idempotent: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestReleaseOrderTerminalButUnevictedStaysIdempotent(t *testing.T) {
 	s.DriveState(id, "FINISHED")
 
 	if err := s.ReleaseOrder(id, []fleet.OrderBlock{
-		{BlockID: "late", Location: "B", BinTask: "JackUnload"},
+		{BlockID: "late", Location: "B", BinTask: "JackUnload", Action: protocol.ActionDropoff},
 	}, true); err != nil {
 		t.Fatalf("release of a terminal order must stay idempotent: %v", err)
 	}
@@ -80,13 +81,13 @@ func TestReleaseOrderRefusesAfterTheBackendForgets(t *testing.T) {
 	s := New()
 	res, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: "staged",
-		Blocks:     []fleet.OrderBlock{{BlockID: "head", Location: "A", BinTask: "JackLoad"}},
+		Blocks:     []fleet.OrderBlock{{BlockID: "head", Location: "A", BinTask: "JackLoad", Action: protocol.ActionPickup}},
 		Complete:   false,
 	})
 	if err != nil {
 		t.Fatalf("CreateOrder: %v", err)
 	}
-	tail := []fleet.OrderBlock{{BlockID: "tail", Location: "B", BinTask: "JackUnload"}}
+	tail := []fleet.OrderBlock{{BlockID: "tail", Location: "B", BinTask: "JackUnload", Action: protocol.ActionDropoff}}
 	if err := s.ReleaseOrder(res.VendorOrderID, tail, true); err != nil {
 		t.Fatalf("release against a live mission must succeed: %v", err)
 	}

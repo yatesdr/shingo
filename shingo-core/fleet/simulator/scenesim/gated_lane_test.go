@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -26,8 +27,8 @@ func gatedStoreReq(id, source, gate string) fleet.CreateOrderRequest {
 	return fleet.CreateOrderRequest{
 		OrderID: id,
 		Blocks: []fleet.OrderBlock{
-			{BlockID: id + "-b1", Location: source, BinTask: "JackLoad"},
-			{BlockID: id + "-b2", Location: gate, BinTask: "Wait"},
+			{BlockID: id + "-b1", Location: source, BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: id + "-b2", Location: gate, BinTask: "Wait", Action: protocol.ActionWait},
 		},
 		Complete: false,
 	}
@@ -36,7 +37,7 @@ func gatedStoreReq(id, source, gate string) fleet.CreateOrderRequest {
 // gatedTail is what the valve APPENDS to seal the order: [dropoff@slot]. Block
 // numbering continues from the create (b3), as stepsToBlocks' blockOffset does.
 func gatedTail(id, slot string) []fleet.OrderBlock {
-	return []fleet.OrderBlock{{BlockID: id + "-b3", Location: slot, BinTask: "JackUnload"}}
+	return []fleet.OrderBlock{{BlockID: id + "-b3", Location: slot, BinTask: "JackUnload", Action: protocol.ActionDropoff}}
 }
 
 // newGatedSim builds the standard lane scene under production physics (mode mouth

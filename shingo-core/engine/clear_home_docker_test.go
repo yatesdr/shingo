@@ -177,7 +177,7 @@ func (r *clearRig) liftAt(t *testing.T, id int64, location string) {
 	}
 	r.sim.DriveState(o.VendorOrderID, "RUNNING")
 	for _, b := range r.sim.BlocksForOrder(o.VendorOrderID) {
-		if IsPickupBlock(b.BinTask) {
+		if b.Action == protocol.ActionPickup {
 			at := b.Location
 			if location != "" {
 				at = location
@@ -455,7 +455,7 @@ func TestClearHome_FullBufferNoPull_BirthsTheTrade(t *testing.T) {
 				c.o.ID, c.o.StepsJSON, c.from, c.to, c.stampBin)
 		}
 		sent := r.sim.GetOrder(c.o.VendorOrderID)
-		if sent == nil || sent.Complete || len(sent.Blocks) != 1 || sent.Blocks[0].Location != c.from || !IsPickupBlock(sent.Blocks[0].BinTask) {
+		if sent == nil || sent.Complete || len(sent.Blocks) != 1 || sent.Blocks[0].Location != c.from || sent.Blocks[0].Action != protocol.ActionPickup {
 			t.Errorf("order %d's create = %+v, want its lift at %s alone, unsealed", c.o.ID, sent, c.from)
 		}
 	}

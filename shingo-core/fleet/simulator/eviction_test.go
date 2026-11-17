@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/fleet"
 )
@@ -13,8 +14,8 @@ func mkTransport(t *testing.T, s *SimulatorBackend, ext string) string {
 	res, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: ext,
 		Blocks: []fleet.OrderBlock{
-			{BlockID: ext + "_load", Location: "A", BinTask: "JackLoad"},
-			{BlockID: ext + "_unload", Location: "B", BinTask: "JackUnload"},
+			{BlockID: ext + "_load", Location: "A", BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: ext + "_unload", Location: "B", BinTask: "JackUnload", Action: protocol.ActionDropoff},
 		},
 		Complete: true,
 	})

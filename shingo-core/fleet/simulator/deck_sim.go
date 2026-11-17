@@ -5,9 +5,9 @@ package simulator
 import (
 	"fmt"
 	"log"
+	"shingo/protocol"
 	"shingo/protocol/lockcheck"
 	"shingocore/internal/lockorder"
-	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 )
@@ -93,58 +93,24 @@ func (rs *robotState) faulted(id string) bool {
 }
 
 // blockCompleted applies what a finished block physically did to the robot
-// that ran it: the deck follows the binTask and the robot is now AT the
-// block's location. A Wait or a bare move changes only the position.
-func (rs *robotState) blockCompleted(robotID, location, binTask string) {
+// that ran it: the deck follows the block's action (fleet.OrderBlock.Action,
+// what Core sent the block to do, never its binTask) and the robot is now AT
+// the block's location. A wait, a turn or a bare move changes only the position.
+func (rs *robotState) blockCompleted(robotID, location, action string) {
 	if robotID == "" {
 		return
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	switch {
-	case deckLoadsOn(binTask):
+	switch action {
+	case protocol.ActionPickup:
 		rs.loaded[robotID] = true
-	case deckEmptiesOn(binTask):
+	case protocol.ActionDropoff:
 		rs.loaded[robotID] = false
 	}
 	if location != "" {
 		rs.at[robotID] = location
 	}
-}
-
-// deckLoadsOn / deckEmptiesOn classify a binTask as lifting or lowering a bin.
-//
-// A COPY OF engine.IsPickupBlock / engine.IsDropoffBlock, and it has to be:
-// engine's tests import this package, so this package importing engine is an
-// import cycle. The vendor vocabulary is roboshop-configurable, which is why
-// the engine matches on patterns and not an exact set — and why a copy that
-// drifted would drift silently. deck_classifier_parity_test.go holds the two
-// together over the vocabulary both are written for; change one, change both.
-func deckLoadsOn(binTask string) bool {
-	if binTask == "" {
-		return false
-	}
-	t := strings.ToLower(binTask)
-	switch t {
-	case "load", "pickup", "pick", "jackload", "jack_load", "fork_load", "rollerload":
-		return true
-	}
-	if strings.Contains(t, "unload") || strings.Contains(t, "drop") || strings.Contains(t, "release") {
-		return false
-	}
-	return strings.Contains(t, "load") || strings.Contains(t, "pick")
-}
-
-func deckEmptiesOn(binTask string) bool {
-	if binTask == "" {
-		return false
-	}
-	t := strings.ToLower(binTask)
-	switch t {
-	case "unload", "dropoff", "drop", "jackunload", "jack_unload", "fork_unload", "rollerunload", "release":
-		return true
-	}
-	return strings.Contains(t, "unload") || strings.Contains(t, "drop") || strings.Contains(t, "release")
 }
 
 // ── Injection, reached from the dev HTTP routes ──────────────────────────────

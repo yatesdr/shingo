@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/domain"
 	"shingocore/fleet"
@@ -49,12 +50,12 @@ func TestDriverReportsTheLastBlockBeforeTheOrderFinishes(t *testing.T) {
 	t.Run("an order released past a bare wait", func(t *testing.T) {
 		d, s, m, em := newTestDriver(t, cfg, 3)
 		res, err := s.CreateOrder(fleet.CreateOrderRequest{ExternalID: "staged",
-			Blocks: []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad"}}})
+			Blocks: []fleet.OrderBlock{{BlockID: "b0", Location: "P", BinTask: "JackLoad", Action: protocol.ActionPickup}}})
 		if err != nil {
 			t.Fatalf("CreateOrder: %v", err)
 		}
 		runTicks(d, m, 20)
-		if err := s.ReleaseOrder(res.VendorOrderID, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload"}}, true); err != nil {
+		if err := s.ReleaseOrder(res.VendorOrderID, []fleet.OrderBlock{{BlockID: "b1", Location: "Q", BinTask: "JackUnload", Action: protocol.ActionDropoff}}, true); err != nil {
 			t.Fatalf("ReleaseOrder: %v", err)
 		}
 		runTicks(d, m, 20)

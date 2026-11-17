@@ -1419,3 +1419,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile); the test ran Node over a JS file and covered no Go statement of its own, and `runSceneJS` stays, read by the other scene tests
 - citations rewritten: none (nothing outside its own file named it)
 - verified at: the commit that adds this row
+
+### DEAD — `TestDeckClassifierMatchesEngine`
+- test: `TestDeckClassifierMatchesEngine` · pkg `shingocore/fleet/simulator` · run `-run '^TestDeckClassifierMatchesEngine$'` · `shingo-core/fleet/simulator/deck_classifier_parity_test.go:17` @ `82c487ff` · tags `sim`
+- code: DEAD
+- assertion map: the test held the simulator's copy of the engine's binTask classifier (`deckLoadsOn` / `deckEmptiesOn` against `engine.IsPickupBlock` / `engine.IsDropoffBlock`) to the original over 23 names. Both copies are gone: the deck reads the block's `fleet.OrderBlock.Action`, the label Core sent the block with, and no name is classified on either side, so there is no second copy to drift. What the deck does with the action is held by `TestDeck_LoadsOnPickupAndEmptiesOnFinalUnload` (`shingo-core/fleet/simulator/driver_deck_test.go:90`).
+- mutation: the deck loading on a wait instead of a pickup (`shingo-core/fleet/simulator/deck_sim.go`, `case protocol.ActionPickup` → `case protocol.ActionWait` in `blockCompleted`) · survivor red: `go test -tags sim -count=1 -run '^TestDeck_LoadsOnPickupAndEmptiesOnFinalUnload$' ./fleet/simulator/` in `shingo-core` → `driver_deck_test.go:100: after the pickup AMR-01 should be busy, loaded, at A; got {ID:AMR-01 Busy:true At:A Loaded:false Fault:false}`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/fleet/simulator/deck_sim.go` (the comment that named the parity test is deleted with the copy)
+- verified at: the commit that adds this row

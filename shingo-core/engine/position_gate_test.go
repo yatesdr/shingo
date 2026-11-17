@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingocore/fleet/seerrds"
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
@@ -49,7 +48,7 @@ func TestPositionGate_HoldsWhenAnotherOrderOwnsTheBin(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(emptyIn), "create empty-in order")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(emptyIn.ID, "sim-empty-in", "RUNNING", "bot-1"), "set vendor id")
 
-	drop := seerrds.BinTaskForAction(protocol.ActionDropoff)
+	drop := protocol.ActionDropoff
 	hold := eng.CanEnterPosition("sim-empty-in", press.Name, drop)
 	if !hold.Held {
 		t.Fatalf("the empty-in was allowed to place onto %s while it still holds bin %d (claimed by the "+
@@ -102,7 +101,7 @@ func TestPositionGate_NeverHoldsAPickup(t *testing.T) {
 	target := &bins.Bin{BinTypeID: bt.ID, Label: "GATE-PICKUP", NodeID: &press.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(target), "create bin")
 
-	load := seerrds.BinTaskForAction(protocol.ActionPickup)
+	load := protocol.ActionPickup
 	if hold := eng.CanEnterPosition("sim-own", press.Name, load); hold.Held {
 		t.Fatalf("order %d was HELD at %s while trying to PICK UP bin %d: %s\n"+
 			"A pickup REMOVES the bin; occupancy cannot obstruct it. Holding here deadlocks the "+
@@ -110,7 +109,7 @@ func TestPositionGate_NeverHoldsAPickup(t *testing.T) {
 			"six minutes on the sim.", pickup.ID, press.Name, target.ID, hold.Reason)
 	}
 
-	wait := seerrds.BinTaskForAction(protocol.ActionWait)
+	wait := protocol.ActionWait
 	if hold := eng.CanEnterPosition("sim-own", press.Name, wait); hold.Held {
 		t.Fatalf("order %d was HELD at %s on a WAIT block: %s — a robot dwelling beside a bin is "+
 			"not placing onto it", pickup.ID, press.Name, hold.Reason)
@@ -124,7 +123,7 @@ func TestPositionGate_ExemptsSyntheticNodes(t *testing.T) {
 	db := testDB(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	if hold := eng.CanEnterPosition("sim-whatever", "_TRANSIT", seerrds.BinTaskForAction(protocol.ActionDropoff)); hold.Held {
+	if hold := eng.CanEnterPosition("sim-whatever", "_TRANSIT", protocol.ActionDropoff); hold.Held {
 		t.Fatalf("_TRANSIT is synthetic and holds many bins by design, but the gate held: %s", hold.Reason)
 	}
 }
@@ -159,7 +158,7 @@ func TestPositionGate_HoldsWhenTheOrderIsUnresolvable(t *testing.T) {
 	resident := &bins.Bin{BinTypeID: bt.ID, Label: "UNRES-RESIDENT", NodeID: &press.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(resident), "create resident bin")
 
-	drop := seerrds.BinTaskForAction(protocol.ActionDropoff)
+	drop := protocol.ActionDropoff
 	// No order carries this vendor id.
 	if hold := eng.CanEnterPosition("sim-no-such-vendor-order", press.Name, drop); !hold.Held {
 		t.Fatalf("the gate PASSED a placement onto %s, which holds bin %d, because it could not "+

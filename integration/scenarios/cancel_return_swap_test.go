@@ -303,8 +303,8 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	fl.set(evacAMR, true, false)
 	crsDrive(t, fl, supply, "RUNNING", supplyAMR)
 	crsDrive(t, fl, evac, "RUNNING", evacAMR)
-	lifted := crsCompleteNext(t, fl, supply.VendorOrderID, 0, coreengine.IsPickupBlock)
-	staged := crsCompleteNext(t, fl, supply.VendorOrderID, lifted+1, coreengine.IsDropoffBlock)
+	lifted := crsCompleteNext(t, fl, supply.VendorOrderID, 0, protocol.ActionPickup)
+	staged := crsCompleteNext(t, fl, supply.VendorOrderID, lifted+1, protocol.ActionDropoff)
 	crsDrive(t, fl, supply, "WAITING", supplyAMR)
 	crsDrive(t, fl, evac, "WAITING", evacAMR)
 	bus.PumpAll()
@@ -318,8 +318,8 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	bus.PumpAll()
 	crsDrive(t, fl, supply, "RUNNING", supplyAMR)
 	crsDrive(t, fl, evac, "RUNNING", evacAMR)
-	crsCompleteNext(t, fl, supply.VendorOrderID, staged+1, coreengine.IsPickupBlock) // the lift off staging
-	crsCompleteNext(t, fl, evac.VendorOrderID, 0, coreengine.IsPickupBlock)          // the lift off the line
+	crsCompleteNext(t, fl, supply.VendorOrderID, staged+1, protocol.ActionPickup) // the lift off staging
+	crsCompleteNext(t, fl, evac.VendorOrderID, 0, protocol.ActionPickup)          // the lift off the line
 	fl.set(supplyAMR, true, true)
 	fl.set(evacAMR, true, true)
 	crsEventually(t, "both robots read loaded in Core's cache", func() bool {
@@ -492,10 +492,11 @@ func crsDrive(t *testing.T, fl *deckFleet, o *coreorders.Order, state, robot str
 }
 
 // crsCompleteNext completes the first block of the vendor order, at or after
-// index from, whose binTask satisfies want — the fleet reporting that block
-// FINISHED, through the simulator's tracker emitter — and returns its index.
+// index from, that Core sent to do want (the block's Action) — the fleet
+// reporting that block FINISHED, through the simulator's tracker emitter — and
+// returns its index.
 // Every block it passes over is completed too, in order, as a fleet would.
-func crsCompleteNext(t *testing.T, fl *deckFleet, vendorID string, from int, want func(string) bool) int {
+func crsCompleteNext(t *testing.T, fl *deckFleet, vendorID string, from int, want string) int {
 	t.Helper()
 	blocks := fl.BlocksForOrder(vendorID)
 	now := time.Now().Unix()
@@ -504,7 +505,7 @@ func crsCompleteNext(t *testing.T, fl *deckFleet, vendorID string, from int, wan
 		if !fl.CompleteBlock(vendorID, b.BlockID, b.Location, b.BinTask, now-1, now) {
 			t.Fatalf("complete block %s of %s: not emitted", b.BlockID, vendorID)
 		}
-		if want(b.BinTask) {
+		if b.Action == want {
 			return i
 		}
 	}

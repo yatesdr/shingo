@@ -126,10 +126,10 @@ type CreateOrderRequest struct {
 // vendor-neutral. Real backends do not implement PositionGated and are unaffected.
 type PositionGate interface {
 	// CanEnterPosition reports whether vendorOrderID's robot may complete a block
-	// with binTask at location now. A Held result means HOLD — retry on a later
-	// tick; its Reason is the line for the sim log. Only placements are ever
-	// held; the implementation decides what counts as one.
-	CanEnterPosition(vendorOrderID, location, binTask string) PositionHold
+	// at location now that does action (OrderBlock.Action, Core's own label).
+	// A Held result means HOLD — retry on a later tick; its Reason is the line
+	// for the sim log. Only placements are ever held.
+	CanEnterPosition(vendorOrderID, location, action string) PositionHold
 }
 
 // PositionHold is the structured answer to a PositionGate question. Held=false

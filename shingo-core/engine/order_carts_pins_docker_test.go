@@ -90,7 +90,7 @@ func (c *cartsSwap) block(t *testing.T, node string, lift bool) {
 		if strings.TrimSpace(b.Location) != node {
 			continue
 		}
-		if lift && IsPickupBlock(b.BinTask) || !lift && IsDropoffBlock(b.BinTask) {
+		if lift && b.Action == protocol.ActionPickup || !lift && b.Action == protocol.ActionDropoff {
 			if !c.sim.CompleteBlock(c.order.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0) {
 				t.Fatalf("block %s @ %s was not emitted", b.BlockID, b.Location)
 			}
