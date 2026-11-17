@@ -669,9 +669,11 @@ async function pinFirstStyleRepick() {
         T.pickerRow(page, 'pd-pop', v);
         await page.settle();
     };
-    // What a position names in the draft (the model the Styles save sends),
-    // and what it runs as on the step (its own copy, or none of its own).
-    const names = (page, n) => ((page.S.model.cells[n] || {}).on ? page.S.model.cells[n].paired || '' : '');
+    // What a position names as its partner in the draft (the model the Styles
+    // save sends), where its swap takes one, and what it runs as on the step
+    // (its own copy, or none of its own).
+    const names = (page, n) => ((page.S.model.cells[n] || {}).on &&
+        page.pd('M')().rowColumns(page.S.model, n, 'partner').some(c => c.key === 'paired') ? page.S.model.cells[n].paired || '' : '');
     const own = (page, n) => {
         const e = page.S.firstStyle.own[n];
         return e ? labels[e.mode] + ((e.picks || {}).paired ? ' paired with ' + e.picks.paired : '') : 'none of its own';

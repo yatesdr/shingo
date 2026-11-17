@@ -238,7 +238,7 @@ ok   a partner kept through the change to Sequential A/B is paired back, as if p
 ok   the back given its row again has its part again
   Sequential A/B, POS_A3 picked: Part=PART-1 · Paired core node=POS_A3 · Comes from=GRP_A · Goes to=DST_1 · POS_A3 runs Sequential A/B paired with POS_A1
 ok   a Sequential partner is paired back
-  POS_A4 opened: Part=PART-2 · Paired core node=POS_B1 · Comes from=GRP_A · Goes to=DST_1
+  POS_A4 opened: Part=PART-2 · Paired core node=POS_B2 · Comes from=GRP_A · Goes to=DST_1
 ok   the next position opened does not take the partner of the one before it
   every other position with a part, POS_A2 picked: line "POS_A2’s part, PART-10, is on no position now: pick it in a position’s Part field."
 ok   with no position free, the line says the back's part is on none
@@ -251,13 +251,13 @@ ok   an Index Swap back picked again hands the old back its row back, with its p
 ok   and the new one is the press's back
   Sequential A/B, POS_A2 picked: POS_A1 names POS_A2 · POS_A2 names POS_A1, runs Sequential A/B paired with POS_A1
 ok   a Sequential partner picked is paired both ways
-  then POS_A3 picked: POS_A1 names POS_A3 · POS_A3 names POS_A1, runs Sequential A/B paired with POS_A1 · POS_A2 names POS_A1, runs Sequential A/B paired with POS_A1 (todo)
+  then POS_A3 picked: POS_A1 names POS_A3 · POS_A3 names POS_A1, runs Sequential A/B paired with POS_A1 · POS_A2 names none, runs 2‑Robot Swap (todo)
 ok   picked again, the new partner is paired both ways
-BUG  the old partner is unpaired: POS_A2 no longer names POS_A1: POS_A2 names POS_A1, runs Sequential A/B paired with POS_A1
-BUG  and is a row of its own again, with the swap it had before it was paired (2-Robot Swap): it runs Sequential A/B paired with POS_A1
-  then 1-Robot Swap: POS_A1 runs 1‑Robot Swap · POS_A3 names POS_A1, runs Sequential A/B paired with POS_A1
-BUG  a swap with no partner unpairs both: POS_A3 no longer names POS_A1: POS_A3 names POS_A1, runs Sequential A/B paired with POS_A1
-BUG  Sequential A/B again pairs the kept pick both ways, as if picked: ["POS_A3","POS_A1","POS_A1"]
+ok   the old partner is unpaired: POS_A2 no longer names POS_A1
+ok   and is a row of its own again, with the swap it had before it was paired (2-Robot Swap)
+  then 1-Robot Swap: POS_A1 runs 1‑Robot Swap · POS_A3 names none, runs none of its own
+ok   a swap with no partner unpairs both: POS_A3 no longer names POS_A1
+ok   Sequential A/B again pairs the kept pick both ways, as if picked
 
 ## Setup › Change… (Edit process): Save writes only what moved, through Settings' doors
   the sheet: "Edit process" · boxes hold positions 16, source 2, staging 3, destination 2 · name "Press A" · screens "Operator screens each set on Settings Screen A · Unloader A "

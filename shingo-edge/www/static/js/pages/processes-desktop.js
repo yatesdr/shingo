@@ -963,7 +963,7 @@ async function startFirstStyle() {
     // A NAME SOMEBODY CHOSE IS KEPT (named): only a part-code name follows.
     S.firstStyle = {
         styleID: st.id, name: st.name || '', named: palette.indexOf(st.name) < 0, parts: parts,
-        own: {}, done: {}, out: {}, backOf: {}, backPart: {}, cur: '', error: '', warned: '',
+        own: {}, done: {}, out: {}, backOf: {}, backPart: {}, paired: {}, cur: '', error: '', warned: '',
     };
     if (rows.length) openFirstPosition(rows[0]);
     S.setupView = 'style';
@@ -1256,13 +1256,17 @@ function firstStyleChanged() {
 }
 
 // setFirstPart puts code on position node (or takes its part off): a part on
-// another position moves here, and that position is not done any more.
+// another position moves here, and that position is not done any more. A
+// position not in this style that takes a part is in it again, and its
+// partner is paired as if picked.
 function setFirstPart(node, code) {
     const d = S.firstStyle;
     for (const n of Object.keys(d.parts)) {
         if (code && n !== node && d.parts[n] === code) { delete d.parts[n]; d.done[n] = false; }
     }
+    const comesBack = code && d.out[node] && !d.backOf[node];
     if (code) { d.parts[node] = code; d.out[node] = false; } else delete d.parts[node];
+    if (comesBack) pairPartner(firstRows(), node);
     firstStyleChanged();
 }
 
@@ -1323,7 +1327,8 @@ function openFirstPick(btn) {
     const rows = (use === 'used' ? [{ value: '-', label: 'none' }] : []).concat(firstChoices(p, n).map(x => ({ value: x, label: x })));
     openRowPicker(pop, btn, rows, v => {
         d.own[n].picks[p.key] = v === '-' ? '' : v;
-        if (p.box === 'partner') firstPartnered(n, v === '-' ? '' : v);
+        // Its own pick: a copy pairing wrote is n's own now (firstRows).
+        if (p.box === 'partner') { delete d.paired[n]; firstPartnered(n, v === '-' ? '' : v); }
         firstStyleChanged();
     }, {
         selected: firstValue(S.model, n, p) || '-', placeholder: 'find a name', head: esc(p.label || W(p.field)),
@@ -1336,7 +1341,8 @@ function openFirstPick(btn) {
 // checklist, where v is one of its rows. AN INDEX PRESS'S BACK IS NOT A ROW OF
 // ITS OWN: its bin is the press's (Robot 2 indexes it forward), so v leaves
 // the checklist as "back of n". A SEQUENTIAL PARTNER IS ITS OWN LINE, paired
-// back: v starts as n's swap with n as its partner, unless it is done.
+// back by pairPartner (firstRows): v starts as n's swap with n as its partner,
+// unless it is done, and the partner n had before is unpaired.
 //
 // A BACK'S PART IS NEVER DROPPED SILENTLY (round 10). A press's back takes no
 // part of its own, so the part v had moves to the next position with none
@@ -1345,25 +1351,57 @@ function openFirstPick(btn) {
 // where it went, so the part comes back with v's row (firstBacksKept).
 function firstPartnered(n, v) {
     const d = S.firstStyle;
-    if (!v || firstStyleRows().indexOf(v) < 0) return;
-    const e = firstEff(n);
-    if (e.mode === 'two_robot_press_index') {
-        d.backOf[v] = n;
-        d.out[v] = true;
-        d.done[v] = false;
-        const part = d.parts[v];
-        delete d.parts[v];
-        delete d.backPart[v];
-        if (part) {
-            const to = firstPartFor(n);
-            if (to) d.parts[to] = part;
-            d.backPart[v] = { part: part, to: to };
-        }
-        return;
+    pairPartner(firstRows(), n);
+    if (!v || firstStyleRows().indexOf(v) < 0 || firstEff(n).mode !== 'two_robot_press_index') return;
+    d.backOf[v] = n;
+    d.out[v] = true;
+    d.done[v] = false;
+    const part = d.parts[v];
+    delete d.parts[v];
+    delete d.backPart[v];
+    if (part) {
+        const to = firstPartFor(n);
+        if (to) d.parts[to] = part;
+        d.backPart[v] = { part: part, to: to };
     }
-    if (e.mode === 'sequential' && !d.done[v]) {
-        d.own[v] = { role: e.role, mode: e.mode, picks: { paired: n } };
-    }
+}
+
+// firstRows is First style's draft as pairPartner's rows: the checklist's
+// positions, each as it runs (firstEff). A position not in this style names
+// nobody, and an Index Swap's back keeps its copy for when it has its row
+// again. Pairing writes the partner's own copy, the press's swap and role with
+// the press as its partner, unless the partner is done; d.paired keeps the copy
+// it had (null: none, it ran as the position before it). Unpairing puts that
+// copy back, with a Sequential partner field cleared, and the position is not
+// done any more, as one a part left is not.
+function firstRows() {
+    const d = S.firstStyle;
+    const rows = firstStyleRows();
+    return {
+        list: () => rows,
+        of: n => {
+            if (rows.indexOf(n) < 0) return null;
+            if (d.out[n] && !d.backOf[n]) return { mode: '', paired: '' };
+            const e = firstEff(n);
+            return { mode: e.mode, paired: e.picks.paired || '' };
+        },
+        pair: (v, by) => {
+            if (d.done[v]) return false;
+            if (!(v in d.paired)) d.paired[v] = d.own[v] || null;
+            const e = firstEff(by);
+            d.own[v] = { role: e.role, mode: e.mode, picks: { paired: by } };
+            return true;
+        },
+        unpair: v => {
+            d.done[v] = false;
+            if (!(v in d.paired)) { d.own[v].picks.paired = ''; return; }
+            const was = d.paired[v];
+            delete d.paired[v];
+            if (!was) { delete d.own[v]; return; }
+            d.own[v] = was;
+            if (was.mode === 'sequential') was.picks.paired = '';
+        },
+    };
 }
 
 // setFirstMode is the open position's swap card. A PARTNER KEPT THROUGH THE
@@ -1371,13 +1409,16 @@ function firstPartnered(n, v) {
 // across swaps, so a row chosen under Index Swap is paired back on Sequential
 // A/B, and one chosen under Sequential A/B is the press's back on Index Swap.
 // Before, only an explicit pick did either, so a kept partner was left
-// unpaired, or was a row of its own and the press's back at once.
+// unpaired, or was a row of its own and the press's back at once. A swap that
+// takes no partner unpairs the one n had (round 11, pairPartner); the pick is
+// still kept, and a swap that takes one pairs it again.
 function setFirstMode(mode) {
     const d = S.firstStyle;
     const n = d.cur;
     if (!n || !d.own[n]) return;
     d.own[n].mode = mode;
-    if (d.own[n].picks.paired) firstPartnered(n, d.own[n].picks.paired);
+    delete d.paired[n];
+    firstPartnered(n, d.own[n].picks.paired || '');
     firstStyleChanged();
 }
 
@@ -1445,6 +1486,7 @@ function firstOut() {
     delete d.parts[n];
     d.done[n] = false;
     d.out[n] = true;
+    pairPartner(firstRows(), n);
     firstNext(n);
 }
 
@@ -1517,6 +1559,8 @@ async function firstWritePositions(change, open, gone) {
         delete d.own[gone];
         delete d.done[gone];
         delete d.out[gone];
+        delete d.paired[gone];
+        pairPartner(firstRows(), gone);
         if (d.cur === gone) d.cur = '';
         firstNext(gone);
         return;
@@ -3817,6 +3861,79 @@ function partnerChoices(node) {
     return backs.filter(n => n !== node).concat(others.filter(n => backs.indexOf(n) < 0));
 }
 
+// pairPartner is THE ONE PLACE A SEQUENTIAL A/B PAIR IS MADE OR UNMADE (round
+// 11), for First style and the Styles table alike: it runs once node's
+// partner, its swap or its place in the style has changed, over that draft's
+// rows (firstRows, pairInTable). A pair is two positions that name each other
+// (paired_core_node), so:
+//   - a row that names node back and is not its Sequential partner now
+//     (another was picked, none was, node's swap takes none, or node is not in
+//     the style) is unpaired: it gets the swap it had before it was paired,
+//     with its partner field cleared;
+//   - node's Sequential partner is paired back (unless its draft keeps it as it
+//     is: rows.pair answers false), and the row that partner named before, if
+//     it named the partner back, is unpaired.
+// Before, only First style paired back, and nothing unpaired: a partner picked
+// again, or a swap with none, left the old partner naming the press, and the
+// Styles table paired one way only. rows.of answers null for a position that
+// is not a row of the draft (a back of the map): it names nobody and is never
+// paired back, so an Index Swap's back stays firstPartnered's. Pinned by
+// cold-start.txt's "a partner picked again" and table-bugs.txt's "Partner
+// picked again" and "Partner cleared".
+function pairPartner(rows, node) {
+    const names = n => { const r = rows.of(n); return r && r.mode === 'sequential' ? r.paired || '' : ''; };
+    const to = names(node);
+    for (const n of rows.list()) if (n !== node && n !== to && names(n) === node) rows.unpair(n);
+    if (!to || to === node || !rows.of(to) || names(to) === node) return;
+    const was = names(to);
+    if (!rows.pair(to, node)) return;
+    if (was && names(was) === to) rows.unpair(was);
+}
+
+// pairInTable is pairPartner over the Styles table's draft, model m, after an
+// action on node; it answers the model after. A row is a position that is not
+// a back. Every write is the model's own action: pairing makes the partner a
+// row of the press's swap and role, naming the press (off, it is added), and
+// keeps on the cell what it was (pairedFrom, never sent: toCells reads the
+// claim fields only); unpairing puts that swap back, or, for a pair the style
+// was saved with, clears the partner field. The row that is selected stays so.
+function pairInTable(m, node) {
+    const backs = new Set(m.positions.filter(p => p.kind === 'back').map(p => p.core_node_name));
+    const sel = m.selected;
+    const act = a => { m = M().reduce(m, a); };
+    pairPartner({
+        list: () => m.positions.map(p => p.core_node_name),
+        of: n => {
+            const c = m.cells[n];
+            if (!c || backs.has(n)) return null;
+            return c.on && c.mode ? { mode: c.mode, paired: c.paired } : { mode: '', paired: '' };
+        },
+        pair: (v, by) => {
+            const b = m.cells[by], was = JSON.parse(JSON.stringify(m.cells[v].pairedFrom || m.cells[v]));
+            act(m.cells[v].on ? { type: 'setMode', node: v, mode: b.mode } : { type: 'addPosition', node: v, mode: b.mode });
+            if (m.cells[v].mode !== b.mode) act({ type: 'setMode', node: v, mode: b.mode });
+            if (m.cells[v].role !== b.role) act({ type: 'setRole', node: v, role: b.role });
+            act({ type: 'setPartner', node: v, partner: by });
+            m.cells[v].pairedFrom = was;
+            return true;
+        },
+        unpair: v => {
+            const was = m.cells[v].pairedFrom;
+            if (!was) { act({ type: 'setPartner', node: v, partner: '' }); return; }
+            if (m.cells[v].role !== was.role) act({ type: 'setRole', node: v, role: was.role });
+            if (!was.on) { act({ type: 'removePosition', node: v }); return; }
+            act({ type: 'setMode', node: v, mode: was.mode });
+            act({ type: 'setPartner', node: v, partner: was.mode === 'sequential' ? '' : was.paired });
+            act({ type: 'setSecondPartner', node: v, partner: was.secondPaired });
+            act({ type: 'setParkOld', node: v, staging: was.parkOld });
+            act({ type: 'setAdvanced', node: v, advanced: was.advanced });
+            delete m.cells[v].pairedFrom;
+        },
+    }, node);
+    if (m.selected !== sel) act({ type: 'select', node: sel });
+    return m;
+}
+
 function optionsFor(node, kind) {
     const c = S.model.cells[node];
     const routing = S.composer.routing;
@@ -4392,11 +4509,16 @@ async function dropFromPartSet(code) {
 // the model already has an action for each. Overloading either one to do both
 // would be the seam this pair exists to keep straight — addPart is the door
 // onto the part set, setPart is the placement.
+//
+// A PARTNER, A SWAP OR A POSITION CHANGED GOES THROUGH pairPartner (round 11),
+// so a Sequential A/B pair stays two rows that name each other.
+const PAIRING_ACTS = new Set(['setPartner', 'setMode', 'addPosition', 'removePosition']);
 function apply(action) {
     for (const a of (Array.isArray(action) ? action : [action])) {
         const before = S.model;
         S.model = M().reduce(S.model, a);
         if (a.type === 'setMode') sayDropped(a.node, before, S.model);
+        if (PAIRING_ACTS.has(a.type)) S.model = pairInTable(S.model, a.node);
     }
     drawFlows();
     schedulePreview();
