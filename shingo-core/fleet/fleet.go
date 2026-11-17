@@ -170,9 +170,20 @@ type TransportOrderResult struct {
 	VendorOrderID string // The ID assigned by the vendor system
 }
 
-// OrderBlock describes a single block in an RDS order.
+// OrderBlock describes a single block in a fleet order.
 type OrderBlock struct {
 	BlockID  string
 	Location string
-	BinTask  string // e.g., "JackLoad", "JackUnload" for SEER RDS
+	// BinTask is the vendor's action key, a free string keyed on the location
+	// in the vendor's scene: dispatch sends JackLoad, JackUnload and Wait, and a
+	// payload's advanced load sequence sends its own names.
+	BinTask string
+	// Action is Core's own label for what the block does: protocol.ActionPickup,
+	// ActionDropoff, ActionWait, or "" for a block of no step's kind. Set where
+	// the block is built (dispatch's stepsToBlocks) and recorded on the order
+	// (orders.block_actions) so a finished block is read from Core's record,
+	// never from its BinTask. Never on the wire: the SEER adapter copies
+	// BlockID, Location and BinTask only (TestWireBytes_ActionIsNotOnTheWire);
+	// the simulator, which keeps the blocks it is handed, reads it.
+	Action string
 }

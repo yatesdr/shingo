@@ -19,6 +19,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 	"shingocore/store/reservations"
 )
 
@@ -173,7 +174,7 @@ func (d *Dispatcher) dispatchHeldTrade(order *orders.Order, steps []resolvedStep
 // see this order while it had no vendor order (redriveVacateOrder); a turn's
 // robot is not at its wait yet, so the table turn finds nothing to do until
 // the staged hook. what names the plan in a log line and an error.
-func (d *Dispatcher) dispatchUnsealed(order *orders.Order, steps []resolvedStep, sourceNode *nodes.Node, loadSeq []string, hand Hand, what string) (string, error) {
+func (d *Dispatcher) dispatchUnsealed(order *orders.Order, steps []resolvedStep, sourceNode *nodes.Node, loadSeq *payloads.LoadSequence, hand Hand, what string) (string, error) {
 	req, _, err := d.buildUnsealedCreate(order, steps, loadSeq, what)
 	if err != nil {
 		return "", err

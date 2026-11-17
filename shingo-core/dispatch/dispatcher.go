@@ -17,6 +17,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 type Dispatcher struct {
@@ -621,14 +622,15 @@ func (d *Dispatcher) robotGroupForPayload(payloadCode string) string {
 	return p.RobotGroup
 }
 
-// loadSequenceForPayload resolves the ordered binTask names for a payload's
-// configured advanced load sequence (F4c), or nil when the payload has none (the
-// field is empty), the payload is unknown, or the named sequence isn't in the
-// registry. A nil result means the load leg emits today's single JackLoad block,
-// unchanged. Like robotGroupForPayload it never blocks material flow: any lookup
-// failure degrades to nil — config-time validation and RDS's 50001 order-issue
-// rejection are the guards, not the dispatch hot path.
-func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
+// loadSequenceForPayload resolves a payload's configured advanced load sequence
+// (F4c): its ordered binTask names and the one that lifts. nil when the payload
+// has none (the field is empty), the payload is unknown, the named sequence
+// isn't in the registry, or it names no binTask. A nil result means the load leg
+// emits today's single JackLoad block, unchanged. Like robotGroupForPayload it
+// never blocks material flow: any lookup failure degrades to nil — config-time
+// validation and RDS's 50001 order-issue rejection are the guards, not the
+// dispatch hot path.
+func (d *Dispatcher) loadSequenceForPayload(payloadCode string) *payloads.LoadSequence {
 	if payloadCode == "" {
 		return nil
 	}
@@ -642,7 +644,10 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 			p.AdvancedLoadSequence, payloadCode, err)
 		return nil
 	}
-	return seq.TaskNames
+	if len(seq.TaskNames) == 0 {
+		return nil
+	}
+	return seq
 }
 
 // dispatchToFleetCore contains the shared fleet dispatch sequence: generate
@@ -780,7 +785,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// THE LOAD SEQUENCE CANNOT RIDE A TURN. F4c expands only the create's
 	// pickups, and at a turn node the lift is in an append, which is never
 	// expanded: the sequence would be silently dropped. So the order waits, named.
-	if turned && len(loadSeq) > 0 {
+	if turned && loadSeq != nil {
 		if node, ok := d.turnLiftWithSequence(spliced); ok {
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseTurnLoadSequence,
 				QueueParams{TableNode: node, Payload: payloadCode, TableLoadSequence: true})

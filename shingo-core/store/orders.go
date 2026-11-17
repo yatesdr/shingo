@@ -1231,9 +1231,9 @@ func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string,
 }
 
 // ClaimAppend is orders.ClaimAppend: the compare-and-set a fleet append is made
-// under.
-func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string) (bool, error) {
-	return orders.ClaimAppend(db.DB, id, waitIndex, stepsJSON)
+// under, recording the segment's blocks.
+func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string, actions map[string]string) (bool, error) {
+	return orders.ClaimAppend(db.DB, id, waitIndex, stepsJSON, actions)
 }
 
 // UpdateOrderStatusFromWithReasonTx is UpdateOrderStatusFromWithReason on the
@@ -1282,6 +1282,12 @@ func (db *DB) OrderSiblingUUID(id int64) (string, error) {
 
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
 	return orders.UpdateVendor(db.DB, id, vendorOrderID, vendorState, robotID)
+}
+
+// NameFleetOrder is orders.NameFleetOrder: the create's write of the vendor
+// order and the record of the blocks it was sent.
+func (db *DB) NameFleetOrder(id int64, vendorOrderID, vendorState, robotID string, actions map[string]string) error {
+	return orders.NameFleetOrder(db.DB, id, vendorOrderID, vendorState, robotID, actions)
 }
 
 // OrderRobotsByUUID is orders.RobotsByUUID: the station and robot of each

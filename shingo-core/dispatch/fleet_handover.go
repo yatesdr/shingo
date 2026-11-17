@@ -346,8 +346,11 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 			order.ID, fresh.Status, vendorOrderID)
 	}
 
-	// 3. NAME IT. The fleet has the job; the row must say which one.
-	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
+	// 3. NAME IT. The fleet has the job; the row must say which one, and what
+	// each block it was sent is (orders.block_actions), in the same write: the
+	// block subscriber reads a finished block's meaning from that record.
+	actions := blockActions(req.Blocks)
+	if err := d.db.NameFleetOrder(order.ID, vendorOrderID, "CREATED", "", actions); err != nil {
 		// THE SURVIVING ORPHAN-GUARD CAUSE. Core cannot name this job, so nothing
 		// will track it, nothing will re-track it after a restart
 		// (loadActiveOrders selects on a non-empty vendor_order_id), and no later
@@ -367,5 +370,6 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 	// The in-memory row matches the database, so a caller that keeps using this
 	// struct (the gated valves append a tail from it) sees the id.
 	order.VendorOrderID = vendorOrderID
+	order.BlockActions = actions
 	return nil
 }

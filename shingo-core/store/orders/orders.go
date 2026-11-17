@@ -573,15 +573,58 @@ func AdvanceStepsDone(db *sql.DB, id int64, n int) error {
 // claim exchange re-pointing a later pickup, dispatch/claim_exchange.go): the
 // segment would carry the old step. The bump of updated_at is what refuses an
 // exchange that read the row before this claim. Same statement.
-func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string) (bool, error) {
-	res, err := db.Exec(fmt.Sprintf(`UPDATE orders SET updated_at=$3
+//
+// THE SEGMENT'S BLOCKS ARE RECORDED IN THE SAME STATEMENT: actions (block id
+// -> action) is merged into block_actions, which stays NULL on an order sent
+// before the record (read by block names for its whole life, so a partial
+// record would read its earlier blocks as unknown). An append the fleet then
+// refuses leaves its entries behind; a retry re-cuts the same ids
+// (dispatch.mintBlockID) and writes them again, and a block never sent never
+// finishes. One of the two writers of block_actions, with NameFleetOrder
+// (TestBlockActions_OnlyTheCreateAndTheAppendWriteTheRecord).
+func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string, actions map[string]string) (bool, error) {
+	raw, err := blockActionsJSON(actions)
+	if err != nil {
+		return false, err
+	}
+	res, err := db.Exec(fmt.Sprintf(`UPDATE orders SET updated_at=$3,
+		block_actions = CASE WHEN block_actions IS NULL THEN NULL ELSE block_actions || $5::jsonb END
 		WHERE id=$1 AND wait_index=$2 AND steps_json=$4 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
-		id, waitIndex, clock.Now().UTC(), stepsJSON)
+		id, waitIndex, clock.Now().UTC(), stepsJSON, raw)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// NameFleetOrder is the create's write once the fleet has taken the order: the
+// vendor order's identifiers, as UpdateVendor writes them, and the record of the
+// blocks it was sent, block id -> action, in block_actions. The record is
+// replaced, not merged: every block of the vendor order named here was sent now.
+// One of the two writers of block_actions, with ClaimAppend.
+func NameFleetOrder(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string, actions map[string]string) error {
+	raw, err := blockActionsJSON(actions)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, block_actions=$6::jsonb,
+		updated_at=$5 WHERE id=$4`,
+		vendorOrderID, vendorState, robotID, id, clock.Now().UTC(), raw)
+	return err
+}
+
+// blockActionsJSON is a block record as block_actions stores it: a JSON object,
+// '{}' for none (never JSON null, which would read back as unreadable).
+func blockActionsJSON(actions map[string]string) (string, error) {
+	if len(actions) == 0 {
+		return "{}", nil
+	}
+	raw, err := json.Marshal(actions)
+	if err != nil {
+		return "", fmt.Errorf("encode block actions: %w", err)
+	}
+	return string(raw), nil
 }
 
 // Wait is what an order is waiting on, as its row carries it: the code and the

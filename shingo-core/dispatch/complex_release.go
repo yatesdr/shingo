@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 
 	"shingo/protocol"
 	"shingocore/service"
@@ -778,7 +779,11 @@ func (d *Dispatcher) appendSegment(order *orders.Order, segment []resolvedStep, 
 	// this one. What is left is the gap between this write and the fleet call
 	// below; a cancel landing there cancels the vendor order, and the append then
 	// meets a terminated order at the fleet.
-	if owed, err := d.db.ClaimAppend(order.ID, order.WaitIndex, order.StepsJSON); err != nil {
+	//
+	// The claim also records what the segment's blocks are (orders.block_actions),
+	// in its one statement.
+	actions := blockActions(blocks)
+	if owed, err := d.db.ClaimAppend(order.ID, order.WaitIndex, order.StepsJSON, actions); err != nil {
 		return fmt.Errorf("%s: claim the append for order %d: %w", what, order.ID, err)
 	} else if !owed {
 		if fresh, rErr := d.db.GetOrder(order.ID); rErr == nil && fresh != nil && !protocol.IsTerminal(fresh.Status) &&
@@ -796,6 +801,9 @@ func (d *Dispatcher) appendSegment(order *orders.Order, segment []resolvedStep, 
 	}
 
 	// PAST THIS LINE THE ROBOT HAS THE SEGMENT. Nothing below can be undone.
+	if order.BlockActions != nil {
+		maps.Copy(order.BlockActions, actions)
+	}
 	newWaitIndex := order.WaitIndex + 1
 	if err := d.db.UpdateOrderWaitIndex(order.ID, newWaitIndex); err != nil {
 		log.Printf("dispatch: update order %d wait_index to %d: %v", order.ID, newWaitIndex, err)

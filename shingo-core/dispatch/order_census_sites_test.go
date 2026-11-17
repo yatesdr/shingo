@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -236,4 +237,72 @@ func TestCensus_FleetTransportCreateIsNotADoor(t *testing.T) {
 		"www/handlers_robots.go:apiRobotMoveTo":        "a person drives a robot to a point: a vendor transport with NO order row — not a door, and invisible to every order reader by design",
 	}, "A new caller of a fleet's CreateOrder either hands over an order row (route it through "+
 		"handoverToFleet) or moves a robot with no order, which has to be said here.")
+}
+
+// TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent names every statement
+// that writes orders.block_actions, and every caller of the two that do: the
+// record is written by the create's vendor write and by the append's claim, from
+// the blocks those two hand the fleet, and nowhere else. A third writer could
+// record a block the fleet was never sent, or forget one it was.
+func TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent(t *testing.T) {
+	t.Parallel()
+	sources := scanCoreSources(t)
+	write := regexp.MustCompile(`block_actions\s*=|INSERT\s+INTO\s+orders\b[^;]*block_actions`)
+	var writers []string
+	fset := token.NewFileSet()
+	for path, src := range sources {
+		locs := write.FindAllStringIndex(src, -1)
+		if len(locs) == 0 {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, loc := range locs {
+			owner := "<package>"
+			for _, d := range f.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok &&
+					fset.Position(fd.Pos()).Offset <= loc[0] && loc[0] < fset.Position(fd.End()).Offset {
+					owner = fd.Name.Name
+				}
+			}
+			writers = append(writers, path+":"+owner)
+		}
+	}
+	slices.Sort(writers)
+	sameSites(t, "the statements that write orders.block_actions", writers, map[string]string{
+		"store/orders/orders.go:ClaimAppend":    "the append's compare-and-set, merging the segment's blocks",
+		"store/orders/orders.go:NameFleetOrder": "the create's vendor write, the blocks the create sent",
+	}, "A new writer of block_actions records blocks somewhere other than where they are sent. "+
+		"Record them in the create (NameFleetOrder) or the append (ClaimAppend).")
+
+	callers := only(sources, "dispatch/", "engine/", "store/", "fleet/", "www/", "service/", "fulfillment/")
+	sameSites(t, "the callers of the block record's writers", callSites(t, callers, "NameFleetOrder", "ClaimAppend"),
+		map[string]string{
+			"dispatch/complex_release.go:appendSegment":  "the one fleet append, with the segment it sends",
+			"dispatch/fleet_handover.go:handoverToFleet": "the one fleet create, with the blocks it sent",
+			"store/orders.go:ClaimAppend":                "the store delegate",
+			"store/orders.go:NameFleetOrder":             "the store delegate",
+		}, "The block record is written from the blocks the fleet is handed, at the create and the append.")
+}
+
+// TestCensus_EveryFleetAppendIsTheClaimedAppend names every call to a fleet
+// backend's ReleaseOrder. The block record is written only by the create and the
+// claimed append, so an order-backed block reaching the fleet any other way
+// would finish unrecorded.
+func TestCensus_EveryFleetAppendIsTheClaimedAppend(t *testing.T) {
+	t.Parallel()
+	sources := scanCoreSources(t)
+	appenders := map[string]string{}
+	for p, src := range sources {
+		if strings.Contains(src, ".ReleaseOrder(") {
+			appenders[p] = src
+		}
+	}
+	sameSites(t, "the fleet ReleaseOrder callers", callSites(t, appenders, "ReleaseOrder"), map[string]string{
+		"dispatch/complex_release.go:appendSegment":       "the claimed append: its blocks are recorded by ClaimAppend",
+		"dispatch/complex_dispatch.go:afterComplexCreate": "the no-wait complex create's mark-complete: no blocks",
+	}, "A new caller of a fleet's ReleaseOrder hands the fleet blocks no record names. "+
+		"Route it through appendSegmentAndAdvance.")
 }

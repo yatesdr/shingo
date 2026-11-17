@@ -77,3 +77,45 @@ func TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad(t *
 		t.Error("lift_at -1 was accepted, want the CHECK to refuse it")
 	}
 }
+
+// TestBlockRecord_TheCreateReplacesAndTheAppendMerges reads both writers back.
+// The create's vendor write replaces the record with the blocks it sent; the
+// append's claim merges its segment's blocks in, and records nothing when the
+// claim refuses. An order sent before the record (NULL) stays NULL through an
+// append, so it is read by its block names for its whole life.
+func TestBlockRecord_TheCreateReplacesAndTheAppendMerges(t *testing.T) {
+	db := testdb.Open(t)
+	live := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "rec-live"; o.StepsJSON = `[{"action":"wait"}]` })
+	old := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "rec-old"; o.StepsJSON = `[{"action":"wait"}]` })
+	_, err := db.Exec(`UPDATE orders SET block_actions = NULL WHERE id = $1`, old.ID)
+	testutil.MustNoErr(t, err, "the order sent before the record")
+	read := func(id int64) map[string]string {
+		t.Helper()
+		o, err := db.GetOrder(id)
+		return testutil.Must(t, o, err, "read the order").BlockActions
+	}
+
+	testutil.MustNoErr(t, db.NameFleetOrder(live.ID, "V-live", "CREATED", "", map[string]string{"V-live-b1": "pickup", "V-live-b2": "wait"}),
+		"the create's write")
+	if got := read(live.ID); len(got) != 2 || got["V-live-b1"] != "pickup" || got["V-live-b2"] != "wait" {
+		t.Fatalf("after the create the record is %v, want the two blocks it sent", got)
+	}
+	owed, err := db.ClaimAppend(live.ID, 1, `[{"action":"wait"}]`, map[string]string{"V-live-b3": "dropoff"})
+	testutil.MustNoErr(t, err, "a refused claim")
+	if owed || len(read(live.ID)) != 2 {
+		t.Errorf("a claim at the wrong wait index answered %v and left %v, want refused and the record unchanged", owed, read(live.ID))
+	}
+	owed, err = db.ClaimAppend(live.ID, 0, `[{"action":"wait"}]`, map[string]string{"V-live-b3": "dropoff", "V-live-b4": ""})
+	testutil.MustNoErr(t, err, "the claim")
+	if got := read(live.ID); !owed || len(got) != 4 || got["V-live-b3"] != "dropoff" || got["V-live-b4"] != "" || got["V-live-b1"] != "pickup" {
+		t.Errorf("after the append (owed %v) the record is %v, want the create's two and the segment's two", owed, got)
+	}
+
+	owed, err = db.ClaimAppend(old.ID, 0, `[{"action":"wait"}]`, map[string]string{"V-old-b3": "dropoff"})
+	testutil.MustNoErr(t, err, "the old order's claim")
+	var raw sql.NullString
+	testutil.MustNoErr(t, db.QueryRow(`SELECT block_actions::text FROM orders WHERE id=$1`, old.ID).Scan(&raw), "read the column")
+	if !owed || raw.Valid {
+		t.Errorf("the old order's claim answered %v and left block_actions %q, want claimed and NULL", owed, raw.String)
+	}
+}
