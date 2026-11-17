@@ -67,3 +67,7 @@ ok   POS_A9 given a swap with no partner: POS_A9 names none · POS_A10 names non
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
 ok   a position with no swap mode: "1 to fix POS_A11 · how does it swap? — Pick its swap mode on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) No unsaved changes"
 ok   a position with no part: "1 to fix POS_A11 · which part runs here? — Pick it on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) Unsaved changes"
+
+## Partner moved · a Sequential A/B row moved to another position is still named by its partner
+ok   POS_A7 moved to POS_A11: POS_A11 names POS_A8 · POS_A8 names POS_A11
+ok   the moved row and its partner name each other

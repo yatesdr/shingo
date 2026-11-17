@@ -4510,8 +4510,8 @@ async function dropFromPartSet(code) {
 // would be the seam this pair exists to keep straight — addPart is the door
 // onto the part set, setPart is the placement.
 //
-// A PARTNER, A SWAP OR A POSITION CHANGED GOES THROUGH pairPartner (round 11),
-// so a Sequential A/B pair stays two rows that name each other.
+// A PARTNER, A SWAP OR A POSITION CHANGED OR MOVED GOES THROUGH pairPartner
+// (round 11), so a Sequential A/B pair stays two rows that name each other.
 const PAIRING_ACTS = new Set(['setPartner', 'setMode', 'addPosition', 'removePosition']);
 function apply(action) {
     for (const a of (Array.isArray(action) ? action : [action])) {
@@ -4519,6 +4519,9 @@ function apply(action) {
         S.model = M().reduce(S.model, a);
         if (a.type === 'setMode') sayDropped(a.node, before, S.model);
         if (PAIRING_ACTS.has(a.type)) S.model = pairInTable(S.model, a.node);
+        // A row moved to another position is paired under its new node: its
+        // partner names where it went, not the position it left.
+        if (a.type === 'movePosition') S.model = pairInTable(S.model, a.to);
     }
     drawFlows();
     schedulePreview();

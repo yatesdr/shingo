@@ -325,6 +325,23 @@ const BUGS = [
             return out;
         },
     },
+    {
+        // A SEQUENTIAL ROW MOVED KEEPS ITS PAIR (round 11): the Position pick
+        // moves POS_A7's settings to a free position, and its partner POS_A8
+        // must name the new one, not the empty POS_A7 it left.
+        title: 'Partner moved · a Sequential A/B row moved to another position is still named by its partner',
+        run: async page => {
+            const names = n => (page.S.model.cells[n] && page.S.model.cells[n].on ? page.S.model.cells[n].paired || '' : '');
+            const to = page.pd('M')().positionChoices(page.S.model, 'POS_A7')[0];
+            page.pd('apply')({ type: 'movePosition', from: 'POS_A7', to: to });
+            await page.settle();
+            return [
+                ['POS_A7 moved to ' + to + ': ' + to + ' names ' + (names(to) || 'none') + ' · POS_A8 names ' + (names('POS_A8') || 'none'), true, ''],
+                ['the moved row and its partner name each other', names(to) === 'POS_A8' && names('POS_A8') === to,
+                    'POS_A8 still names ' + (names('POS_A8') || 'none')],
+            ];
+        },
+    },
 ];
 
 async function pinTableBugs() {
