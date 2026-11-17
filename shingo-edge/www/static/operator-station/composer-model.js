@@ -664,6 +664,11 @@ function reduce(state, action) {
                 const prior = s.priorClaims[action.node];
                 cell.paired = (prior && prior.paired_core_node) || freeBackPosition(s, action.node);
             }
+            // NOTHING THE SWAP FORBIDS IS KEPT, as a swap change does: a back
+            // handed to a 1-Robot Swap row is a partner the save refuses, with no
+            // field on First style to clear it (round 11). A position with no
+            // swap yet keeps it for the swap that will take one.
+            clearForbidden(s, cell);
             ensurePartner(s, action.node);
             s.selected = action.node;
             break;
