@@ -80,6 +80,9 @@ Deploy: Edge v55–v57 first, at every Edge of the plant; then Core v178. An Edg
 - When Core names this Edge for a loader, the Edge makes its process and screen and keeps its windows on it, with nobody at the Edge
 - A loader Core gives another Edge is not offered here; a screen of it from before stays, says where Core moved it, and loses its windows
 - A loader's process says which Edge Core names for each of its loaders, or "No Edge picked: set on Core, under Loaders"
+- A position taken off and put back keeps both its rows at the Edge's next start; one put back on no screen is no longer deleted by the start
+- A produce position with no inbound source asks Core for an empty carrier, not a full of the part it makes
+- Every swap mode refuses a blank outbound destination at request, in the same words; Sequential A/B and 1-Robot Swap sent the robot to drop the old bin at no node
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
 - The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once
