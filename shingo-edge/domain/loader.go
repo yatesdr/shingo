@@ -650,6 +650,35 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 	return false
 }
 
+// IsBoardWindow is THE rule for which of a loader's members a board works as
+// a tile, and so which a screen should hold: every window of a shared_window
+// loader, and every home of a dedicated one; never a dedicated loader's buffer
+// spot, which the board draws from the loader itself (the buffer strip), so
+// one on a screen as well is a second tile with no part. Two readers, one
+// rule: Loader.BoardWindows (the page's "Core added") and
+// store.CoreLoader.BoardWindows ("Make a screen" and the loader gaps).
+// Pinned by TestIsBoardWindow and TestBoardWindows_TheCacheAndTheAggregateAgree.
+func IsBoardWindow(layout LoaderLayout, homeKind string) bool {
+	return layout != LayoutDedicatedPositions || !(Position{HomeKind: homeKind}).IsBuffer()
+}
+
+// BoardWindows is the members a board works as tiles (IsBoardWindow), in
+// Core's order. Pinned by TestLoader_BoardWindows.
+func (l *Loader) BoardWindows() []NodeID {
+	var out []NodeID
+	for _, w := range l.windows {
+		if IsBoardWindow(l.layout, "") {
+			out = append(out, w.Node)
+		}
+	}
+	for _, p := range l.positions {
+		if IsBoardWindow(l.layout, p.HomeKind) {
+			out = append(out, p.Node)
+		}
+	}
+	return out
+}
+
 // DeliveryNodes is the set of nodes a carrier for this loader may be delivered
 // to — every window for shared_window, every position for dedicated. Core
 // chooses among them (loaders.DeliveryTargets); the Edge reads the set for

@@ -10,6 +10,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/service"
+	"shingocore/store/loaders"
 )
 
 // nodeFeedSetup is one enrolled station with a node of its own and a scene.
@@ -201,5 +202,84 @@ func TestNodeFeed_FailedReadLeavesTheKeyOut(t *testing.T) {
 	svc.HandleNodeListRequest(feedsPinEnv("edge.test"), &protocol.NodeListRequest{})
 	if len(resp.events) != before+1 {
 		t.Error("reply path: no node list sent on a bin-type read failure")
+	}
+}
+
+// A loader that names an Edge goes down with that Edge's display name, filled
+// before the digest: picking another Edge moves the digest, and so does
+// renaming the one picked. An Edge with no display name sends none (the Edge
+// falls back to the uid). The feed path fails on a failed registry read; a
+// reply still answers, with the uid and no names. A build whose loaders name
+// no Edge does not read the registry at all.
+func TestNodeFeed_LoaderNamesItsEdge(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	testutil.MustNoErr(t, err, "enroll")
+	seedFeedsPinNodes(t, db)
+	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
+	_, err = db.EnrollEdge("stn-nf-press", "PRESS EDGE", "stn-nf-press")
+	testutil.MustNoErr(t, err, "enroll the press Edge")
+	_, err = db.IntroduceEdge("stn-nf-cell", "cell-host", "test")
+	testutil.MustNoErr(t, err, "introduce an unnamed Edge")
+	id, err := db.CreateLoader(loaders.Loader{Name: "NF-LDR", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator})
+	testutil.MustNoErr(t, err, "a loader")
+
+	build := func(strict bool) (protocol.LoaderInfo, string) {
+		t.Helper()
+		nl, err := svc.buildNodeList("edge.test", strict)
+		testutil.MustNoErr(t, err, "build the node list")
+		for _, li := range nl.Loaders {
+			if li.LoaderKey == loaders.Key(id) {
+				return li, nl.Digest
+			}
+		}
+		t.Fatal("NF-LDR missing from the node list")
+		return protocol.LoaderInfo{}, ""
+	}
+	pick := func(uid string) {
+		t.Helper()
+		l, err := db.GetLoader(id)
+		testutil.MustNoErr(t, err, "read the loader")
+		l.EdgeStationUID = uid
+		testutil.MustNoErr(t, db.UpdateLoader(*l), "pick "+uid)
+	}
+	_, none := build(true)
+
+	pick("stn-nf-press")
+	li, picked := build(true)
+	if li.EdgeStationUID != "stn-nf-press" || li.EdgeDisplayName != "PRESS EDGE" {
+		t.Errorf("picked: uid %q name %q; want stn-nf-press, PRESS EDGE", li.EdgeStationUID, li.EdgeDisplayName)
+	}
+	if picked == none {
+		t.Error("picking an Edge left the digest where it was")
+	}
+
+	_, err = db.RenameEdge("stn-nf-press", "PRESS EDGE 2")
+	testutil.MustNoErr(t, err, "rename the press Edge")
+	li, renamed := build(true)
+	if li.EdgeDisplayName != "PRESS EDGE 2" || renamed == picked {
+		t.Errorf("renamed: name %q, digest moved %v; want PRESS EDGE 2 and a new digest", li.EdgeDisplayName, renamed != picked)
+	}
+
+	pick("stn-nf-cell")
+	li, other := build(true)
+	if li.EdgeStationUID != "stn-nf-cell" || li.EdgeDisplayName != "" || other == renamed {
+		t.Errorf("an unnamed Edge: uid %q name %q, digest moved %v; want stn-nf-cell, no name, a new digest",
+			li.EdgeStationUID, li.EdgeDisplayName, other != renamed)
+	}
+
+	pick("stn-nf-press")
+	hideTable(t, db, "edge_registry")
+	if _, err := svc.buildNodeList("edge.test", true); err == nil {
+		t.Error("feed path: built a node list with the registry unread; want the build to fail")
+	}
+	if li, _ := build(false); li.EdgeStationUID != "stn-nf-press" || li.EdgeDisplayName != "" {
+		t.Errorf("reply path, registry unread: uid %q name %q; want the uid and no name", li.EdgeStationUID, li.EdgeDisplayName)
+	}
+	pick("")
+	if _, err := svc.buildNodeList("edge.test", true); err != nil {
+		t.Errorf("no loader names an Edge, registry unread: the feed build failed (%v); want no registry read", err)
 	}
 }

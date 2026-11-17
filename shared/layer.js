@@ -198,7 +198,9 @@ export function confirmWithInput(message, opts) {
 // a body, a status line and Cancel and OK. OK runs opts.run through the
 // entry's run (one run per press, the OK disabled while it runs); Cancel
 // closes without asking, because it is a deliberate click. opts: title, sub,
-// body (a Node, or markup the page built and escaped), ok, cancel, danger,
+// body (a Node, or markup the page built and escaped), ok, cancel (false
+// draws no Cancel: a sheet whose every control is already a draft edit has
+// nothing to cancel, and closes with its OK), danger,
 // run(state, handle), backdrop, ask, focus, opener (where focus returns on
 // close, as openLayer's: a sheet opened from a menu row names the menu's
 // trigger, since the row is gone by then), onClose, cardClass (the card's
@@ -209,7 +211,7 @@ export function openSheet(opts) {
     if (typeof o.body === 'string') body.innerHTML = o.body;
     else if (o.body) body.appendChild(o.body);
     const status = el('span', { className: 'layer-status', 'data-layer-status': '' });
-    const cancel = el('button', { className: 'btn', type: 'button' }, o.cancel || 'Cancel');
+    const cancel = o.cancel === false ? null : el('button', { className: 'btn', type: 'button' }, o.cancel || 'Cancel');
     const ok = el('button', { className: 'btn ' + (o.danger ? 'btn-danger' : 'btn-primary'), type: 'button', 'data-layer-ok': '' }, o.ok || 'OK');
     const card = el('div', {
         className: o.cardClass || 'layer-card layer-sheet',
@@ -217,7 +219,7 @@ export function openSheet(opts) {
     }, [
         el('div', { className: 'layer-head' }, [el('h2', null, o.title || ''), o.sub ? el('p', null, o.sub) : null]),
         body,
-        el('div', { className: 'layer-foot' }, [status, cancel, ok]),
+        el('div', { className: 'layer-foot' }, cancel ? [status, cancel, ok] : [status, ok]),
     ]);
     const scrim = el('div', { className: 'layer-scrim' }, card);
     document.body.appendChild(scrim);
@@ -226,7 +228,7 @@ export function openSheet(opts) {
         backdrop: !!o.backdrop, ask: o.ask, focus: o.focus, opener: o.opener, onClose: o.onClose,
     });
     ok.addEventListener('click', () => { if (o.run) h.run(o.run); });
-    cancel.addEventListener('click', () => h.close('cancel'));
+    if (cancel) cancel.addEventListener('click', () => h.close('cancel'));
     return h;
 }
 

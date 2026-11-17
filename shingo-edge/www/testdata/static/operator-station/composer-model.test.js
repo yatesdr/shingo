@@ -223,6 +223,27 @@ test('addPosition with no prior claim takes the first free back position in sequ
     assert.strictEqual(s.cells.PLN_03.paired, 'PLN_02');
 });
 
+// A POSITION ADDED ON A SWAP THAT TAKES NO PARTNER GETS NONE (round 11). Every
+// added position was handed the line's first free back position as its
+// partner, whatever its swap, and nothing cleared it until a swap CHANGE: a
+// 1-Robot Swap row added as such kept paired_core_node, which the save refuses
+// on a strict mode ("1-Robot Swap does not use Paired core node; clear it"),
+// and First style draws no partner field there to clear. A line whose map has
+// back positions could not save its First style on 1-Robot Swap.
+test('addPosition on a swap that takes no partner sends none', () => {
+    for (const mode of ['single_robot', 'two_robot']) {
+        let s = initStyle(7);
+        s = M.reduce(s, { type: 'startBlank' });
+        s = M.reduce(s, { type: 'addPosition', node: 'PLN_03', mode: mode });
+        assert.strictEqual(s.cells.PLN_03.paired, '', mode + ': an added position took back ' + s.cells.PLN_03.paired + ' as its partner');
+        const cell = M.toCells(s).find(c => c.core_node_name === 'PLN_03');
+        assert.ok(!cell.paired_core_node, mode + ': the save is sent partner ' + cell.paired_core_node);
+        // Switching it to a swap that takes one still finds the free back.
+        s = M.reduce(s, { type: 'setMode', node: 'PLN_03', mode: 'two_robot_press_index' });
+        assert.strictEqual(s.cells.PLN_03.paired, 'PLN_02', mode + ' then Index Swap: no back');
+    }
+});
+
 test('removePosition clears the partner role, and the partner is not left in the flow', () => {
     let s = initStyle(7);
     s = M.reduce(s, { type: 'removePosition', node: 'PLN_01' });
@@ -2308,7 +2329,7 @@ function gridLines(M, FLOWSPEC) {
     // Every Advanced key with a value that is not its INSERT default.
     const ALL_SET = {
         allowed_payload_codes: ['PART-X'], reorder_point: 5,
-        auto_reorder: true, lineside_soft_threshold: 3, auto_request_payload: 'PART-X',
+        auto_reorder: true, lineside_soft_threshold: 3,
         auto_push: true, keep_staged_node: 'STG_1', evacuate_on_changeover: true,
         changeover_carryover_disposition: 'keep_lineside', index_robot_supplies: true,
         auto_confirm: true, curtain_required: true, strict_pack: true, pack_tolerance_pct: 5,

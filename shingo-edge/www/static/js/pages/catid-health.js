@@ -61,11 +61,12 @@
                     esc(d.catid) + '">Pin to ' +
                     esc(d.suggestion.style_name) + '</button>';
             }
-            const opts = (d.styles || []).map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>').join('');
-            if (opts) {
-                out += '<select class="pd-inp" data-ch-pick="' + esc(d.catid) + '">' + opts + '</select>' +
-                    '<button class="pd-btn" data-act="ch-pin-pick" data-pid="' + esc(pid) + '" data-catid="' +
-                    esc(d.catid) + '">Pin</button>';
+            // Any other style: one button that opens the page's shared picker
+            // over these styles (the page's ch-pin-pick), carried on it.
+            const styles = (d.styles || []).map(s => ({ id: s.id, name: s.name }));
+            if (styles.length) {
+                out += '<button class="pd-sel" data-act="ch-pin-pick" data-pid="' + esc(pid) + '" data-catid="' +
+                    esc(d.catid) + '" data-styles="' + esc(JSON.stringify(styles)) + '">Pin to a style…<i class="car"></i></button>';
             }
             return out;
         }

@@ -201,8 +201,8 @@ meanings could meet.
 
 One operator screen inside an Edge (`domain.Station`, table `operator_stations`, API `/api/operator-stations`, page
 `/operator/station/{id}`): it belongs to one process, claims a subset of that process's nodes, and renders the
-operator UI for them. Code says **operator station**; UI text says **screen** (*Operator screens* is the Processes
-page's tab), which keeps "station" for the Edge and the loader station.
+operator UI for them. Code says **operator station**; UI text says **screen** (each is a row under the Processes
+page's *Settings › Screens and positions*), which keeps "station" for the Edge and the loader station.
 
 ### Process
 
@@ -670,12 +670,22 @@ calls it"); these are the nouns around the fields.
 
 | Say | Never | Why |
 |---|---|---|
-| **part** | payload (in UI text) | the plant's word on every surface, from the picker to the finding pill. `payload_code` stays the field name in code and on the wire; field labels and refusals say *part* (*Auto request part*; a claim with none is asked for a part) |
+| **part** | payload (in UI text) | the plant's word on every surface, from the picker to the finding pill. `payload_code` stays the field name in code and on the wire; field labels and refusals say *part* (*Allowed parts*; a claim with none is asked for a part) |
 | **flow** | — | what one part does on this process: which positions it works, how each swaps, where its bins come from and go |
-| **recipe** | preset (in UI text) | a named **shape** of flow — the Processes page's *Recipes* tab. The code calls it a preset (`flow_presets`). A recipe is never a part and never names one; parts are applied to it |
+| **recipe** | preset (in UI text) | a named **shape** of flow, listed under the Processes page's *Settings › Operator setup* and drawn from the Styles tab's rail; there is no Recipes tab. The code calls it a preset (`flow_presets`). A recipe is never a part and never names one; parts are applied to it |
+| **recipe group** | — | one side of a recipe (Left Hand, Right Hand on a two-off): its spots, and its own list on its card, **Set for this group**, which every style the floor makes from the recipe takes there. A group carries no carry-over: it marks nothing for a Tool change |
 | **screen** | station, for an HMI | see [Operator Station](#operator-station) |
 | **1‑Robot Swap**, **2‑Robot Swap**, **Index Swap**, **Sequential A/B** | Single-robot swap, Two-robot swap, 2-Robot Press Index, 2‑Robot Index | the chip's word, everywhere, server refusals included. Go's `SwapModeWord` and `composer-model.js`'s `MODES` are the one table (pinned, see [Drift detection](ui-style-guide/24-drift-detection.md)) and keep its non-breaking hyphen |
-| **Add a position** | — | one phrase on every door that turns a position on in a flow (the table's *+ Add a position*, the free-position menu, the empty bar's *Add a position below, or use a preset*) |
+| **Add a position** | — | one phrase on every door that turns a position on in a flow (the table's *+ Add a position*, the free-position menu, the empty bar's *Add a position below*), and on an exception list's add |
+| **Setup** | — | the tab a new process opens on: three steps, *Nodes and part* (the *Add process* sheet, parts first; *Change…* opens it again), *First style* (one position at a time: a checklist of the positions, and the open one's part, consume or produce, swap and its picks — paired core node (Index Swap, Sequential A/B), comes from, inbound staging, outbound staging, goes to; *Done · next position* or *Not in this style*; saved by the Styles tab's save once every position is one or the other) and *Run it* (the operator screen, opened). It is finished when the line can run and its screen has been opened (the screen's `last_seen_at`), not at a first changeover. *Skip setup, use Settings* hides it in this browser; *Show setup* brings it back while the process cannot run. A loader's or unloader's process has no Setup |
+| **set pick** | buckets | the one list in four boxes — **Positions**, **Inbound**, **Staging**, **Outbound** — each marked by its role's dot (the `--role-*` tokens) with its picks as chips, over one node list, a row a line, with **All · Groups only · Free only** and the name prefixes beside its filter (`shared/set-pick.js`). On *Add process*, its *Change…*, and *Settings › Positions and routing*. Ticking a node into Positions takes it out of the roles |
+| **positions on no screen** | On no screen | a process's positions no screen holds. *Settings › Positions and routing* names them, with *Put them on <screen>* for each screen the line has; on a line with none, *+ Add a screen* takes them. A line has one screen, made with the process |
+| **exception list** | — | a setting said as its rule once (`2 of 23 positions`) and a row only where a place differs, × to take it off, *+ Add …* after (`exceptionList`, `shared/exceptions.js`). Two uses: *Settings › Light curtain* and *Settings › Counted somewhere else* (each a card's whole subject, drawn bare: no name column), and a recipe group's *Set for this group*. A style's position sets its own in its row's **Advanced** sheet |
+| **robot work list** | steps | a position's orders, one robot each, and the steps each is sent (pick up, drop, wait, and the node), as the Edge's request-time builders make them for the draft: the preview's `?steps=1` (`engine/flow_steady.go`). Robot 1, 2, 3 are the orders in the order the Edge makes them; on Sequential A/B, Order A and Order B. Beside First style's open position, and under a clicked row on the Styles tab |
+| **Advanced** (a position's) | Set for this style | what a position sets for one style: every row of the Styles tab's positions table ends with **Advanced**, or **Advanced · N set** where it sets something, opening that position's sheet with every setting its swap takes and its value control; edits are the style's draft, saved with Save style. It never asks for the position, and a setting that takes a part starts from the row's. No gear, no list under the table |
+| **Tool change** | — | `changeover_evac_nodes`: the positions of this cell cleared for a setup; the changeover waits for *Tooling done*. In a position's **Advanced** sheet |
+| **carry-over** | part-full bin | a Tool change's second value, drawn only beside its marks: what happens to a marked position's bin when the next style runs the same part there — *if the part stays*: **Fresh bin**, **Keep it** or **Out and back** (`changeover_carryover_disposition`; Fresh bin is the default). A part that changes is always cleared |
+| **Next carrier** | the same for every part on this press | `refill_by`: which robot brings an Index Swap position its next carrier (Robot 1, the default, Robot 2 or Robot 3). It is per style, since it can differ by part; a recipe group carries one value for every part made from it |
 | a node name, in full | `PLN_01` → `P01` | the plant named its nodes; a shortened name is a second name nobody can search for. Too long for its box, it is cut in the middle with the full name in the tooltip |
 
 The changeover picker's red pill says what Core answered — **No bin at Core** (at least one part has no available

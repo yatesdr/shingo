@@ -300,11 +300,11 @@ func TestBuildSwapDispatch_TwoRobotPressIndex_MissingFields(t *testing.T) {
 // and those 2 are the whole population of Core-side orphans: every other
 // unpaired complex order in the dump is single-leg by design.
 //
-// Scoped to the two-leg modes deliberately. sequential and single_robot route to
-// OutboundDestination through the same buildStep and will emit the same
-// node-less dropoff, but they emit ONE order, so a blank there strands nothing
-// and pairs nothing — a different defect with a different fix, and widening this
-// test to cover it would assert a rule this change does not make true.
+// Scoped to the two-leg modes, whose blank orphans a leg at Core. sequential
+// and single_robot emit ONE order, so a blank there strands nothing, but it
+// still sends the robot a dropoff with no node; since round 11 every mode
+// refuses it with the same words (requireOutboundDestination), pinned by
+// TestBuildSwapDispatch_EveryModeRefusesABlankOutboundDestination.
 func TestBuildSwapDispatch_TwoLegModes_RejectBlankOutboundDestination(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -45,6 +46,20 @@ func (c LineCounter) Tags() []string {
 		return []string{c.TagName}
 	}
 	return []string{c.TagName, c.TagName2}
+}
+
+// Name is the counter as another row names it: its label, else its tags joined
+// with " + " (the counter counts their sum). The station strip's name and the
+// position-removal warning's; the page's own copy is StationCard.nameOf
+// (station-card.js).
+func (c LineCounter) Name() string {
+	if c.Label != "" {
+		return c.Label
+	}
+	if c.TagName2 == "" {
+		return c.TagName
+	}
+	return c.TagName + " + " + c.TagName2
 }
 
 const lineCounterCols = `lc.id, lc.process_id, lc.label, lc.plc_name, lc.tag_name, lc.last_count,
@@ -237,11 +252,21 @@ func DeleteLineCounter(db *sql.DB, id int64) (int64, error) {
 	return unbound, tx.Commit()
 }
 
+// NodeCounter is one binding: a position and the station counter it is
+// counted at (nil: the production counter).
+type NodeCounter = domain.NodeCounter
+
+// execer is *sql.DB or *sql.Tx: SetNodeLineCounter runs alone or inside the
+// many-binding write's transaction (store.DB.SetNodeLineCounters).
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // SetNodeLineCounter binds a position to a station counter (nil unbinds it).
 // The rules are the engine's (SetCountedAt); this is the write. It reports
 // whether the binding changed; the store's wrapper publishes the node
 // generation (processes.BumpNodeGeneration) when it did.
-func SetNodeLineCounter(db *sql.DB, nodeID int64, counterID *int64) (bool, error) {
+func SetNodeLineCounter(db execer, nodeID int64, counterID *int64) (bool, error) {
 	res, err := db.Exec(`UPDATE process_nodes SET line_counter_id = ? WHERE id = ? AND line_counter_id IS NOT ?`,
 		counterID, nodeID, counterID)
 	if err != nil {

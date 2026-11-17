@@ -64,7 +64,8 @@ option anywhere — an unrecognised mode still draws, as nothing in particular.
 
 The desktop Processes page draws the glyph at 22 px: on the positions table's
 mode chip and in its picker (`rest` on the modes not chosen), in the
-free-position mode menu, and in the Recipes tab's shape cell.
+free-position mode menu, and in a *Found in your flows* row's shape under
+Settings › Operator setup.
 
 **Never below 16 px, never recoloured, never animated.** Below 16 the chevron
 pairs merge and the glyph stops being countable, which is the one property it

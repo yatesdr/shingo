@@ -509,3 +509,57 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 		t.Fatal("a second run touched an adopted row")
 	}
 }
+
+// TestPutRoutingNodes_AllOrNothing pins the routing set's one write: the rows
+// it adds or adopts and the rows it takes out land together or not at all. A
+// list refused at its third row (a name that is one of the process's own
+// positions) used to leave its first two written, and a sheet that took a
+// name out before writing the rest left the removal standing when the rest
+// was refused.
+func TestPutRoutingNodes_AllOrNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	pid, _ := seedRoutingProcess(t, db, "P500")
+	names := func() []string {
+		t.Helper()
+		rows, err := db.ListRoutingNodes(pid)
+		testutil.MustNoErr(t, err, "list")
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.Role+":"+r.CoreNodeName)
+		}
+		slices.Sort(out)
+		return out
+	}
+	row := func(name, role string) domain.RoutingNodeInput {
+		return domain.RoutingNodeInput{CoreNodeName: name, Role: role}
+	}
+	_, err := db.PutRoutingNodes(domain.CoreNodeKinds{}, pid,
+		[]domain.RoutingNodeInput{row("SMN_01", domain.RoutingRoleSource), row("ULN_01", domain.RoutingRoleDestination)}, nil, "eng")
+	testutil.MustNoErr(t, err, "the first set")
+	want := []string{"destination:ULN_01", "source:SMN_01"}
+
+	// Refused at its last row: nothing of it lands, the removal included.
+	_, err = db.PutRoutingNodes(domain.CoreNodeKinds{}, pid,
+		[]domain.RoutingNodeInput{row("SMN_02", domain.RoutingRoleSource), row("STG_01", domain.RoutingRoleStaging), row("PLN_01", domain.RoutingRoleStaging)},
+		[]domain.RoutingNodeInput{row("ULN_01", domain.RoutingRoleDestination)}, "eng")
+	if !errors.Is(err, processes.ErrRoutingNodeIsPosition) {
+		t.Fatalf("a set naming a position: err = %v, want ErrRoutingNodeIsPosition", err)
+	}
+	if got := names(); !slices.Equal(got, want) {
+		t.Errorf("after a refused set the rows are %v, want %v untouched", got, want)
+	}
+
+	// Accepted: the add and the removal in one write, with what the removal
+	// leaves behind. A removal of a row already gone is nothing to do.
+	gone, err := db.PutRoutingNodes(domain.CoreNodeKinds{}, pid,
+		[]domain.RoutingNodeInput{row("SMN_02", domain.RoutingRoleSource)},
+		[]domain.RoutingNodeInput{row("ULN_01", domain.RoutingRoleDestination), row("ULN_09", domain.RoutingRoleDestination)}, "eng")
+	testutil.MustNoErr(t, err, "the second set")
+	if got, want := names(), []string{"source:SMN_01", "source:SMN_02"}; !slices.Equal(got, want) {
+		t.Errorf("after the second set the rows are %v, want %v", got, want)
+	}
+	if len(gone) != 1 || gone[0].Name != "ULN_01" || gone[0].Role != domain.RoutingRoleDestination {
+		t.Errorf("the removals reported %+v, want ULN_01 as a destination only", gone)
+	}
+}

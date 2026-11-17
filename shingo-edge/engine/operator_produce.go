@@ -306,13 +306,22 @@ func (e *Engine) createClearsThenPrimes(node *processes.Node, claim *processes.N
 // confirms it (up to ten minutes a cycle). A prime was confirmed by the merged
 // auto-confirm signal; a consume prime was a move.
 func (e *Engine) carrierToPosition(nodeID int64, claim *processes.NodeClaim, pos string, quantity int64, origin ordermgr.Origin) (*orders.Order, error) {
+	spec := carrierSpec(claim, pos, quantity)
+	spec.Process, spec.Origin = &nodeID, origin
+	return e.orderMgr.CreateRetrieveOrder(spec)
+}
+
+// carrierSpec is the retrieve carrierToPosition creates, without the row it is
+// made on or the demand it serves. Pure, so a dry run can show the follow-on
+// Robot 3's lift makes from the spec the runtime creates rather than a copy of
+// it. Pinned by TestRobot3_TheFollowOnsRetrieveSpec.
+func carrierSpec(claim *processes.NodeClaim, pos string, quantity int64) ordermgr.RetrieveSpec {
 	empty := carriesEmpty(claim)
 	if empty {
 		quantity = 1
 	}
-	return e.orderMgr.CreateRetrieveOrder(ordermgr.RetrieveSpec{Process: &nodeID, Delivery: pos,
-		Source: claim.InboundSource, Payload: claim.PayloadCode, Quantity: quantity, Empty: empty,
-		AutoConfirm: true, Origin: origin, Press: claim.CoreNodeName})
+	return ordermgr.RetrieveSpec{Delivery: pos, Source: claim.InboundSource, Payload: claim.PayloadCode,
+		Quantity: quantity, Empty: empty, AutoConfirm: true, Press: claim.CoreNodeName}
 }
 
 // primeNodeLock returns the per-cell prime mutex, creating it on first use.

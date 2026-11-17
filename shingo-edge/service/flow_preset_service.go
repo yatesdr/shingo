@@ -49,10 +49,6 @@ import (
 type PresetsView struct {
 	Presets    []PresetRow       `json:"presets"`
 	Candidates []PresetCandidate `json:"candidates"`
-	// StylesWithFlow is how many of the process's live styles have any claim
-	// at all — the denominator for "N shapes over M flows", and the number
-	// that makes the grouping visible.
-	StylesWithFlow int `json:"styles_with_flow"`
 }
 
 // PresetRow is one row of the PRESETS section.
@@ -157,11 +153,6 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 	}
 
 	out := &PresetsView{Presets: []PresetRow{}, Candidates: []PresetCandidate{}}
-	for _, f := range flows {
-		if len(f.cells) > 0 {
-			out.StylesWithFlow++
-		}
-	}
 
 	// ── the named shapes ─────────────────────────────────────────────────
 	activeKeys := map[string]bool{}

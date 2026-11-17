@@ -145,6 +145,14 @@ export function collectList(container, rowSelector, read) {
 //           },
 //       },
 //       onSaved(body, sections) -> after the shared request saved, e.g. to redraw live words
+//       stopOnFailure -> true: the own saves stop at the first that fails; the
+//                        ones after it are not sent, stay dirty, and the
+//                        outcome names them "not sent" (a page whose rule is
+//                        that a refusal stops the writes after it)
+//       afterSave(out) -> awaited once a save has run, whatever its outcome: a
+//                         page whose sections each have their own door reads
+//                         back once here, then calls page.rebase(names) for the
+//                         sections that saved (out.own[n].ok)
 //   });
 //
 // Dirty is decided per section by comparing read() with what the page last
@@ -315,9 +323,15 @@ export function settingsPage(root, opts) {
                     if (opts.onSaved) opts.onSaved(b, shared);
                 }
             }
+            let stop = false;
             for (const n of own) {
                 const s = sections[n];
                 const label = s.label || n;
+                if (stop) {
+                    out.own[n] = { ok: false, skipped: true, error: 'not sent' };
+                    parts.push({ label, ok: false, skipped: true, why: 'not sent' });
+                    continue;
+                }
                 let r;
                 try {
                     r = await s.save(drafts[n]);
@@ -333,6 +347,7 @@ export function settingsPage(root, opts) {
                     const loose = showErrors(r.errors);
                     const placed = Object.keys(r.errors || {}).length - loose.length;
                     parts.push({ label, ok: false, shown: !!r.shown, why: failureText(r, loose, placed, 0) });
+                    if (opts.stopOnFailure) stop = true;
                 }
             }
         } finally {
@@ -340,6 +355,14 @@ export function settingsPage(root, opts) {
         }
 
         out.ok = parts.every((p) => p.ok);
+        if (opts.afterSave) {
+            try {
+                await opts.afterSave(out);
+            } catch (e) {
+                parts.push({ label: 'reading back', ok: false, why: String(e && e.message ? e.message : e) });
+                out.ok = false;
+            }
+        }
         if (out.ok) {
             if (!state.failed.length) toast('Saved', 'success');
         } else if (parts.length === 1) {
@@ -348,7 +371,7 @@ export function settingsPage(root, opts) {
         } else {
             // A partial outcome, said plainly: "Settings saved; shifts failed: …".
             // A part the door already said on the notice (shown) adds only "failed".
-            const line = parts.map((p) => p.label + (p.ok ? ' saved' : p.shown ? ' failed' : ' failed: ' + p.why.replace(/\.$/, ''))).join('; ');
+            const line = parts.map((p) => p.label + (p.ok ? ' saved' : p.skipped ? ' not sent' : p.shown ? ' failed' : ' failed: ' + p.why.replace(/\.$/, ''))).join('; ');
             state.refusal = line.charAt(0).toUpperCase() + line.slice(1) + '.';
         }
         render();
@@ -376,9 +399,16 @@ export function settingsPage(root, opts) {
     if (discardBtn) discardBtn.addEventListener('click', discard);
     render();
 
+    // rebase takes the named sections (all, without names) as they read now
+    // as their saved state: after a page read back what a save wrote.
+    function rebase(list) {
+        (list || names).forEach((n) => { if (sections[n]) state.baseline[n] = snap(n); });
+        render();
+    }
     return {
         save,
         discard,
+        rebase,
         update: render,
         isDirty: () => dirtySections().length > 0,
         dirtySections,

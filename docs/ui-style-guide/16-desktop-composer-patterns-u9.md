@@ -4,34 +4,87 @@ Verified against: 74c3eb77
 
 The Edge Processes page (`shingo-edge/www/static/js/pages/processes-desktop.js`)
 is the engineer's half of the flow composer: a process list, and per process
-four tabs — **Styles**, **Operator screens**, **Settings** and **Recipes**.
-These are the patterns on it worth reusing. Each is one paragraph because each
-is one idea.
+two tabs, **Styles** and **Settings**, with a **Setup** tab before them until
+the line is set up. There is no Operator screens tab and no Recipes tab: the
+screen is a line under **Settings › Positions and routing**,
+and the recipes sit under **Settings › Operator setup** (a `#tab=presets` or
+`#tab=recipes` link lands there). A loader's or unloader's process — Core runs
+its board, the process row's `core_boards` — has Settings alone: Line, Screens
+and positions, a **Loader board** pointer to Core, and Danger; no Setup, no
+Styles, no flow picture. Nothing on it is a pick: a position there that no
+loader holds would make the process a line again. Positions on no screen are
+chips with **Put them on <screen>**. One line per loader says which Edge Core
+names for it; the Edge keeps the windows itself, and what it could not take is
+one line each, **Core added <window>** with **Put it on <screen>** and **Core
+removed <window>** with **Take it off <screen>**, drafts on the one Save. These are the patterns on it worth reusing. Each is
+one paragraph because each is one idea.
 
 **One editor per fact.** Each fact about a process is edited in one place, and
 every other screen that shows it shows it read-only:
 
 | Fact | Its editor |
 |---|---|
-| name, description, group, production counter, changeover auto-arm, HMI setup, the parts the process runs, quality hold, routing set | **Settings** |
-| the operator screens | **Operator screens** |
-| a style's flow, and its Advanced fields | **Styles** |
-| a recipe's shape | **Styles**, from the rail (open a recipe, or **+ New recipe**) |
-| recipe names, and which parts a recipe is applied to | **Recipes** |
-| all of it, once, when the process is made | **Add process** |
+| name, description, group | **Settings › Line** |
+| production counter | **Settings › Production counter** |
+| the positions, the routing set and the screen that holds the positions | **Settings › Positions and routing**, the set pick (and **Add process** and its Change…, the same pick) |
+| the parts the process runs | **Settings › Parts** |
+| a position counted somewhere other than the production counter | **Settings › Counted somewhere else** |
+| where the CATID is read from, and what a confirmed change of it does (auto-arm) | **Settings › Part identity (CATID)** |
+| a position's light curtain | **Settings › Light curtain** |
+| HMI setup, recipe names, and which parts a recipe is applied to | **Settings › Operator setup** |
+| whether the station shows the auto-reorder switch | **Settings › Auto-reorder** |
+| quality hold | **Settings › Quality hold** |
+| a style's flow, and what a position sets for that style | **Styles** (the positions table; each row's **Advanced** sheet) |
+| a recipe's shape, and what a recipe group sets | **Styles**, from the rail (open a recipe, or **+ New recipe**) |
+| a process, its screen, its positions, routing set and parts, when it is made | **Add process**, which lands on **Setup**; Setup's Change… is the same sheet |
 
-The process list finds a process and opens it; it has no edit sheet of its
-own. A second editor for a fact is two forms that can disagree about it, and
-the one the engineer did not open is the one holding the stale value. When a
-fact gains a better editor, the old one is deleted with its routes rather than
-kept in step. The positions a process works are the one fact with two doors —
-**Settings › Positions** and **Operator screens › Edit** — and they cannot
-disagree: both write through the same `PUT …/claimed-nodes`, and each sends only
-a list it has just read. **"+ Add a position" on the Styles tab is not a
-positions editor either**: it turns a position on in the draft, nothing is
-written until the flow is saved, and which positions the process works is still
-Settings' and Operator screens' to say. One phrase for it everywhere: "Add a
-position".
+**The set pick is one piece in two places** (`shared/set-pick.js`): four boxes,
+Positions, Inbound, Staging and Outbound, each in its role's colour (the
+`--role-*` tokens, never the robot hues) with its picks as chips, over one
+always-open list, one row a line with nothing to open before a tick (a group's
+nodes wait under its **show N**, as everywhere). Beside the name filter,
+**All · Groups only · Free only**, then the name prefixes (PLN, SMN …), each a
+filter: Groups only is the group rows, already listed; Free only is what the
+open box may take. A node already in another box carries that box's name as a
+tag in its colour, and is greyed with the reason where the open box may not
+take it; nodes other processes hold wait under one line at the foot. What holds
+for many rows of the open box is said once above the list (`hint`), not on each
+row. The open box, its chips and the list's frame are neutral: only a box still
+needed is outlined in its role's colour. **The pick has one scroll, what holds
+it**: the list has no height of its own, the sheet's body (Add process) or the
+Settings column scrolls it, and the boxes and the **Picking …** line stay in
+view at the top of that scroll while the rows go under them. The Add process
+sheet (and its Change…, the same sheet filled in) and Settings › Positions and
+routing draw it; both save through the same
+doors (`savePositions`, `saveRouting`), so it is one editor drawn twice, not two
+forms. Positions are saved per screen through `PUT …/claimed-nodes` (a line's
+positions on no screen through `PUT …/positions`), each from a list just read.
+**A line has one screen**, made with the process; a new position goes on it.
+A line with none offers **+ Add a screen**, which takes the positions on no
+screen; one with two from before shows each with its positions, and nothing
+there moves a position between them. **"+ Add a position" on the Styles tab is not a positions editor
+either**: it turns a position on in the draft, nothing is written until the
+flow is saved, and which positions the process works is still Settings' to
+say. One phrase for it everywhere: "Add a position".
+
+**Setup: a short path to a first line, skippable.** A new process opens on
+Setup: three steps, each done where it is shown — **Nodes and part** (the Add
+process sheet answered it, parts first; Change… opens it again), **First
+style** (one position at a time: the positions as a checklist, done ones ticked
+green; the open position's part, consume or produce, swap (it starts as the
+position before it) and its picks from the routing set, only what its swap
+uses; **Done · next position** or **Not in this style**; **+ Add a position**
+and **Take … off this line** through Settings' positions write; Save style once
+every position is done or left free, by the Styles tab's own save), and **Run
+it** (the screen, opened, with its three presses written out). No step lands on
+Settings. Beside the first and last, the line so far and what can wait for
+Settings; First style's checklist is its line so far. Its loud colours are the
+open position, green for done, and the dashed outline of a pick box still
+needed; a role is a small dot. It is finished when the
+line **can** run and its screen **has been opened** (the screen's
+`last_seen_at`), not at a first changeover: some lines have none. **Skip setup,
+use Settings** hides it in this browser; **Show setup** brings it back while the
+process cannot run.
 
 **The app-bar gate sentence.** Plain muted text on the right of the app bar
 (`.pd-gate`: no border, no tone, no pill) states a setting that is decided
@@ -49,13 +102,27 @@ to show a setting it is not the owner of.
 group label and a count above it, the ungrouped bucket last, and a whole row as
 the click target. Columns are facts, never controls — no inline editing on a
 list — because a list is for finding the thing, and a row that edits is a row
-you cannot click. A row's only buttons are its doors (*Flows*, *Settings*).
+you cannot click. A row's only buttons are its doors (*Styles*, *Settings*).
 
 **The positions table with chip pickers.** A row per position, and every cell
 that can change is a chip that opens a popover list — never a native `<select>`
 (a select's dropdown is the browser drawing its own chrome over ours, and it
 cannot carry a glyph). Every pick applies immediately to the draft and redraws
-the picture; nothing is written until the page's one save button.
+the picture; nothing is written until the page's one save button. **Every
+list of unknown length on the page is the shared picker** ([Picker](34-picker.md):
+`shared/picker.js` and its node and part adapters), node groups first — a
+chip's list, a routing role, a screen's positions, the part set, + Add a
+setting, a group, a PLC, a counter — so a list on this page reads, searches
+and greys a row the way every other does. The role and swap-mode chips, two to
+four fixed answers each, open a short menu: the table is not a settings page
+([Settings pages](33-settings-pages.md) rule 6).
+
+**Free positions fold.** The Styles picture draws the positions the style uses
+and the nodes their rows name (partners, staging), then one line, `N more
+positions on this process are free · show them`; the table's POSITIONS line
+folds its free names the same way, to `N free` beside + Add a position until
+*show them*. A flow that uses nothing yet draws every position: there is
+nothing to fold to.
 
 **One vertical scroll: the main column.** The picture above the table takes
 its full height and never scrolls inside itself, and the table draws every
@@ -66,20 +133,41 @@ own (`#pd-poshead`, the same colgroup) sticky against the column and carried
 sideways with the rows. The bar sticks to the foot of the column, so Save is
 always on screen.
 
-**The per-row `N set` count.** A row that opens a sheet of settings says how
-many of them carry a value, in the accent, and reads `defaults` when none do.
-The count is computed from the SAME predicate the server uses for "has a
-value", so a badge and a save cannot disagree; a second spelling of it would
-put an indigo count on a row the server reads as untouched.
+**The row's Advanced.** Every positions-table row ends with one control,
+**Advanced**, or **Advanced · N set** where its position sets something for
+this style (the count in the accent), opening that position's sheet: the
+shared sheet shell, every setting flowspec offers the position under its
+heading, each with its value control, edits the style's draft (no Cancel;
+Done closes it). It never asks for the position again, and a setting that
+takes a part starts from the row's part. The count is one per setting set,
+and "is set" is the SAME predicate
+the server uses for "has a value" (Robot 1 and Fresh bin are defaults, not
+settings), so a chip and a save cannot disagree; a second spelling of it would
+put an indigo count on a row the server reads as untouched. There is no gear
+and no Advanced sheet: it drew every field at its default behind each row, so
+one setting on one position was a sheet of a dozen "off".
 
-**The Advanced sheet's field shape.** The one sheet width over the scrim (see
-[Modals](10-modals.md) › Sheets); a section per group of fields with an 11 px
-label and its own `N set`; each field a 230 px label column carrying a
-**one-line, plain-language sub-label** and a value column beside it. The
-sub-label is not optional — these are the fields nobody can name from memory,
-and the sheet exists precisely because they had no home. The footer states what
-the sheet does NOT do (`Nothing here changes the flow or the picture.`) before
-the two buttons.
+**The exception list.** A setting that is the same everywhere except where it
+differs is said as the rule once (`2 of 23 positions`, `all 23 at the
+production counter`) and a row only where a place differs, each with its
+controls and a ×, then `+ Add …` — never one row per place saying the default.
+It is one shared piece, `exceptionList` in `shared/exceptions.js` (markup only;
+the page's delegated handler acts on its × and its add), with two uses:
+**Settings › Light curtain** and **Settings › Counted somewhere else** (each
+the card's whole subject, so the list is `bare`: no name column of its own, `+
+Add a position` at the card's right edge), and a recipe group's own list on its
+card (**Set for this group**, one row named for the group). A style's position
+is not a list: its settings are its row's Advanced sheet (above). A setting's label is the claim's own word (`Next carrier`, `Tool
+change`) with one muted sub-line only where it changes what a person would
+pick. What a list offers is flowspec's decision, as the positions table's
+columns are: a setting this choreography forbids or never reads is not
+offered. **A setting's second value is drawn only beside its first**: the
+carry-over (`if the part stays: Fresh bin · Keep it · Out and back`) is a Tool
+change's, drawn beside its marks and nowhere else, and a recipe group, which
+marks nothing, carries none. **Next carrier is per style** — it can differ by
+part — and a group's is one value for every part made from it. **Auto reorder
+is on the row**, `off` or `on at <point>`, so a position does not list it
+twice; a recipe group, which has no row, lists it as one row reading the same.
 
 **The settings section with a live indicator in its title.** `Production
 counter · counting` (or `not wired`). The live state goes in the TITLE, not
@@ -91,15 +179,35 @@ makes people think the control did it.
 outlined destructive button (`Delete <process>…`), and a sub-label saying what
 else goes with it. Not a red-filled button: a filled destructive control
 competes with the primary action for the eye, and the primary action on that
-page is `Save settings`.
+page is the foot bar's `Save`.
+
+**Settings is one settings page.** The tab is `settingsPage`
+(`shared/settings.js`; see [Settings pages](33-settings-pages.md)): every
+section open, grouped by what it is about, each group under a small heading on
+the page and in the list down the left — **The line** (Line · Parts ·
+Positions and routing), **Counting and part identity** (Production counter ·
+Part identity (CATID), holding *When the part changes* · Counted somewhere
+else), **At the station** (Operator setup · Auto-reorder · Quality hold ·
+Light curtain) and **Danger** — with Health first while it has items, a dot in
+the list on a section that needs attention, each a card, the page's full
+width, and one Save in the foot bar. Two half cards share a row and its
+height; a card holding a table or a list takes the full width; every card's
+label column is one width, so values and switches start on one line down the
+page. Nothing on a card is cut: a segment of long answers stacks (`.pd-seg.col`)
+rather than clipping, and a recipe's name and spots wrap. Nothing on it is saved as it
+is picked: a pick, a switch and a typed value are the draft until Save, the
+line's auto-reorder switch included (it is still recorded with who, where and
+when). An on/off setting is a switch with what it means beside it.
 
 **Recipes: two sections, and the second one is an offer.** A screen that names
-reusable shapes has two lists on it and they are different kinds of thing.
-**Recipes** is what somebody named — name, shape, how many parts use it,
-whether any have drifted, when it was saved. **Found in your flows** is one row
-per distinct shape the process already runs that nobody has named, with a
-suggested name and a `Name it…`; it applies nothing, ever, and the section
-disappears when every shape has a name. The second one is why the first is
+reusable shapes has two lists on it and they are different kinds of thing. On
+this page they sit under **Settings › Operator setup**, beside the switch they
+serve. **Recipes** is what somebody named — name, shape, how many parts use it,
+whether any have drifted, when it was saved — each name's newest version, the
+older ones behind `show`. **Found in your flows** is one row per distinct shape
+the process already runs that nobody has named, with a suggested name and a
+`Name it…`, three and then the rest on ask; it applies nothing, ever, and the
+section disappears when every shape has a name. The second one is why the first is
 usable on arrival: an engineer meeting a press with ninety parts over two shapes
 is offered two rows, not ninety, and that is the difference between an offer
 and a list. A part already under a recipe is not on offer even when it has

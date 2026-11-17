@@ -339,7 +339,9 @@ function bootPage(opts) {
     };
 
     // the store
-    const stored = Object.assign({}, opts.stored || {});
+    // Every page is a screen an operator turned ROBOTS on (its store says
+    // "on"), unless it brings its own store or is fresh: never pressed.
+    const stored = Object.assign({}, opts.stored || (opts.fresh ? {} : { 'shingo.robot-panel.7': 'on' }));
     h.stored = stored;
     const localStorage = opts.store === 'throws'
         ? { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } }
@@ -517,7 +519,7 @@ function tap(h, under) {
         'a screen whose orders have no robot loads no drawing, asks for no scene, opens no panel stream');
     ok(!!h.toggle(), 'a cell screen carries the ROBOTS toggle in its top bar');
     eq([h.toggle().textContent, h.toggle().attrs['aria-pressed'], h.toggle().attrs['aria-label']],
-        ['ROBOTS', 'true', 'Robots on this screen'], 'the toggle reads ROBOTS, enabled with no store');
+        ['ROBOTS', 'true', 'Robots on this screen'], 'the toggle reads ROBOTS, on, on a screen an operator turned it on');
     // A reshuffling parent has no robot: Core tracks its child legs.
     await h.setView(cellView({ 3: [order(503, 'reshuffling', 'AMR-01', 'PLN_03')] }));
     eq([h.counts.imports, h.panelStreams().length], [0, 0], 'a reshuffling parent shows no robot (D13)');
@@ -959,7 +961,8 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
         'shown again: the same hint, built once with the panel, saying the same');
 }
 
-// ── 11. The toggle is remembered per screen; a store that fails means enabled.
+// ── 11. The toggle is remembered per screen, "on" and "off" both; a store
+// that fails means off, as a screen nobody pressed.
 {
     const v = cellView({ 3: [order(501, 'in_transit', 'AMR-07', 'PLN_03')] });
     const h = await shownPage(v);
@@ -971,20 +974,76 @@ ok(jam.moved >= 4 && jam.h.map().inspect().fits > 2, 'the jam stacks the chips a
     await again.boot();
     eq([again.toggle().attrs['aria-pressed'], again.counts.imports, again.panelStreams().length], ['false', 0, 0],
         'a reload of this screen comes back off and loads nothing');
-    const other = bootPage({ view: v, stored: { 'shingo.robot-panel.8': 'off' } });
+    const other = bootPage({ view: v, stored: { 'shingo.robot-panel.7': 'on', 'shingo.robot-panel.8': 'off' } });
     await other.boot();
     eq(other.panelStreams().length, 1, 'another screen\'s setting is not this one\'s');
     again.toggle().click();
     await again.flush();
-    eq([again.stored['shingo.robot-panel.7'], again.panelStreams().length], [undefined, 1], 'toggled on: the store forgets the off, the panel opens');
+    eq([again.stored['shingo.robot-panel.7'], again.panelStreams().length], ['on', 1], 'toggled on: the store says on, the panel opens');
     const broken = bootPage({ view: v, store: 'throws' });
     await broken.boot();
-    eq([broken.toggle().attrs['aria-pressed'], broken.panelStreams().length], ['true', 1], 'an unreadable store: enabled');
+    eq([broken.toggle().attrs['aria-pressed'], broken.panelStreams().length], ['false', 0], 'an unreadable store: off, as a screen nobody pressed');
     const readonly = bootPage({ view: v, store: 'readonly' });
     await readonly.boot();
     readonly.toggle().click();
     await readonly.flush();
     eq([readonly.toggle().attrs['aria-pressed'], readonly.openPanelStream()], ['false', null], 'a store that cannot be written: the toggle still holds for the page');
+}
+
+// ── 11a. OFF UNTIL AN OPERATOR TURNS IT ON (owner, 2026-11-15). A screen
+// nobody has pressed ROBOTS on shows no panel, loads nothing, opens no stream
+// and sets no timer, its first dispatch included: the zero cost of hidden. The
+// button is drawn off (aria-pressed false: its dimmed outline). A press turns it on and remembers "on"; from then
+// the panel shows on dispatch and goes on delivery, as built; a tap hides it
+// for the orders that had a robot and leaves the toggle and the store as they
+// were; another press turns it off and remembers "off".
+{
+    const v = cellView({ 3: [order(501, 'dispatched', 'AMR-07', 'PLN_03')] });
+    const h = bootPage({ view: cellView({ 3: [order(501, 'queued', '', 'PLN_03')] }), fresh: true });
+    await h.boot();
+    eq([h.toggle().textContent, h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7']], ['ROBOTS', 'false', undefined],
+        'never pressed: the button is drawn off with no order running, and nothing is stored');
+    // Off and on are told apart by the button's colours alone (owner: "the
+    // colors do enough there"): the off rule changes the outline and the word.
+    const css = fs.readFileSync(path.join(SRC_DIR, 'operator.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const offRule = (css.match(/\.os-header-btn\.robots\[aria-pressed="false"\]\s*\{([^}]*)\}/) || [])[1] || '';
+    ok(/border-color\s*:/.test(offRule) && /(^|[;\s])color\s*:/.test(offRule), 'operator.css draws off apart from on: its outline and its word', offRule);
+    h.mark();
+    await h.setView(v);
+    await h.advance(60000);
+    eq([h.visible(), !!h.panel(), h.counts.imports, h.counts.sceneGets, h.panelStreams().length, h.counts.panelTimers],
+        [false, false, 0, 0, 0, 0], 'its first dispatch, and a minute on: no panel, no drawing loaded, no scene, no stream, no timer');
+    h.toggle().click();
+    await h.flush();
+    h.frame(available(true));
+    await h.flush();
+    eq([h.toggle().textContent, h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7'], h.visible(), h.panelStreams().length],
+        ['ROBOTS', 'true', 'on', true, 1], 'pressed: drawn on, "on" remembered, and the order\'s robot shows at once');
+    await h.setView(cellView({ 3: [order(501, 'delivered', 'AMR-07', 'PLN_03')] }));
+    eq([h.visible(), h.openPanelStream()], [false, null], 'delivered: it goes, as built');
+    await h.setView(cellView({ 3: [order(502, 'dispatched', 'AMR-08', 'PLN_03')] }));
+    h.frame(available(true));
+    await h.flush();
+    eq(h.visible(), true, 'the next dispatch: it shows again, as built');
+    tap(h, h.document.getElementById('os-grid'));
+    await h.flush();
+    eq([h.visible(), h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7']], [false, 'true', 'on'],
+        'a tap hides it for this order; the toggle and the store stay on');
+    const back = bootPage({ view: v, stored: h.stored });
+    await back.boot();
+    eq([back.toggle().attrs['aria-pressed'], back.panelStreams().length], ['true', 1], 'a reload of a screen turned on comes back on');
+    // A press while the panel is tap-hidden brings it back (as built); the
+    // next press turns ROBOTS off.
+    h.toggle().click();
+    await h.flush();
+    h.frame(available(true));
+    await h.flush();
+    eq([h.visible(), h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7']], [true, 'true', 'on'],
+        'pressed while tap-hidden: shown again, still on');
+    h.toggle().click();
+    await h.flush();
+    eq([h.toggle().attrs['aria-pressed'], h.stored['shingo.robot-panel.7'], h.visible(), h.openPanelStream()], ['false', 'off', false, null],
+        'pressed again: drawn off, "off" remembered, nothing shown');
 }
 
 // ── 12. {available: false} hides it, and what tries it again.

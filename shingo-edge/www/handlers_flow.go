@@ -48,9 +48,11 @@ type flowPreviewBody struct {
 	New     bool  `json:"new"`
 }
 
-// flowSaveBody is POST /api/processes/{id}/flow/save. station_id names the
-// operator station saving; the handler resolves its NAME for called_by, the
-// client never sends the name.
+// flowSaveBody is POST /api/processes/{id}/flow/save. station_id is
+// optional: when set it names the operator station the desktop is looking
+// at, and the handler refuses one that is not this process's; zero or absent
+// is a process with no screen yet. It is never authorship — called_by is the
+// session's person (R1), not the station's name.
 type flowSaveBody struct {
 	ToStyleID   int64             `json:"to_style_id"`
 	Cells       []domain.FlowCell `json:"cells"`
@@ -110,12 +112,16 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 	// (a new one every 400 ms) do not ask, and the desktop never does: it
 	// does not read the answer. See engine.flowPreflight.
 	//
+	// ?steps=1 asks for every cell's steady-state legs as Core would receive
+	// them (engine.FlowPreview.Steady). Not on the mint form.
+	//
 	// r.Context() travels, so a preview whose operator has left the screen
 	// stops at the next phase boundary instead of finishing a plan and a Core
 	// call for nobody.
 	preq := engine.FlowPreviewRequest{
 		ToStyleID: body.ToStyleID, Cells: body.Cells, TakenOff: body.TakenOff,
 		Preflight: r.URL.Query().Get("preflight") == "1",
+		Steps:     r.URL.Query().Get("steps") == "1",
 	}
 	if body.PresetID != 0 || len(body.Parts) > 0 || body.StyleID != 0 {
 		preq = engine.FlowPreviewRequest{Preflight: preq.Preflight, Mint: &engine.MintRequest{
@@ -132,9 +138,7 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &noOrders) && noOrders.Preview != nil {
 			// 400 with the named reason — and the preview's findings and
 			// unresolved nodes, which are usually why nothing fires.
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]any{
+			out := map[string]any{
 				"error":       err.Error(),
 				"order_count": 0,
 				"findings":    noOrders.Preview.Findings,
@@ -142,7 +146,14 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 				"preflight":   noOrders.Preview.Preflight,
 				"fingerprint": noOrders.Preview.Fingerprint,
 				"mint":        noOrders.Preview.Mint,
-			})
+			}
+			// Present when asked, absent otherwise, as on a 200 (omitempty).
+			if len(noOrders.Preview.Steady) > 0 {
+				out["steady"] = noOrders.Preview.Steady
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(out)
 			return
 		}
 		if !writeFlowRefusal(w, err) {
@@ -164,35 +175,36 @@ func (h *Handlers) apiSaveFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.StationID == 0 {
-		writeError(w, http.StatusBadRequest, "station_id is required: a flow is saved by a station")
-		return
+	// THE STATION IS OPTIONAL. A body that names one still has to name a
+	// real station of THIS process — a desktop looking at one press and
+	// saving into another is refused here, before the engine runs. A body
+	// that names none saves: nothing below reads the station (the author is
+	// the session's person, and engine.SaveFlow takes no station), and a
+	// process has no screen until someone hangs one on it, which is after
+	// its first style is set up, not before. Refusing that save made the
+	// screen a prerequisite of the setup it is part of.
+	// TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle pins both halves.
+	if body.StationID != 0 {
+		station, err := h.engine.StationService().Get(body.StationID)
+		if err != nil || station == nil {
+			writeError(w, http.StatusBadRequest, "unknown station")
+			return
+		}
+		if station.ProcessID != processID {
+			writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
+			return
+		}
 	}
-	station, err := h.engine.StationService().Get(body.StationID)
-	if err != nil || station == nil {
-		writeError(w, http.StatusBadRequest, "unknown station")
-		return
-	}
-	if station.ProcessID != processID {
-		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
-		return
-	}
-	// WHO SAVED THIS, AND FROM WHERE — decided here, from the authenticated
-	// caller, and never from the body (owner ruling R1).
-	//
-	// Both surfaces POST this route. An admin session is a person on the
-	// desktop; no session is a station on the floor, which is what the kiosk
-	// is. The station is still required and still has to belong to the
-	// process either way: a flow is saved AT a press, and the desktop says
-	// which one it is looking at.
+	// WHO SAVED THIS — decided here, from the signed-in caller, and never
+	// from the body (owner ruling R1). The route is behind login: only the
+	// desktop saves a flow, so the author is the session's person, whichever
+	// screen (if any) the desktop was looking at.
 	//
 	// This is the routing set's rule applied to a second write. A body that
 	// declared its own source would be a page deciding authorship, and
 	// flowSaveBody deliberately has nowhere to put one.
-	source, calledBy := domain.ClaimSourceHMI, station.Name
-	if user, ok := h.sessions.getUser(r); ok && user != "" {
-		source, calledBy = domain.ClaimSourceAdmin, user
-	}
+	calledBy, _ := h.sessions.getUser(r)
+	source := domain.ClaimSourceAdmin
 	// PRESET PROVENANCE, WHEN THIS SAVE IS AN APPLY (U10). Both or neither: a
 	// row that says "preset 42, version nothing" is provenance nobody can
 	// read, and half-writing it is worse than not recording it.

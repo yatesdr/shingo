@@ -42,8 +42,8 @@ CREATE UNIQUE INDEX idx_process_nodes_process_code_live
 		ON process_nodes(process_id, code) WHERE deleted_at IS NULL;
 
 CREATE UNIQUE INDEX idx_process_nodes_process_core_name
-				ON process_nodes(process_id, core_node_name)
-				WHERE core_node_name <> '' AND deleted_at IS NULL;
+		ON process_nodes(process_id, core_node_name)
+		WHERE core_node_name <> '' AND deleted_at IS NULL;
 
 CREATE INDEX idx_process_routing_nodes_process ON process_routing_nodes(process_id);
 
@@ -173,6 +173,11 @@ CREATE TABLE core_loaders (
     -- 1 = a dedicated loader whose Clear partials is off: the board offers
     -- no home clear (Edge v46). Core owns it (bin_loaders.no_clear_partials).
     no_clear_partials INTEGER NOT NULL DEFAULT 0,
+    -- The station uid of the Edge Core names to work this loader, and that
+    -- Edge's display name (Edge v57). '' = Core names none (or predates the
+    -- field). Core owns both (bin_loaders.edge_station_uid).
+    edge_station_uid  TEXT NOT NULL DEFAULT '',
+    edge_display_name TEXT NOT NULL DEFAULT '',
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );
@@ -337,6 +342,9 @@ CREATE TABLE operator_stations (
     last_seen_at       TEXT,
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    -- The Core loader this screen was made or taken for (Edge v57), its
+    -- loader_key; '' = none. Written by the Edge, never by a screen's edit.
+    core_loader_key    TEXT NOT NULL DEFAULT '',
     UNIQUE(process_id, code)
 );
 
@@ -720,7 +728,12 @@ CREATE TABLE process_nodes (
     -- NULL = counted by the process's production counter. No FK (the edge
     -- runs with foreign keys off): every read LEFT JOINs line_counters, so a
     -- binding to a deleted counter reads as unbound.
-    line_counter_id     INTEGER
+    line_counter_id     INTEGER,
+    -- 1 once a Core loader has held this position's node as a window or a
+    -- home while the row lived (v56). Never cleared on a live row: it is how
+    -- a window Core later removes is still known as one, so its process stays
+    -- a loader's and its page says Core removed it.
+    loader_window       INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE process_payloads (
@@ -927,7 +940,6 @@ CREATE TABLE style_node_claims (
     -- tolerance: the real count always ships.
     pack_tolerance_pct      INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
-    auto_request_payload    TEXT NOT NULL DEFAULT '',
     -- The keep-staged node: one more node this line's full or empty comes
     -- from instead of inbound_source, with a spare kept standing on it.
     -- Blank is off. Replaced the keep_staged flag, which armed a spot on
@@ -961,8 +973,8 @@ CREATE TABLE style_node_claims (
     changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
     -- Which robot of a press-index pair brings the back position its next
     -- carrier: clearing_robot (Robot 1, R1 evacuates and refills) or
-    -- index_robot (Robot 2, R2 indexes and refills). Describes the cell's
-    -- hardware, so UpsertClaim warns when two styles on one press disagree.
+    -- index_robot (Robot 2, R2 indexes and refills). The style's choice: two
+    -- styles on one press may differ (the part decides), and nothing warns.
     refill_by               TEXT NOT NULL DEFAULT 'clearing_robot',
     -- SEER robot-SELECTION hints, carried through to the fleet request.
     -- key_route is a JSON array of map points to prefer passing through, IN
@@ -1042,7 +1054,6 @@ CREATE TABLE style_node_claims_quarantine(
   strict_pack INT,
   pack_tolerance_pct INT,
   allowed_payload_codes TEXT,
-  auto_request_payload TEXT,
   keep_staged_node TEXT,
   paired_core_node TEXT,
   auto_confirm INT,

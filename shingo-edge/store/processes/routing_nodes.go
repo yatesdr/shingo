@@ -139,7 +139,7 @@ func RoutingSetNames(db *sql.DB, processID int64) (map[string]bool, error) {
 
 // isLivePosition reports whether name is one of the process's live
 // process_nodes.
-func isLivePosition(db *sql.DB, processID int64, name string) (bool, error) {
+func isLivePosition(db DBTX, processID int64, name string) (bool, error) {
 	var n int
 	err := db.QueryRow(`SELECT COUNT(*) FROM process_nodes
 		WHERE process_id = ? AND core_node_name = ? AND deleted_at IS NULL`, processID, name).Scan(&n)
@@ -156,7 +156,7 @@ func isLivePosition(db *sql.DB, processID int64, name string) (bool, error) {
 // kinds is Core's lane set, and a row naming a lane is refused in every role
 // (domain.CoreNodeKinds.RefuseRoutingRow): the composer offers these rows on a
 // claim's legs, and no leg may name a lane.
-func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInput) (int64, error) {
+func UpsertRoutingNode(db DBTX, kinds domain.CoreNodeKinds, in RoutingNodeInput) (int64, error) {
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
 	if in.CoreNodeName == "" {
 		return 0, fmt.Errorf("routing node name is required")
@@ -262,11 +262,18 @@ func routingFieldMatch(role string) string {
 	}
 }
 
+// RoutingDeletion is one row a routing set write took out: its node and role,
+// and the live styles whose claims still name it in the matching field.
+type RoutingDeletion struct {
+	Name, Role string
+	Styles     []string
+}
+
 // DeleteRoutingNode removes one row and returns its node and role with the live
 // styles whose claims still name it in the matching field. It never refuses over
 // them (owner ruling, 2026-10-30: a removal warns what it orphans): a claim is
 // the style's own and goes on routing through the node.
-func DeleteRoutingNode(db *sql.DB, processID, id int64) (name, role string, styles []string, err error) {
+func DeleteRoutingNode(db DBTX, processID, id int64) (name, role string, styles []string, err error) {
 	switch err := db.QueryRow(`SELECT core_node_name, role FROM process_routing_nodes
 		WHERE id = ? AND process_id = ?`, id, processID).Scan(&name, &role); {
 	case errors.Is(err, sql.ErrNoRows):

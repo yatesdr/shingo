@@ -1,4 +1,4 @@
-# The positions table's and Advanced sheet's bugs (S4 U3), each on a fresh page of the fixture.
+# The positions table's and its settings' bugs (S4 U3), each on a fresh page of the fixture.
 # "ok" is what must hold; "BUG" is the bug, and what the page did.
 
 ## B4 · another screen's positions are never move or paired targets
@@ -9,12 +9,12 @@ ok   col:partner:secondPaired offers no position bound to another screen
 ## B5 · Tool change is drawn exactly where flowspec lets the mode carry changeover_evac_nodes
 ok   every row
 
-## B6 · the row's "N set" is the sheet's own total
-ok   every row of Style B
+## B6 · every row's Advanced control says how many of its settings are set
+ok   every row of Style A and Style B
 
 ## F15 · Board order only on a loader position; Curtain required only where the node has a curtain
 ok   Board order is drawn on no line-mode position
-ok   Curtain required is drawn exactly on the curtained position
+ok   Curtain required is drawn on the curtained position, and wherever it is set
 
 ## B7 · the key-route picker offers no waypoint already on the route
 ok   POS_A3 via:0 (LM_2 of LM_2 › LM_3)
@@ -29,7 +29,7 @@ ok   the words: "2‑Robot Swap does not use Outbound staging STG_2: dropped fro
 ## U3 · Auto reorder on the row: off on a new position of either role; Set turns it on at the point; Off turns it off
 ok   a new consume position reads off
 ok   a new produce position reads off
-ok   Set 15 writes reorder_point 15 and auto_reorder on; the cell reads 15
+ok   Set 15 writes reorder_point 15 and auto_reorder on; the cell reads on at 15
 ok   Off writes auto_reorder off and keeps the point; the cell reads off
 ok   the reorder point's sub-label speaks of the bin, not of what is left in it: "units in the bin when the next one is requested"
 
@@ -41,14 +41,33 @@ ok   only POS_A3 two_robot, POS_A4 two_robot, POS_A5 single_robot, POS_A6 single
 ok   no card says "on deck for" or "paired with"
 ok   a pair card says "Paired core node"
 
-## + Add a position is on the box's head line, above the headings, not under the rows and the bar
-ok   the control is drawn before the headings and the rows
+## + Add a position is one control, the dashed row under the rows
+ok   one add control, the dashed row inside the rows' box
 
-## Advanced · a flipped switch is typed work, so Escape and the backdrop ask first
-ok   POS_A1: the sheet as it opened is not marked
-ok   POS_A1: Strict pack flipped marks it data-dirty
-ok   POS_A1: flipped back, it is not marked
+## A position's Advanced sheet · a switch turned on is the style's draft, and off takes the draft back
+ok   POS_A2: the style as it opened is not dirty
+ok   POS_A2: Strict pack on makes the draft dirty
+ok   POS_A2: off again, the draft is clean
+
+## Partner picked again · the old Sequential partner is unpaired, the new one paired both ways; an Index Swap back pairs nothing back
+ok   POS_A5 picked for POS_A7: POS_A7 Sequential A/B naming POS_A5, PART-7 · POS_A5 Sequential A/B naming POS_A7, PART-5 · POS_A8 Sequential A/B naming none, PART-8
+ok   the new partner is paired both ways: POS_A5 names POS_A7, on Sequential A/B
+ok   the old partner is unpaired: POS_A8 no longer names POS_A7
+ok   and is still a row of its own, with its swap and its part
+ok   POS_A8 picked back: POS_A7 Sequential A/B naming POS_A8, PART-7 · POS_A8 Sequential A/B naming POS_A7, PART-8 · POS_A5 1‑Robot Swap naming none, PART-5 (staging STG_1, STG_2)
+ok   picked back, POS_A8 and POS_A7 name each other again
+ok   and POS_A5 has the swap it had before it was paired, with what it carried
+ok   POS_B4 picked for the Index Swap POS_A1: POS_A1 Index Swap naming POS_B4, PART-1 · POS_B1 named by none · POS_B4 no row
+ok   the old back is named by no position, and the new back is no row
+
+## Partner cleared · no partner, or a swap with none, unpairs both rows of a Sequential A/B pair
+ok   POS_A7 set to no partner: POS_A7 names none · POS_A8 names none
+ok   POS_A9 given a swap with no partner: POS_A9 names none · POS_A10 names none
 
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
 ok   a position with no swap mode: "1 to fix POS_A11 · how does it swap? — Pick its swap mode on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) No unsaved changes"
 ok   a position with no part: "1 to fix POS_A11 · which part runs here? — Pick it on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) Unsaved changes"
+
+## Partner moved · a Sequential A/B row moved to another position is still named by its partner
+ok   POS_A7 moved to POS_A11: POS_A11 names POS_A8 · POS_A8 names POS_A11
+ok   the moved row and its partner name each other

@@ -68,7 +68,7 @@ type (
 // than by each of the readers.
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	` + capacity.SQL("style_node_claims") + `, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
+	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
@@ -91,7 +91,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var presetID, presetVersion sql.NullInt64
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&resolvedCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
-		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON, &c.AutoRequestPayload,
+		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON,
 		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
@@ -609,7 +609,6 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// A WARNING, NOT A REFUSAL, and the direction matters: refusing would make
 	// the flag unsettable, because changing a press with four styles means
 	// four saves and the first three would each be refused by the other three.
-	warnRefillByDrift(db, in)
 
 	var existingID int64
 	var priorSpot, priorSource string
@@ -660,16 +659,16 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// UNIQUE constraint on the same race.
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, auto_reorder, inbound_staging, outbound_staging,
-		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes, auto_request_payload,
+		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
 		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes,
 		refill_by, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, autoReorder, in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON, in.AutoRequestPayload,
+		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON,
 		keepStagedNode, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
@@ -781,75 +780,6 @@ func modeArmViolation(in NodeClaimInput) error {
 	return nil
 }
 
-// warnRefillByDrift logs when this save would leave two styles on the same
-// press disagreeing about which robot brings the next carrier.
-//
-// Scoped to claims on the SAME core node in the same process, because that is
-// what "one press" means; two presses may legitimately differ.
-//
-// Silent on a caller with no opinion (nil) — an import or the compare grid is
-// not asserting anything about the hardware and must not be reported as if it
-// were.
-func warnRefillByDrift(db DBTX, in NodeClaimInput) {
-	if in.RefillBy == nil || in.CoreNodeName == "" {
-		return
-	}
-	want := in.RefillBy.OrDefault()
-	others, err := OtherStylesRefillBy(db, in.StyleID)
-	if err != nil {
-		// Cannot check is not a finding. Saying nothing is right here: the
-		// save proceeds either way and a warning we could not substantiate
-		// would be worse than none.
-		return
-	}
-	var disagree []string
-	for _, o := range others[in.CoreNodeName] {
-		if o.RefillBy != want {
-			disagree = append(disagree, o.Style)
-		}
-	}
-	if len(disagree) > 0 {
-		log.Printf("claim %s: refill_by=%s disagrees with style(s) %s on the same process. "+
-			"Which robot brings the next carrier is a fact about the cell, not about a style, "+
-			"so the process will choreograph differently depending on what it runs. "+
-			"Set it the same on every style for this node.",
-			in.CoreNodeName, want, strings.Join(disagree, ", "))
-	}
-}
-
-// OtherStylesRefillBy is, by core node, what every other live style of
-// styleID's process says about who brings the next carrier there, in
-// style-name order: one statement for the whole process, read by the save's
-// log line (warnRefillByDrift) and the editor's warning on a press whose
-// styles disagree (domain.RefillByDisagreementFinding).
-func OtherStylesRefillBy(db DBTX, styleID int64) (map[string][]domain.StyleRefillBy, error) {
-	rows, err := db.Query(`
-		SELECT c.core_node_name, s.name, c.refill_by
-		FROM style_node_claims c
-		JOIN styles s ON s.id = c.style_id
-		WHERE c.style_id != ?
-		  AND s.deleted_at IS NULL
-		  AND c.retired_at IS NULL
-		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)
-		ORDER BY s.name`,
-		styleID, styleID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]domain.StyleRefillBy{}
-	for rows.Next() {
-		var node string
-		var v domain.StyleRefillBy
-		if err := rows.Scan(&node, &v.Style, &v.RefillBy); err != nil {
-			return nil, err
-		}
-		v.RefillBy = v.RefillBy.OrDefault()
-		out[node] = append(out[node], v)
-	}
-	return out, rows.Err()
-}
-
 func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 
@@ -861,7 +791,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
 		`containment_destination=?`, `partial_destination=?`, `curtain_required=?`, `strict_pack=?`, `pack_tolerance_pct=?`,
-		`allowed_payload_codes=?`, `auto_request_payload=?`,
+		`allowed_payload_codes=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 		`source=?`, `called_by=?`, `updated_at=datetime('now')`, `retired_at=NULL`,
@@ -870,7 +800,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
 		in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct,
-		allowedJSON, in.AutoRequestPayload,
+		allowedJSON,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		in.Source, in.CalledBy,
@@ -1050,7 +980,7 @@ func carryoverOrDefault(d *domain.CarryoverDisposition) string {
 // on the live claims of one style, and NOTHING else.
 //
 // A DEDICATED NARROW UPDATE, because updateClaim is not the tool for this.
-// updateClaim writes eighteen columns unconditionally (claims.go's own
+// updateClaim writes seventeen columns unconditionally (claims.go's own
 // boundary note), so putting provenance through it means a caller who wanted
 // to record where a flow came from has to first reproduce the flow exactly or
 // silently rewrite it. Naming a migration candidate stamps rows an engineer

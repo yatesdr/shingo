@@ -23,9 +23,18 @@ import (
 // episode. It returns the engine, the store, the press's node and the two legs.
 func robot3Pair(t *testing.T, refill protocol.RefillBy) (*Engine, *store.DB, int64, *orders.Order, *orders.Order) {
 	t.Helper()
+	return robot3PairAs(t, refill, protocol.ClaimRoleProduce)
+}
+
+// robot3PairAs is robot3Pair for a press of either role: seedSwapClaim seeds a
+// produce press, and a consume one is the same row with its role turned.
+func robot3PairAs(t *testing.T, refill protocol.RefillBy, role protocol.ClaimRole) (*Engine, *store.DB, int64, *orders.Order, *orders.Order) {
+	t.Helper()
 	db := testEngineDB(t)
 	nodeID, node, _ := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
 	setRefill(t, db, refill)
+	_, err := db.DB.Exec(`UPDATE style_node_claims SET role = ? WHERE core_node_name = 'PRESS'`, string(role))
+	testutil.MustNoErr(t, err, "role")
 	claim := requestedClaimAtNode(db, node)
 	eng := testEngine(t, db)
 	d, err := BuildSwapDispatch(node, claim)
@@ -207,6 +216,12 @@ func TestRobot3_ACancelledChangeoverAbortsTheCarrierNotYetFlown(t *testing.T) {
 // wireProcessNode is the process_node an order.request in the outbox carries.
 func wireProcessNode(t *testing.T, db *store.DB, uuid string) string {
 	t.Helper()
+	return wireOrderRequest(t, db, uuid).ProcessNode
+}
+
+// wireOrderRequest is the order.request the outbox carries for uuid.
+func wireOrderRequest(t *testing.T, db *store.DB, uuid string) protocol.OrderRequest {
+	t.Helper()
 	msgs, err := db.ListPendingOutbox(200)
 	testutil.MustNoErr(t, err, "outbox")
 	for _, m := range msgs {
@@ -216,9 +231,62 @@ func wireProcessNode(t *testing.T, db *store.DB, uuid string) string {
 		var env protocol.Envelope
 		var req protocol.OrderRequest
 		if json.Unmarshal(m.Payload, &env) == nil && env.DecodePayload(&req) == nil && req.OrderUUID == uuid {
-			return req.ProcessNode
+			return req
 		}
 	}
 	t.Fatalf("no order.request for %s", uuid)
-	return ""
+	return protocol.OrderRequest{}
+}
+
+// TestRobot3_TheFollowOnsRetrieveSpec pins every field of the retrieve the
+// runtime makes for Robot 3, on the row and on the wire, for both roles: the
+// order carrierToPosition creates when Robot 2's lift reaches followOnOnPickup
+// (quantity 1), and the one it creates when asked for a count (a consume
+// prime's). An empty is one whatever is asked; a full carries the count. The
+// flow preview's follow-on leg is built from the same spec, so this is what a
+// change to either has to keep.
+func TestRobot3_TheFollowOnsRetrieveSpec(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		role  protocol.ClaimRole
+		empty bool
+	}{{protocol.ClaimRoleProduce, true}, {protocol.ClaimRoleConsume, false}} {
+		t.Run(string(c.role), func(t *testing.T) {
+			t.Parallel()
+			eng, db, nodeID, _, r2 := robot3PairAs(t, protocol.RefillByOwnRobot, c.role)
+			eng.HandleBinPickedUp(r2.UUID, 501, "INDEX-B")
+			got := followOnsTo(t, db, nodeID, "INDEX-B")
+			if len(got) != 1 {
+				t.Fatalf("%d orders to the back after Robot 2's lift, want 1", len(got))
+			}
+			node, err := db.GetProcessNode(nodeID)
+			testutil.MustNoErr(t, err, "node")
+			counted, err := eng.carrierToPosition(nodeID, requestedClaimAtNode(db, node), "INDEX-B", 4, ordermgr.Attached("EP-COUNT"))
+			testutil.MustNoErr(t, err, "a carrier asked for with a count")
+			wantCounted := int64(4)
+			if c.empty {
+				wantCounted = 1
+			}
+			for _, o := range []struct {
+				order    orders.Order
+				delivery string
+				quantity int64
+				origin   string
+			}{{got[0], "INDEX-B", 1, "EP-R3"}, {*counted, "INDEX-B", wantCounted, "EP-COUNT"}} {
+				f := o.order
+				if !isRetrieve(f.OrderType) || f.DeliveryNode != o.delivery || f.SourceNode != "MARKET-EMPTIES" ||
+					f.PayloadCode != "WIDGET-A" || f.Quantity != o.quantity || f.RetrieveEmpty != c.empty || !f.AutoConfirm ||
+					f.ProcessNodeID == nil || *f.ProcessNodeID != nodeID || f.OriginID != o.origin {
+					t.Errorf("row: %+v, want a retrieve to %s from MARKET-EMPTIES of WIDGET-A, quantity %d, empty %v, "+
+						"auto-confirmed, on the press's row, origin %s", f, o.delivery, o.quantity, c.empty, o.origin)
+				}
+				w := wireOrderRequest(t, db, f.UUID)
+				if w.OrderType != protocol.OrderTypeRetrieve || w.DeliveryNode != o.delivery || w.SourceNode != "MARKET-EMPTIES" ||
+					w.PayloadCode != "WIDGET-A" || w.Quantity != o.quantity || w.RetrieveEmpty != c.empty ||
+					w.ProcessNode != "PRESS" || w.SkipAutoConfirm || w.OriginID != o.origin {
+					t.Errorf("wire: %+v, want the row's retrieve naming press PRESS", w)
+				}
+			}
+		})
+	}
 }

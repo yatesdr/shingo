@@ -351,17 +351,23 @@ func (s *stubEngine) UpdateStationCounter(_ int64, label, tagName string, tagNam
 	return nil
 }
 func (s *stubEngine) DeleteStationCounter(int64) error { return nil }
-func (s *stubEngine) SetCountedAt(nodeID int64, _ *int64) error {
-	if nodeID != 1 {
-		return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
+
+// SetCountedAtMany: only position 1 may be bound; any other refuses the lot.
+func (s *stubEngine) SetCountedAtMany(_ int64, bindings []counters.NodeCounter) error {
+	for _, b := range bindings {
+		if b.NodeID != 1 {
+			return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
+		}
 	}
 	return nil
 }
-func (s *stubEngine) StationCountable(nodeID int64) error {
-	if nodeID != 1 {
-		return &engine.StationCounterRefused{Sentence: "no live style consumes there"}
+
+// StationCountables: process 1 has positions 1 (countable) and 2 (refused).
+func (s *stubEngine) StationCountables(processID int64) (map[int64]error, error) {
+	if processID != 1 {
+		return map[int64]error{}, nil
 	}
-	return nil
+	return map[int64]error{1: nil, 2: &engine.StationCounterRefused{Sentence: "no live style consumes there"}}, nil
 }
 func (s *stubEngine) CancelProcessChangeover(int64) error                   { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }

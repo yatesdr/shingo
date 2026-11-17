@@ -190,6 +190,11 @@ type Node struct {
 	CurtainPLCName   string `json:"curtain_plc_name,omitempty"`
 	CurtainTagName   string `json:"curtain_tag_name,omitempty"`
 	CurtainSafeValue *bool  `json:"curtain_safe_value,omitempty"`
+	// LoaderWindow is true once a Core loader has held this position's node
+	// as a window or a home while the row lived (process_nodes.loader_window,
+	// StationService.TakeLoaders marks it). Not on the wire: every node rides
+	// the station poll, and only the process list reads it, server side.
+	LoaderWindow bool `json:"-"`
 	// Joined fields
 	StationName string `json:"station_name"`
 	ProcessName string `json:"process_name"`
@@ -423,7 +428,6 @@ type NodeClaim struct {
 	// a claim with no tolerance, every claim today, spends no bytes on it.
 	PackTolerancePct    int      `json:"pack_tolerance_pct,omitempty"`
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
-	AutoRequestPayload  string   `json:"auto_request_payload"`
 	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
 	// the full or the empty for this line comes from, instead of the inbound
 	// source, with one spare kept standing on it. Naming one is what turns
@@ -501,11 +505,10 @@ type NodeClaim struct {
 	// forward and then goes for the replacement itself. One robot leaves the
 	// cell as soon as the press is clear; the other owns the whole refill.
 	//
-	// IT DESCRIBES HARDWARE, not a style. Which robot can reach the
-	// supermarket is a fact about the cell's layout and reach, so two styles on
-	// one press disagreeing about it is operator confusion rather than
-	// configuration — UpsertClaim warns on the drift. Read it through
-	// IndexRobotFetches.
+	// IT IS THE STYLE'S. Two styles on one press may bring the back position
+	// its next carrier with different robots, because the part decides it; a
+	// recipe carries one value, applied to every part built from it. Nothing
+	// warns when two styles differ. Read it through IndexRobotFetches.
 	RefillBy protocol.RefillBy `json:"refill_by"`
 	// KeyRoute names map points a leg from this claim should be routed
 	// through, in order. It is SEER's keyRoute: per the vendor manual
@@ -1322,7 +1325,6 @@ type NodeClaimInput struct {
 	// MaxPackTolerancePct.
 	PackTolerancePct     int      `json:"pack_tolerance_pct"`
 	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
-	AutoRequestPayload   string   `json:"auto_request_payload"`
 	PairedCoreNode       string   `json:"paired_core_node"`
 	SecondPairedCoreNode string   `json:"second_paired_core_node"`
 	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.

@@ -1,5 +1,5 @@
 ## flow preview: two picker edits (POS_A5 source → SRC_1, POS_A1 key route + LM_1), debounced into one preview
-  1  POST /api/processes/1/flow/preview
+  1  POST /api/processes/1/flow/preview?steps=1
        {
          "to_style_id": 1,
          "cells": [
@@ -218,9 +218,9 @@
          "fingerprint": "fp-2",
          "station_id": 11
        }
-  2  GET /api/processes/1/composer
+  2  GET /api/processes/1/composer?map_rev=map-r1
   3  GET /api/operator-stations/11/claimed-nodes
   4  GET /api/operator-stations/12/claimed-nodes
-  5  POST /api/processes/1/flow/preview
+  5  POST /api/processes/1/flow/preview?steps=1
        (the boot preview's body, as requests-open-process.txt pins it)
 -- sheet closed

@@ -1,0 +1,265 @@
+//go:build shots
+
+package www
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"shingo/protocol"
+	"shingoedge/config"
+	"shingoedge/engine"
+	"shingoedge/internal/testdb"
+	"shingoedge/store/processes"
+)
+
+// processes_bigline_shots_test.go — the Processes page photographed on the
+// big line (testdb.BigLinePlant: 23 positions, 108 nodes, 46 parts, 13
+// styles, 3 recipes in 12 versions, 2 light curtains, 1 Next carrier), at
+// desktop width, by the real engine, router and templates.
+//
+// Not CI. Each slice of the one-process-page build is photographed here before
+// and after, so its report shows the page at a real press's size and not on a
+// four-position line.
+//
+// Run:
+//
+//	BIGLINE_SHOTS_OUT=<dir> go test -tags shots ./www -run TestBigLineShots -count=1
+//
+// What it writes: bigline-list.png, bigline-styles.png, bigline-styles-set.png
+// (the same page tall enough to show Set for this style under the table),
+// bigline-recipe-groups.png (a recipe draft's group cards), bigline-settings.png,
+// a process just added: bigline-new-setup.png, bigline-new-settings.png, and a
+// Core loader's process: bigline-loader.png.
+func TestBigLineShots(t *testing.T) {
+	out := os.Getenv("BIGLINE_SHOTS_OUT")
+	if out == "" {
+		t.Skip("BIGLINE_SHOTS_OUT not set")
+	}
+	chrome := chromeBinary()
+	if chrome == "" {
+		t.Fatal("no Chrome binary: set COMPOSER_SHOTS_CHROME")
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", out, err)
+	}
+
+	fx := testdb.BigLinePlant()
+	db := testdb.Open(t)
+	seeded := testdb.SeedPlant(t, db, fx, "BIG-PRESS")
+	pid := seeded.ProcessID
+	testdb.SeedRoutingSet(t, db, pid, "shots")
+	// What a running big press has that the plant fixture does not carry: a
+	// description and group, a counting production counter, its part set,
+	// the light curtains on two positions, and the running style's Next
+	// carrier (Robot 2).
+	if err := db.UpdateProcess(pid, "BIG-PRESS", "Synthetic big press"); err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	gid, err := db.CreateProcessGroup("Big Presses", "")
+	if err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	if err := db.SetProcessGroupID(pid, &gid); err != nil {
+		t.Fatalf("set group: %v", err)
+	}
+	if err := db.SetProcessCounter(pid, "PLC_BIG", "BigCount", true, "", false); err != nil {
+		t.Fatalf("counter: %v", err)
+	}
+	if err := db.ReplaceProcessPayloads(pid, testdb.BigLineParts()); err != nil {
+		t.Fatalf("part set: %v", err)
+	}
+	on := true
+	for _, n := range testdb.BigLineCurtains {
+		if err := processes.SetNodeCurtain(db.DB, seeded.Nodes[n], true, "PLC_BIG", "Curtain_"+n, &on); err != nil {
+			t.Fatalf("curtain %s: %v", n, err)
+		}
+	}
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET refill_by = ? WHERE style_id = ? AND core_node_name = 'BPN_007KLM'`,
+		string(protocol.RefillByIndexRobot), seeded.Styles[fx.Styles[0].Name]); err != nil {
+		t.Fatalf("next carrier: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.StationUID = "shots.bigline"
+	cfg.Namespace = "shots"
+	cfg.LineID = "bigline"
+	cfg.Messaging.StationID = cfg.StationUID
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	eng.SetPayloadBinTypes(nil)
+	eng.Start()
+	t.Cleanup(eng.Stop)
+	var nodes []protocol.NodeInfo
+	for _, n := range fx.Nodes {
+		name := n.Name
+		if n.ParentName != nil && *n.ParentName != "" {
+			name = *n.ParentName + "." + n.Name
+		}
+		typ := ""
+		if n.NodeTypeCode != nil {
+			typ = *n.NodeTypeCode
+		}
+		nodes = append(nodes, protocol.NodeInfo{Name: name, NodeType: typ})
+	}
+	eng.SetCoreNodes(nodes, false)
+	var pbt []protocol.PayloadBinTypeInfo
+	for code, types := range fx.PayloadBinTypeCodes() {
+		for _, bt := range types {
+			pbt = append(pbt, protocol.PayloadBinTypeInfo{PayloadCode: code, BinTypeCode: bt})
+		}
+	}
+	eng.SetPayloadBinTypes(pbt)
+
+	srv := shotsServer(t, shotsRouter(t, eng), nil)
+
+	// THE RECIPES THROUGH THE REAL DOOR: "Save as recipe" from a style, the
+	// same name again making the next version (store CreateFlowPreset), so
+	// the real handler validates each shape. 6 + 2 + 4 = 12 versions.
+	post := func(path string, body any) {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		resp, err := http.Post(srv.URL+path, "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			var b bytes.Buffer
+			_, _ = b.ReadFrom(resp.Body)
+			t.Fatalf("POST %s: %d %s", path, resp.StatusCode, b.String())
+		}
+	}
+	recipes := []struct {
+		name     string
+		style    int
+		versions int
+	}{{"Big Index - One Spot", 0, 6}, {"Big Index - Totes", 3, 2}, {"Big Index - Two Spots", 1, 4}}
+	for _, r := range recipes {
+		for v := 0; v < r.versions; v++ {
+			post(fmt.Sprintf("/api/processes/%d/presets", pid),
+				map[string]any{"name": r.name, "from_style_id": seeded.Styles[fx.Styles[r.style].Name]})
+		}
+	}
+
+	shot := func(file, path string, w, h int) {
+		t.Helper()
+		target := filepath.Join(out, file)
+		_ = os.Remove(target)
+		args := []string{"--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-dark-mode",
+			"--blink-settings=preferredColorScheme=0",
+			fmt.Sprintf("--window-size=%d,%d", w, h), "--virtual-time-budget=8000",
+			"--screenshot=" + target, srv.URL + path}
+		cmd := exec.Command(chrome, args...)
+		if raw, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("chrome %s: %v\n%s", file, err, raw)
+		}
+		if _, err := os.Stat(target); err != nil {
+			t.Fatalf("%s: no screenshot written", file)
+		}
+		t.Logf("wrote %s", target)
+	}
+	shot("bigline-list.png", "/processes", 1440, 900)
+	shot("bigline-styles.png", fmt.Sprintf("/processes?process=%d", pid), 1440, 1500)
+	shot("bigline-styles-set.png", fmt.Sprintf("/processes?process=%d", pid), 1440, 1800)
+	// A recipe group's own settings, on its card: the newest One Spot, its
+	// groups set up (;groups=1, the page's own one-shot), nothing saved.
+	var recipe int64
+	if err := db.DB.QueryRow(`SELECT MAX(id) FROM flow_presets WHERE process_id = ? AND name = ?`, pid, recipes[0].name).Scan(&recipe); err != nil {
+		t.Fatalf("the One Spot recipe: %v", err)
+	}
+	shot("bigline-recipe-groups.png", fmt.Sprintf("/processes?process=%d#tab=presets;recipe=%d;groups=1", pid, recipe), 1440, 2100)
+	shot("bigline-settings.png", fmt.Sprintf("/processes?process=%d#tab=settings", pid), 1440, 4200)
+
+	// A PROCESS JUST ADDED (slice 4): Add process asks a name and a group, so
+	// it has no screen, no position and no style. Its Setup tab, then three
+	// positions on no screen (the process's own positions write) and its
+	// Settings, where they are the "On no screen" row.
+	send := func(method, path string, body any) map[string]any {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		req, err := http.NewRequest(method, srv.URL+path, bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if resp.StatusCode/100 != 2 {
+			t.Fatalf("%s %s: %d %v", method, path, resp.StatusCode, out)
+		}
+		return out
+	}
+	made := send("POST", "/api/processes", map[string]any{"name": "NEW-PRESS", "description": "", "group_id": 0})
+	fresh := int64(made["id"].(float64))
+	shot("bigline-new-setup.png", fmt.Sprintf("/processes?process=%d", fresh), 1440, 900)
+	var loose []string
+	for _, n := range fx.Nodes {
+		if _, held := seeded.Nodes[n.Name]; held || (n.NodeTypeCode != nil && *n.NodeTypeCode == "NGRP") || n.ParentName != nil {
+			continue
+		}
+		if loose = append(loose, n.Name); len(loose) == 3 {
+			break
+		}
+	}
+	send("PUT", fmt.Sprintf("/api/processes/%d/positions", fresh), map[string]any{"nodes": loose})
+	shot("bigline-new-settings.png", fmt.Sprintf("/processes?process=%d#tab=settings", fresh), 1440, 1700)
+
+	// A CORE LOADER'S PROCESS (slice 5). Core sends a shared-window loader whose
+	// four windows (BLD_W1..BLD_W4, invented) are Core nodes, the engineer adds
+	// a process for it, and "Make a screen for this loader" (the real door,
+	// CreateLoaderBoard) puts the windows on a screen made for it. Every
+	// position of BIG-LOADER is then a loader window, so its list row reads
+	// core_boards true and the page draws it as Settings only, the loader's
+	// setup pointing at Core.
+	//
+	// LAST, so every shot above is the line it always was: the windows join
+	// the Core node list only here, and a node list is a whole replace.
+	windows := []string{"BLD_W1", "BLD_W2", "BLD_W3", "BLD_W4"}
+	positions := make([]protocol.LoaderPosition, 0, len(windows))
+	for i, w := range windows {
+		nodes = append(nodes, protocol.NodeInfo{Name: w})
+		positions = append(positions, protocol.LoaderPosition{CoreNodeName: w, Ordinal: i + 1})
+	}
+	eng.SetCoreNodes(nodes, false)
+	parts := testdb.BigLineParts()
+	if err := eng.SetCoreLoaders([]protocol.LoaderInfo{{
+		Name: "BIG Loader", LoaderKey: "loader:big", Role: "produce", Layout: "shared_window",
+		Replenishment: "operator", OutboundDest: testdb.BigLineSource, InboundSource: testdb.BigLineDestination,
+		Positions: positions,
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: parts[0]}, {PayloadCode: parts[1]}},
+	}}); err != nil {
+		t.Fatalf("core loaders: %v", err)
+	}
+	made = send("POST", "/api/processes", map[string]any{"name": "BIG-LOADER", "description": "", "group_id": 0})
+	loaderPID := int64(made["id"].(float64))
+	send("POST", "/api/loader-boards", map[string]any{"loader_key": "loader:big", "process_id": loaderPID})
+	resp, err := http.Get(srv.URL + "/api/processes")
+	if err != nil {
+		t.Fatalf("GET /api/processes: %v", err)
+	}
+	var rows []map[string]any
+	err = json.NewDecoder(resp.Body).Decode(&rows)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("decode /api/processes: %v", err)
+	}
+	coreBoards := map[string]any{}
+	for _, r := range rows {
+		coreBoards[fmt.Sprint(r["name"])] = r["core_boards"]
+	}
+	if coreBoards["BIG-LOADER"] != true || coreBoards["BIG-PRESS"] != false {
+		t.Fatalf("core_boards: BIG-LOADER %v, BIG-PRESS %v; want true and false", coreBoards["BIG-LOADER"], coreBoards["BIG-PRESS"])
+	}
+	shot("bigline-loader.png", fmt.Sprintf("/processes?process=%d", loaderPID), 1440, 1100)
+}

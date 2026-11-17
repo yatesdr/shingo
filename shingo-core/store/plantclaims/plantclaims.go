@@ -249,9 +249,12 @@ func replacePositions(tx *sql.Tx, processID string, positions []string) error {
 	return nil
 }
 
-// WipeAll deletes every mirror row. Used by the full-snapshot rebuild path
-// (a late-joining Core applies a full snapshot by wiping then re-inserting
-// every process) and by the mirror-rebuild test. Safe on an empty mirror.
+// WipeAll deletes every mirror row. No production code calls it: Core never
+// wipes the mirror, and a full snapshot is one message per process, each
+// replacing only that process's rows (ReplaceProcessFromStation). Its one
+// caller is TestHandlePlantClaims_MirrorRebuildAfterWipe, through
+// store.WipePlantClaims, which wipes to stand in for a late-joining Core's
+// empty mirror. Safe on an empty mirror.
 func WipeAll(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {

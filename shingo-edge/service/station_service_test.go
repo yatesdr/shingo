@@ -1,12 +1,15 @@
 package service
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
+	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
 
@@ -274,6 +277,180 @@ func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 		if before[i] != after[i] {
 			t.Errorf("routing row %d changed under SetNodes:\n before %+v\n after  %+v", i, before[i], after[i])
 		}
+	}
+}
+
+// ── Positions on no screen ──────────────────────────────────────────
+//
+// A process's positions are process_nodes rows, and a row's screen is
+// nullable: a press is set up before anybody hangs a screen on it, and its
+// positions exist from the setup. SetLoosePositions is SetNodes for the rows
+// on no screen — the same wholesale replace, the same refusals, the same
+// removal pass — over the set whose operator_station_id IS NULL.
+
+// loosePositions is the process's rows on no screen, by name.
+func loosePositions(t *testing.T, svc *StationService, processID int64) map[string]processes.Node {
+	t.Helper()
+	nodes, err := svc.db.ListProcessNodesByProcess(processID)
+	testutil.MustNoErr(t, err, "ListProcessNodesByProcess")
+	out := map[string]processes.Node{}
+	for _, n := range nodes {
+		if n.OperatorStationID == nil {
+			out[n.CoreNodeName] = n
+		}
+	}
+	return out
+}
+
+// TestStation_SetLoosePositions_CreatesRetiresAndKeeps walks the four
+// branches SetNodes has, on a process with no screen at all: a first save
+// creates the rows on no screen with their runtime rows; a re-save of the
+// same list changes nothing; a name left out retires; a name left out that
+// still has an active order is disabled and named in kept, because the save
+// did not do what it was asked.
+func TestStation_SetLoosePositions_CreatesRetiresAndKeeps(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewStationService(db)
+	pid, err := db.CreateProcess("Loose P", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+
+	kept, err := svc.SetLoosePositions(pid, []string{"L-ONE", " L-TWO ", "L-ONE", "", "L-BUSY"})
+	testutil.MustNoErr(t, err, "first save")
+	if len(kept) != 0 {
+		t.Errorf("a first save kept %v; it removed nothing", kept)
+	}
+	first := loosePositions(t, svc, pid)
+	if len(first) != 3 {
+		t.Fatalf("rows on no screen = %v, want L-ONE, L-TWO and L-BUSY once each", first)
+	}
+	for name, seq := range map[string]int{"L-ONE": 1, "L-TWO": 2, "L-BUSY": 3} {
+		n, ok := first[name]
+		if !ok {
+			t.Fatalf("%s was not created", name)
+		}
+		if n.Sequence != seq || !n.Enabled {
+			t.Errorf("%s: sequence %d enabled %v, want %d and enabled", name, n.Sequence, n.Enabled, seq)
+		}
+		if rt, err := db.GetProcessNodeRuntime(n.ID); err != nil || rt == nil {
+			t.Errorf("%s has no runtime row (%v): the board and the counter read it", name, err)
+		}
+	}
+
+	// A re-save of the same list is the same rows: no new id, no new row.
+	_, err = svc.SetLoosePositions(pid, []string{"L-ONE", "L-TWO", "L-BUSY"})
+	testutil.MustNoErr(t, err, "re-save")
+	again := loosePositions(t, svc, pid)
+	if len(again) != 3 {
+		t.Fatalf("a re-save left %d rows, want 3", len(again))
+	}
+	for name, n := range first {
+		if again[name].ID != n.ID || again[name].Sequence != n.Sequence || !again[name].Enabled {
+			t.Errorf("a re-save moved %s: %+v -> %+v", name, n, again[name])
+		}
+	}
+
+	// L-BUSY has an order running at it; L-ONE has none. Both are left out.
+	busyID := first["L-BUSY"].ID
+	if _, err := db.CreateOrder("loose-busy", "retrieve", &busyID, false, 1, "", "", "", protocol.Height{}, false, "", "", ""); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	kept, err = svc.SetLoosePositions(pid, []string{"L-TWO"})
+	testutil.MustNoErr(t, err, "remove two")
+	if len(kept) != 1 || kept[0] != "L-BUSY" {
+		t.Errorf("kept = %v, want [L-BUSY]: the save could only disable it", kept)
+	}
+	after := loosePositions(t, svc, pid)
+	if _, ok := after["L-ONE"]; ok {
+		t.Error("L-ONE is still a position; nothing ran at it, so it retires")
+	}
+	if b, ok := after["L-BUSY"]; !ok || b.Enabled {
+		t.Errorf("L-BUSY = %+v (present %v), want kept and disabled", b, ok)
+	}
+	if _, ok := after["L-TWO"]; !ok {
+		t.Error("L-TWO was on the list and is gone")
+	}
+}
+
+// TestStation_SetLoosePositions_RefusesANameOnAScreen: the loose write and a
+// screen's write meet at a name, and they do not meet symmetrically. A screen
+// that claims a loose position ADOPTS it — that is how a screen hung on the
+// press later takes the positions set up before it, and it is SetNodes'
+// behaviour unchanged. The loose write naming a position on a screen would be
+// the reverse move, a position silently taken off a screen the floor works
+// from, so it is refused by name, the whole save, before any row moves.
+func TestStation_SetLoosePositions_RefusesANameOnAScreen(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewStationService(db)
+	pid, err := db.CreateProcess("Loose Q", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	screen, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "Front Screen"})
+	testutil.MustNoErr(t, err, "create station")
+	testutil.MustNoErr(t, setNodesErr(svc, screen, []string{"S-ONE"}), "screen claims S-ONE")
+	_, err = svc.SetLoosePositions(pid, []string{"L-ONE"})
+	testutil.MustNoErr(t, err, "seed a loose position")
+	before, err := db.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, err, "list before")
+
+	_, err = svc.SetLoosePositions(pid, []string{"L-ONE", "S-ONE", "L-NEW"})
+	if !errors.Is(err, ErrPositionOnAScreen) {
+		t.Fatalf("err = %v, want ErrPositionOnAScreen", err)
+	}
+	if want := "S-ONE is on Front Screen; take it off there first"; !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal reads %q, want it to say %q", err, want)
+	}
+	after, err := db.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, err, "list after")
+	if len(after) != len(before) {
+		t.Fatalf("a refused save changed the rows: %d -> %d", len(before), len(after))
+	}
+	for i := range before {
+		b, a := before[i], after[i]
+		if a.ID != b.ID || a.CoreNodeName != b.CoreNodeName || (a.OperatorStationID == nil) != (b.OperatorStationID == nil) || a.Sequence != b.Sequence {
+			t.Errorf("a refused save moved %s: %+v -> %+v", b.CoreNodeName, b, a)
+		}
+	}
+
+	// The other direction is an adoption: the screen claims the loose
+	// position, and it is the same row, now on the screen.
+	loose := loosePositions(t, svc, pid)["L-ONE"]
+	testutil.MustNoErr(t, setNodesErr(svc, screen, []string{"S-ONE", "L-ONE"}), "screen adopts L-ONE")
+	adopted, err := db.ListProcessNodesByProcess(pid)
+	testutil.MustNoErr(t, err, "list adopted")
+	if len(adopted) != len(before) {
+		t.Errorf("the screen's claim made %d rows from %d; it adopts, it does not mint", len(adopted), len(before))
+	}
+	got, err := db.GetProcessNode(loose.ID)
+	testutil.MustNoErr(t, err, "reread L-ONE")
+	if got.OperatorStationID == nil || *got.OperatorStationID != screen {
+		t.Errorf("L-ONE's screen = %v, want %d", got.OperatorStationID, screen)
+	}
+	if left := loosePositions(t, svc, pid); len(left) != 0 {
+		t.Errorf("positions left on no screen: %v", left)
+	}
+}
+
+// TestStation_SetLoosePositions_RefusesWholeLikeAScreen: the loose write is
+// SetNodes' replace, so its two refusals are SetNodes' — a name Core does not
+// have and a live position of another process — and each is total.
+func TestStation_SetLoosePositions_RefusesWholeLikeAScreen(t *testing.T) {
+	t.Parallel()
+	svc, _, pidB := crossProcessFixture(t)
+	pidA, err := svc.db.CreateProcess("Loose R", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+
+	_, err = svc.SetLoosePositions(pidA, []string{"L-ONE", "FGN_001"})
+	if !errors.Is(err, ErrPositionOfOtherProcess) || !strings.Contains(err.Error(), "Press B") {
+		t.Errorf("err = %v, want ErrPositionOfOtherProcess naming Press B (process %d)", err, pidB)
+	}
+	svc.SetCoreNodeResolver(func() map[string]bool { return map[string]bool{"L-ONE": true} })
+	_, err = svc.SetLoosePositions(pidA, []string{"L-ONE", "NOT-ON-CORE"})
+	if !errors.Is(err, ErrUnknownCoreNodes) || !strings.Contains(err.Error(), "NOT-ON-CORE") {
+		t.Errorf("err = %v, want ErrUnknownCoreNodes naming NOT-ON-CORE", err)
+	}
+	if left := loosePositions(t, svc, pidA); len(left) != 0 {
+		t.Errorf("a refused save wrote %v", left)
 	}
 }
 

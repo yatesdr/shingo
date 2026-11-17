@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -201,5 +202,76 @@ func TestCreateLoaderBoard_RefusesWhatItCannotBind(t *testing.T) {
 	// A board belongs to ONE process on ONE edge; that is not inferable here.
 	if _, err := svc.CreateLoaderBoard("loader:9", 0); err == nil {
 		t.Error("expected a missing process_id to be refused")
+	}
+}
+
+// cacheDedicated caches one dedicated loader whose members are homes (each
+// with its own part) and buffer spots, in the order given by kinds: "home"
+// or "buffer" for each node of nodes.
+func cacheDedicated(t *testing.T, db *store.DB, key string, nodes, kinds []string) {
+	t.Helper()
+	pos := make([]protocol.LoaderPosition, 0, len(nodes))
+	for i, n := range nodes {
+		p := protocol.LoaderPosition{CoreNodeName: n, HomeKind: kinds[i], Ordinal: i}
+		if kinds[i] == protocol.LoaderHomeKindHome {
+			p.PayloadCode = "PART-" + n
+		}
+		pos = append(pos, p)
+	}
+	if err := db.ReplaceCoreLoaders([]protocol.LoaderInfo{{
+		LoaderKey: key, Name: "Dedicated", Role: "produce", Layout: "dedicated_positions",
+		Replenishment: "threshold", Positions: pos,
+	}}); err != nil {
+		t.Fatalf("ReplaceCoreLoaders: %v", err)
+	}
+}
+
+// "MAKE A SCREEN" PUTS A LOADER'S WINDOWS ON IT, NOT ITS BUFFER SPOTS (round
+// 9; owner, 2026-11-16: "it shouldnt put its buffer spots on the screen"). The
+// board draws a dedicated loader's buffer spots from the loader (the buffer
+// strip); one on the screen as well is a second tile with no part. The homes
+// go on in Core's order; the gap the screen closes names the homes only.
+func TestCreateLoaderBoard_PutsTheHomesOnTheScreenNotTheBufferSpots(t *testing.T) {
+	t.Parallel()
+	db, svc := boardFixture(t)
+	cacheDedicated(t, db, "loader:7", []string{"SMN_014", "SMN_003", "SMN_015", "SMN_004"},
+		[]string{"home", "buffer", "home", "buffer"})
+	pid, err := db.CreateProcess("Bin Loader", "", "", "", false)
+	testutil.MustNoErr(t, err, "CreateProcess")
+
+	gaps, err := svc.LoaderBoardGaps()
+	if err != nil {
+		t.Fatalf("LoaderBoardGaps: %v", err)
+	}
+	if len(gaps) != 1 || strings.Join(gaps[0].Windows, ",") != "SMN_014,SMN_015" {
+		t.Fatalf("gaps = %+v, want loader:7 naming SMN_014 and SMN_015 only", gaps)
+	}
+	id, err := svc.CreateLoaderBoard("loader:7", pid)
+	if err != nil {
+		t.Fatalf("CreateLoaderBoard: %v", err)
+	}
+	if got := strings.Join(nodeNames(t, svc, id), ","); got != "SMN_014,SMN_015" {
+		t.Errorf("the new screen holds %s, want SMN_014,SMN_015: a buffer spot is drawn from the loader", got)
+	}
+}
+
+// A dedicated loader with buffer spots and no home has nothing a screen works:
+// it is no gap, and "Make a screen" refuses it as it refuses a windowless one.
+func TestCreateLoaderBoard_ALoaderOfBufferSpotsOnlyHasNothingToBind(t *testing.T) {
+	t.Parallel()
+	db, svc := boardFixture(t)
+	cacheDedicated(t, db, "loader:8", []string{"SMN_003", "SMN_004"}, []string{"buffer", "buffer"})
+	pid, err := db.CreateProcess("Buffers", "", "", "", false)
+	testutil.MustNoErr(t, err, "CreateProcess")
+
+	gaps, err := svc.LoaderBoardGaps()
+	if err != nil {
+		t.Fatalf("LoaderBoardGaps: %v", err)
+	}
+	if len(gaps) != 0 {
+		t.Errorf("gaps = %+v, want none: a loader of buffer spots has no window to bind", gaps)
+	}
+	if _, err := svc.CreateLoaderBoard("loader:8", pid); err == nil || !strings.Contains(err.Error(), "no windows") {
+		t.Errorf("CreateLoaderBoard = %v, want it refused for having no windows", err)
 	}
 }

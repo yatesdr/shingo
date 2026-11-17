@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"time"
 
 	"shingoedge/store/counters"
@@ -62,7 +63,23 @@ func (db *DB) DeleteLineCounter(id int64) error {
 // SetNodeLineCounter binds a position to a station counter (nil unbinds it);
 // the node generation moves when the binding changed.
 func (db *DB) SetNodeLineCounter(nodeID int64, counterID *int64) error {
-	changed, err := counters.SetNodeLineCounter(db.DB, nodeID, counterID)
+	return db.SetNodeLineCounters([]counters.NodeCounter{{NodeID: nodeID, CounterID: counterID}})
+}
+
+// SetNodeLineCounters writes several bindings in one transaction: all of them
+// or none. The node generation moves once when any binding changed.
+func (db *DB) SetNodeLineCounters(bindings []counters.NodeCounter) error {
+	changed := false
+	err := db.InTx(func(tx *sql.Tx) error {
+		for _, b := range bindings {
+			c, err := counters.SetNodeLineCounter(tx, b.NodeID, b.CounterID)
+			if err != nil {
+				return err
+			}
+			changed = changed || c
+		}
+		return nil
+	})
 	if err == nil && changed {
 		processes.BumpNodeGeneration()
 	}

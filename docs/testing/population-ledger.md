@@ -1380,3 +1380,30 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this branch (no before/after profile was taken)
 - citations rewritten: none outside this ledger
 - verified at: the commit that adds this row
+
+### DEAD — `TestFlowSave_GatedOffStationBodyIsRefused`
+- test: `TestFlowSave_GatedOffStationBodyIsRefused` · pkg `shingoedge/www` · run `-run '^TestFlowSave_GatedOffStationBodyIsRefused$'` · `shingo-edge/www/handlers_flow_mint_test.go:97` @ `aea6321d` · tags `none`
+- code: DEAD (the station's flow save: no station sends one. The operator station's composer previews and mints and never posts `flow/save`; the route is behind login since "fix(www): saving a style's flow needs a signed-in person", and the body builder it posted, composer-model.js's `flowSaveBody`, had no caller and is removed with it)
+- assertion map: none carried for the save: an unauthenticated save is the login bounce (`TestRouter_FlowSaveIsBehindLogin`, `shingo-edge/www/router_flow_save_gate_test.go:20`). HMI setup's gate on the station's one write stays pinned from the station's own body (`TestFlowMint_SetupGatesTheStationsMint`, `shingo-edge/www/handlers_flow_mint_test.go:95`).
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName`
+- test: `TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName` · pkg `shingoedge/www` · run `-run '^TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName$'` · `shingo-edge/www/handlers_flow_running_move_test.go:41` @ `aea6321d` · tags `none`
+- code: STALE
+- assertion map: renamed `TestSaveFlow_RunningPositionMoveRefusesByName` (`shingo-edge/www/handlers_flow_running_move_test.go:38`). The "HMI door" it also walked, a save with no session, no longer reaches the handler (flow save is behind login: `TestRouter_FlowSaveIsBehindLogin`). The desktop door's assertions are kept unchanged: 409 and the sentence naming the position, the bin and the move (`:122-127`), not stale (`:128-130`), and nothing moved after the refusal (`:134-146`). The gate-opening it did for the HMI door is gone: HMI setup does not gate a desktop save.
+- mutation: none needed: the code under test is deleted or the assertion is unchanged under a new name.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row
+
+### STALE — `TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused`
+- test: `TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused` · pkg `shingoedge/engine` · run `-run '^TestFlow_APressWhoseStylesDisagreeOnTheRefillIsWarnedNotRefused$'` · `shingo-edge/engine/refill_by_disagreement_test.go:21` @ `aea6321d` · tags `none`
+- code: STALE (the behaviour it pinned is ruled wrong: which robot brings a press its next carrier may differ by style, owner 2026-11-14, "thats the whole point of styles. it can change by part". The warning it asserted, `domain.RefillByDisagreementFinding`, is deleted with its preview and save calls)
+- assertion map: rewritten as `TestFlow_TwoStylesMayDifferOnTheNextCarrier` (`shingo-edge/engine/refill_by_per_style_test.go:19`) on the same fixture: the preview of a press whose two styles differ carries no next-carrier finding, the save goes through, and the saved claim keeps this style's Robot 2. Red before the deletion (the warning was present), green after.
+- mutation: the new test was seen red at the base, with the deleted code in place.
+- coverage Δ: not measured for this branch (no before/after profile was taken)
+- citations rewritten: none outside this ledger
+- verified at: the commit that adds this row

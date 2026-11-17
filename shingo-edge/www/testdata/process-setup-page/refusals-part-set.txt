@@ -64,60 +64,74 @@
 # writes, in order: PUT /api/processes/1/payloads
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: … and 53 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 12
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: Server error (500)
-    new text: … and 53 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 12
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-root div.pd-refusal: No answer from the server
-    new text: … and 53 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 12
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: … and 55 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 12
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: no message set
+    state: bar.refusal="Not saved."
     unhandled rejection: none
 
 ## Settings › Parts: × PART-11
 # writes, in order: PUT /api/processes/1/payloads
 ### PUT /api/processes/1/payloads  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: … and 53 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 10
+    new text: .pd-sheet div.set-refusal: Not saved. The Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="the Edge refused it"
+    state: bar.refusal="Not saved. The Edge refused it"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: Server error (500)
-    new text: … and 53 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 10
+    new text: .pd-sheet div.set-refusal: Not saved. Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="Server error (500)"
+    state: bar.refusal="Not saved. Server error (500)"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-root div.pd-refusal: No answer from the server
-    new text: … and 53 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 10
+    new text: .pd-sheet div.set-refusal: Not saved. No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="No answer from the server"
+    state: bar.refusal="Not saved. No answer from the server"
     unhandled rejection: none
 ### PUT /api/processes/1/payloads  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: … and 55 more runs (the tab redrew)
+    new text: #pd-stbody span.pd-dim: 10
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
+    new text: .notice-root span.notice-text: Signed out
+    new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
-    state: no message set
+    state: bar.refusal="Not saved."
     unhandled rejection: none

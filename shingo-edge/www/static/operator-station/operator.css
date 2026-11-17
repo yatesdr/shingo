@@ -196,9 +196,10 @@ body {
    amber, the tile chip's colour: the line asks for nothing on its own. */
 .os-header-btn.auto-reorder { background: #2d4060; }
 .os-header-btn.auto-reorder.off { background: #ffd98a; color: #1a1204; }
-/* ROBOTS — the robot panel's toggle (operator-robot-panel.js). A toggle, not an
-   act: no fill of its own; on, its outline is the accent (an active UI state);
-   off, the outline recedes and the word dims. */
+/* ROBOTS — the robot panel's toggle (operator-robot-panel.js), off until an
+   operator turns it on. A toggle, not an act: no fill of its own. Its colours
+   are its state: on, the outline is the accent (an active UI state); off, the
+   outline recedes and the word dims. */
 .os-header-btn.robots { background: var(--os-surface); border: 2px solid var(--os-accent); }
 .os-header-btn.robots[aria-pressed="false"] { border-color: var(--os-border); color: var(--os-text-muted); }
 

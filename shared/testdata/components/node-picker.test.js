@@ -301,4 +301,44 @@ test('parts: a picker over no list offers its allowed codes alone; one over a li
     eq([reads, k2.el.querySelectorAll('.picker-row').map((n) => n.getAttribute('data-value'))], [1, ['PART-A', 'PART-B', 'PART-C']]);
 });
 
+test('members fold: a group says how many it holds and its nodes wait under its show; none: they are not drawn', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const fold = N.nodeRows(s.rows(), { members: 'fold' }).find((r) => r.value === 'GRP-A');
+    const none = N.nodeRows(s.rows(), { members: 'none' }).find((r) => r.value === 'GRP-A');
+    eq([fold.note, fold.fold, fold.members.map((m) => m.value)], ['group · 2 nodes', true, ['SLOT-A1', 'SLOT-A2']]);
+    eq([none.note, none.fold, none.members], ['group · 2 nodes', undefined, undefined]);
+    const plain = N.nodeRows(s.rows(), {}).find((r) => r.value === 'GRP-A');
+    eq([plain.note, plain.fold], ['group', undefined]);
+});
+
+test('later: a field sends a top row behind the shell\'s one show', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const rows = N.nodeRows(s.rows(), { later: (n) => n.name === 'PRESS-1' });
+    eq(rows.filter((r) => r.later).map((r) => r.value), ['PRESS-1']);
+});
+
+test('quiet: a field marks the rows whose reason it says once, above the list', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const rows = N.nodeRows(s.rows(), {
+        members: 'fold',
+        rule: (n) => (n.type === 'NGRP' ? 'a group: its nodes are positions one at a time' : ''),
+        quiet: (n) => n.type === 'NGRP',
+    });
+    const g = rows.find((r) => r.value === 'GRP-A');
+    eq([g.reason, g.quiet, g.note], ['a group: its nodes are positions one at a time', true, 'group · 2 nodes']);
+    eq(rows.filter((r) => r.quiet).map((r) => r.value).every((v) => v.indexOf('GRP') === 0), true, 'only the groups are quiet');
+});
+
+test('a group row says it is one, for a view of the groups', async () => {
+    const { N } = adapters();
+    const s = await loaded(N, EDGE);
+    const rows = N.nodeRows(s.rows(), { members: 'fold' });
+    const group = (v) => !!(rows.find((r) => r.value === v) || {}).group;
+    eq([group('GRP-A'), group('PRESS-1'), group('LANE-1')], [true, false, false]);
+    eq(rows.find((r) => r.value === 'GRP-A').members.some((m) => m.group), false, 'its nodes are not groups');
+});
+
 run();

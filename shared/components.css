@@ -1157,6 +1157,11 @@ nav {
 }
 .pd-seg button:last-child, .set-ui .set-seg button:last-child { border-right: 0; }
 .pd-seg button.on, .set-ui .set-seg button.on { background: var(--surface-2, var(--surface)); color: var(--text); }
+/* A segment of long answers that would not fit its column side by side
+ * stacks them, each a full-width row: clipped words are never the answer. */
+.pd-seg.col, .set-ui .set-seg.col { display: flex; flex-direction: column; align-self: stretch; max-width: 320px; }
+.pd-seg.col button, .set-ui .set-seg.col button { border-right: 0; border-bottom: 1px solid var(--sub-2); text-align: left; }
+.pd-seg.col button:last-child, .set-ui .set-seg.col button:last-child { border-bottom: 0; }
 .pd-btn.danger, .set-ui .set-btn.danger { border-color: var(--viz-coral); color: var(--chip-ink-below); }
 .pd-savebar, .set-ui .set-savebar {
     display: flex; align-items: center; justify-content: flex-end; gap: 12px;
@@ -1304,6 +1309,8 @@ nav {
     border: 1px solid var(--sub-2); border-radius: 999px; font-size: var(--font-sm);
 }
 .picker-chip button { padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
+/* The fold's "+ N more · show all": a link-weight button after the chips. */
+.picker-more { padding: 0 var(--sp-1); border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--font-sm); cursor: pointer; }
 .picker-q {
     padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--bg); color: var(--text); font: inherit;
@@ -1322,6 +1329,10 @@ nav {
     background: none; color: var(--text-muted); font: inherit; font-size: var(--font-xs); cursor: pointer;
 }
 .picker-filters button.is-on { border-color: var(--accent); color: var(--accent); }
+/* The views (opts.views: All · Groups only · Free only) come first, the
+ * prefix filters after them a little apart: a view is one of three, a prefix
+ * is a query. */
+.picker-filters .picker-view + button:not(.picker-view) { margin-left: var(--sp-3); }
 .picker-list {
     max-height: 18rem; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface); box-shadow: var(--shadow-md);
@@ -1345,6 +1356,17 @@ nav {
     flex: 0 0 auto; padding: 0 var(--sp-2); border: 1px solid var(--sub-4); border-radius: 999px;
     color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
 }
+/* A role's tag wears the role's colour (the --role-* tokens), its name in ink. */
+.picker-tag[data-tone] { border-color: var(--role, var(--sub-4)); color: var(--text); }
+/* A folded group's "show N" and the later rows' line. */
+.picker-fold {
+    margin-left: auto; padding: 0 var(--sp-2); border: 0; background: none; color: var(--accent);
+    font: inherit; font-size: var(--font-xs); cursor: pointer; white-space: nowrap;
+}
+.picker-later {
+    display: flex; align-items: center; gap: var(--sp-2); min-height: 40px; padding: var(--sp-1) var(--sp-3);
+    border-top: 1px solid var(--sub-2); color: var(--text-muted); font-size: var(--font-sm);
+}
 .picker-add { color: var(--accent); }
 .picker-add.is-busy { color: var(--text-muted); cursor: progress; }
 /* A write-through pick out with the caller (onPick), and its refusal. */
@@ -1358,3 +1380,113 @@ nav {
     position: sticky; bottom: 0; padding: var(--sp-1) var(--sp-3); border-top: 1px solid var(--sub-2);
     background: var(--surface); color: var(--text-muted); font-size: var(--font-xs); text-align: right;
 }
+
+/* ── THE EXCEPTION LIST (shared/exceptions.js) ───────────────────────────
+ * One setting kept per place, said as the rule and the places that break it:
+ * the label in the settings grid's label column, the summary, then one row per
+ * place that differs (its name, the caller's controls, a ×), then + Add. Rows
+ * size to their controls, never to the page's width. Three uses: a process's
+ * position settings, a style's "Set for this style", a recipe group's keys. */
+.exc { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 2px var(--sp-3); align-items: start; padding: var(--sp-2) 0 var(--sp-3); }
+.exc + .exc { border-top: 1px dashed var(--sub-1); }
+.exc-name { padding-top: var(--sp-2); font-size: var(--font-sm); }
+.exc-name small { display: block; color: var(--text-muted); font-size: var(--font-xs); font-weight: var(--fw-normal); }
+.exc-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); min-width: 0; }
+.exc-sum { display: flex; align-items: center; gap: var(--sp-3); min-height: 34px; color: var(--text-muted); font-size: var(--font-sm); }
+.exc-rows { border-collapse: collapse; }
+.exc-rows td { padding: 3px var(--sp-2) 3px 0; font-size: var(--font-sm); vertical-align: middle; white-space: nowrap; }
+.exc-rows td.exc-pos { min-width: 110px; font-weight: var(--fw-bold); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.exc-rows td.exc-x button {
+    padding: 0 var(--sp-2); border: 0; background: none; color: var(--text-muted); font: inherit; font-size: var(--font-base); cursor: pointer;
+}
+.exc-rows td.exc-x button:hover, .exc-rows td.exc-x button:focus-visible { color: var(--text); }
+.exc-add { align-self: flex-start; }
+/* A bare list is a card's whole subject: no name column, the rows across the
+ * card, + Add at the right edge, beside the summary or under the rows. */
+.exc.bare { grid-template-columns: minmax(0, 1fr); }
+.exc.bare .exc-body { align-items: stretch; }
+.exc.bare .exc-sum > .exc-add { margin-left: auto; }
+.exc.bare .exc-body > .exc-add { align-self: flex-end; }
+
+/* ── THE SET PICK (shared/set-pick.js) ───────────────────────────────────
+ * A process's positions and routing set off one node list: a row of boxes,
+ * each a role in its own colour with what is picked in it, and the list for
+ * the open box under them. The colour is the box's data-role, read through
+ * --role, and always comes with the role's name. QUIET (owner, 2026-11-15:
+ * "the colors and highlighted boxes look a little tacky"): a role is its dot
+ * and the tag on a row; the one outline in colour is a box still needed
+ * (dashed). The open box, the chips and the list's frame are neutral. One
+ * still needed says "needed"; an empty optional one says so. */
+[data-role="positions"], .picker-tag[data-tone="positions"] { --role: var(--role-positions); }
+[data-role="inbound"], .picker-tag[data-tone="inbound"] { --role: var(--role-inbound); }
+[data-role="staging"], .picker-tag[data-tone="staging"] { --role: var(--role-staging); }
+[data-role="outbound"], .picker-tag[data-tone="outbound"] { --role: var(--role-outbound); }
+.setpick { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+/* The boxes stick to the top of the pick's scroll (THE SET PICK HAS ONE
+ * SCROLL, below), opaque so the rows pass under them. */
+.setpick-boxes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-3);
+    position: sticky; top: var(--setpick-top, 0px); z-index: var(--z-sticky); margin: 0 -4px; padding: 6px 4px 8px; background: var(--surface);
+}
+.setpick-box {
+    display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; min-height: 120px; padding: var(--sp-3);
+    border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--bg); cursor: pointer;
+}
+/* The open box: a stronger neutral outline, not its role's colour (only a box
+ * still needed is outlined in colour, dashed). */
+.setpick-box.is-on { border: 2px solid var(--text-muted); padding: calc(var(--sp-3) - 1px); background: var(--surface); }
+.setpick-box.is-needed:not(.is-on) { border: 2px dashed var(--role); padding: calc(var(--sp-3) - 1px); }
+.setpick-box.is-closed { cursor: not-allowed; opacity: .6; }
+.setpick-t {
+    display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; padding: 0; border: 0; background: none;
+    color: var(--text); font: inherit; font-weight: var(--fw-bold); text-align: left; cursor: inherit;
+}
+.setpick-n { margin-left: auto; color: var(--text-muted); font-size: var(--font-sm); }
+.setpick-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--role); }
+.setpick-need {
+    padding: 0 var(--sp-1); border: 1px solid var(--sub-2); border-radius: 4px;
+    color: var(--text-muted); font-size: var(--font-xs); font-weight: var(--fw-bold);
+}
+.setpick-need.is-needed { border-color: var(--role); background: var(--role); color: var(--bg); }
+.setpick-sub, .setpick-none, .setpick-note { color: var(--text-muted); font-size: var(--font-xs); }
+.setpick-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.setpick-chip {
+    display: inline-flex; align-items: center; gap: var(--sp-1); max-width: 100%; padding: 0 var(--sp-2);
+    border: 1px solid var(--sub-2); border-radius: 999px; background: var(--bg); font-size: var(--font-sm);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.setpick-chip button { padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
+.setpick-more { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--font-sm); cursor: pointer; }
+.setpick-list {
+    display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3);
+    border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--bg);
+}
+/* The "Picking …" head sticks just under the boxes, over the list's padding,
+ * and holds the list's name filter, views and prefixes (.setpick-tools): one
+ * band, so nothing of the list's top slides half under it. */
+.setpick-head {
+    display: flex; flex-direction: column; gap: var(--sp-2);
+    position: sticky; top: calc(var(--setpick-boxes-h, 0px) + var(--setpick-top, 0px)); z-index: var(--z-sticky);
+    margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0; padding: var(--sp-3) var(--sp-3) var(--sp-2); background: var(--bg);
+    border-radius: calc(var(--radius) + 4px) calc(var(--radius) + 4px) 0 0;
+}
+.setpick-headt { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); }
+.setpick-headt .setpick-hint { flex-basis: 100%; }
+.setpick-headt .setpick-dot { align-self: center; }
+.setpick-headt small { color: var(--text-muted); font-size: var(--font-xs); }
+.setpick-tools { display: flex; flex-direction: column; gap: var(--sp-1); }
+/* THE SET PICK HAS ONE SCROLL, ITS PAGE'S (owner, 2026-11-15: "its hard to
+ * scroll the page and the new thing"). The list is never a scroll box of its
+ * own. Capped at 360 px inside Settings' scrolling column it was two scrolls
+ * under one pointer, and the list's overscroll-behavior: contain held the
+ * column still while the pointer was over the list. So the list is its full
+ * height, and the box the pick sits in scrolls it: the Add sheet's body, the
+ * Settings column. The boxes, and the "Picking …" head under them (their
+ * rules above), stick to the top of that scroll, so what is picked and which
+ * box a tick goes in stay in view while the rows go under them; the count
+ * line is the list's last row. A sticky box stops inside its scroller's
+ * padding, so a page sets --setpick-top on its scroller to minus that padding
+ * and the boxes sit flush with the edge; --setpick-boxes-h is the boxes'
+ * height, which set-pick.js sets as they draw and whenever they change size. */
+.setpick .picker--open .picker-list { max-height: none; overflow: visible; overscroll-behavior: auto; box-shadow: none; }
+.setpick .picker--open .picker-count { position: static; }

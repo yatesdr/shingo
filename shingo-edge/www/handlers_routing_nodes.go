@@ -207,13 +207,34 @@ func (h *Handlers) apiPatchProcess(w http.ResponseWriter, r *http.Request) {
 // station had its composer block on the station view and the desktop had no
 // equivalent door. Admin-gated with the rest of the process routes: this is the
 // engineer's screen, and the shop-floor group has no business serving it.
+//
+// ?map_rev=<revision> is the revision of the plant map the page already
+// holds. When it is this Edge's, the reply leaves the map off and carries
+// "map_same": true (domain.ComposerData.LeaveOffHeldMap); without it, or with
+// any other revision, the reply is the whole read.
 func (h *Handlers) apiProcessComposer(w http.ResponseWriter, r *http.Request) {
+	held := r.URL.Query().Get("map_rev")
+	svc := h.engine.StationService()
+	h.writeProcessComposer(w, r, func(processID int64) (*domain.ComposerData, error) {
+		data, err := svc.ComposerForProcess(processID)
+		data.LeaveOffHeldMap(held)
+		return data, err
+	})
+}
+
+// apiProcessComposerLists is the Styles tab's poll: the style and recipe lists
+// only (service ComposerListsForProcess), not the picture or the plant map.
+func (h *Handlers) apiProcessComposerLists(w http.ResponseWriter, r *http.Request) {
+	h.writeProcessComposer(w, r, h.engine.StationService().ComposerListsForProcess)
+}
+
+func (h *Handlers) writeProcessComposer(w http.ResponseWriter, r *http.Request, read func(int64) (*domain.ComposerData, error)) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	data, err := h.engine.StationService().ComposerForProcess(processID)
+	data, err := read(processID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

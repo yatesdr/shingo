@@ -158,6 +158,16 @@ func (s *ProcessService) Update(id int64, name, description string) error {
 // process_groups.name, for the same www classification pattern.
 var ErrDuplicateGroupName = process_groups.ErrDuplicateGroupName
 
+// ErrProcessNameTaken re-exports the store's refusal of a name another process
+// holds, from Create and Update.
+var ErrProcessNameTaken = processes.ErrNameTaken
+
+// NameTaken reports whether a process other than exceptID is called name.
+// A rename asks it before its first write (apiUpdateProcess).
+func (s *ProcessService) NameTaken(name string, exceptID int64) (bool, error) {
+	return s.db.ProcessNameTaken(name, exceptID)
+}
+
 // Delete removes a process row by id, retiring the rows that are meaningless
 // without it, its lineside piles included.
 //
@@ -268,11 +278,57 @@ func (s *ProcessService) RoutingSet(processID int64) ([]domain.RoutingNode, erro
 	return s.db.RoutingSet(processID)
 }
 
-// PutRoutingNodes writes a whole list of (name, role) rows in the order given,
-// adopting rows that already exist and never deleting one the list omits. The
-// rule and its reasons live with the write: store.DB.PutRoutingNodes.
-func (s *ProcessService) PutRoutingNodes(kinds domain.CoreNodeKinds, processID int64, rows []domain.RoutingNodeInput, calledBy string) error {
-	return s.db.PutRoutingNodes(kinds, processID, rows, calledBy)
+// PutRoutingNodes is the routing set's one write: rows added or adopted and
+// remove taken out (by name and role), all of it or none of it
+// (store.DB.PutRoutingNodes). It returns what each removal orphans, as the
+// single-row DeleteRoutingNode does: a warning, never a refusal.
+//
+// THE WARNINGS READ AS IF THE REMOVALS RAN ONE BY ONE, in the order given,
+// which is what the sheet's one DELETE per name used to say: each removal's
+// recipes are the ones it orphans on the set the removals before it left.
+func (s *ProcessService) PutRoutingNodes(kinds domain.CoreNodeKinds, processID int64, rows, remove []domain.RoutingNodeInput, calledBy string) ([]domain.RoutingRemoval, error) {
+	if len(remove) == 0 {
+		_, err := s.db.PutRoutingNodes(kinds, processID, rows, nil, calledBy)
+		return nil, err
+	}
+	presets, err := s.db.ListFlowPresets(processID, false)
+	if err != nil {
+		return nil, err
+	}
+	positions, err := s.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	before, err := s.db.ListRoutingNodes(processID)
+	if err != nil {
+		return nil, err
+	}
+	gone, err := s.db.PutRoutingNodes(kinds, processID, rows, remove, calledBy)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.RoutingRemoval, 0, len(gone))
+	cur := before
+	for _, g := range gone {
+		next := make([]domain.RoutingNode, 0, len(cur))
+		for _, r := range cur {
+			if r.CoreNodeName != g.Name || r.Role != g.Role {
+				next = append(next, r)
+			}
+		}
+		recipes := domain.RecipeOrphans(presets, positions, positions, cur, next)
+		if recipes == nil {
+			recipes = []string{}
+		}
+		styles := g.Styles
+		if styles == nil {
+			styles = []string{}
+		}
+		out = append(out, domain.RoutingRemoval{Recipes: recipes, Styles: styles,
+			Warning: domain.RoutingRemovalWarning(g.Name, g.Role, recipes, styles)})
+		cur = next
+	}
+	return out, nil
 }
 
 // ── The process part set ────────────────────────────────────────────
@@ -365,20 +421,18 @@ func (s *ProcessService) SetNodeCurtain(nodeID int64, enabled bool, plcName, tag
 		strings.TrimSpace(plcName), strings.TrimSpace(tagName), safeValue)
 }
 
-// CurtainedNodeNames returns, per process id, the names of its live nodes
-// whose curtain interlock is on - the process list's at-a-glance column.
-func (s *ProcessService) CurtainedNodeNames() (map[int64][]string, error) {
-	nodes, err := s.db.ListProcessNodes()
-	if err != nil {
-		return nil, err
-	}
+// CurtainedNodeNames is, per process id, the names of the nodes whose curtain
+// interlock is on, in nodes' order - the process list's at-a-glance column.
+// nodes is every live position (ProcessService.ListNodes), the read the list
+// shares with StationService.CoreBoardProcesses.
+func CurtainedNodeNames(nodes []processes.Node) map[int64][]string {
 	out := map[int64][]string{}
 	for _, n := range nodes {
 		if n.CurtainEnabled {
 			out[n.ProcessID] = append(out[n.ProcessID], n.Name)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // DeleteNode removes a process_node row by id.
@@ -414,9 +468,6 @@ func (s *ProcessService) ClearNodeRuntimeOrders(processNodeID int64) error {
 	return s.db.ClearProcessNodeRuntimeOrders(processNodeID)
 }
 
-// autoReorderFlipsShown is how many flips Processes lists for a line.
-const autoReorderFlipsShown = 10
-
 // SetAutoReorderSwitchHMI shows or hides a line's auto-reorder switch on the
 // station board.
 func (s *ProcessService) SetAutoReorderSwitchHMI(processID int64, allowed bool) error {
@@ -434,9 +485,13 @@ func (s *ProcessService) AutoReorderSwitch(processID int64) (*domain.AutoReorder
 	if err != nil {
 		return nil, err
 	}
-	flips, err := processes.ListAutoReorderFlips(s.db.DB, processID, autoReorderFlipsShown)
+	flips, err := processes.ListAutoReorderFlips(s.db.DB, processID, 1)
 	if err != nil {
 		return nil, err
 	}
-	return &domain.AutoReorderSwitch{ShownOnStation: p.AutoReorderSwitchHMI, Positions: positions, SwitchedOff: off, Flips: flips}, nil
+	sw := &domain.AutoReorderSwitch{Positions: positions, SwitchedOff: off}
+	if len(flips) > 0 {
+		sw.LastFlip = &flips[0]
+	}
+	return sw, nil
 }

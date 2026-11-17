@@ -76,26 +76,31 @@ func (h *Handlers) apiSetProcessPayloads(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// apiPutRoutingNodes writes a whole routing list in one trip.
+// apiPutRoutingNodes is the routing set's one write: {"nodes": [...]} added or
+// adopted and {"remove": [...]} taken out (name and role), in one transaction.
 //
-// VALIDATED WHOLE, THEN WRITTEN. A bad role or a name Core does not have
-// refuses the BODY, before any of it lands — the same rule SetNodes states for
-// the station's node list: a partial write reports success for a set the
-// caller never asked for, and nothing says which half landed.
+// VALIDATED WHOLE, THEN WRITTEN, AND WRITTEN WHOLE. A bad role or a name Core
+// does not have refuses the BODY before any of it lands, and a row the store
+// refuses halfway rolls the rest back — the same rule SetNodes states for the
+// station's node list: a partial write reports success for a set the caller
+// never asked for, and nothing says which half landed.
 //
-// IT ADDS AND ADOPTS AND NEVER DELETES. See service.PutRoutingNodes for why a
-// set-to is the wrong shape for a table whose removal warns what it orphans.
+// IT TAKES OUT ONLY WHAT IT NAMES. See store.DB.PutRoutingNodes for why a
+// set-to is the wrong shape for a table whose removal warns what it orphans;
+// the answer carries each removal's warning.
 func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
+	type routingRow struct {
+		CoreNodeName string `json:"core_node_name"`
+		Role         string `json:"role"`
+	}
 	var req struct {
-		Nodes []struct {
-			CoreNodeName string `json:"core_node_name"`
-			Role         string `json:"role"`
-		} `json:"nodes"`
+		Nodes  []routingRow `json:"nodes"`
+		Remove []routingRow `json:"remove"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -129,8 +134,18 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, domain.RoutingNodeInput{CoreNodeName: name, Role: n.Role})
 	}
+	remove := make([]domain.RoutingNodeInput, 0, len(req.Remove))
+	for _, n := range req.Remove {
+		if !domain.IsRoutingRole(n.Role) {
+			writeError(w, http.StatusBadRequest,
+				n.CoreNodeName+": role must be source, staging or destination, not "+n.Role)
+			return
+		}
+		remove = append(remove, domain.RoutingNodeInput{CoreNodeName: strings.TrimSpace(n.CoreNodeName), Role: n.Role})
+	}
 	user, _ := h.sessions.getUser(r)
-	if err := h.engine.ProcessService().PutRoutingNodes(kinds, id, rows, user); err != nil {
+	removals, err := h.engine.ProcessService().PutRoutingNodes(kinds, id, rows, remove, user)
+	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrRoutingNodeIsPosition):
 			writeError(w, http.StatusConflict, err.Error())
@@ -142,5 +157,13 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("routing-node-updated")
-	writeJSON(w, map[string]string{"status": "ok"})
+	// What each removal orphans, as the single-row DELETE answers it: the
+	// desktop shows the warnings, and a removal never refuses.
+	warnings := []string{}
+	for _, rm := range removals {
+		if rm.Warning != "" {
+			warnings = append(warnings, rm.Warning)
+		}
+	}
+	writeJSON(w, map[string]any{"status": "ok", "warnings": warnings})
 }

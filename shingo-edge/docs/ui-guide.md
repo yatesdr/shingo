@@ -132,7 +132,8 @@ three parts:
 
 **Route:** `/operator/station/{id}`
 
-The touch screen at an operator station (one per screen configured on a process's Operator screens tab). It
+The touch screen at an operator station (one per screen configured under a process's Settings, Screens and
+positions). It
 needs no login, has no theme toggle and lays itself out at a fixed 1024 px width so a small kiosk screen scales
 it whole.
 
@@ -199,18 +200,60 @@ process, what it is running, its styles, whether operators may set up styles at 
 counter, its curtain nodes, its operator screens and its state. A part-identity health strip above the list
 flags each process whose PLC reports a part the Edge cannot place, with the verb that resolves it.
 
-Opening a process gives four tabs:
+**Add process** is one sheet: the name, the group, the operator screen (blank: named after the process), the
+set pick (one list in four coloured boxes: Positions, Inbound, Staging, Outbound) and the parts. Only the name
+is needed; Create makes the process and its screen, with the positions on it, and opens the process on Setup.
+Opening a process gives two tabs, Styles and Settings, with Setup before them until the line is set up:
 
+- **Setup**: a short path to a first line, in three steps — **Nodes and part** (the Add process sheet; Change…
+  opens it again, filled in), **First style** (one position at a time: its part, consume or produce, its swap
+  and the routing names it reads, filled from the routing set, and on Index Swap and Sequential A/B its Paired
+  core node, from the Styles table's list; beside it, the position's robot work lists;
+  saved through the Styles tab's save), and **Run it** (open the operator screen; start the first changeover or make the first call). Beside
+  them, the line so far and what can wait for Settings. It is finished when the line can run and its screen
+  has been opened, then says so and goes. **Skip setup, use Settings** hides it in this browser; **Show setup**
+  brings it back while the process cannot run.
 - **Styles**: a rail of the recipes and styles, and each style's flow, as the same picture and model the
-  operator station uses, with its positions table. Changes are saved with **Save flow**; **+ New style** puts
-  parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as running**,
-  the admin's style switch for when the plant changed parts without shingo.
-- **Operator screens**: the HMIs that work this process, and its loader windows.
-- **Settings**: General, Production counter (the counter's PLC and tag), Changeover, HMI, Parts this process
-  runs, Quality hold (the containment destination), Auto-reorder (the line's switch, whether the station shows
-  it, and every flip), Styles, the Routing set, and Danger (delete the process). A position's reorder point
-  and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never orders.
-- **Recipes**: saved flow presets, and the flows found in this process's styles, to apply across styles.
+  operator station uses, with its positions table and one dashed **+ Add a position** row closing it. Each row
+  ends with **Advanced** (**Advanced · N set** where it sets something), which opens that position's settings in a
+  sheet, each with its value control, saved with the style. A row clicked opens its **robot work lists** under it: each robot, and the steps
+  it is sent, as the Edge's own builders make them for the draft (the preview's `?steps=1`). The list is the
+  swap as configured: an empty line, an index press's back positions being primed, a keep-staged spot with no
+  spare and a held partial change what a request sends, and are not drawn. A swap not complete (a field its swap
+  requires is blank) draws no robot, even where the builders would make a step to no node, and says what it needs. Changes are saved with **Save style**; **+ New style**
+  puts parts on a recipe. A style row's menu holds rename, expected CATID, clone, delete and **Mark as
+  running**, the admin's style switch for when the plant changed parts without shingo. A position's reorder
+  point and auto-reorder are set from its reorder cell on the flow; Clear the point sets it to 0, which never
+  orders.
+- **Settings**: one page with one Save, the full width, its sections down the left (a dot on one that needs
+  attention), each a card, grouped by what it is about. Health first, while it has items. **The line**: Line
+  (name, description, group), Parts, Positions and routing (the same set pick as Add process, each screen
+  under it with Edit and Open and a chip for each position it holds, the positions on no screen with Put them on
+  <screen> for each screen, and its loader windows; it says in one line that
+  operators are offered these names, never the plant). A name in Inbound, Staging or Outbound is a place this
+  process may route material through; there is nothing to switch on, since a name in the list is set up. A recipe
+  follows the one name in a role; with several, it keeps the one it was saved with. Taking one out warns what it
+  leaves behind. Whether operators may change flows at all is under Operator setup. **Counting and part
+  identity**: Production counter (the counter's PLC and tag, MES slots and station counters; outlined amber
+  until it is wired), Part identity (CATID) (where it is read from, and *When the part changes*: the
+  changeover auto-arm), Counted somewhere else (positions whose strokes count at a station counter). **At the
+  station**: Operator setup (HMI setup and the recipes: saved flow presets, and the flows found in this
+  process's styles, to apply across styles), Auto-reorder (the line's switch, saved with the page, and who last
+  switched it; whether the station shows it), Quality hold (the containment destination), Light curtain
+  (positions where a release waits for the curtain). **Danger**: delete the process. On/off settings are switches with what they mean beside them. A line has one screen: **+ Add a
+  screen** shows only on a line with none, and takes its positions. A loader's or unloader's process, whose
+  board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger. Its screens' positions and
+  any on no screen are listed, not picked; positions on no screen go onto a screen with **Put them on <screen>**, or with
+  **+ Add a screen** when it has none. Its board draws the screen's positions, not the loader's windows. The Edge keeps
+  them itself, by the Edge Core names for the loader under Loaders: one line per loader says **Core's pick: this Edge**,
+  **Core moved <loader> to <Edge>**, or **No Edge picked: set on Core, under Loaders**. Named here, the Edge makes the
+  loader's process and screen and puts on and takes off what Core adds and removes; named elsewhere, it offers nothing
+  and the screen loses the loader's windows but stays; with none picked, a window Core adds goes onto the one screen
+  already holding the loader's others, and one it removes comes off. What it could not take is one line each:
+  **Core added <window>** with **Put it on <screen>**, and **Core removed <window>** with **Take it off <screen>**, or, while
+  an order runs there, "comes off by itself when its order ends". The one Save writes the screen. A screen with a
+  position no loader holds is never written by the Edge. A dedicated loader's buffer spots are drawn from the loader
+  itself and never need a line.
 
 A process's production counter is its reporting point: the Edge keeps the reporting point that binds that tag
 to the active style in step whenever the process is saved or changes over, and PLC polling reads it from there.

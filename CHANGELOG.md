@@ -16,6 +16,82 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Edge v55–v57 first, at every Edge of the plant; then Core v178. An Edge from before this release ignores the Edge Core names for a loader and keeps its screens as they are, so pick an Edge under Loaders only once every Edge at the plant runs this release.
+
+- The Processes page is two tabs, Styles and Settings, plus Setup until a new line is set up
+- Add process is one sheet: name, group, operator screen, the coloured node pick and the parts
+- Setup is three steps, nodes and part, a first style, open the screen; it can be skipped
+- Setup's first style names the style, puts a part on each position and fills the routing set's nodes in
+- Add process asks for the parts before the nodes
+- The node pick is one plain list with All · Groups only · Free only by its filter; on Settings and Add process the page scrolls, not the list
+- First style goes one position at a time: a checklist, the open position, Done · next position, Not in this style
+- First style can add a position to the line or take one off, asked about first as Settings asks
+- The node pick and First style are quieter: a role is a dot; only a box still needed is outlined in colour
+- First style shows each name it filled in as a dropdown, inbound and outbound staging apart
+- A position in First style can swap its own way; a free one can add a part from Core's catalog
+- The Styles tab's staging cell labels its inbound and outbound dropdowns
+- Settings groups its sections: the line, counting and part identity, at the station, danger
+- Light curtain and Counted somewhere else are cards of their own; Changeover is under Part identity
+- Nothing on Settings is cut off, and cards in one row are the same height
+- The node pick says the group rule once; on Add process its boxes stay in view while picking
+- Setup is done once the line can run and its operator screen has been opened
+- Settings lists its sections down the left, one card each, across the full width, with one Save
+- Settings' Positions and routing is the same coloured pick as Add process
+- The node roles have their own colours, apart from the robot colours
+- A line has one screen; + Add a screen shows only on a line with none and takes its positions
+- The line's auto-reorder switch saves with the Settings page
+- The Edge home page has a strip of buttons, one for each operator screen
+- A cell screen's robot panel is off until an operator presses ROBOTS on that screen; the button's colours say off or on
+- #tab=styles typed on an open process opens Styles
+- With WarLink off, the CATID monitor asks WarLink for nothing at start
+- The per-position short lists name only the positions that differ, each added through the node picker
+- A recipe group's settings are a list on its card
+- A recipe group carries no carry-over; carry-over is on a position marked Tool change
+- Counted somewhere else takes several positions in one pick and saves with the rest
+- Every chooser on the page is the shared picker; a long part set folds its chips
+- The Styles picture folds free positions, and a group's auto reorder is one row
+- Taking a position off says the settings it clears; positions on no screen go in one write
+- A Core loader's process shows its line, its screens and where Core's loader settings are
+- Two styles may bring a press its next carrier with different robots
+- A first style saves with no operator screen; the empty flow points to Positions and routing
+- The routing set is saved in one write, and saving a style's flow needs a sign-in
+- The list paints with its rows, reads its positions once, and does not resend a plant map
+- A station board with more tiles than its screen's grid holds adds rows, so no tile draws over itself
+- A running style with no changeover on record no longer reads "never run here" beside its running tag
+- Settings shows the positions each screen holds, and offers the positions on no screen to each screen
+- The Styles tab has one + Add a position, under the table
+- Each row on the Styles tab ends with Advanced, which opens that position's settings in a sheet; Allowed parts starts from the row's part
+- First style and the Styles tab show a position's robot work lists: each robot and the steps the Edge sends it
+- Sequential A/B reads as two robots, one after the other; Index Swap's card holds for every Next carrier
+- First style offers no staging on Index Swap or Sequential A/B, whose swaps never stop there
+- The Add sheet's "Picking …" line stays in view under the four boxes
+- First style asks for an Index Swap's or Sequential A/B's paired position, so both can be finished there
+- First style's Done waits until the position has nothing to fix, and says what it lacks in plain words
+- Allowed parts reads "other parts this position counts as its own"
+- Auto request part is gone: nothing read it, and Edge v55 drops it, values and all
+- After this update, a Styles draft left open across the Edge's restart says "the flow changed since you previewed" once on Save, then previews again
+- On a loader's or unloader's process, the positions on no screen are listed, not picked; Put them on <screen> moves them
+- A loader's process says Core added <window> with Put it on <screen>, and Core removed <window> with Take it off
+- A window Core removes from a loader no longer turns its process into a line; Edge v56 remembers Core's windows
+- Make a screen puts a dedicated loader's homes on the new screen, not its buffer spots, which the board draws already
+- With no Edge picked on Core, a window Core adds to a loader goes onto the one screen here holding its others, and one it removes comes off
+- A window Core removes while an order runs there stays on its screen, saying so, and comes off once the order ends
+- Core's Loaders: a station's Settings has an Edge pick, the Edge that works it; every existing loader starts with No Edge picked
+- When Core names this Edge for a loader, the Edge makes its process and screen and keeps its windows on it, with nobody at the Edge
+- A loader Core gives another Edge is not offered here; a screen of it from before stays, says where Core moved it, and loses its windows
+- A loader's process says which Edge Core names for each of its loaders, or "No Edge picked: set on Core, under Loaders"
+- A position taken off and put back keeps both its rows at the Edge's next start; one put back on no screen is no longer deleted by the start
+- A produce position with no inbound source asks Core for an empty carrier, not a full of the part it makes
+- Every swap mode refuses a blank outbound destination at request, in the same words; Sequential A/B and 1-Robot Swap sent the robot to drop the old bin at no node
+- Picking another Sequential A/B partner, or none, unpairs the old one, in First style and on the Styles table; a row moved on the table keeps its pair
+- A position added on a swap that takes no partner sends none, so First style saves 1-Robot Swap rows on a line with back positions
+- An Index Swap back picked again leaves room for the new back's part where the old back's part had moved
+- A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
+- The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
+- The Add sheet and Settings say Parts once
+- Settings names a single back position in the singular
+- A shape found in the flows stays on one line: a long parts list is cut, and Name it… no longer breaks
+
 ## v0.9.0 — 2026-11-15
 
 Deploy: Edge v51–v54 first, at every Edge of the plant. Core has no migration, and goes only after every Edge there runs this release: until then Core's old timers are what end a dead Edge's waits.

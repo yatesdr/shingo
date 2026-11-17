@@ -28,14 +28,6 @@ ok   Keep editing keeps the draft and its row, on Styles
 ok   and the address bar says Styles
 ok   Discard leaves the draft and lands there
 
-## F4: the Operator screens tab out of a recipe draft
-ok   an untouched draft leaves without asking, and lands there
-ok   a changed draft asks first, the draft still on screen
-ok   the question is Back's
-ok   Keep editing keeps the draft and its row, on Styles
-ok   and the address bar says Styles
-ok   Discard leaves the draft and lands there
-
 ## F4: #tab=settings typed in the address bar out of a recipe draft
 ok   an untouched draft leaves without asking, and lands there
 ok   a changed draft asks first, the draft still on screen
@@ -72,10 +64,10 @@ ok   the refusal is said in the popover, which stays
 ok   and the row is as it was
 
 ## the empty flow bar names a door that is on the screen
-ok   no position to add: the bar does not send the engineer below ("Nothing in the flow yet Its screen has no position yet: add them on Settings No unsaved changes")
+ok   no position to add: the bar does not send the engineer below ("Nothing in the flow yet This process has no position yet: add them in Settings › Positions and routing No unsaved changes")
 
 ## F36: Settings › HMI setup on a process with no recipe
-#    "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from no recipe yet New recipe Found in your flows · 1 shape run by 2 styles, not named yet Shape Ru"
+#    "id=\"pd-hmirecipes\"> Recipes no recipe yet Found in your flows a shape run by styles, not named yet mixed POS_A1 / POS_A3 Style A, Style B Name it… Auto-reorder "
 ok   the HMI setup row says the process has no recipe
 ok   and offers New recipe there
 ok   "Found in your flows" is beside it
@@ -85,85 +77,200 @@ ok   switched off (not saved), the recipes row does not warn
 ## Press A with Recipe One
 rail headings: ["Recipes · 1","Styles · 2"] · + New recipe drawn
 rail foot: "+ New style a part this process runs"
-main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 10 positions · last run 11-10 running" · buttons ["+ New recipe","+ New style","Discard changes","Save as recipe…","Use a recipe ▾","Save style","+ Add a position"]
+main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 10 positions · last run 11-10 running" · buttons ["+ New recipe","+ New style","Discard changes","Save as recipe…","Use a recipe ▾","Save style"]
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Start from a recipe","Name","Expected CATID"]
-  the chooser opens on "— none, draw it —" (value "")
+  the chooser opens on "none, draw it" (value "")
 
 ## Press A with no recipe
 rail headings: ["Styles · 2"] · + New recipe not drawn
 rail foot: "+ New style a part this process runs"
-main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 10 positions · last run 11-10 running" · buttons ["+ New style","Discard changes","Save as recipe…","Save style","+ Add a position"]
+main: "Style A Index Swap + 2‑Robot Swap + 1‑Robot Swap + Sequential A/B · 10 positions · last run 11-10 running" · buttons ["+ New style","Discard changes","Save as recipe…","Save style"]
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
 
 ## Press A with no style and no recipe
 rail headings: [] · + New recipe not drawn
 rail foot: ""
-main: "" · buttons ["Change…","Change…","Change…","+ New style","Set up…","New recipe"]
+main: "" · buttons ["Change…","Start"]
 New style: "New style — a part this process runs: name it, then draw its flow." · fields ["Name","Expected CATID"]
 
-## the Setup tab: Press A opened at each state (tabs, then the rows: value → action)
-# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
-  · positions: "none yet" → Add positions [primary]
-  · routing: "none yet" → Set the routing set
-  ✓ parts: "11 parts" → Change…
-  · style: "none yet" → + New style
-  · screen: "Screen A · not run yet" → Open the screen
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "off · no recipe yet" → New recipe
-# positions claimed · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
-  ✓ positions: "16 positions" → Change…
-  · routing: "none yet" → Set the routing set [primary]
-  ✓ parts: "11 parts" → Change…
-  · style: "none yet" → + New style
-  · screen: "Screen A · not run yet" → Open the screen
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "off · no recipe yet" → New recipe
-# and a routing set · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
-  ✓ positions: "16 positions" → Change…
-  ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
-  ✓ parts: "11 parts" → Change…
-  · style: "none yet" → + New style [primary]
-  · screen: "Screen A · not run yet" → Open the screen
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "off · no recipe yet" → New recipe
-# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
-  ✓ positions: "16 positions" → Change…
-  ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
-  ✓ parts: "11 parts" → Change…
-  · style: "Style A · no flow yet" → Draw its flow [primary]
-  · screen: "Screen A · not run yet" → Open the screen
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "off · no recipe yet" → New recipe
-# and its flow drawn, never run · lands on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
-  ✓ positions: "16 positions" → Change…
-  ✓ routing: "2 inbound · 3 staging · 2 outbound" → Change…
-  ✓ parts: "11 parts" → Change…
-  ✓ style: "Style A · +1" → Open
-  · screen: "Screen A · not run yet" → Open the screen [primary]
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "off · 1 recipe" → Change…
-# run once (active style set) · lands on flows · tabs ["Styles*","Operator screens","Settings"]
-# HMI setup on with no recipe, never run · lands on setup
-  · counter: "counting on PLC_A · CountA" → Set up…
-  · hmi: "on · no recipe yet" (warn) → New recipe
+## the Setup tab: Press A opened at each state, its screens never opened (the steps: state title: what it holds → its controls)
+# a new process: nothing yet · lands on setup · tabs ["Setup*","Styles","Settings"] · no re-read of the screens
+  title: "Set up Press A 0 of 3 done"
+  now Nodes and part: "still to pick: Positions, Inbound, Outbound, a part" → Pick them [primary] (setup-edit)
+      "the sheet you made the process with"
+  next First style: "a part on each position and how they swap"
+  next Run it: "open the operator screen, then start the first changeover or make the first call"
+      "The screen “Screen A” is already made and holds 11 positions."
+  beside: "Your line so far Inbound none yet → no positions yet → Outbound none yet Staging: none. Optional; a swap that needs one will ask. Later, on Settings · not needed to run Production counter Auto-reorder Light curtain Operator setup Quality hold"
+  app bar: "Skip setup, use Settings" (setup-skip)
+# positions claimed · lands on setup · tabs ["Setup*","Styles","Settings"] · no re-read of the screens
+  title: "Set up Press A 0 of 3 done"
+  now Nodes and part: "still to pick: Inbound, Outbound" → Pick them [primary] (setup-edit)
+      "the sheet you made the process with"
+  next First style: "a part on each position and how they swap"
+  next Run it: "open the operator screen, then start the first changeover or make the first call"
+      "The screen “Screen A” is already made and holds 11 positions."
+  beside: "Your line so far Inbound none yet → POS_A1 no style yet POS_A2 no style yet POS_A3 no style yet POS_A4 no style yet POS_A5 no style yet POS_A6 no style yet POS_A7 no style yet POS_A8 no style yet POS_A9 no style yet POS_A10 no style yet POS_A11 no style yet POS_B1 no style yet POS_B2 no style yet POS_B3 no style yet POS_B4 no style yet ULD_1 no style yet → Outbound none yet Staging: none. Optional; a swap that needs one will ask. Later, on Settings · not needed to run Production counter Auto-reorder Light curtain Operator setup Quality hold"
+  app bar: "Skip setup, use Settings" (setup-skip)
+# and a routing set · lands on setup · tabs ["Setup*","Styles","Settings"] · no re-read of the screens
+  title: "Set up Press A 1 of 3 done"
+  done Nodes and part: "16 positions · GRP_A +1 in · STG_1 +2 staging · DST_1 +1 out · 11 parts" → Change… (setup-edit)
+      "opens the sheet you filled in"
+  now First style: "a part on each position and how they swap" → Start [primary] (setup-style)
+      "Make the first style Pick how the positions swap. Inbound, Outbound and any Staging come from step 1."
+  next Run it: "open the operator screen, then start the first changeover or make the first call"
+      "The screen “Screen A” is already made and holds 11 positions."
+  beside: "Your line so far Inbound GRP_A, SRC_1 → POS_A1 no style yet POS_A2 no style yet POS_A3 no style yet POS_A4 no style yet POS_A5 no style yet POS_A6 no style yet POS_A7 no style yet POS_A8 no style yet POS_A9 no style yet POS_A10 no style yet POS_A11 no style yet POS_B1 no style yet POS_B2 no style yet POS_B3 no style yet POS_B4 no style yet ULD_1 no style yet → Outbound DST_1, DST_2 Staging: STG_1, STG_2, STG_3. Later, on Settings · not needed to run Production counter Auto-reorder Light curtain Operator setup Quality hold"
+  app bar: "Skip setup, use Settings" (setup-skip)
+# and a style with no flow yet · lands on setup · tabs ["Setup*","Styles","Settings"] · no re-read of the screens
+  title: "Set up Press A 1 of 3 done"
+  done Nodes and part: "16 positions · GRP_A +1 in · STG_1 +2 staging · DST_1 +1 out · 11 parts" → Change… (setup-edit)
+      "opens the sheet you filled in"
+  now First style: "a part on each position and how they swap" → Start [primary] (setup-style)
+      "Make the first style Pick how the positions swap. Inbound, Outbound and any Staging come from step 1."
+  next Run it: "open the operator screen, then start the first changeover or make the first call"
+      "The screen “Screen A” is already made and holds 11 positions."
+  beside: "Your line so far Inbound GRP_A, SRC_1 → POS_A1 no style yet POS_A2 no style yet POS_A3 no style yet POS_A4 no style yet POS_A5 no style yet POS_A6 no style yet POS_A7 no style yet POS_A8 no style yet POS_A9 no style yet POS_A10 no style yet POS_A11 no style yet POS_B1 no style yet POS_B2 no style yet POS_B3 no style yet POS_B4 no style yet ULD_1 no style yet → Outbound DST_1, DST_2 Staging: STG_1, STG_2, STG_3. Later, on Settings · not needed to run Production counter Auto-reorder Light curtain Operator setup Quality hold"
+  app bar: "Skip setup, use Settings" (setup-skip)
+# and its flow drawn: the line can run, its screen never opened · lands on setup · tabs ["Setup*","Styles","Settings"] · re-reads the screens every 5 s
+  title: "Set up Press A 2 of 3 done"
+  done Nodes and part: "16 positions · GRP_A +1 in · STG_1 +2 staging · DST_1 +1 out · 11 parts" → Change… (setup-edit)
+      "opens the sheet you filled in"
+  done First style: "Style A · +1" → Open it on Styles (setup-styles)
+  now Run it: "open the operator screen, then start the first changeover or make the first call" → Open the screen [primary] (/operator/station/11)
+      "The operator screen “Screen A” is ready It holds POS_A1, POS_A2, POS_A3, POS_A4, POS_A5, POS_A6, POS_A7, POS_A8, POS_A9, POS_A10, POS_A11 and the style Style A. 1 Press CHANGEOVER 2 Pick Style A 3 Press Start A line that has no changeover makes its first call from the screen instead. Waiting for the screen to be opened. This step ticks by itself."
+  beside: "Your line so far Inbound GRP_A, SRC_1 → POS_A1 Index Swap · PART-1 POS_A2 Index Swap · PART-2 POS_A3 2‑Robot Swap · PART-3 POS_A4 2‑Robot Swap · PART-4 POS_A5 1‑Robot Swap · PART-5 POS_A6 1‑Robot Swap · PART-6 POS_A7 Sequential A/B · PART-7 POS_A8 Sequential A/B · PART-8 POS_A9 Sequential A/B · PART-9 POS_A10 Sequential A/B · PART-10 POS_A11 not in this style POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1, DST_2 Staging: STG_1, STG_2, STG_3. Later, on Settings · not needed to run Production counter Auto-reorder Light curtain Operator setup Quality hold"
+  app bar: "Skip setup, use Settings" (setup-skip)
 
-## where a #tab= link lands (the Recipes tab went to HMI setup on Settings)
-  #tab=presets → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
-  #tab=recipes → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
-  #tab=presets;preset=7 → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
-  #tab=settings → tab settings · tabs ["Styles","Operator screens","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
-  #tab=setup → tab flows · tabs ["Styles*","Operator screens","Settings"] · hash "?process=1#style=1"
-  Settings › HMI setup: "id=\"pd-hmirecipes\"> Recipes what an operator sets a style up from 1 recipe New recipe Name Shape Applied to Drift Saved Recipe One v1 mixed 0 parts in step — Apply to parts… ⋯ Quality hold off: finished goods go to their"
+## when Setup is finished: the line can run AND its screen has been opened (last_seen_at)
+# the line can run, its screen seen 30 s ago · lands on flows · tabs ["Styles*","Settings"]
+# its screen seen, no style with a flow · lands on setup · tabs ["Setup*","Styles","Settings"]
+ok   waiting on Run it, the screens are re-read every 5 s, one timer
+ok   a tick with no screen opened is one read and changes nothing
+# the screen opened, on the next tick: GET /api/operator-stations
+  title: "Press A is set up 3 of 3 done"
+  "Its operator screen “Screen A” has been opened. Setup closes now. Everything else is on Settings."
+  beside: "Your line so far Inbound GRP_A, SRC_1 → POS_A1 Index Swap · PART-1 POS_A2 Index Swap · PART-2 POS_A3 2‑Robot Swap · PART-3 POS_A4 2‑Robot Swap · PART-4 POS_A5 1‑Robot Swap · PART-5 POS_A6 1‑Robot Swap · PART-6 POS_A7 Sequential A/B · PART-7 POS_A8 Sequential A/B · PART-8 POS_A9 Sequential A/B · PART-9 POS_A10 Sequential A/B · PART-10 POS_A11 not in this style POS_B1 not in this style POS_B2 not in this style POS_B3 not in this style POS_B4 not in this style ULD_1 not in this style → Outbound DST_1, DST_2 Staging: STG_1, STG_2, STG_3. Later, on Settings · not needed to run Production counter Auto-reorder Light curtain Operator setup Quality hold"
+  app bar: no skip or show
+ok   it says the line is set up and stops re-reading
+ok   the tab stays while the engineer is on it
+ok   and goes once they leave it
 
-## the Setup tab's actions, from a new process with positions (each on a fresh page)
-  positions → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog
-  routing → tab setup, sheet "Edit process" · GET /api/core-nodes, GET /api/process-nodes, GET …/payloads, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog
-  style → tab setup, sheet "New style" · GET /api/core-nodes, GET /api/payload-catalog
-  counter → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
-  hmi → tab flows (a recipe draft) · GET …/composer
+## Skip and Show setup (this browser's, per process)
+# Skip setup: tab settings · tabs ["Styles","Settings*"] · stored {"pd.setup.skipped.1":"1"} · ["setup-show","Show setup"]
+ok   Skip opens Settings with no Setup tab, and offers Show setup
+# opened again, skipped: lands on flows · tabs ["Styles*","Settings"]
+# Show setup: tab setup · tabs ["Setup*","Styles","Settings"] · stored {}
+ok   Show setup brings the tab back and forgets the skip
+ok   skipped, a line that can run offers no Show setup
+ok   a Core loader's process has no Setup, and nothing to skip
+
+## where a #tab= link lands (the Recipes tab went to Operator setup on Settings; #tab=styles is the Styles tab)
+  #tab=presets → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=recipes → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=presets;preset=7 → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · Recipe One expanded · hash "?process=1#tab=settings"
+  #tab=settings → tab settings · tabs ["Styles","Settings*"] · the recipes beside HMI setup · hash "?process=1#tab=settings"
+  #tab=setup → tab flows · tabs ["Styles*","Settings"] · hash "?process=1#style=1"
+  #tab=styles → tab flows · tabs ["Styles*","Settings"] · hash "?process=1#style=1"
+  Settings › Operator setup: "id=\"pd-hmirecipes\"> Recipes 1 recipe · newest version of each Recipe Spots Applied to Saved Recipe One v1 0 parts — Apply to parts… ⋯ Auto-reorder needs the production counter This line’s switch could not be read. Reload"
+
+## the Setup tab's actions (each on a fresh page; its requests)
+  Pick them (step 1, a new process with positions) → tab setup, sheet "Edit process" · GET /api/core-nodes, GET …/payloads, GET /api/process-nodes, GET /api/operator-stations/11/claimed-nodes, GET /api/operator-stations/12/claimed-nodes, GET …/routing-nodes, GET /api/payload-catalog, GET /api/process-nodes
+  Start (step 2, a routing set and no style: one is made, named by the first part) → tab setup (style step) · POST /api/styles {"name":"PART-1","description":"","process_id":1,"expected_catid":""}, GET /api/processes, GET …/composer?map_rev=map-r1, GET …/styles, POST …/flow/preview?steps=1
+  Start (step 2, a style with no flow yet) → tab setup (style step) · POST …/flow/preview?steps=1
+  Production counter (Later, on Settings) → tab settings · GET …/routing-nodes, GET /api/process-nodes, GET /api/payload-catalog, GET …/payloads, GET …/station-counters, GET …/counting-slots, GET …/catid-health, GET /api/plcs, GET …/presets, GET …/auto-reorder, GET /api/core-nodes
+
+## Setup › First style on Press A (a style with no flow yet): one position at a time, then its Save
+ok   Start opens First style on its first position
+ok   no "Your line so far" on this step: the checklist is the line so far
+  checklist: POS_A1 now · POS_A2 todo · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A1 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Outbound staging=STG_2 · Goes to=DST_1 · role consume · swap single_robot
+  top: "12 positions to go" · Save style disabled
+ok   Save style waits for every position
+ok   the open position's robot work lists are drawn beside it
+ok   Index Swap offers no inbound or outbound staging pick
+# POS_A1 on another swap, produce: POST …/flow/preview?steps=1, POST …/flow/preview?steps=1
+  checklist: POS_A1 now · POS_A2 todo · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A1 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Goes to=DST_1 · role produce · swap two_robot
+  top: "12 positions to go" · Save style disabled
+# POS_A1's Inbound staging offers: STG_1, STG_2, STG_3
+ok   the draft holds the pick
+# Done · next position: POST …/flow/preview?steps=1
+  checklist: POS_A1 done (PART-1 · 2‑Robot Swap) · POS_A2 now · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A2 · Part=PART-10 · Comes from=GRP_A · Inbound staging=STG_3 · Goes to=DST_1 · role produce · swap two_robot
+  top: "11 positions to go" · Save style disabled
+ok   POS_A1 is ticked and POS_A2 open, starting the same as POS_A1
+ok   a ticked position reopens, changes, and stays ticked
+# POS_A2's part, PART-1 in its list: "on POS_A1, moves here"
+  checklist: POS_A1 todo · POS_A2 now · POS_A3 todo · POS_A4 todo · POS_A5 todo · POS_A6 todo · POS_A7 todo · POS_A8 todo · POS_A9 todo · POS_A10 todo · POS_A11 todo · ULD_1 todo
+  open: POS_A2 · Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_3 · Goes to=DST_1 · role produce · swap two_robot
+  top: "12 positions to go" · Save style disabled
+ok   the part moved, and the position it left is not done
+# + Add a position offers (free): DST_9, LANE_1, NEW_1, NEW_2, NEW_3, OTH_1 …
+# + Add a position DST_9: PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A3","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11","DST_9"]}, POST …/flow/preview?steps=1
+ok   it writes the screen's positions with the node, through Settings' door (PUT …/claimed-nodes)
+# Take POS_A3 off this line: POST /api/operator-stations/11/claimed-nodes/impact {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, PUT /api/operator-stations/11/claimed-nodes {"nodes":["POS_A1","POS_A2","POS_A4","POS_A5","POS_A6","POS_A7","POS_A8","POS_A9","POS_A10","POS_A11"]}, POST …/flow/preview?steps=1
+ok   taking one off asks what still names it first (…/claimed-nodes/impact), as Settings does
+  checklist: POS_A1 out (not in this style) · POS_A2 done (PART-1 · 2‑Robot Swap) · POS_A3 out (not in this style) · POS_A4 done (PART-2 · 2‑Robot Swap) · POS_A5 done (PART-3 · 2‑Robot Swap) · POS_A6 done (PART-4 · 2‑Robot Swap) · POS_A7 done (PART-5 · 2‑Robot Swap) · POS_A8 done (PART-6 · 2‑Robot Swap) · POS_A9 done (PART-7 · 2‑Robot Swap) · POS_A10 done (PART-8 · 2‑Robot Swap) · POS_A11 done (PART-9 · 2‑Robot Swap) · ULD_1 out (not in this style)
+  open: none ·  · role  · swap 
+  top: "" · Save style enabled
+ok   every position done or not in this style: Save style is live
+# Save style: PUT /api/styles/1 {"name":"FG-7731 finished","description":"","process_id":1,"expected_catid":"CAT-A"}, POST …/flow/save, POST …/flow/preview?steps=1 · then tab setup
+ok   a changed name is the rename (PUT /api/styles/1), written before the Styles save
+ok   Save style is the Styles save (flow/save) of the step's draft
+
+## Setup › First style on Press A: the Paired core node pick
+  1-Robot Swap (as it opens): Part=PART-1 · Comes from=GRP_A · Inbound staging=STG_1 · Outbound staging=STG_2 · Goes to=DST_1
+ok   a 1-Robot Swap is offered no partner
+  Index Swap: Part=PART-1 · Paired core node=POS_B1 · Comes from=GRP_A · Goes to=DST_1
+ok   Index Swap offers Paired core node, starting at the map's free back position
+ok   no second paired node is offered
+  its list: POS_B1, POS_B2, POS_B3, POS_B4, POS_A2, POS_A3 …
+ok   the list is the Styles table's: the back positions first
+  POS_A2 picked: Part=PART-1 · Paired core node=POS_A2 · Comes from=GRP_A · Goes to=DST_1 · POS_A2 out (back of POS_A1)
+ok   a row picked as the press's partner is its back, off the checklist
+  POS_A2 had PART-10: line "POS_A2’s part, PART-10, is on ULD_1 now." · PART-10 on ULD_1 · bar "Ready: 11 positions."
+ok   the back's part is said on the pick, in one line, naming it
+ok   the back's part stays for the next position: on a position, not dropped
+ok   another swap gives the back its row again
+  Sequential A/B, POS_A2 kept: POS_A2 runs Sequential A/B paired with POS_A1 · its part PART-10 · line ""
+ok   a partner kept through the change to Sequential A/B is paired back, as if picked
+ok   the back given its row again has its part again
+  Sequential A/B, POS_A3 picked: Part=PART-1 · Paired core node=POS_A3 · Comes from=GRP_A · Goes to=DST_1 · POS_A3 runs Sequential A/B paired with POS_A1
+ok   a Sequential partner is paired back
+  POS_A4 opened: Part=PART-2 · Paired core node=POS_B2 · Comes from=GRP_A · Goes to=DST_1
+ok   the next position opened does not take the partner of the one before it
+  every other position with a part, POS_A2 picked: line "POS_A2’s part, PART-10, is on no position now: pick it in a position’s Part field."
+ok   with no position free, the line says the back's part is on none
+  Sequential A/B partner POS_A3, then Index Swap: POS_A3 out (back of POS_A1) · in the draft not a cell of its own · POS_A1 paired with POS_A3 · line "POS_A3’s part, PART-11, is on ULD_1 now."
+ok   a partner kept through the change to Index Swap is the press's back, as if picked
+
+## Setup › First style on Press A: a partner picked again
+  Index Swap, POS_A2 then POS_A3 picked: POS_A1 paired with POS_A3 · POS_A2 todo, its part PART-10 · POS_A3 out (back of POS_A1)
+ok   an Index Swap back picked again hands the old back its row back, with its part
+ok   and the new one is the press's back
+  POS_A3's part PART-11 went to ULD_1; positions to do with no part: none
+ok   the new back's part is on no position only when no position is free
+  Sequential A/B, POS_A2 picked: POS_A1 names POS_A2 · POS_A2 names POS_A1, runs Sequential A/B paired with POS_A1
+ok   a Sequential partner picked is paired both ways
+  then POS_A3 picked: POS_A1 names POS_A3 · POS_A3 names POS_A1, runs Sequential A/B paired with POS_A1 · POS_A2 names none, runs 2‑Robot Swap (todo)
+ok   picked again, the new partner is paired both ways
+ok   the old partner is unpaired: POS_A2 no longer names POS_A1
+ok   and is a row of its own again, with the swap it had before it was paired (2-Robot Swap)
+  then 1-Robot Swap: POS_A1 runs 1‑Robot Swap · POS_A3 names none, runs none of its own
+ok   a swap with no partner unpairs both: POS_A3 no longer names POS_A1
+ok   Sequential A/B again pairs the kept pick both ways, as if picked
+
+## Setup › Change… (Edit process): Save writes only what moved, through Settings' doors
+  the sheet: "Edit process" · boxes hold positions 16, source 2, staging 3, destination 2 · name "Press A" · screens "Operator screens each set on Settings Screen A · Unloader A "
+  nothing changed, Save: no write · sheet closed · notices ["Nothing had changed."]
+  Outbound + NEW_1, Save: PUT …/routing-nodes {"nodes":[{"core_node_name":"GRP_A","role":"source"},{"core_node_name":"SRC_1","role":"source"},{"core_node_name":"STG_1","role":"staging"},{"core_node_name":"STG_2","role":"staging"},{"core_node_name":"STG_3","role":"staging"},{"core_node_name":"DST_1","role":"destination"},{"core_node_name":"DST_2","role":"destination"},{"core_node_name":"NEW_1","role":"destination"}]} · sheet closed · notices ["The routing set was saved."]
+  the name typed Press A2, Save: PUT … {"name":"Press A2","description":"synthetic press","counter_plc_name":"PLC_A","counter_tag_name":"CountA","counter_enabled":true,"identity_tag_name":"","identity_none":false,"changeover_auto_arm":"auto","group_id":3} · sheet closed · notices ["Saved."]
+  the part set less PART-11, Save: PUT …/payloads {"payloads":["PART-1","PART-10","PART-2","PART-3","PART-4","PART-5","PART-6","PART-7","PART-8","PART-9"]} · sheet closed · notices ["The part set was saved."]
 
 ## Add process
-  from Press A (this Edge has a map): sections ["The process","Positions and routing set","The part set"] · map block not drawn
-  from Press A, an Edge with no map: sections ["The process","Positions and routing set","The part set"] · map block not drawn
-ok   a screen name left blank is the process's name
-#    then it opens on setup · tabs ["Setup*","Styles","Operator screens","Settings"]
+  fields ["Name (what this process is called here)","Operator screen (blank: named after the process)","Group (groups processes on the list)"]
+  the set pick: ["positions (needed)","source (needed)","staging","destination (needed)"] · open on "positions"
+  still to pick: "Still to pick: Positions, Inbound, Outbound . You can also finish it in Setup."
+ok   Create on a name alone makes the process and its screen, named after it, and nothing else
+#    then it opens on setup · tabs ["Setup*","Styles","Settings"]

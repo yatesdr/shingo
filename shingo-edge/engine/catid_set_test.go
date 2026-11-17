@@ -36,7 +36,6 @@ func seedProduceClaim(t *testing.T, db *store.DB, styleID int64, coreNode, paylo
 		InboundStaging:      "IN",
 		OutboundStaging:     "OUT",
 		OutboundDestination: "FILLED",
-		AutoRequestPayload:  payloadCode,
 	})
 	testutil.MustNoErr(t, err, "produce claim "+payloadCode)
 }

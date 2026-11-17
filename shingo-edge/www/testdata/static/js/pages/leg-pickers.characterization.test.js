@@ -3,10 +3,11 @@
 // destination) offers a member of a node group.
 //
 // The claim and routing saves refuse a lane on every leg, staging included.
-// The pickers that feed a leg are the two routing pickers (Settings and the
-// Add-process sheet) and the Quality Hold destination picker. Each draws from
-// Core's node list, so each must leave a LANE out, and all three ask one
-// predicate in desktop-bodies.js.
+// The pickers that feed a leg are Settings' routing pickers (one per role)
+// and the Quality Hold destination picker. Each draws from Core's node list,
+// so each must leave a LANE out, and both ask one predicate in
+// desktop-bodies.js. (The Add-process sheet's routing buckets went with that
+// sheet in slice 4: Add asks a name and a group.)
 //
 // TWO HALVES. The rule runs under node against a node list with a lane, a
 // group, a plain node and a lane's slot. The wiring is read off the page's
@@ -91,25 +92,24 @@ test('legExclusion: no node list yet refuses nothing', () => {
     assert.strictEqual(B.legExclusion(undefined, 'SUP-L1'), '');
 });
 
-// The routing rule of each set picker (setInit: the positions and the
-// routing set, one list in four buckets). The process sheet declares its rule
-// inline in `setInit(PROC_SET, {`; Settings' is the function stSetRule.
+// The routing rule of each routing picker: the set pick's role boxes, on the
+// process sheet and on Settings, share the function setPickField (one field
+// per box). A second routing picker that declares its own rule has to be
+// added here.
 function routingRuleSites() {
     const sites = [];
-    const sheet = PAGE.indexOf('setInit(PROC_SET, {');
-    assert.ok(sheet >= 0, 'the process sheet’s set picker not found');
-    sites.push(PAGE.slice(sheet, PAGE.indexOf('});', sheet)));
-    const st = PAGE.indexOf('function stSetRule(');
-    assert.ok(st >= 0, 'stSetRule not found');
+    assert.ok(PAGE.indexOf('setInit(') < 0, 'a page-local set picker is back: add its routing rule to these sites');
+    const st = PAGE.indexOf('function setPickField(');
+    assert.ok(st >= 0, 'setPickField not found');
     sites.push(PAGE.slice(st, PAGE.indexOf('\n}\n', st)));
     return sites;
 }
 
-test('the two set pickers each ask the leg rule in the bucket’s role', () => {
+test('the routing pickers each ask the leg rule in their role', () => {
     const sites = routingRuleSites();
     sites.forEach((s, i) => {
-        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name), b\)/.test(s),
-            'set picker #' + (i + 1) + ' does not ask legExclusion in its bucket’s role:\n' + s);
+        assert.ok(/B\(\)\.legExclusion\(S\.coreNodes, (?:n|name|n\.name), (?:b|role|box)\)/.test(s),
+            'routing picker #' + (i + 1) + ' does not ask legExclusion in its role:\n' + s);
     });
 });
 

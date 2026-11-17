@@ -888,10 +888,11 @@ console.log('relation picture: chevrons on the card doing the action');
     check('1-Robot Swap: in-lane up, spot up from it, out-lane down from the spot',
         cvs(slotOf(s1, 'SLN_01')) === '1u' && cvs(nodeCard(s1, 'ALN_02')) === '1u' && cvs(slotOf(s1, 'SLN_02')) === '1d',
         [cvs(slotOf(s1, 'SLN_01')), cvs(nodeCard(s1, 'ALN_02')), cvs(slotOf(s1, 'SLN_02'))].join(' / '));
-    // Sequential A/B: the B card Robot 1 up; A no chevron.
+    // Sequential A/B: the B card's new bin is Robot 2's, Order B (the work
+    // list's second order); A no chevron.
     const sq = parse(m.renderFlowPicture({ cell: weldDrift({ ALN_01: seqAB('ALN_02', 'A'), ALN_02: seqAB('ALN_01', 'B') }),
         station: { name: 'PIN' } }, {}));
-    check('Sequential A/B: B carries Robot 1 up, A none', cvs(nodeCard(sq, 'ALN_02')) === '1u' && cvs(nodeCard(sq, 'ALN_01')) === '',
+    check('Sequential A/B: B carries Robot 2 up, A none', cvs(nodeCard(sq, 'ALN_02')) === '2u' && cvs(nodeCard(sq, 'ALN_01')) === '',
         cvs(nodeCard(sq, 'ALN_02')) + ' / ' + cvs(nodeCard(sq, 'ALN_01')));
     // ROBOT COLOUR FROM THE MODEL'S LEGS, never a template: the same cell with
     // the model's index leg made Robot 1's draws the index in Robot 1.

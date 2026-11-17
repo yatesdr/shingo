@@ -278,13 +278,18 @@ function routingAdd(name, role, after) {
 // origin, called_by and enabled are not here for the same reason they are not
 // on routingAdd: the server stamps authorship, and naming a row in this list
 // IS the switch.
-function routingSet(rows) {
-    return {
-        nodes: (rows || []).map(r => ({
-            core_node_name: String((r && r.core_node_name) || ''),
-            role: String((r && r.role) || ''),
-        })),
-    };
+//
+// remove is the names taken out (name and role), in the same write: the server
+// adds and takes out in one transaction, all or nothing, and answers each
+// removal's warning. Absent when nothing is taken out.
+function routingSet(rows, remove) {
+    const row = r => ({
+        core_node_name: String((r && r.core_node_name) || ''),
+        role: String((r && r.role) || ''),
+    });
+    const body = { nodes: (rows || []).map(row) };
+    if (remove && remove.length) body.remove = remove.map(row);
+    return body;
 }
 
 // processPayloads — PUT /api/processes/{id}/payloads, the part set.

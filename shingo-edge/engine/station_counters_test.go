@@ -14,6 +14,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/plc"
+	"shingoedge/store/counters"
 	"shingoedge/store/processes"
 )
 
@@ -256,6 +257,11 @@ func TestBind_Refusals(t *testing.T) {
 	pair := bindNode(t, eng, pid, style, "B-PAIR", "consume", "simple", "B-PARTNER")
 	unclaimed := bindNode(t, eng, pid, style, "B-NONE", "", "", "")
 
+	// The station card's dry run reads the whole line at once, and must say
+	// for each position what binding it says.
+	verdicts, err := eng.StationCountables(pid)
+	testutil.MustNoErr(t, err, "the dry run")
+	testutil.MustNoErr(t, verdicts[ok], "the dry run on a consume position")
 	testutil.MustNoErr(t, eng.SetCountedAt(ok, &lc.ID), "a consume position")
 	for name, c := range map[string]struct {
 		node int64
@@ -267,8 +273,12 @@ func TestBind_Refusals(t *testing.T) {
 		"claimed by no live style":         {unclaimed, "no live style consumes"},
 	} {
 		err := eng.SetCountedAt(c.node, &lc.ID)
-		if s := refusedSentence(t, err); !strings.Contains(s, c.want) {
+		s := refusedSentence(t, err)
+		if !strings.Contains(s, c.want) {
 			t.Errorf("%s: %q, want %q", name, s, c.want)
+		}
+		if dry := refusedSentence(t, verdicts[c.node]); dry != s {
+			t.Errorf("%s: the dry run says %q, the binding %q", name, dry, s)
 		}
 	}
 	otherProc, err := eng.db.CreateProcess("OTHER", "", "plc", "MES_Other.Prod_Counter_01", true)
@@ -355,4 +365,39 @@ func TestProcessCounter_PLCEditRefusedWhileStationCountersExist(t *testing.T) {
 	}
 	testutil.MustNoErr(t, eng.EditProcessCounter(pid, domain.ProcessCounterEdit{PLCName: "plc", TagName: "MES_Other.Prod_Counter_01", Enabled: true}),
 		"a tag edit on the same PLC still saves")
+}
+
+// TestBind_ManyIsAllOrNothing: Position settings' Counted at saves every row
+// it changed in one write. A refused binding anywhere in it writes none of
+// them, and says which position refused; an accepted one binds them all.
+func TestBind_ManyIsAllOrNothing(t *testing.T) {
+	t.Parallel()
+	eng, pid, style, _ := stationRig(t)
+	lc, err := eng.CreateStationCounter(pid, "load station", "Sta010.Prod_Tool_1_CNT.ACC", "")
+	testutil.MustNoErr(t, err, "station counter")
+	a := bindNode(t, eng, pid, style, "M-A", "consume", "simple", "")
+	b := bindNode(t, eng, pid, style, "M-B", "consume", "simple", "")
+	none := bindNode(t, eng, pid, style, "M-NONE", "", "", "")
+	bound := func(id int64) bool {
+		n, err := eng.db.GetProcessNode(id)
+		testutil.MustNoErr(t, err, "node")
+		return n.LineCounterID != nil
+	}
+
+	err = eng.SetCountedAtMany(pid, []counters.NodeCounter{{NodeID: a, CounterID: &lc.ID}, {NodeID: none, CounterID: &lc.ID}, {NodeID: b, CounterID: &lc.ID}})
+	if s := refusedSentence(t, err); !strings.Contains(s, "no live style consumes at M-NONE") {
+		t.Errorf("the refusal reads %q; want M-NONE's", s)
+	}
+	if bound(a) || bound(b) {
+		t.Fatal("a refused write bound the positions before the refused one")
+	}
+
+	testutil.MustNoErr(t, eng.SetCountedAtMany(pid, []counters.NodeCounter{{NodeID: a, CounterID: &lc.ID}, {NodeID: b, CounterID: &lc.ID}}), "two binds")
+	if !bound(a) || !bound(b) {
+		t.Error("an accepted write did not bind both positions")
+	}
+	testutil.MustNoErr(t, eng.SetCountedAtMany(pid, []counters.NodeCounter{{NodeID: a}, {NodeID: b}}), "back to the production counter")
+	if bound(a) || bound(b) {
+		t.Error("nil counters did not send both back to the production counter")
+	}
 }

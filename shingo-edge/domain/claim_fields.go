@@ -69,8 +69,6 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.IndexRobotFetches()
 	case flowspec.AutoConfirm:
 		return c.AutoConfirm
-	case flowspec.AutoRequestPayload:
-		return c.AutoRequestPayload != ""
 	case flowspec.AutoPush:
 		return c.AutoPush
 	case flowspec.KeyRoute:
@@ -129,8 +127,6 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return in.RefillBy != nil && in.RefillBy.OrDefault() != protocol.RefillByClearingRobot
 	case flowspec.AutoConfirm:
 		return in.AutoConfirm
-	case flowspec.AutoRequestPayload:
-		return in.AutoRequestPayload != ""
 	case flowspec.AutoPush:
 		return in.AutoPush
 	case flowspec.KeyRoute:

@@ -96,7 +96,7 @@ body.pd-body { overflow-x: hidden; }
    can. A sheet taller than the viewport was previously handled by the page
    growing; now it is handled here. */
 body.pd-body .pd-list { overflow: auto; }
-body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
+body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpick-top: -12px; }
 
 
 /* ── app bar ──────────────────────────────────────────────────────────── */
@@ -295,31 +295,25 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
     overflow: hidden; padding-top: 6px;
 }
-/* THE ADD CONTROL IS ON THE BOX'S HEAD LINE, right of the label: outside
-   the sideways box, above the headings, and on screen as the tab opens. As
-   the box's footer it sat under the sticky bar at 1440x900 until the column
-   scrolled (browser walk 2026-11-11). */
-/* It is a CONTROL and a caption, not one dim line that is secretly both. It
-   was 12 px --text-muted with a cursor on it, which is the value of the hint
-   beside it and of the free-name list — so the only way to put a position
-   into a flow was drawn as the quietest thing in the box. The button is the
-   page's own .pd-btn; the free names keep the muted value, because they are
-   what the button is offering. The label's caps and tracking stop here. */
 .pd-posbox > .pd-lbl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; }
-.pd-posadd {
-    margin-left: 12px; display: flex; align-items: center; gap: 10px;
-    text-transform: none; letter-spacing: 0; font-weight: 400;
-}
-/* First on the line and in the accent: at the far right it read as caption. */
-.pd-posadd .pd-btn { border-color: var(--accent); color: var(--accent); font-weight: var(--fw-bold); }
-/* The same act again where a row ends: a dashed row closing the table. */
+/* The one "+ Add a position": a dashed row closing the table. */
 .pd-addrow td { padding: 6px 3px; }
 .pd-addrowbtn {
     width: 100%; min-height: 40px; padding: 0 12px; border: 1px dashed var(--sub-4); border-radius: var(--radius);
     background: none; color: var(--accent); font: inherit; font-weight: var(--fw-bold); text-align: left; cursor: pointer;
 }
 .pd-addrowbtn:hover { border-color: var(--accent); }
-.pd-posadd span { color: var(--text-muted); font-size: 12px; }
+/* A position's Advanced sheet (openAdvSheet): a setting a row, its name and
+   help on the left, its value control on the right, under its heading. */
+.pd-advsheet { display: flex; flex-direction: column; gap: 10px; min-width: 560px; }
+.pd-advsec .pd-lbl { margin: 6px 0 4px; }
+.pd-advrow { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 4px 16px; align-items: center; padding: 6px 0;
+    border-top: 1px solid var(--sub-1); }
+.pd-advname { font-size: 13px; }
+.pd-advname small { display: block; color: var(--text-muted); font-size: 11.5px; }
+.pd-advval { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.pd-advmore { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.pd-setchip.set { border-color: var(--accent); color: var(--text); }
 .pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .pd-postbl table { width: 100%; border-collapse: collapse; }
 .pd-postbl th {
@@ -350,13 +344,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    has to fit on one line at 1440. So the chip is a single line that ellipsises
    with its full text in a title, and the columns below are sized so it does
    not have to. */
-.pd-postbl .pd-sel, .pd-postbl .pd-adv { white-space: nowrap; }
+.pd-postbl .pd-sel, .pd-postbl .pd-setchip { white-space: nowrap; }
 /* Tighter chrome INSIDE THE TABLE ONLY. Ten columns share 1059 px at 1440 and
    a chip spends 30 of them on padding, gap and caret before it draws a
    character; the sheets, which have one field per row, keep the roomy one. */
 .pd-postbl .pd-sel { padding: 0 6px; gap: 5px; }
 .pd-postbl .pd-sel .car { margin-left: 0; }
-.pd-postbl .pd-adv { padding: 0 6px; gap: 5px; }
 .pd-postbl .pd-sel { overflow: hidden; }
 /* The chip's label box. text-overflow needs a box of its own — on the flex
    container it does nothing, and a chip too wide for its column clipped
@@ -410,7 +403,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-postbl col.c-via { width: 7.5%; }
 .pd-postbl col.c-dst { width: 11.75%; }
 .pd-postbl col.c-reorder { width: 6%; }
-.pd-postbl col.c-adv { width: 6%; }
+.pd-postbl col.c-set { width: 6%; }
 /* The eleven add to 100. They have to be WRITTEN as eleven: leaving Advanced
    to "whatever is left" left it nothing, because the others already summed to
    100, and its badge then spilled 75 px past the table's right edge. A column
@@ -465,6 +458,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* Two fields in one cell stack, because side by side they cannot both fit a
    node name in 14% of the column. */
 .pd-cellsep { display: block; height: 2px; }
+/* A staging chip's word (inbound, outbound) on its own small line above it. */
+.pd-cellk { display: block; margin: 0 0 1px 2px; color: var(--text-muted); font-size: 11px; line-height: 1.2; text-transform: lowercase; }
 
 /* The route: chips in order, with the arrows that move one and an add at the
    end. The separator is drawn, not typed, so it never lands inside a chip. */
@@ -490,12 +485,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-sel.bad { border-color: var(--viz-coral); }
 .pd-sel .k { color: var(--text-muted); font-size: 11px; }
 .pd-sel .gl { flex: 0 0 auto; width: 22px; height: 22px; }
-.pd-adv {
-    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px;
-    border: 1px solid var(--sub-2); border-radius: 8px; background: none;
-    color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
-}
-.pd-adv.set { color: var(--accent); border-color: var(--accent); }
+/* Set for this style (under the positions table) and a recipe group's list
+   (on its card): the shared exception list (.exc-*). The row's chip says the
+   row is listed there, in the accent, like a set value. */
+.pd-setchip { color: var(--accent); border-color: var(--accent); font-size: 12px; cursor: pointer; }
+.pd-gset .exc-rows .k { color: var(--text-muted); font-size: 12px; }
+.pd-setnum { width: 72px; }
+.pd-setnote { margin: 0 0 6px; }
+.pd-gset { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.pd-gset .exc { width: 100%; grid-template-columns: 170px minmax(0, 1fr); }
 
 /* ── D1 · a recipe's groups (recipe groups, 2026-10-24) ─────────────────
    One card per part under the positions table, two to a row at 1440 (the
@@ -538,7 +536,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-grp > .pd-chip.add { margin-top: 8px; }
 .pd-gkv { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
 .pd-gkv .k { color: var(--text-muted); font-size: 12px; }
-.pd-gadv { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
 .pd-floor { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--sub-1); border-radius: 12px; }
 .pd-floor p { margin: 6px 0 0; font-size: 13px; }
 /* A sheet's picture (New style's Spots step, Use a recipe): the page's own
@@ -663,9 +660,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-modal .layer-head { padding: 20px 24px 12px; border-bottom: 1px solid var(--sub-1); }
 .pd-modal .layer-head h2 { font-size: 18px; font-weight: 600; }
 .pd-modal .layer-head p { margin: 4px 0 0; font-size: 12.5px; }
-.pd-modal .layer-body { margin: 0; padding: 6px 24px 10px; overflow: auto; }
+.pd-modal .layer-body { margin: 0; padding: 6px 24px 10px; overflow: auto; --setpick-top: -6px; }
 .pd-modal .layer-foot { padding: 14px 24px; border-top: 1px solid var(--sub-1); gap: 10px; }
 .pd-modal .layer-status { font-size: 12.5px; }
+/* THE SET PICK SCROLLS WITH WHAT HOLDS IT (shared/components.css, THE SET
+   PICK HAS ONE SCROLL): on Add process the sheet's body (.layer-body above),
+   on Settings the column (body.pd-body .pd-sheet). Each scroller's own rule
+   sets --setpick-top to minus its top padding, so the pick's boxes stick
+   flush with its edge: the body's 6 px, the column's 12 px (.pd-sheet's
+   padding in components.css). TestSetPickScrollsWithWhatHoldsIt holds both. */
 .pd-sec { padding: 10px 0 4px; }
 .pd-sec .pd-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pd-sec .pd-lbl .cnt {
@@ -679,6 +682,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-fld label { font-size: 13px; }
 .pd-fld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
 .pd-fld .v { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* A field's own refusal (a taken name): one line under its control, on its own row of the value box. */
+.pd-ferr { flex: 1 0 100%; margin: 2px 0 0; color: var(--chip-ink-below); font-size: 12.5px; line-height: 1.35; }
 /* .pd-inp moved to shared/components.css (U1), grouped with .set-inp; .wide went with it. */
 .pd-inp.dflt { color: var(--text-muted); }
 /* .pd-note (both definitions, in order) and .pd-chk moved to shared/components.css (U1),
@@ -689,11 +694,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-chip.set i { font-style: normal; color: var(--text-muted); }
 .pd-chip.add { border-style: dashed; color: var(--accent); }
 .pd-sel.dflt { color: var(--text-muted); }
-
-/* .pd-notice and .pd-refusal moved to shared/components.css (U1), grouped with
-   .set-notice and .set-refusal. */
-/* On Flows the notice sits in the column under the head, inset like the picture. */
-.pd-main > .pd-notice { margin: 0 24px 8px; flex: none; }
 
 /* ── D4 · Operator screens, D5 · Settings ─────────────────────────────────
    One sheet shape for both: a section rule, a 230 px label column and the
@@ -712,10 +712,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-modal .pd-note { margin-left: 0; }
 /* .pd-seg, .pd-btn.danger and .pd-savebar moved to shared/components.css (U1). */
-.pd-nchip {
-    display: inline-block; margin: 0 6px 0 0; padding: 3px 10px; border-radius: 999px;
-    border: 1px solid var(--sub-2); font-size: 12px; color: var(--text-muted);
-}
 .pd-acts { text-align: right; white-space: nowrap; }
 .pd-acts .pd-dimlink { margin-left: 14px; }
 .pd-modal .mf .st.bad { color: var(--chip-ink-below); }
@@ -737,11 +733,12 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    here would compete with the state tags P0 draws in the same column position. */
 .pd-vtag { color: var(--text-muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
 
-/* THE NAME IS ONE LINE. It is the column an engineer scans down, and a preset
-   named from a shape carries the mode word and its positions, so it is long by
-   construction: left to wrap it broke after the positions and orphaned `v1` on
-   a second line. Ellipsised, with the full name in the cell's own title. */
-.pd-presettbl td.pn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* NOTHING IS CUT (owner, 2026-11-15: "words gettign cut off"). A recipe's name
+   and its spots wrap in their columns rather than ending in an ellipsis; the
+   version tag keeps to the name's last word (.pd-vtag does not break), so it
+   is never orphaned on a line of its own. Saved wraps too: who saved a recipe
+   is half its value. */
+.pd-presettbl td.pn, .pd-presettbl td.pd-spots { white-space: normal; overflow-wrap: anywhere; }
 
 /* The Shape column. CHIPS NEVER WRAP (SPEC §2): a shape over six positions
    ellipsises its list instead of growing the row, because a table whose row
@@ -776,7 +773,23 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-mem:hover { background: var(--surface-2, var(--surface)); }
 .pd-mem .nm { font-weight: 500; }
 .pd-mem .sp { flex: 1; }
-.pd-candtbl tbody tr { cursor: default; }
+/* A shape found in the flows, not named yet: its shape, its positions, the
+   parts that run it, and Name it…, in four columns across Operator setup's
+   full width. NOTHING IS CUT (owner, 2026-11-15: "words gettign cut off"):
+   the positions and the parts wrap in their own columns, and the parts list
+   stops at four with "and N more" (every part in its title). */
+.pd-cand {
+    display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 2fr) auto; align-items: center;
+    gap: 16px; padding: 6px 0; border-top: 1px solid var(--sub-1); font-size: 13px;
+}
+.pd-cand > .pd-cand-at, .pd-cand > .pd-dim { min-width: 0; overflow-wrap: anywhere; }
+.pd-cand > .pd-dimlink { white-space: nowrap; }
+/* AND THE VALUE COLUMN DOES NOT GROW TO IT. A field's value column is the
+   grid's 1fr, whose floor is its content's min-content: a list that will not
+   wrap made the column as wide as the list, past the sheet, and Name it…
+   went off the edge with it. With no floor the column is the sheet's and the
+   list is what is cut. */
+.pd-hmirecipes .pd-sfld > .v { min-width: 0; }
 
 /* ── the apply modal ─────────────────────────────────────────────────────
    The Advanced sheet's shell at its one width. Its body is a list of parts
@@ -831,15 +844,96 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }
 
-/* Settings · Positions: the screen's name over its rows. */
-.pd-settings .pd-posscreen { display: block; margin: 14px 0 2px; }
+/* ── Settings: the section list and the cards (owner, 2026-11-15) ──────────
+   The page takes the full width: the sections down the left, each a link to
+   its card with a dot on one that needs attention, and the cards two to a row,
+   a wide one across both. A card's heading is its first line; a link lands
+   with it in view. The production counter's card is outlined amber while it is
+   not wired, Danger's in the danger ink. Core's config pages keep their own
+   width (.set-ui.set-page). */
+.pd-sheet.pd-settings { max-width: none; }
+.pd-stlayout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+.pd-stnav { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.pd-stnav button {
+    display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: var(--radius);
+    background: none; color: var(--text-muted); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer;
+}
+.pd-stnav button span { flex: 1; min-width: 0; }
+.pd-stnav button:hover, .pd-stnav button:focus-visible { background: var(--surface); color: var(--text); }
+.pd-stdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--viz-amber); }
+.pd-stcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; min-width: 0; }
+/* A group's heading spans the row; two half cards under it share a row and
+   its height (align-items: stretch). */
+.pd-stgroup {
+    grid-column: 1 / -1; margin: 10px 0 -6px; font-size: 12px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-muted);
+}
+.pd-stcards > .pd-stgroup:first-child, .pd-stcards > .pd-card:first-child + .pd-stgroup { margin-top: 0; }
+.pd-stnavg {
+    padding: 12px 10px 2px; font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-muted);
+}
+.pd-stnav > .pd-stnavg:first-child { padding-top: 0; }
+.pd-stcards > .pd-refusal, .pd-stcards > .pd-notice { grid-column: 1 / -1; }
+.pd-card {
+    min-width: 0; padding: 4px 18px 14px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px);
+    background: var(--surface); scroll-margin-top: 16px;
+}
+.pd-card.wide { grid-column: 1 / -1; }
+.pd-card.warn { border-color: var(--viz-amber); }
+.pd-card.danger { border-color: var(--chip-ink-below); }
+.pd-card > .pd-sect:first-child { border-top: 0; }
+/* A card's label column is narrower than the page's 300 px, and a note under
+   a field starts where the values do. */
+.pd-card .pd-sfld { grid-template-columns: 210px minmax(0, 1fr); }
+.pd-card .pd-note { margin-left: 224px; }
+.pd-card > .pd-sect + .pd-note, .pd-card .pd-scrlines + .pd-note { margin-left: 0; }
+/* Inside a card a value column holds its control, never wider than the card:
+   the wide input (420 px elsewhere) and a combo take the column's width. */
+.pd-card .pd-sfld .v { min-width: 0; }
+.pd-card .pd-inp.wide, .pd-card .pd-combo { min-width: 0; width: 100%; max-width: 420px; }
+.pd-setup .pd-card .pd-note, .pd-card .pd-sphost ~ .pd-note { text-align: left; margin: 2px 0 0; }
+/* AT 1280 THE SECTION LIST KEEPS ITS LEFT COLUMN (round 10), as at 1440; the
+   cards beside it go one to a row (954 px in a 1280 window: two to a row were
+   469 px, and Part identity's three-way switch was cut). The list goes across
+   the top only on a narrower window. Pinned by
+   TestSettingsSectionListKeepsItsColumnAt1280. */
+@media (max-width: 1280px) {
+    .pd-stcards { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1000px) {
+    .pd-stlayout { grid-template-columns: minmax(0, 1fr); }
+    .pd-stnav { position: static; flex-direction: row; flex-wrap: wrap; }
+}
+/* An on/off setting is a switch with what it means beside it; a meaning too
+   long for the column wraps beside the switch, not under it. */
+.pd-switch { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.pd-switch > .pd-chk { flex: none; }
+.pd-swmean { min-width: 0; color: var(--text-muted); font-size: 13px; }
+.pd-chk.on + .pd-swmean { color: var(--text); }
+/* Positions and routing: the screen under the pick. */
+.pd-sphost { min-width: 0; padding: 8px 0 4px; }
+.pd-scrlines { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 6px; }
+.pd-scrline { display: flex; align-items: center; gap: 12px; min-height: 32px; font-size: 13px; }
+.pd-scrline > span:first-child { flex: 1; min-width: 0; color: var(--text-muted); }
+.pd-scrline b { color: var(--text); }
+/* The positions a screen holds, a chip each, under its line. */
+.pd-scrchips { padding: 0 0 6px; }
+/* The part set under its heading, no field label beside it. */
+.pd-partsbox { padding: 2px 0 8px; }
+
+/* Settings · Position settings: a light curtain's row fits the value column.
+   A PLC name is short; a tag is a struct path and keeps the wider box. */
+.pd-settings .exc-rows .pd-combo[data-combo="plc"] .pd-inp { width: 130px; }
+.pd-settings .exc-rows .pd-combo[data-combo="tag"] .pd-inp { width: 180px; }
 
 /* Settings · Production counter: the MES slots' lines and the station
    counters' list, rows in the value column (33-settings-pages.md rule 9).
    A counter's row is its name and tags with its verbs, then two muted lines
    (its positions, its status; the status takes the warning ink only when the
-   counter stopped), then its checklist while open. Sizes are the settings
-   rows' own (.pd-dim, .pd-dimlink). */
+   counter stopped). Which positions it counts is picked under Position
+   settings › Counted at. Sizes are the settings rows' own (.pd-dim,
+   .pd-dimlink). */
 .pd-sfld.pd-scl-fld { align-items: start; }
 .pd-sfld.pd-scl-fld > label { padding-top: 3px; }
 .pd-scl-line { display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 1px 0; }
@@ -850,51 +944,158 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-scl-head b, .pd-scl-head .pd-dimlink { flex: none; white-space: nowrap; }
 .pd-scl-head .pd-dimlink { margin-left: 0; }
 .pd-scl-head .pd-dim { min-width: 0; overflow-wrap: anywhere; }
-.pd-scl-pos { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 2px 14px; }
-.pd-scl-box { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.pd-scl-acts { display: flex; gap: 8px; margin-top: 4px; }
 
-/* A process with no part yet — the state an Add process lands in. Prose at the
-   note's colour and the field grid's measure; it is a sentence, not a panel. */
-.pd-empty { padding: 28px 4px; max-width: 64ch; }
-.pd-empty p { margin: 0 0 10px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
-.pd-empty b { color: var(--text); font-weight: 600; }
+/* ── Setup: the short path (owner, 2026-11-15) ─────────────────────────────
+   The steps on the left, the line so far and what can wait on the right, the
+   page's full width. A step is its number (✓ once done, lit while it is the
+   one to do), its title, what it holds and what to do; the one to do is a card
+   outlined in the accent. The line so far draws each role in its colour. */
+.pd-sheet.pd-setup { max-width: none; }
+.pd-sugrid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: start; padding-top: 12px; }
+@media (max-width: 1100px) { .pd-sugrid { grid-template-columns: minmax(0, 1fr); } }
+.pd-sumain, .pd-suside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.pd-sutitle { display: flex; align-items: baseline; gap: 12px; }
+.pd-sutitle h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.pd-sustep { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pd-sus { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 16px; padding-bottom: 24px; }
+.pd-sus:last-child { padding-bottom: 0; }
+.pd-susn, .pd-supress .pd-susn {
+    width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--sub-3);
+    display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--text-muted);
+}
+.pd-sus.done .pd-susn { border-color: var(--viz-green); color: var(--viz-green); }
+.pd-sus.now .pd-susn, .pd-supress .pd-susn { border-color: var(--accent-solid); background: var(--accent-solid); color: var(--on-accent-solid); }
+.pd-susb { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pd-susb > b { font-size: 17px; }
+.pd-susb > small { color: var(--text-muted); font-size: 13px; }
+.pd-sus.next .pd-susb > b { color: var(--text-muted); }
+.pd-susact { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pd-sucard {
+    display: flex; align-items: center; gap: 16px; padding: 16px 18px; border: 1px solid var(--accent);
+    border-radius: calc(var(--radius) + 4px); background: var(--surface);
+}
+.pd-sucard.col { flex-direction: column; align-items: stretch; }
+.pd-sucard > div:first-child, .pd-surow > div:first-child { flex: 1; min-width: 0; }
+.pd-sucard small { display: block; color: var(--text-muted); font-size: 13px; }
+.pd-surow { display: flex; align-items: center; gap: 16px; }
+.pd-sucard a.pd-btn { display: inline-flex; align-items: center; text-decoration: none; }
+.pd-supresses { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pd-supress { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.pd-supress .pd-susn { width: 28px; height: 28px; flex: none; }
+.pd-suwait { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
+.pd-suline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 0; }
+.pd-supos {
+    display: flex; flex-direction: column; min-width: 120px; padding: 10px 12px;
+    border: 1px solid var(--role, var(--border)); border-radius: 8px; background: var(--bg);
+}
+.pd-supos[data-role="positions"] { border-color: var(--border); }
+.pd-supos[data-empty] { border-style: dashed; }
+.pd-supos small { color: var(--text-muted); font-size: 12px; }
+.pd-supos .pd-surole { color: var(--role); font-weight: 700; }
+.pd-sulater { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 6px 0 4px; }
+.pd-setup .pd-note .setpick-dot { display: inline-block; vertical-align: middle; }
+/* FIRST STYLE, ONE POSITION AT A TIME. The top line: the step's name, the
+   style's name, what is still to go and Save style. Below, the positions as a
+   checklist on the left and the open position in the middle. QUIETER (owner,
+   2026-11-15: "do you think the colors and highlighted boxes look a little
+   tacky"): the loud colours are the open position (the accent), green for a
+   done one, and nothing else outlined in colour. A role is a small dot. */
+.pd-fstop { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 0 16px; }
+.pd-fstop h1 { margin: 0; font-size: 22px; }
+.pd-fsnamefld { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+.pd-fsnamefld .pd-inp { width: 280px; }
+.pd-fsgo { color: var(--text-muted); font-size: 13px; }
+.pd-fsgrid { display: grid; grid-template-columns: 250px minmax(0, 1.15fr) minmax(0, 1.05fr); gap: 24px; align-items: start; }
+@media (max-width: 1200px) { .pd-fsgrid { grid-template-columns: 250px minmax(0, 1fr); } .pd-fswork { grid-column: 2; } }
+@media (max-width: 1000px) { .pd-fsgrid { grid-template-columns: minmax(0, 1fr); } .pd-fswork { grid-column: auto; } }
 
-/* ── Setup: the cold start (U2) ─────────────────────────────────────────
-   Settings' width and rhythm; a row is its number (✓ once done), what it is,
-   what the process has now, and its one action. Only the next row's action is
-   primary, so the eye goes there. */
-.pd-sheet.pd-setup { max-width: 1040px; }
-.pd-steps { display: flex; flex-direction: column; margin: 2px 0 10px; }
-.pd-step {
-    display: grid; grid-template-columns: 28px 260px 1fr auto; align-items: center;
-    gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--sub-1);
+/* Robot work lists (workListHTML): per robot its dot, name and words, then
+   its steps in three aligned columns, glyph, verb and node. The robot's
+   colour is the picture's own (--robot-N). */
+.pd-wl { display: flex; flex-direction: column; min-width: 0; }
+.pd-wlhd { margin-bottom: 6px; }
+.pd-wlhd h2 { margin: 0; font-size: 15px; }
+.pd-wlhd small { display: block; margin-top: 2px; color: var(--text-muted); font-size: 12px; }
+.pd-wlrobot { padding: 10px 0; border-top: 1px solid var(--sub-1); --robot: var(--robot-1); }
+.pd-wlrobot.r2 { --robot: var(--robot-2); }
+.pd-wlrobot.r3 { --robot: var(--robot-3); }
+.pd-wlname { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.pd-wlname small { color: var(--text-muted); font-size: 12px; }
+.pd-wldot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--robot); align-self: center; }
+.pd-wlsteps { display: grid; grid-template-columns: 26px 112px minmax(0, 1fr); gap: 6px 10px; align-items: center; }
+.pd-wlg {
+    display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px;
+    border: 1.5px solid var(--robot); color: var(--robot); font-weight: var(--fw-bold); font-size: 13px;
 }
-.pd-step:last-child { border-bottom: 0; }
-.pd-stepn {
-    width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--sub-3);
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 600; color: var(--text-muted);
+.pd-wln { min-width: 0; }
+.pd-wln .setpick-chip { min-height: 24px; }
+.pd-wln .setpick-dot { display: inline-block; }
+.pd-wlerr { color: var(--chip-ink-below); font-size: 13px; }
+/* On the Styles tab the list is a row of its own under the selected row. */
+.pd-workrow td { padding: 6px 12px 14px; background: var(--surface); }
+.pd-workrow .pd-wl { max-width: 640px; }
+.pd-fslist { display: flex; flex-direction: column; gap: 8px; }
+.pd-fslhd { color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.pd-fslist ol { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.pd-fsitem button {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; text-align: left; cursor: pointer;
 }
-.pd-stepn:empty { border-color: transparent; }
-.pd-step.done .pd-stepn { border-color: var(--viz-green); color: var(--viz-green); }
-.pd-steplbl b { display: block; font-size: 14px; font-weight: 600; }
-.pd-steplbl small { display: block; color: var(--text-muted); font-size: 12px; }
-.pd-stepval { color: var(--text-muted); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
-.pd-stepval.warn { color: var(--chip-ink-near); }
-.pd-step .pd-btn { justify-self: end; white-space: nowrap; text-decoration: none; }
-/* Open the screen is a link to the HMI, drawn as the button it is. */
-.pd-step a.pd-btn { display: inline-flex; align-items: center; }
-/* HMI setup's recipes on Settings (F36): the fact row, the recipes table and
-   "Found in your flows" under the switch, in the value column's indent. A
-   switch on with no recipe is the one state here that needs someone. */
+.pd-fsitem.now button { border: 2px solid var(--accent); padding: 7px 9px; background: var(--surface); }
+.pd-fsmark {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border: 1px solid var(--sub-4); border-radius: 50%; color: var(--text-muted); font-size: 12px; font-weight: 700;
+}
+.pd-fsitem.is-done .pd-fsmark { border-color: var(--viz-green); background: var(--viz-green); color: #fff; }
+.pd-fsname { display: flex; flex-direction: column; min-width: 0; }
+.pd-fsname b { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pd-fsname small { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.pd-fsitem.out .pd-fsname b { color: var(--text-muted); }
+.pd-fspos { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pd-fsposhd { display: flex; align-items: baseline; gap: 12px; }
+.pd-fsposhd h2 { margin: 0; font-size: 18px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pd-fsposhd h2.pd-fsplain { font-family: inherit; }
+.pd-fsfield { display: grid; grid-template-columns: 170px minmax(0, 320px) auto; align-items: center; gap: 12px; }
+.pd-fsfield > .pd-seg, .pd-fsfield > .pd-dimlink { justify-self: start; }
+.pd-fsflbl { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.pd-fsflbl .setpick-dot { display: inline-block; }
+.pd-fsfield .pd-sel { min-width: 0; max-width: 100%; }
+/* A pick's one line, under its field row from the label's edge: indented under
+   the control, a back's part code took it to two lines at 1280. */
+.pd-fsnote { margin: -4px 0 0; color: var(--text-muted); font-size: 13px; }
+.pd-fsblock { display: flex; flex-direction: column; gap: 8px; }
+.pd-fsmodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pd-fsmode {
+    display: flex; align-items: flex-start; gap: 12px; min-height: 80px; padding: 12px; border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 4px); background: var(--bg); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.pd-fsmode.on { border: 2px solid var(--text-muted); padding: 11px; background: var(--surface); }
+.pd-fsmode small { display: block; color: var(--text-muted); font-size: 13px; }
+/* The bar on its own line, the buttons one row under it, right-aligned:
+   beside the buttons the bar's sentence had a column a word wide. */
+.pd-fsfoot { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.pd-fsbar { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.pd-fsacts { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: nowrap; }
+.pd-fsacts > .pd-btn, .pd-fsacts > .pd-dimlink { flex: 0 0 auto; white-space: nowrap; }
+.pd-btn.done { border-color: var(--success); background: var(--success); color: #fff; }
+.pd-btn.done:disabled { opacity: .5; cursor: default; }
+.pd-skip { font-weight: 600; }
+/* The process sheet is wider than the others: its set pick's four boxes sit
+   side by side. Two fields share a line; the line over its buttons says what
+   is still to pick. */
+.pd-modal.pd-wide { width: 1040px; }
+.pd-procsheet .pd-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.pd-procsheet .pd-two .pd-fld { grid-template-columns: minmax(0, 1fr); }
+.pd-still { display: flex; align-items: center; gap: 8px; min-height: 20px; margin: 8px 0 0; font-size: 13px; }
+.pd-still:empty { display: none; }
+/* Operator setup's recipes on Settings (F36): the recipes table and "Found in
+   your flows", each a field under the switch. A switch on with no recipe is
+   the one state here that needs someone. */
 .pd-cnt.warn { color: var(--chip-ink-near); }
 .pd-cnt.warn i { background: var(--viz-amber); }
-.pd-hmirecipes { position: relative; margin: 4px 0 6px; }
-.pd-hmirecipes > .pd-tbl, .pd-hmirecipes > .pd-foundlbl, .pd-hmirecipes > .pd-refusal { margin-left: 314px; }
-.pd-hmirecipes > .pd-tbl { width: calc(100% - 314px); margin-top: 6px; }
-.pd-foundlbl { display: block; margin-top: 10px; }
-.pd-foundlbl .pd-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.pd-hmirecipes { position: relative; }
+.pd-hmirecipes > .pd-refusal { margin-left: 314px; }
+.pd-hmirecipes .pd-presettbl { width: 100%; }
 
 /* ── the routing set in Settings (U10) ────────────────────────────────────
    The tab is gone: reviewing the set is Settings' job and it sits beside the
@@ -902,7 +1103,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    the node picker's and the label column is the settings field's. */
 /* .pd-sfld .v.col moved to shared/components.css (U1), grouped with .set-fld .v.col. */
 .pd-sfld .v.col .pd-npk { margin-top: 6px; }
-
 /* THE SWITCHED-OFF ROWS OF A ROLE, AND THE ONE CONTROL THAT ANSWERS THEM ALL.
  * The backfill lands a derived name disabled and never runs again once the gate
  * is open, so a row nobody adopted stays off forever — seven of them on
@@ -962,38 +1162,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     margin-top: 4px; padding: 4px 6px; border-left: 3px solid; border-radius: 2px; }
 .pd-ch-acts { display: flex; gap: 6px; align-items: center; }
 
-/* A Settings section written as each pick is made says so beside its heading:
- * the save bar's Save and Discard do not cover it. */
-.pd-wt {
-    padding: 0 var(--sp-2); border: 1px solid var(--sub-2); border-radius: 999px;
-    color: var(--text-muted); font-size: var(--font-xs); white-space: nowrap;
-}
-
-/* ── the set picker: four buckets over one checklist (setInit) ──────────────
- * Each bucket has one colour, used the same way on its button, its tokens and
- * the tags on rows already in it: the page's text colour for positions
- * (--station is a white for dark surfaces only), Robot 1's for inbound, an
- * orange node-class colour (--map-class-5) for staging (the accent read as
- * Robot 2's indigo and as the primary button), Robot 2's for outbound. One list
- * instead of four boxes gives it the height the four were sharing (F16): about
- * nine 40 px rows. */
-.pd-set { --bk: var(--text); display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1) 0 var(--sp-2); }
-.pd-set.bk-source, .pd-setb.source, .picker-tag[data-tone="source"] { --bk: var(--robot-1); }
-.pd-set.bk-staging, .pd-setb.staging, .picker-tag[data-tone="staging"] { --bk: var(--map-class-5); }
-.pd-set.bk-destination, .pd-setb.destination, .picker-tag[data-tone="destination"] { --bk: var(--robot-2); }
-.pd-setb.positions, .picker-tag[data-tone="positions"] { --bk: var(--text); }
-.pd-setbar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.pd-setb {
-    display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 40px; padding: 0 var(--sp-3);
-    border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text);
-    font: inherit; cursor: pointer;
-}
-.pd-setb b { color: var(--text-muted); font-weight: var(--fw-bold); }
-.pd-setb.on { border-color: var(--bk); box-shadow: inset 0 -3px 0 var(--bk); }
-.pd-setb.on b { color: var(--text); }
-.pd-setb[disabled] { opacity: .5; cursor: not-allowed; }
-.pd-setdot { width: 10px; height: 10px; border-radius: 50%; background: var(--bk); }
-.pd-setlead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-height: 24px; }
-.pd-set .picker-chip { border-color: var(--bk); }
-.picker-tag[data-tone] { border-color: var(--bk); color: var(--text); }
-.pd-set .picker--open .picker-list { max-height: 380px; }
+/* The picture's fold (freeLine): how many free positions it leaves out, and
+   "show them", under the picture, on the positions box's margins. */
+.pd-freeline { margin: 2px 24px 0; color: var(--text-muted); font-size: 12px; }

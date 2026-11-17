@@ -13,15 +13,18 @@ import (
 
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/service"
 )
 
 // --- Processes Admin ---
 
-// processListRow is the list's row shape: the process plus its DERIVED
-// quality-containment state. Embedded, so the JSON stays flat and every
-// existing consumer reads it unchanged. The state is derived from the
-// claims, not stored on the process — the claim is the one source of truth
-// and the divert reads it; these two fields are the settings draft's read.
+// processListRow is the list's row shape: the process plus what the list
+// DERIVES for it — its quality-containment state, its curtained nodes, and
+// whether Core runs its boards. Embedded, so the JSON stays flat and every
+// existing consumer reads it unchanged. The containment state is derived
+// from the claims, not stored on the process — the claim is the one source
+// of truth and the divert reads it; those two fields are the settings
+// draft's read.
 type processListRow struct {
 	domain.Process
 	QualityHoldEnabled     bool   `json:"quality_hold_enabled"`
@@ -29,24 +32,55 @@ type processListRow struct {
 	// CurtainNodes names the process's live nodes whose curtain interlock is
 	// on. The interlock is configured per node; this is the list's summary.
 	CurtainNodes []string `json:"curtain_nodes,omitempty"`
+	// CoreBoards is true when Core runs this process's boards: it has a
+	// position and every position is a Core loader's window
+	// (StationService.CoreBoardProcesses) — a loader's or unloader's
+	// process, whose setup is Core's loader settings, not styles here.
+	// Always on the row, false included, so a reader never has to tell
+	// "false" from "not sent".
+	CoreBoards bool `json:"core_boards"`
+	// CoreAdded and CoreRemoved are what Core changed on such a process's
+	// loaders that its screens do not show (StationService.CoreLoaderChanges):
+	// a window no screen has taken, a position no loader holds any more. The
+	// page says each as one line, with the way onto the screen or off it.
+	CoreAdded   []string `json:"core_added,omitempty"`
+	CoreRemoved []string `json:"core_removed,omitempty"`
+	// CoreKept is the removed positions a running order keeps on their
+	// screen until it ends; the page says why they are still there.
+	CoreKept []string `json:"core_kept,omitempty"`
+	// CoreLoaders is which Edge Core names for each loader the process
+	// works (this Edge, another, or none picked), one line each.
+	CoreLoaders []service.CoreLoaderPick `json:"core_loaders,omitempty"`
 }
 
-func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
+// processListRows is every process as the list draws it. The page's first
+// paint (handleProcesses) and /api/processes both serve it, so the Curtain
+// column and Settings' Quality hold read the same on first load as after a
+// re-read.
+func (h *Handlers) processListRows() ([]processListRow, error) {
 	processes, err := h.engine.ProcessService().List()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	states, err := h.engine.ProcessService().ContainmentStates()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
-	curtained, err := h.engine.ProcessService().CurtainedNodeNames()
+	// ONE READ of every live position answers both columns: the curtains and
+	// whether Core runs the process's boards.
+	nodes, err := h.engine.ProcessService().ListNodes()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
+	curtained := service.CurtainedNodeNames(nodes)
+	// The screens that name a loader: a loader's process keeps its page when
+	// every window has come off it (Core moved the loader, or removed them).
+	links, err := h.engine.StationService().ScreenLoaderLinks()
+	if err != nil {
+		return nil, err
+	}
+	coreBoards := h.engine.StationService().CoreBoardProcesses(nodes, links)
+	coreChanges := h.engine.StationService().CoreLoaderChanges(nodes, coreBoards, links)
 	rows := make([]processListRow, len(processes))
 	for i, p := range processes {
 		rows[i] = processListRow{Process: p}
@@ -55,6 +89,20 @@ func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 			rows[i].QualityHoldDestination = dest
 		}
 		rows[i].CurtainNodes = curtained[p.ID]
+		rows[i].CoreBoards = coreBoards[p.ID]
+		rows[i].CoreAdded = coreChanges[p.ID].Added
+		rows[i].CoreRemoved = coreChanges[p.ID].Removed
+		rows[i].CoreKept = coreChanges[p.ID].Kept
+		rows[i].CoreLoaders = coreChanges[p.ID].Loaders
+	}
+	return rows, nil
+}
+
+func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.processListRows()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, rows)
 }
@@ -96,6 +144,17 @@ func (h *Handlers) apiProcessContainmentSetting(w http.ResponseWriter, r *http.R
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// writeNameTaken answers a create or rename to a name another process holds:
+// 409, in plain words, and as the name field's error ("errors", the shape
+// handlers_config_save answers and shared/http.js reads as fieldErrors) so a
+// page draws it on that field.
+func writeNameTaken(w http.ResponseWriter, name string) {
+	msg := `another process is already called "` + name + `"`
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "errors": map[string]string{"name": msg}})
+}
+
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name              string `json:"name"`
@@ -129,6 +188,10 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
+	if errors.Is(err, service.ErrProcessNameTaken) {
+		writeNameTaken(w, req.Name)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -187,6 +250,15 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// A TAKEN NAME BEFORE ANY WRITE: the counter edit below lands first, so
+	// the name's UNIQUE refusal alone would leave it written and the name not.
+	if taken, err := h.engine.ProcessService().NameTaken(req.Name, id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if taken {
+		writeNameTaken(w, req.Name)
+		return
+	}
 	// The counter and identity first: the engine refuses a re-point while a
 	// changeover is open, and a refused save writes nothing. It re-points the
 	// reporting point by tag (blank names disable it) and re-primes the CATID
@@ -203,6 +275,10 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.ProcessService().Update(id, req.Name, req.Description); err != nil {
+		if errors.Is(err, service.ErrProcessNameTaken) {
+			writeNameTaken(w, req.Name)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

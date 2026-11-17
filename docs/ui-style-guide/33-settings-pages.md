@@ -6,6 +6,10 @@ A settings page is the shape of the Edge Processes page's Settings tab,
 shared so the Core and Edge Configuration pages are built from it too. The
 CSS is one set of rules in `shared/components.css`; the behaviour is
 `settingsPage` in `shared/settings.js`. Sizes and colours come from those rules.
+The Processes page's Settings tab is a `settingsPage` itself: its sections in
+the order a process is set up, a jump list of them at the top, and its one
+Save in the foot bar ([Desktop composer patterns](16-desktop-composer-patterns-u9.md)
+› Settings is one settings page).
 
 ### What a settings page looks like
 
@@ -25,8 +29,12 @@ CSS is one set of rules in `shared/components.css`; the behaviour is
 5. **A duration is one box with its unit in it** (`45 min`, `10 s`, `1 h`).
    Parsed to a Go duration on the wire; a Go string typed in is accepted. Never
    `45m0s` on screen.
-6. **Two to four short answers are a segment, not a select.** A switch for
-   on/off. No pop-over menu on a settings page.
+6. **Two to four fixed answers are a segment, not a select.** A switch for
+   on/off. **A list of unknown length opens the shared picker**
+   ([Picker](34-picker.md)) from a button that shows the current answer: a
+   group, a PLC, a counter, a style. It is never a native select, and never
+   a hand-built menu. The rule is for settings pages: the Styles tab's
+   positions table is not one, and its role and swap-mode menus stay menus.
 7. **A row that is off hides what depends on it** (computed from state, see
    [Forms](13-forms.md)).
    Rarely changed values sit behind one row that shows their current values in
@@ -34,14 +42,19 @@ CSS is one set of rules in `shared/components.css`; the behaviour is
 8. **A secret is never rendered.** Placeholder says `saved` or `none saved`;
    blank keeps it; a `Remove` control clears it.
 9. **A list is rows in the value column** with `Remove` on the row and `Add …`
-   after the last.
+   after the last. A setting kept per place (a position's light curtain, the
+   counter it counts at) is an exception list (`exceptionList`,
+   `shared/exceptions.js`): the rule once, a row only where a place differs
+   with its ×, then `+ Add a position`; never a row per place saying the
+   default.
 10. **One Save for the page**, in the foot bar: `No unsaved changes` /
     `Unsaved changes`, `Discard`, `Save` (disabled until dirty). This is the
     stated exception to save-on-change ([Dialog UX](11-dialog-ux-confirmation-prompt-toast.md)):
     a settings page drafts and saves together, because a half-typed address
     must never be applied. An action
     that is not a setting (Test connection, Send a test, Refresh, Back up now,
-    Change password) is its own button and does not touch the draft.
+    Change password, switching a line's auto-reorder) is its own button and
+    does not touch the draft.
 11. **After a save that needs a restart**, a notice above the bar names the
     fields until the process restarts.
 

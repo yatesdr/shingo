@@ -34,6 +34,12 @@ func (db *DB) UpdateProcess(id int64, name, description string) error {
 	return processes.Update(db.DB, id, name, description)
 }
 
+// ProcessNameTaken reports whether a process other than exceptID is called
+// name (processes.NameTaken).
+func (db *DB) ProcessNameTaken(name string, exceptID int64) (bool, error) {
+	return processes.NameTaken(db.DB, name, exceptID)
+}
+
 // SetProcessCounter writes a process's counter and part-identity
 // configuration (processes.SetCounter).
 func (db *DB) SetProcessCounter(id int64, plcName, tagName string, enabled bool, identityTag string, identityNone bool) error {

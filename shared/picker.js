@@ -12,6 +12,9 @@
 //   reason   why this row cannot be picked: it is drawn greyed with the
 //            reason beside it, and neither a click nor the keyboard reaches it
 //            (an exclusion is shown, never silently dropped)
+//   quiet    with a reason: the reason is said once above the list (the
+//            caller's), so the row is greyed with its note instead of
+//            repeating it — every group row of a positions list
 //   members  rows drawn indented under this one (a group's nodes)
 //   values   what picking the row picks, when it is not [value] (a group that
 //            stands for its members); the row is on when all of them are
@@ -19,6 +22,12 @@
 //   tags     [{label, tone}]: short marks after the label, each in its tone's
 //            colour (the page's CSS colours [data-tone]) — what else the row
 //            already is, said where it is picked
+//   fold     its members are drawn only once its "show N" is pressed, or
+//            when the search box matches one: a group of twenty is one row
+//            until somebody wants a member
+//   later    drawn after every other row, behind one "show" (opts.later):
+//            the nodes another process holds, which a list of free ones
+//            should not have to scroll past
 //
 // ONE LIST OPEN AT A TIME. A dropdown picker's list is a popover on the layer
 // (layer.js), so Escape and a press outside close it before the sheet under
@@ -58,6 +67,19 @@ let dropped = null;   // the picker whose dropdown list is open
 //                (a second press clears it)
 //   chips        false: draw no chips (the control that opened it shows the
 //                value)
+//   fold         a number: past that many, the chips stop there and say
+//                "+ N more · show all" (a part set of 46 is a wall of chips
+//                above its own search box); "fold them" puts them back
+//   later        { label }: the line the later rows fold under ("In use by
+//                other processes"); its count and show/hide are the shell's
+//   views        [{key, label, keep(row)}]: buttons before the filters, one
+//                on at a time (the first at the start). A view narrows the
+//                list as the search does: a row its keep refuses is drawn
+//                only for a member it keeps, and a kept row brings its
+//                members. The list stays one list ("Groups only", "Free only")
+//   top          an element: the search box and the views and filters are
+//                drawn in it instead of over the list, so a host can hold
+//                them where it holds its own head (the set pick's sticky one)
 //   empty(q)     the line when nothing matches; loading, the not-read-yet line
 //   add          the "Add and use" slot: { label(q), run(q) }. run makes the
 //                thing typed and resolves its value or row (null: nothing was
@@ -83,7 +105,8 @@ export function createPicker(host, opts) {
     const id = 'picker-' + (++seq);
     const multi = !!o.multi;
     const always = !!o.open;
-    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '' };
+    const st = { sel: list(o.selected), was: [], q: '', active: -1, extra: [], adding: false, layer: null, keys: [], pending: null, refused: '', allChips: false,
+        unfolded: new Set(), later: false, view: o.views && o.views.length ? o.views[0].key : '' };
     st.was = st.sel.slice();
 
     const root = el('div', { className: 'picker' + (multi ? ' picker--multi' : '') + (always ? ' picker--open' : '') });
@@ -98,13 +121,16 @@ export function createPicker(host, opts) {
     const field = always ? input : el('div', { className: 'picker-field' }, [
         input, el('i', { className: 'picker-car', 'aria-hidden': 'true' }),
     ]);
-    const filters = o.filters && o.filters.length ? el('div', { className: 'picker-filters' }) : null;
+    const filters = (o.filters && o.filters.length) || (o.views && o.views.length) ? el('div', { className: 'picker-filters' }) : null;
     const box = el('div', { className: 'picker-list', id, role: 'listbox', 'aria-multiselectable': multi ? 'true' : null });
     box.hidden = !always;
     // A write-through pick's refusal, beside the chips it left as they were.
     const refusal = o.onPick ? el('div', { className: 'picker-refused', role: 'status' }) : null;
     if (refusal) refusal.hidden = true;
-    for (const part of [chips, refusal, field, filters, box]) if (part) root.appendChild(part);
+    const top = o.top || null;
+    for (const part of [chips, refusal, field, filters, box]) {
+        if (part) (top && (part === field || part === filters) ? top : root).appendChild(part);
+    }
     host.textContent = '';
     host.appendChild(root);
 
@@ -124,7 +150,11 @@ export function createPicker(host, opts) {
         open: () => openList(),
         close: () => closeList(),
         focus: () => input.focus(),
-        destroy() { closeList(); root.remove(); },
+        destroy() {
+            closeList();
+            root.remove();
+            if (top) for (const part of [field, filters]) if (part) part.remove();
+        },
     };
 
     input.addEventListener('input', () => {
@@ -152,12 +182,25 @@ export function createPicker(host, opts) {
     // on a list that had gone.
     box.addEventListener('mousedown', (ev) => ev.preventDefault());
     box.addEventListener('click', (ev) => {
+        // A fold's show/hide opens or closes it and picks nothing.
+        const fold = ev.target.closest ? ev.target.closest('[data-fold], [data-later]') : null;
+        if (fold) {
+            if (fold.hasAttribute('data-later')) st.later = !st.later;
+            else {
+                const v = fold.getAttribute('data-fold');
+                if (st.unfolded.has(v)) st.unfolded.delete(v); else st.unfolded.add(v);
+            }
+            drawRows();
+            return;
+        }
         const hit = ev.target.closest ? ev.target.closest('.picker-row, .picker-add') : null;
         const k = hit && st.keys.find((x) => x.node === hit);
         if (k) choose(k);
     });
     if (chips) {
         chips.addEventListener('click', (ev) => {
+            const more = ev.target.closest ? ev.target.closest('[data-more]') : null;
+            if (more) { st.allChips = !st.allChips; drawChips(); return; }
             const b = ev.target.closest ? ev.target.closest('[data-drop]') : null;
             if (!b) return;
             const v = b.getAttribute('data-drop');
@@ -166,6 +209,8 @@ export function createPicker(host, opts) {
     }
     if (filters) {
         filters.addEventListener('click', (ev) => {
+            const view = ev.target.closest ? ev.target.closest('[data-view]') : null;
+            if (view) { st.view = view.getAttribute('data-view'); st.active = -1; draw(); return; }
             const b = ev.target.closest ? ev.target.closest('[data-query]') : null;
             if (!b) return;
             const q = b.getAttribute('data-query');
@@ -209,22 +254,40 @@ export function createPicker(host, opts) {
     function drawChips() {
         if (!chips) return;
         chips.textContent = '';
-        for (const v of st.sel) {
+        const folds = o.fold > 0 && st.sel.length > o.fold;
+        const shown = folds && !st.allChips ? st.sel.slice(0, o.fold) : st.sel;
+        for (const v of shown) {
             chips.appendChild(el('span', { className: 'picker-chip' }, [
                 labelOf(v),
                 el('button', { type: 'button', 'data-drop': v, 'aria-label': 'Remove ' + labelOf(v) }, '×'),
             ]));
+        }
+        if (folds) {
+            chips.appendChild(el('button', { type: 'button', className: 'picker-more', 'data-more': '' },
+                st.allChips ? 'fold them' : '+ ' + (st.sel.length - o.fold) + ' more · show all'));
         }
     }
 
     function drawFilters() {
         if (!filters) return;
         filters.textContent = '';
-        for (const f of o.filters) {
+        for (const v of o.views || []) {
+            filters.appendChild(el('button', {
+                type: 'button', className: 'picker-view' + (st.view === v.key ? ' is-on' : ''), 'data-view': v.key,
+                'aria-pressed': st.view === v.key ? 'true' : 'false',
+            }, v.label));
+        }
+        for (const f of o.filters || []) {
             filters.appendChild(el('button', {
                 type: 'button', className: st.q === f.query ? 'is-on' : null, 'data-query': f.query,
             }, f.label));
         }
+    }
+
+    // keeps is the view's word on a row (every row while no view is set).
+    function keeps(r) {
+        const v = (o.views || []).find((x) => x.key === st.view);
+        return !v || !v.keep || !!v.keep(r);
     }
 
     function drawRows() {
@@ -241,18 +304,44 @@ export function createPicker(host, opts) {
         let section = null;
         let shown = 0;
         let drawn = 0;
-        for (const r of all.concat(st.extra.filter((x) => !seen.has(String(x.value))))) {
+        // THE VIEW NARROWS AS THE SEARCH DOES, and the list stays one list: a
+        // row the view refuses is drawn only as the heading of a member it
+        // keeps (a Positions group whose nodes are free, under Free only).
+        const rows = all.concat(st.extra.filter((x) => !seen.has(String(x.value))))
+            .filter((r) => keeps(r) || (r.members || []).some(keeps));
+        const now = rows.filter((r) => !r.later);
+        const later = rows.filter((r) => r.later);
+        // THE LATER ROWS FOLD UNDER ONE LINE, open while searching: a node
+        // typed by name is found wherever it is.
+        const laterOpen = st.later || !!q;
+        const one = (r) => {
             const self = hits(r, q);
-            const members = (r.members || []).filter((m) => self || hits(m, q));
-            if (!self && !members.length) continue;
+            const kept = keeps(r);
+            const kids = r.members || [];
+            const members = kids.filter((m) => (self || hits(m, q)) && (kept || keeps(m)));
+            if (!(self && kept) && !members.length) return;
+            // A FOLDED ROW'S MEMBERS wait for its show, unless the search is
+            // what found them.
+            const closed = !!r.fold && members.length > 0 && !st.unfolded.has(String(r.value)) && !(q && !self);
             if (r.section && r.section !== section) {
                 section = r.section;
                 box.appendChild(el('div', { className: 'picker-sect', role: 'presentation' }, r.section));
             }
-            row(r, false);
-            for (const m of members) row(m, true);
+            row(r, false, r.fold && members.length ? { open: !closed, n: members.length } : null);
+            const drawnMembers = closed ? [] : members;
+            for (const m of drawnMembers) row(m, true);
             shown++;
-            drawn += 1 + members.length;
+            drawn += 1 + drawnMembers.length;
+        };
+        now.forEach(one);
+        if (later.length) {
+            const label = (o.later && o.later.label) || 'More';
+            box.appendChild(el('div', { className: 'picker-later', role: 'presentation' }, [
+                el('span', null, label + ' · ' + later.length),
+                q ? null : el('button', { type: 'button', className: 'picker-fold', 'data-later': '' }, laterOpen ? 'hide' : 'show'),
+            ]));
+            section = null;
+            if (laterOpen) later.forEach(one);
         }
         if (o.add && q && !everyRow().some((r) => String(r.label === undefined ? r.value : r.label).toLowerCase() === q
             || String(r.value).toLowerCase() === q)) {
@@ -275,7 +364,7 @@ export function createPicker(host, opts) {
         mark();
     }
 
-    function row(r, member) {
+    function row(r, member, fold) {
         const vals = valuesOf(r);
         const on = vals.length > 0 && vals.every((v) => st.sel.indexOf(v) >= 0);
         const off = !!r.reason;
@@ -290,8 +379,10 @@ export function createPicker(host, opts) {
             multi ? el('i', { className: 'picker-box', 'aria-hidden': 'true' }) : null,
             el('span', { className: 'picker-label' }, r.label === undefined ? String(r.value) : String(r.label)),
             ...(r.tags || []).map((t) => el('span', { className: 'picker-tag', 'data-tone': t.tone || null }, String(t.label))),
-            off ? el('small', { className: 'picker-why' }, String(r.reason))
+            off && !r.quiet ? el('small', { className: 'picker-why' }, String(r.reason))
                 : (r.note ? el('small', { className: 'picker-note' }, String(r.note)) : null),
+            fold ? el('button', { type: 'button', className: 'picker-fold', 'data-fold': String(r.value), 'aria-expanded': fold.open ? 'true' : 'false' },
+                fold.open ? 'hide' : 'show ' + fold.n) : null,
         ]);
         box.appendChild(node);
         if (!off) st.keys.push({ row: r, node });

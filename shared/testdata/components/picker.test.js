@@ -302,4 +302,67 @@ test('write-through: an answer that is not a promise is taken at once; a throw i
     eq([g.k.value(), g.k.el.querySelector('.picker-refused').textContent], ['', 'no answer']);
 });
 
+// FOLD: past `fold` chips the rest wait behind one button (a part set of 46
+// is a wall of chips above its own search box). The selection is untouched.
+test('fold: past that many chips, "+ N more · show all"; pressed, every chip and "fold them"', async () => {
+    const f = picker({ multi: true, open: true, fold: 2, selected: ['PLN_001', 'PLN_003', 'SMN_001', 'SMN_002'] });
+    const chipWords = () => f.k.el.querySelectorAll('.picker-chip, .picker-more').map((n) => n.textContent.replace('×', ''));
+    eq(chipWords(), ['PLN_001', 'PLN_003', '+ 2 more · show all'], 'folded');
+    f.k.el.querySelector('[data-more]').click();
+    eq(chipWords(), ['PLN_001', 'PLN_003', 'SMN_001', 'SMN_002', 'fold them'], 'shown');
+    eq([f.k.value(), f.changes], [['PLN_001', 'PLN_003', 'SMN_001', 'SMN_002'], []], 'the press moves no selection');
+    f.k.el.querySelector('[data-more]').click();
+    eq(chipWords().length, 3, 'folded again');
+    const g = picker({ multi: true, open: true, fold: 4, selected: ['PLN_001', 'PLN_003'] });
+    eq(g.k.el.querySelectorAll('.picker-more').length, 0, 'at or under the fold: no button');
+});
+
+test('a folded group is one row until its show is pressed, and its show picks nothing', async () => {
+    const rows = [
+        { value: 'PLN_001', label: 'PLN_001' },
+        { value: 'GRP_A', label: 'GRP_A', fold: true, members: [{ value: 'SMN_001', label: 'SMN_001' }, { value: 'SMN_002', label: 'SMN_002' }] },
+    ];
+    const f = picker({ open: true, multi: true }, rows);
+    eq(f.shown(), ['PLN_001', 'GRP_Ashow 2']);
+    f.k.el.querySelector('[data-fold="GRP_A"]').click();
+    eq([f.shown(), f.k.value()], [['PLN_001', 'GRP_Ahide', '  SMN_001', '  SMN_002'], []]);
+    f.row('SMN_002').click();
+    eq(f.k.value(), ['SMN_002']);
+    f.k.el.querySelector('[data-fold="GRP_A"]').click();
+    eq(f.shown(), ['PLN_001', 'GRP_Ashow 2']);
+});
+
+test('a search that finds a folded member shows it under its group', async () => {
+    const rows = [{ value: 'GRP_A', label: 'GRP_A', fold: true, members: [{ value: 'SMN_001', label: 'SMN_001' }, { value: 'SMN_002', label: 'SMN_002' }] }];
+    const f = picker({ open: true, multi: true }, rows);
+    f.typeQ('002');
+    eq(f.shown(), ['GRP_Ahide <', '  SMN_002']);
+});
+
+test('the later rows wait under one line with their count, after the rest, and open while searching', async () => {
+    const rows = [
+        { value: 'ALN_02', label: 'ALN_02', later: true, reason: 'on INV TEST' },
+        { value: 'ALN_04', label: 'ALN_04' },
+        { value: 'ALN_05', label: 'ALN_05' },
+    ];
+    const f = picker({ open: true, multi: true, later: { label: 'In use by other processes' } }, rows);
+    const line = () => f.k.el.querySelector('.picker-later').textContent;
+    eq([f.shown(), line()], [['ALN_04', 'ALN_05'], 'In use by other processes · 1show']);
+    f.k.el.querySelector('[data-later]').click();
+    eq([f.shown(), line()], [['ALN_04', 'ALN_05', 'ALN_02on INV TEST [off]'], 'In use by other processes · 1hide']);
+    f.k.el.querySelector('[data-later]').click();
+    f.typeQ('ALN_02');
+    eq(f.shown(), ['ALN_02on INV TEST [off]']);
+});
+
+test('a quiet exclusion is greyed with its note: its reason is said once, above the list, by the caller', async () => {
+    const f = picker({ open: true, multi: true }, [
+        { value: 'GRP_A', label: 'GRP_A', note: 'group · 2 nodes', reason: 'a group: its nodes are positions one at a time', quiet: true },
+        { value: 'PLN_001', label: 'PLN_001' },
+    ]);
+    f.row('GRP_A').click();
+    eq([f.k.value(), f.row('GRP_A').getAttribute('aria-disabled'), f.row('GRP_A').querySelector('.picker-why'),
+        f.row('GRP_A').querySelector('.picker-note').textContent], [[], 'true', null, 'group · 2 nodes']);
+});
+
 run();

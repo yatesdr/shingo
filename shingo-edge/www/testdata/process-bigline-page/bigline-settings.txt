@@ -1,0 +1,12 @@
+positions on the line: 23
+position rows drawn (each "light curtain …" line): 0
+positions whose curtain is on: 2
+rows saying the curtain is off: 0
+Light curtain says: 2 of 23 positions · rows: 2
+Counted at says: all 23 at the production counter · rows: 0
+Counted at, with one station counter, says: all 23 at the production counter
+parts in the part set: 46
+part set chips drawn: 12 · then "+ 34 more · show all"
+recipe versions listed: 3
+save bar: yes
+markup written, characters: 13554

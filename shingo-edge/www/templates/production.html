@@ -7,6 +7,22 @@
     </div>
 </div>
 
+{{/* One link per operator screen, where Core's Dashboard page puts its wall
+     displays: first, under the title, as one compact strip rather than a
+     titled card. Drawn here from the handler's station list, so it costs the
+     page no request, and outside #production-content, so the partial refresh
+     never redraws it: the list changes only when screens are made, renamed or
+     removed on Processes. No screens, no strip. A div with the navigation
+     role, not a <nav>: components.css styles every <nav> as the site's top
+     bar (its band, rule and padding). */}}
+{{with .Screens}}
+<div class="row-wrap items-center mb-3" id="screen-links" role="navigation" aria-label="Operator screens">
+    <span class="text-muted-sm">Screens</span>
+    {{range .}}<a class="btn btn-primary btn-sm" href="/operator/station/{{.ID}}" title="{{.ProcessName}}">{{.Name}}</a>
+    {{end}}
+</div>
+{{end}}
+
 <div class="card">
     <div class="card-body" style="padding:0">
         <div id="production-content"

@@ -60,7 +60,6 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 		InboundStaging:      "PRODUCE-IN-STAGING",
 		OutboundStaging:     "PRODUCE-OUT-STAGING",
 		OutboundDestination: "FILLED-STORAGE",
-		AutoRequestPayload:  "WIDGET-A",
 	})
 	if err != nil {
 		t.Fatalf("upsert claim: %v", err)

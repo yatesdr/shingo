@@ -1050,6 +1050,8 @@ digest and `scene_revision` is the `scene` feed's value.
 | `board_hides_idle` | boolean | omitempty | BoardHidesIdle: the station's board leaves off cards and homes with nothing to do (an operator-ordered station still shows an empty spot). BoardShowsAllParts: the board lists every part the station takes, not only what a running style needs. Display only. A Core predating these fields sends both false, so deploy Core first. |
 | `board_shows_all_parts` | boolean | omitempty | See `board_hides_idle`. |
 | `no_clear_partials` | boolean | omitempty | NoClearPartials turns off a dedicated loader's Clear partials: its board never asks a driver to pull a home's full so that a buffer partial goes home, and Core refuses the home clear. False, also what a Core predating this field sends, is the clear every loader has. |
+| `edge_station_uid` | string | omitempty | EdgeStationUID is the station uid of the Edge that works this loader (bin_loaders.edge_station_uid): that Edge makes the loader's screen and keeps its windows on it, and every other Edge takes nothing of it. Blank, also what a Core predating this field sends, picks no Edge: each Edge infers from the screens it already has. |
+| `edge_display_name` | string | omitempty | EdgeDisplayName is that Edge's display name as Core holds it, so an Edge can name another on its page. Display only; never compared. |
 | `positions` | [`LoaderPosition`](#loaderposition)[] | omitempty | Positions are the loader's member homes: its windows (shared_window) or its dedicated positions. |
 | `payloads` | [`LoaderPayloadInfo`](#loaderpayloadinfo)[] | omitempty | Payloads is the shared allowed set, on a shared_window loader only. |
 

@@ -305,12 +305,18 @@ func (e *Engine) startCatidMonitor() {
 // startCatidMonitor before the goroutine starts: it writes cm.states with no
 // lock. A process with a counter but no derivable tag is skipped and logged —
 // the guard stays inert for it; reprime brings an edited process in later.
+//
+// WITH WARLINK OFF (warlink.enabled: false) IT ASKS FOR NO PUBLISH: the Edge
+// talks to no WarLink then, and a cut-off copy still PATCHed whatever host the
+// config named. The processes are monitored all the same; their reads fail
+// open, as for any unreadable tag (TestPrime_WarLinkOffMakesNoCall).
 func (cm *catidMonitor) prime() {
 	procs, err := cm.eng.db.ListProcesses()
 	if err != nil {
 		log.Printf("plc-catid: list processes: %v", err)
 		return
 	}
+	publish := cm.eng.cfg.WarLinkSettings().Enabled
 	observed := cm.observedByProcess()
 	for i := range procs {
 		p := &procs[i]
@@ -328,11 +334,13 @@ func (cm *catidMonitor) prime() {
 		// managed bit is left as found: at boot the manager's cache cannot
 		// say whether WarLink was already publishing the tag, so only a save
 		// (republishIdentity, after IsTagPublished) marks it the Edge's.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := cm.eng.plcMgr.EnableTagPublishing(ctx, p.CounterPLCName, tag); err != nil {
-			log.Printf("plc-catid: enable publish for %s.%s: %v (monitoring anyway)", p.CounterPLCName, tag, err)
+		if publish {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := cm.eng.plcMgr.EnableTagPublishing(ctx, p.CounterPLCName, tag); err != nil {
+				log.Printf("plc-catid: enable publish for %s.%s: %v (monitoring anyway)", p.CounterPLCName, tag, err)
+			}
+			cancel()
 		}
-		cancel()
 		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
 		cm.states[p.ID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name}
 		cm.snapshots.Store(p.ID, &catidSnapshot{tag: tag, observed: observed[p.ID]})

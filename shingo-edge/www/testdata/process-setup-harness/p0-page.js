@@ -24,7 +24,7 @@
 //
 //   sheet-stack.txt: the page's sheet stack — openSheet, runSheet's one run
 //     per press, what closeSheet clears, the Escape rule innermost first, the
-//     discard question, the Advanced sheet — and the facts about scroll lock
+//     discard question, Set for this style's list — and the facts about scroll lock
 //     and focus.
 //
 // THE PLANT IS U0's (fixture.json); the routes an act needs that the base
@@ -92,6 +92,15 @@ function rootButton(page, act, more) {
     if (!b) throw new Error('#pd-root draws no ' + act + ' ' + JSON.stringify(more || {}));
     return Object.assign({}, b.dataset);
 }
+// scrLines is what Settings' screen lines say, a line each: its words, its
+// chips as ‹name›, its buttons and links as [words].
+function scrLines(page) {
+    const host = page.byId('pd-scrlines');
+    if (!host) return ['-- no screen lines'];
+    return host.innerHTML.split(/(?=<div class="pd-scrline"|<p class="pd-note")/).filter(Boolean).map(h => '-- ' + T.text(h
+        .replace(/<span class="setpick-chip">([\s\S]*?)<\/span>/g, ' ‹$1› ')
+        .replace(/<(button|a)\b[^>]*>([\s\S]*?)<\/(?:button|a)>/g, ' [$2] ')).replace(/\s+/g, ' ').trim());
+}
 function sheetTitle(page) {
     const m = /<h2>([\s\S]*?)<\/h2>/.exec(page.scrim.innerHTML);
     return m ? T.decode(m[1].replace(/<[^>]*>/g, '')) : '';
@@ -126,6 +135,8 @@ function stateLine(page) {
         ['routingError', S.routingError], ['routingWarning', S.routingWarning],
         ['presets.error', S.presets && S.presets.error], ['shapeDraft.refusal', S.shapeDraft && S.shapeDraft.refusal],
         ['partPop.note', S.partPop && S.partPop.note], ['papply.status', S.papply && S.papply.status],
+        // Settings' save outcome is the shared bar's (shared/settings.js).
+        ['bar.refusal', S.stShell && S.stShell.pid === S.processID && S.stShell.page.state.refusal],
     ].filter(x => x[1]);
     return f.length ? 'state: ' + f.map(x => x[0] + '=' + JSON.stringify(x[1])).join(', ') : 'state: no message set';
 }
@@ -167,14 +178,14 @@ const FINDING = { core_node_name: 'POS_A1', side: 'to', field: 'inbound_source',
 // later call too, so that answer is STICKY: the refused write and every admin
 // call after it get the login page.
 const PUBLIC = [
-    /^\/api\/processes\/\d+\/flow\/(preview|save|mint)$/, /^\/api\/processes\/\d+\/changeover\/(start|gate-status)$/,
+    /^\/api\/processes\/\d+\/flow\/(preview|save|mint)(\?steps=1)?$/, /^\/api\/processes\/\d+\/changeover\/(start|gate-status)$/,
     /^\/api\/processes\/\d+\/catid-health$/, /^\/api\/catid-health$/, /^\/api\/core-nodes$/, /^\/api\/payload-catalog$/,
 ];
 const isPublic = url => PUBLIC.some(re => re.test(url.split('?')[0]));
 function answersFor(method, url) {
     const u = url.split('?')[0];
     let four;
-    if (/\/flow\/preview$/.test(u)) {
+    if (/\/flow\/preview(\?steps=1)?$/.test(u)) {
         four = [
             ['409 {"error"} (writeFlowRefusal)', { status: 409, body: { error: MSG } }],
             ['400 {"error", order_count:0, findings, fingerprint} (no orders)', { status: 400, body: { error: MSG, order_count: 0, findings: [FINDING], unresolved: [], fingerprint: 'fp-refused' } }],
@@ -349,12 +360,18 @@ const STYLE_ROUTES = route([
 const COUNTER = { id: 51, label: 'Station 1', tag_name: 'S1.Count', tag_name_2: '', last_poll_at: '', ratio: null, strokes_since_click: 0, stopped: false };
 const COUNTER_ROUTES = route([
     ['GET', /^\/api\/processes\/1\/station-counters$/, () => [COUNTER]],
-    ['GET', /^\/api\/process-nodes\/\d+\/countable$/, () => ({ countable: true })],
+    // The dry run, one read for the whole process: every position countable.
+    ['GET', /^\/api\/processes\/1\/countable$/, () => Object.fromEntries(T.FX.server.processNodes
+        .filter(n => n.process_id === 1).map(n => [n.id, { countable: true, refusal: '' }]))],
     ['POST', /^\/api\/processes\/1\/station-counters$/, () => ({ id: 52 })],
     ['PUT', /^\/api\/station-counters\/\d+$/, OK],
     ['DELETE', /^\/api\/station-counters\/\d+$/, OK],
-    ['PUT', /^\/api\/process-nodes\/\d+\/counted-at$/, OK],
+    ['PUT', /^\/api\/processes\/1\/counted-at$/, OK],
 ]);
+// Two station counters on Press A: a row + Add made waits for its counter.
+const COUNTER_2 = Object.assign({}, COUNTER, { id: 52, label: 'Station 2', tag_name: 'S2.Count' });
+const TWO_COUNTERS = route([['GET', /^\/api\/processes\/1\/station-counters$/, () => [COUNTER, COUNTER_2]]]);
+const TWO_COUNTER_ROUTES = (m, u) => TWO_COUNTERS(m, u) || COUNTER_ROUTES(m, u);
 const MISC_ROUTES = route([
     ['POST', /^\/api\/loader-boards$/, () => ({ station_id: 32 })],
     ['POST', /^\/api\/payload-catalog\/sync$/, OK],
@@ -381,7 +398,13 @@ const ON_SETTINGS = { hash: '#tab=settings', extra: CATID_ROUTES };
 const D = {
     chStart: Object.assign({ drive: strip('ch-start') }, ON_SETTINGS),
     chPin: Object.assign({ drive: async page => { await strip('ch-pin')(page); await pressOK(page); } }, ON_SETTINGS),
-    chPinPick: Object.assign({ drive: async page => { await strip('ch-pin-pick')(page); await pressOK(page); } }, ON_SETTINGS),
+    // "Pin to a style…" is the shared picker (slice 5); the first style, as
+    // the select it replaced opened on.
+    chPinPick: Object.assign({ drive: async page => {
+        await strip('ch-pin-pick')(page);
+        T.pickerRow(page, 'pd-stpop', '1');
+        await pressOK(page);
+    } }, ON_SETTINGS),
     chChargeAsk: Object.assign({ drive: strip('ch-charge') }, ON_SETTINGS),
     chRepoint: Object.assign({ drive: async page => { await strip('ch-repoint')(page); await pressOK(page); } }, ON_SETTINGS),
     chCharge: Object.assign({ drive: async page => { await strip('ch-charge')(page); await pressOK(page); } }, ON_SETTINGS),
@@ -413,14 +436,41 @@ const scSheet = (label, tag) => async page => {
     page.byId('sc-tag').value = tag;
     await pressOK(page);
 };
-// Counted at sits behind its position row's Change… (owner ruling 4).
-const countedAt = (node, value) => async page => {
-    page.click('root', { act: 'st-more', more: 'pos-' + node });
+// Counted at is an exception list under Position settings and a draft: + Add a
+// position ticks one or more positions, Escape closes the list and each gets a
+// row at the process's only station counter; value, when given, is a row's
+// select changed after. Save settings writes every changed row at once.
+const countedAdd = nodes => async page => {
+    page.click('root', { act: 'ca-add' });
     await page.settle();
-    const sel = page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === String(node));
-    if (!sel) throw new Error('Settings draws no Counted at for ' + node);
-    sel.value = value;
-    page.fire(sel, 'change');
+    for (const node of nodes) {
+        const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(node));
+        if (!pick) throw new Error('+ Add a position under Counted at offers no ' + node);
+        pick.click();
+        await page.settle();
+    }
+    page.key('Escape');
+    await page.settle();
+};
+const countedAt = (node, value) => async page => {
+    await countedAdd([node])(page);
+    if (value === undefined) return;
+    await pickCounter(page, node, value);
+};
+// A Counted at row's counter is the shared picker (slice 5): its button, then
+// the counter's row.
+async function pickCounter(page, node, value) {
+    const btn = page.root.querySelectorAll('[data-act="ca-pick"]').find(el => el.dataset.node === String(node));
+    if (!btn) throw new Error('Settings draws no Counted at for ' + node);
+    page.click('root', { act: 'ca-pick', node: String(node) });
+    T.pickerRow(page, 'pd-stpop', value);
+    await page.settle();
+}
+// Save is the shared settings page's bar (shared/settings.js): its own button.
+const saveSettings = async page => {
+    const b = page.root.querySelector('[data-set="save"]');
+    if (!b) throw new Error('Settings draws no Save');
+    b.click();
     await page.settle();
 };
 Object.assign(D, {
@@ -432,46 +482,92 @@ Object.assign(D, {
         page.click('root', rootButton(page, 'sc-edit', { sc: 51 }));
         await scSheet('Station 1b', 'S1.Count')(page);
     } },
-    scCountedAt: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: countedAt(201, '51') },
+    scCountedAt: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
+        await countedAt(201)(page);
+        await saveSettings(page);
+    } },
+    // A row's New station counter…: the counter is made in its sheet, the row
+    // counts at it in the draft, and Save settings writes the binding.
     scCountedAtNew: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
         await countedAt(202, 'new')(page);
         await scSheet('Station 3', 'S3.Count')(page);
+        await saveSettings(page);
     } },
-    // Change positions…: every countable box opens ticked (the only counter,
-    // counting none: station-card.js rows); all but POS_A1 and POS_A2 are
-    // unticked, so the save binds those two.
-    scPositions: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
-        page.click('root', rootButton(page, 'sc-checklist', { sc: 51 }));
-        const sel = 'input[data-scpos][data-sc="51"]';
-        const keep = new Set(page.S.curtainNodes.filter(n => n.core_node_name === 'POS_A1' || n.core_node_name === 'POS_A2').map(n => String(n.id)));
-        for (const el of page.root.querySelectorAll(sel)) el.checked = keep.has(el.dataset.scpos);
-        page.click('root', rootButton(page, 'sc-positions', { sc: 51 }));
-        await page.settle();
-        await pressOK(page);
+    // Two positions in one + Add, one row each at Station 1: one save, one
+    // write, one reload (owner ruling 2026-11-14, REPORT-slice1).
+    scCountedAtTwo: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
+        await countedAdd([201, 202])(page);
+        await saveSettings(page);
+    } },
+    // Two positions in one + Add on a process with two counters: each row
+    // waits for its counter, and the first chosen is both rows' (owner ruling
+    // 2026-11-14: one pick, one counter). One save, one write.
+    scCountedAtTwoOfTwo: { hash: '#tab=settings', extra: TWO_COUNTER_ROUTES, drive: async page => {
+        await countedAdd([201, 202])(page);
+        await pickCounter(page, 201, '52');
+        await saveSettings(page);
     } },
     scDelete: { hash: '#tab=settings', extra: COUNTER_ROUTES, drive: async page => {
         page.click('root', rootButton(page, 'sc-delete', { sc: 51 }));
         await pressOK(page);
     } },
 });
+// PRESS A WITH ONE SCREEN: Unloader A gone, ULD_1 on no screen with the back
+// positions, so Settings offers "Put them on Screen A" (a line has one
+// screen, ruling 2026-11-15).
+const oneScreenPage = () => withPage(p => ({ stations: p.stations.filter(st => st.id !== 12),
+    stationNodes: { 11: p.stationNodes['11'] } }));
+const ONE_SCREEN_ROUTES = route([
+    ['GET', /^\/api\/process-nodes$/, () => T.FX.server.processNodes.map(n => (n.operator_station_id === 12
+        ? Object.assign({}, n, { operator_station_id: null, station_name: '' }) : n))],
+    ['GET', /^\/api\/operator-stations$/, () => T.FX.page.stations.filter(st => st.id !== 12)],
+    ['POST', /^\/api\/processes\/1\/positions\/impact$/, () => ({ warning: '' })],
+    ['PUT', /^\/api\/processes\/1\/positions$/, () => ({ status: 'ok', kept: [] })],
+]);
 Object.assign(D, {
-    // A position is ticked in Settings' set picker, in its Positions bucket:
-    // written as it is ticked, onto the screen's list as read just then.
+    // A position is ticked in the Positions box under Positions and routing
+    // (the set pick, ruling 2026-11-15), then Save: it goes on the line's
+    // first screen.
     posAdd: { hash: '#tab=settings', drive: async page => {
-        T.setPick(page, 'root', 'stset', 'positions', 'NEW_1');
+        T.setPick(page, 'st', 'positions', 'NEW_1');
+        await T.stSave(page);
+    } },
+    // And taken out there: what still names it is read first, and Save again
+    // takes it off (Settings' per-row Remove was a second door to the same
+    // write).
+    posUntick: { hash: '#tab=settings', drive: async page => {
+        T.setPick(page, 'st', 'positions', 'POS_A11', 'drop');
+        await T.stSave(page);
+        await T.stSave(page);
+    } },
+    // Settings opened and read, nothing pressed.
+    scrLines: { hash: '#tab=settings', drive: async () => {} },
+    // A line with two screens offers the positions on no screen to each
+    // (round 4): Unloader A's, the lines it leaves, and then its Save.
+    posLooseOntoSecond: { hash: '#tab=settings', drive: async page => {
+        page.click('root', drawn(page, 'pd-scrlines', 'loose-onto', { station: 12 }));
         await page.settle();
     } },
-    posRemoveAsk: { hash: '#tab=settings', drive: async page => {
-        page.click('root', rootButton(page, 'pos-remove', { node: 'POS_A11' }));
+    posLooseOntoSecondSave: { hash: '#tab=settings', extra: route([
+        ['POST', /^\/api\/processes\/1\/positions\/impact$/, () => ({ warning: '' })],
+        ['PUT', /^\/api\/processes\/1\/positions$/, () => ({ status: 'ok', kept: [] })],
+    ]), drive: async page => {
+        page.click('root', drawn(page, 'pd-scrlines', 'loose-onto', { station: 12 }));
         await page.settle();
+        await T.stSave(page);
     } },
-    posRemove: { hash: '#tab=settings', drive: async page => {
-        page.click('root', rootButton(page, 'pos-remove', { node: 'POS_A11' }));
+    // A move and a take-off in one Save, on a one-screen line: "Put them on
+    // Screen A" moves the positions on no screen onto it, and POS_A11 comes
+    // off. Only the take-off is asked about: a move keeps its curtain and
+    // counter (slice 5); the screen's write takes the moved ones.
+    posMoveAndUntick: { hash: '#tab=settings', page: oneScreenPage, extra: ONE_SCREEN_ROUTES, drive: async page => {
+        T.setPick(page, 'st', 'positions', 'POS_A11', 'drop');
+        page.click('root', drawn(page, 'pd-scrlines', 'loose-onto'));
         await page.settle();
-        await pressOK(page);
+        await T.stSave(page);
     } },
     bindLoader: {
-        hash: '#tab=screens', extra: MISC_ROUTES,
+        hash: '#tab=settings', extra: MISC_ROUTES,
         page: () => withPage(() => ({ loaderGaps: [{ loader_key: 'LDR_1', process_id: 1 }] })),
         drive: async page => { page.click('root', rootButton(page, 'bind-loader')); await page.settle(); },
     },
@@ -499,7 +595,7 @@ const presetMenu = (item, typed) => async page => {
     await pressOK(page);
 };
 // The apply modal on Style B: tick, answer each "which part?" with its first
-// part, then Save. The modal's controls answer on the scrim (onAdvClick).
+// part, then Save. The modal's controls answer on the scrim (onScrimClick).
 async function applyTick(page) {
     page.click('root', { act: 'preset-apply', preset: '7' });
     await page.settle();
@@ -566,15 +662,20 @@ async function pinRequests() {
     await requests('requests-station-counters.txt', [
         ['Settings › + Add station counter: Station 2 on S2.Count', D.scNew],
         ['Settings › Station 1 › Edit: Station 1b', D.scEdit],
-        ['Settings › POS_A1 › Counted at: Station 1 (the select\'s change)', D.scCountedAt],
-        ['Settings › POS_A2 › Counted at: New station counter… (Station 3 on S3.Count, then the bind)', D.scCountedAtNew],
-        ['Settings › Station 1 › Change positions…: POS_A1 and POS_A2 ticked, the rest unticked, Save positions', D.scPositions],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A1 (at Station 1, the only counter), then Save settings', D.scCountedAt],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count), then Save settings', D.scCountedAtNew],
+        ['Settings › Position settings › Counted at › + Add a position: POS_A1 and POS_A2 in one pick, then Save settings', D.scCountedAtTwo],
+        ['With two counters: POS_A1 and POS_A2 in one pick, Station 2 chosen on POS_A1’s row, then Save settings', D.scCountedAtTwoOfTwo],
         ['Settings › Station 1 › Remove', D.scDelete],
     ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
     await requests('requests-positions.txt', [
-        ['Settings › Positions bucket: tick NEW_1 onto Screen A (the first screen)', D.posAdd],
-        ['Settings › POS_A11 › Remove (the impact is read before the sheet opens)', D.posRemove],
-        ['Operator screens › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
+        ['Settings on Press A, two screens (Screen A, Unloader A) and POS_B1-POS_B4 on none: the screen lines', D.scrLines, scrLines],
+        ['…Put them on Unloader A, the second screen: the lines', D.posLooseOntoSecond, scrLines],
+        ['…Put them on Unloader A, then Save (Unloader A\'s write takes POS_B1-POS_B4)', D.posLooseOntoSecondSave],
+        ['Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)', D.posAdd],
+        ['Settings › Positions and routing › the Positions box: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
+        ['Settings › Positions and routing on a one-screen Press A: POS_A11 off and Put them on Screen A, Save (the move is not asked about)', D.posMoveAndUntick],
+        ['Settings › Positions and routing › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
     ]);
     await requests('requests-settings-misc.txt', [
         ['Settings › Sync from Core', D.sync],
@@ -604,20 +705,25 @@ async function pinReads() {
         await page.settle();
         lines.push(...T.actLines(title, page, from), '');
     };
-    for (const tab of ['settings', 'screens', 'presets']) {
+    for (const tab of ['settings', 'presets']) {
         await act('the ' + tab + ' tab clicked', null, async page => { page.click('root', { tab: tab }); });
     }
     await act('window focus on the Styles tab (refreshRail)', null, async page => { page.fireWindow('focus'); });
     await act('the Part chip on POS_A1 (the part popover opens)', null, async page => {
         page.click('root', { act: 'pick', node: 'POS_A1', kind: 'part' });
     });
-    // A PLC box is drawn only under a curtain switched on (cuCombo); the
-    // counter's tag box names its PLC field by selector (data-plcsel), which
-    // reads PLC_A off the drawn draft.
+    // A PLC box is drawn only under a curtain switched on (cuCombo): + Add a
+    // position under Light curtain, then POS_A1. The counter's tag box names
+    // its PLC field by selector (data-plcsel), which reads PLC_A off the
+    // drawn draft.
     await act('Settings: POS_A1\'s curtain switched on and its PLC box focused, then the counter\'s tag box focused',
         { hash: '#tab=settings', extra: MISC_ROUTES }, async page => {
             const node = page.S.curtainNodes.find(n => n.core_node_name === 'POS_A1');
-            page.click('root', { act: 'cu-toggle', node: String(node.id) });
+            page.click('root', { act: 'cu-add' });
+            await page.settle();
+            const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === String(node.id));
+            if (!pick) throw new Error('+ Add a position under Light curtain offers no POS_A1');
+            pick.click();
             const box = (kind, attr, v) => {
                 const w = page.root.querySelectorAll('[data-combo]').find(c => c.dataset.combo === kind && c.dataset[attr] === v);
                 if (!w) throw new Error('Settings draws no ' + kind + ' suggestion box with ' + attr + '=' + v);
@@ -668,11 +774,12 @@ async function pinRefusals() {
     ]);
     await refusals('refusals-style-create.txt', [specOf('+ New style with no recipe (Style C, CAT-C)', U.styleCreate, { again: true })]);
     await refusals('refusals-flow-mint.txt', [specOf('+ New style from Recipe One, a part per slot and a CATID', U.mint, { again: true })]);
-    await refusals('refusals-add-process.txt', [specOf('Add process (the chain of five writes)', U.addProcess, { again: true })]);
+    await refusals('refusals-add-process.txt', [specOf('Add process (its five writes: the process, its screen, its positions, its routing set, its part set)', U.addProcess, { again: true })]);
     await refusals('refusals-settings-save.txt', [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]);
     await refusals('refusals-screen-sheet.txt', [
-        specOf('Edit Screen A (POS_A11 off, NEW_3 on)', U.screenEdit, { again: true }),
-        specOf('Add operator screen (Screen C on NEW_1)', U.screenAdd, { again: true }),
+        specOf('Edit Screen A (the note)', U.screenEdit, { again: true }),
+        specOf('+ Add a screen on Press A with no screen (Screen C, taking its positions)', U.screenAdd, { again: true }),
+        specOf('the Positions box on Settings (POS_A11 off, NEW_3 on), Save', U.screenPositions),
     ]);
     await refusals('refusals-part-set.txt', [
         specOf('Part popover: + PART-12 (on a fresh page)', U.partPopAdd),
@@ -711,15 +818,14 @@ async function pinRefusals() {
     await refusals('refusals-station-counters.txt', [
         specOf('+ Add station counter', D.scNew, { again: true }),
         specOf('Edit Station 1', D.scEdit, { again: true }),
-        specOf('POS_A1 › Counted at: Station 1', D.scCountedAt),
-        specOf('POS_A2 › Counted at: New station counter… (the create, then the bind)', D.scCountedAtNew, { again: true }),
-        specOf('Change positions… › Save positions (two binds)', D.scPositions, { again: true }),
+        specOf('Counted at › + Add: POS_A1, Save settings', D.scCountedAt),
+        specOf('Counted at › + Add: POS_A2, New station counter…, Save settings', D.scCountedAtNew),
+        specOf('Counted at › + Add: POS_A1 and POS_A2 in one pick, Save settings (one write)', D.scCountedAtTwo),
         specOf('Remove Station 1', D.scDelete, { again: true }),
     ]);
     await refusals('refusals-positions.txt', [
-        specOf('Positions bucket: tick NEW_1', D.posAdd),
-        specOf('Remove POS_A11: the sheet the impact read opens', D.posRemoveAsk),
-        specOf('Remove POS_A11: the sheet\'s Remove', D.posRemove, { again: true, refuse: /^PUT / }),
+        specOf('the Positions box: NEW_1, Save', D.posAdd),
+        specOf('the Positions box: POS_A11 off, Save, its list write refused', D.posUntick, { refuse: /^PUT / }),
         specOf('Make a screen for LDR_1', D.bindLoader),
     ]);
     await refusals('refusals-settings-misc.txt', [
@@ -740,7 +846,7 @@ async function pinRefusals() {
 // The overlay stack (shared/layer.js, which this page's own stack moved into):
 // what opening, running, closing and Escape do, one act per block. Every block
 // starts on a fresh page. A sheet is the layer's shell (pageSheet) or
-// #pd-scrim (Advanced and the apply modal, which draw their own markup); the
+// #pd-scrim (the apply modal, which draws its own markup); the
 // discard question is the layer's confirm, on the stack above the sheet.
 function stackFacts(page) {
     const S = page.S, scrim = page.byId('pd-scrim');
@@ -748,7 +854,7 @@ function stackFacts(page) {
     return 'sheet ' + (page.sheetOpen() ? 'open (' + (page.scrim === scrim ? '#pd-scrim' : 'the layer\'s shell') + ')' : 'closed') +
         ', #pd-scrim markup ' + (scrim.innerHTML ? 'drawn' : 'empty') + ', layers ' + page.pd('layerDepth')() +
         ', body overflow ' + JSON.stringify(page.doc.body.style.overflow || '') +
-        ', S.sheet ' + (S.sheet ? 'set' : 'null') + ', S.adv ' + (S.adv ? 'set' : 'null') +
+        ', S.sheet ' + (S.sheet ? 'set' : 'null') +
         ', question ' + (q ? JSON.stringify(q.text) + ' [' + q.buttons.join(' · ') + ']' : 'none');
 }
 function popFacts(page) {
@@ -797,7 +903,7 @@ async function pinSheetStack() {
     const open = async o => { const p = await T.openPage(o); pages.push(p); return p; };
     T.setCurrent('sheet-stack.txt');
     const L = ['# The sheet stack on shared/layer.js (pageSheet / runSheet / closeSheet / Escape / the discard question /',
-        '# Advanced), one act per block, each on a fresh page. "facts" is the sheet, the layer\'s depth, body scroll',
+        '# Set for this style), one act per block, each on a fresh page. "facts" is the sheet, the layer\'s depth, body scroll',
         '# lock, the page\'s sheet state and the question; "focus" is every element focus() was called on during the act.'];
     const block = (title, rows) => { L.push('', '## ' + title); for (const r of rows) L.push(r); };
     const focusSince = (page, n) => {
@@ -877,14 +983,13 @@ async function pinSheetStack() {
         const page = await open({ hash: '#tab=settings' });
         page.click('root', { act: 'add-process' });
         await page.settle();
-        T.setPick(page, 'scrim', 'procset', 'positions', 'NEW_1');
+        page.type('name', 'Press N');
         const S = page.S;
         const keys = () => Object.keys(S.pickers).sort().join(', ');
-        const sets = () => Object.keys(S.sets).sort().join(', ');
-        const rows = ['open Add process, NEW_1 ticked: ' + stackFacts(page) + '; sets ' + sets() + '; pickers ' + keys()];
+        const rows = ['open Add process, a name typed: ' + stackFacts(page) + '; pickers ' + keys()];
         page.click('scrim', { act: 'sheet-cancel' });
         await page.settle();
-        rows.push('after Cancel: ' + stackFacts(page) + '; sets ' + sets() + '; pickers ' + keys() +
+        rows.push('after Cancel: ' + stackFacts(page) + '; pickers ' + keys() +
             ' (Settings’ own pickers stay: their boxes are in #pd-root)');
         block('closeSheet: what it clears (Add process on Settings)', rows);
     }
@@ -907,9 +1012,7 @@ async function pinSheetStack() {
     {
         const page = await open();
         page.click('root', { act: 'new-style' });
-        const chooser = page.byId('pd-newrecipe');
-        chooser.value = '7';
-        page.fire(chooser, 'change');
+        T.pickRecipe(page, '7');
         await page.settle();
         const S = page.S;
         const rows = ['New style, Recipe One picked: ' + stackFacts(page) + '; S.newStyle ' + (S.newStyle ? 'set' : 'null')];
@@ -951,49 +1054,42 @@ async function pinSheetStack() {
         await esc(page, rows);
         block('Escape: a popover in a sheet (#pd-advpop), then the sheet (nothing typed)', rows);
     }
-    const advNode = () => 'POS_A1';
+    // SET FOR THIS STYLE IS NO SHEET (slice 3: it replaced the Advanced
+    // sheet). Its + Add a setting is a popover the first Escape closes, and a
+    // value typed into it is the style's draft, which Save style or Discard
+    // changes answers; Escape takes nothing away.
+    const pickIn = async (page, id, value) => {
+        const r = page.byId(id).querySelectorAll('.picker-row').find(x => x.getAttribute('data-value') === value);
+        if (!r) return false;
+        r.click();
+        await page.settle();
+        return true;
+    };
     {
         const page = await open();
         const rows = [];
-        page.click('root', { act: 'advanced', node: advNode() });
-        rows.push('Advanced open on POS_A1: ' + stackFacts(page), ...modalShape(page).filter(l => /^(modal|header|footer)/.test(l)));
-        const pick = page.scrim.querySelectorAll('[data-advkind="pick"]')[0];
-        if (pick) {
-            page.click('scrim', Object.assign({}, pick.dataset), { cls: [] });
-            rows.push('its first picker (' + pick.dataset.adv + ') clicked: ' + popFacts(page));
-            await esc(page, rows);
-        }
+        const from = page.mark();
+        page.click('root', { act: 'adv-open', node: 'POS_A1' });
+        await page.settle();
+        rows.push('POS_A1 › Advanced: ' + stackFacts(page) + '; title ' + JSON.stringify(sheetTitle(page)));
         await esc(page, rows);
-        block('Escape: Advanced\'s own picker, then Advanced (nothing typed)', rows);
+        rows.push('nothing changed: dirty=' + page.pd('dirty')() + '; requests ' + (page.since(from).filter(c => !isPreview(c)).map(lineOf).join(' · ') || 'none'));
+        block("Escape: a position's Advanced sheet (the row's own, round 5)", rows);
     }
     {
         const page = await open();
         const rows = [];
-        page.click('root', { act: 'advanced', node: advNode() });
-        const num = page.scrim.querySelectorAll('[data-advkind="number"]')[0];
-        if (!num) throw new Error('Advanced on POS_A1 draws no number field');
-        const key = num.dataset.adv;
+        page.click('root', { act: 'adv-open', node: 'POS_A1' });
+        await page.settle();
+        const num = page.scrim.querySelectorAll('[data-setnum]').find(e => e.dataset.setnum === 'lineside_soft_threshold' && e.dataset.node === 'POS_A1');
+        if (!num) throw new Error("POS_A1's Advanced sheet draws no lineside_soft_threshold field");
         num.value = '7';
-        page.fire(num, 'input');
-        rows.push('typed 7 into ' + key + ': S.adv.a.' + key + '=' + page.S.adv.a[key]);
-        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        // Escape on the question is Keep editing: Escape closes the innermost
-        // entry, and the question is a confirm on the stack, which always
-        // resolves (S2-components lead decision 4).
-        page.key('Escape');
-        await page.settle();
-        const back = page.scrim.querySelectorAll('[data-advkind="number"]').find(e => e.dataset.adv === key);
-        rows.push('Escape again, with the question up (Keep editing) → sheet ' + JSON.stringify(sheetTitle(page)) + ', ' + key + ' field reads ' +
-            JSON.stringify(back ? back.value : '(gone)') + ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
-        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        page.dialog().press('Keep editing');
-        await page.settle();
-        rows.push('Keep editing → sheet ' + JSON.stringify(sheetTitle(page)) + ', S.adv.a.' + key + '=' + page.S.adv.a[key] + '; ' + stackFacts(page));
-        await esc(page, rows, p => 'sheet ' + JSON.stringify(sheetTitle(p)));
-        page.dialog().press('Discard');
-        await page.settle();
-        rows.push('Discard → ' + stackFacts(page));
-        block('the discard question on Advanced: a typed number, Escape, Escape, Escape, Keep editing, Escape, Discard', rows);
+        // A BUBBLING input, as a browser sends it: the sheet's numbers are
+        // read by one listener on the sheet (onSetNumber), not one per field.
+        num.dispatchEvent({ type: 'input' });
+        rows.push("typed 7 into lineside_soft_threshold in POS_A1's sheet: dirty=" + page.pd('dirty')() + '; ' + stackFacts(page));
+        await esc(page, rows, p => 'dirty=' + p.pd('dirty')());
+        block("A position's Advanced sheet: a number typed is the style draft's, and Escape takes nothing away", rows);
     }
     {
         const page = await open({ extra: STYLE_ROUTES });
@@ -1041,26 +1137,6 @@ async function pinSheetStack() {
         await esc(page, rows, p => 'S.selected ' + JSON.stringify(p.S.selected));
         await esc(page, rows, p => 'S.selected ' + JSON.stringify(p.S.selected));
         block('Escape with no layer: the selected position lets go (then nothing)', rows);
-    }
-    // A BUG, PINNED AS IS: Apply on a sheet nothing was changed in writes an
-    // all-defaults advanced block onto the cell (setAdvanced with the sheet's
-    // whole draft, processes-desktop.js:4169), so the flow reads dirty and the
-    // next Save sends the block.
-    {
-        const page = await open();
-        const rows = [];
-        page.click('root', { act: 'advanced', node: advNode() });
-        rows.push('open: ' + stackFacts(page));
-        page.click('scrim', { act: 'adv-cancel' });
-        await page.settle();
-        rows.push('Cancel: ' + stackFacts(page));
-        page.click('root', { act: 'advanced', node: advNode() });
-        const from = page.mark();
-        page.click('scrim', { act: 'adv-apply' });
-        await page.settle();
-        rows.push('reopened, Apply with nothing changed: ' + stackFacts(page) + '; dirty=' + page.pd('dirty')() + '; requests ' +
-            (page.since(from).map(lineOf).join(' · ') || 'none'));
-        block('the Advanced sheet: open, Cancel, open, Apply', rows);
     }
     // THE FACTS, MEASURED over every page the blocks above opened: the lock
     // is the layer's counted one, and focus is every focus() call made in them.
@@ -1152,7 +1228,7 @@ const DOOR_BUGS = [
     },
     {
         title: '"Preview OK · null orders" (processes-desktop.js:2400): the flow edit\'s preview answers a 500 with no body',
-        spec: () => Object.assign({ previews: true }, T.DRIVE.flowEdit), target: { method: 'POST', url: '/api/processes/1/flow/preview', k: 0 },
+        spec: () => Object.assign({ previews: true }, T.DRIVE.flowEdit), target: { method: 'POST', url: '/api/processes/1/flow/preview?steps=1', k: 0 },
         answer: BODILESS_500,
         checks: [checks.notSays('Preview OK · null orders'), checks.says('Server error (500)')],
     },

@@ -2,7 +2,7 @@
   1  GET /api/processes/1/composer
   2  GET /api/operator-stations/11/claimed-nodes
   3  GET /api/operator-stations/12/claimed-nodes
-  4  POST /api/processes/1/flow/preview
+  4  POST /api/processes/1/flow/preview?steps=1
        {
          "to_style_id": 1,
          "cells": [

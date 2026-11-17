@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
@@ -101,6 +102,21 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 	if lerr != nil {
 		return nil, fmt.Errorf("build loader infos: %w", lerr)
 	}
+	// The display name of the Edge each loader names, from ONE registry read,
+	// and none when no loader names an Edge. Filled here, before the digest, so
+	// the digest covers what is sent and a rename moves it. A name is display
+	// only (the Edge falls back to the uid), so a reply degrades as the kanbans
+	// read does: the uids go, without names.
+	if loadersNameAnEdge(loaderInfos) {
+		edges, eerr := s.db.ListEdges()
+		if eerr != nil {
+			if strict {
+				return nil, fmt.Errorf("list edges: %w", eerr)
+			}
+			log.Printf("core_handler: list edges for %s: %v", stationID, eerr)
+		}
+		nameLoaderEdges(loaderInfos, edges)
+	}
 	// Payload→dunnage mapping: one query replaces the N+1 per-node
 	// GetEffectiveBinTypes calls. Edge uses this to derive picker options
 	// from the node's allowed payloads (claim.AllowedPayloadCodes).
@@ -145,6 +161,31 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		PlantWide:       !stationScoped,
 		Digest:          digest,
 	}, nil
+}
+
+// loadersNameAnEdge reports whether any loader names the Edge that works it.
+func loadersNameAnEdge(infos []protocol.LoaderInfo) bool {
+	for _, li := range infos {
+		if li.EdgeStationUID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// nameLoaderEdges gives each loader that names an Edge that Edge's display
+// name as Core holds it. A uid with no registry row, or a row with no display
+// name, sends none.
+func nameLoaderEdges(infos []protocol.LoaderInfo, edges []domain.RegistryEdge) {
+	names := make(map[string]string, len(edges))
+	for _, e := range edges {
+		names[e.StationUID] = e.DisplayName
+	}
+	for i := range infos {
+		if uid := infos[i].EdgeStationUID; uid != "" {
+			infos[i].EdgeDisplayName = names[uid]
+		}
+	}
 }
 
 // binTypeFamilies is NodeListResponse.Family: each type's carrier family, as the walk compares

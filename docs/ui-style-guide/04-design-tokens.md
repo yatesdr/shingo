@@ -119,6 +119,10 @@ keeps the light value):
 | `--map-class-5` | `#ff9b72` | — |
 | `--map-class-6` | `#79c0ff` | — |
 | `--map-class-7` | `#f0883e` | — |
+| `--role-positions` | `var(--text)` | — |
+| `--role-inbound` | `#0969da` | `#6cb0ff` |
+| `--role-staging` | `#b84f0a` | `var(--map-class-5)` |
+| `--role-outbound` | `#cc0085` | `#f075b9` |
 | `--kpi-up` | `var(--viz-green)` | — |
 | `--kpi-down` | `var(--viz-coral)` | — |
 | `--font-xs` | `0.75rem` | — |
@@ -284,10 +288,26 @@ Four tokens, theme-invariant, in `:root`:
 
 | Token | Value | What it is |
 |---|---|---|
-| `--robot-1` | `#22c9ae` | Robot 1 — its chevrons, words and key-route strip on the cell picture, its trips on the station composer, its chevrons in a swap-mode glyph; the desktop set picker's Inbound bucket borrows it |
-| `--robot-2` | `#8a7bff` | Robot 2 — the same things for the second robot; the desktop set picker's Outbound bucket borrows it |
+| `--robot-1` | `#22c9ae` | Robot 1 — its chevrons, words and key-route strip on the cell picture, its trips on the station composer, its chevrons in a swap-mode glyph |
+| `--robot-2` | `#8a7bff` | Robot 2 — the same things for the second robot |
 | `--robot-3` | `#f2b84b` | Robot 3 — the trip an index press's own robot makes to its back position (refill set to Robot 3): its chevrons, its words, its in glyph |
 | `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph — on the station; the desktop Processes page, which follows the light theme, draws these through `--os-station` mapped to `--text-strong` |
+
+### Node role hues
+
+**A process's node roles have their own colours, never a robot's.** The set
+pick (`shared/set-pick.js`) draws Positions, Inbound, Staging and Outbound each
+in one, on its box, its chips, the tag on a row already in another box, and the
+line on Setup. A role's colour always comes with its name. Light and dark values
+(`[data-theme="dark"]`); every pair stays 5.0 apart (CIEDE2000) under each
+dichromacy, and the light values clear 4.5:1 (`TestRoleColours`).
+
+| Token | Light | Dark | What it is |
+|---|---|---|---|
+| `--role-positions` | `var(--text)` | `var(--text)` | a process's positions |
+| `--role-inbound` | `#0969da` | `#6cb0ff` | Inbound: where the bin comes from |
+| `--role-staging` | `#b84f0a` | `var(--map-class-5)` | Staging: where a bin waits |
+| `--role-outbound` | `#cc0085` | `#f075b9` | Outbound: where the bin goes |
 
 **How this sits with rule 5 (indigo is the accent, never a status).** A robot
 hue is neither. It is an **identity**, in exactly the sense a chart series is

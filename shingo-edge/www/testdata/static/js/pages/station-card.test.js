@@ -1,7 +1,7 @@
 // station-card.test.js — the Production counter section's live words, its MES
-// slots row, and the station counters' list: each counter's row, its
-// checklist's boxes and the bindings its save sends. Run by
-// www/station_card_test.go.
+// slots row, and the station counters' list: each counter's row. Which
+// positions a counter counts is picked under Position settings › Counted at
+// (the exception list), not on the card. Run by www/station_card_test.go.
 'use strict';
 
 const path = require('path');
@@ -25,60 +25,6 @@ function check(name, fn) {
     try { fn(); console.log('ok   ' + name); } catch (e) { failed++; console.log('FAIL ' + name + '\n     ' + e.message); }
 }
 
-const positions = [
-    { id: 1, name: 'POS-1', line_counter_id: null },
-    { id: 2, name: 'POS-2', line_counter_id: null },
-    { id: 3, name: 'POS-3', line_counter_id: 7 },
-    { id: 4, name: 'POS-4', line_counter_id: 8 },
-];
-const verdicts = {
-    1: { countable: true, refusal: '' },
-    2: { countable: false, refusal: 'POS-2 is a loader under RUN; a loader is counted by its loads' },
-    3: { countable: true, refusal: '' },
-    4: { countable: true, refusal: '' },
-};
-const byID = rows => Object.fromEntries(rows.map(r => [r.id, r]));
-
-check('the checklist: the only station counter, counting no position yet, pre-ticks its countable unbound positions', () => {
-    const r = byID(C.rows(7, 1, positions.slice(0, 2), verdicts));
-    assert.strictEqual(r[1].checked, true, 'POS-1: countable, unbound');
-    assert.strictEqual(r[2].checked, false, 'POS-2: refused');
-    assert.strictEqual(r[2].disabled, true);
-    assert.strictEqual(r[2].refusal, verdicts[2].refusal, 'the refusal sentence greys the box');
-});
-
-// The 4x2 report: the only counter counted three positions and the boxes of
-// the two it did not count showed ticked.
-check('the checklist: once the counter counts a position, the boxes are the bindings', () => {
-    const r = byID(C.rows(7, 1, positions.slice(0, 3), verdicts));
-    assert.strictEqual(r[3].checked, true, 'POS-3: bound here');
-    assert.strictEqual(r[1].checked, false, 'POS-1: countable and unbound, but not counted here');
-});
-
-check('the checklist: with a second station counter nothing unbound is pre-ticked', () => {
-    const r = byID(C.rows(7, 2, positions, verdicts));
-    assert.strictEqual(r[1].checked, false, 'POS-1: unbound, but this is not the only station');
-    assert.strictEqual(r[3].checked, true, 'POS-3: bound here');
-    assert.strictEqual(r[4].checked, false, 'POS-4: bound to the other counter');
-    assert.strictEqual(r[4].at, 8);
-});
-
-check('the checklist: a position not yet checked is greyed, never pre-ticked', () => {
-    const r = byID(C.rows(7, 1, [{ id: 9, name: 'POS-9', line_counter_id: null }], {}));
-    assert.strictEqual(r[9].checked, false);
-    assert.strictEqual(r[9].disabled, true);
-});
-
-check('the checklist: the save sends each changed box, and only those', () => {
-    const ticked = { 1: true, 2: true, 3: false, 4: true };
-    const out = C.changes(7, positions, verdicts, ticked);
-    assert.deepStrictEqual(out, [
-        { id: 1, line_counter_id: 7 },
-        { id: 3, line_counter_id: null },
-        { id: 4, line_counter_id: 7 },
-    ]);
-    assert.deepStrictEqual(C.changes(7, positions, verdicts, { 3: true }), [], 'an unchanged box sends nothing');
-});
 
 check('a two-tag counter shows both tags joined with " + "', () => {
     assert.strictEqual(C.tagsOf({ tag_name: 'Sta020_Fix1_T1.CNT', tag_name_2: 'Sta020_Fix2_T1.CNT' }),
@@ -138,8 +84,6 @@ const block = {
         { id: 2, name: 'POS-2', line_counter_id: 7 },
         { id: 3, name: 'POS-3', line_counter_id: null },
     ],
-    verdicts: { 1: { countable: true, refusal: '' }, 2: { countable: true, refusal: '' }, 3: { countable: true, refusal: '' } },
-    open: 0,
     fmt: fmt,
     clock: clock,
 };
@@ -176,7 +120,7 @@ check('the title: what it counts on, the CATID and the style that expects it, th
 check('the counting rows: MES slots counted first, in-use slots their own lines, unused ones folded', () => {
     const html = C.countingHTML(block);
     const slots = text(rowOf(html, 'slots'));
-    assert.strictEqual(slots, 'MES slots | the counter’s struct, read once a minute | ' +
+    assert.strictEqual(slots, 'MES slots | ' +
         'Prod_Counter_01 · counted · CATID 1315 · count 5234 · rising | ' +
         'Prod_Counter_02 · CATID 1315 · count 5230 · rising · rises with Prod_Counter_01: a second counter of the same stroke, counted once | ' +
         'Prod_Counter_03 · CATID 1316 · count 14 · rising | Count Prod_Counter_03 | ' +
@@ -200,23 +144,14 @@ check('the counting rows: unread slots fold, a slot leading with no record says 
 check('the station list: one row per counter, its tags, its positions as words, its status; then + Add', () => {
     const html = C.countingHTML(block);
     const st = rowOf(html, 'stations');
-    assert.strictEqual(text(st), 'Station counters | count positions where the part leaves the cart, in place of the production counter | ' +
-        'op 10 | Sta010.CNT | Change positions… | Edit | Remove | counts POS-1, POS-2 | ≈1.0 per part · last click 1 stroke ago | ' +
-        'op 20 | Sta020_Fix1.CNT + Sta020_Fix2.CNT | Change positions… | Edit | Remove | counts no position yet | ' +
+    assert.strictEqual(text(st), 'Station counters | where a part leaves the cart, in place of the production counter | ' +
+        'op 10 | Sta010.CNT | Edit | Remove | counts POS-1, POS-2 | ≈1.0 per part · last click 1 stroke ago | ' +
+        'op 20 | Sta020_Fix1.CNT + Sta020_Fix2.CNT | Edit | Remove | counts no position yet | ' +
         'not read yet · clicks per part not measured yet · no click for 40 strokes, more than the deepest run-out seen | ' +
         '+ Add station counter');
     assert.strictEqual(st.split('pd-warn').length, 2, 'amber on the stopped counter only');
-    assert.ok(st.indexOf('data-checklist') < 0, 'no checklist until Change positions…');
+    assert.ok(st.indexOf('data-checklist') < 0 && st.indexOf('sc-checklist') < 0, 'no checklist: Counted at picks the positions');
     assert.ok(st.lastIndexOf('data-act="sc-new"') > st.lastIndexOf('data-sc-row'), '+ Add after the last row');
-});
-
-check('the station list: Change positions… opens that counter’s checklist, the boxes as bound, a save and a cancel', () => {
-    const html = C.countingHTML(copy({ open: 7 }));
-    const list = html.slice(html.indexOf('data-checklist="7"'));
-    assert.ok(html.indexOf('data-checklist="8"') < 0, 'one checklist open');
-    assert.ok(/data-scpos="1" data-sc="7" checked/.test(list) && /data-scpos="2" data-sc="7" checked/.test(list), 'bound here: ticked');
-    assert.ok(/data-scpos="3" data-sc="7">/.test(list), 'POS-3 is not ticked: the counter counts positions already');
-    assert.ok(list.indexOf('data-act="sc-positions" data-sc="7"') > 0 && list.indexOf('data-act="sc-checklist-close"') > 0);
 });
 
 check('the counting rows: hidden until the counter is wired', () => {

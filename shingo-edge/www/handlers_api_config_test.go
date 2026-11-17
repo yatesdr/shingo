@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -44,6 +45,112 @@ func TestApiConfig_ListProcesses(t *testing.T) {
 	}
 }
 
+// TestApiConfig_ListProcesses_CoreBoardsIsEveryPositionALoaderWindow pins
+// core_boards on the list's row: true only for a process with a position and
+// every position (enabled or not, on a screen or not) a Core loader's window,
+// so the page can draw a loader's or unloader's process as Core's to set up.
+// One loader window among press positions is a press; no position at all is
+// not a loader's either. The key is always on the row, false included.
+func TestApiConfig_ListProcesses_CoreBoardsIsEveryPositionALoaderWindow(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	loader, err := domain.NewSharedWindowLoader(domain.LoaderID("LD-BOARDS"), domain.RoleConsume,
+		domain.ReplenishmentOperator, []domain.Window{{Node: "LDW_001"}, {Node: "LDW_002"}}, nil)
+	if err != nil {
+		t.Fatalf("NewSharedWindowLoader: %v", err)
+	}
+	h.engine.(*stubEngine).loaders = oneLoader{l: loader}
+
+	loaderLine := seedProcess(t, db, "CoreBoards Loader")
+	ldrScreen := seedOperatorStation(t, db, loaderLine, "CB-LDR", "CoreBoards Loader Screen")
+	seedProcessNode(t, db, loaderLine, ldrScreen, "LDW_001")
+	off := seedProcessNode(t, db, loaderLine, 0, "LDW_002")
+	if _, err := db.Exec(`UPDATE process_nodes SET enabled = 0 WHERE id = ?`, off); err != nil {
+		t.Fatalf("disable LDW_002: %v", err)
+	}
+	press := seedProcess(t, db, "CoreBoards Press")
+	seedProcessNode(t, db, press, 0, "LDW_001")
+	seedProcessNode(t, db, press, 0, "CB-PRESS-POS")
+	bare := seedProcess(t, db, "CoreBoards Bare")
+
+	resp := doRequest(t, router, "GET", "/api/processes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var rows []map[string]any
+	decodeJSON(t, resp, &rows)
+	got := map[int64]any{}
+	for _, r := range rows {
+		id, _ := r["id"].(float64)
+		v, has := r["core_boards"]
+		if !has {
+			t.Errorf("process %v's row carries no core_boards; the page reads false from the key, not its absence", r["name"])
+		}
+		got[int64(id)] = v
+	}
+	for pid, want := range map[int64]bool{loaderLine: true, press: false, bare: false} {
+		if got[pid] != want {
+			t.Errorf("process %d core_boards = %v, want %v", pid, got[pid], want)
+		}
+	}
+}
+
+// TestApiConfig_ListProcesses_CoreAddedAndRemoved pins what a loader's
+// process's row says Core changed that its screens do not show: core_added,
+// each window of its loaders that is no position here, in the loader's order;
+// core_removed, each position a loader held (loader_window) and none holds
+// now, which keeps the process Core's. A line's row carries neither key, nor
+// does a loader's process with nothing to say.
+func TestApiConfig_ListProcesses_CoreAddedAndRemoved(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	loader, err := domain.NewSharedWindowLoader(domain.LoaderID("LD-CHANGES"), domain.RoleProduce,
+		domain.ReplenishmentOperator, []domain.Window{{Node: "LCW_001"}, {Node: "LCW_003"}, {Node: "LCW_002"}}, []domain.PayloadCode{"PART-LC"})
+	if err != nil {
+		t.Fatalf("NewSharedWindowLoader: %v", err)
+	}
+	h.engine.(*stubEngine).loaders = oneLoader{l: loader}
+
+	changed := seedProcess(t, db, "Changes Loader")
+	screen := seedOperatorStation(t, db, changed, "CH-LDR", "Changes Loader Screen")
+	seedProcessNode(t, db, changed, screen, "LCW_001")
+	gone := seedProcessNode(t, db, changed, screen, "LCW_GONE")
+	if _, err := db.Exec(`UPDATE process_nodes SET loader_window = 1 WHERE id = ?`, gone); err != nil {
+		t.Fatalf("mark LCW_GONE: %v", err)
+	}
+	press := seedProcess(t, db, "Changes Press")
+	seedProcessNode(t, db, press, 0, "LCW_002")
+	seedProcessNode(t, db, press, 0, "CH-PRESS-POS")
+
+	resp := doRequest(t, router, "GET", "/api/processes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var rows []map[string]any
+	decodeJSON(t, resp, &rows)
+	byID := map[int64]map[string]any{}
+	for _, r := range rows {
+		id, _ := r["id"].(float64)
+		byID[int64(id)] = r
+	}
+	got := byID[changed]
+	if got["core_boards"] != true {
+		t.Fatalf("the loader's process core_boards = %v, want true: a removed window keeps it Core's", got["core_boards"])
+	}
+	// LCW_002 is the press's position, so it is not added here.
+	if want := []any{"LCW_003"}; !reflect.DeepEqual(got["core_added"], want) {
+		t.Errorf("core_added = %v, want %v", got["core_added"], want)
+	}
+	if want := []any{"LCW_GONE"}; !reflect.DeepEqual(got["core_removed"], want) {
+		t.Errorf("core_removed = %v, want %v", got["core_removed"], want)
+	}
+	for _, key := range []string{"core_added", "core_removed"} {
+		if _, has := byID[press][key]; has {
+			t.Errorf("the press's row carries %s", key)
+		}
+	}
+}
+
 func TestApiConfig_CreateProcess(t *testing.T) {
 	t.Parallel()
 	h, router := newAdminRouter(t)
@@ -82,6 +189,70 @@ func TestApiConfig_CreateProcess_MissingName(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/processes", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "name is required")
+}
+
+// A TAKEN NAME IS THE PERSON'S TO FIX, not a fault: 409, said in plain words,
+// and as the name field's error so the page can draw it there. Not SQLite's
+// "UNIQUE constraint failed: processes.name (2067)".
+func TestApiConfig_CreateProcess_NameTaken(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	seedProcess(t, db, "Press 6")
+
+	resp := doRequest(t, router, "POST", "/api/processes", map[string]any{"name": "Press 6"}, cookie)
+	assertStatus(t, resp, http.StatusConflict)
+	var got struct {
+		Error  string            `json:"error"`
+		Errors map[string]string `json:"errors"`
+	}
+	decodeJSON(t, resp, &got)
+	if want := `another process is already called "Press 6"`; got.Error != want || got.Errors["name"] != want {
+		t.Errorf("a taken name answered %+v", got)
+	}
+	list, err := db.ListProcesses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Errorf("a refused create left %d processes, want 1", len(list))
+	}
+}
+
+// A rename to a taken name writes NOTHING: the counter and identity edit runs
+// before the name's, so a refusal found only at the name's write left the
+// identity switched and the name as it was.
+func TestApiConfig_UpdateProcess_NameTakenWritesNothing(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	db := dbOf(h)
+	cookie := authCookie(t, h)
+	seedProcess(t, db, "Press 6")
+	pid := seedProcess(t, db, "Press 7")
+
+	body := map[string]any{"name": "Press 6", "description": "renamed", "identity_none": true}
+	resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), body, cookie)
+	assertStatus(t, resp, http.StatusConflict)
+	var got struct {
+		Error  string            `json:"error"`
+		Errors map[string]string `json:"errors"`
+	}
+	decodeJSON(t, resp, &got)
+	if want := `another process is already called "Press 6"`; got.Error != want || got.Errors["name"] != want {
+		t.Errorf("a taken name answered %+v", got)
+	}
+	p, err := db.GetProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "Press 7" || p.Description != "test process" || p.IdentityNone {
+		t.Errorf("a refused rename wrote: name %q, description %q, identity_none %v", p.Name, p.Description, p.IdentityNone)
+	}
+
+	// Its own name is not taken from it: a save that keeps the name saves.
+	resp = doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), map[string]any{"name": "Press 7", "description": "kept"}, cookie)
+	assertStatus(t, resp, http.StatusOK)
 }
 
 func TestApiConfig_UpdateProcess(t *testing.T) {

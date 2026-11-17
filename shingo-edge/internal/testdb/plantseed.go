@@ -211,7 +211,7 @@ func SeedRoutingSet(t *testing.T, db *store.DB, processID int64, by string) {
 		add(c.InboundStaging, domain.RoutingRoleStaging)
 		add(c.OutboundStaging, domain.RoutingRoleStaging)
 	}
-	if err := db.PutRoutingNodes(domain.CoreNodeKinds{}, processID, rows, by); err != nil {
+	if _, err := db.PutRoutingNodes(domain.CoreNodeKinds{}, processID, rows, nil, by); err != nil {
 		t.Fatalf("SeedRoutingSet: put: %v", err)
 	}
 }

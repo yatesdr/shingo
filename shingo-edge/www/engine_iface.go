@@ -196,11 +196,13 @@ type EngineOrchestration interface {
 	// UpdateStationCounter: tagName2 nil keeps the second tag, blank removes it.
 	UpdateStationCounter(id int64, label, tagName string, tagName2 *string) error
 	DeleteStationCounter(id int64) error
-	SetCountedAt(nodeID int64, counterID *int64) error
-	// StationCountable is the binding's rules on one position, binding
-	// nothing: the station card's dry run greys a refused box with its
-	// sentence.
-	StationCountable(nodeID int64) error
+	// SetCountedAtMany writes a process's bindings in one transaction, all or
+	// none (Position settings' Counted at save).
+	SetCountedAtMany(processID int64, bindings []domain.NodeCounter) error
+	// StationCountables is the binding's rules on every live position of a
+	// process, binding nothing, keyed by position id (nil: countable): the
+	// station card's dry run greys a refused box with its sentence.
+	StationCountables(processID int64) (map[int64]error, error)
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
 	// AbandonChangeoverSupply is the operator exit from awaiting_material:

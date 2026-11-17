@@ -75,7 +75,7 @@ function server(summary, items, refuse) {
         if (refuse && refuse[u]) return { status: 500, body: { error: refuse[u] } };
         if (method === 'GET' && u === '/api/catid-health') return { status: summary.status, body: summary.body };
         if (method === 'GET' && items[u]) return { status: items[u].status, body: items[u].body };
-        if (method === 'GET' && /^\/api\/processes\/\d+\/composer$/.test(u)) return { body: EMPTY_COMPOSER };
+        if (method === 'GET' && /^\/api\/processes\/\d+\/composer(\/lists)?$/.test(u)) return { body: EMPTY_COMPOSER };
         return undefined;
     };
 }
@@ -223,7 +223,7 @@ async function listPins() {
 async function processPins() {
     const lines = ['# A process open (?process=4, CELL-IDENT): its health items are read on the Settings tab only;',
         '# the 10 s tick never reads them, and the list\'s summary is not read while a process is open.',
-        '# Requests other than the health routes and the composer read answer 404 (no fixture): listed, not',
+        '# Requests other than the health routes and the composer reads answer 404 (no fixture): listed, not',
         '# pinned for their own sake.'];
     const pd = pageData(STAGE[3]);
     pd.activeProcessId = 4;

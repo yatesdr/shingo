@@ -361,9 +361,10 @@ func (db *DB) migrate() error {
 	db.Exec("UPDATE style_node_claims SET inbound_source = COALESCE(NULLIF(inbound_source_node, ''), inbound_source_node_group) WHERE inbound_source = ''")
 	db.Exec("UPDATE style_node_claims SET outbound_source = COALESCE(NULLIF(outbound_source_node, ''), outbound_source_node_group) WHERE outbound_source = ''")
 
-	// Allowed payload codes and auto-request for manual_swap nodes
+	// Allowed payload codes for manual_swap nodes
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
+	// (auto_request_payload, added beside it, was dropped by Edge v55,
+	// 2026-11-16, and its ALTER removed with it.)
 
 	// REMOVED 2026-09-28: the ALTER that added payload_catalog.cycle_seconds.
 	// Edge v3 drops that column, and this unguarded step re-ran on every boot,
@@ -2697,7 +2698,109 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return true
 			},
 		},
+		{
+			// v55 (2026-11-16): auto_request_payload leaves style_node_claims
+			// and its quarantine mirror. Auto request part named the part a
+			// vacated position asked for; nothing has read it since decffaa0
+			// (2026-04-10), when that request was rewritten to ask for every
+			// allowed part, and the request itself went in c652540c. Every
+			// row's other columns stay as they are. It was in the flow
+			// fingerprint, so a preview held across this upgrade is refused
+			// once as stale and previewed again. The frozen-chain ALTER that
+			// re-added it on every boot was removed in the same change.
+			// Guarded per table, and no Verify, as v48.
+			Version: 55,
+			Name:    "drop_style_node_claims_auto_request_payload",
+			Fn: func(tx *sql.Tx) error {
+				for _, table := range []string{"style_node_claims", ClaimQuarantineTable} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + table + `')
+						WHERE name = 'auto_request_payload'`).Scan(&n); err != nil {
+						return fmt.Errorf("v55 %s: %w", table, err)
+					}
+					if n == 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP COLUMN auto_request_payload`); err != nil {
+						return fmt.Errorf("v55 %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+		},
+		{
+			// v56 (2026-11-16): process_nodes.loader_window, 1 once a Core
+			// loader has held the position's node as a window or home while
+			// the row lived (StationService.TakeLoaders). 0 on every
+			// existing row; the engine marks the held ones at its next start,
+			// from Core's loaders as this Edge holds them. It is what keeps a
+			// loader's process Core's after Core removes one of its windows.
+			// Column-check guarded, like v52.
+			Version: 56,
+			Name:    "process_nodes_loader_window",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes')
+					WHERE name = 'loader_window'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_nodes ADD COLUMN loader_window INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_nodes')
+					WHERE name = 'loader_window'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
+		{
+			// v57 (2026-11-16): Core names the Edge that works a loader.
+			// core_loaders caches the pick (edge_station_uid) and that Edge's
+			// display name; operator_stations.core_loader_key is the loader a
+			// screen was made or taken for (StationService.TakeLoaders), so a
+			// screen whose windows all came off is still that loader's. Blank
+			// on every existing row: no loader names an Edge until Core's next
+			// send says so, and no screen names a loader until the Edge acts
+			// for one. Column-check guarded per column, like v54.
+			Version: 57,
+			Name:    "core_loader_edge_and_screen_loader",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range v57Columns {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil {
+						return fmt.Errorf("v57 %s.%s: %w", c.table, c.column, err)
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+						return fmt.Errorf("v57 %s.%s: %w", c.table, c.column, err)
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				for _, c := range v57Columns {
+					var n int
+					if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name = ?`, c.column).Scan(&n); err != nil || n != 1 {
+						return false
+					}
+				}
+				return true
+			},
+		},
 	}
+}
+
+// v57Columns are v57's columns, each TEXT NOT NULL and empty by default.
+var v57Columns = []struct{ table, column string }{
+	{"core_loaders", "edge_station_uid"},
+	{"core_loaders", "edge_display_name"},
+	{"operator_stations", "core_loader_key"},
 }
 
 // v54Columns are v54's columns (each TEXT, NULL on every existing row).
@@ -3976,9 +4079,21 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	// string. Grouping them would delete real nodes, discard their runtime and
 	// repoint their orders onto an unrelated survivor. Exclude them here, and make
 	// the index below partial on the same predicate so unbound nodes stay possible.
+	// LIVE ROWS ONLY. A retired row (deleted_at set) is history, not a
+	// duplicate: taking a position off retires its row and putting the node
+	// back makes a new one, a pair the live-only unique index allows. Grouping
+	// retired rows "merged" every such pair at the next start, hard-deleting
+	// the retired row with a LOSES warning, and where the retired row was on a
+	// screen and the new one on none, deleting the LIVE one (round 11). The
+	// column is checked because this runs before migrateProcessNodeSoftDelete
+	// adds it to an older database, which then has no retired rows at all.
+	live, err := liveProcessNodesPredicate(db.DB)
+	if err != nil {
+		return err
+	}
 	rows, err := db.Query(`
 		SELECT process_id, core_node_name FROM process_nodes
-		WHERE core_node_name <> ''
+		WHERE core_node_name <> ''` + live + `
 		GROUP BY process_id, core_node_name HAVING COUNT(*) > 1`)
 	if err != nil {
 		return err
@@ -3998,7 +4113,7 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	}
 
 	for _, g := range groups {
-		if err := db.collapseProcessNodeGroup(g); err != nil {
+		if err := db.collapseProcessNodeGroup(g, live); err != nil {
 			return err
 		}
 	}
@@ -4008,12 +4123,30 @@ func (db *DB) collapseDuplicateProcessNodes() error {
 	// other and a process may hold several. Created here rather than in the
 	// canonical DDL because it cannot be built until the collapse above has run:
 	// schema.Apply would fail on any database that still has duplicates.
+	//
+	// Live rows only where the table has retired ones, the shape
+	// migrateProcessNodeSoftDelete gives it: built here without the predicate,
+	// a retired row beside its live replacement fails the index.
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_process_nodes_process_core_name
 		ON process_nodes(process_id, core_node_name)
-		WHERE core_node_name <> ''`); err != nil {
+		WHERE core_node_name <> ''` + live); err != nil {
 		return fmt.Errorf("enforce UNIQUE(process_id, core_node_name): %w", err)
 	}
 	return nil
+}
+
+// liveProcessNodesPredicate is " AND deleted_at IS NULL" where process_nodes
+// has the soft-delete column, and "" on an older database that has none (and
+// so no retired rows): the boot's collapse runs before that column is added.
+func liveProcessNodesPredicate(db *sql.DB) (string, error) {
+	has, err := schema.TableHasColumn(db, "process_nodes", "deleted_at")
+	if err != nil {
+		return "", fmt.Errorf("process_nodes deleted_at: %w", err)
+	}
+	if !has {
+		return "", nil
+	}
+	return " AND deleted_at IS NULL", nil
 }
 
 // dupGroup is one (process, core node) that has more than one process_nodes row.
@@ -4035,7 +4168,7 @@ type dupGroup struct {
 // What is destroyed is announced, and only after the commit that destroyed it —
 // logging a discard that then rolled back would be a lie in the one record anyone
 // has of it.
-func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
+func (db *DB) collapseProcessNodeGroup(g dupGroup, live string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("collapse %s: begin: %w", g.coreNodeName, err)
@@ -4046,7 +4179,7 @@ func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
 	if err := tx.QueryRow(`
 		SELECT pn.id FROM process_nodes pn
 		LEFT JOIN process_node_runtime_states r ON r.process_node_id = pn.id
-		WHERE pn.process_id = ? AND pn.core_node_name = ?
+		WHERE pn.process_id = ? AND pn.core_node_name = ?`+strings.ReplaceAll(live, "deleted_at", "pn.deleted_at")+`
 		ORDER BY (pn.operator_station_id IS NOT NULL) DESC,
 		         COALESCE(r.updated_at, '') DESC,
 		         pn.id ASC
@@ -4056,7 +4189,7 @@ func (db *DB) collapseProcessNodeGroup(g dupGroup) error {
 
 	dead, err := scanIDs(tx.Query(`
 		SELECT id FROM process_nodes
-		WHERE process_id = ? AND core_node_name = ? AND id <> ?`,
+		WHERE process_id = ? AND core_node_name = ? AND id <> ?`+live,
 		g.processID, g.coreNodeName, survivor))
 	if err != nil {
 		return fmt.Errorf("collapse %s: list duplicates: %w", g.coreNodeName, err)

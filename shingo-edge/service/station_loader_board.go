@@ -20,13 +20,28 @@ import (
 // already holds every input in local SQLite: the loaders Core sent down, their
 // windows, and what this edge has bound to which screen.
 //
-// WHY IT DOES NOT AUTO-PROVISION. Core sends every loader to every edge —
-// BuildLoaderInfos takes no edge argument and the node list is unfiltered — so
-// the ONLY thing assigning a loader window to an edge is a human putting that
-// node into one of that edge's processes. Creating boards automatically would
-// remove that decision without replacing it. The button keeps the human
-// answering "which edge, which process" and only removes the tedium of
-// answering it across four screens.
+// WHAT IS TAKEN WITH NO PERSON, AND WHY NO MORE. Core sends every loader to
+// every edge (BuildLoaderInfos takes no edge argument), so for a long time the
+// only thing assigning a loader to an edge was a person putting its windows on
+// one of that edge's screens, and this file made no board on its own. Core now
+// says which Edge works a loader (bin_loaders.edge_station_uid), and the take
+// (station_loader_take.go) acts on that:
+//
+//   - Core names THIS Edge: the Edge makes the loader's process and screen
+//     through CreateLoaderBoard below when it has none, and keeps the windows
+//     Core adds and removes on and off it.
+//   - Core names ANOTHER Edge: nothing is made or offered here (no gap below,
+//     and CreateLoaderBoard refuses), and a screen of it from before loses the
+//     loader's windows but stays.
+//   - Core names NONE: a window Core adds goes onto the one screen already
+//     holding the loader's other windows; with none, the button below keeps
+//     the person answering "which process", as before.
+//
+// What is still never taken: a screen with any position no loader holds is a
+// person's (SPR's Unloader windows sit on two press screens), so the Edge does
+// not write it, and does not make a second screen for a loader whose windows
+// already sit on one. Those stay the person's decision because the plant
+// made them that way, and nothing Core sends says otherwise.
 
 // LoaderBoardGap is a Core loader this edge draws NO operator board for.
 type LoaderBoardGap struct {
@@ -53,14 +68,19 @@ type nodeBinding struct {
 // LoaderBoardGaps lists Core loaders with no board on this edge.
 //
 // ONLY a loader with ZERO of its windows on a station counts, and that threshold
-// is the whole design. Partial binding is NORMAL, not a gap: a dedicated loader
-// of 31 positions may have 22 homes on its board and 9 buffer spots that no
-// operator ever works. Reporting "unbound windows" would put a permanent 9-row
-// complaint on a correctly configured loader — the same failure mode as a
-// threshold warning that fires on every loader that does not use thresholds.
+// is the whole design. Partial binding is NORMAL, not a gap: a loader may have
+// windows that no screen here works. Reporting "unbound windows" would put a
+// permanent complaint on a correctly configured loader — the same failure mode
+// as a threshold warning that fires on every loader that does not use thresholds.
 //
-// A loader with no windows at all is skipped too. There is nothing to bind, and
-// Core's own box already says so (configGapHtml) at the place it can be fixed.
+// ITS WINDOWS ARE WHAT A BOARD WORKS AS TILES (CoreLoader.BoardWindows, the one
+// rule): a dedicated loader's buffer spots are not among them. The board draws
+// those from the loader (the buffer strip), so they are never bound and never
+// counted (SPR's Bin Loader: 22 homes on its screen, 9 buffer spots on none).
+//
+// A loader with no windows at all is skipped too, a loader of buffer spots
+// only among them. There is nothing to bind, and Core's own box already says
+// so (configGapHtml) at the place it can be fixed.
 func (s *StationService) LoaderBoardGaps() ([]LoaderBoardGap, error) {
 	loaders, err := s.db.ListCoreLoaders()
 	if err != nil {
@@ -73,13 +93,12 @@ func (s *StationService) LoaderBoardGaps() ([]LoaderBoardGap, error) {
 
 	var out []LoaderBoardGap
 	for _, l := range loaders {
-		windows := make([]string, 0, len(l.Positions))
-		for _, p := range l.Positions {
-			if p.PositionNode != "" {
-				windows = append(windows, p.PositionNode)
-			}
-		}
+		windows := l.BoardWindows()
 		if len(windows) == 0 {
+			continue
+		}
+		// A loader Core gives another Edge is that Edge's to board.
+		if f, ok := s.loaderFact(l.LoaderKey); ok && f.Case == LoaderCaseElsewhere {
 			continue
 		}
 		gap := LoaderBoardGap{
@@ -147,7 +166,15 @@ func (s *StationService) nodeBindings() (map[string]nodeBinding, error) {
 }
 
 // CreateLoaderBoard makes the operator screen for a Core loader and binds its
-// windows to it, in that order, as one action.
+// windows to it, in that order, as one action. The screen names the loader
+// (core_loader_key). "Make a screen" calls it, and so does the take when Core
+// names this Edge; it refuses a loader Core names another Edge for.
+//
+// ITS WINDOWS, NOT ITS BUFFER SPOTS (CoreLoader.BoardWindows, the rule "Core
+// added" follows too; owner, 2026-11-16: "it shouldnt put its buffer spots on
+// the screen"). The board draws a dedicated loader's buffer spots from the
+// loader; one bound here as well was a second tile with no part, whose sheet
+// offers only CLOSE. A loader of buffer spots only has nothing to bind.
 //
 // One call rather than the two it composes (create station, then set its nodes)
 // because a half-applied version — a screen with no nodes — is exactly the
@@ -171,14 +198,12 @@ func (s *StationService) CreateLoaderBoard(loaderKey string, processID int64) (i
 	if l == nil {
 		return 0, fmt.Errorf("loader %s: not in this edge's Core loader cache", loaderKey)
 	}
-	windows := make([]string, 0, len(l.Positions))
-	for _, p := range l.Positions {
-		if p.PositionNode != "" {
-			windows = append(windows, p.PositionNode)
-		}
-	}
+	windows := l.BoardWindows()
 	if len(windows) == 0 {
-		return 0, fmt.Errorf("loader %s has no windows to bind: give it members on Core first", loaderKey)
+		return 0, fmt.Errorf("loader %s has no windows to bind: give it members on Core first (a buffer spot is drawn from the loader, never bound)", loaderKey)
+	}
+	if f, ok := s.loaderFact(loaderKey); ok && f.Case == LoaderCaseElsewhere {
+		return 0, fmt.Errorf("loader %s: Core names %s to work it, and that Edge makes its screen (set it on Core, under Loaders)", loaderKey, edgeName(f))
 	}
 
 	name := strings.TrimSpace(l.Name)
@@ -189,6 +214,9 @@ func (s *StationService) CreateLoaderBoard(loaderKey string, processID int64) (i
 		ProcessID: processID,
 		Name:      name,
 		Enabled:   true,
+		// The screen is this loader's from here on, by its key: a later
+		// take finds it even after every window has come off it.
+		CoreLoaderKey: loaderKey,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("create board for loader %s: %w", loaderKey, err)
@@ -203,4 +231,13 @@ func (s *StationService) CreateLoaderBoard(loaderKey string, processID int64) (i
 		return 0, fmt.Errorf("bind windows for loader %s: %w", loaderKey, err)
 	}
 	return stationID, nil
+}
+
+// edgeName is how a page names the Edge Core picked: its display name, else
+// its station uid.
+func edgeName(f LoaderFacts) string {
+	if strings.TrimSpace(f.EdgeName) != "" {
+		return f.EdgeName
+	}
+	return f.EdgeUID
 }

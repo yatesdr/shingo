@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"strings"
+
 	"shingo/protocol"
+	"shingoedge/service"
 	"shingoedge/store"
 )
 
@@ -16,6 +19,13 @@ import (
 // refresh, the claim reconcile) is logged and is not a failed apply, because
 // the durable cache is already current and a resend would change nothing.
 func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
+	// The set held before this send, which the take compares it with: in
+	// memory from the last send or the engine's start, else the cache, read
+	// once before it is replaced.
+	held, known := e.stationService.LoaderFactsHeld()
+	if !known {
+		held, known = e.cachedLoaderFacts()
+	}
 	if err := e.db.ReplaceCoreLoaders(loaders); err != nil {
 		e.logFn("core_loaders: cache replace failed (%d loaders) — keeping last-known-good: %v", len(loaders), err)
 		return err
@@ -30,6 +40,17 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 			e.logFn("core_loaders: loader-store snapshot refresh failed — keeping last-known-good: %v", err)
 		}
 	}
+	// What the send makes this Edge take: windows on and off its loader
+	// screens, a screen made where Core's pick became this Edge, and the v56
+	// marks. Nothing when no loader's windows or pick moved (TakeLoaders).
+	// With no held set to compare with, the send runs as a start does:
+	// removals and marks, nothing added.
+	arriving := service.FactsOfInfos(loaders, e.cfg.StationID())
+	if known {
+		e.takeLoaders("node-list sync", held, arriving, false)
+	} else {
+		e.takeLoaders("node-list sync", arriving, arriving, true)
+	}
 	// The board bin lists read the loaders; they rebuild on the next read.
 	e.loaderGeneration.Add(1)
 	// AFTER the cache and the snapshot, never before. A node whose stored claim
@@ -41,6 +62,39 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 	// differs from the one held.
 	e.nudgeBoards()
 	return nil
+}
+
+// cachedLoaderFacts reads Core's loader set from the cache, as this Edge held
+// it before a send or at its start; ok is false when the read failed.
+func (e *Engine) cachedLoaderFacts() ([]service.LoaderFacts, bool) {
+	cls, err := e.db.ListCoreLoaders()
+	if err != nil {
+		e.logFn("core_loaders: read the loader cache for the take: %v", err)
+		return nil, false
+	}
+	return service.FactsOfCoreLoaders(cls, e.cfg.StationID()), true
+}
+
+// takeLoaders runs the take (StationService.TakeLoaders) and logs what it
+// did; a failure is logged and is not the caller's: the cache is current, and
+// the next send or start runs it again.
+func (e *Engine) takeLoaders(when string, held, arriving []service.LoaderFacts, start bool) {
+	if e.stationService == nil {
+		return
+	}
+	res, err := e.stationService.TakeLoaders(held, arriving, start)
+	if err != nil {
+		e.logFn("core_loaders: %s: the loader take stopped: %v", when, err)
+	}
+	if res.Marked > 0 {
+		e.logFn("core_loaders: %s: marked %d position(s) a Core loader holds as loader windows", when, res.Marked)
+	}
+	for _, c := range res.Changes {
+		e.logFn("core_loaders: %s: %s", when, c)
+	}
+	if len(res.Kept) > 0 {
+		e.logFn("core_loaders: %s: kept %s on screen for a running order; taken off once it ends", when, strings.Join(res.Kept, ", "))
+	}
 }
 
 // reconcileLoaderClaims moves every stored manual_swap claim into the quarantine

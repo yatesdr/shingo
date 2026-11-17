@@ -9,12 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
 	"shingoedge/store"
 
 	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
+	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
 
@@ -83,6 +86,54 @@ func TestFlowPreview_WritesTheEngineResultVerbatim(t *testing.T) {
 	}
 }
 
+// TestFlowPreview_StepsReachTheEngineAndTheNoOrdersBody: ?steps=1 is the
+// engine request's Steps, beside ?preflight=1 and independent of it, and off
+// without it. A preview that fires nothing carries its steady state on the
+// hand-built 400 exactly as the engine built it, and without one the key is
+// absent, as on a 200 (omitempty).
+func TestFlowPreview_StepsReachTheEngineAndTheNoOrdersBody(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	stub := h.orchestration.(*stubEngine)
+	stub.flowPreview = &engine.FlowPreview{OrderCount: ptr(1), Findings: []domain.NodeFinding{}, Unresolved: []string{},
+		Preflight: engine.FlowPreflight{State: "unchecked", Missing: []string{}}, Fingerprint: "f"}
+	for _, c := range []struct {
+		query            string
+		steps, preflight bool
+	}{{"", false, false}, {"?steps=1", true, false}, {"?steps=1&preflight=1", true, true}, {"?preflight=1", false, true}, {"?steps=0", false, false}} {
+		resp := doRequest(t, router, "POST", "/api/processes/1/flow/preview"+c.query, map[string]any{"to_style_id": 7, "cells": []any{}}, nil)
+		assertStatus(t, resp, http.StatusOK)
+		got := stub.flowPreviewCalls[len(stub.flowPreviewCalls)-1]
+		if got.Steps != c.steps || got.Preflight != c.preflight {
+			t.Errorf("%q: the engine was asked steps %v preflight %v, want %v %v", c.query, got.Steps, got.Preflight, c.steps, c.preflight)
+		}
+	}
+
+	steady := []engine.SteadyCell{{CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot", Legs: []engine.SteadyLeg{
+		{Leg: engine.SteadyLegA, Kind: engine.SteadyKindComplex, Steps: []protocol.ComplexOrderStep{{Action: "pickup", Node: "PLN_01"}}},
+	}}, {CoreNodeName: "PLN_02", Role: "produce", SwapMode: "two_robot", Error: "needs a destination", Legs: []engine.SteadyLeg{}}}
+	want, err := json.Marshal(steady)
+	testutil.MustNoErr(t, err, "json.Marshal")
+	stub.flowPreview = &engine.FlowPreview{OrderCount: ptr(0), Findings: []domain.NodeFinding{}, Unresolved: []string{},
+		Preflight: engine.FlowPreflight{State: "unchecked", Missing: []string{}}, Fingerprint: "f", Steady: steady}
+	stub.flowPreviewErr = &engine.FlowNoOrdersError{Preview: stub.flowPreview}
+	for _, with := range []bool{true, false} {
+		if !with {
+			stub.flowPreview.Steady = nil
+		}
+		resp := doRequest(t, router, "POST", "/api/processes/1/flow/preview?steps=1", map[string]any{"to_style_id": 7}, nil)
+		assertStatus(t, resp, http.StatusBadRequest)
+		var body map[string]json.RawMessage
+		testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&body), "decode")
+		raw, ok := body["steady"]
+		switch {
+		case with && string(raw) != string(want):
+			t.Errorf("no-orders steady:\n got  %s\n want %s", raw, want)
+		case !with && ok:
+			t.Errorf("no-orders body carries steady %s with none asked for", raw)
+		}
+	}
+}
+
 // TestFlowPreview_StatusMapping: no orders is 400 with the reason and the
 // preview's findings/unresolved; the seam's gates are 409; anything else 400.
 func TestFlowPreview_StatusMapping(t *testing.T) {
@@ -120,7 +171,7 @@ func TestFlowPreview_StatusMapping(t *testing.T) {
 // TestFlowSave_StatusMappingAndOnePublish: gate off is 403 with the named
 // message; the seam's gates 409; stale 409 with stale:true; a validation
 // refusal 422 with findings; success 200 with the engine's result, the
-// station's NAME stamped as called_by, and EXACTLY ONE per-process publish —
+// session's person stamped as called_by, and EXACTLY ONE per-process publish —
 // none on any refusal.
 func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
@@ -159,11 +210,11 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 		t.Errorf("422 body = %v, want findings", b)
 	}
 
-	// The station is required and must belong to the process.
+	// A station the body names must belong to the process. A body naming
+	// none is a process with no screen, and saves
+	// (TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle).
 	stub.flowSaveErr = nil
 	stub.flowSaveResult = &engine.FlowSaveResult{Fingerprint: "def", Written: 2, Deleted: 1}
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(map[string]any{"station_id": 0}), nil)
-	assertStatus(t, resp, http.StatusBadRequest)
 	resp = doRequest(t, router, "POST", "/api/processes/2/flow/save", body(nil), nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 
@@ -174,29 +225,22 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 		t.Fatalf("a refused save published %v; a refusal has no side effects", got)
 	}
 
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(nil), nil)
+	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(nil), authCookie(t, h))
 	assertStatus(t, resp, http.StatusOK)
 	if b := flowBody(t, resp); b["fingerprint"] != "def" || b["written"] != float64(2) || b["deleted"] != float64(1) {
 		t.Errorf("200 body = %v, want the engine's result", b)
 	}
 	last := stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
-	if last.CalledBy != "Press 400" || last.Fingerprint != "abc" || last.ToStyleID != 7 {
-		t.Errorf("SaveFlow request = %+v, want the station's NAME as called_by and the body's fields", last)
+	if last.CalledBy != "testadmin" || last.Fingerprint != "abc" || last.ToStyleID != 7 {
+		t.Errorf("SaveFlow request = %+v, want the session's person as called_by and the body's fields", last)
 	}
 	rec.waitFor(t, []int64{1})
 }
 
-// TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller (owner ruling R1).
-//
-// Both surfaces POST the same route, and until now both stamped
-// domain.ClaimSourceHMI with the station's name — so a claim could not say
-// which screen wrote it, and the HMI's set-up card could not say where a flow
-// came from. The fix keeps the rule that made the routing origin right: the
-// SERVER decides authorship, and nothing in the body declares it.
-//
-// The authenticated caller is the evidence. An admin session is a person on
-// the desktop; no session is a station on the floor. One route, one engine
-// call, a `source` argument.
+// TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller (owner ruling R1): the
+// SERVER decides authorship, and nothing in the body declares it. The route is
+// behind login (TestRouter_FlowSaveIsBehindLogin) — only the desktop saves a
+// flow — so the author is the session's person, stamped admin.
 func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
 	db := dbOf(h)
@@ -212,23 +256,11 @@ func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	}
 	body := map[string]any{"to_style_id": 7, "cells": []any{}, "fingerprint": "abc", "station_id": stationID}
 
-	// No session: the station saved it.
-	resp := doRequest(t, router, "POST", "/api/processes/1/flow/save", body, nil)
+	// A person on the desktop saved it.
+	cookie := authCookie(t, h)
+	resp := doRequest(t, router, "POST", "/api/processes/1/flow/save", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	last := stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
-	if last.Source != domain.ClaimSourceHMI {
-		t.Errorf("an unauthenticated save stamped source %q, want %q — that is a station on the floor",
-			last.Source, domain.ClaimSourceHMI)
-	}
-	if last.CalledBy != "Press 400" {
-		t.Errorf("called_by = %q, want the station's name", last.CalledBy)
-	}
-
-	// An admin session: a person on the desktop saved it.
-	cookie := authCookie(t, h)
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	last = stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
 	if last.Source != domain.ClaimSourceAdmin {
 		t.Errorf("an authenticated save stamped source %q, want %q — that is the desktop", last.Source, domain.ClaimSourceAdmin)
 	}
@@ -243,12 +275,12 @@ func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 	for k, v := range body {
 		lie[k] = v
 	}
-	lie["source"] = domain.ClaimSourceAdmin
+	lie["source"] = domain.ClaimSourceHMI
 	lie["called_by"] = "not me"
-	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", lie, nil)
+	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", lie, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	last = stub.flowSaveCalls[len(stub.flowSaveCalls)-1]
-	if last.Source != domain.ClaimSourceHMI || last.CalledBy != "Press 400" {
+	if last.Source != domain.ClaimSourceAdmin || last.CalledBy != "testadmin" {
 		t.Errorf("the body changed the authorship: source %q called_by %q", last.Source, last.CalledBy)
 	}
 }
@@ -307,6 +339,81 @@ func TestFlowSave_CarriesPresetProvenanceWhenTheBodyHasIt(t *testing.T) {
 	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save",
 		body(map[string]any{"source_preset_id": 42}), nil)
 	assertStatus(t, resp, http.StatusBadRequest)
+}
+
+// TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle: a style's flow is
+// saved on the desktop by a person, and nothing in the save reads a station —
+// so a process that has no operator screen yet saves one. The press is set up
+// before anybody hangs a screen on it, and refusing the save until a screen
+// exists made the screen a prerequisite of the setup it is part of.
+//
+// Through the real engine, so the claim is on the style afterwards and not
+// merely handed to a stub. A station that IS named still has to be this
+// process's: a body naming another process's screen is refused before the
+// engine runs, and the style is left as it was.
+func TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle(t *testing.T) {
+	db := testdb.Open(t)
+	pid, err := db.CreateProcess("NOSCREEN-PROC", "no operator screen", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	for i, name := range []string{"NOSCREEN-A", "NOSCREEN-B"} {
+		id, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: name, Name: name, Sequence: i + 1, Enabled: true})
+		testutil.MustNoErr(t, err, "position "+name)
+		_, err = db.EnsureProcessNodeRuntime(id)
+		testutil.MustNoErr(t, err, "runtime "+name)
+	}
+	styleID, err := db.CreateStyle("NOSCREEN-STYLE", "", pid)
+	testutil.MustNoErr(t, err, "create style")
+	if screens, err := db.ListOperatorStationsByProcess(pid); err != nil || len(screens) != 0 {
+		t.Fatalf("the fixture's process has screens %v (%v); this test is about one with none", screens, err)
+	}
+	otherPID, err := db.CreateProcess("NOSCREEN-OTHER", "", "", "", false)
+	testutil.MustNoErr(t, err, "create other process")
+	otherStation, err := db.CreateOperatorStation(stations.Input{ProcessID: otherPID, Code: "other-screen", Name: "Other Screen", Enabled: true})
+	testutil.MustNoErr(t, err, "create other station")
+
+	h, router := realFlowRouter(t, db)
+	cookie := authCookie(t, h)
+	cells := []domain.FlowCell{{
+		CoreNodeName: "NOSCREEN-A", Role: "consume", SwapMode: "two_robot", PayloadCode: "PART-NOSCREEN",
+		InboundStaging: "NOSCREEN-STG", InboundSource: "NOSCREEN-SRC", OutboundDestination: "NOSCREEN-DST",
+	}}
+	pv := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/flow/preview",
+		map[string]any{"to_style_id": styleID, "cells": cells}, cookie)
+	fingerprint, _ := flowBody(t, pv)["fingerprint"].(string)
+	if fingerprint == "" {
+		t.Fatal("the preview returned no fingerprint; the save below would be refused as stale")
+	}
+	body := map[string]any{"to_style_id": styleID, "cells": cells, "fingerprint": fingerprint}
+
+	// A station of ANOTHER process is still refused, and nothing is written.
+	wrong := map[string]any{"station_id": otherStation}
+	for k, v := range body {
+		wrong[k] = v
+	}
+	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/flow/save", wrong, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if msg, _ := flowBody(t, resp)["error"].(string); msg != "station Other Screen is not a station of this process" {
+		t.Errorf("the refusal reads %q, want it to name the other process's screen", msg)
+	}
+	if got, err := db.ListStyleNodeClaims(styleID); err != nil || len(got) != 0 {
+		t.Fatalf("a refused save left claims %v (%v)", got, err)
+	}
+
+	// No station at all: the save goes through.
+	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/flow/save", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	if b := flowBody(t, resp); b["written"] != float64(1) {
+		t.Errorf("200 body = %v, want one cell written", b)
+	}
+	saved, err := db.ListStyleNodeClaims(styleID)
+	testutil.MustNoErr(t, err, "reload claims")
+	if len(saved) != 1 || saved[0].CoreNodeName != "NOSCREEN-A" || saved[0].PayloadCode != "PART-NOSCREEN" {
+		t.Fatalf("the style holds %+v, want the one cell the save sent", saved)
+	}
+	if saved[0].Source != domain.ClaimSourceAdmin || saved[0].CalledBy != "testadmin" {
+		t.Errorf("the claim reads source %q called_by %q; the author is the session's person, screen or no screen",
+			saved[0].Source, saved[0].CalledBy)
+	}
 }
 
 // TestChangeoverStart_FlowFingerprintIsCheckedFirst: a stale flow_fingerprint

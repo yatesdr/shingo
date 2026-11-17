@@ -922,7 +922,7 @@ func TestALN011_TheNightReplayed(t *testing.T) {
 	processID, nodeID, styleID, claimID := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
 	_, err := db.DB.Exec(`UPDATE payload_catalog SET code='74575', uop_capacity=? WHERE code='WIDGET-A'`, pack)
 	testutil.MustNoErr(t, err, "part 74575, pack 132")
-	_, err = db.DB.Exec(`UPDATE style_node_claims SET payload_code='74575', auto_request_payload='74575', strict_pack=1 WHERE id=?`, claimID)
+	_, err = db.DB.Exec(`UPDATE style_node_claims SET payload_code='74575', strict_pack=1 WHERE id=?`, claimID)
 	testutil.MustNoErr(t, err, "the strict claim")
 	bin23 := int64(23)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin23, 1, pack), "CARRIER-0011 full at 528")

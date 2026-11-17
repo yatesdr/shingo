@@ -186,6 +186,59 @@ func TestPositionIsBuffer(t *testing.T) {
 	}
 }
 
+// TestIsBoardWindow: the one rule for which members a board works as tiles,
+// and so which a screen holds. A dedicated loader's buffer spot is the only
+// member that is not one; a shared loader's window is one whatever kind Core
+// sends with it, since the board draws every shared window as a tile.
+func TestIsBoardWindow(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		layout LoaderLayout
+		kind   string
+		want   bool
+	}{
+		{LayoutDedicatedPositions, HomeKindHome, true},
+		{LayoutDedicatedPositions, HomeKindBuffer, false},
+		{LayoutDedicatedPositions, "", true}, // an older Core sends no kind: a home
+		{LayoutSharedWindow, HomeKindHome, true},
+		{LayoutSharedWindow, "", true},
+		{LayoutSharedWindow, HomeKindBuffer, true},
+	} {
+		if got := IsBoardWindow(c.layout, c.kind); got != c.want {
+			t.Errorf("IsBoardWindow(%s, %q) = %v, want %v", c.layout, c.kind, got, c.want)
+		}
+	}
+}
+
+// TestLoader_BoardWindows: the members a board works as tiles, in Core's
+// order. Every window of a shared loader; every home of a dedicated one,
+// an unpinned home included; never a buffer spot, which the board draws from
+// the loader itself (the buffer strip).
+func TestLoader_BoardWindows(t *testing.T) {
+	t.Parallel()
+	shared, err := NewSharedWindowLoader("loader:S", RoleProduce, ReplenishmentOperator,
+		[]Window{{Node: "W2"}, {Node: "W1"}}, []PayloadCode{"PA"})
+	if err != nil {
+		t.Fatalf("shared: %v", err)
+	}
+	dedicated, err := NewDedicatedPositionsLoader("loader:D", RoleProduce, ReplenishmentThreshold, []Position{
+		{Node: "H1", Payload: "PA", HomeKind: HomeKindHome},
+		{Node: "B1", HomeKind: HomeKindBuffer},
+		{Node: "H2", HomeKind: HomeKindHome},
+	})
+	if err != nil {
+		t.Fatalf("dedicated: %v", err)
+	}
+	for _, c := range []struct {
+		l    *Loader
+		want []NodeID
+	}{{shared, []NodeID{"W2", "W1"}}, {dedicated, []NodeID{"H1", "H2"}}} {
+		if got := c.l.BoardWindows(); !slices.Equal(got, c.want) {
+			t.Errorf("%s BoardWindows() = %v, want %v", c.l.ID(), got, c.want)
+		}
+	}
+}
+
 // TestLoaderFlowOptions pins the config carried on the aggregate so the completion
 // handlers read outbound off the Loader instead of the legacy claim. Unset fields
 // are empty.

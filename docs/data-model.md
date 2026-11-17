@@ -433,7 +433,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`bin_loader_homes`](#core-bin_loader_homes) | 7 |  | [`bin_loaders`](#core-bin_loaders), [`nodes`](#core-nodes) |
 | [`bin_loader_payloads`](#core-bin_loader_payloads) | 4 | `loader_id`, `payload_code` | [`bin_loaders`](#core-bin_loaders) |
 | [`bin_loader_quotas`](#core-bin_loader_quotas) | 3 | `loader_id`, `bin_type_id` | [`bin_loaders`](#core-bin_loaders), [`bin_types`](#core-bin_types) |
-| [`bin_loaders`](#core-bin_loaders) | 24 | `id` | `bin_loaders` |
+| [`bin_loaders`](#core-bin_loaders) | 25 | `id` | `bin_loaders` |
 | [`bin_types`](#core-bin_types) | 13 | `id` | [`carrier_families`](#core-carrier_families), `bin_types` |
 | [`bin_uop_delta_daily`](#core-bin_uop_delta_daily) | 13 | `day`, `bin_id`, `epoch_seq`, `payload_code`, `reason`, `actor` |  |
 | [`bin_uop_exception`](#core-bin_uop_exception) | 13 | `id` |  |
@@ -632,6 +632,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `drains_leftover` | `boolean` | yes | `false` |  |
 | `drains_unverified` | `boolean` | yes | `false` |  |
 | `no_clear_partials` | `boolean` | yes | `false` |  |
+| `edge_station_uid` | `text` | yes | `''` |  |
 
 - Check `(layout = ANY (ARRAY['shared_window', 'dedicated_positions']))`
 - Check `(replenishment = ANY (ARRAY['operator', 'threshold']))`
@@ -1947,7 +1948,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`changeover_station_tasks`](#edge-changeover_station_tasks) | 5 | `id` | [`operator_stations`](#edge-operator_stations), [`process_changeovers`](#edge-process_changeovers) |
 | [`core_loader_payloads`](#edge-core_loader_payloads) | 3 | `loader_key`, `payload_code` |  |
 | [`core_loader_positions`](#edge-core_loader_positions) | 6 | `loader_key`, `position_node` |  |
-| [`core_loaders`](#edge-core_loaders) | 17 | `loader_key` |  |
+| [`core_loaders`](#edge-core_loaders) | 19 | `loader_key` |  |
 | [`counter_snapshots`](#edge-counter_snapshots) | 11 | `id` | [`reporting_points`](#edge-reporting_points) |
 | [`demand_origins_open`](#edge-demand_origins_open) | 17 | `episode_key` |  |
 | [`feed_copy`](#edge-feed_copy) | 5 | `feed` |  |
@@ -1957,7 +1958,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`inventory_delta_seq`](#edge-inventory_delta_seq) | 6 | `scope_kind`, `scope_key`, `epoch` |  |
 | [`line_counters`](#edge-line_counters) | 12 | `id` |  |
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
-| [`operator_stations`](#edge-operator_stations) | 13 | `id` | [`processes`](#edge-processes) |
+| [`operator_stations`](#edge-operator_stations) | 14 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
 | [`orders`](#edge-orders) | 45 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
@@ -1966,7 +1967,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`process_changeovers`](#edge-process_changeovers) | 15 | `id` | [`processes`](#edge-processes), [`styles`](#edge-styles) |
 | [`process_groups`](#edge-process_groups) | 5 | `id` |  |
 | [`process_node_runtime_states`](#edge-process_node_runtime_states) | 32 | `id` | [`orders`](#edge-orders), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
-| [`process_nodes`](#edge-process_nodes) | 16 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
+| [`process_nodes`](#edge-process_nodes) | 17 | `id` | [`operator_stations`](#edge-operator_stations), [`processes`](#edge-processes) |
 | [`process_payloads`](#edge-process_payloads) | 4 | `id` | [`processes`](#edge-processes) |
 | [`process_routing_nodes`](#edge-process_routing_nodes) | 10 | `id` | [`processes`](#edge-processes) |
 | [`processes`](#edge-processes) | 16 | `id` | [`process_groups`](#edge-process_groups), [`styles`](#edge-styles) |
@@ -1979,8 +1980,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 48 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 52 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2126,6 +2127,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `board_hides_idle` | `INTEGER` | yes | `0` |  | How the station's board draws (Edge v23). Core owns both (bin_loaders.board_hides_idle, board_shows_all_parts). |
 | `board_shows_all_parts` | `INTEGER` | yes | `0` |  |  |
 | `no_clear_partials` | `INTEGER` | yes | `0` |  | 1 = a dedicated loader whose Clear partials is off: the board offers no home clear (Edge v46). Core owns it (bin_loaders.no_clear_partials). |
+| `edge_station_uid` | `TEXT` | yes | `''` |  | The station uid of the Edge Core names to work this loader, and that Edge's display name (Edge v57). '' = Core names none (or predates the field). Core owns both (bin_loaders.edge_station_uid). |
+| `edge_display_name` | `TEXT` | yes | `''` |  |  |
 | `synced_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 
 #### Edge: `counter_snapshots`
@@ -2267,21 +2270,22 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Edge: `operator_stations`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `INTEGER` | yes |  | PK autoincrement |
-| `process_id` | `INTEGER` | yes |  | → `processes(id) ON DELETE CASCADE` |
-| `code` | `TEXT` | yes |  |  |
-| `name` | `TEXT` | yes |  |  |
-| `note` | `TEXT` | yes | `''` |  |
-| `area_label` | `TEXT` | yes | `''` |  |
-| `sequence` | `INTEGER` | yes | `0` |  |
-| `controller_node_id` | `TEXT` | yes | `''` |  |
-| `enabled` | `INTEGER` | yes | `1` |  |
-| `health_status` | `TEXT` | yes | `'offline'` |  |
-| `last_seen_at` | `TEXT` |  |  |  |
-| `created_at` | `TEXT` | yes | `(datetime('now'))` |  |
-| `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `INTEGER` | yes |  | PK autoincrement |  |
+| `process_id` | `INTEGER` | yes |  | → `processes(id) ON DELETE CASCADE` |  |
+| `code` | `TEXT` | yes |  |  |  |
+| `name` | `TEXT` | yes |  |  |  |
+| `note` | `TEXT` | yes | `''` |  |  |
+| `area_label` | `TEXT` | yes | `''` |  |  |
+| `sequence` | `INTEGER` | yes | `0` |  |  |
+| `controller_node_id` | `TEXT` | yes | `''` |  |  |
+| `enabled` | `INTEGER` | yes | `1` |  |  |
+| `health_status` | `TEXT` | yes | `'offline'` |  |  |
+| `last_seen_at` | `TEXT` |  |  |  |  |
+| `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
+| `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
+| `core_loader_key` | `TEXT` | yes | `''` |  | The Core loader this screen was made or taken for (Edge v57), its loader_key; '' = none. Written by the Edge, never by a screen's edit. |
 
 - Unique (process_id, code)
 
@@ -2471,6 +2475,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_tag_name` | `TEXT` | yes | `''` |  |  |
 | `curtain_safe_value` | `INTEGER` |  |  |  |  |
 | `line_counter_id` | `INTEGER` |  |  |  | The station counter this position is counted at (line_counters.id); NULL = counted by the process's production counter. No FK (the edge runs with foreign keys off): every read LEFT JOINs line_counters, so a binding to a deleted counter reads as unbound. |
+| `loader_window` | `INTEGER` | yes | `0` |  | 1 once a Core loader has held this position's node as a window or a home while the row lived (v56). Never cleared on a live row: it is how a window Core later removes is still known as one, so its process stays a loader's and its page says Core removed it. |
 
 - Unique (process_id, code) where `deleted_at IS NULL`
 - Unique (process_id, core_node_name) where `core_node_name <> '' AND deleted_at IS NULL`
@@ -2656,7 +2661,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `strict_pack` | `INTEGER` | yes | `0` |  | strict_pack (v26): a produce claim's bound bin is charged only up to its pack (the catalog's uop_capacity for the claim's part); the ticks past it are held on the seat for the next bin of the part. 0 = uncapped, today's count. |
 | `pack_tolerance_pct` | `INTEGER` | yes | `0` |  | pack_tolerance_pct (v34): a strict claim's miscount tolerance, a percent of the pack (0-20). A station's RELEASE of a bin within it of the pack declares the bin full; further short ships the real count. 0 = no tolerance: the real count always ships. |
 | `allowed_payload_codes` | `TEXT` | yes | `''` |  |  |
-| `auto_request_payload` | `TEXT` | yes | `''` |  |  |
 | `keep_staged_node` | `TEXT` | yes | `''` |  | The keep-staged node: one more node this line's full or empty comes from instead of inbound_source, with a spare kept standing on it. Blank is off. Replaced the keep_staged flag, which armed a spot on inbound_staging and so gave that column a second meaning. |
 | `paired_core_node` | `TEXT` | yes | `''` |  |  |
 | `auto_confirm` | `INTEGER` | yes | `0` |  |  |
@@ -2665,7 +2669,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `reuse_compatible_bins` | `INTEGER` | yes | `0` |  | DEAD AS A SWITCH. It armed the no-swap shortcut for a press-index cell whose next style makes the same part; that shortcut is baked in (ApplyReuseCompatibleBinsShortcut, 2026-09-09) and reads this column no more. Kept, and flowspec marks it Unused rather than Forbidden, so the seven Hopkinsville rows that carry it keep their value instead of being cleared by the next save. |
 | `changeover_evac_nodes` | `TEXT` | yes | `''` |  | Which core NODES hold bins that block the tooling change, as a JSON array of node names ("PLN_001"/"PLN_002"). Same shape and same reasoning as allowed_payload_codes: a small set on one row rather than a child table, because an index-paired node has no claim row of its own to hang it on. Empty = nothing marked = today's behaviour. |
 | `changeover_carryover_disposition` | `TEXT` | yes | `'replace'` |  | What happens to a marked position's bin when its part CARRIES OVER — the same payload on that position in both styles. "replace" (the default) clears it like any other marked position and brings a fresh carrier through staging; "keep_lineside" leaves the bin where it is, because that part does not have to move for the setup; "outbound_staging" walks the SAME bin to the cell's outbound staging spot to clear the floor and brings it back on the tooling-done release. Never consulted when the payloads differ — the bin has to change anyway. |
-| `refill_by` | `TEXT` | yes | `'clearing_robot'` |  | Which robot of a press-index pair brings the back position its next carrier: clearing_robot (Robot 1, R1 evacuates and refills) or index_robot (Robot 2, R2 indexes and refills). Describes the cell's hardware, so UpsertClaim warns when two styles on one press disagree. |
+| `refill_by` | `TEXT` | yes | `'clearing_robot'` |  | Which robot of a press-index pair brings the back position its next carrier: clearing_robot (Robot 1, R1 evacuates and refills) or index_robot (Robot 2, R2 indexes and refills). The style's choice: two styles on one press may differ (the part decides), and nothing warns. |
 | `key_route` | `TEXT` | yes | `''` |  | SEER robot-SELECTION hints, carried through to the fleet request. key_route is a JSON array of map points to prefer passing through, IN ORDER; key_task is 'load'/'unload'. Both empty on every claim until one is configured, and empty means the fleet picks freely. A point that does not resolve terminates the robot's waybill on issue, which is why ValidateNodeClaim checks each one against Core's synced node list. |
 | `key_task` | `TEXT` | yes | `''` |  |  |
 | `auto_push` | `INTEGER` | yes | `0` |  |  |
@@ -2712,7 +2716,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `strict_pack` | `INT` |  |  |  |
 | `pack_tolerance_pct` | `INT` |  |  |  |
 | `allowed_payload_codes` | `TEXT` |  |  |  |
-| `auto_request_payload` | `TEXT` |  |  |  |
 | `keep_staged_node` | `TEXT` |  |  |  |
 | `paired_core_node` | `TEXT` |  |  |  |
 | `auto_confirm` | `INT` |  |  |  |

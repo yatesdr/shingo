@@ -703,6 +703,7 @@ function answerStations(net) {
     net.on('GET', '/api/nodes', { json: fx.nodes })
         .on('GET', '/api/payloads', { json: fx.payloads })
         .on('GET', '/api/loader/list', { json: { loaders: STATIONS } })
+        .on('GET', '/api/edges', { json: [] })
         .on('GET', '/api/bin-types', { json: { bin_types: [] } })
         .on('POST', '/api/loader/', { json: { status: 'ok' } });
 }
@@ -793,7 +794,7 @@ async function loadersPins() {
     L.push('== page load (init)');
     flush(L, t.net, t.rec);
     const calls = refreshCallers();
-    L.push('', '== refresh() re-reads /api/nodes and /api/loader/list (the catalogue, /api/payloads, once a page); called ' + calls.length + ' times, from:');
+    L.push('', '== refresh() re-reads /api/nodes, /api/loader/list and, signed in, /api/edges (the catalogue, /api/payloads, once a page); called ' + calls.length + ' times, from:');
     L.push('  ' + calls.join(', '));
 
     // --- C11: what each armed slot lights --------------------------------

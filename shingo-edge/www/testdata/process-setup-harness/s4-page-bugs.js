@@ -87,9 +87,11 @@ async function applyTick(page) {
 const COUNTER = { id: 51, label: 'Station 1', tag_name: 'S1.Count', tag_name_2: '', last_poll_at: '', ratio: null, strokes_since_click: 0, stopped: false };
 const COUNTER_ROUTES = route([
     ['GET', /^\/api\/processes\/1\/station-counters$/, () => [COUNTER]],
-    ['GET', /^\/api\/process-nodes\/\d+\/countable$/, () => ({ countable: true })],
+    // The dry run, one read for the whole process: every position countable.
+    ['GET', /^\/api\/processes\/1\/countable$/, () => Object.fromEntries(T.FX.server.processNodes
+        .filter(n => n.process_id === 1).map(n => [n.id, { countable: true, refusal: '' }]))],
     ['POST', /^\/api\/processes\/1\/station-counters$/, () => ({ id: 52 })],
-    ['PUT', /^\/api\/process-nodes\/\d+\/counted-at$/, OK],
+    ['PUT', /^\/api\/processes\/1\/counted-at$/, OK],
 ]);
 // A Core node list in Core's map order, with a group, a typed node and two
 // nodes with no type (Core sends '' for a plain node).
@@ -189,25 +191,27 @@ block({
         return ['the title: ' + JSON.stringify(title), title === 'Press A', 'said ' + JSON.stringify(title)];
     }],
 });
+// THE PART SET IS SAID ONCE (round 5, owner 2026-11-15): under the Parts
+// heading, with no field label saying Parts again (which, drawn as a sheet's
+// .pd-fld, was also the wrong grid; slice 4).
 block({
-    title: 'smoke: Settings\' Parts row is on the settings grid, as every other row is',
+    title: 'smoke: Settings\' part set sits under its Parts heading, not labelled Parts a second time',
     open: () => ({ hash: '#tab=settings' }),
     act: async () => {},
     checks: [r => {
         const html = String(r.page.root.innerHTML);
-        const row = (/<div class="(pd-s?fld)"><label>Parts<small>/.exec(html) || ['', 'missing'])[1];
-        return ['the Parts row is a .pd-sfld', row === 'pd-sfld', 'drawn as .' + row + ' (the sheets\' 230 px grid)'];
+        const labelled = /<label>Parts<small>/.test(html);
+        const box = /<h2>Parts<\/h2>[\s\S]*?<div class="pd-partsbox">/.test(html);
+        return ['the part set is under the heading, with no second Parts label', box && !labelled,
+            (labelled ? 'a field label still says Parts' : '') + (box ? '' : ' no .pd-partsbox under the heading')];
     }],
 });
 
-// Smoke (browser walk 2026-11-11): Add process drew "Show on map" only after a
-// process had been opened in the same page load, from that process's composer
-// read the list still held, so it learned to read a composer of its own as it
-// opened. The sheet's map was removed (2026-11-14, the shared-map brief's tier
-// A1) and that read with it: nothing else on the sheet read its answer. So the
-// sheet makes no composer read, and draws no Show on map. (The second smoke
-// block here, "a process opened before lends Add process neither its map nor
-// its zoom", went with it: there is no map or zoom left to lend.)
+// The Add process sheet's map went with the sheet's routing set (slice 4):
+// Add asks a name and a group, and the routing set is Settings'. The map
+// itself was removed on main too (2026-11-14, the shared-map brief's tier A1),
+// and with it the composer read the sheet made to draw it: the sheet makes no
+// composer read, and draws no Show on map.
 const sheetToggle = page => !!page.scrim.querySelector('[data-act="add-showmap"]') ||
     /Show on map/.test(String((page.scrim.querySelector('.layer-body') || {}).innerHTML || ''));
 block({
@@ -217,7 +221,7 @@ block({
     checks: [
         r => ['no composer read', r.calls.filter(c => c.method === 'GET' && /\/composer$/.test(c.url.split('?')[0])).length === 0,
             r.calls.map(lineOf).join(' · ') || 'no request'],
-        r => ['no Show on map on the routing set\'s heading', !sheetToggle(r.page), 'a map toggle is drawn'],
+        r => ['no Show on map on the sheet', !sheetToggle(r.page), 'a map toggle is drawn'],
     ],
 });
 
@@ -235,7 +239,7 @@ block({
         }
         return { seen: seen };
     },
-    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> screens | #tab=recipes -> settings | #style=2 -> flows style 2',
+    checks: [r => ['each hash lands on its tab', r.seen.join(' | ') === '#tab=settings -> settings | #tab=screens -> settings | #tab=recipes -> settings | #style=2 -> flows style 2',
         r.seen.join(' | ')]],
 });
 
@@ -287,7 +291,29 @@ block({
     }],
 });
 
-// Census #3 — a routing name added in Settings, then the Styles tab.
+// The set pick on Settings sits in #pd-root: a click on a box's title
+// bubbles through the page's onClick, which opens a process from any
+// [data-open] it finds. The title carried one once, and the click opened
+// process NaN.
+block({
+    title: 'set pick: a click on a box of Settings\' set pick opens that box and navigates nowhere',
+    open: () => ({ hash: '#tab=settings' }),
+    act: async page => {
+        const host = page.byId('sp-st');
+        const box = host.querySelectorAll('.setpick-box').find(b => b.getAttribute('data-box') === 'destination');
+        box.querySelector('.setpick-t').click();
+        await page.settle();
+    },
+    checks: [
+        r => ['the box opens', !!r.page.S.setPicks.st && r.page.S.setPicks.st.api.active() === 'destination',
+            'open ' + (r.page.S.setPicks.st ? r.page.S.setPicks.st.api.active() : 'no set pick')],
+        r => ['no request names a process NaN', !r.calls.some(c => /NaN/.test(c.url)), r.calls.map(lineOf).join(' · ')],
+        r => ['the page stays on Press A', r.page.S.processID === 1, 'processID ' + r.page.S.processID],
+    ],
+});
+
+// Census #3 — a routing name added in Settings, then the Styles tab. The save
+// reads the composer back, whose routing is what the Styles pickers offer.
 block({
     title: 'census #3: a source added in Settings is offered on the Styles tab',
     open: () => {
@@ -298,15 +324,20 @@ block({
             hash: '#tab=settings',
             extra: (m, u) => {
                 const p = u.split('?')[0];
-                if (m === 'POST' && p === '/api/processes/1/routing-nodes') { added = true; return { body: { id: 120 } }; }
+                if (m === 'PUT' && p === '/api/processes/1/routing-nodes') { added = true; return { body: { status: 'ok', warnings: [] } }; }
                 if (m === 'GET' && p === '/api/processes/1/routing-nodes') return { body: { rows: rows() } };
+                if (m === 'GET' && p === '/api/processes/1/composer' && added) {
+                    const c = JSON.parse(JSON.stringify(T.FX.composer));
+                    c.routing = (c.routing || []).concat([{ core_node_name: 'SRC_2', role: 'source', sequence: 3 }]);
+                    return { body: c };
+                }
                 return undefined;
             },
         };
     },
     act: async page => {
-        T.setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add');
-        await page.settle();
+        T.setPick(page, 'st', 'source', 'SRC_2');
+        await T.stSave(page);
         page.click('root', { tab: 'flows' });
         await page.settle();
     },
@@ -316,18 +347,35 @@ block({
     }],
 });
 
+// Settings' set pick's box (the routing set's roles are its boxes now).
+const setPickValue = (page, box) => (page.S.setPicks.st ? page.S.setPicks.st.api.value(box) : []);
+
 // The P0 flat bugs on this page (REPORT-v2-stop1-P0, "S4 flat bugs").
+// A refused routing-set save is said on the bar, and its picks stay picked
+// (P0 :3746 and :3626, the add and Turn all on, on the one Save now).
+const barSays = r => {
+    const said = (r.page.S.stShell && r.page.S.stShell.page.state.refusal) || '';
+    return ['the bar says ' + JSON.stringify(MSG), said.toLowerCase().indexOf(MSG.toLowerCase()) >= 0, 'refusal ' + JSON.stringify(said)];
+};
 block({
-    title: 'P0 :3746: a refused routing-set add is drawn, not cleared by the re-read',
-    open: () => ({ hash: '#tab=settings', answer: refuse('POST', '/api/processes/1/routing-nodes', REFUSED) }),
-    act: async page => { T.setPick(page, 'root', 'stset', 'source', 'SRC_2', 'add'); await page.settle(); },
-    checks: [r => ['the page says ' + JSON.stringify(MSG), onScreen(r.page, MSG), 'routingError ' + JSON.stringify(r.page.S.routingError)]],
+    title: 'P0 :3746: a refused routing-set save is said, and the name picked stays',
+    open: () => ({ hash: '#tab=settings', answer: refuse('PUT', '/api/processes/1/routing-nodes', REFUSED) }),
+    act: async page => { T.setPick(page, 'st', 'source', 'SRC_2'); await T.stSave(page); },
+    checks: [barSays,
+        r => ['SRC_2 is still picked', setPickValue(r.page, 'source').indexOf('SRC_2') >= 0,
+            'Inbound ' + JSON.stringify(setPickValue(r.page, 'source'))]],
 });
 block({
-    title: 'P0 :3626: a refused Turn all on is drawn, not cleared by the re-read',
-    open: () => ({ hash: '#tab=settings', answer: refuse('PATCH', '/api/processes/1/routing-nodes/106', REFUSED) }),
-    act: async page => { page.click('root', { act: 'rs-all-on', role: 'staging' }); await page.settle(); },
-    checks: [r => ['the page says ' + JSON.stringify(MSG), onScreen(r.page, MSG), 'routingError ' + JSON.stringify(r.page.S.routingError)]],
+    title: 'P0 :3626: a refused Turn all on is said, and the names stay picked',
+    open: () => ({ hash: '#tab=settings', answer: refuse('PUT', '/api/processes/1/routing-nodes', REFUSED) }),
+    act: async page => { page.click('root', { act: 'rs-all-on', role: 'staging' }); await page.settle(); await T.stSave(page); },
+    checks: [barSays,
+        r => {
+            const off = (r.page.S.routing || []).filter(x => x.role === 'staging' && !x.enabled).map(x => x.core_node_name);
+            const sel = setPickValue(r.page, 'staging');
+            return ['the switched-off names stay picked', off.length > 0 && off.every(n => sel.indexOf(n) >= 0),
+                'off ' + JSON.stringify(off) + ', Staging ' + JSON.stringify(sel)];
+        }],
 });
 block({
     title: 'P0 :5368: a refused Save settings keeps the typed draft',
@@ -352,17 +400,21 @@ block({
     checks: [r => ['the sheet names "POS_A1 needs a source"', statusText(r.page).indexOf('POS_A1 needs a source') >= 0,
         'status ' + JSON.stringify(statusText(r.page))]],
 });
+// The row's Advanced sheet (round 5) keeps the rule the list kept: a setting
+// switched on and off again is no change (advancedAction).
 block({
-    title: 'P0 :4169: Apply on an untouched Advanced sheet changes nothing',
+    title: "P0 :4169: a setting switched on and off again in a position's Advanced sheet changes nothing",
     open: () => ({}),
     act: async page => {
         const before = JSON.stringify(page.pd('M')().toCells(page.S.model));
-        page.click('root', { act: 'advanced', node: 'POS_A1' });
+        page.click('root', { act: 'adv-open', node: 'POS_A1' });
+        await page.settle();
+        page.click('scrim', { act: 'set-switch', key: 'auto_confirm', node: 'POS_A1', v: '1' }, { inside: ['.pd-modal'] });
         await page.settle();
         const from = page.mark();
-        page.click('scrim', { act: 'adv-apply' });
+        page.click('scrim', { act: 'set-switch', key: 'auto_confirm', node: 'POS_A1', v: '0' }, { inside: ['.pd-modal'] });
         await page.settle();
-        return { before: before, after: JSON.stringify(page.pd('M')().toCells(page.S.model)), sent: page.since(from) };
+        return { before: before, after: JSON.stringify(page.pd('M')().toCells(page.S.model)), sent: page.since(from).filter(c => !/flow\/preview/.test(c.url)) };
     },
     checks: [
         r => ['the flow is as it was', r.before === r.after, 'cells moved'],
@@ -394,7 +446,7 @@ block({
     open: () => {
         let k = 0;
         return {
-            hash: '#tab=screens', answer: (m, u) => {
+            hash: '#tab=settings', answer: (m, u) => {
                 if (m !== 'GET' || u.split('?')[0] !== '/api/processes/1/composer' || k++ === 0) return undefined;
                 const c = JSON.parse(JSON.stringify(T.FX.composer));
                 c.palette = c.palette.concat(['PART-NEW']).sort();
@@ -443,59 +495,46 @@ const resume = (title, o) => block({
             'pressed again: ' + (writes(r.again).map(lineOf).join(' · ') || 'no write')],
     ],
 });
-resume('ruling 5: Add process, its positions refused, then pressed again', {
-    open: { answer: refuse('PUT', '/api/operator-stations/31/claimed-nodes', REFUSED) },
-    drive: page => T.DRIVE.addProcess.drive(page),
-    once: /^POST \/api\/(processes|operator-stations)$/, step: /^PUT \/api\/operator-stations\/31\/claimed-nodes$/,
-});
-resume('ruling 5: Counted at → New station counter, its binding refused, then pressed again', {
-    open: { hash: '#tab=settings', extra: COUNTER_ROUTES, answer: refuse('PUT', '/api/process-nodes/202/counted-at', REFUSED) },
-    drive: async page => {
-        // Settings keeps a position's controls behind its "Change…" row
-        // (33-settings-pages.md rule 7): open it first.
-        const findSel = () => page.root.querySelectorAll('select[data-countedat]').find(el => el.dataset.countedat === '202');
-        if (!findSel()) {
-            const more = page.root.querySelectorAll('[data-act="st-more"]').find(el => el.dataset.more === 'pos-202');
-            if (more) { page.click('root', Object.assign({}, more.dataset)); await page.settle(); }
-        }
-        const sel = findSel();
-        if (!sel) throw new Error('Settings draws no Counted at for 202');
-        sel.value = 'new';
-        page.fire(sel, 'change');
+// Counted at is a draft saved by Save settings, every changed row in one
+// write: a refused save keeps its rows on screen, and Save again sends the
+// same one write.
+block({
+    title: 'Counted at: a refused save keeps its rows, and Save again sends the same one write',
+    open: () => ({ hash: '#tab=settings', extra: COUNTER_ROUTES, answer: refuse('PUT', '/api/processes/1/counted-at', REFUSED) }),
+    act: async page => {
+        page.click('root', { act: 'ca-add' });
         await page.settle();
-        page.byId('sc-label').value = 'Station 3';
-        page.byId('sc-tag').value = 'S3.Count';
-        await pressOK(page);
+        for (const v of ['201', '202']) {
+            const pick = page.byId('pd-stpop').querySelectorAll('.picker-row').find(r => r.getAttribute('data-value') === v);
+            if (!pick) throw new Error('+ Add a position under Counted at offers no ' + v);
+            pick.click();
+            await page.settle();
+        }
+        page.key('Escape');
+        await page.settle();
+        (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
+        await page.settle();
+        // The save's outcome is the shared bar's (shared/settings.js).
+        const first = page.S.stShell.page.state.refusal;
+        const rows = page.root.querySelectorAll('[data-act="ca-pick"]').length;
+        const from = page.mark();
+        (() => { const b = page.root.querySelector('[data-set="save"]'); if (!b) throw new Error('Settings draws no Save'); b.click(); })();
+        await page.settle();
+        return { first: first, rows: rows, again: writes(page.since(from)) };
     },
-    once: /^POST \/api\/processes\/1\/station-counters$/, step: /^PUT \/api\/process-nodes\/202\/counted-at$/,
+    checks: [
+        r => ['the refusal is said on the bar', r.first.toLowerCase().indexOf(MSG.toLowerCase()) >= 0, 'refusal ' + JSON.stringify(r.first)],
+        r => ['both rows stay on screen', r.rows === 2, r.rows + ' rows'],
+        r => ['Save again sends one write, with both rows', r.again.length === 1 && /^PUT \/api\/processes\/1\/counted-at$/.test(lineOf(r.again[0])) &&
+            JSON.stringify((r.again[0].body || {}).bindings) === '[{"node_id":201,"line_counter_id":51},{"node_id":202,"line_counter_id":51}]',
+            r.again.map(c => lineOf(c) + ' ' + JSON.stringify(c.body)).join(' · ') || 'no write'],
+    ],
 });
 resume('ruling 5: + New style from Recipe One, its CATID refused, then pressed again', {
     open: { answer: refuse('PUT', '/api/styles/9', REFUSED) },
     drive: page => T.DRIVE.mint.drive(page),
     once: /^POST \/api\/processes\/1\/flow\/mint$/, step: /^PUT \/api\/styles\/9$/,
 });
-resume('ruling 5 (same chain class): Add operator screen, its positions refused, then pressed again', {
-    open: { answer: refuse('PUT', '/api/operator-stations/31/claimed-nodes', REFUSED) },
-    drive: page => T.DRIVE.screenAdd.drive(page),
-    once: /^POST \/api\/operator-stations$/, step: /^PUT \/api\/operator-stations\/31\/claimed-nodes$/,
-});
-block({
-    title: 'ruling 5: Add process half made, then Cancel: what was made is read back',
-    open: () => ({ answer: refuse('PUT', '/api/operator-stations/31/claimed-nodes', REFUSED) }),
-    act: async page => {
-        await T.DRIVE.addProcess.drive(page);
-        const from = page.mark();
-        page.click('scrim', { act: 'sheet-cancel' });
-        await page.settle();
-        return { after: page.since(from) };
-    },
-    checks: [
-        r => ['nothing is deleted', !r.after.some(c => c.method === 'DELETE'), r.after.map(lineOf).join(' · ')],
-        r => ['the process list is read again', r.after.some(c => lineOf(c) === 'GET /api/processes'),
-            'after Cancel: ' + (r.after.map(lineOf).join(' · ') || 'nothing')],
-    ],
-});
-
 // ── F22: no refused write leaves its button silent ──────────────────────────
 //
 // Read off the refusal goldens this run wrote (p0-page.js): every block of a
@@ -515,6 +554,177 @@ function silentRefusals() {
     }
     return out;
 }
+
+// SLICE 5: A CORE LOADER'S PROCESS (core_boards) has no styles, so no HMI gate
+// line and a Danger line that names only what it has; its windows are Core's,
+// so its screen's positions are chips with no × and no picker.
+block({
+    title: 'slice 5: a Core loader’s process draws no gate, its own Danger line, and its windows read-only',
+    open: () => ({
+        hash: '#tab=settings',
+        page: withPage(p => ({ processes: p.processes.map(x => x.id === 1 ? Object.assign({}, x, { core_boards: true }) : x) })),
+    }),
+    act: async () => {},
+    checks: [
+        r => ['no HMI setup line in the bar', String(r.page.root.innerHTML).indexOf('class="pd-gate"') < 0, 'drawn'],
+        r => ['Danger names its screens and positions only',
+            String(r.page.root.innerHTML).indexOf('its screens and positions go with it') >= 0 &&
+            String(r.page.root.innerHTML).indexOf('its styles, flows') < 0, 'not said'],
+        r => {
+            const html = String(r.page.root.innerHTML);
+            const picker = html.indexOf('id="npk-scr-11"') >= 0;
+            const chips = (html.match(/<span class="picker-chip">POS_A\d+<\/span>/g) || []).length;
+            return ['Screen A’s positions are chips, no picker', !picker && chips === 11, 'picker ' + picker + ', ' + chips + ' chips'];
+        },
+    ],
+});
+
+// SLICE 5: THE MAP IS NOT SENT AGAIN. A composer read after the first quotes
+// the revision of the map the page holds (map_rev); a reply that says map_same
+// carries no map, and the page keeps drawing the one it has.
+block({
+    title: 'slice 5: a composer read quotes the held map, and map_same keeps it',
+    open: () => ({
+        extra: (m, u) => {
+            const [p, q] = u.split('?');
+            if (m === 'GET' && p === '/api/processes/1/composer' && /(^|&)map_rev=/.test(q || '')) {
+                const c = JSON.parse(JSON.stringify(T.FX.composer));
+                delete c.map;
+                c.map_same = true;
+                return { body: c };
+            }
+            return undefined;
+        },
+    }),
+    act: async page => {
+        const held = page.S.composer.map;
+        const from = page.mark();
+        await page.pd('refreshProcess')();
+        await page.settle();
+        const reads = page.since(from).map(lineOf).filter(l => /\/composer/.test(l));
+        return { held: held, reads: reads, after: page.S.composer.map };
+    },
+    checks: [
+        r => ['the page held a map to quote', !!(r.held && r.held.revision), 'map ' + JSON.stringify(r.held && r.held.revision)],
+        r => ['the read quotes its revision', r.reads.length === 1 && r.reads[0] === 'GET /api/processes/1/composer?map_rev=' +
+            encodeURIComponent(r.held.revision), JSON.stringify(r.reads)],
+        r => ['map_same: the map drawn is the one held', r.after === r.held, 'map ' + JSON.stringify(r.after && r.after.revision)],
+    ],
+});
+
+// SLICE 5, ruling 8. A process whose positions are all on no screen is not an
+// empty process: the loader block (made for an empty one, a loader's board
+// being made on it) said "Every loader … has a screen. Nothing to bind." there.
+block({
+    title: 'slice 5: a process whose positions are all on no screen is not an empty one to a loader',
+    open: () => ({ page: withPage(() => ({ stations: [] })) }),
+    act: async page => {
+        const S = page.S;
+        S.loaderGaps = [{ loader: 'LDR_9', process_id: 0 }];
+        S.curtainNodes = [{ id: 901, process_id: S.processID, core_node_name: 'POS_A1', operator_station_id: null }];
+        const loose = page.pd('loaderGapsHere')();
+        S.curtainNodes = [];
+        const empty = page.pd('loaderGapsHere')();
+        return { loose: loose, empty: empty };
+    },
+    checks: [
+        r => ['positions on no screen: no loader block', r.loose === null, 'gaps ' + JSON.stringify(r.loose)],
+        r => ['no position at all: the block offers the loader', Array.isArray(r.empty) && r.empty.length === 1,
+            'gaps ' + JSON.stringify(r.empty)],
+    ],
+});
+// A style from a recipe is minted at a screen (flow/mint is the station's
+// door): with none, New style says so where the chooser would be, and links
+// to where one is added.
+block({
+    title: 'slice 5: New style on a process with no screen says a recipe style is made at one',
+    open: () => ({ page: withPage(() => ({ stations: [] })) }),
+    act: async page => {
+        page.click('root', { act: 'new-style' });
+        await page.settle();
+        const body = page.scrim.querySelector('.layer-body');
+        return { html: String(body ? body.innerHTML : '') };
+    },
+    checks: [
+        r => ['no recipe chooser', r.html.indexOf('data-act="newstyle-recipe"') < 0, 'drawn'],
+        r => ['the line says why, and goes to Positions and routing',
+            r.html.indexOf('A style from a recipe is made at a screen') >= 0 && r.html.indexOf('data-act="newstyle-screens"') >= 0,
+            r.html.slice(0, 300)],
+    ],
+});
+
+// ROUND 6: A TAKEN NAME (owner's walk). The server answers it 409 on the name
+// field (writeNameTaken); before, the page drew SQLite's "constraint failed:
+// UNIQUE constraint failed: processes.name (2067)" on the sheet's status line.
+// It is one plain line on the Name field, and typing takes it away.
+const TAKEN = name => { const msg = 'another process is already called "' + name + '"'; return { status: 409, body: { error: msg, errors: { name: msg } } }; };
+const DB_WORDS = /constraint|UNIQUE|2067|processes\.name/;
+const nameLine = host => {
+    // A hidden line is no line: the page hides it, empty, once the name is typed again.
+    const el = host && host.querySelector('.pd-ferr[data-ferr="name"]');
+    return el && !el.hidden ? (el.textContent || T.text(el.innerHTML)) : '';
+};
+const dbWordsShown = page => page.segments().some(s => DB_WORDS.test(s)) || DB_WORDS.test(statusText(page)) ||
+    page.notices.some(n => DB_WORDS.test(n.text)) ||
+    DB_WORDS.test((page.S.stShell && page.S.stShell.page.state.refusal) || '');
+const typeIn = (page, el, value) => { el.value = value; page.fire(el, 'input'); };
+const nameChecks = (want, after) => [
+    r => ['the Name field says ' + JSON.stringify(want), r.line === want, 'Name field ' + JSON.stringify(r.line)],
+    r => ['no database words on screen', !r.dbWords, 'status ' + JSON.stringify(r.status) + ', bar ' + JSON.stringify(r.bar)],
+    r => [after, r.status === r.wantStatus, 'status ' + JSON.stringify(r.status)],
+    r => ['typing a name takes the line away', r.lineAfterTyping === '', 'still ' + JSON.stringify(r.lineAfterTyping)],
+];
+block({
+    title: 'round 6: Add process with a taken name says so on the Name field',
+    open: () => ({ answer: every('POST', /^\/api\/processes$/, TAKEN('Press B')) }),
+    act: async page => {
+        page.click('root', { act: 'add-process' });
+        await page.settle();
+        page.type('name', 'Press B');
+        await pressOK(page);
+        const r = { line: nameLine(page.scrim), status: statusText(page), dbWords: dbWordsShown(page), bar: '', wantStatus: '' };
+        typeIn(page, page.scrim.querySelector('[data-f="name"]'), 'Press C');
+        r.lineAfterTyping = nameLine(page.scrim);
+        return r;
+    },
+    checks: nameChecks('Another process is already called Press B.', 'the status line adds nothing'),
+});
+block({
+    title: 'round 6: Setup\'s Change… with a taken name says so on the Name field',
+    open: () => ({ answer: every('PUT', /^\/api\/processes\/1$/, TAKEN('Press B')) }),
+    act: async page => {
+        await page.pd('openEditProcess')();
+        await page.settle();
+        page.type('name', 'Press B');
+        await pressOK(page);
+        const r = { line: nameLine(page.scrim), status: statusText(page), dbWords: dbWordsShown(page), bar: '', wantStatus: '' };
+        typeIn(page, page.scrim.querySelector('[data-f="name"]'), 'Press C');
+        r.lineAfterTyping = nameLine(page.scrim);
+        return r;
+    },
+    checks: nameChecks('Another process is already called Press B.', 'the status line adds nothing'),
+});
+block({
+    title: 'round 6: Settings › Line renamed to a taken name says so on the Name field',
+    open: () => ({ hash: '#tab=settings', answer: every('PUT', /^\/api\/processes\/1$/, TAKEN('Press B')) }),
+    act: async page => {
+        const field = () => page.root.querySelectorAll('[data-st]').find(el => el.dataset.st === 'name' && el.tagName === 'INPUT');
+        T.typeSetting(page, '[data-st]', el => el.dataset.st === 'name' && el.tagName === 'INPUT', 'Press B');
+        // The browser bubbles the input to the shared page, which marks the bar;
+        // the harness fires it on the field alone (page.update is that mark).
+        page.S.stShell.page.update();
+        await T.stSave(page);
+        const bar = (page.S.stShell && page.S.stShell.page.state.refusal) || '';
+        const r = { line: nameLine(page.root), status: bar, bar: bar, dbWords: dbWordsShown(page), wantStatus: 'Not saved.' };
+        r.kept = field() ? field().value : '';
+        typeIn(page, field(), 'Press C');
+        r.lineAfterTyping = nameLine(page.root);
+        return r;
+    },
+    checks: nameChecks('Another process is already called Press B.', 'the bar says "Not saved." and no more').concat([
+        r => ['the typed name stays in the field', r.kept === 'Press B', 'field ' + JSON.stringify(r.kept)],
+    ]),
+});
 
 async function run(t) {
     T = t;

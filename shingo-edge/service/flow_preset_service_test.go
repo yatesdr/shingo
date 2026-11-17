@@ -42,7 +42,7 @@ func presetFixture(t *testing.T) (*ProcessService, testdb.SeededPlant, *store.DB
 // candidate. That property is the difference between an offer and a list.
 func TestPresets_CandidatesAreOneEntryPerDistinctShape(t *testing.T) {
 	t.Parallel()
-	svc, seeded, _ := presetFixture(t)
+	svc, seeded, db := presetFixture(t)
 	view, err := svc.PresetsFor(seeded.ProcessID)
 	if err != nil {
 		t.Fatalf("PresetsFor: %v", err)
@@ -75,8 +75,18 @@ func TestPresets_CandidatesAreOneEntryPerDistinctShape(t *testing.T) {
 	if total < len(view.Candidates) {
 		t.Errorf("%d members across %d candidates", total, len(view.Candidates))
 	}
-	// FEWER CANDIDATES THAN STYLES WITH A FLOW is the whole point.
-	withFlow := view.StylesWithFlow
+	// FEWER CANDIDATES THAN STYLES WITH A FLOW is the whole point. The count
+	// is the fixture's: the view stopped carrying it, since no page read it.
+	withFlow := 0
+	for _, id := range seeded.Styles {
+		claims, err := db.ListStyleNodeClaims(id)
+		if err != nil {
+			t.Fatalf("claims of style %d: %v", id, err)
+		}
+		if len(claims) > 0 {
+			withFlow++
+		}
+	}
 	if withFlow == 0 {
 		t.Fatal("no style on the press has a flow; the fixture is not the HK pull")
 	}

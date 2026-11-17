@@ -415,7 +415,7 @@ func TestComposerShots(t *testing.T) {
 			if c.Mode == string(protocol.SwapModeTwoRobotPressIndex) {
 				pressIndexID = id
 			}
-			t.Logf("named %q (preset %d) over %d of %d flows", c.SuggestedName, id, len(c.Members), offer.StylesWithFlow)
+			t.Logf("named %q (preset %d) over %d flows", c.SuggestedName, id, len(c.Members))
 		}
 	}
 
@@ -810,16 +810,12 @@ func TestComposerShots(t *testing.T) {
 			t.Errorf("%s: the rows' box is %d px of content in %d px — it scrolls down, and only the column may",
 				label, fit.ScrollerScrollH, fit.ScrollerClientH)
 		}
-		// THE ADD CONTROL IS ON THE BOX'S HEAD LINE: above the headings, and
-		// on screen above the bar as the tab opens. As the box's footer it sat
-		// under the sticky bar at 1440x900 until the column scrolled.
+		// THE ADD CONTROL IS THE DASHED ROW CLOSING THE TABLE: inside the
+		// positions box, reached by scrolling the column as the paired-above
+		// line is. The head line's second copy is gone (one control per act).
 		if !fit.HasAdd {
 			t.Errorf("%s: the positions box has no add-a-position control", label)
 		} else {
-			if fit.AddBottom > fit.BarTop+1 {
-				t.Errorf("%s: the add control ends at y=%d, under the bar at y=%d — it is off screen as the tab opens",
-					label, fit.AddBottom, fit.BarTop)
-			}
 			if fit.AddTop < fit.TableTop-1 {
 				t.Errorf("%s: the add control starts at y=%d, above the positions box at y=%d",
 					label, fit.AddTop, fit.TableTop)
@@ -929,12 +925,10 @@ func TestComposerShots(t *testing.T) {
 	for _, gone := range []string{"New bins from", "Old bins to", "Robot drives via"} {
 		desktopRefuteDOM("D1 invents no second name", d1, gone)
 	}
-	// D2 is D1 with one position's Advanced sheet open. The hash is the page's
-	// own deep link (#style=;adv=), not a shot-only door: the harness cannot
-	// drive a mouse and a state only a mouse can reach is a state no shot
-	// checks.
-	d2 := fmt.Sprintf("/processes?process=%d#style=%d;adv=PLN_01", seeded.ProcessID, seeded.Styles[idx])
-	desktopShot("D2-advanced.png", d2)
+	// D2 WAS D1 with one position's Advanced sheet open (#style=;adv=). What
+	// a position sets for the style is its row's Advanced (round 5): every
+	// row of D1 carries the control that opens it.
+	desktopDOM("D2 a row's Advanced", d1, `data-act="adv-open"`)
 	desktopDOM("P0 processes", "/processes", `class="pd-tbl"`)
 
 	// ── EDIT PROCESS CHANGES ONE FIELD AND NOTHING ELSE ─────────────────
@@ -1234,7 +1228,6 @@ func TestComposerShots(t *testing.T) {
 			}
 		}
 	}
-	desktopDOM("D2 advanced", d2, `class="pd-modal"`)
 	d4 := fmt.Sprintf("/processes?process=%d#tab=screens", seeded.ProcessID)
 	d5 := fmt.Sprintf("/processes?process=%d#tab=settings", seeded.ProcessID)
 	desktopShot("D4-operator-screens.png", d4)

@@ -869,11 +869,13 @@ function showPullFromMarketPicker(nodeID) {
 
 function gridDimensions() {
     var w = window.innerWidth;
-    // Fixed grid per screen size — 7": 2×2, 10": 3×2, 15"+: 4×N.
-    if (w <= 1024) return { cols: 2, rows: 2 };
-    if (w <= 1400) return { cols: 3, rows: 2 };
+    // Columns per screen size — 7": 2, 10": 3, 15"+: 4 — and rows that hold
+    // every tile, two at least. A fixed two rows put a tile past them in an
+    // implicit row the grid gives no height, where it drew over itself (the
+    // HOP 4X2's fifth tile at 1024x768).
+    var cols = w <= 1024 ? 2 : w <= 1400 ? 3 : 4;
     var count = claimedNodes().length || 1;
-    return { cols: 4, rows: Math.max(2, Math.ceil(count / 4)) };
+    return { cols: cols, rows: Math.max(2, Math.ceil(count / cols)) };
 }
 
 // unloaderWindowColour maps an unloader window (isUnloaderWindow) to the

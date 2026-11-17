@@ -20,12 +20,12 @@ ok   Press A's counter cell: "off · PLC_A"
 ## smoke: a screen named after its process is not said twice in the title
 ok   the title: "Press A"
 
-## smoke: Settings' Parts row is on the settings grid, as every other row is
-ok   the Parts row is a .pd-sfld
+## smoke: Settings' part set sits under its Parts heading, not labelled Parts a second time
+ok   the part set is under the heading, with no second Parts label
 
 ## smoke: Add process on a fresh list reads no plant map as it opens (A1)
 ok   no composer read
-ok   no Show on map on the routing set's heading
+ok   no Show on map on the sheet
 
 ## F21: #tab= edited in place switches the tab (FINDINGS F21)
 ok   each hash lands on its tab
@@ -40,14 +40,21 @@ ok   the rows follow the node adapter's
 ## census #4: Core's nodes are offered groups first, nodes with no type last
 ok   GRP_Q first with A_PLAIN and DST_7 under it, Z_PLAIN last
 
+## set pick: a click on a box of Settings' set pick opens that box and navigates nowhere
+ok   the box opens
+ok   no request names a process NaN
+ok   the page stays on Press A
+
 ## census #3: a source added in Settings is offered on the Styles tab
 ok   POS_A5's Inbound source offers SRC_2
 
-## P0 :3746: a refused routing-set add is drawn, not cleared by the re-read
-ok   the page says "the Edge refused it"
+## P0 :3746: a refused routing-set save is said, and the name picked stays
+ok   the bar says "the Edge refused it"
+ok   SRC_2 is still picked
 
-## P0 :3626: a refused Turn all on is drawn, not cleared by the re-read
-ok   the page says "the Edge refused it"
+## P0 :3626: a refused Turn all on is said, and the names stay picked
+ok   the bar says "the Edge refused it"
+ok   the switched-off names stay picked
 
 ## P0 :5368: a refused Save settings keeps the typed draft
 ok   the page says "the Edge refused it"
@@ -59,7 +66,7 @@ ok   the page says "the Edge refused it"
 ## P0 :6467: a mint refused 422 with findings names them
 ok   the sheet names "POS_A1 needs a source"
 
-## P0 :4169: Apply on an untouched Advanced sheet changes nothing
+## P0 :4169: a setting switched on and off again in a position's Advanced sheet changes nothing
 ok   the flow is as it was
 ok   the flow is not dirty
 ok   nothing is sent
@@ -71,29 +78,52 @@ ok   one save, no preview-and-retry
 ok   PART-NEW is one of this process's parts
 ok   Core's catalog waits behind its button
 
-## ruling 5: Add process, its positions refused, then pressed again
-ok   the refusal is said
-ok   pressed again, nothing is made twice
-ok   pressed again, the failed step is sent
-
-## ruling 5: Counted at → New station counter, its binding refused, then pressed again
-ok   the refusal is said
-ok   pressed again, nothing is made twice
-ok   pressed again, the failed step is sent
+## Counted at: a refused save keeps its rows, and Save again sends the same one write
+ok   the refusal is said on the bar
+ok   both rows stay on screen
+ok   Save again sends one write, with both rows
 
 ## ruling 5: + New style from Recipe One, its CATID refused, then pressed again
 ok   the refusal is said
 ok   pressed again, nothing is made twice
 ok   pressed again, the failed step is sent
 
-## ruling 5 (same chain class): Add operator screen, its positions refused, then pressed again
-ok   the refusal is said
-ok   pressed again, nothing is made twice
-ok   pressed again, the failed step is sent
+## slice 5: a Core loader’s process draws no gate, its own Danger line, and its windows read-only
+ok   no HMI setup line in the bar
+ok   Danger names its screens and positions only
+ok   Screen A’s positions are chips, no picker
 
-## ruling 5: Add process half made, then Cancel: what was made is read back
-ok   nothing is deleted
-ok   the process list is read again
+## slice 5: a composer read quotes the held map, and map_same keeps it
+ok   the page held a map to quote
+ok   the read quotes its revision
+ok   map_same: the map drawn is the one held
+
+## slice 5: a process whose positions are all on no screen is not an empty one to a loader
+ok   positions on no screen: no loader block
+ok   no position at all: the block offers the loader
+
+## slice 5: New style on a process with no screen says a recipe style is made at one
+ok   no recipe chooser
+ok   the line says why, and goes to Positions and routing
+
+## round 6: Add process with a taken name says so on the Name field
+ok   the Name field says "Another process is already called Press B."
+ok   no database words on screen
+ok   the status line adds nothing
+ok   typing a name takes the line away
+
+## round 6: Setup's Change… with a taken name says so on the Name field
+ok   the Name field says "Another process is already called Press B."
+ok   no database words on screen
+ok   the status line adds nothing
+ok   typing a name takes the line away
+
+## round 6: Settings › Line renamed to a taken name says so on the Name field
+ok   the Name field says "Another process is already called Press B."
+ok   no database words on screen
+ok   the bar says "Not saved." and no more
+ok   typing a name takes the line away
+ok   the typed name stays in the field
 
 ## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)
 ok   no refusal block leaves the page silent

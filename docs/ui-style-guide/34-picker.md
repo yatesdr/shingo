@@ -19,6 +19,10 @@ field but `value` optional:
 - `reason` is why a row **cannot** be picked. The row is drawn greyed with the
   reason beside it, and neither a click nor the keyboard reaches it. A picker
   shows what it excludes and why; it never drops a row in silence.
+- `quiet`, with a `reason`: the reason is said once above the list by the
+  caller (the set pick's `hint`), so the row is greyed with its `note` instead
+  of repeating it. Every group row of a Positions list is one: "a group is one
+  row: its nodes are positions one at a time" is said once, not on each.
 - `members` are rows drawn indented under this one (a group's nodes).
 - `values` is what picking the row picks when that is not its own `value` (a
   group standing for its members). The row is on when all of them are.
@@ -29,6 +33,18 @@ field but `value` optional:
 - **The search box is never redrawn**: a keystroke redraws the rows and
   chips, never the field under the caret. A member that matches brings its
   group; a group that matches brings all its members.
+- **Views.** `views: [{ key, label, keep(row) }]` are buttons before the
+  `filters`, one on at a time, the first on at the start: the set pick's
+  **All · Groups only · Free only**. A view narrows the list as the search
+  does, and the list stays one list, a row a line: a row its `keep` refuses is
+  drawn only as the heading of a member it keeps, and a kept row brings its
+  members. Groups only is the group rows (the node adapter marks each
+  `group`), listed with nothing to open first; Free only is what the open box
+  may take. "All" is a view, never a tick-all.
+- **Top.** `top: <element>` draws the search box, the views and the filters
+  there instead of over the list. The set pick passes a slot in its sticky
+  "Picking …" head, so the head, the filter and the views stick as one band
+  and none of them scrolls half under it.
 - **Keyboard.** The arrows move through the rows that can be picked, Enter
   picks, and the box names the active row for a screen reader.
 - **Single or multi.** A single picker's pick replaces its value and closes
@@ -52,8 +68,10 @@ field but `value` optional:
   answers: the selection as the server now holds it (an array, or
   `{ values }`), drawn as clean; or a refusal (`{ error }`, or nothing), and
   the chips stay as they were with the reason beside them. One pick at a time;
-  no timer. A list whose truth is the server (a routing set) uses it, so the
-  page never shows a pick the Edge has not taken.
+  no timer. A pick that is itself a server write uses it (the Processes page's
+  add-and-use on a positions-table row, which adds the node to the routing set
+  and then uses it), so the page never shows a pick the Edge has not taken. A
+  picker on a settings page is a draft instead, saved by the page's one Save.
 
 ```js
 import { createPicker } from '/static/shared/picker.js';

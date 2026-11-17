@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/windoworder"
+	"shingoedge/domain"
 )
 
 // CoreLoader is the cached read shape for one Core-owned loader, assembled with
@@ -59,8 +60,29 @@ type CoreLoader struct {
 	// false, the clear, is also what a row from a Core predating the field
 	// reads as.
 	NoClearPartials bool
+	// EdgeStationUID is the station uid of the Edge Core names to work this
+	// loader, and EdgeDisplayName that Edge's name (bin_loaders.
+	// edge_station_uid; v57). Blank, also what a row from a Core predating
+	// the field reads as, names none.
+	EdgeStationUID  string
+	EdgeDisplayName string
 	Positions       []CoreLoaderPosition
 	Payloads        []CoreLoaderPayload
+}
+
+// BoardWindows is the cached loader's members a board works as tiles, in
+// Core's order (domain.IsBoardWindow, the one rule): every window of a
+// shared_window loader, every home of a dedicated one, never a buffer spot.
+// "Make a screen" puts these on the new screen, and the loader gaps count
+// them; the projected aggregate answers the same (Loader.BoardWindows).
+func (l CoreLoader) BoardWindows() []string {
+	var out []string
+	for _, p := range l.Positions {
+		if p.PositionNode != "" && domain.IsBoardWindow(domain.LoaderLayout(l.Layout), p.HomeKind) {
+			out = append(out, p.PositionNode)
+		}
+	}
+	return out
 }
 
 // CoreLoaderPosition is one home of a cached loader (position node NAME). For a
@@ -107,10 +129,11 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, synced_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, edge_station_uid, edge_display_name, synced_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
 			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
 			l.LeavesBare, l.TakesBare, l.AutoPush, l.PulledDirectly, l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials,
+			l.EdgeStationUID, l.EdgeDisplayName,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
@@ -137,7 +160,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, edge_station_uid, edge_display_name FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -155,7 +178,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, funnel_windows, leaves_bare, takes_bare, auto_push, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, edge_station_uid, edge_display_name FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -180,7 +203,8 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
 			&l.OutboundDest, &l.InboundSource, &l.FunnelWindows,
 			&l.LeavesBare, &l.TakesBare, &l.AutoPush, &l.PulledDirectly,
-			&l.BoardHidesIdle, &l.BoardShowsAllParts, &l.NoClearPartials); err != nil {
+			&l.BoardHidesIdle, &l.BoardShowsAllParts, &l.NoClearPartials,
+			&l.EdgeStationUID, &l.EdgeDisplayName); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
 		}
 		out = append(out, l)

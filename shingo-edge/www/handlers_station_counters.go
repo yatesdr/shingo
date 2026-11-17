@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"shingoedge/domain"
 	"shingoedge/engine"
 )
 
@@ -121,42 +122,65 @@ func (h *Handlers) apiCountingSlots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"slots": slots})
 }
 
-// apiStationCountable is the station card's dry run on one position:
-// {"countable": true}, or false with the refusal's sentence. It binds nothing.
-func (h *Handlers) apiStationCountable(w http.ResponseWriter, r *http.Request) {
-	nodeID, err := parseID(r, "id")
+// apiStationCountables is the station card's dry run on every live position of
+// a process, in one read: {"<position id>": {"countable": true, "refusal": ""}},
+// or countable false with the refusal's sentence. It binds nothing.
+func (h *Handlers) apiStationCountables(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	err = h.orchestration.StationCountable(nodeID)
-	var refusal *engine.StationCounterRefused
-	switch {
-	case err == nil:
-		writeJSON(w, map[string]any{"countable": true, "refusal": ""})
-	case errors.As(err, &refusal):
-		writeJSON(w, map[string]any{"countable": false, "refusal": refusal.Sentence})
-	default:
+	verdicts, err := h.orchestration.StationCountables(processID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
+	type verdict struct {
+		Countable bool   `json:"countable"`
+		Refusal   string `json:"refusal"`
+	}
+	out := make(map[int64]verdict, len(verdicts))
+	for id, v := range verdicts {
+		var refusal *engine.StationCounterRefused
+		switch {
+		case v == nil:
+			out[id] = verdict{Countable: true}
+		case errors.As(v, &refusal):
+			out[id] = verdict{Refusal: refusal.Sentence}
+		default:
+			writeError(w, http.StatusInternalServerError, v.Error())
+			return
+		}
+	}
+	writeJSON(w, out)
 }
 
-// apiSetCountedAt binds a position to a station counter, or (null) back to the
-// production counter.
+// apiSetCountedAt is Position settings' Counted at save: every binding it
+// changed, in one write, {"bindings": [{"node_id": …, "line_counter_id": …}]}
+// (line_counter_id null: back to the production counter). All or nothing: a
+// refused binding is a 400 with its sentence, and binds none.
 func (h *Handlers) apiSetCountedAt(w http.ResponseWriter, r *http.Request) {
-	nodeID, err := parseID(r, "id")
+	processID, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
 	var req struct {
-		LineCounterID *int64 `json:"line_counter_id"`
+		Bindings []struct {
+			NodeID        int64  `json:"node_id"`
+			LineCounterID *int64 `json:"line_counter_id"`
+		} `json:"bindings"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.orchestration.SetCountedAt(nodeID, req.LineCounterID); err != nil {
+	bindings := make([]domain.NodeCounter, 0, len(req.Bindings))
+	for _, b := range req.Bindings {
+		bindings = append(bindings, domain.NodeCounter{NodeID: b.NodeID, CounterID: b.LineCounterID})
+	}
+	if err := h.orchestration.SetCountedAtMany(processID, bindings); err != nil {
 		writeStationCounterError(w, err)
 		return
 	}

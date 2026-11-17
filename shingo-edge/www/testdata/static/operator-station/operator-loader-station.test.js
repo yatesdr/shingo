@@ -1768,6 +1768,31 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq(modalHTML().includes('os-action-why'), false, 'an enabled SEND BACK: no reason line');
 }
 
+// ── 22. The node grid's rows hold every tile (the HOP 4X2 fifth tile) ─────
+{
+    // The UX walk's 4X2 board at 1024x768: five tiles on a grid of two rows,
+    // so the fifth fell into an implicit row the grid gave no height and drew
+    // over itself. Columns follow the screen; rows hold the tiles.
+    const tiles = n => Array.from({ length: n }, (_, i) => ({
+        node: { id: 30 + i, process_id: 1, core_node_name: 'ALN_0' + (11 + i), name: 'ALN_0' + (11 + i) },
+        runtime: { remaining_uop_cached: 10, active_bin_id: 1 }, orders: [],
+        active_claim: { id: 40 + i, core_node_name: 'ALN_0' + (11 + i), role: 'consume', swap_mode: 'single_robot',
+            payload_code: 'PART-A', uop_capacity: 20 },
+    }));
+    const shape = (n, w) => {
+        ctx.window.innerWidth = w; ctx.window.innerHeight = Math.round(w * 0.75);
+        setView(tiles(n));
+        render();
+        return grid.style.props['--os-cols'] + 'x' + grid.style.props['--os-rows'];
+    };
+    eq([shape(4, 1024), shape(5, 1024), shape(6, 1024)], ['2x2', '2x3', '2x3'],
+        'a tablet: two columns, rows for the tiles (changed: two rows whatever the count)');
+    eq([shape(6, 1366), shape(7, 1366)], ['3x2', '3x3'],
+        'a 10-inch screen: three columns, rows for the tiles (changed: two rows whatever the count)');
+    eq([shape(4, 1920), shape(9, 1920)], ['4x2', '4x3'], 'a large screen: four columns, rows for the tiles');
+    ctx.window.innerWidth = 1280; delete ctx.window.innerHeight;
+}
+
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator loader station: ' + passed + ' passed');
 process.exit(0);

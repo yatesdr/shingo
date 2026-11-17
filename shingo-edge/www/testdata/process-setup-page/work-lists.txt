@@ -1,0 +1,102 @@
+# The Styles tab on Press A's Style A: a row clicked, its robot work lists drawn under it. The steps
+# are the builders' (steady.json); each line is glyph, verb, node and the role it is named in.
+
+## the Styles tab's previews ask for the steps: /api/processes/1/flow/preview?steps=1
+
+## POS_A5 (1-Robot Swap)
+  Robot work lists · POS_A5 — 1‑Robot Swap · the steps sent to Core
+  Robot 1 · out, then in
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          STG_1 (staging)
+    ‖ Wait          POS_A5 (positions)
+    ↑ Pick up       POS_A5 (positions)
+    ↓ Drop          STG_2 (staging)
+    ↑ Pick up       STG_1 (staging)
+    ↓ Drop          POS_A5 (positions)
+    ↑ Pick up       STG_2 (staging)
+    ↓ Drop          DST_1 (outbound)
+
+## POS_A3 (2-Robot Swap)
+  Robot work lists · POS_A3 — 2‑Robot Swap · the steps sent to Core
+  Robot 1 · new bin in
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          STG_1 (staging)
+    ‖ Wait          STG_1 (staging)
+    ↑ Pick up       STG_1 (staging)
+    ↓ Drop          POS_A3 (positions)
+  Robot 2 · old bin out
+    ‖ Wait          POS_A3 (positions)
+    ↑ Pick up       POS_A3 (positions)
+    ↓ Drop          DST_1 (outbound)
+
+## POS_A7 (Sequential A/B)
+  Robot work lists · POS_A7 — Sequential A/B · the steps sent to Core
+  Robot 1 · old bin out
+    ‖ Wait          POS_A7 (positions)
+    ↑ Pick up       POS_A7 (positions)
+    ↓ Drop          DST_1 (outbound)
+  Robot 2 · new bin in
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          POS_A7 (positions)
+
+## POS_A1 (Index Swap, Next carrier as stored (Robot 1))
+  Robot work lists · POS_A1 — Index Swap · the steps sent to Core
+  Robot 1 · out, then in
+    ‖ Wait          POS_A1 (positions)
+    ↑ Pick up       POS_A1 (positions)
+    ↓ Drop          DST_1 (outbound)
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          POS_B1 (positions)
+  Robot 2 · indexes
+    ‖ Wait          POS_B1 (positions)
+    ↑ Pick up       POS_B1 (positions)
+    ↓ Drop          POS_A1 (positions)
+
+## POS_A1, Next carrier Robot 2 (its row's Advanced › Next carrier)
+  Robot work lists · POS_A1 — Index Swap · the steps sent to Core
+  Robot 1 · old bin out
+    ‖ Wait          POS_A1 (positions)
+    ↑ Pick up       POS_A1 (positions)
+    ↓ Drop          DST_1 (outbound)
+  Robot 2 · indexes, refills
+    ‖ Wait          POS_B1 (positions)
+    ↑ Pick up       POS_B1 (positions)
+    ↓ Drop          POS_A1 (positions)
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          POS_B1 (positions)
+
+## POS_A1, Next carrier Robot 3 (its row's Advanced › Next carrier)
+  Robot work lists · POS_A1 — Index Swap · the steps sent to Core
+  Robot 1 · old bin out
+    ‖ Wait          POS_A1 (positions)
+    ↑ Pick up       POS_A1 (positions)
+    ↓ Drop          DST_1 (outbound)
+  Robot 2 · indexes
+    ‖ Wait          POS_B1 (positions)
+    ↑ Pick up       POS_B1 (positions)
+    ↓ Drop          POS_A1 (positions)
+  Robot 3 · new bin in
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          POS_B1 (positions)
+
+## POS_A3 with its Outbound destination cleared (the builder refuses it)
+  Robot work lists · POS_A3 — 2‑Robot Swap · the steps sent to Core
+  No robot is sent until this swap is complete: 2‑Robot Swap requires an outbound destination
+
+## POS_A7 with its Outbound destination cleared (the builder takes it; its removal would drop at no node)
+  Robot work lists · POS_A7 — Sequential A/B · the steps sent to Core
+  No robot is sent until this swap is complete: Sequential A/B requires an outbound destination
+
+## POS_B1 clicked (POS_A1's back position)
+  Robot work lists · POS_A1 — Index Swap · the steps sent to Core
+  Robot 1 · old bin out
+    ‖ Wait          POS_A1 (positions)
+    ↑ Pick up       POS_A1 (positions)
+    ↓ Drop          DST_1 (outbound)
+  Robot 2 · indexes
+    ‖ Wait          POS_B1 (positions)
+    ↑ Pick up       POS_B1 (positions)
+    ↓ Drop          POS_A1 (positions)
+  Robot 3 · new bin in
+    ↑ Pick up       GRP_A (inbound)
+    ↓ Drop          POS_B1 (positions)

@@ -211,15 +211,33 @@ function kindOf(n) {
 //                outside it is not drawn (it is not a choice this field has,
 //                as a slot is not one for a field that takes groups), and the
 //                nodes under it that are inside move up to its place
+//   members      'fold': a group's nodes wait under its "show N" (the shell's
+//                fold), for a field that may take one of them; 'none': they
+//                are not drawn at all, for a field that names the group and
+//                never a member (where Core picks inside it). Either way the
+//                group's row says how many it holds: "group · 4 nodes"
+//   later(node)  true: the row goes after the rest, behind the shell's one
+//                "show" (opts.later) — a node another process holds
+//   quiet(node)  true: the rule's reason is said once above the list, so the
+//                row is greyed without it (the shell's quiet)
+// A group's row (an NGRP) says so, group: true, for a view that keeps the
+// groups (the set pick's Groups only).
 export function nodeRows(nodes, field) {
     const f = field || {};
     if (!Array.isArray(nodes)) return [];
     const plant = plantOf(nodes);
     const zoned = f.sections !== undefined ? !!f.sections : plant.all.some((n) => n.zone);
     const valueOf = f.value === 'id' ? (n) => String(n.id) : (n) => n.name;
+    const counted = f.members === 'fold' || f.members === 'none';
+    const kind = (n) => {
+        const k = kindOf(n);
+        if (!counted || k !== 'group') return k;
+        const leaves = under(n, 1, [], new Set()).filter((x) => !x.n.kids.length).length;
+        return leaves ? 'group · ' + leaves + (leaves === 1 ? ' node' : ' nodes') : k;
+    };
     const rowOf = (n, depth, section) => {
         const why = f.rule ? f.rule(n) : '';
-        const notes = [kindOf(n), n.display && n.display !== n.name ? n.display : '', n.desc,
+        const notes = [kind(n), n.display && n.display !== n.name ? n.display : '', n.desc,
             n.local ? 'this Edge only' : '', !why && f.note ? f.note(n) : ''];
         const row = {
             value: valueOf(n),
@@ -229,6 +247,9 @@ export function nodeRows(nodes, field) {
         };
         if (section !== undefined) row.section = section;
         if (why) row.reason = why;
+        if (why && f.quiet && f.quiet(n)) row.quiet = true;
+        if (kindOf(n) === 'group') row.group = true;
+        if (depth === 0 && f.later && f.later(n)) row.later = true;
         const tags = f.tags ? f.tags(n) : null;
         if (tags && tags.length) row.tags = tags;
         if (f.expand && n.kids.length) {
@@ -269,8 +290,9 @@ export function nodeRows(nodes, field) {
     return tops.map((n) => {
         const section = zoned ? (zoneOf(n) || 'Other') : undefined;
         const row = rowOf(n, 0, section);
-        const members = below(n).map((x) => rowOf(x.n, x.depth));
+        const members = f.members === 'none' && isContainer(n) ? [] : below(n).map((x) => rowOf(x.n, x.depth));
         if (members.length) row.members = members;
+        if (members.length && f.members === 'fold') row.fold = true;
         return row;
     });
 }

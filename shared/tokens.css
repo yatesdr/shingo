@@ -363,6 +363,20 @@
   --map-class-6: #79c0ff;
   --map-class-7: #f0883e;
 
+  /* A process's node roles: its positions and the three roles of its routing
+   * set, drawn on the set pick's boxes, its chips and tags, and Settings.
+   * Their own tokens, NOT the robot hues: on the flow picture teal and indigo
+   * mean Robot 1 and Robot 2, and the pick used them for Inbound and Outbound.
+   * A role's colour always comes with its name (ui-style-guide 04).
+   * Light values clear 4.5:1 on --surface and --bg; every pair stays 5.0 apart
+   * (CIEDE2000) under each dichromacy (TestRoleColours). Outbound in dark is
+   * #f075b9, a shade off the first mock's #f778ba, which sat 4.9 from Staging
+   * under tritanopia. */
+  --role-positions: var(--text);
+  --role-inbound: #0969da;
+  --role-staging: #b84f0a;
+  --role-outbound: #cc0085;
+
   /* Dashboard / charts (mission-telemetry plan §4). These reference the
    * semantic tokens above, so they resolve per-theme without a dark-mode
    * override. --kpi-up / --kpi-down are aliases for delta arrows so they
@@ -590,6 +604,10 @@
   --route-remaining: var(--text);
   --route-chip: #21262d;
   --route-chip-ink: var(--text);
+  /* The node roles, dark. Staging is the orange the set pick has always had. */
+  --role-inbound: #6cb0ff;
+  --role-staging: var(--map-class-5);
+  --role-outbound: #f075b9;
 }
 
 /* Reduced-motion, by law ("motion means motion"). Zeroing the motion

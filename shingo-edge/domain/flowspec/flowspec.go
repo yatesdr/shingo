@@ -119,7 +119,6 @@ const (
 	ReuseCompatibleBins            Field = "reuse_compatible_bins"
 	RefillBy                       Field = "refill_by"
 	AutoConfirm                    Field = "auto_confirm"
-	AutoRequestPayload             Field = "auto_request_payload"
 	AutoPush                       Field = "auto_push"
 	KeyRoute                       Field = "key_route"
 	KeyTask                        Field = "key_task"
@@ -182,7 +181,6 @@ var fieldLabels = map[Field]string{
 	ReuseCompatibleBins:            "Reuse compatible bins",
 	RefillBy:                       "Next carrier",
 	AutoConfirm:                    "Auto confirm",
-	AutoRequestPayload:             "Auto request part",
 	AutoPush:                       "Auto push",
 	KeyRoute:                       "Key route",
 	KeyTask:                        "Key task",
@@ -202,7 +200,7 @@ var fieldOrder = []Field{
 	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
 	LinesideSoftThreshold, Sequence, KeepStagedNode,
 	ChangeoverEvacNodes, ChangeoverCarryoverDisposition,
-	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoRequestPayload, AutoPush,
+	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoPush,
 	KeyRoute, KeyTask, PartialDestination, CurtainRequired,
 	StrictPack, PackTolerancePct,
 }
@@ -428,7 +426,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
-		AutoConfirm, AutoRequestPayload,
+		AutoConfirm,
 	} {
 		ms[f] = Unused
 	}

@@ -112,18 +112,18 @@ type FlowCell struct {
 // Unmarshalling is untouched — omitempty is a marshalling tag — so a save
 // sending every key still writes every column.
 type FlowAdvanced struct {
-	// AllowedPayloadCodes is which payloads a robot may bring to this
-	// position. Set explicitly here, it beats Expand's degenerate-list guess.
+	// AllowedPayloadCodes is the other parts this position counts as its own:
+	// its readers take a carrier, pile or bin of a listed part as this
+	// position's (the changeover gate, counting, the lineside piles, Core's
+	// sourceability); none brings a second part to the line. Set explicitly
+	// here, it beats Expand's degenerate-list guess.
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
 	// ReorderPoint / AutoReorder are the replenishment policy: the point the
 	// engineer set (0 is off) and whether reaching it asks for a bin.
 	ReorderPoint          int  `json:"reorder_point,omitempty"`
 	AutoReorder           bool `json:"auto_reorder,omitempty"`
 	LinesideSoftThreshold int  `json:"lineside_soft_threshold,omitempty"`
-	// AutoRequestPayload is a PAYLOAD CODE, not a flag: it names which payload
-	// a vacated position asks for. Blank is off.
-	AutoRequestPayload string `json:"auto_request_payload,omitempty"`
-	AutoPush           bool   `json:"auto_push,omitempty"`
+	AutoPush              bool `json:"auto_push,omitempty"`
 	// CarryoverDisposition is the changeover special that is not a position on
 	// the picture.
 	CarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition"`
@@ -173,7 +173,6 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		ReorderPoint:          c.ReorderPoint,
 		AutoReorder:           c.AutoReorder,
 		LinesideSoftThreshold: c.LinesideSoftThreshold,
-		AutoRequestPayload:    c.AutoRequestPayload,
 		AutoPush:              c.AutoPush,
 		CarryoverDisposition:  CarryoverFor(c),
 		KeepStagedNode:        c.KeepStagedNode,
@@ -230,10 +229,10 @@ func Collapse(c NodeClaim) FlowCell {
 
 // Expand is the write for a cell: the NodeClaimInput UpsertClaim takes.
 //
-// It honours updateClaim's boundary. Of the seventeen columns the store writes
+// It honours updateClaim's boundary. Of the sixteen columns the store writes
 // unconditionally, the cell supplies role, swap_mode, payload_code, the two
-// paired positions, the four routing fields and the partial destination; the other eight (uop_capacity,
-// reorder_point, allowed_payload_codes, auto_request_payload,
+// paired positions, the four routing fields and the partial destination; the other seven (uop_capacity,
+// reorder_point, allowed_payload_codes,
 // auto_confirm, lineside_soft_threshold,
 // reuse_compatible_bins, auto_push) are copied from the prior claim — or take
 // the INSERT defaults with no prior — because a value type cannot say "no
@@ -247,7 +246,7 @@ func Collapse(c NodeClaim) FlowCell {
 //
 // All of that describes a cell whose Advanced is nil, which is every save the
 // station HMI makes and every desktop save nobody opened the modal on. A cell
-// that DOES carry Advanced overrides seven of the nine carried columns and
+// that DOES carry Advanced overrides six of the eight carried columns and
 // six of the nine silent ones, at the bottom of the function — see FlowCell.
 func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimInput {
 	in := NodeClaimInput{
@@ -274,7 +273,6 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		if len(prior.AllowedPayloadCodes) == 1 && prior.AllowedPayloadCodes[0] == prior.PayloadCode {
 			in.AllowedPayloadCodes = []string{cell.PayloadCode}
 		}
-		in.AutoRequestPayload = prior.AutoRequestPayload
 		in.AutoConfirm = prior.AutoConfirm
 		in.LinesideSoftThreshold = prior.LinesideSoftThreshold
 		in.ReuseCompatibleBins = prior.ReuseCompatibleBins
@@ -298,13 +296,12 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 	//
 	// Five of them are pointer-gated columns Expand otherwise leaves
 	// nil; speaking them is what makes an update touch them at all. The other
-	// ten are unconditional columns that were being copied from the prior a
+	// nine are unconditional columns that were being copied from the prior a
 	// moment ago and are now the modal's.
 	if a := cell.Advanced; a != nil {
 		in.AllowedPayloadCodes = cloneStrings(a.AllowedPayloadCodes)
 		in.ReorderPoint = a.ReorderPoint
 		in.LinesideSoftThreshold = a.LinesideSoftThreshold
-		in.AutoRequestPayload = a.AutoRequestPayload
 		in.AutoPush = a.AutoPush
 		in.AutoConfirm = a.AutoConfirm
 		in.AutoReorder = Ptr(a.AutoReorder)
@@ -348,7 +345,6 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		StrictPack:                     c.StrictPack,
 		PackTolerancePct:               c.PackTolerancePct,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
-		AutoRequestPayload:             c.AutoRequestPayload,
 		PairedCoreNode:                 c.PairedCoreNode,
 		SecondPairedCoreNode:           c.SecondPairedCoreNode,
 		ChangeoverEvacNodes:            Ptr(nonNilStrings(c.ChangeoverEvacNodes)),
@@ -391,7 +387,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	if in.StyleID != 0 {
 		c.StyleID = in.StyleID
 	}
-	// The eighteen unconditional columns, with the store's own normalisation.
+	// The seventeen unconditional columns, with the store's own normalisation.
 	c.CoreNodeName = in.CoreNodeName
 	c.Role = protocol.ClaimRoleConsume
 	if in.Role == protocol.ClaimRoleProduce {
@@ -412,7 +408,6 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.OutboundDestination = in.OutboundDestination
 	c.PartialDestination = in.PartialDestination
 	c.AllowedPayloadCodes = cloneStrings(in.AllowedPayloadCodes)
-	c.AutoRequestPayload = in.AutoRequestPayload
 	// The two paired positions as the save stores them: none on a mode that
 	// names none.
 	c.PairedCoreNode, c.SecondPairedCoreNode = in.SavedPairs()

@@ -83,6 +83,10 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			BoardShowsAllParts: l.BoardShowsAllParts,
 			// The board's Clear partials, and the home clear Core answers.
 			NoClearPartials: l.NoClearPartials,
+			// The Edge that works the loader. Its display name is filled by
+			// the node-list build (messaging.buildNodeList), from one registry
+			// read for every loader rather than one here per loader.
+			EdgeStationUID: l.EdgeStationUID,
 		}
 
 		homes, err := db.ListLoaderHomes(l.ID)

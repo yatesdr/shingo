@@ -2,140 +2,99 @@
 # answer; the requests that followed it; each run of text that appeared on the page (container,
 # innermost element); the sheet; the page's message state; any rejection the page left unhandled.
 
-## Positions bucket: tick NEW_1
+## the Positions box: NEW_1, Save
 # writes, in order: PUT /api/operator-stations/11/claimed-nodes
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
     then: nothing
-    new text: #pd-root div.pd-refusal: the Edge refused it
-    new text: … and 53 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. Screen A: the Edge refused it
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="the Edge refused it"
+    state: bar.refusal="Not saved. Screen A: the Edge refused it"
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
     then: nothing
-    new text: #pd-root div.pd-refusal: Server error (500)
-    new text: … and 53 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. Screen A: Server error (500)
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="Server error (500)"
+    state: bar.refusal="Not saved. Screen A: Server error (500)"
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
-    new text: #pd-root div.pd-refusal: No answer from the server
-    new text: … and 53 more runs (the tab redrew)
+    new text: .pd-sheet div.set-refusal: Not saved. Screen A: No answer from the server
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     sheet: closed
-    state: settingsError="No answer from the server"
+    state: bar.refusal="Not saved. Screen A: No answer from the server"
     unhandled rejection: none
 ### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
     then: nothing
-    new text: … and 55 more runs (the tab redrew)
-    notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: closed
-    state: no message set
-    unhandled rejection: none
-
-## Remove POS_A11: the sheet the impact read opens
-# writes, in order: POST /api/operator-stations/11/claimed-nodes/impact
-### POST /api/operator-stations/11/claimed-nodes/impact  ←  400 {"error"} (writeError)
-    then: nothing
-    new text: .layer-scrim p.pd-note: What still names it could not be read (the Edge refused it). Removing it takes its tile off the screen.
-    new text: .layer-scrim h2: Remove POS_A11
-    new text: .layer-scrim p: from Screen A
-    new text: .layer-scrim button.btn: Cancel
-    new text: .layer-scrim button.btn.btn-danger: Remove
-    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
-    state: no message set
-    unhandled rejection: none
-### POST /api/operator-stations/11/claimed-nodes/impact  ←  500, no body (chi Recoverer)
-    then: nothing
-    new text: .layer-scrim p.pd-note: What still names it could not be read (Server error (500)). Removing it takes its tile off the screen.
-    new text: .layer-scrim h2: Remove POS_A11
-    new text: .layer-scrim p: from Screen A
-    new text: .layer-scrim button.btn: Cancel
-    new text: .layer-scrim button.btn.btn-danger: Remove
-    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
-    state: no message set
-    unhandled rejection: none
-### POST /api/operator-stations/11/claimed-nodes/impact  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: .layer-scrim p.pd-note: What still names it could not be read (No answer from the server). Removing it takes its tile off the screen.
-    new text: .layer-scrim h2: Remove POS_A11
-    new text: .layer-scrim p: from Screen A
-    new text: .layer-scrim button.btn: Cancel
-    new text: .layer-scrim button.btn.btn-danger: Remove
-    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
-    state: no message set
-    unhandled rejection: none
-### POST /api/operator-stations/11/claimed-nodes/impact  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: nothing
-    new text: .layer-scrim p.pd-note: What still names it could not be read. Removing it takes its tile off the screen.
+    new text: .pd-sheet div.set-refusal: Not saved.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
-    new text: .layer-scrim h2: Remove POS_A11
-    new text: .layer-scrim p: from Screen A
-    new text: .layer-scrim button.btn: Cancel
-    new text: .layer-scrim button.btn.btn-danger: Remove
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
-    state: no message set
+    sheet: closed
+    state: bar.refusal="Not saved."
     unhandled rejection: none
 
-## Remove POS_A11: the sheet's Remove
+## the Positions box: POS_A11 off, Save, its list write refused
 # writes, in order: PUT /api/operator-stations/11/claimed-nodes
 ### PUT /api/operator-stations/11/claimed-nodes  ←  400 {"error"} (writeError)
-    then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: the Edge refused it
-    sheet: open "Remove POS_A11", status "the Edge refused it" (bad), OK "Remove" enabled
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
+    new text: .pd-sheet span.prov: No unsaved changes
+    notice: success "Saved"
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  500, no body (chi Recoverer)
-    then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: Server error (500)
-    sheet: open "Remove POS_A11", status "Server error (500)" (bad), OK "Remove" enabled
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
+    new text: .pd-sheet span.prov: No unsaved changes
+    notice: success "Saved"
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: nothing
-    new text: .layer-scrim span.layer-status.is-bad: No answer from the server
-    sheet: open "Remove POS_A11", status "No answer from the server" (bad), OK "Remove" enabled
+    then: GET /api/operator-stations/11/claimed-nodes · POST /api/operator-stations/11/claimed-nodes/impact · PUT /api/operator-stations/11/claimed-nodes · GET /api/process-nodes · GET /api/processes/1/station-counters · GET /api/processes/1/composer?map_rev=map-r1
+    new text: .pd-sheet span.prov: No unsaved changes
+    notice: success "Saved"
+    sheet: closed
     state: no message set
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes · PUT /api/operator-stations/11/claimed-nodes · GET /api/operator-stations/11/claimed-nodes · GET /api/processes/1/composer · GET /api/process-nodes → sheet: closed
 ### PUT /api/operator-stations/11/claimed-nodes  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: nothing
+    then: GET /api/operator-stations/11/claimed-nodes
+    new text: .pd-sheet div.set-refusal: Not saved. Screen A’s positions could not be read, so nothing was changed. Try again.
+    new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
-    sheet: open "Remove POS_A11", no status, OK "Remove" enabled
-    state: no message set
+    sheet: closed
+    state: bar.refusal="Not saved. Screen A’s positions could not be read, so nothing was changed. Try again."
     unhandled rejection: none
-    pressed again: GET /api/operator-stations/11/claimed-nodes → sheet: open "Remove POS_A11", status "This screen’s positions could not be read, so nothing was removed." (bad), OK "Remove" enabled
 
 ## Make a screen for LDR_1
 # writes, in order: POST /api/loader-boards
 ### POST /api/loader-boards  ←  400 {"error"} (writeError)
-    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
-    new text: #pd-root div.pd-refusal: Could not make a screen for LDR_1: the Edge refused it
+    then: GET /api/operator-stations · GET /api/process-nodes · GET /api/processes
+    new text: #pd-stbody div.pd-refusal: Could not make a screen for LDR_1: the Edge refused it
     sheet: closed
     state: settingsError="Could not make a screen for LDR_1: the Edge refused it"
     unhandled rejection: none
 ### POST /api/loader-boards  ←  500, no body (chi Recoverer)
-    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
-    new text: #pd-root div.pd-refusal: Could not make a screen for LDR_1: Server error (500)
+    then: GET /api/operator-stations · GET /api/process-nodes · GET /api/processes
+    new text: #pd-stbody div.pd-refusal: Could not make a screen for LDR_1: Server error (500)
     sheet: closed
     state: settingsError="Could not make a screen for LDR_1: Server error (500)"
     unhandled rejection: none
 ### POST /api/loader-boards  ←  no answer (fetch rejects: TypeError "Failed to fetch")
-    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
-    new text: #pd-root div.pd-refusal: Could not make a screen for LDR_1: No answer from the server
+    then: GET /api/operator-stations · GET /api/process-nodes · GET /api/processes
+    new text: #pd-stbody div.pd-refusal: Could not make a screen for LDR_1: No answer from the server
     sheet: closed
     state: settingsError="Could not make a screen for LDR_1: No answer from the server"
     unhandled rejection: none
 ### POST /api/loader-boards  ←  session lapsed (303 to /login, 200 text/html, for it and every admin call after)
-    then: GET /api/operator-stations · GET /api/processes · GET /api/processes/1/composer · GET /api/processes/1/styles
-    new text: .notice-root span.notice-text: Signed out
-    new text: .notice-root a.notice-action: Sign in
+    then: GET /api/operator-stations · GET /api/process-nodes · GET /api/processes
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Positions and routing.
+    new text: #pd-stbody p.pd-note: This process has no positions yet: pick them under Positions and routing.
+    new text: … and 8 more runs (the tab redrew)
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: no message set

@@ -124,10 +124,13 @@ async function save(state) {
 The flow composer (the desktop Processes page and the station's changeover
 screens) is the convention at full size. Its state object is
 `shingo-edge/www/static/operator-station/composer-model.js` — pure, no DOM,
-`reduce(state, action)` — and the fields it cannot draw on the picture are in
-one Advanced sheet per position, whose `advancedShows()` asks **flowspec**: the
-same table the server validates against, so a control cannot be offered for a
-value the save would refuse. Copy from it:
+`reduce(state, action)` — and the fields it cannot draw on the picture are
+in a position's own **Advanced** sheet, opened from its row of the positions
+table (every setting its swap takes, each with its value control; see
+[Desktop composer patterns](16-desktop-composer-patterns-u9.md) › The row's
+Advanced). What the sheet offers is asked of `advancedShows()`,
+which asks **flowspec**: the same table the server validates against, so a
+control cannot be offered for a value the save would refuse. Copy from it:
 
 - **One state object, shared between surfaces.** `composer-model.js` is the
   draft for the HMI and the desktop both. Two screens over one model is what

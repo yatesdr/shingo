@@ -1,0 +1,50 @@
+== process list (page data, then its first read)
+GET /api/catid-health  12 B
+-- 1 requests, 12 B of answers
+
+== open BIG-PRESS (Styles, the running style)
+GET /api/processes/1/composer  59986 B
+GET /api/operator-stations/61/claimed-nodes  268 B
+GET /api/operator-stations/62/claimed-nodes  21 B
+POST /api/processes/1/flow/preview?steps=1  53 B
+-- 4 requests, 60328 B of answers
+
+== the Styles poll, once (it runs every 10 s and on focus)
+GET /api/processes/1/composer/lists  5433 B
+-- 1 requests, 5433 B of answers
+
+== Settings, opened
+GET /api/processes/1/composer  59986 B
+GET /api/operator-stations/61/claimed-nodes  268 B
+GET /api/operator-stations/62/claimed-nodes  21 B
+GET /api/processes/1/routing-nodes  291 B
+GET /api/process-nodes  6752 B
+GET /api/payload-catalog  2393 B
+GET /api/processes/1/payloads  599 B
+GET /api/processes/1/station-counters  2 B
+GET /api/processes/1/counting-slots  12 B
+GET /api/processes/1/catid-health  12 B
+GET /api/plcs  37 B
+GET /api/processes/1/presets  4719 B
+GET /api/processes/1/auto-reorder  33 B
+GET /api/core-nodes  4755 B
+POST /api/processes/1/flow/preview?steps=1  53 B
+-- 15 requests, 79933 B of answers
+
+== Settings, opened, with one station counter
+GET /api/processes/1/composer  59986 B
+GET /api/operator-stations/61/claimed-nodes  268 B
+GET /api/operator-stations/62/claimed-nodes  21 B
+GET /api/processes/1/routing-nodes  291 B
+GET /api/process-nodes  6752 B
+GET /api/payload-catalog  2393 B
+GET /api/processes/1/payloads  599 B
+GET /api/processes/1/station-counters  132 B
+GET /api/processes/1/counting-slots  12 B
+GET /api/processes/1/catid-health  12 B
+GET /api/plcs  37 B
+GET /api/processes/1/presets  4719 B
+GET /api/processes/1/auto-reorder  33 B
+GET /api/core-nodes  4755 B
+POST /api/processes/1/flow/preview?steps=1  53 B
+-- 15 requests, 80063 B of answers

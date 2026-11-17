@@ -45,7 +45,7 @@ var edgePageBudgets = map[string]struct {
 	"manual-order.html":     {20, 75 << 10},  // 18, 68974 at s3-adapters: the shared picker and its adapters
 	"operator-display.html": {29, 199 << 10}, // 27, 185107 at sm/u10-panel: the robot panel's boot module and shared/scene-view.css (+2 requests, +4849 B on 180258); its map loads on first show
 	"orders.html":           {18, 80 << 10},  // 16, 73607
-	"processes.html":        {35, 360 << 10}, // 33, 329851 at s3-processes: the shared picker and its adapters
+	"processes.html":        {25, 272 << 10}, // 22, 234842 with v0.9.0 merged: the composer stack and the key-route model wait for the first open
 	"production.html":       {22, 101 << 10}, // 20, 93782 at s3-adapters: the shared picker and its adapters
 }
 

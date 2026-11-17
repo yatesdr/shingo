@@ -333,8 +333,12 @@ func cellPositionNames(stationID int64, nodes []Node, claims map[string]NodeClai
 		if n.DeletedAt != nil || !n.Enabled {
 			continue
 		}
-		bound := n.OperatorStationID != nil &&
-			(stationID == 0 || *n.OperatorStationID == stationID)
+		// The desktop (station 0) draws every live position, one on no screen
+		// included: a process's positions come before its screen, and its
+		// first style is drawn over them. It left out a position with no
+		// screen, so a new process drew an empty press.
+		bound := stationID == 0 ||
+			(n.OperatorStationID != nil && *n.OperatorStationID == stationID)
 		if bound || partners[n.CoreNodeName] {
 			out[n.CoreNodeName] = true
 		}

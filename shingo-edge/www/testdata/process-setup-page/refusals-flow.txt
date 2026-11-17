@@ -3,15 +3,15 @@
 # innermost element); the sheet; the page's message state; any rejection the page left unhandled.
 
 ## flow edit: the debounced preview (POS_A5 source, POS_A1 key route)
-# writes, in order: POST /api/processes/1/flow/preview
-### POST /api/processes/1/flow/preview  ←  409 {"error"} (writeFlowRefusal)
+# writes, in order: POST /api/processes/1/flow/preview?steps=1
+### POST /api/processes/1/flow/preview?steps=1  ←  409 {"error"} (writeFlowRefusal)
     then: nothing
     new text: #pd-bar div.h.bad: the Edge refused it
     new text: #pd-bar div.d: Check the flow, or ask an engineer if this needs Core. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
     sheet: closed
     state: no message set
     unhandled rejection: none
-### POST /api/processes/1/flow/preview  ←  400 {"error", order_count:0, findings, fingerprint} (no orders)
+### POST /api/processes/1/flow/preview?steps=1  ←  400 {"error", order_count:0, findings, fingerprint} (no orders)
     then: nothing
     new text: #pd-svg text.needlbl: POS_A1 needs a source
     new text: #pd-bar div.h.bad: 1 to fix
@@ -19,14 +19,14 @@
     sheet: closed
     state: no message set
     unhandled rejection: none
-### POST /api/processes/1/flow/preview  ←  500, no body (chi Recoverer)
+### POST /api/processes/1/flow/preview?steps=1  ←  500, no body (chi Recoverer)
     then: nothing
     new text: #pd-bar div.h.bad: Server error (500)
     new text: #pd-bar div.d: Check the flow, or ask an engineer if this needs Core. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
     sheet: closed
     state: no message set
     unhandled rejection: none
-### POST /api/processes/1/flow/preview  ←  no answer (fetch rejects: TypeError "Failed to fetch")
+### POST /api/processes/1/flow/preview?steps=1  ←  no answer (fetch rejects: TypeError "Failed to fetch")
     then: nothing
     new text: #pd-bar div.h.bad: No answer from the server
     new text: #pd-bar div.d: Check the flow, or ask an engineer if this needs Core. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6)
@@ -43,7 +43,7 @@
     state: no message set
     unhandled rejection: none
 ### POST /api/processes/1/flow/save  ←  409 {"error", stale:true} (a stale fingerprint)
-    then: POST /api/processes/1/flow/preview
+    then: POST /api/processes/1/flow/preview?steps=1
     new text: none
     sheet: closed
     state: no message set

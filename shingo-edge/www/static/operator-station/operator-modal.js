@@ -441,8 +441,8 @@ export function renderModal(entry) {
                 // reorder feeds loaders), so the operator never has
                 // to manually request a bin from this screen. (The threshold
                 // / lineside demand-signal route this list used to name was
-                // deleted 2026-08; auto_request_payload is persisted but has
-                // no trigger reader.) Once that's
+                // deleted 2026-08, and Auto request part, which had no
+                // trigger reader, was dropped by Edge v55.) Once that's
                 // wired up, the canRequest branch — and the matching
                 // /request-empty / /request-full URLs below — becomes dead
                 // code and should be deleted instead of being left as a
