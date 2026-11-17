@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.11.1 — 2026-11-17
+
 Deploy: no migration; Core and Edges in either order. A box an earlier tag install left on a release needs `--tag` this once.
 
 - A plain install run installs the newest release; `--tag vX.Y.Z` picks one, `--main` builds main
