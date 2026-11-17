@@ -581,7 +581,7 @@ func AdvanceStepsDone(db *sql.DB, id int64, n int) error {
 // refuses leaves its entries behind; a retry re-cuts the same ids
 // (dispatch.mintBlockID) and writes them again, and a block never sent never
 // finishes. One of the two writers of block_actions, with NameFleetOrder
-// (TestBlockActions_OnlyTheCreateAndTheAppendWriteTheRecord).
+// (TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent).
 func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string, actions map[string]string) (bool, error) {
 	raw, err := blockActionsJSON(actions)
 	if err != nil {
