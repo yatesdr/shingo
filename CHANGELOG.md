@@ -16,6 +16,13 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core first, then every Edge: an Edge on this release shows no robot moving until its Core runs it too.
+
+- A robot panel shows its robots already moving within about half a second, pressed or shown again
+- Core's robot map draws a driving robot driving on its first frame after a reload
+- Core answers a robot panel that just opened from its last robot poll, not the next one
+- A robot panel never draws a robot stepping back to an older position
+
 ## v0.10.0 — 2026-11-17
 
 Deploy: Edge v55–v57 first, at every Edge of the plant; then Core v178. An Edge from before this release ignores the Edge Core names for a loader and keeps its screens as they are, so pick an Edge under Loaders only once every Edge at the plant runs this release.
