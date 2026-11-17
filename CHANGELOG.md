@@ -83,6 +83,9 @@ Deploy: Edge v55–v57 first, at every Edge of the plant; then Core v178. An Edg
 - A position taken off and put back keeps both its rows at the Edge's next start; one put back on no screen is no longer deleted by the start
 - A produce position with no inbound source asks Core for an empty carrier, not a full of the part it makes
 - Every swap mode refuses a blank outbound destination at request, in the same words; Sequential A/B and 1-Robot Swap sent the robot to drop the old bin at no node
+- Picking another Sequential A/B partner, or none, unpairs the old one, in First style and on the Styles table; a row moved on the table keeps its pair
+- A position added on a swap that takes no partner sends none, so First style saves 1-Robot Swap rows on a line with back positions
+- An Index Swap back picked again leaves room for the new back's part where the old back's part had moved
 - A name another process already has is said under the Name field, in Add process, Setup's Change… and Settings; a refused rename saves nothing
 - The node pick's name filter and its All · Groups only · Free only stay in view with "Picking …" as the list scrolls
 - The Add sheet and Settings say Parts once
