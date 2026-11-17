@@ -120,9 +120,6 @@ func (s *coreStub) take() map[string]int {
 
 // binsRig is a real engine over a counting store, its Core API pointed at a
 // stub, and the router the Edge serves.
-//
-// A test that builds one is not parallel: NewRouter sets plantLocation, the
-// package variable every template render reads, so a parallel render races it.
 type binsRig struct {
 	eng     *engine.Engine
 	db      *store.DB

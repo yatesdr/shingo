@@ -2,6 +2,7 @@ package www
 
 import (
 	"log"
+	"sync/atomic"
 	"time"
 
 	"shingoedge/config"
@@ -24,7 +25,22 @@ import (
 //
 // Resolved once in NewRouter, before templates parse; the boot log names
 // the source so "which knob made this clock" is answerable from journald.
-var plantLocation = time.UTC
+//
+// The store is atomic because NewRouter writes it and every render reads it.
+// In the shipped Edge those never meet, but in this package's tests a parallel
+// test that builds a router writes it while another parallel test renders. A
+// rule in comments ("a test that builds a router is not parallel") held that
+// off until four parallel tests broke it and CI's race run failed (2026-11-17).
+// Being atomic means nothing depends on that rule.
+var plantZone atomic.Pointer[time.Location]
+
+// plantLocation is the plant's zone: UTC until NewRouter resolves one.
+func plantLocation() *time.Location {
+	if loc := plantZone.Load(); loc != nil {
+		return loc
+	}
+	return time.UTC
+}
 
 // resolvePlantLocation is NewRouter's resolution step. cfg may be nil in
 // tests; that keeps UTC, the honest answer for "no config".

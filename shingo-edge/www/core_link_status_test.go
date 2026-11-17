@@ -149,9 +149,7 @@ func TestDiagnostics_CoreLinkNotes(t *testing.T) {
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
-	orig := plantLocation
-	plantLocation = chicago
-	defer func() { plantLocation = orig }()
+	usePlantLocation(t, chicago)
 
 	h, _ := newTestHandlers(t)
 	eng := h.orchestration.(*stubEngine)

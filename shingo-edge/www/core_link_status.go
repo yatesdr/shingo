@@ -101,7 +101,7 @@ func coreLinkFeedNote(eng statusEngine, key string, now time.Time) string {
 	case at.IsZero():
 		return "No data from Core yet"
 	case old:
-		return "as of " + planttime.Clock(at, plantLocation)
+		return "as of " + planttime.Clock(at, plantLocation())
 	default:
 		return "current"
 	}

@@ -74,8 +74,6 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // position's auto-reorder (orders.AbortOrderByPerson). Changed 2026-11-14:
 // submit and abort were public. Both directions are asserted so a later "tidy
 // the routes" pass cannot move one without noticing the other.
-//
-// Not parallel: NewRouter sets plantLocation (realFlowRouterEngine).
 func TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot(t *testing.T) {
 	h, r, _ := realFlowRouterEngine(t, testdb.Open(t))
 

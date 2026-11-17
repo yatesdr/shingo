@@ -409,7 +409,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	// plant — so for the hour between plant midnight and box midnight this
 	// page asked for tomorrow. plantLocation is the same zone the stored UTC
 	// buckets are reported in, so the chart and its title agree.
-	todayStr := time.Now().In(plantLocation).Format("2006-01-02")
+	todayStr := time.Now().In(plantLocation()).Format("2006-01-02")
 	var hourlyCounts map[int]int64
 	if isAll {
 		// Sum hourly counts across all processes for the initial page load
@@ -571,7 +571,7 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	dateStr := r.URL.Query().Get("date")
 	if dateStr == "" {
-		dateStr = time.Now().In(plantLocation).Format("2006-01-02")
+		dateStr = time.Now().In(plantLocation()).Format("2006-01-02")
 	}
 	processIDStr := r.URL.Query().Get("process_id")
 
