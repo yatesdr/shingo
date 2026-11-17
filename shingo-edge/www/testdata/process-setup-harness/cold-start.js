@@ -644,6 +644,84 @@ async function pinFirstStylePartner() {
         a3item[1] === 'out' && T.decode(a3item[2] || '') === 'back of POS_A1' && !a3cell.on, JSON.stringify({ item: a3item.slice(1), cell: a3cell.on }));
 }
 
+// ── Setup · First style: a partner picked again (round 11) ──────────────────
+//
+// A Sequential A/B pair is two positions that name each other. Picking another
+// partner unpairs the one picked before: it names no partner of this press,
+// and is a row of its own again with the swap it had before it was paired. A
+// swap with no partner unpairs both. An Index Swap's back picked again hands
+// the old back its row back, with its part (round 10).
+async function pinFirstStyleRepick() {
+    L.push('', '## Setup › First style on Press A: a partner picked again');
+    const open = async () => {
+        const page = await T.openPage(pressA(NO_FLOW, NOT_RUN));
+        page.click('root', { act: 'setup-style' });
+        await page.settle();
+        return page;
+    };
+    const labels = (await open()).pd('M')().modeLabels();
+    const mode = name => Object.keys(labels).find(m => labels[m] === name);
+    const item = (page, n) => (new RegExp('<li class="pd-fsitem ([a-z]+)[^"]*"><button data-act="fs-open" data-node="' + n + '">.*?<small>([^<]*)</small>')
+        .exec(page.root.innerHTML) || []);
+    const act = async (page, data) => { page.click('root', data); await page.settle(); };
+    const pick = async (page, v) => {
+        await act(page, { act: 'fs-pick', pick: 'paired' });
+        T.pickerRow(page, 'pd-pop', v);
+        await page.settle();
+    };
+    // What a position names in the draft (the model the Styles save sends),
+    // and what it runs as on the step (its own copy, or none of its own).
+    const names = (page, n) => ((page.S.model.cells[n] || {}).on ? page.S.model.cells[n].paired || '' : '');
+    const own = (page, n) => {
+        const e = page.S.firstStyle.own[n];
+        return e ? labels[e.mode] + ((e.picks || {}).paired ? ' paired with ' + e.picks.paired : '') : 'none of its own';
+    };
+
+    // INDEX SWAP: the back picked again (round 10 left it so; pinned here).
+    const ix = await open();
+    await act(ix, { act: 'fs-mode', mode: mode('Index Swap') });
+    const had = ix.S.firstStyle.parts.POS_A2;
+    await pick(ix, 'POS_A2');
+    await pick(ix, 'POS_A3');
+    L.push('  Index Swap, POS_A2 then POS_A3 picked: POS_A1 paired with ' + ix.S.model.cells.POS_A1.paired + ' · POS_A2 ' + item(ix, 'POS_A2')[1] +
+        ', its part ' + (ix.S.firstStyle.parts.POS_A2 || 'none') + ' · POS_A3 ' + item(ix, 'POS_A3')[1] + ' (' + T.decode(item(ix, 'POS_A3')[2] || '') + ')');
+    check('an Index Swap back picked again hands the old back its row back, with its part', item(ix, 'POS_A2')[1] !== 'out' &&
+        ix.S.firstStyle.parts.POS_A2 === had && !ix.S.firstStyle.backOf.POS_A2, JSON.stringify({ item: item(ix, 'POS_A2').slice(1), part: ix.S.firstStyle.parts.POS_A2 }));
+    check('and the new one is the press\'s back', ix.S.model.cells.POS_A1.paired === 'POS_A3' && item(ix, 'POS_A3')[1] === 'out' &&
+        T.decode(item(ix, 'POS_A3')[2] || '') === 'back of POS_A1', JSON.stringify(item(ix, 'POS_A3').slice(1)));
+
+    // SEQUENTIAL A/B: POS_A2 is given a swap of its own first, so "the swap
+    // it had before it was paired" is one it chose (2-Robot Swap).
+    const sq = await open();
+    await act(sq, { act: 'fs-open', node: 'POS_A2' });
+    await act(sq, { act: 'fs-mode', mode: mode('2‑Robot Swap') });
+    await act(sq, { act: 'fs-open', node: 'POS_A1' });
+    await act(sq, { act: 'fs-mode', mode: mode('Sequential A/B') });
+    await pick(sq, 'POS_A2');
+    L.push('  Sequential A/B, POS_A2 picked: POS_A1 names ' + names(sq, 'POS_A1') + ' · POS_A2 names ' + names(sq, 'POS_A2') + ', runs ' + own(sq, 'POS_A2'));
+    check('a Sequential partner picked is paired both ways', names(sq, 'POS_A1') === 'POS_A2' && names(sq, 'POS_A2') === 'POS_A1',
+        JSON.stringify([names(sq, 'POS_A1'), names(sq, 'POS_A2')]));
+    await pick(sq, 'POS_A3');
+    L.push('  then POS_A3 picked: POS_A1 names ' + names(sq, 'POS_A1') + ' · POS_A3 names ' + names(sq, 'POS_A3') + ', runs ' + own(sq, 'POS_A3') +
+        ' · POS_A2 names ' + (names(sq, 'POS_A2') || 'none') + ', runs ' + own(sq, 'POS_A2') + ' (' + item(sq, 'POS_A2')[1] + ')');
+    check('picked again, the new partner is paired both ways', names(sq, 'POS_A1') === 'POS_A3' && names(sq, 'POS_A3') === 'POS_A1',
+        JSON.stringify([names(sq, 'POS_A1'), names(sq, 'POS_A3')]));
+    check('the old partner is unpaired: POS_A2 no longer names POS_A1', names(sq, 'POS_A2') !== 'POS_A1' &&
+        ((sq.S.firstStyle.own.POS_A2 || {}).picks || {}).paired !== 'POS_A1', 'POS_A2 names ' + names(sq, 'POS_A2') + ', runs ' + own(sq, 'POS_A2'));
+    check('and is a row of its own again, with the swap it had before it was paired (2-Robot Swap)', own(sq, 'POS_A2') === labels[mode('2‑Robot Swap')] &&
+        item(sq, 'POS_A2')[1] !== 'out', 'it runs ' + own(sq, 'POS_A2'));
+    // A SWAP WITH NO PARTNER IS NO PARTNER: both are unpaired, and POS_A3,
+    // which had no copy of its own, runs as the position before it again. The
+    // pick stays POS_A1's own (round 10), so Sequential A/B pairs it again.
+    await act(sq, { act: 'fs-mode', mode: mode('1‑Robot Swap') });
+    L.push('  then 1-Robot Swap: POS_A1 runs ' + labels[sq.S.model.cells.POS_A1.mode] + ' · POS_A3 names ' + (names(sq, 'POS_A3') || 'none') + ', runs ' + own(sq, 'POS_A3'));
+    check('a swap with no partner unpairs both: POS_A3 no longer names POS_A1', sq.S.model.cells.POS_A1.mode !== mode('Sequential A/B') &&
+        names(sq, 'POS_A3') !== 'POS_A1' && own(sq, 'POS_A3') === 'none of its own', 'POS_A3 names ' + names(sq, 'POS_A3') + ', runs ' + own(sq, 'POS_A3'));
+    await act(sq, { act: 'fs-mode', mode: mode('Sequential A/B') });
+    check('Sequential A/B again pairs the kept pick both ways, as if picked', names(sq, 'POS_A1') === 'POS_A3' && names(sq, 'POS_A3') === 'POS_A1' &&
+        names(sq, 'POS_A2') !== 'POS_A1', JSON.stringify([names(sq, 'POS_A1'), names(sq, 'POS_A3'), names(sq, 'POS_A2')]));
+}
+
 async function pinFirstStyle() {
     L.push('', '## Setup › First style on Press A (a style with no flow yet): one position at a time, then its Save');
     // Once saved, the composer read holds the flow (the fixture's Style A).
@@ -875,6 +953,7 @@ async function run(t) {
     await pinSetup();
     await pinFirstStyle();
     await pinFirstStylePartner();
+    await pinFirstStyleRepick();
     await pinEditProcess();
     await pinAddProcess();
     T.out['cold-start.txt'] = L.join('\n') + '\n';

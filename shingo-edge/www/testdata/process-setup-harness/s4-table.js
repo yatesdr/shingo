@@ -251,6 +251,68 @@ const BUGS = [
         },
     },
     {
+        // A SEQUENTIAL A/B PAIR IS TWO ROWS THAT NAME EACH OTHER (round 11).
+        // The fixture pairs POS_A7 with POS_A8; POS_A5 is a 1-Robot Swap
+        // row with staging of its own. No mode is spelled: the rows say them.
+        title: 'Partner picked again · the old Sequential partner is unpaired, the new one paired both ways; an Index Swap back pairs nothing back',
+        run: async page => {
+            const labels = page.pd('M')().modeLabels();
+            const was = JSON.parse(JSON.stringify(page.S.model.cells.POS_A5));
+            const seq = page.S.model.cells.POS_A7.mode;
+            const row = n => {
+                const c = page.S.model.cells[n];
+                return c.on ? labels[c.mode] + (c.paired ? ' naming ' + c.paired : ' naming none') + (c.part ? ', ' + c.part : '') : 'no row';
+            };
+            const names = n => (page.S.model.cells[n].on ? page.S.model.cells[n].paired || '' : '');
+            T.pickChip(page, 'POS_A7', 'col:partner:paired', 'POS_A5');
+            await page.settle();
+            const out = [['POS_A5 picked for POS_A7: POS_A7 ' + row('POS_A7') + ' · POS_A5 ' + row('POS_A5') + ' · POS_A8 ' + row('POS_A8'), true, '']];
+            out.push(['the new partner is paired both ways: POS_A5 names POS_A7, on Sequential A/B',
+                names('POS_A7') === 'POS_A5' && names('POS_A5') === 'POS_A7' && page.S.model.cells.POS_A5.mode === seq, 'POS_A5 ' + row('POS_A5')]);
+            out.push(['the old partner is unpaired: POS_A8 no longer names POS_A7', names('POS_A8') !== 'POS_A7', 'POS_A8 ' + row('POS_A8')]);
+            out.push(['and is still a row of its own, with its swap and its part', page.S.model.cells.POS_A8.on &&
+                page.S.model.cells.POS_A8.mode === seq && !!page.S.model.cells.POS_A8.part, 'POS_A8 ' + row('POS_A8')]);
+            T.pickChip(page, 'POS_A7', 'col:partner:paired', 'POS_A8');
+            await page.settle();
+            const c5 = page.S.model.cells.POS_A5;
+            out.push(['POS_A8 picked back: POS_A7 ' + row('POS_A7') + ' · POS_A8 ' + row('POS_A8') + ' · POS_A5 ' + row('POS_A5') +
+                ' (staging ' + (c5.staging || '-') + ', ' + (c5.parkOld || '-') + ')', true, '']);
+            out.push(['picked back, POS_A8 and POS_A7 name each other again', names('POS_A7') === 'POS_A8' && names('POS_A8') === 'POS_A7',
+                'POS_A8 ' + row('POS_A8')]);
+            out.push(['and POS_A5 has the swap it had before it was paired, with what it carried', c5.mode === was.mode && !names('POS_A5') &&
+                c5.staging === was.staging && c5.parkOld === was.parkOld && c5.part === was.part, 'POS_A5 ' + row('POS_A5')]);
+            // AN INDEX SWAP'S BACK IS NO ROW: picked again, the old back is
+            // named by no position and the new one is not made a row.
+            T.pickChip(page, 'POS_A1', 'col:partner:paired', 'POS_B4');
+            await page.settle();
+            const naming = n => Object.keys(page.S.model.cells).filter(x => page.S.model.cells[x].on && page.S.model.cells[x].paired === n);
+            out.push(['POS_B4 picked for the Index Swap POS_A1: POS_A1 ' + row('POS_A1') + ' · POS_B1 named by ' + (naming('POS_B1').join(', ') || 'none') +
+                ' · POS_B4 ' + row('POS_B4'), true, '']);
+            out.push(['the old back is named by no position, and the new back is no row', names('POS_A1') === 'POS_B4' &&
+                !naming('POS_B1').length && !page.S.model.cells.POS_B4.on, JSON.stringify({ B1: naming('POS_B1'), B4: row('POS_B4') })]);
+            return out;
+        },
+    },
+    {
+        // NO PARTNER IS NO PAIR: the partner set to none (the action a none
+        // row sends), or a swap that takes none, unpairs both. The fixture
+        // pairs POS_A7 with POS_A8 and POS_A9 with POS_A10; POS_A5's swap
+        // takes no partner.
+        title: 'Partner cleared · no partner, or a swap with none, unpairs both rows of a Sequential A/B pair',
+        run: async page => {
+            const names = n => (page.S.model.cells[n].on ? page.S.model.cells[n].paired || '' : '');
+            page.pd('apply')({ type: 'setPartner', node: 'POS_A7', partner: '' });
+            await page.settle();
+            const out = [['POS_A7 set to no partner: POS_A7 names ' + (names('POS_A7') || 'none') + ' · POS_A8 names ' + (names('POS_A8') || 'none'),
+                !names('POS_A7') && names('POS_A8') !== 'POS_A7', 'POS_A8 still names POS_A7']];
+            T.pickChip(page, 'POS_A9', 'mode', page.S.model.cells.POS_A5.mode);
+            await page.settle();
+            out.push(['POS_A9 given a swap with no partner: POS_A9 names ' + (names('POS_A9') || 'none') + ' · POS_A10 names ' + (names('POS_A10') || 'none'),
+                !names('POS_A9') && names('POS_A10') !== 'POS_A9', 'POS_A10 still names POS_A9']);
+            return out;
+        },
+    },
+    {
         title: 'F24 · R3 · the desktop\'s bar never says "Tap the position" or "use a preset"',
         run: async page => {
             const M = page.pd('M')(), apply = page.pd('apply');
