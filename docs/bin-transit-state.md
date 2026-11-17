@@ -164,12 +164,33 @@ anomaly state on the failure path.
 
 The RDS poller reads `OrderDetail.Blocks[i].State` on every poll. When
 a block transitions to FINISHED while the parent order is still
-RUNNING, the poller fires `EventBlockCompleted`. The engine handler
-classifies the block by `BinTask` (Load / Unload / Wait / Script /
-navigation) and routes pickup-shaped blocks through the bin service's lift
-(`BinService.Lift`), which moves the bin to `_TRANSIT` and writes the Edge's
-`BinPickedUp` notice in the same transaction; the handler then emits
-`EventBinEnteredTransit`.
+RUNNING, the poller fires `EventBlockCompleted`. The engine handler reads
+what the block was from Core's own record, never from its `BinTask` name, and
+routes a pickup through the bin service's lift (`BinService.Lift`), which moves
+the bin to `_TRANSIT` and writes the Edge's `BinPickedUp` notice in the same
+transaction; the handler then emits `EventBinEnteredTransit`.
+
+### What a block was
+
+Every block Core sends carries Core's own label of what it does
+(`fleet.OrderBlock.Action`: pickup, dropoff, wait, or blank for a block of no
+step's kind), set where the block is built (`stepsToBlocks`) and never sent to
+the fleet. The order keeps them by block id in `orders.block_actions`, written
+by the statements that already run as blocks go out: the create's vendor write
+(`orders.NameFleetOrder`) and the append's compare-and-set (`orders.ClaimAppend`),
+and by nothing else (`TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent`).
+An advanced load sequence's expansion records pickup on the one block its
+`load_sequences.lift_at` names and blank on the others.
+
+When a block finishes the handler reads its action from that record
+(`finishedAction`): a pickup lifts, a dropoff runs the store arm, and the action
+is what the step count (`domain.StepsDoneAfter`) and the block's leg row are
+given. A block the record does not name moves nothing, counts nothing and is
+logged. An order sent before the record existed reads `NULL` and is read by its
+block names for its whole life (`legacyBlockAction`); a leg row written before
+legs carried their action is read the same way (`engine.LegBlocks`). The
+simulator keeps each block's action and its deck, position gate and scene bench
+read it.
 
 Idempotent against vendor retries: a lift of a bin already at `_TRANSIT` moves
 nothing. The poller suppresses duplicate emits via a sticky-state diff.

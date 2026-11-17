@@ -114,7 +114,7 @@ Creates a multi-block order with explicit location, operation, and bin task per 
       "location": "STATION-A",
       "operation": "",              // optional
       "operation_args": {},         // optional
-      "binTask": "JackLoad",       // optional: JackLoad, JackUnload
+      "binTask": "JackLoad",       // optional: a key the location carries in the scene, e.g. JackLoad, JackUnload, Wait
       "goodsId": "goods-001",      // optional
       "scriptName": "",            // optional
       "scriptArgs": {},             // optional
@@ -151,6 +151,11 @@ and a plain waypoint is a key route's primary use.
 **No-action waypoint block:** To force a stop at a location with no action, send
 a block with only `blockId` and `location` (leave `binTask` and `operation`
 blank). The robot stops there but runs no action or script.
+
+**`binTask` is a free string:** the key an engineer gives the location's action
+in the scene. Shingo sends `JackLoad`, `JackUnload`, `Wait` and a payload's
+advanced load sequence names, and never reads a key back for what the block did:
+it keeps its own record of each block it sends ([bin-transit-state.md](bin-transit-state.md#what-a-block-was)).
 
 **Response:** Standard envelope.
 

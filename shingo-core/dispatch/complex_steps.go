@@ -270,9 +270,11 @@ func mintVendorOrderID(orderID int64) string {
 }
 
 // mintBlockID hand-authors a block ID unique within a vendor order. Uniqueness
-// is SEER's only contract on it (a duplicate is rejected 50001); every consumer
-// — poller, telemetry, block-completion, the differential harness — treats it as
-// opaque (D80e / F4c V0 finding 3). The default order-side shape is
+// is SEER's only contract on it (a duplicate is rejected 50001). No consumer
+// parses it — poller, telemetry, block-completion, the differential harness —
+// but Core's record of what each block was (orders.block_actions) is keyed on
+// it, and a finished block is looked up there by it, so the id the fleet reports
+// must be the id Core sent (blockActions). The default order-side shape is
 // "<vendorOrderID>-b<n>"; the advanced-load-sequence expansion suffixes "-<k>" on
 // the same base so the N same-location blocks stay distinct without renumbering
 // the rest of the order.

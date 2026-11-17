@@ -138,6 +138,10 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 - `delivery_node` — see the caveat below. `source_node` and `delivery_node` are node names, not keys: the table
   has no reference to `nodes`.
 - `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string.
+- `block_actions` is what each block sent to the fleet for the order is, by block id: `pickup`, `dropoff`, `wait`,
+  or `''` for a block of no step's kind. Written by the create's vendor write and by each append's compare-and-set,
+  read when a block finishes; never on the wire. `NULL` on an order sent before the column existed, which is read by
+  its block names for its whole life ([What a block was](bin-transit-state.md#what-a-block-was)).
 - `named_bin_id` is the one bin the asker named the order for, if any — a constraint, not a record.
 - `parent_order_id` is the parent compound order (for reshuffle child orders); `sequence` the step sequence within
   it.

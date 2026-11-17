@@ -26,10 +26,12 @@ func IsTerminalState(vendorState string) bool {
 	return rds.OrderState(vendorState).IsTerminal()
 }
 
-// BinTaskForAction maps an abstract dispatch action to the vendor-specific
-// BinTask value for SEER RDS. Dispatch passes action strings ("pickup",
-// "dropoff", "wait"); the adapter translates them so dispatch doesn't depend
-// on vendor-specific vocabulary.
+// BinTaskForAction maps an abstract dispatch action to the default SEER RDS
+// BinTask key for it. Dispatch calls it as it builds each block
+// (stepsToBlocks), so the block carries the key; the adapter copies BinTask
+// onto the wire as it is. A block's meaning is never read back from the key:
+// the block also carries its action (fleet.OrderBlock.Action), which Core
+// records and reads when the block finishes.
 func BinTaskForAction(action string) string {
 	switch action {
 	case protocol.ActionPickup:

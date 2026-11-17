@@ -16,6 +16,12 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Core v179. Core only; the Edges are unchanged and need no install.
+
+- Core keeps its own record of what each block it sends a robot does, and reads that record when the block finishes instead of the action's name in RDS; every block finishes as it did before
+- Orders already on the floor when Core is updated finish exactly as they always did
+- The mission page labels each robot action from Core's record
+
 ## v0.12.2 — 2026-11-18
 
 Deploy: no migration; Core and Edges in either order.
