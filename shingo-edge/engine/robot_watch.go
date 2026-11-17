@@ -342,8 +342,10 @@ func (e *Engine) RobotPosition(orderUUID string) (RobotPositionHeld, bool) {
 
 // HandleRobotPositions takes one robot.positions read off the ephemeral topic
 // for this station. Memory only. The orders kept are the ones shown now; for
-// each, the position replaces the one held unless it is older (a later poll
-// already arrived). With nothing shown the message is dropped whole.
+// each, the position replaces the one held and is handed on, unless it is
+// older (a later poll already arrived): an older one is neither, so a panel
+// never sees a robot step back. With nothing shown the message is dropped
+// whole.
 func (e *Engine) HandleRobotPositions(_ *protocol.Envelope, p *protocol.RobotPositions) {
 	rw := &e.robotWatch
 	rw.mu.Lock()
@@ -357,10 +359,10 @@ func (e *Engine) HandleRobotPositions(_ *protocol.Envelope, p *protocol.RobotPos
 		if _, ok := slices.BinarySearch(union, pos.OrderUUID); !ok {
 			continue
 		}
-		out.Orders = append(out.Orders, pos)
 		if h, ok := rw.held[pos.OrderUUID]; ok && p.T.Before(h.T) {
 			continue
 		}
+		out.Orders = append(out.Orders, pos)
 		if rw.held == nil {
 			rw.held = map[string]RobotPositionHeld{}
 		}

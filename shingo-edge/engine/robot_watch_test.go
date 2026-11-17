@@ -192,8 +192,9 @@ func TestRobotWatch_AnotherTopicThanConfiguredStaysClosed(t *testing.T) {
 
 // TestHandleRobotPositions_LatestPerShownOrderInMemory pins the intake: only
 // the orders shown are kept, the latest per order (an older poll does not
-// overwrite a newer), the subscriber gets the message cut to them, nothing
-// shown drops the message whole, and none of it touches SQLite.
+// overwrite a newer, nor reach the subscriber), the subscriber gets the
+// message cut to them, nothing shown drops the message whole, and none of it
+// touches SQLite.
 func TestHandleRobotPositions_LatestPerShownOrderInMemory(t *testing.T) {
 	t.Parallel()
 	db, counter := testEngineDBCounting(t)
@@ -223,6 +224,9 @@ func TestHandleRobotPositions_LatestPerShownOrderInMemory(t *testing.T) {
 	}
 	if len(got) != 3 || len(got[0].Orders) != 1 || got[0].Orders[0].OrderUUID != "u-1" {
 		t.Errorf("subscriber got %+v, want three messages, the first cut to u-1", got)
+	}
+	if len(got) == 3 && len(got[1].Orders) != 0 {
+		t.Errorf("the poll older than u-1's held one reached the subscriber with %+v, want no orders (a robot never steps back)", got[1].Orders)
 	}
 
 	e.SetRobotWatch(1, []string{"u-2"})
