@@ -60,7 +60,8 @@ func TestCMSClearEndToEnd_TheDepartureReachesTheMiddleware(t *testing.T) {
 	stub := newMiddlewareStub(t, http.StatusOK, `{"TransactionId":"MW-CLEAR-1"}`)
 	eng := cmsEngine(t, db, stub.srv.URL)
 
-	// Ten cycles left of a template that packs 24 per cycle: 240 parts leave.
+	// A bin of one part with ten pieces left: ten leave, whatever its line's
+	// pieces per assembly cycle (24 here).
 	bin, nodeID := clearBoundaryBin(t, db, "E2E-CLEAR-PAYLOAD", 24, 10)
 
 	epoch, err := eng.ClearForReuseAndBookDeparture(bin.ID, nodeID, nil)
@@ -91,8 +92,8 @@ func TestCMSClearEndToEnd_TheDepartureReachesTheMiddleware(t *testing.T) {
 	if txns[0].SourceType != "clear" {
 		t.Errorf("source type = %q, want clear", txns[0].SourceType)
 	}
-	if txns[0].Delta != -240 {
-		t.Errorf("delta = %d, want -240", txns[0].Delta)
+	if txns[0].Delta != -10 {
+		t.Errorf("delta = %d, want -10", txns[0].Delta)
 	}
 
 	if eng.cmsPoster == nil {
@@ -113,8 +114,8 @@ func TestCMSClearEndToEnd_TheDepartureReachesTheMiddleware(t *testing.T) {
 	if r["TransactionType"] != "D" {
 		t.Errorf("TransactionType = %v, want D — material LEFT the storeroom", r["TransactionType"])
 	}
-	if r["Quantity"] != float64(240) {
-		t.Errorf("Quantity = %v, want 240 (10 cycles x 24 per cycle), unsigned: %s",
+	if r["Quantity"] != float64(10) {
+		t.Errorf("Quantity = %v, want 10 (the bin's pieces, not 10 x its ratio 24), unsigned: %s",
 			r["Quantity"], got[0])
 	}
 	if r["StockLocation"] != "ASTEST" {
@@ -236,8 +237,8 @@ func TestCMSReplace_TheOldToteLeavesAndTheNewLoads(t *testing.T) {
 		}
 		txns, err := db.ListAllCMSTransactions(50, 0)
 		testutil.MustNoErr(t, err, "list cms transactions")
-		if len(txns) != 1 || txns[0].SourceType != "clear" || txns[0].Delta != -240 {
-			t.Fatalf("cms transactions = %+v, want one clear of -240 (the old tote's 10 cycles x 24)", txns)
+		if len(txns) != 1 || txns[0].SourceType != "clear" || txns[0].Delta != -10 {
+			t.Fatalf("cms transactions = %+v, want one clear of -10 (the old tote's 10 pieces)", txns)
 		}
 	})
 	t.Run("a booking that cannot be written refuses the replace", func(t *testing.T) {
@@ -330,7 +331,7 @@ func TestCMSClearEndToEnd_TheServiceClearStaysSilent(t *testing.T) {
 	eng := cmsEngine(t, db, stub.srv.URL)
 
 	// A TAGGED boundary, so the only thing keeping this quiet is which door was
-	// used. Under the engine's door this exact fixture posts 240.
+	// used. Under the engine's door this exact fixture posts 10.
 	bin, _ := clearBoundaryBin(t, db, "E2E-UIDOOR-PAYLOAD", 24, 10)
 
 	if _, err := eng.BinManifest().ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle); err != nil {

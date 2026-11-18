@@ -28,10 +28,11 @@ func TestBuildClear_AtBoundaryBooksTheDeparture(t *testing.T) {
 	f := newFakeStore()
 	addBoundary(f, 14, "Supermarket Area", "ASTEST")
 	addNode(f, 20, "SMN_01", false, 14)
-	// 10 cycles left at 24 parts per cycle -> 240 parts leaving.
-	f.setTemplate(100, "KK21 5019 A PIA14", 12000, map[string]int64{"KK21 5019 A PIA14": 24})
-	bin := &bins.Bin{ID: 10, Label: "BIN-0912", PayloadCode: "KK21 5019 A PIA14", UOPRemaining: 10}
-	setManifest(bin, []bins.ManifestEntry{{PartNumber: "KK21 5019 A PIA14"}})
+	// A bin of one part counts pieces: 10 left is 10 leaving, whatever the
+	// line's pieces per assembly cycle (24 here) says.
+	f.setTemplate(100, "SYN-CLR-P01", 12000, map[string]int64{"SYN-CLR-P01": 24})
+	bin := &bins.Bin{ID: 10, Label: "BIN-0912", PayloadCode: "SYN-CLR-P01", UOPRemaining: 10}
+	setManifest(bin, []bins.ManifestEntry{{PartNumber: "SYN-CLR-P01"}})
 	f.bins[10] = bin
 
 	txns, report, err := BuildClearTransactions(f, ClearEvent{BinID: 10, NodeID: 20})
@@ -45,8 +46,8 @@ func TestBuildClear_AtBoundaryBooksTheDeparture(t *testing.T) {
 		t.Fatalf("built %d rows, want 1 (one manifest line, one boundary)", len(txns))
 	}
 	got := txns[0]
-	if got.Delta != -240 {
-		t.Errorf("delta = %d, want -240 (10 cycles x 24 parts, LEAVING)", got.Delta)
+	if got.Delta != -10 {
+		t.Errorf("delta = %d, want -10 (the bin's 10 pieces, LEAVING)", got.Delta)
 	}
 	if got.NodeID != 14 || got.NodeName != "Supermarket Area" {
 		t.Errorf("row names node %d/%q, want the BOUNDARY 14/Supermarket Area", got.NodeID, got.NodeName)
@@ -88,7 +89,7 @@ func TestBuildClear_DeltasSumToThePreClearContents(t *testing.T) {
 			}
 			sum += tx.Delta
 		}
-		want := int64(uop) * -5 // 2 + 3 parts per cycle
+		want := int64(uop) * -5 // a kit: 2 + 3 pieces per cycle
 		if sum != want {
 			t.Errorf("uop %d: deltas sum to %d, want %d", uop, sum, want)
 		}

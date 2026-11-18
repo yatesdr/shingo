@@ -3,15 +3,16 @@ package domain
 import "time"
 
 // PayloadManifestItem is one line of a payload template — a part
-// number and how many of it one production cycle consumes, optionally
+// number and how many of it one assembly cycle consumes, optionally
 // tagged with a free-form description. A Payload's full manifest is the
 // ordered list of its items (ordered by ID, which is insertion order).
 //
-// PartsPerCycle is a RATIO, not a count. The number of this part
-// physically in a bin is bins.uop_remaining x PartsPerCycle, derived
-// wherever it is needed and stored nowhere — see domain.ManifestEntry,
-// which deliberately carries no quantity of its own. Very often the
-// ratio is 1; it is >1 for a part an assembly uses several of per cycle.
+// PartsPerCycle is a RATIO, not a count: an assembly consume setting, set by
+// an engineer, that a press never reads. Very often it is 1; it is >1 for a
+// part an assembly uses several of per cycle. What a bin's count means for
+// each line, a one-line payload's and a kit's, is protocol.ManifestItem's; a
+// count is stored nowhere on the line — see domain.ManifestEntry, which
+// deliberately carries no quantity of its own.
 //
 // It was called Quantity until v99 renamed it. The value did not change,
 // because the value was always the ratio — measured at both plants, 138

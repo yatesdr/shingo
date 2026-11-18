@@ -283,13 +283,21 @@ incidental.
 ## Quantity derivation
 
 ```
-quantity = |bin.uop_remaining × payload_manifest.parts_per_cycle|
+one-part payload:  quantity = |bin.uop_remaining|
+kit (2+ lines):    quantity = |bin.uop_remaining × payload_manifest.parts_per_cycle|
 ```
 
-Computed at emission time in `material.BuildMovementTransactions`, never stored
-(`TestBuildMovement_DerivesFromUOPTimesPartsPerCycle`). The bin manifest lists
-**which parts are in the carrier and nothing else** (`domain.ManifestEntry`);
-it carries no quantity, and a `qty` key in an older manifest is ignored.
+A bin of a one-part payload counts pieces of that part, so its count is what
+moves (`TestBuildMovement_OnePartPostsTheBinsCount`); the line's
+`parts_per_cycle` is an assembly's consume setting and is not read here. A kit's
+count is cycles, and each line posts the count times its ratio
+(`TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart`). The rule is
+[uop-architecture.md](../../docs/uop-architecture.md#process-semantics)'s.
+
+Computed at emission time in `material.BuildMovementTransactions`, never stored.
+The bin manifest lists **which parts are in the carrier and nothing else**
+(`domain.ManifestEntry`); it carries no quantity, and a `qty` key in an older
+manifest is ignored.
 
 **A manifest line names a part by its part number.** `ManifestEntry.PartNumber`
 is written as `part_number` (a line written under the older `catid` key reads

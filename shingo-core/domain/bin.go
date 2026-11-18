@@ -120,8 +120,9 @@ type Bin struct {
 // bins.manifest JSON column.
 //
 // IT CARRIES NO QUANTITY, AND THAT IS DELIBERATE. The manifest says WHICH
-// parts are in the carrier; how many is bins.uop_remaining x the payload
-// template's parts_per_cycle, derived wherever it is needed. It used to
+// parts are in the carrier; how many is derived from bins.uop_remaining and
+// the payload template wherever it is needed, by protocol.ManifestItem's count
+// rule. It used to
 // carry a `qty`, and it was never a usable count: resolveTemplateManifest
 // copied the TEMPLATE's per-cycle ratio into it regardless of how full the
 // bin actually was, while SyncUOPAndClaim wrote the remaining cycle count.

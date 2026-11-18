@@ -74,11 +74,21 @@ type NodeBinInfo struct {
 
 // ManifestItem describes a single line in a payload manifest TEMPLATE.
 //
-// PartsPerCycle is a ratio — how many of the part one production cycle
-// consumes, usually 1. The number physically in a bin is that times the bin's
-// UoP count. The JSON key was `quantity` until Core's rename — same value, a
-// name that says what it is. Core and Edge ship that rename together, so there
-// is no version in which one key is read and the other written.
+// THE COUNT RULE, the one place it is written. A bin of a payload with ONE line
+// counts pieces of that part: its count (uop_remaining, a release's declared
+// count, a LOAD's count) is how many are in it, and no reader multiplies it.
+// PartsPerCycle is an assembly consume setting: how many pieces of the part one
+// cycle of an assembly that consumes it uses, usually 1. An assembly's consume
+// spot draws its counter step times it (the Edge's handleConsumeTick and
+// handleABFallthrough); a press never reads it. A payload of SEVERAL lines (a
+// kit) keeps counting cycles: a line's pieces are the bin's count times its
+// PartsPerCycle, the arithmetic it always had. The readers that turn a count
+// into pieces (CMS postings, the inventory list, the Bins page, the LOAD
+// screens) each follow this; docs/uop-architecture.md says it for people.
+//
+// The JSON key was `quantity` until Core's rename — same value, a name that
+// says what it is. Core and Edge ship that rename together, so there is no
+// version in which one key is read and the other written.
 //
 // This is NOT the shape a bin-load request carries — see BinLoadItem. The two
 // were one struct, which is how a template ratio and a physical count came to
