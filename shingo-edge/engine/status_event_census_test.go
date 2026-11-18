@@ -75,9 +75,13 @@ var statusEventSubscribers = map[string]string{
 	"www/sse.go:SetupEngineListeners EventOrderStatusChanged": "case; payload",
 }
 
-// statusEventEmitters is every site that emits a status-derived event, at this
-// tree: the bus's Event literals, all in orderEmitter, and the order manager's
-// calls of them, all in the lifecycle's one transition but the delivered
+// statusEventEmitters is every site that emits a status-derived event: the bus's
+// Event literals, all in orderEmitter, and the order manager's calls of them.
+// Two funnels, one per kind of order: the lifecycle's transition for an order
+// whose status is not Core's versioned word (an older Core's, the Edge's own
+// abort and confirm), and the versioned applier for one whose is
+// (orders/core_word.go: a status Core told, applied once, newer only; and the
+// delivery's follow-ons, once both halves of it are in). Plus the delivered
 // fallback (an order.delivered for an order with no Edge row).
 var statusEventEmitters = map[string]string{
 	"engine/adapters.go:EmitOrderCompleted EventOrderCompleted":               "Event literal",
@@ -89,6 +93,10 @@ var statusEventEmitters = map[string]string{
 	"orders/lifecycle_service.go:applyTransition EmitOrderDelivered":          "order emitter call",
 	"orders/lifecycle_service.go:applyTransition EmitOrderFailed":             "order emitter call",
 	"orders/lifecycle_service.go:applyTransition EmitOrderStatusChanged":      "order emitter call",
+	"orders/core_word.go:coreMoved EmitOrderCompleted":                        "order emitter call",
+	"orders/core_word.go:coreMoved EmitOrderFailed":                           "order emitter call",
+	"orders/core_word.go:coreMoved EmitOrderStatusChanged":                    "order emitter call",
+	"orders/core_word.go:deliveredFollowOns EmitOrderDelivered":               "order emitter call",
 	"orders/manager_status.go:handleDeliveredWire EmitOrderDeliveredFallback": "order emitter call",
 }
 

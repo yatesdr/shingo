@@ -908,8 +908,10 @@ function createNodeButton(entry) {
     // make the tile flicker color right when the robot is closest.
     const releaseReady = isReleaseReady(entry);
     const inChangeover = !!entry.changeover_task;
+    // Dispatched is inbound too: a robot is being sent. It was purple when its
+    // waybill wrote in_transit, and stays purple now that Core tells dispatched.
     const inboundOrders = (entry.orders || []).filter(o =>
-        o.status === 'in_transit' || o.status === 'staged'
+        o.status === 'in_transit' || o.status === 'staged' || o.status === 'dispatched'
     );
     const unloaderWindow = isUnloaderWindow(entry);
     let stateClass;
@@ -1100,7 +1102,9 @@ function createNodeButton(entry) {
     return btn;
 }
 
-// Renders one pill per inbound order. Three states:
+// Renders one pill per inbound order, by its state:
+//   - dispatched                       → the robot's name, "Dispatched" until the
+//     fleet names one (Core tells dispatched before any robot moves)
 //   - in_transit + no bin at this node → ETA countdown ("ETA: ~3 min")
 //   - staged                           → "Arrived" (robot at the spot)
 //   - in_transit + bin already at node → skip (the order has reverted
@@ -1118,7 +1122,9 @@ function appendETAPills(btn, inboundOrders, binState) {
     const binAtNode = !!(binState && binState.occupied);
     const pills = [];
     inboundOrders.forEach(o => {
-        if (o.status === 'staged') {
+        if (o.status === 'dispatched') {
+            pills.push({ text: o.robot_id || 'Dispatched', overdue: false });
+        } else if (o.status === 'staged') {
             pills.push({ text: 'Arrived', overdue: false });
         } else if (o.status === 'faulted') {
             // The pill is one word ("Fault" / "Replanning"); the reason is in

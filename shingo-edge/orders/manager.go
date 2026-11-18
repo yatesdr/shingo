@@ -2,6 +2,7 @@ package orders
 
 import (
 	"log"
+	"sync"
 
 	"shingo/protocol"
 	"shingo/protocol/types"
@@ -26,6 +27,12 @@ type Manager struct {
 	// OnStagedMessage is the release layer's wake on Core's OrderStaged
 	// (engine.onStagedMessage); nil until the engine wires it.
 	OnStagedMessage func(orderID int64, stationWait *int)
+	// deliveredFacts and deliveredAwaiting are the two halves of a versioned
+	// delivery, keyed by order id: order.delivered's carrier facts waiting for
+	// Core's delivered, and Core's delivered waiting for the facts. Whichever
+	// lands second runs the follow-ons (core_word.go, coreDelivered).
+	deliveredFacts    sync.Map
+	deliveredAwaiting sync.Map
 }
 
 // NewManager creates an order manager.

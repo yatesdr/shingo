@@ -98,6 +98,7 @@ CREATE TABLE orders (
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
     staged_at       TEXT,
+    core_version    INTEGER NOT NULL DEFAULT 0,
     want            TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),

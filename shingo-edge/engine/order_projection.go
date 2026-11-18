@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 )
 
@@ -35,6 +36,18 @@ import (
 // by telling Core about the order would loop. The provenance test asserts zero
 // outbox rows rather than trusting the absence of a call.
 func (e *Engine) ApplyOrderProjection(p protocol.OrderProjection) (created bool, err error) {
+	return e.applyOrderProjection(p, false)
+}
+
+// applyOrderProjection is ApplyOrderProjection; reconcile says the projection
+// came back in the reconcile's Unlisted list rather than pushed (CoreWord.Reconcile).
+//
+// A VERSIONED PROJECTION OF A ROW THIS EDGE HOLDS writes the order's fields
+// here and its status through the one applier (orders.Manager.ApplyCoreWord):
+// newer only, with a history row and the event, an ended row kept as it ended,
+// and an operator's cancel Core still holds live sent again. The raw upsert
+// used to set any status over any row with neither.
+func (e *Engine) applyOrderProjection(p protocol.OrderProjection, reconcile bool) (created bool, err error) {
 	if p.OrderUUID == "" {
 		return false, errors.New("order projection with no uuid")
 	}
@@ -54,10 +67,23 @@ func (e *Engine) ApplyOrderProjection(p protocol.OrderProjection) (created bool,
 		QueueCode:     p.QueueCode,
 		OriginID:      p.OriginID,
 		OriginClass:   p.OriginClass,
+		Version:       p.Version,
 	}
 	created, err = orders.UpsertProjection(e.db.DB, row)
 	if err != nil {
 		return false, fmt.Errorf("apply order projection %s: %w", p.OrderUUID, err)
+	}
+	if !created && p.Version > 0 {
+		if werr := e.orderMgr.ApplyCoreWord(p.OrderUUID, ordermgr.CoreWord{
+			Status:      protocol.Status(p.Status),
+			Version:     p.Version,
+			Detail:      "projected by Core",
+			QueueReason: p.QueueReason,
+			QueueCode:   p.QueueCode,
+			Reconcile:   reconcile,
+		}); werr != nil {
+			e.debugFn.Log("order projection %s: apply its status: %v", p.OrderUUID, werr)
+		}
 	}
 	e.debugFn.Log("order projection applied: uuid=%s type=%s status=%s delivery=%s created=%v",
 		p.OrderUUID, p.OrderType, p.Status, p.DeliveryNode, created)

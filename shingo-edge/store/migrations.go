@@ -2793,6 +2793,34 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return true
 			},
 		},
+		{
+			// v58 (2026-11-17): orders.core_version, the version of the last Core
+			// word this Edge applied to the order (protocol.OrderUpdate.Version).
+			// The applier writes a status only when Core's version is newer, with
+			// the compare in the UPDATE's WHERE. 0 on every existing row: no word
+			// of Core's applied yet, so the next versioned one is newer. Column-check
+			// guarded, like v50.
+			Version: 58,
+			Name:    "orders_core_version",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'core_version'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN core_version INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'core_version'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

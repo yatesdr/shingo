@@ -187,6 +187,10 @@ type Order struct {
 	// staged (its robot parked); nil until then (orders.staged_at). The idle
 	// rule's hour does not start before it.
 	StagedAt *time.Time `json:"-"`
+	// CoreVersion is the version of the last word of Core's this Edge applied to
+	// the order (protocol.OrderUpdate.Version; orders.core_version). 0 means none
+	// yet: an order an older Core holds, or one no versioned word has reached.
+	CoreVersion int64 `json:"-"`
 	// DepartedAt is when this leg stopped being its cell's business: the
 	// instant the fleet confirmed the last step of its plan whose node is in
 	// the claim's cell set. A departed leg is still a live order — what it

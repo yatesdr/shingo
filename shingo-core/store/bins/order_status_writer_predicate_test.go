@@ -59,6 +59,11 @@ var orderStatusWriters = []struct {
 		mustStatusGuard: "WHERE id=?",
 		why:             "Edge's id-scoped status write. Edge statuses mirror Core's machine for the operator board; a dropped WHERE re-stamps the whole board.",
 	},
+	{
+		file: "@edge/store/orders/core_word.go", fn: "func ApplyCoreWord(",
+		mustStatusGuard: "WHERE id = ? AND core_version < ?",
+		why:             "The Edge's versioned applier: Core's word written only when newer than the last applied. Without the version compare a late or repeated word moves the row back, which is the mirror disagreeing with Core again.",
+	},
 }
 
 // TestOrderStatusWritersKeepTheirScope pins each writer's WHERE shape: the

@@ -1965,7 +1965,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 14 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
-| [`orders`](#edge-orders) | 45 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
+| [`orders`](#edge-orders) | 46 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
 | [`payload_catalog`](#edge-payload_catalog) | 8 | `id` |  |
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
@@ -2348,6 +2348,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `release_intent` | `TEXT` | yes | `''` |  | release_intent / release_held (Edge v9): the act's promise to this leg for one station wait (release.Intent, JSON; '' = none), and the last hold or rejection sentence the board's chip shows. |
 | `release_held` | `TEXT` | yes | `''` |  |  |
 | `staged_at` | `TEXT` |  |  |  | staged_at (Edge v54): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
+| `core_version` | `INTEGER` | yes | `0` |  | core_version (Edge v58): the version of the last Core word applied to the order (protocol.OrderUpdate.Version). 0 = none yet. |
 | `want` | `TEXT` | yes | `''` |  | want (Edge v30): the height an empty is wanted at, as this Edge stated it on the order's request (protocol.Height's spelling; '' is none). SEND BACK knows its pull by it; a projection never writes it. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 | `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |

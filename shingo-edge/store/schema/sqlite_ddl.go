@@ -273,6 +273,9 @@ CREATE TABLE IF NOT EXISTS orders (
     -- order to staged (a robot parked). NULL until then. The idle rule's hour
     -- does not start before it (engine/idle_cancel.go).
     staged_at       TEXT,
+    -- core_version (Edge v58): the version of the last Core word applied to
+    -- the order (protocol.OrderUpdate.Version). 0 = none yet.
+    core_version    INTEGER NOT NULL DEFAULT 0,
     -- want (Edge v30): the height an empty is wanted at, as this Edge stated
     -- it on the order's request (protocol.Height's spelling; '' is none).
     -- SEND BACK knows its pull by it; a projection never writes it.

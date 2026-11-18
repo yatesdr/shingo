@@ -56,7 +56,6 @@ import (
 // describing a state of the world that ended.
 var knownDropped = map[string]string{
 	"StationID": "the Edge IS the station — it knows its own id, and storing Core's copy would create a second answer that can disagree",
-	"Version":   "Core's order version rides the projection before the Edge has a column for it; the Edge's versioned applier stores it, and this entry goes with that change",
 }
 
 // TestOrderProjection_NoFieldDropsSilently is the gate.

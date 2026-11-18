@@ -244,25 +244,33 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 }
 
 func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
-	if stagedExpireAt != nil {
-		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
-			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
-		}
-	}
 	// Capture Core's bin id at delivery so the PLC tick path can
 	// attribute deltas to the right bin. Nil for multi-bin orders /
 	// older Core builds. uop+epoch are Core's snapshot of that bin at
 	// delivery (from the OrderDelivered envelope) — stashed here for the
 	// delivered emit in applyTransition so Edge seeds its runtime cache
 	// and active_bin_epoch without an HTTP pull.
+	s.writeDeliveredFacts(order, stagedExpireAt, binID)
+	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
+	defer s.deliveredSeeds.Delete(order.ID)
+	return s.Transition(order.ID, StatusDelivered, statusDetail)
+}
+
+// writeDeliveredFacts writes what order.delivered says about the carrier onto
+// the order: the staged expiry when one is sent, and Core's bin id at delivery
+// (nil for a multi-bin order, or an older Core), which the PLC tick path
+// attributes deltas by.
+func (s *LifecycleService) writeDeliveredFacts(order *orders.Order, stagedExpireAt *time.Time, binID *int64) {
+	if stagedExpireAt != nil {
+		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
+			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
+		}
+	}
 	if binID != nil {
 		if err := s.db.UpdateOrderBinID(order.ID, binID); err != nil {
 			log.Printf("update order bin_id: %v", err)
 		}
 	}
-	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
-	defer s.deliveredSeeds.Delete(order.ID)
-	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }
 
 // encodeSnapshotFaultRef renders the fleet's reason as the JSON the Edge column

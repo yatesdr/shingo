@@ -310,7 +310,9 @@ export function renderModal(entry) {
             // Keep acknowledged separate from in_transit: a robot actually en
             // route is "IN TRANSIT"; an acknowledged order (fleet accepted,
             // pre-dispatch) is NOT in transit and gets its own summary line.
-            const inTransit = activeOrders.find(o => o.status === 'in_transit');
+            // A dispatched order is in transit here: it read so when its waybill
+            // wrote the status, and still does now that Core tells `dispatched`.
+            const inTransit = activeOrders.find(o => o.status === 'in_transit' || o.status === 'dispatched');
             const acknowledged = activeOrders.find(o => o.status === 'acknowledged');
             // PRE-DISPATCH, not literals. This read `'queued' || 'pending'` and
             // so left a waiting rung out (`sourcing`, while it was one) — an order
@@ -416,7 +418,8 @@ export function renderModal(entry) {
                 // Keep acknowledged separate from in_transit: the card renders a
                 // real transit order as IN TRANSIT and an acknowledged order as
                 // its own ACKNOWLEDGED step, not a moving robot.
-                var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit'; });
+                // A dispatched order is in transit here, as above.
+                var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'dispatched'; });
                 var payloadAcknowledged = payloadOrders.find(function(o) { return o.status === 'acknowledged'; });
                 // Same widening as the summary block above, and `submitted` stays
                 // beside the predicate rather than inside it: it is an Edge-lifecycle
@@ -1055,6 +1058,8 @@ function blockerPhrase(blocker) {
             return 'queued';
         case 'acknowledged':
             return 'acknowledged, not yet dispatched';
+        // dispatched reads as in transit, as it did when the waybill made it so.
+        case 'dispatched':
         case 'in_transit': {
             const eta = formatETA(blocker.eta);
             return eta.empty ? 'in transit' : eta.text;
