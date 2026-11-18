@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.13.2 — 2026-11-18
+
 Deploy: no migration. Edge and Core, in either order.
 
 - A produce node's RELEASE SHORT now asks RELEASE PARTIAL or RELEASE FULL; RELEASE PARTIAL sends the cart at its count, as before
