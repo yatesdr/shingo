@@ -402,13 +402,15 @@ function renderContents(data) {
   var html = '';
 
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
-    // The count is derived, not stored: uop_remaining x the template line's
-    // parts_per_cycle. A part the template no longer lists shows "—" rather
-    // than 0, because "we cannot count this" and "there are none" are
-    // different things to tell someone standing at the bin.
-    var perCycle = {};
-    (data.template_manifest || []).forEach(function(t) {
-      perCycle[t.part_number] = t.parts_per_cycle;
+    // The count is derived, not stored, from uop_remaining and the template
+    // line, by protocol.ManifestItem's count rule (a template of one line
+    // shows the bin's count as it stands). A part the template no longer
+    // lists shows "—" rather than 0, because "we cannot count this" and "there
+    // are none" are different things to tell someone standing at the bin.
+    var template = data.template_manifest || [];
+    var perUnit = {};
+    template.forEach(function(t) {
+      perUnit[t.part_number] = template.length === 1 ? 1 : t.parts_per_cycle;
     });
     var uop = (b && b.uop_remaining) || 0;
     // Either key: lines are written as part_number, and bins loaded before that
@@ -417,8 +419,8 @@ function renderContents(data) {
     html += h`<table class="table-compact"><thead><tr><th>Part number</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
       data.manifest.items.map(function(item) {
         var part = item.part_number || item.catid;
-        var ppc = perCycle[part];
-        var qty = ppc == null ? '—' : String(uop * ppc);
+        var per = perUnit[part];
+        var qty = per == null ? '—' : String(uop * per);
         return h`<tr><td><code>${part}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
       })
     }</tbody></table>`;

@@ -355,9 +355,9 @@ type binDetailResponse struct {
 	Bin      *domain.Bin      `json:"bin"`
 	Manifest *domain.Manifest `json:"manifest"`
 	Template *domain.Payload  `json:"template,omitempty"`
-	// TemplateManifest carries the payload template's per-cycle ratios so the
-	// page can show a count per manifest line: bin.uop_remaining x the
-	// matching line's parts_per_cycle. The bin manifest stores no count of
+	// TemplateManifest carries the payload template's lines so the page can
+	// show a count per manifest line, derived from bin.uop_remaining by
+	// protocol.ManifestItem's count rule. The bin manifest stores no count of
 	// its own, so without this the page has a part list and no numbers.
 	TemplateManifest []*domain.PayloadManifestItem `json:"template_manifest,omitempty"`
 	Audit            []*domain.AuditEntry          `json:"audit"`
@@ -393,8 +393,8 @@ func (h *Handlers) binDetailView(b *domain.Bin) binView {
 	}
 
 	// Payload template, and its manifest lines — the page derives each part's
-	// count from uop_remaining x parts_per_cycle, so the ratios travel with
-	// the bin rather than costing the page a second round trip.
+	// count from uop_remaining and these lines, so they travel with the bin
+	// rather than costing the page a second round trip.
 	if b.PayloadCode != "" {
 		if p, err := h.engine.PayloadService().GetByCode(b.PayloadCode); err == nil {
 			v.Template = p

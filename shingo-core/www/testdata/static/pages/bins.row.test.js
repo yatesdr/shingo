@@ -232,6 +232,59 @@ console.log('echo ledger: counted, not timed');
     eq('bulk: refused bin 2 event is real', L.take(2, 20), false);
 }
 
+// renderContents (bins.js) is the pop-up's Contents table, drawn from the same
+// detail answer: each part's Qty is derived from uop_remaining and the payload
+// template by protocol.ManifestItem's count rule. bins.js wires the page when it
+// loads, so the function is lifted out by name and run with shared/dom.js's h.
+function extractFn(src, name) {
+    const m = new RegExp('function\\s+' + name + '\\s*\\(').exec(src);
+    if (!m) throw new Error('no function ' + name);
+    let depth = 0;
+    for (let i = src.indexOf('{', m.index); i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) return src.slice(m.index, i + 1);
+    }
+    throw new Error('unclosed function ' + name);
+}
+function loadContents() {
+    const bins = fs.readFileSync(path.join(SRC_DIR, 'bins.js'), 'utf8');
+    const dom = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'dom.js'), 'utf8');
+    const els = {};
+    const ctx = {
+        escapeHtml, PAGE_AUTH: false,
+        document: { getElementById: (id) => (els[id] = els[id] || { innerHTML: '' }) },
+    };
+    vm.createContext(ctx);
+    vm.runInContext(extractFn(dom, 'h') + '\n' + extractFn(bins, 'renderContents') +
+        '\nthis.renderContents = renderContents;', ctx);
+    // qtys draws the answer and returns each row's part and Qty cell.
+    return function qtys(data) {
+        ctx.renderContents(data);
+        const out = {};
+        const re = /<tr><td><code>([^<]*)<\/code><\/td><td>([^<]*)<\/td>/g;
+        let row;
+        while ((row = re.exec(els['bd-contents'].innerHTML)) !== null) out[row[1]] = row[2];
+        return out;
+    };
+}
+const qtys = loadContents();
+
+console.log('the Contents table counts a bin of one part in its pieces');
+{
+    const oneLine = [{ part_number: 'SYN-BN-P01', parts_per_cycle: 2 }];
+    eq('one line at 2 per assembly cycle: the bin\'s 8, not 8 x 2',
+        JSON.stringify(qtys({ bin: bin({ uop_remaining: 8 }), manifest: { items: [{ part_number: 'SYN-BN-P01' }] },
+            template_manifest: oneLine })), JSON.stringify({ 'SYN-BN-P01': '8' }));
+    eq('one line: a part the template does not list cannot be counted',
+        JSON.stringify(qtys({ bin: bin({ uop_remaining: 8 }), manifest: { items: [{ catid: 'SYN-BN-OTHER' }] },
+            template_manifest: oneLine })), JSON.stringify({ 'SYN-BN-OTHER': '—' }));
+    const kit = [{ part_number: 'SYN-BN-L', parts_per_cycle: 2 }, { part_number: 'SYN-BN-R', parts_per_cycle: 3 }];
+    eq('a kit keeps the product: 4 cycles x 2 and x 3',
+        JSON.stringify(qtys({ bin: bin({ uop_remaining: 4 }),
+            manifest: { items: [{ part_number: 'SYN-BN-L' }, { part_number: 'SYN-BN-R' }] }, template_manifest: kit })),
+        JSON.stringify({ 'SYN-BN-L': '8', 'SYN-BN-R': '12' }));
+}
+
 if (failures > 0) {
     console.log(failures + ' failure(s)');
     process.exit(1);
