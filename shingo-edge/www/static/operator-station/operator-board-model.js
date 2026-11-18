@@ -22,6 +22,20 @@
 
 import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand, windowRole } from './operator-window-state.js';
 
+// cyclesLeftWords is what a consume tile says of a part an assembly uses more
+// than one of a cycle: the tile's count is pieces, so it says the cycles they
+// make too, the count divided by the claim's pieces per cycle (the Edge's
+// NodeClaim.PiecesPerCycle), rounded down and never below 0. '' everywhere
+// else: a produce tile (a press never reads the number), a part at 1 a cycle,
+// a tile with no cart.
+export function cyclesLeftWords(claim, count, noCarrier) {
+    const ratio = claim ? Number(claim.pieces_per_cycle) || 1 : 1;
+    if (!claim || claim.role !== 'consume' || noCarrier || ratio <= 1) return '';
+    const cycles = Math.max(0, Math.floor((Number(count) || 0) / ratio));
+    // OWNER-WORDS
+    return cycles === 1 ? '1 cycle left' : cycles + ' cycles left';
+}
+
 // loaderOf is a tile's loader, or null on every tile that is not a Core
 // loader's window or position.
 export function loaderOf(tile) {

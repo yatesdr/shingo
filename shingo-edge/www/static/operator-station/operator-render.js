@@ -5,7 +5,7 @@ import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, tileRole, takesBare, stageTwoOn, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
-import { windowWords } from './operator-board-model.js';
+import { windowWords, cyclesLeftWords } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
@@ -1077,6 +1077,10 @@ function createNodeButton(entry) {
                 textContent: '/ ' + capacity
             }));
         }
+        // An assembly that uses more than one of its part a cycle: the count
+        // is pieces, and the cycles they make are said under it.
+        const cycles = cyclesLeftWords(claim, remaining, noCarrier);
+        if (cycles) btn.appendChild(el('span', { className: 'os-node-cycles', textContent: cycles }));
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));

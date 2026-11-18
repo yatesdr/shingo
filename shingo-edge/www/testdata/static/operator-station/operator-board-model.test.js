@@ -1098,5 +1098,21 @@ WIDTHS.forEach(function (w) {
         'scale: the reason line in operator.css (its line, word, words and mark) is the one STEPS measures');
 }
 
+// ── A consume tile's cycles left (cyclesLeftWords) ──
+// The owner's example: 800 pieces at 8 a cycle is 100 cycles; rounded down;
+// never below 0; nothing for a press, a part at 1, a kit or a tile with no cart.
+{
+    const at8 = { role: 'consume', pieces_per_cycle: 8 };
+    eq(M.cyclesLeftWords(at8, 800, false), '100 cycles left', 'cycles: 800 pieces at 8 a cycle');
+    eq(M.cyclesLeftWords(at8, 799, false), '99 cycles left', 'cycles: rounded down');
+    eq(M.cyclesLeftWords(at8, 8, false), '1 cycle left', 'cycles: one cycle');
+    eq(M.cyclesLeftWords(at8, -3, false), '0 cycles left', 'cycles: a count below 0 is 0 cycles');
+    eq(M.cyclesLeftWords(at8, 800, true), '', 'cycles: no cart, no cycles');
+    eq(M.cyclesLeftWords({ role: 'produce', pieces_per_cycle: 8 }, 800, false), '', 'cycles: a press never says them');
+    eq(M.cyclesLeftWords({ role: 'consume', pieces_per_cycle: 1 }, 800, false), '', 'cycles: a part at 1 a cycle');
+    eq(M.cyclesLeftWords({ role: 'consume' }, 800, false), '', 'cycles: a claim with no number');
+    eq(M.cyclesLeftWords(null, 800, false), '', 'cycles: no claim');
+}
+
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator board model: ' + passed + ' passed');
