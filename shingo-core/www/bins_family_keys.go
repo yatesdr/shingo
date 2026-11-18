@@ -54,6 +54,9 @@ type keyOption struct {
 	// Pinned is in every view: the default and the saved key.
 	Pinned   bool `json:"pinned,omitempty"`
 	Selected bool `json:"selected,omitempty"`
+	// Missing marks a saved key the scene copy (read) does not list: the strip
+	// says "not in RDS" beside it at rest.
+	Missing bool `json:"missing,omitempty"`
 }
 
 // keyField is one key field of a row: the form name its pick is posted as,
@@ -63,6 +66,20 @@ type keyField struct {
 	View    string      `json:"view"`
 	ViewOps []string    `json:"viewOps"`
 	Options []keyOption `json:"options"`
+}
+
+// Saved is the field's saved key, as its row: the selected one, else the
+// default (the first).
+func (f *keyField) Saved() keyOption {
+	for _, o := range f.Options {
+		if o.Selected {
+			return o
+		}
+	}
+	if len(f.Options) > 0 {
+		return f.Options[0]
+	}
+	return keyOption{}
 }
 
 // JSON is the field as the adapter reads it from the host's data-field.
@@ -140,7 +157,7 @@ func keyOptions(def, saved string, scene sceneKeyCopy) []keyOption {
 	if saved != "" && !listed {
 		o := keyOption{Value: saved, Label: saved, Pinned: true, Selected: true}
 		if scene.Err == nil {
-			o.Note = "not in RDS"
+			o.Note, o.Missing = "not in RDS", true
 		}
 		opts = append(opts, o)
 	}
@@ -190,6 +207,22 @@ type binTypeFamilyTab struct {
 	// LiftField and WaitField are the family's keys; nil when the page's read
 	// of the families failed, and the tab then offers nothing to save.
 	LiftField, WaitField *keyField
+}
+
+// keyStripField is one field of a tab's key strip: the strip's name for it
+// (bins-keystrip.js), its label, and the field.
+type keyStripField struct {
+	Key, Label string
+	Field      *keyField
+}
+
+// KeyStrip is the tab's key strip, lift then wait; nil when the family's keys
+// were not read, and the tab then offers nothing to save.
+func (t binTypeFamilyTab) KeyStrip() []keyStripField {
+	if t.LiftField == nil || t.WaitField == nil {
+		return nil
+	}
+	return []keyStripField{{Key: "lift", Label: "Lift", Field: t.LiftField}, {Key: "wait", Label: "Wait", Field: t.WaitField}}
 }
 
 // Key is the tab's key: its tab carries it, its panel is tab-<key> (shared

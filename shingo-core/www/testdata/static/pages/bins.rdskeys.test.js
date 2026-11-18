@@ -1,5 +1,5 @@
-// Unit tests for bins-rdskeys.js, the RDS keys adapter the Bin Types table's
-// Lift and Wait fields draw the shared picker through. Run under plain Node via
+// Unit tests for bins-rdskeys.js, the RDS keys adapter a family tab's key strip
+// draws its Lift and Wait pickers through. Run under plain Node via
 // the Go wrapper bins_rdskeys_view_test.go. Exit 0 on pass, 1 on any failure.
 //
 // What they hold: each field opens on its own view (Lift keys, Wait keys),

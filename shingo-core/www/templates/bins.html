@@ -44,24 +44,31 @@
         </div>
         {{range $i, $f := .BinTypeFamilies}}
         <div class="tab-panel{{if eq $i 0}} active{{end}}" id="tab-{{$f.Key}}">
-          {{/* The family's keys, once: every type below sends them. Each field
-               is the shared picker through the page's RDS keys adapter
-               (bins-rdskeys.js), which posts its pick as the field's name. */}}
-          {{if $f.LiftField}}
+          {{/* The family's key strip, one line at rest: each key with a small
+               Change, the scene's sync time at the end. Change opens that
+               field's shared picker in place (bins-keystrip.js over the page's
+               RDS keys adapter, bins-rdskeys.js); a pick closes it and marks the
+               key "not saved", and only then do Save keys and Cancel show. The
+               form posts the hidden inputs, one Save for the two. */}}
+          {{with $f.KeyStrip}}
           <form method="POST" action="/bin-types/family-keys" class="bt-keys" data-family="{{$f.Code}}">
             <input type="hidden" name="family_id" value="{{$f.ID}}">
-            <span class="bt-keys-label">Lift</span>
-            <div class="bt-key-pick" id="bt-lift-{{$f.ID}}" data-label="Lift key" data-field="{{$f.LiftField.JSON}}"></div>
-            <span class="bt-keys-label">Wait</span>
-            <div class="bt-key-pick" id="bt-wait-{{$f.ID}}" data-label="Wait key" data-field="{{$f.WaitField.JSON}}"></div>
-            <button type="submit" class="btn btn-sm">Save</button>
+            {{range .}}
+            <span class="bt-key" data-key="{{.Key}}">
+              <span class="bt-keys-label">{{.Label}}</span>
+              {{with .Field.Saved}}<span class="bt-key-value"><code>{{.Label}}</code> <span class="bt-key-note">{{if .Missing}}not in RDS{{end}}</span></span>{{end}}
+              <button type="button" class="btn btn-sm bt-key-change" data-action="changeFamilyKey:{{.Key}}">Change</button>
+              <input type="hidden" name="{{.Field.Name}}" value="{{.Field.Saved.Value}}">
+              <div class="bt-key-pick" id="bt-{{.Key}}-{{$f.ID}}" data-label="{{.Label}} key" data-field="{{.Field.JSON}}" hidden></div>
+            </span>
+            {{end}}
+            <span class="bt-key-sync">{{with $.KeyScene}}{{if .Err}}The RDS scene copy could not be read
+              {{else if .SyncedAt.IsZero}}No copy of the RDS scene yet
+              {{else}}RDS scene synced {{formatTime .SyncedAt}}{{end}}{{end}}</span>
+            <button type="submit" class="btn btn-primary btn-sm bt-key-save" hidden>Save keys</button>
+            <button type="button" class="btn btn-sm bt-key-cancel" data-action="cancelFamilyKeys" hidden>Cancel</button>
           </form>
           {{else}}<p class="text-muted">This family's RDS keys were not read.</p>{{end}}
-          {{/* Where the keys come from, and how fresh. */}}
-          <div class="form-hint mb-1">One lift key and one wait key for every type of this family.
-            {{with $.KeyScene}}{{if .Err}}The scene copy could not be read, so no RDS key from it is offered.
-            {{else if .SyncedAt.IsZero}}Core has no copy of the RDS scene yet, so no RDS key from it is offered.
-            {{else}}RDS keys from Core's copy of the RDS scene, synced {{formatTime .SyncedAt}}.{{end}}{{end}}</div>
           <table class="bt-table">
             <thead>
               <tr>

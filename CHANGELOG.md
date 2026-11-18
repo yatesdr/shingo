@@ -22,7 +22,7 @@ Deploy: Core v179–v180. Core only; the Edges are unchanged and need no install
 - Orders already on the floor when Core is updated finish exactly as they always did
 - The mission page labels each robot action from Core's record
 - After a rollback, update Core again only with no orders on the floor; an order the older Core sent and still moving then finishes without moving its carts in Shingo, and they need correcting by hand
-- Each carrier family can send its own RDS lift key and wait key: pick them for a bin type on the Bins page's Bin Types table, and every type of the family sends them
+- Each carrier family can send its own RDS lift key and wait key: pick them on the family's tab of the Bins page's Bin Types section, and every type of the family sends them
 - The keys are picked from the keys Core's copy of the RDS scene lists, the default first; a saved key RDS no longer lists says "not in RDS"
 - A family's lift key goes on the lift of its carts, and its wait key only on a wait in front of that lift at the same spot; set-downs and waits made while carrying send what they always did
 - A spot whose RDS scene does not list the family's key gets the default key, so keys can be added spot by spot

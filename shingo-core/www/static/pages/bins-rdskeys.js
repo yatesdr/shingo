@@ -1,6 +1,7 @@
 // bins-rdskeys.js — the RDS keys adapter over the picker's shell (style guide
-// §34), for the Lift and Wait fields at the top of each family tab of the Bin
-// Types section. One pick each.
+// §34), for the Lift and Wait fields of each family tab's key strip in the Bin
+// Types section (bins-keystrip.js mounts it when Change is pressed). One pick
+// each.
 //
 // The server hands each field whole (bins_family_keys.go, keyField, in the
 // host's data-field): its form name, its first view's label, the operations
@@ -47,18 +48,19 @@ export function rdsKeySelected(field) {
     return saved ? [String(saved.value || '')] : [''];
 }
 
-// rdsKeyPicker draws one field into host. Its pick is posted with the row's
-// form as the field's name (a hidden input), so the Save is the form's, as
-// before; label names the box for a screen reader.
-export function rdsKeyPicker(host, field, label) {
+// rdsKeyPicker draws one field's picker into host, opening on its first view.
+// The key strip (bins-keystrip.js) mounts it when Change is pressed and owns the
+// field's value: opts are the shell's own (selected, the value to open on;
+// chips: false, as the strip shows the value; onChange, the pick). label names
+// the box for a screen reader.
+export function rdsKeyPicker(host, field, label, opts) {
     const rows = rdsKeyRows(field);
-    const picker = mountPicker(host, null, () => rows, {
-        name: field.name,
+    const picker = mountPicker(host, null, () => rows, Object.assign({
         selected: rdsKeySelected(field),
         views: rdsKeyViews(field),
         placeholder: 'Search the RDS keys',
         empty: (q) => (q ? 'No key is called that' : 'No keys'),
-    });
+    }, opts));
     if (label) picker.input.setAttribute('aria-label', label);
     return picker;
 }

@@ -807,22 +807,30 @@ textarea { resize: vertical; min-height: 60px; }
    line break. */
 #bin-table td code { white-space: nowrap; }
 .bt-table td code { white-space: nowrap; }
-/* The Bin Types table's RDS keys (bins_family_keys.go): each field's picker
-   (bins-rdskeys.js) beside its label, one Save for both, the family line under
-   them. */
-.bt-keys { display:grid; grid-template-columns:auto auto auto; justify-content:start; gap:0.25rem 0.5rem; align-items:center; }
+/* A family tab's key strip (bins-keystrip.js): one line at rest, each key
+   with its small Change, the scene's sync time muted at the end; Save keys and
+   Cancel only while a picked key is not saved. */
+.bt-keys { display:flex; flex-wrap:wrap; align-items:center; gap:0.4rem 1.25rem; margin:0.75rem 0 0.75rem; }
+.bt-key { display:inline-flex; align-items:center; gap:0.4rem; }
 .bt-keys-label { color:var(--text-muted); }
-.bt-keys button { grid-column:3; grid-row:1 / span 2; }
-/* Each key field's views (Lift keys · All) sit beside its box, not under it:
-   the shell places the box's list against the box, under it or above it, so
-   anything stacked there is covered while the list is open. The chosen key's
-   chip is on the line above. */
-.bt-key-pick .picker { display:grid; grid-template-columns:minmax(10rem, 14rem) auto; align-items:center; gap:0.25rem 0.5rem; }
-.bt-key-pick .picker-chips, .bt-key-pick .picker-refused { grid-column:1 / -1; }
-.bt-key-pick .picker-field { grid-column:1; grid-row:3; }
-.bt-key-pick .picker-filters { grid-column:2; grid-row:3; flex-wrap:nowrap; }
+.bt-key-note { color:var(--text-muted); font-size:0.85em; }
+.bt-key-note:empty { display:none; }
+.bt-key-note.is-not-saved { color:var(--warning); }
+.bt-key-change { font-size:0.75rem; padding:0.1rem 0.45rem; }
+.bt-key-sync { color:var(--text-muted); font-size:0.85em; }
+.bt-key-save { margin-left:auto; }
+/* [hidden] hides inside the strip: .btn sets display, and an author display
+   beats the UA sheet's [hidden] (as .lb-cmp[hidden] below). */
+.bt-keys [hidden] { display:none; }
+/* An open field's picker sits in the strip, its views (Lift keys · All)
+   beside its box, not under it: the shell places the box's list against the
+   box, under it or above it, so anything stacked there is covered while the
+   list is open. */
+.bt-key-pick .picker { display:grid; grid-template-columns:minmax(12rem, 16rem) auto; align-items:center; gap:0.25rem 0.5rem; }
+.bt-key-pick .picker-refused { grid-column:1 / -1; }
+.bt-key-pick .picker-field { grid-column:1; grid-row:2; }
+.bt-key-pick .picker-filters { grid-column:2; grid-row:2; flex-wrap:nowrap; }
 .bt-key-pick .picker-filters button { white-space:nowrap; }
-.bt-families .bt-keys { margin:0.75rem 0 0.25rem; }
 /* A type's bare marker is no row of its own: a quiet line under the type it
    stands for (a tote carrier's is its bottom), its Edit and Delete with it. */
 .bt-table tr.bt-has-marker td { border-bottom:none; }

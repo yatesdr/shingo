@@ -223,12 +223,14 @@ no UI trigger — no template or page script references it.
 
 Physical containers: every bin with its type, status, location, payload and
 count, filtered by text, type and status. The **Bin Types** accordion is a tab
-per carrier family, each counting its types. At the top of a tab are the
-family's RDS keys, once, with one Save: the lift key and the wait key, from the
-keys Core's copy of the RDS scene lists, the default first (a saved key the scene
-no longer lists says "not in RDS"); each field opens on its own keys, **Lift
-keys** or **Wait keys** (the keys RDS runs as its default lift or wait), and
-**All** offers every key. Every type of the family sends them. Under them are
+per carrier family, each counting its types. At the top of a tab is the
+family's key strip, one line: Lift and its key, Wait and its key, each with a
+small **Change**, and the scene's sync time. Change opens that field's picker in
+place, from the keys Core's copy of the RDS scene lists, the default first (a
+saved key the scene no longer lists says "not in RDS"); it opens on its own keys,
+**Lift keys** or **Wait keys** (the keys RDS runs as its default lift or wait),
+and **All** offers every key. A picked key reads "not saved" until **Save keys**;
+**Cancel** puts both back. Every type of the family sends them. Under them are
 the family's types, with Edit (the type's id in its heading) and Delete; a bare
 marker is a quiet line under its type, and a tote carrier's line says its top is
 totes, so many per layer, with its marker's line its bottom. **+ Bin Type** opens

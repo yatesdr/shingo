@@ -5,7 +5,7 @@ import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
-import { rdsKeyPicker } from '/static/pages/bins-rdskeys.js';
+import { mountKeyStrip } from '/static/pages/bins-keystrip.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
 
@@ -1407,15 +1407,20 @@ try {
   }
 } catch (e) { /* no storage: the first tab, the section as the page drew it */ }
 
-// Each family's Lift and Wait field is the shared picker through the page's
-// RDS keys adapter (bins-rdskeys.js), drawn from the field the server put in
-// the host's data-field. Its pick is posted by the tab's form, so the Save is
-// the form's.
-for (const host of document.querySelectorAll('.bt-key-pick')) {
-  let field = null;
-  try { field = JSON.parse(host.dataset.field || 'null'); } catch (e) { field = null; }
-  if (field && field.name) rdsKeyPicker(host, field, host.dataset.label || '');
+// Each family tab's key strip (bins-keystrip.js): one line at rest, a Change
+// per key that opens its shared picker in place, Save keys and Cancel only
+// while a picked key is not saved. The form posts as it always did.
+var keyStrips = new WeakMap();
+document.querySelectorAll('#bt-accordion form.bt-keys').forEach(function(form) {
+  keyStrips.set(form, mountKeyStrip(form));
+});
+
+function keyStripOf(el) {
+  var form = el && el.closest ? el.closest('form.bt-keys') : null;
+  return form ? keyStrips.get(form) : null;
 }
+function changeFamilyKey(key, el) { var s = keyStripOf(el); if (s) s.change(key); }
+function cancelFamilyKeys(el) { var s = keyStripOf(el); if (s) s.cancel(); }
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
@@ -1456,6 +1461,8 @@ delegateActions(document.body, {
     requestMove,
     switchTab: showBinTab,
     showFamilyTab,
+    changeFamilyKey,
+    cancelFamilyKeys,
     toggleAllBins,
     toggleBinTypesAccordion,
     toggleManifest,

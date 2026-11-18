@@ -34,7 +34,7 @@ func fkType(t *testing.T, h *Handlers, db *store.DB, code, family string) *bins.
 
 // fkFieldRe is a key field's host as the page renders it: the field the RDS
 // keys adapter (bins-rdskeys.js) draws the shared picker from.
-var fkFieldRe = regexp.MustCompile(`<div class="bt-key-pick" id="(bt-[a-z]+-\d+)" data-label="[^"]*" data-field="([^"]*)"></div>`)
+var fkFieldRe = regexp.MustCompile(`<div class="bt-key-pick" id="(bt-[a-z]+-\d+)" data-label="[^"]*" data-field="([^"]*)"(?: hidden)?></div>`)
 
 // fkPickers reads the page's key fields by id (bt-lift-<type id>,
 // bt-wait-<type id>), each as optionLines writes a picker.
@@ -100,8 +100,8 @@ func TestBinsPage_FamilyKeys(t *testing.T) {
 
 	// No scene copy yet: said plainly, and the saved keys are not in it.
 	page := binsPage(t, h, cookie)
-	if !strings.Contains(page, "Core has no copy of the RDS scene yet") {
-		t.Error("with no scene copy the table does not say so")
+	if !strings.Contains(fkStrip(t, page, a.FamilyID), "No copy of the RDS scene yet") {
+		t.Error("with no scene copy the key strip does not say so")
 	}
 	if got, want := fkPickers(t, page)["bt-lift-"+strconv.FormatInt(a.FamilyID, 10)],
 		[]string{"|JackLoad (default)", "jackload_4548|jackload_4548 · not in RDS*"}; !reflect.DeepEqual(got, want) {
@@ -178,9 +178,52 @@ func TestBinsPage_FamilyKeys(t *testing.T) {
 	var synced time.Time
 	testutil.MustNoErr(t, db.QueryRow(`SELECT MAX(synced_at) FROM scene_points WHERE class_name = 'GeneralLocation'`).
 		Scan(&synced), "read the newest sync time")
-	if want := `synced <time data-utc="` + synced.UTC().Format(time.RFC3339) + `"`; !strings.Contains(page, want) {
-		t.Errorf("the table does not show the last scene sync (%s)", want)
+	if want := `synced <time data-utc="` + synced.UTC().Format(time.RFC3339) + `"`; !strings.Contains(fkStrip(t, page, a.FamilyID), want) {
+		t.Errorf("the key strip does not show the last scene sync (%s)", want)
 	}
+
+	// At rest the strip is one line: each key as saved, with a small Change and
+	// the hidden input the form posts; Save keys and Cancel are not shown, and
+	// no picker is drawn until Change opens one. One hint, over the tabs: none
+	// under the strip.
+	strip := fkStrip(t, page, a.FamilyID)
+	for _, want := range []string{
+		`<code>jackload_4548</code>`, `<code>wait_4548</code> <span class="bt-key-note">not in RDS</span>`,
+		`data-action="changeFamilyKey:lift">Change</button>`, `data-action="changeFamilyKey:wait">Change</button>`,
+		`<input type="hidden" name="lift_bintask" value="jackload_4548">`,
+		`<input type="hidden" name="wait_bintask" value="wait_4548">`,
+		`class="btn btn-primary btn-sm bt-key-save" hidden>Save keys</button>`,
+		`class="btn btn-sm bt-key-cancel" data-action="cancelFamilyKeys" hidden>Cancel</button>`,
+	} {
+		if !strings.Contains(strip, want) {
+			t.Errorf("family %s's strip at rest lacks %q", a.FamilyCode, want)
+		}
+	}
+	if strings.Count(strip, `class="bt-key-pick"`) != 2 || strings.Count(strip, "hidden></div>") != 2 {
+		t.Errorf("family %s's strip should hold its two picker hosts, both hidden at rest", a.FamilyCode)
+	}
+	if strings.Contains(page, "One lift key and one wait key") {
+		t.Error("a second hint is drawn under the strip; the sentence over the tabs is the one hint")
+	}
+	if blank := fkStrip(t, page, c.FamilyID); !strings.Contains(blank, `<code>JackLoad (default)</code>`) ||
+		!strings.Contains(blank, `<code>Wait (default)</code>`) {
+		t.Errorf("family %s's strip does not read its blank keys as the defaults", c.FamilyCode)
+	}
+}
+
+// fkStrip is a family tab's key strip: its form, from the tag to its end.
+func fkStrip(t *testing.T, page string, familyID int64) string {
+	t.Helper()
+	panel := fkTabPanel(t, page, "bt-family-"+strconv.FormatInt(familyID, 10))
+	i := strings.Index(panel, `<form method="POST" action="/bin-types/family-keys"`)
+	if i < 0 {
+		t.Fatalf("family %d's tab has no key strip", familyID)
+	}
+	end := strings.Index(panel[i:], "</form>")
+	if end < 0 {
+		t.Fatalf("family %d's key strip has no end", familyID)
+	}
+	return panel[i : i+end]
 }
 
 // fkSave posts the Bin Types table's Save of a family's keys.

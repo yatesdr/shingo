@@ -375,16 +375,18 @@ function binsPage() {
     g.PAGE_BIN_TYPES = fx.binTypes;
     g.PAGE_PAYLOAD_BIN_TYPES = fx.payloadBinTypes;
     g.PAGE_AUTH = true;
-    // bins.js's own three modules, run as they are; the RDS keys adapter
+    // bins.js's own modules, run as they are; the RDS keys adapter
     // (bins-rdskeys.js) over the same recorded shell as the node and part
-    // adapters.
+    // adapters, and the key strip (bins-keystrip.js) over it.
     const echo = D.loadPage('static/pages/bins-echo.js', { console: g.console }, () => undefined);
     const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, () => undefined);
     const keys = D.loadPage('static/pages/bins-rdskeys.js', { console: g.console }, () => undefined);
+    const strip = D.loadPage('static/pages/bins-keystrip.js', { console: g.console, MutationObserver: function () {} },
+        (n) => (n === 'rdsKeyPicker' ? keys.ctx.rdsKeyPicker : undefined));
     const p = D.loadPage('static/pages/bins.js', g, lender(rec, doc, {
         echoesFor: echo.ctx.echoesFor, newEchoLedger: echo.ctx.newEchoLedger,
         binRowView: row.ctx.binRowView, uopText: row.ctx.uopText,
-        rdsKeyPicker: keys.ctx.rdsKeyPicker,
+        mountKeyStrip: strip.ctx.mountKeyStrip,
         switchTab(key) { return key; },
     }));
     return { p, doc, net, rec };
