@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.12.2 — 2026-11-18
+
 Deploy: no migration; Core and Edges in either order.
 
 - On the loader board, "+N more" opens its section in place and the board scrolls; Show less folds it
