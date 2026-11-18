@@ -773,3 +773,103 @@ func TestConsume_ALedgerRowReleasesInItsOwnUnit(t *testing.T) {
 		t.Errorf("CELL after the held draw's release = %d, want 776: 2 strokes at 8", got)
 	}
 }
+
+// TestShareStep_SumsToTheStepFloorFirst: over every step 0-60 and 1-6 spots,
+// the shares sum to the step, each is the floor share or one more, and the
+// odd pieces go to the first spots in node order.
+func TestShareStep_SumsToTheStepFloorFirst(t *testing.T) {
+	t.Parallel()
+	for n := 1; n <= 6; n++ {
+		for step := 0; step <= 60; step++ {
+			got := shareStep(step, n)
+			if len(got) != n {
+				t.Fatalf("shareStep(%d, %d) = %v: %d shares, want %d", step, n, got, len(got), n)
+			}
+			sum := 0
+			for i, s := range got {
+				sum += s
+				want := step / n
+				if i < step%n {
+					want++
+				}
+				if s != want {
+					t.Errorf("shareStep(%d, %d)[%d] = %d, want %d (floor %d, the first %d spots one more)",
+						step, n, i, s, want, step/n, step%n)
+				}
+			}
+			if sum != step {
+				t.Errorf("shareStep(%d, %d) = %v sums to %d, want the step", step, n, got, sum)
+			}
+		}
+	}
+}
+
+// TestProduce_TwoSpotsOfOnePartShareTheStep: two produce spots of one style
+// running one part on one counter split each step, the odd piece to the first
+// in node order: steps 2, 4 and 1 give A 1+2+1 and B 1+2+0. An LH/RH die's
+// two parts are untouched: each takes the whole step. Before, A and B each
+// took the whole step (7 and 7).
+func TestProduce_TwoSpotsOfOnePartShareTheStep(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	b1, b2, b3, b4 := int64(81), int64(82), int64(83), int64(84)
+	f := seedWalkerProcess(t, db, "SHR", []walkerNode{
+		{Suffix: "A", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-TWO", Capacity: 100, BoundBin: &b1, ActivePull: true},
+		{Suffix: "B", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-TWO", Capacity: 100, BoundBin: &b2, ActivePull: true},
+		{Suffix: "LH", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-LH2", Capacity: 100, BoundBin: &b3, ActivePull: true},
+		{Suffix: "RH", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-RH2", Capacity: 100, BoundBin: &b4, ActivePull: true},
+	})
+	eng := testEngine(t, db)
+	for _, step := range []int64{2, 4, 1} {
+		eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: step})
+	}
+	got := tickOutcomes(t, db, f)
+	for suffix, want := range map[string]int{"A": 4, "B": 3, "LH": 7, "RH": 7} {
+		if got[suffix].Remaining != want {
+			t.Errorf("%s after steps 2, 4, 1 = %d, want %d", suffix, got[suffix].Remaining, want)
+		}
+	}
+}
+
+// TestProduce_AnABPairIsOneSpot: a produce A/B pair of one part takes the
+// whole step at its lit side; beside a lone spot of the same part it is one
+// of two spots, so each takes half.
+func TestProduce_AnABPairIsOneSpot(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name               string
+		lone               bool
+		wantLit, wantAlone int
+	}{
+		{name: "the pair alone", wantLit: 4},
+		{name: "the pair beside a lone spot of its part", lone: true, wantLit: 2, wantAlone: 2},
+	} {
+		db := testEngineDB(t)
+		b1, b2, b3 := int64(91), int64(92), int64(93)
+		spots := []walkerNode{
+			{Suffix: "PA", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSequential,
+				PayloadCode: "SYN-AB2", Capacity: 100, BoundBin: &b1, Paired: "ABP_PB", ActivePull: true},
+			{Suffix: "PB", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSequential,
+				PayloadCode: "SYN-AB2", Capacity: 100, BoundBin: &b2, Paired: "ABP_PA", ActivePull: true},
+		}
+		if c.lone {
+			spots = append(spots, walkerNode{Suffix: "ALONE", Role: protocol.ClaimRoleProduce,
+				SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "SYN-AB2", Capacity: 100, BoundBin: &b3, ActivePull: true})
+		}
+		f := seedWalkerProcess(t, db, "ABP", spots)
+		eng := testEngine(t, db)
+		eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 4})
+		got := tickOutcomes(t, db, f)
+		if got["PA"].Remaining != c.wantLit || got["PB"].Remaining != 0 {
+			t.Errorf("%s: the pair = %d / %d, want %d at its first lit side and 0 at its second", c.name,
+				got["PA"].Remaining, got["PB"].Remaining, c.wantLit)
+		}
+		if c.lone && got["ALONE"].Remaining != c.wantAlone {
+			t.Errorf("%s: the lone spot = %d, want %d", c.name, got["ALONE"].Remaining, c.wantAlone)
+		}
+	}
+}

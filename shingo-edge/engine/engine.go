@@ -157,6 +157,10 @@ type Engine struct {
 	// bothLitLogged marks the A/B pairs whose both-lit tick has been logged
 	// (process|pair → struct{}), so the walk says it once.
 	bothLitLogged sync.Map
+	// unevenShareLogged marks the (process, part) pairs whose produce spots
+	// have been given a step that does not divide (process|part → struct{}),
+	// so the walk says it once (walkTick, produceShares).
+	unevenShareLogged sync.Map
 
 	// stationHealth is the station counters' health account (station_health.go),
 	// fed by the counting events.

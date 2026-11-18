@@ -241,6 +241,9 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 		}
 	}
 	process, claims, runtimes := e.counterDeltaRows(h.ProcessID, styleID, nodes)
+	// A produce spot's row is its share, as the release's walk splits it.
+	shares, _ := produceShares(process, nodes, claims, runtimes, tickScope{processID: h.ProcessID, styleID: styleID,
+		delta: int(h.Qty), counter: holdCounter(h, process, nodes, claims, styleID)}, newABPairs(nodes).byCore)
 	var rows []CatidHoldChargeRow
 	lands, refusal := false, ""
 	for i := range nodes {
@@ -259,9 +262,12 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 			continue
 		}
 		row := CatidHoldChargeRow{Node: nodes[i].Name, ClaimPart: claim.PayloadCode, Qty: h.Qty}
-		if claim.Role == protocol.ClaimRoleConsume {
+		switch share, ok := shares[nodes[i].ID]; {
+		case claim.Role == protocol.ClaimRoleConsume:
 			// What the cart is drawn, in pieces, as the release's walk draws it.
 			row.Qty = int64(tickScope{delta: int(h.Qty), unit: releaseUnit(h)}.consumeDraw(claim))
+		case ok:
+			row.Qty = int64(share)
 		}
 		switch {
 		case rt.ActiveBinID == nil:
