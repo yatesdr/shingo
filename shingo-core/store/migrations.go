@@ -4602,6 +4602,12 @@ func migrationList() []migration {
 //
 // ROLLBACK is the previous binary: it reads neither column. Pin:
 // TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad.
+// After a rollback, update again only with no orders on the floor: an order the
+// previous binary creates takes the default '{}', so its blocks go out
+// unrecorded, and if this binary returns while it is still moving, each of its
+// finished blocks lifts, sets down and counts nothing (pinned by
+// TestBlockRecord_ABlockTheRecordDoesNotNameOnlyLeavesItsLeg); its carts then
+// need a hand correction.
 func v179BlockRecord(tx *sql.Tx) error {
 	for _, s := range []string{
 		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS block_actions JSONB`,

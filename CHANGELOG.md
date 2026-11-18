@@ -21,6 +21,7 @@ Deploy: Core v179. Core only; the Edges are unchanged and need no install.
 - Core keeps its own record of what each block it sends a robot does, and reads that record when the block finishes instead of the action's name in RDS; every block finishes as it did before
 - Orders already on the floor when Core is updated finish exactly as they always did
 - The mission page labels each robot action from Core's record
+- After a rollback, update Core again only with no orders on the floor; an order the older Core sent and still moving then finishes without moving its carts in Shingo, and they need correcting by hand
 
 ## v0.12.2 — 2026-11-18
 
