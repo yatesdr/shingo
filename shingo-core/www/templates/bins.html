@@ -45,13 +45,16 @@
             {{/* The family's keys: a Save sets every type of the family, and the
                  line under it names them (bins_family_keys.go). */}}
             <td>
-              {{if .LiftOptions}}
+              {{if .LiftField}}
+              {{/* Each field is the shared picker through the page's RDS keys
+                   adapter (bins-rdskeys.js), which posts its pick as the
+                   field's name. */}}
               <form method="POST" action="/bin-types/family-keys" class="bt-keys">
                 <input type="hidden" name="family_id" value="{{.FamilyID}}">
-                <label for="bt-lift-{{.ID}}">Lift</label>
-                <select name="lift_bintask" id="bt-lift-{{.ID}}">{{range .LiftOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-                <label for="bt-wait-{{.ID}}">Wait</label>
-                <select name="wait_bintask" id="bt-wait-{{.ID}}">{{range .WaitOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+                <span class="bt-keys-label">Lift</span>
+                <div class="bt-key-pick" id="bt-lift-{{.ID}}" data-label="Lift key" data-field="{{.LiftField.JSON}}"></div>
+                <span class="bt-keys-label">Wait</span>
+                <div class="bt-key-pick" id="bt-wait-{{.ID}}" data-label="Wait key" data-field="{{.WaitField.JSON}}"></div>
                 <button type="submit" class="btn btn-sm">Save</button>
               </form>
               <div class="form-hint">Saves for family <code>{{.FamilyCode}}</code>{{with .FamilyOthers}}, also {{range $i, $c := .}}{{if $i}}, {{end}}<code>{{$c}}</code>{{end}}{{end}}</div>

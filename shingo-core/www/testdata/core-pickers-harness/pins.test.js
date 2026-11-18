@@ -375,12 +375,16 @@ function binsPage() {
     g.PAGE_BIN_TYPES = fx.binTypes;
     g.PAGE_PAYLOAD_BIN_TYPES = fx.payloadBinTypes;
     g.PAGE_AUTH = true;
-    // bins.js's own two modules, run as they are.
+    // bins.js's own three modules, run as they are; the RDS keys adapter
+    // (bins-rdskeys.js) over the same recorded shell as the node and part
+    // adapters.
     const echo = D.loadPage('static/pages/bins-echo.js', { console: g.console }, () => undefined);
     const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, () => undefined);
+    const keys = D.loadPage('static/pages/bins-rdskeys.js', { console: g.console }, () => undefined);
     const p = D.loadPage('static/pages/bins.js', g, lender(rec, doc, {
         echoesFor: echo.ctx.echoesFor, newEchoLedger: echo.ctx.newEchoLedger,
         binRowView: row.ctx.binRowView, uopText: row.ctx.uopText,
+        rdsKeyPicker: keys.ctx.rdsKeyPicker,
     }));
     return { p, doc, net, rec };
 }

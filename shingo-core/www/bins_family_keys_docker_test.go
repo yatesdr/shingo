@@ -3,6 +3,8 @@
 package www
 
 import (
+	"encoding/json"
+	"html"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -30,25 +32,19 @@ func fkType(t *testing.T, h *Handlers, db *store.DB, code, family string) *bins.
 	return got
 }
 
-var (
-	fkSelectRe = regexp.MustCompile(`(?s)<select name="[a-z_]+" id="([a-z]+-[a-z]+-\d+)">(.*?)</select>`)
-	fkOptionRe = regexp.MustCompile(`<option value="([^"]*)"( selected)?>([^<]*)</option>`)
-)
+// fkFieldRe is a key field's host as the page renders it: the field the RDS
+// keys adapter (bins-rdskeys.js) draws the shared picker from.
+var fkFieldRe = regexp.MustCompile(`<div class="bt-key-pick" id="(bt-[a-z]+-\d+)" data-label="[^"]*" data-field="([^"]*)"></div>`)
 
-// fkPickers reads the page's key pickers by id (bt-lift-<type id>,
+// fkPickers reads the page's key fields by id (bt-lift-<type id>,
 // bt-wait-<type id>), each as optionLines writes a picker.
-func fkPickers(page string) map[string][]string {
+func fkPickers(t *testing.T, page string) map[string][]string {
+	t.Helper()
 	out := map[string][]string{}
-	for _, s := range fkSelectRe.FindAllStringSubmatch(page, -1) {
-		var lines []string
-		for _, o := range fkOptionRe.FindAllStringSubmatch(s[2], -1) {
-			line := o[1] + "|" + o[3]
-			if o[2] != "" {
-				line += "*"
-			}
-			lines = append(lines, line)
-		}
-		out[s[1]] = lines
+	for _, s := range fkFieldRe.FindAllStringSubmatch(page, -1) {
+		var f keyField
+		testutil.MustNoErr(t, json.Unmarshal([]byte(html.UnescapeString(s[2])), &f), "decode the field "+s[1])
+		out[s[1]] = optionLines(f.Options)
 	}
 	return out
 }
@@ -89,7 +85,7 @@ func TestBinsPage_FamilyKeys(t *testing.T) {
 	if !strings.Contains(page, "Core has no copy of the RDS scene yet") {
 		t.Error("with no scene copy the table does not say so")
 	}
-	if got, want := fkPickers(page)["bt-lift-"+strconv.FormatInt(a.ID, 10)],
+	if got, want := fkPickers(t, page)["bt-lift-"+strconv.FormatInt(a.ID, 10)],
 		[]string{"|JackLoad (default)", "jackload_4548|jackload_4548 · not in RDS*"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("with no scene copy, A's lift picker = %q, want %q", got, want)
 	}
@@ -118,7 +114,7 @@ func TestBinsPage_FamilyKeys(t *testing.T) {
 		"lift": append([]string{"|JackLoad (default)*"}, listed...),
 		"wait": append([]string{"|Wait (default)*"}, listed...),
 	}
-	pickers := fkPickers(page)
+	pickers := fkPickers(t, page)
 	for _, row := range []struct {
 		bt   *bins.BinType
 		want map[string][]string
@@ -197,7 +193,7 @@ func TestFamilyKeysSave_SetsEveryTypeOfTheFamily(t *testing.T) {
 	if changed, err := h.engine.Dispatcher().ReloadCarrierKeys(); err != nil || changed {
 		t.Errorf("a reload after the save changed the dispatcher's keys (%v, %v): the save went around its door", changed, err)
 	}
-	pickers := fkPickers(binsPage(t, h, cookie))
+	pickers := fkPickers(t, binsPage(t, h, cookie))
 	for _, bt := range []*bins.BinType{a, b} {
 		for key, want := range map[string]string{"lift": "jackload_4548", "wait": "wait_4548"} {
 			id := "bt-" + key + "-" + strconv.FormatInt(bt.ID, 10)

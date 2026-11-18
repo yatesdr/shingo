@@ -2,6 +2,7 @@ package www
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"log"
 	"maps"
@@ -27,17 +28,51 @@ import (
 // names them.
 //
 // The options are the distinct keys Core's scene copy lists at bin locations
-// (GeneralLocation rows), each with the operation RDS gives it there: one
-// scene_points read for the page (TestBinsPage_FamilyKeys). The default is
-// offered first, stored blank and labelled with the key it sends. A saved key
-// the copy no longer lists stays offered and selected, marked "not in RDS".
-// Nothing is typed, and no key is left out for its name or its operation.
+// (GeneralLocation rows), each with the operation RDS gives it there as the
+// row's note: one scene_points read for the page (TestBinsPage_FamilyKeys). The
+// default is offered first, stored blank and labelled with the key it sends. A
+// saved key the copy no longer lists stays offered and selected, marked "not in
+// RDS". Nothing is typed, and the save takes any key the copy lists.
+//
+// Each field is the shared picker (shared/picker.js, style guide §34) through
+// the page's RDS keys adapter (static/pages/bins-rdskeys.js), with two views:
+// Lift keys (or Wait keys), then All. A view keeps a key by the operation RDS
+// gives it, never by its name: the operations the copy gives the default key
+// this field sends (seerrds.BinTaskForAction, the one list of defaults). The
+// default row and the saved row are in every view; a key with no operation is
+// under All only.
 
-// keyOption is one option of a key picker.
+// keyOption is one row of a key picker, as the adapter reads it.
 type keyOption struct {
-	Value    string // what Save stores: the key, "" for the default
-	Label    string
-	Selected bool
+	Value string `json:"value"` // what Save stores: the key, "" for the default
+	Label string `json:"label"`
+	// Note is the row's quiet line: the operations RDS gives the key, or "not in
+	// RDS" on a saved key the copy does not list.
+	Note string `json:"note,omitempty"`
+	// Ops are the operations RDS gives the key: what a view keeps it by.
+	Ops []string `json:"ops,omitempty"`
+	// Pinned is in every view: the default and the saved key.
+	Pinned   bool `json:"pinned,omitempty"`
+	Selected bool `json:"selected,omitempty"`
+}
+
+// keyField is one key field of a row: the form name its pick is posted as,
+// its first view, the operations that view keeps, and its rows.
+type keyField struct {
+	Name    string      `json:"name"`
+	View    string      `json:"view"`
+	ViewOps []string    `json:"viewOps"`
+	Options []keyOption `json:"options"`
+}
+
+// JSON is the field as the adapter reads it from the host's data-field.
+func (f *keyField) JSON() string {
+	b, err := json.Marshal(f)
+	if err != nil {
+		log.Printf("bins page: encode the %s field: %v", f.Name, err)
+		return "{}"
+	}
+	return string(b)
 }
 
 // sceneKey is one key the scene copy lists at some bin location, with every
@@ -45,14 +80,6 @@ type keyOption struct {
 type sceneKey struct {
 	Name       string
 	Operations []string
-}
-
-// label is the key as its option shows it: "jackload_4548 · JackLoad".
-func (k sceneKey) label() string {
-	if len(k.Operations) == 0 {
-		return k.Name
-	}
-	return k.Name + " · " + strings.Join(k.Operations, ", ")
 }
 
 // sceneKeyCopy is what the page's one read of the scene copy's bin locations
@@ -101,25 +128,40 @@ func gatherSceneKeys(points []*domain.ScenePoint) sceneKeyCopy {
 	return out
 }
 
-// keyOptions is one picker: the default first (stored blank, labelled with
-// the key it sends), then a saved key the copy does not list, then every key
-// the copy lists. The saved key is the selected one. A saved key is marked
-// "not in RDS" only when the copy was read.
+// keyOptions is one picker's rows: the default first (stored blank, labelled
+// with the key it sends), then a saved key the copy does not list, then every
+// key the copy lists. The saved key is the selected one, and it and the
+// default are pinned to every view. A saved key is marked "not in RDS" only
+// when the copy was read.
 func keyOptions(def, saved string, scene sceneKeyCopy) []keyOption {
 	opts := make([]keyOption, 0, len(scene.Keys)+2)
-	opts = append(opts, keyOption{Value: "", Label: def + " (default)", Selected: saved == ""})
+	opts = append(opts, keyOption{Value: "", Label: def + " (default)", Pinned: true, Selected: saved == ""})
 	listed := slices.ContainsFunc(scene.Keys, func(k sceneKey) bool { return k.Name == saved })
 	if saved != "" && !listed {
-		label := saved
+		o := keyOption{Value: saved, Label: saved, Pinned: true, Selected: true}
 		if scene.Err == nil {
-			label += " · not in RDS"
+			o.Note = "not in RDS"
 		}
-		opts = append(opts, keyOption{Value: saved, Label: label, Selected: true})
+		opts = append(opts, o)
 	}
 	for _, k := range scene.Keys {
-		opts = append(opts, keyOption{Value: k.Name, Label: k.label(), Selected: k.Name == saved})
+		mine := k.Name == saved
+		opts = append(opts, keyOption{Value: k.Name, Label: k.Name, Note: strings.Join(k.Operations, ", "),
+			Ops: k.Operations, Pinned: mine, Selected: mine})
 	}
 	return opts
+}
+
+// viewOps is what a field's first view keeps keys by: the operations the copy
+// gives the default key the field sends. None when the copy does not list the
+// default key, and the view then holds the default and the saved key.
+func viewOps(def string, scene sceneKeyCopy) []string {
+	for _, k := range scene.Keys {
+		if k.Name == def {
+			return k.Operations
+		}
+	}
+	return []string{}
 }
 
 // pageFamilyKeys is a carrier family's two keys as the page's families read
@@ -133,8 +175,8 @@ type pageFamilyKeys struct {
 // family the page did not read has no pickers, so it offers nothing to save.
 type binTypeRow struct {
 	*domain.BinType
-	LiftOptions, WaitOptions []keyOption
-	FamilyOthers             []string
+	LiftField, WaitField *keyField
+	FamilyOthers         []string
 }
 
 // binTypeRows is the Bin Types table: each type with its family's keys.
@@ -144,6 +186,7 @@ func binTypeRows(types []*domain.BinType, families map[int64]pageFamilyKeys, sce
 		members[bt.FamilyID] = append(members[bt.FamilyID], bt.Code)
 	}
 	lift, wait := seerrds.BinTaskForAction(protocol.ActionPickup), seerrds.BinTaskForAction(protocol.ActionWait)
+	liftOps, waitOps := viewOps(lift, scene), viewOps(wait, scene)
 	rows := make([]binTypeRow, len(types))
 	for i, bt := range types {
 		rows[i] = binTypeRow{BinType: bt}
@@ -151,8 +194,10 @@ func binTypeRows(types []*domain.BinType, families map[int64]pageFamilyKeys, sce
 		if !read {
 			continue
 		}
-		rows[i].LiftOptions = keyOptions(lift, keys.lift, scene)
-		rows[i].WaitOptions = keyOptions(wait, keys.wait, scene)
+		rows[i].LiftField = &keyField{Name: "lift_bintask", View: "Lift keys", ViewOps: liftOps,
+			Options: keyOptions(lift, keys.lift, scene)}
+		rows[i].WaitField = &keyField{Name: "wait_bintask", View: "Wait keys", ViewOps: waitOps,
+			Options: keyOptions(wait, keys.wait, scene)}
 		rows[i].FamilyOthers = slices.DeleteFunc(slices.Clone(members[bt.FamilyID]),
 			func(code string) bool { return code == bt.Code })
 	}

@@ -40,17 +40,25 @@ func sceneLocation(t *testing.T, name string, synced time.Time, keys ...[2]strin
 	return &domain.ScenePoint{InstanceName: name, ClassName: "GeneralLocation", PropertiesJSON: string(props), SyncedAt: synced}
 }
 
-// optionLines is a picker as "value|label", with a trailing "*" on the
+// optionLines is a picker as "value|label · note", with a trailing "*" on the
 // selected option.
 func optionLines(opts []keyOption) []string {
 	out := make([]string, len(opts))
 	for i, o := range opts {
-		out[i] = o.Value + "|" + o.Label
+		out[i] = o.Value + "|" + optionText(o)
 		if o.Selected {
 			out[i] += "*"
 		}
 	}
 	return out
+}
+
+// optionText is a row as the picker draws it: the label, and its note after.
+func optionText(o keyOption) string {
+	if o.Note == "" {
+		return o.Label
+	}
+	return o.Label + " · " + o.Note
 }
 
 var fkSynced = time.Date(2026, 11, 17, 12, 16, 0, 0, time.UTC)
@@ -86,7 +94,10 @@ func TestGatherSceneKeys_EachKeyOnceWithItsOperations(t *testing.T) {
 		got := gatherSceneKeys(order)
 		labels := make([]string, len(got.Keys))
 		for i, k := range got.Keys {
-			labels[i] = k.label()
+			labels[i] = k.Name
+			if len(k.Operations) > 0 {
+				labels[i] += " · " + strings.Join(k.Operations, ", ")
+			}
 		}
 		if !reflect.DeepEqual(labels, want) {
 			t.Errorf("keys = %q, want %q", labels, want)
@@ -162,10 +173,10 @@ func TestBinTypeRows_EachTypeShowsItsFamilysKeys(t *testing.T) {
 	if len(rows) != len(types) {
 		t.Fatalf("%d rows for %d types", len(rows), len(types))
 	}
-	sel := func(opts []keyOption) string {
-		for _, o := range opts {
+	sel := func(f *keyField) string {
+		for _, o := range f.Options {
 			if o.Selected {
-				return o.Label
+				return optionText(o)
 			}
 		}
 		return "(none)"
@@ -178,12 +189,58 @@ func TestBinTypeRows_EachTypeShowsItsFamilysKeys(t *testing.T) {
 	}
 	for i, w := range want {
 		r := rows[i]
-		if got := [3]string{sel(r.LiftOptions), sel(r.WaitOptions), fmt.Sprint(r.FamilyOthers)}; got != [3]string{w.lift, w.wait, w.others} {
+		if got := [3]string{sel(r.LiftField), sel(r.WaitField), fmt.Sprint(r.FamilyOthers)}; got != [3]string{w.lift, w.wait, w.others} {
 			t.Errorf("%s: lift %q, wait %q, others %s; want %q, %q, %s", r.Code, got[0], got[1], got[2], w.lift, w.wait, w.others)
 		}
 	}
-	if r := rows[4]; r.LiftOptions != nil || r.WaitOptions != nil {
-		t.Errorf("%s, whose family was not read, offers keys %q / %q", r.Code, optionLines(r.LiftOptions), optionLines(r.WaitOptions))
+	if r := rows[4]; r.LiftField != nil || r.WaitField != nil {
+		t.Errorf("%s, whose family was not read, offers keys %+v / %+v", r.Code, r.LiftField, r.WaitField)
+	}
+}
+
+// TestKeyFields_TheFirstViewKeepsByTheDefaultKeysOperation: each field posts as
+// its form name and opens on its own view, which keeps keys by the operations
+// the scene copy gives the default key the field sends (seerrds), never a list
+// of its own; only the default and the saved key are pinned to every view.
+// With the default key not in the copy, the view keeps by nothing.
+func TestKeyFields_TheFirstViewKeepsByTheDefaultKeysOperation(t *testing.T) {
+	t.Parallel()
+	scene := gatherSceneKeys(fkScenePoints(t))
+	types := []*domain.BinType{{ID: 1, Code: "C4548", FamilyID: 10}}
+	rows := binTypeRows(types, map[int64]pageFamilyKeys{10: {lift: "jackload_9999", wait: "wait_4548"}}, scene)
+	lift, wait := rows[0].LiftField, rows[0].WaitField
+	if lift.Name != "lift_bintask" || lift.View != "Lift keys" || !slices.Equal(lift.ViewOps, []string{"JackLoad"}) {
+		t.Errorf("lift field %s / %q keeps by %q, want lift_bintask / Lift keys by [JackLoad]", lift.Name, lift.View, lift.ViewOps)
+	}
+	if wait.Name != "wait_bintask" || wait.View != "Wait keys" || !slices.Equal(wait.ViewOps, []string{"Wait"}) {
+		t.Errorf("wait field %s / %q keeps by %q, want wait_bintask / Wait keys by [Wait]", wait.Name, wait.View, wait.ViewOps)
+	}
+	pinned := func(f *keyField) []string {
+		var out []string
+		for _, o := range f.Options {
+			if o.Pinned {
+				out = append(out, o.Value)
+			}
+		}
+		return out
+	}
+	if got := pinned(lift); !slices.Equal(got, []string{"", "jackload_9999"}) {
+		t.Errorf("lift pins %q, want the default and the saved key not in RDS", got)
+	}
+	if got := pinned(wait); !slices.Equal(got, []string{"", "wait_4548"}) {
+		t.Errorf("wait pins %q, want the default and the saved key", got)
+	}
+	for _, o := range wait.Options {
+		if o.Value == "wait_4548" && !slices.Equal(o.Ops, []string{"Wait", "Wait2"}) {
+			t.Errorf("wait_4548 carries operations %q, want every one RDS gives it", o.Ops)
+		}
+		if o.Value == "lift_plain" && len(o.Ops) != 0 {
+			t.Errorf("lift_plain carries operations %q, want none", o.Ops)
+		}
+	}
+	bare := gatherSceneKeys(fkScenePoints(t)[3:4]) // lift_plain and wait_4548, no JackLoad
+	if got := viewOps("JackLoad", bare); got == nil || len(got) != 0 {
+		t.Errorf("a copy without the default key: the view keeps by %#v, want by nothing ([], not null)", got)
 	}
 }
 

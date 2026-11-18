@@ -5,6 +5,7 @@ import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
+import { rdsKeyPicker } from '/static/pages/bins-rdskeys.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
 
@@ -1344,6 +1345,16 @@ function toggleBinTypesAccordion() {
 // (handleBinTypeFamilyKeys): open the table the Save was made from, so the
 // saved keys are in view.
 if (location.hash === '#bt-accordion') toggleBinTypesAccordion();
+
+// The Bin Types table's RDS keys: each row's Lift and Wait field is the shared
+// picker through the page's RDS keys adapter (bins-rdskeys.js), drawn from the
+// field the server put in the host's data-field. Its pick is posted by the
+// row's form, so the Save is the form's.
+for (const host of document.querySelectorAll('.bt-key-pick')) {
+  let field = null;
+  try { field = JSON.parse(host.dataset.field || 'null'); } catch (e) { field = null; }
+  if (field && field.name) rdsKeyPicker(host, field, host.dataset.label || '');
+}
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions

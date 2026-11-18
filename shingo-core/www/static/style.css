@@ -807,12 +807,21 @@ textarea { resize: vertical; min-height: 60px; }
    line break. */
 #bin-table td code { white-space: nowrap; }
 .bt-table td code { white-space: nowrap; }
-/* The Bin Types table's RDS keys (bins_family_keys.go): each picker beside its
-   label, one Save for both, the family line under them. */
+/* The Bin Types table's RDS keys (bins_family_keys.go): each field's picker
+   (bins-rdskeys.js) beside its label, one Save for both, the family line under
+   them. */
 .bt-keys { display:grid; grid-template-columns:auto auto auto; justify-content:start; gap:0.25rem 0.5rem; align-items:center; }
-.bt-keys label { margin:0; font-weight:400; color:var(--text-muted); }
-.bt-keys select { width:auto; max-width:18rem; padding:0.2rem 0.4rem; font-size:0.82rem; }
+.bt-keys-label { color:var(--text-muted); }
 .bt-keys button { grid-column:3; grid-row:1 / span 2; }
+/* Each key field's views (Lift keys · All) sit beside its box, not under it:
+   the shell places the box's list against the box, under it or above it, so
+   anything stacked there is covered while the list is open. The chosen key's
+   chip is on the line above. */
+.bt-key-pick .picker { display:grid; grid-template-columns:minmax(10rem, 14rem) auto; align-items:center; gap:0.25rem 0.5rem; }
+.bt-key-pick .picker-chips, .bt-key-pick .picker-refused { grid-column:1 / -1; }
+.bt-key-pick .picker-field { grid-column:1; grid-row:3; }
+.bt-key-pick .picker-filters { grid-column:2; grid-row:3; flex-wrap:nowrap; }
+.bt-key-pick .picker-filters button { white-space:nowrap; }
 .bin-dot-loaded { background:#22c55e; }
 .bin-dot-unconfirmed { background:#f97316; }
 .bin-dot-depleted { background:var(--danger); }

@@ -225,8 +225,10 @@ Physical containers: every bin with its type, status, location, payload and
 count, filtered by text, type and status. The **Bin Types** accordion creates,
 edits and deletes bin types, and picks each type's family RDS keys: the lift key
 and the wait key, from the keys Core's copy of the RDS scene lists, the default
-first (a saved key the scene no longer lists says "not in RDS"). Save sets them
-for every type of the family, and the row names the others. **+ Bin** creates 1
+first (a saved key the scene no longer lists says "not in RDS"). Each field opens
+on its own keys, **Lift keys** or **Wait keys** (the keys RDS runs as its default
+lift or wait), and **All** offers every key. Save sets them for every type of the
+family, and the row names the others. **+ Bin** creates 1
 to 100 carriers from a label prefix; **Cycle Count** walks the filtered bins for
 a count. The **Lineside Buckets** section is Core's mirror of the Edges' piles.
 
