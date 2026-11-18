@@ -376,15 +376,21 @@ eq([NOBIN, FULLBIN('PART-A'), Object.assign(FULLBIN('PART-A'), { partial: true }
     eq(P(PARTIALBIN('PART-A'), { orders: [demand('dispatched')] }), '', 'a dispatched move leaving the home: none');
     // A partial home with a partial of its part in the buffer: Bring partials
     // home offers it, saying a partial is on the home, and Show all lists the
-    // home as its tile, opening the node modal where REPLACE PARTIAL is.
+    // home as its tile, opening the node modal where REPLACE PARTIAL and Bring
+    // partials home are. The tile keeps the card's words and the section's
+    // tone (changed: a plain tile, so Show all drew it as one more spot, SPR
+    // 2026-11-18).
     const withBuffer = B({ station: {}, nodes: [home(PARTIALBIN('PART-A'), {
         buffer: [{ node: 'LDR.SMN_B1', state: 'partial' }], partialFrom: 'LDR.SMN_B1' })], serves: [row('PART-A', 3)] },
     { partialsOpen: true });
     eq(zone(withBuffer, 'partials').cards.map(c => [c.spotWords, c.reason, c.act.partial]),
         [['partial', 'Take the partial bin off · partial on SMN_B1 comes here', true]],
         'a partial home: Bring partials home offers it, saying the bin on the home is a partial');
-    eq(withBuffer.all.map(c => c.act), [{ kind: 'modal', node: 1 }],
-        'Show all: a partial home opens its node modal (REPLACE PARTIAL), not Bring partials home');
+    eq(withBuffer.all.map(c => [c.act, c.tone, c.spotWords, c.reason]),
+        [[{ kind: 'modal', node: 1 }, 'red', 'partial', 'Take the partial bin off · partial on SMN_B1 comes here']],
+        'Show all: a partial home opens its node modal (REPLACE PARTIAL), in its Bring partials home card\'s words and tone');
+    eq(M.bringHomeOf(home(PARTIALBIN('PART-A'), { partialFrom: 'LDR.SMN_B1' })),
+        { home: 'SMN_029', spot: 'SMN_B1', partial: true }, 'bringHomeOf: the home, the buffer spot, a partial on the home');
 }
 
 // ── No parts available ──
@@ -441,6 +447,10 @@ eq([NOBIN, FULLBIN('PART-A'), Object.assign(FULLBIN('PART-A'), { partial: true }
     eq([z.tone, z.word, z.reason, z.folded, z.openedByBoard, z.cards.map(c => c.tone)],
         ['amber', 'SOON', 'No empty', false, true, ['plain']],
         'partials with no empty and an open spot: amber, opened by the board, the cards plain (one problem, one colour)');
+    const amberAll = B({ station: {}, nodes: homesWith(spots(['open', 'partial', 'open']), 'SMN_B2'), serves: [] });
+    eq([amberAll.all.map(c => [c.spot, c.tone, c.act.kind]), zone(amberAll, 'partials').cards[0].tone],
+        [[['SMN_H1', 'amber', 'clear-home'], ['SMN_H2', 'plain', 'modal']], 'plain'],
+        'Show all: a Bring partials home card carries its section\'s amber (no section there to colour it), its tap the clear');
     z = P(spots(['partial', 'partial', 'partial']), 'SMN_B3');
     eq([z.tone, z.word, z.reason, z.cards.map(c => [c.tone, c.number])], ['red', 'NOW', 'Buffer full · clear one', [['plain', 3]]],
         'a buffer of partials with no empty and no open spot: red, any card clears it');

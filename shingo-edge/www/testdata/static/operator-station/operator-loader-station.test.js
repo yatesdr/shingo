@@ -1110,7 +1110,9 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // 40 homes to load, four refusals of parts no cell runs (plain, so they may
     // be cut), at 1280 x 768: the zones give way from the last. A cut zone draws the cards that fit and a "+N more"
     // for exactly the rest (a bug fixed: a zone cut to no card drew its title
-    // and nothing to tap), and "+N more" opens Show all.
+    // and nothing to tap). "+N more" opens that zone in place, every card at
+    // the fit's size, and the board scrolls; "Show less" folds it back
+    // (changed: it opened Show all, SPR 2026-11-18).
     const homes = [], serves = [];
     for (let i = 0; i < 40; i++) {
         const p = 'PART-' + (100 + i);
@@ -1125,13 +1127,24 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     setView(homes, { serves: serves });
     render();
     const more = z => zoneEl(z).descendants().filter(n => n.classList.contains('os-pc-more')).map(n => n.textContent);
-    const drawn = zoneEl('No parts available').descendants().filter(n => n.classList.contains('os-pc-card')
+    const drawnIn = z => zoneEl(z).descendants().filter(n => n.classList.contains('os-pc-card')
         && !n.classList.contains('os-pc-more')).length;
+    const drawn = drawnIn('No parts available');
+    const loads = drawnIn('Load');
     eq([drawn < 4, more('No parts available')], [true, ['+' + (4 - drawn) + ' more']],
         'overflow: a cut zone draws what fits and "+N more" for the rest');
+    const step = grid.className.split(/\s+/).find(c => /^os-pc-step-/.test(c));
     await tap(zoneEl('No parts available').descendants().find(n => n.classList.contains('os-pc-more')));
-    eq(topLine()[2], 'Show work', '"+N more" opens Show all');
-    await tap(showAllButton());
+    eq([topLine()[2], drawnIn('No parts available'), more('No parts available'), drawnIn('Load')],
+        ['Show all 44', 4, ['Show less'], loads],
+        '"+N more" opens its zone in place: every card, then Show less; Show all stays shut, the other zones as fitted');
+    eq([grid.classList.contains('os-pc-zoneopen'), grid.className.split(/\s+/).find(c => /^os-pc-step-/.test(c))], [true, step],
+        'an opened zone: the board scrolls, the cards at the fit\'s size');
+    render();
+    eq(drawnIn('No parts available'), 4, 'an opened zone stays open across a poll');
+    await tap(zoneButton('No parts available', 'Show less'));
+    eq([drawnIn('No parts available'), more('No parts available'), grid.classList.contains('os-pc-zoneopen')],
+        [drawn, ['+' + (4 - drawn) + ' more'], false], 'Show less folds the zone back to the fit');
 }
 
 // ── 12. A band is replaced only when what it draws changed ────────────────
@@ -1837,6 +1850,37 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     render();
     ctx.openModal(1);
     eq(modalButtons().indexOf('REPLACE PARTIAL'), -1, 'a full: no REPLACE PARTIAL in the node modal');
+}
+
+// ── 24. Show all: a partial home that can bring a buffer partial home ──────
+{
+    // Show all draws the home in its Bring partials home card's words and the
+    // section's colour, and its tap opens the node modal, which offers REPLACE
+    // PARTIAL and BRING PARTIAL HOME. BRING PARTIAL HOME is the board card's
+    // confirm, and it posts clear-loader-home (SPR 2026-11-18: Show all drew
+    // the home as a plain spot, and its modal had no way to bring the partial
+    // home).
+    const PARTIAL = Object.assign(FULL('PART-A', 12), { partial: true });
+    setView([loaderTile(1, 'SMN_029', { dedicated: true, outbound: '', parts: ['PART-A'], bin: PARTIAL,
+        buffer: [{ node: 'SMN_B1', state: 'partial' }, { node: 'SMN_B2', state: 'open' }],
+        buffer_partial: { node: 'LDR.SMN_B1' } })], { serves: [row('CELL-1', 'PART-A', 30)] });
+    render();
+    await tap(showAllButton());
+    const tile = pcCards()[0];
+    eq([tile.className, cardText(tile)],
+        ['os-pc-card os-pc-card--amber os-pc-card--numbered', ['SMN_029', ' · partial', 'PART-A', 'Take the partial bin off · partial on SMN_B1 comes here']],
+        'Show all: the partial home in its Bring partials home words, amber as its section');
+    await tap(tile);
+    eq(['REPLACE PARTIAL', 'BRING PARTIAL HOME'].map(b => modalButtons().indexOf(b) >= 0), [true, true],
+        'its node modal offers REPLACE PARTIAL and BRING PARTIAL HOME');
+    await tapModal('bring-home');
+    eq([overlayTexts()[0], overlayButtons()], ['Partial bin off SMN_029?', ['BIN IS OFF · CONFIRM', 'CANCEL']],
+        'BRING PARTIAL HOME: the board card\'s confirm, naming the home');
+    await tapOverlay('BIN IS OFF · CONFIRM');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
+        'BRING PARTIAL HOME: posts clear-loader-home for the home');
+    requests = [];
+    await tap(showAllButton());
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

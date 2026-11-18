@@ -17,6 +17,11 @@ import { boardModel, boardViewport, fitBoard, statusRowLayout, GEOM } from './op
 // What the person at the screen chose; this screen only, nothing is stored.
 let showAll = false;
 let partialsOpen = false;
+// opened: the zones (by key) opened past the fit by their "+N more": every card
+// drawn in place and the board scrolls (SPR 2026-11-18: "+4 more" under Bring
+// partials home jumped to Show all, which drew the four as plain cards among
+// every spot).
+let opened = {};
 // statusOpen: the board's status row (a loader's cells, an unloader's presses)
 // opened from its folded line.
 let statusOpen = false;
@@ -124,9 +129,17 @@ function buildCard(card, acts) {
     return btn;
 }
 
-function moreCard(n, acts) {
+// moreCard opens its zone in place (opened); lessCard, drawn after an opened
+// zone's last card, folds it back to the fit.
+function moreCard(n, key, acts) {
     const btn = el('button', { type: 'button', className: 'os-pc-card os-pc-more', textContent: '+' + n + ' more' });
-    btn.addEventListener('click', function () { showAll = true; acts.rerender(); });
+    btn.addEventListener('click', function () { opened[key] = true; acts.rerender(); });
+    return btn;
+}
+
+function lessCard(key, acts) {
+    const btn = el('button', { type: 'button', className: 'os-pc-card os-pc-more os-pc-less', textContent: 'Show less' });
+    btn.addEventListener('click', function () { delete opened[key]; acts.rerender(); });
     return btn;
 }
 
@@ -311,7 +324,9 @@ function buildStrip(z) {
     return strip;
 }
 
-function buildZone(z, shown, cols, acts) {
+// buildZone draws a zone with shown of its cards, the rest behind "+N more";
+// less, where the zone is opened past the fit, ends it with "Show less".
+function buildZone(z, shown, cols, less, acts) {
     const sec = el('section', { className: 'os-pc-zone os-pc-zone--' + z.tone + (z.folded ? ' os-pc-zone--folded' : '') });
     const head = el('div', { className: 'os-pc-zone-head' });
     head.appendChild(el('span', { className: 'os-pc-rail' }));
@@ -338,7 +353,8 @@ function buildZone(z, shown, cols, acts) {
         const grid = el('div', { className: 'os-pc-cards' });
         grid.style.setProperty('--os-pc-cols', String(cols));
         z.cards.slice(0, shown).forEach(function (c) { grid.appendChild(buildCard(c, acts)); });
-        if (shown < z.cards.length) grid.appendChild(moreCard(z.cards.length - shown, acts));
+        if (shown < z.cards.length) grid.appendChild(moreCard(z.cards.length - shown, z.key, acts));
+        else if (less) grid.appendChild(lessCard(z.key, acts));
         sec.appendChild(grid);
     }
     return sec;
@@ -371,11 +387,25 @@ export function renderBoard(grid, view, viewport, acts, when, sign) {
     } else {
         fit = fitBoard(at, statusAt, zones, !!m.bar);
     }
+    // A zone opened by its "+N more" draws every card at the fit's step and
+    // columns, and the board scrolls; a zone the fit no longer cuts is closed.
+    let shown = fit.shown;
+    const less = zones.map(function () { return false; });
+    if (!showAll) {
+        shown = fit.shown.map(function (n, i) {
+            const z = zones[i];
+            if (!opened[z.key]) return n;
+            if (n >= z.cards.length) { delete opened[z.key]; return n; }
+            less[i] = true;
+            return z.cards.length;
+        });
+    }
     const layout = statusRowLayout(status, at.width, fit.rowsPerTile);
     grid.style.setProperty('--os-pc-scale', String(at.scale));
     grid.classList.remove('os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3');
     grid.classList.add('os-pc-step-' + fit.step);
     if (showAll) grid.classList.add('os-pc-showall'); else grid.classList.remove('os-pc-showall');
+    if (less.some(Boolean)) grid.classList.add('os-pc-zoneopen'); else grid.classList.remove('os-pc-zoneopen');
     if (status && statusOpen) grid.classList.add('os-pc-cellsopen'); else grid.classList.remove('os-pc-cellsopen');
 
     const bands = [{ key: 'top', inputs: [m.title, m.words, m.tileCount, showAll, m.sign], build: function () { return buildTop(m, acts); } }];
@@ -392,8 +422,8 @@ export function renderBoard(grid, view, viewport, acts, when, sign) {
             build: function () { return buildPresses(m.presses, layout, statusOpen, acts); } });
     }
     zones.forEach(function (z, i) {
-        bands.push({ key: 'zone:' + z.key, inputs: [z, fit.shown[i], fit.columns],
-            build: function () { return buildZone(z, fit.shown[i], fit.columns, acts); } });
+        bands.push({ key: 'zone:' + z.key, inputs: [z, shown[i], fit.columns, less[i]],
+            build: function () { return buildZone(z, shown[i], fit.columns, less[i], acts); } });
     });
     if (drawn.length === 0) grid.innerHTML = '';
     drawn = bands.map(function (b, i) {

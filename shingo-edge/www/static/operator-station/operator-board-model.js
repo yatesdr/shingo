@@ -844,6 +844,20 @@ function bufferPartialOf(tile) {
     return tile.buffer_partial || null;
 }
 
+// bringHomeOf is a home's Bring partials home, or null: a home with a bin of a
+// part on it, full or partial, a partial of that part on a buffer spot
+// (bufferPartialOf), and no clear of its own running (clearMoves). {home, spot,
+// partial}: the home and the buffer spot as the confirm names them, and
+// whether the bin on the home is a partial (Core's row flag). The board's card
+// and the node modal's button both read it, so they offer it on the same
+// homes. The caller checks binsKnown.
+export function bringHomeOf(tile) {
+    const bp = bufferPartialOf(tile);
+    const bin = tile.bin_state || {};
+    if (!bp || !bp.node || clearMoves(tile).length > 0 || !bin.occupied || !bin.payload_code) return null;
+    return { home: spotOf(tile), spot: shortNode(bp.node), partial: !!bin.partial };
+}
+
 // alarmOf is a tile's alarm sentence: a contained payload, or an unloader's
 // full asked of Core and not answered (the server's ask_pending, verbatim).
 function alarmOf(tile) {
@@ -946,17 +960,16 @@ function loaderCards(t, ctx) {
         if (first.fixes) card.fixes = first.fixes;
         ctx.load.push(card);
     }
-    const bp = bufferPartialOf(t);
     const bin = t.bin_state || {};
     if (!ctx.known) return;
-    if (bp && bp.node && !inFlight && bin.occupied && bin.payload_code) {
-        const from = shortNode(bp.node);
+    const bring = bringHomeOf(t);
+    if (bring) {
         // What is on the home, Core's row flag: a full bin or a partial.
-        const held = bin.partial ? 'partial' : 'full';
+        const held = bring.partial ? 'partial' : 'full';
         ctx.partials.push(ctx.card(t, 'partial', [0], {
             spotWords: held, headline: bin.payload_code,
-            reason: 'Take the ' + held + ' bin off · partial on ' + from + ' comes here', partialSpot: from,
-            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from, partial: !!bin.partial },
+            reason: 'Take the ' + held + ' bin off · partial on ' + bring.spot + ' comes here', partialSpot: bring.spot,
+            act: { kind: 'clear-home', node: t.node.id, home: bring.home, spot: bring.spot, partial: bring.partial },
         }));
     } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
         ctx.other('Check bin', ctx.card(t, 'check', [0], {
@@ -1114,7 +1127,8 @@ function lightStoppedPresses(presses, windows) {
 //                  No parts available, At the windows, the catch-all zones
 //                  (each titled by its act), Bring partials home
 //   all            every tile's cards in the plant's order (Show all); a tile
-//                  with no card gets a plain one opening the node modal
+//                  with no card gets a plain one opening the node modal; a
+//                  Bring partials home card carries its section's tone
 //
 // ui: {partialsOpen: the partials opened by a tap, when(iso): the time a
 // refusal was said, sign: the station's stale sign}.
@@ -1255,14 +1269,27 @@ export function boardModel(view, ui) {
         counts.push(p + (p === 1 ? ' partial' : ' partials'));
     }
 
+    // Show all has no Bring partials home section to colour its cards, so each
+    // carries the section's tone itself (SPR 2026-11-18: Show all lost the
+    // amber, while the red refusal cards kept theirs).
+    const bufferTone = partials ? partials.tone : 'plain';
     const byTile = tiles.map(function () { return []; });
-    cards.forEach(function (c) { byTile[c.tile].push(c); });
+    cards.forEach(function (c) {
+        byTile[c.tile].push(c.partialSpot ? Object.assign({}, c, { tone: bufferTone }) : c);
+    });
     const all = [];
     tiles.forEach(function (t, i) {
         // A home holding a partial of its part opens its node modal from Show
-        // all, whatever cards it has on the board: REPLACE PARTIAL is there.
+        // all, whatever cards it has on the board: REPLACE PARTIAL is there,
+        // and so is Bring partials home (bringHomeOf). Its Bring partials home
+        // card keeps its words and its tone on that tile.
         const replacing = ctx.known && replacePartialPart(t);
         if (byTile[i].length > 0 && !replacing) { all.push.apply(all, byTile[i]); return; }
+        const bring = byTile[i].find(function (c) { return !!c.partialSpot; });
+        if (bring) {
+            all.push(Object.assign({}, bring, { key: 'tile:' + t.node.id, act: { kind: 'modal', node: t.node.id } }));
+            return;
+        }
         const spot = spotWords(t);
         all.push(ctx.card(t, 'tile', [0], {
             spotWords: spot.words, spotCode: spot.code, headline: headlineOf(t),

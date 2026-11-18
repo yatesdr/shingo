@@ -1293,10 +1293,12 @@ body.os-pc-active #os-footer { display: none; }
     --os-pc-instruction: calc(15px * var(--os-pc-scale));
     --os-pc-instruction-line: calc(18px * var(--os-pc-scale));
 }
-/* Show all scrolls, and so does the board with its status row opened: the
-   tiles sit above the work, which keeps the layout the fit gave it. */
+/* Show all scrolls, and so does the board with its status row opened (the
+   tiles sit above the work, which keeps the layout the fit gave it) or a zone
+   opened by its "+N more" (its cards below the fit, at the fit's size). */
 #os-grid.os-pc-board.os-pc-showall,
-#os-grid.os-pc-board.os-pc-cellsopen { overflow-y: auto; }
+#os-grid.os-pc-board.os-pc-cellsopen,
+#os-grid.os-pc-board.os-pc-zoneopen { overflow-y: auto; }
 
 .os-pc-board button { font-family: inherit; color: inherit; touch-action: manipulation; }
 

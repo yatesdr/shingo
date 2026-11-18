@@ -16,6 +16,12 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration; Core and Edges in either order.
+
+- On the loader board, "+N more" opens its section in place and the board scrolls; Show less folds it
+- Show all keeps the amber or red on Bring partials home cards, and lists every one of them
+- A home's menu offers BRING PARTIAL HOME wherever the board offers its card
+
 ## v0.12.1 — 2026-11-18
 
 Deploy: no migration; Core and Edges in either order.

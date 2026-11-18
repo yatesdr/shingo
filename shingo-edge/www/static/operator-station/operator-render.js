@@ -327,7 +327,7 @@ export function renderGrid() {
         return;
     }
     document.body.classList.remove('os-pc-active');
-    grid.classList.remove('os-pc-board', 'os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3', 'os-pc-showall', 'os-pc-cellsopen');
+    grid.classList.remove('os-pc-board', 'os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3', 'os-pc-showall', 'os-pc-cellsopen', 'os-pc-zoneopen');
     grid.style.removeProperty('--os-pc-scale');
     resetBoard();
     grid.innerHTML = '';
@@ -703,7 +703,7 @@ function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo, cartType) {
 // the tap, so the tap sends one request. Recorded, the confirm closes and the
 // sentence is the board's success toast; refused, the confirm stays and shows
 // the refusal in place of its buttons.
-function confirmClearLoaderHome(nodeID, home, spot, partial) {
+export function confirmClearLoaderHome(nodeID, home, spot, partial) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     // What is on the home: a full bin, or a partial (Core's row flag).
