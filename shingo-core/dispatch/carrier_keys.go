@@ -69,9 +69,14 @@ func (d *Dispatcher) reloadCarrierKeysOnFloor() {
 
 // SaveCarrierFamilyKeys is the one door that sets a family's keys: it writes
 // them and reloads the set, so the next block built sends them. A blank key is
-// the default. Every type of the family sends what is saved here.
+// the default. Every type of the family sends what is saved here. A wait key
+// that changes is first checked at every table-turn node (turnsAdmitWaitKey),
+// and a refusal there, wrapping ErrTableTurnRefused, writes nothing.
 func (d *Dispatcher) SaveCarrierFamilyKeys(familyID int64, lift, wait string) error {
 	lift, wait = strings.TrimSpace(lift), strings.TrimSpace(wait)
+	if err := d.turnsAdmitWaitKey(familyID, wait); err != nil {
+		return err
+	}
 	if err := d.db.SetCarrierFamilyKeys(familyID, lift, wait); err != nil {
 		return err
 	}

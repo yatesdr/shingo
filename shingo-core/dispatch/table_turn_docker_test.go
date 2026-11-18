@@ -299,3 +299,108 @@ func TestTableTurnDoor_ReadsTheFamiliesWhenTheSetNeverLoaded(t *testing.T) {
 		t.Fatalf("a lift-side angle where the unloaded family's wait key does not recognize: got %v, want a refusal naming it", err)
 	}
 }
+
+// setTurn gives a node a turn on side, written around the door, and reloads
+// the turn nodes as the property door's write does.
+func (f *turnDoorFixture) setTurn(t *testing.T, n *nodes.Node, side string) {
+	t.Helper()
+	testutil.MustNoErr(t, f.db.SetNodeProperty(n.ID, PropTableTurnRad, "1.57"), "angle at "+n.Name)
+	testutil.MustNoErr(t, f.db.SetNodeProperty(n.ID, PropTableTurnSide, side), "side at "+n.Name)
+	testutil.MustNoErr(t, f.d.ReloadTableTurns(), "reload the turn nodes")
+}
+
+// storedFamilyKeys is a family's two keys as the table holds them.
+func storedFamilyKeys(t *testing.T, db *store.DB, id int64) familyKeys {
+	t.Helper()
+	fams, err := db.ListCarrierFamilies()
+	testutil.MustNoErr(t, err, "list the families")
+	for _, fam := range fams {
+		if fam.ID == id {
+			return familyKeys{lift: fam.LiftBinTask, wait: fam.WaitBinTask}
+		}
+	}
+	t.Fatalf("family %d is not in the table", id)
+	return familyKeys{}
+}
+
+// TestTableTurnDoor_AFamilyWaitKeySaveIsCheckedAtEveryTurnNode: a family's wait
+// key is saved only when every turn node, on its own side, still passes the
+// door's check with it. A key a lift-side node lists without recognize, or a
+// set-down-side node lists with it, is refused naming the node and the key, and
+// nothing is written; a key no turn node lists saves after one fleet read for
+// both nodes; a fleet that cannot answer refuses.
+func TestTableTurnDoor_AFamilyWaitKeySaveIsCheckedAtEveryTurnNode(t *testing.T) {
+	f := newTurnDoorFixture(t)
+	fam := keyFamily(t, f.db, "TT-4548")
+	f.setTurn(t, f.recognizing, TableTurnSideLift)
+	f.setTurn(t, f.plain, TableTurnSideSetDown)
+	f.be.tasks[f.recognizing.Name]["wait_4548"] = waitPlain
+	f.be.tasks[f.plain.Name]["wait_big"] = waitRecognizes
+	_, err := f.d.ReloadCarrierKeys()
+	testutil.MustNoErr(t, err, "load the keyed families")
+	unchanged := func(when string, want familyKeys) {
+		t.Helper()
+		if got := storedFamilyKeys(t, f.db, fam); got != want {
+			t.Errorf("%s: the table holds %+v, want %+v (nothing written)", when, got, want)
+		}
+		if got := f.d.carrierKeys()[fam]; got != want {
+			t.Errorf("%s: the keyed set holds %+v, want %+v", when, got, want)
+		}
+	}
+
+	for _, tc := range []struct{ wait, want string }{
+		{"wait_4548", "TT-REC's wait_4548 key does not recognize"},
+		{"wait_big", "TT-PLAIN's wait_big key recognizes the cart"},
+	} {
+		err := f.d.SaveCarrierFamilyKeys(fam, "jackload_4548", tc.wait)
+		if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), tc.want) ||
+			!strings.Contains(err.Error(), `"`+tc.wait+`" is not saved`) {
+			t.Errorf("saving %s: got %v, want a refusal of the key saying %q", tc.wait, err, tc.want)
+		}
+		unchanged("refused "+tc.wait, familyKeys{})
+	}
+
+	f.be.reads = 0
+	testutil.MustNoErr(t, f.d.SaveCarrierFamilyKeys(fam, "jackload_4548", "wait_other"), "a key no turn node lists")
+	if f.be.reads != 1 {
+		t.Errorf("the save read the fleet %d times, want once for both turn nodes", f.be.reads)
+	}
+	unchanged("saved wait_other", familyKeys{lift: "jackload_4548", wait: "wait_other"})
+
+	f.be.err = errors.New("rds down")
+	err = f.d.SaveCarrierFamilyKeys(fam, "jackload_4548", "wait_third")
+	f.be.err = nil
+	if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), "could not read") {
+		t.Errorf("saving while the fleet cannot answer: got %v, want a refusal", err)
+	}
+	unchanged("fleet down", familyKeys{lift: "jackload_4548", wait: "wait_other"})
+}
+
+// TestTableTurnDoor_ASaveThatCannotMoveATurnReadsNoFleet: a family save on a
+// plant with no turn node, and a save that changes only the lift key on a plant
+// with one, make no fleet read. The wait key changing on that same plant does
+// read, so the zero counts are the code's and not the counter's.
+func TestTableTurnDoor_ASaveThatCannotMoveATurnReadsNoFleet(t *testing.T) {
+	f := newTurnDoorFixture(t)
+	fam := keyFamily(t, f.db, "TT-4548")
+	f.be.tasks[f.recognizing.Name]["wait_4548"] = waitPlain // would refuse, were it read
+	_, err := f.d.ReloadCarrierKeys()
+	testutil.MustNoErr(t, err, "load the keyed families")
+
+	testutil.MustNoErr(t, f.d.SaveCarrierFamilyKeys(fam, "", "wait_4548"), "a wait key on a plant with no turn node")
+	if f.be.reads != 0 {
+		t.Errorf("a plant with no turn node: %d fleet reads, want none", f.be.reads)
+	}
+	f.setTurn(t, f.recognizing, TableTurnSideLift)
+	testutil.MustNoErr(t, f.d.SaveCarrierFamilyKeys(fam, "jackload_4548", "wait_4548"), "the lift key alone")
+	if f.be.reads != 0 {
+		t.Errorf("a lift key changed alone: %d fleet reads, want none", f.be.reads)
+	}
+	if got := storedFamilyKeys(t, f.db, fam); got != (familyKeys{lift: "jackload_4548", wait: "wait_4548"}) {
+		t.Errorf("after both saves the table holds %+v", got)
+	}
+	testutil.MustNoErr(t, f.d.SaveCarrierFamilyKeys(fam, "jackload_4548", "wait_other"), "a wait key no node lists")
+	if f.be.reads != 1 {
+		t.Errorf("a wait key changed on a plant with a turn node: %d fleet reads, want one", f.be.reads)
+	}
+}

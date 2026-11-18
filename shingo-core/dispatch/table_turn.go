@@ -292,8 +292,9 @@ func (d *Dispatcher) turnNodeShapeRefusal(node *nodes.Node) error {
 	return nil
 }
 
-// turnWaitKeysRefusal is the one check of the wait keys at turn nodes, the
-// property door's (CheckTableTurnProperty). turns is each node's side by name;
+// turnWaitKeysRefusal is the one check of the wait keys at turn nodes: the
+// property door's for one node (CheckTableTurnProperty) and the family save's
+// for every turn node (turnsAdmitWaitKey). turns is each node's side by name;
 // families is the keyed families the check reads.
 //
 // A wait at a node should go out as the default Wait or, directly in front of
@@ -416,6 +417,49 @@ func (d *Dispatcher) turnCarrierKeys() (map[int64]familyKeys, error) {
 		}
 	}
 	return d.carrierKeys(), nil
+}
+
+// turnsAdmitWaitKey is the family save's turn check (SaveCarrierFamilyKeys):
+// when the family's wait key changes, every turn node (the cache, each with
+// its side) goes through turnWaitKeysRefusal against the keyed families as they
+// would stand after the save. A refusal names the node and the key, and the
+// save writes nothing. A plant with no turn node, and a save that leaves the
+// wait key as it was (a lift key changed alone), read nothing from the fleet;
+// "as it was" is the held set's, which a write around the save leaves up to a
+// floor pass behind the table. The fleet that cannot answer refuses the save,
+// as it refuses the door: what cannot be checked is not admitted.
+// PIN: TestTableTurnDoor_AFamilyWaitKeySaveIsCheckedAtEveryTurnNode,
+// PIN: TestTableTurnDoor_ASaveThatCannotMoveATurnReadsNoFleet
+func (d *Dispatcher) turnsAdmitWaitKey(familyID int64, wait string) error {
+	d.turnMu.Lock()
+	turns := make(map[string]string, len(d.turnNodes))
+	for name, t := range d.turnNodes {
+		turns[name] = t.side
+	}
+	d.turnMu.Unlock()
+	if len(turns) == 0 {
+		return nil
+	}
+	refused := func(err error) error {
+		if wait == "" {
+			return fmt.Errorf("the wait key is not cleared: %w", err)
+		}
+		return fmt.Errorf("the wait key %q is not saved: %w", wait, err)
+	}
+	held, err := d.turnCarrierKeys()
+	if err != nil {
+		return refused(err)
+	}
+	if held[familyID].wait == wait {
+		return nil
+	}
+	after := make(map[int64]familyKeys, len(held)+1)
+	maps.Copy(after, held)
+	after[familyID] = familyKeys{wait: wait} // the check reads only the wait keys
+	if err := d.turnWaitKeysRefusal(turns, after); err != nil {
+		return refused(err)
+	}
+	return nil
 }
 
 // ── THE TURN RULE (spliceCoreWaits' second rule) ────────────────────────────
