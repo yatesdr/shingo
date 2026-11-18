@@ -873,8 +873,8 @@ function cellCardAction(entry, claim, remaining) {
         // carries at all. Deleted rather than annotated — git remembers, and
         // ten lines of prose explaining unreachable code is a thing every
         // future reader has to disprove. If the label is wanted, the count is
-        // uop_remaining x the template's parts_per_cycle and Core is where it
-        // would come from.
+        // derived from uop_remaining by protocol.ManifestItem's count rule and
+        // Core is where it would come from.
         const confirmLabel = 'CONFIRM';
         if (Number.isInteger(delivered.id) && delivered.id > 0) {
             return { label: confirmLabel, cls: 'request', enabled: true,

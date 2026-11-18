@@ -124,15 +124,19 @@ function applyTemplate(data) {
     // The template the catalog holds, shown so the operator can check the bin
     // matches it; the ratios are the catalog's and are not editable here.
     //
-    // What is held is the TEMPLATE (a per-cycle ratio per part). The count a
-    // line shows is that ratio times the UoP count the operator sets, derived
-    // at render, because the operator can change UoP after the template opens.
+    // What is held is the TEMPLATE: per part, how many of it one unit of the
+    // UoP count is (per_unit), by protocol.ManifestItem's count rule — 1 for a
+    // template of one line, whose bin counts pieces, so a press's screen never
+    // shows a count scaled by an assembly's pieces per cycle. The count a line
+    // shows is per_unit times the UoP count the operator sets, derived at
+    // render, because the operator can change UoP after the template opens.
     // LOAD sends the part and the count, and the Edge builds the bin's
-    // manifest from the same catalog copy (engine loadManifest).
+    // manifest from the same catalog copy by the same rule (engine
+    // loadManifest).
     loadBinState.manifest = items.map(function(item) {
         return {
             part_number: item.part_number,
-            parts_per_cycle: item.parts_per_cycle || 0,
+            per_unit: items.length === 1 ? 1 : (item.parts_per_cycle || 0),
             description: item.description || '',
         };
     });
@@ -216,7 +220,7 @@ function renderRows() {
 
     // Manifest line items — display-only. Operators can see what the payload
     // template expects (part numbers, and the count this UoP figure implies)
-    // but can't edit; the ratios come from the catalog and sending
+    // but can't edit; the lines come from the catalog and sending
     // operator-edited counts here would let a typo silently corrupt the bin's
     // manifest. renderRows re-runs when UoP changes, so the counts follow it.
     state.manifest.forEach(function(item) {
@@ -230,7 +234,7 @@ function renderRows() {
                     : '') +
             '</div>' +
             '<div style="min-width:60px;text-align:right;color:#cfd;font-size:18px;font-weight:600">' +
-                (item.parts_per_cycle * state.uopCount) + '</div>';
+                (item.per_unit * state.uopCount) + '</div>';
         rows.appendChild(row);
     });
 }

@@ -29,6 +29,24 @@ func TestProductionRefreshJS(t *testing.T) {
 	t.Logf("refresh-on-events JS tests: %s", out)
 }
 
+// TestProductionLoadDefaultJS runs testdata/static/js/pages/production.load.test.js
+// under node: the Production page's LOAD modal defaults each manifest line to
+// a full bin by protocol.ManifestItem's count rule (a template of one line is
+// the standard pack itself; a kit's line is the pack times its ratio).
+func TestProductionLoadDefaultJS(t *testing.T) {
+	t.Parallel()
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skipf("node not on PATH; skipping the production load JS tests")
+	}
+	script := filepath.Join("testdata", "static", "js", "pages", "production.load.test.js")
+	out, err := exec.Command(nodePath, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("production load JS tests failed:\n%s\nerror: %v", out, err)
+	}
+	t.Logf("production load JS tests: %s", out)
+}
+
 // TestProductionRefresh_OneStream holds the Production page to one stream:
 // production.js subscribes on shared/bus.js, #production-content's sse:
 // triggers through refreshOnEvents before the page's own handlers (so the

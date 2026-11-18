@@ -503,10 +503,11 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, departing *store
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
 	}
-	// Quantity is the CYCLE count, not a part count: Core writes it to
-	// uop_remaining, and the part count is uop_remaining x the template's
-	// parts_per_cycle. The outbox row and its ledger row commit together:
-	// a crash between them leaves neither, and the release is retried.
+	// Quantity is the bin's count: Core writes it to uop_remaining, and what
+	// that is in pieces is protocol.ManifestItem's count rule (a bin of one
+	// part counts its pieces). The outbox row and its ledger row commit
+	// together: a crash between them leaves neither, and the release is
+	// retried.
 	envelope, msgType, err := e.orderMgr.IngestEnvelope(payload, "", binID, runtime.ActiveBinEpoch, node.CoreNodeName, qty,
 		time.Now().UTC().Format(time.RFC3339), declared)
 	if err != nil {

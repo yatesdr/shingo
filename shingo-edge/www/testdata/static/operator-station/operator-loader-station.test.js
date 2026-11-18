@@ -1240,6 +1240,14 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq([reads(), shown().indexOf('PN-V1') >= 0, shown().indexOf('PN-V2') >= 0, shown().indexOf('>200<') >= 0],
         [[], true, true, true],
         'load modal, the part in the view: no request, its two lines, the count at its capacity (PN-V1 2 x 100)');
+    // lineCount is the count a manifest line shows (the row's last cell).
+    const lineCount = (part) => {
+        const row = rowsEl.children.find(n => n.innerHTML.indexOf(part) >= 0);
+        const m = row && />(-?\d+)<\/div>$/.exec(row.innerHTML);
+        return m ? Number(m[1]) : null;
+    };
+    eq([lineCount('PN-V1'), lineCount('PN-V2')], [200, 100],
+        'load modal, a kit of two lines: each line is the count times its ratio, as it always was');
     await confirmLoad();
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: { payload_code: 'PART-A', uop_count: 100 } }],
         'load modal, from the view: LOAD posts the part and the capacity, no manifest');
@@ -1261,6 +1269,11 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq([reads(), shown().indexOf('PN-A1') >= 0, shown().indexOf('No manifest template') >= 0],
         [['/api/payload/PART-A/manifest'], true, false],
         'load modal, the part not in the view: the manifest read, and the row\'s template line');
+    // PART-A's template is ONE line at 2 pieces per assembly cycle: its bin
+    // counts pieces, so the line shows the count, not the count x 2 (it showed
+    // 48) — protocol.ManifestItem's count rule.
+    eq(lineCount('PN-A1'), 24,
+        'load modal, a part of one line at ratio 2: its line shows the count (24), not 24 x 2');
     await confirmLoad();
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: loadBody }],
         'load modal, from the read: LOAD posts the part and the read\'s capacity, no manifest');

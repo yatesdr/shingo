@@ -86,10 +86,11 @@ Core's count on the node, and files the L2.
 can open on (a loader tile's parts, a stage 2's partial and full parts), the part's load template from the Edge's
 copy of Core's catalog: its UOP capacity, which the count starts at, and its template lines, which the modal shows
 (`load_templates`, `StationService.loadTemplatesForBoard`, held in memory between catalog writes). The modal posts
-the part and the count and no manifest; the Edge builds the bin's manifest from the same copy, each template line's
-per-cycle ratio times the count (`Engine.loadManifest`), and refuses a payload the copy has no row for. A request
-that carries a manifest (the Production page, whose counts a person may edit) is sent as it came. The modal falls
-back to `GET /api/payload/{code}/manifest` only for a part the view did not carry.
+the part and the count and no manifest; the Edge builds the bin's manifest from the same copy, each line's count
+derived from the declared one by the count rule in [uop-architecture.md](uop-architecture.md#process-semantics) (a
+template of one line carries the count itself; `Engine.loadManifest`), and refuses a payload the copy has no row
+for. A request that carries a manifest (the Production page, whose counts a person may edit) is sent as it came. The
+modal falls back to `GET /api/payload/{code}/manifest` only for a part the view did not carry.
 
 **Unloader.** A robot delivers a full to a window (a U1, sent with `SkipAutoConfirm` so Core does not confirm it on
 arrival). The operator CLEARs it — the `bin.clear` ask (`Engine.ClearBin`) — and Core clears the manifest; the U2

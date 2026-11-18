@@ -292,7 +292,9 @@ func (e *Engine) askLoad(nodeID int64, node *processes.Node, claim *processes.No
 // loadManifest is the manifest a LOAD writes: the one the request carried,
 // unchanged, else the payload's template from this Edge's copy of Core's
 // catalog (CatalogEntry.TemplateLines, the lines the load modal shows), each
-// line's per-cycle ratio times the declared count, with its description.
+// line's count derived from the declared count by protocol.ManifestItem's
+// count rule (a template of one line is the declared count itself), with its
+// description.
 //
 // THE EDGE BUILDS IT SO THE MODAL NEED NOT FETCH IT. The operator station used
 // to build this in the browser from a per-tap manifest read, and on the
@@ -324,8 +326,12 @@ func (e *Engine) loadManifest(payloadCode string, uopCount *int64, sent []protoc
 	lines := entry.TemplateLines()
 	out := make([]protocol.IngestManifestItem, len(lines))
 	for i, l := range lines {
+		perUnit := l.PartsPerCycle
+		if len(lines) == 1 {
+			perUnit = 1
+		}
 		out[i] = protocol.IngestManifestItem{
-			PartNumber: l.PartNumber, Quantity: l.PartsPerCycle * *uopCount, Description: l.Description,
+			PartNumber: l.PartNumber, Quantity: perUnit * *uopCount, Description: l.Description,
 		}
 	}
 	return out, nil

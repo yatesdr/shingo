@@ -191,18 +191,19 @@ async function onLoadPayloadChanged() {
             '<input type="number" id="rb-uop-count" class="form-input" value="' + uopCapacity + '" style="text-align:center;font-weight:600">';
         rows.appendChild(uopRow);
         // The input is a COUNT — how many of the part are in the carrier. The
-        // template supplies a per-cycle RATIO, so the default is that ratio
-        // times a full bin's cycles, which is the number this field defaulted
-        // to before the rename. It stays editable: this form is the operator
-        // saying what is actually in the bin.
+        // default is a full bin of it by protocol.ManifestItem's count rule: a
+        // template of one line counts pieces, so its default is the standard
+        // pack itself and never the pack times an assembly's pieces per cycle.
+        // It stays editable: this form is the operator saying what is actually
+        // in the bin.
         items.forEach(function(item) {
-            var perCycle = item.parts_per_cycle || 0;
+            var perUnit = items.length === 1 ? 1 : (item.parts_per_cycle || 0);
             var row = document.createElement('div');
             row.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px';
             row.innerHTML =
                 '<div><div style="font-weight:500">' + escapeHtml(item.part_number) + '</div>' +
                 '<div style="color:var(--text-muted);font-size:0.85rem">' + escapeHtml(item.description || '') + '</div></div>' +
-                '<input type="number" class="form-input rb-manifest-qty" value="' + (perCycle * uopCapacity) + '" ' +
+                '<input type="number" class="form-input rb-manifest-qty" value="' + (perUnit * uopCapacity) + '" ' +
                     'data-part="' + escapeHtml(item.part_number) + '" data-desc="' + escapeHtml(item.description || '') + '" ' +
                     'style="text-align:center">';
             rows.appendChild(row);

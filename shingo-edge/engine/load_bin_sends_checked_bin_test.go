@@ -51,9 +51,12 @@ func TestLoadBin_SendsWhatItRead(t *testing.T) {
 
 // TestLoadBin_BuildsTheManifestFromTheCatalog: a LOAD that carries no manifest
 // (the operator station sends the part and the count) is written with the
-// payload's template from this Edge's catalog copy, each line's per-cycle
-// ratio times the count, as the station's own script built it before; a row
-// with no lines is its one-line template of itself (CatalogEntry.TemplateLines,
+// payload's template from this Edge's catalog copy, as the station's own
+// script builds it: a template of one line carries the count itself, whatever
+// its pieces per assembly cycle (protocol.ManifestItem's count rule; the case
+// at ratio 2 sent 180 for a count of 90 until a bin of one part counted
+// pieces), and a kit's lines are each the count times their ratio. A row with
+// no lines is its one-line template of itself (CatalogEntry.TemplateLines,
 // what the modal shows). A payload the copy has no row for, or a request with
 // no count, is refused before Core is asked; a request that carries a manifest
 // is sent as it came, whatever the catalog says.
@@ -74,12 +77,12 @@ func TestLoadBin_BuildsTheManifestFromTheCatalog(t *testing.T) {
 		windowID string
 	}{
 		{
-			name: "one line, the typed count", windowID: "SC-LMAN-W1", uop: count(90),
+			name: "one line at ratio 2, the typed count itself", windowID: "SC-LMAN-W1", uop: count(90),
 			row:  &catalog.CatalogEntry{ID: 1, Name: "PART-SC", Code: "PART-SC", UOPCapacity: 100, Manifest: twoLines[:1]},
-			want: []BinLoadItem{{PartNumber: "PN-SC-L", Quantity: 180, Description: "left"}},
+			want: []BinLoadItem{{PartNumber: "PN-SC-L", Quantity: 90, Description: "left"}},
 		},
 		{
-			name: "two lines, each scaled", windowID: "SC-LMAN-W2", uop: count(90),
+			name: "a kit of two lines, each scaled", windowID: "SC-LMAN-W2", uop: count(90),
 			row: &catalog.CatalogEntry{ID: 1, Name: "PART-SC", Code: "PART-SC", UOPCapacity: 100, Manifest: twoLines},
 			want: []BinLoadItem{{PartNumber: "PN-SC-L", Quantity: 180, Description: "left"},
 				{PartNumber: "PN-SC-R", Quantity: 90}},
