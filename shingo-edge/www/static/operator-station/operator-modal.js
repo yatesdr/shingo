@@ -14,7 +14,7 @@ import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { emptyCarrierHeld, isOwnEmptyOut } from './operator-window-state.js';
-import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight } from './operator-board-model.js';
+import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight, replacePartialPart } from './operator-board-model.js';
 import { confirmUnloadSwap } from './operator-render.js';
 
 const nodeModal = document.getElementById('node-modal');
@@ -550,6 +550,12 @@ export function renderModal(entry) {
                 }
             }
 
+            // REPLACE PARTIAL: the board's card, the same rule
+            // (replacePartialPart); the LOAD screen as a replace.
+            const replacing = binsKnown(getView()) ? replacePartialPart(entry) : '';
+            if (replacing) {
+                html += actionBtn('REPLACE PARTIAL', 'request', true, 'replace-partial:' + replacing);
+            }
             // CLEAR BIN. An unloader's goes through the CLEAR panel the board's
             // tap opens, which names the carrier type (a bug fixed: it posted
             // clear-bin with no type, around the panel); a loader's posts as it
@@ -1252,6 +1258,15 @@ const ACTION_HANDLERS = {
         closeModal();
         // A loader tile carries no capacity: the load modal takes the part's.
         openLoadBin(entry.node.id, [code], 0);
+    },
+
+    // REPLACE PARTIAL: the load modal as a replace, the part filled in.
+    'replace-partial': (code) => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        if (!entry) return;
+        closeModal();
+        openLoadBin(entry.node.id, [code], 0, { replace: true });
     },
 
     // An unloader's CLEAR BIN: the CLEAR panel the board's tap opens, with the

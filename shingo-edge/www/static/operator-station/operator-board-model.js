@@ -103,7 +103,7 @@ export function isDedicated(tile) {
 // clearsPartials: this dedicated loader's board asks for Clear partials (a
 // home's full pulled so a buffer partial goes home). Off where Core's
 // bin_loaders.no_clear_partials says so: the buffer section, its words and the
-// header's PULL FULL FROM HOME are not drawn. Absent is on.
+// header's FULL BIN OFF HOME are not drawn. Absent is on.
 function clearsPartials(tile) {
     const loader = loaderOf(tile);
     return isDedicated(tile) && !loader.no_clear_partials;
@@ -493,6 +493,7 @@ function shortNode(name) {
 }
 
 // spotWords is what a spot holds, from a closed set: "holds a full bin",
+// "holds a partial" (Core's row flag: parts, fewer than the part's capacity),
 // "holds an empty <bin>" (words "holds an empty", code the bin), "holds an
 // empty bin", "no bin" (a cart with no bin on it too), "count unknown" (a bin
 // with a part and a count of 0 or below) and "could not look" (no bin read).
@@ -500,6 +501,7 @@ export function spotWords(tile) {
     const bin = tile.bin_state;
     if (!bin) return { words: 'could not look', code: '' };
     if (!bin.occupied || bin.bare) return { words: 'no bin', code: '' };
+    if (bin.payload_code && bin.stocked && bin.partial) return { words: 'holds a partial', code: '' };
     if (bin.payload_code) return { words: bin.stocked ? 'holds a full bin' : 'count unknown', code: '' };
     if (bin.bin_type_code) return { words: 'holds an empty', code: bin.bin_type_code };
     return { words: 'holds an empty bin', code: '' };
@@ -876,6 +878,28 @@ function refusalReason(c, when) {
     return { tone: 'red', reason: words + at };
 }
 
+// replacePartialPart is the part a home's REPLACE PARTIAL takes off as a
+// partial and puts on again full, or '' where it offers none: the node modal's
+// button, with no card on the board (a card per partial would crowd out the
+// loads; Show all's tile opens the modal). A loader's home (produce; never a
+// stage 2, which tileRole reads as an unloader) holding a stocked bin of one of
+// its own parts at fewer than its capacity (the row's partial). Not while the
+// home's clear runs (a move leaving it, clearMoves, or one delivering to it,
+// clearRow), and not once a robot has an order leaving the home: the carrier
+// is promised, and Core refuses a LOAD of a held carrier anyway. The tap is
+// the LOAD; the Edge sends it to Core as a replace (engine LoadBin).
+export function replacePartialPart(tile) {
+    const bin = tile.bin_state;
+    if (!bin || !bin.occupied || !bin.payload_code || !bin.stocked || !bin.partial) return '';
+    if (tileRole(tile) !== 'produce' || partCodes(tile).indexOf(bin.payload_code) === -1) return '';
+    if (clearMoves(tile).length > 0 || clearRow(tile)) return '';
+    const home = (tile.node && tile.node.core_node_name) || '';
+    const taken = liveOrders(tile).some(function (o) {
+        return ROBOT_ON_IT.indexOf(o.status) !== -1 && shortNode(o.source_node) === shortNode(home);
+    });
+    return taken ? '' : bin.payload_code;
+}
+
 // loaderCards sorts a loader tile's work into its zones: Load (one card per
 // home and part, or per shared window listing the parts called for, the first
 // by coverage lit), No parts available (a standing refusal, red while a cell
@@ -928,8 +952,8 @@ function loaderCards(t, ctx) {
     if (bp && bp.node && !inFlight && bin.occupied && bin.payload_code) {
         const from = shortNode(bp.node);
         ctx.partials.push(ctx.card(t, 'partial', [0], {
-            spotWords: 'holds a full bin', headline: bin.payload_code,
-            reason: 'Pull the full · partial from ' + from, partialSpot: from,
+            spotWords: 'full', headline: bin.payload_code,
+            reason: 'Take the full bin off · partial on ' + from + ' comes here', partialSpot: from,
             act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from },
         }));
     } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
@@ -1086,7 +1110,7 @@ function lightStoppedPresses(presses, windows) {
 //   zones          [{key, title, count, tone, word, reason, cards, empty,
 //                  folded, openedByBoard, strip, stripWords}] in order: Load,
 //                  No parts available, At the windows, the catch-all zones
-//                  (each titled by its act), Clear partials
+//                  (each titled by its act), Bring partials home
 //   all            every tile's cards in the plant's order (Show all); a tile
 //                  with no card gets a plain one opening the node modal
 //
@@ -1096,7 +1120,7 @@ function lightStoppedPresses(presses, windows) {
 // WHILE THE BINS ARE NOT KNOWN (binsKnown) the board claims nothing about what
 // stands at a spot: no Load card, no cart at a window, no partial or Check bin
 // card (each card and its act read bin_state); Load, At the windows and an
-// opened Clear partials say "Could not look" in place of their empty
+// opened Bring partials home say "Could not look" in place of their empty
 // sentence, and neither their titles nor the top line give a count. No parts available, the
 // cells row and the strip ("?") stay. Pinned by operator-board-model.test.js.
 export function boardModel(view, ui) {
@@ -1167,7 +1191,7 @@ export function boardModel(view, ui) {
         ctx.partials.sort(function (a, b) { return (a.number || 99) - (b.number || 99) || a.order - b.order; });
         const opened = st.tone !== 'plain' || !!ui.partialsOpen;
         partials = {
-            key: 'partials', title: 'Clear partials', count: ctx.partials.length, tone: st.tone,
+            key: 'partials', title: 'Bring partials home', count: ctx.partials.length, tone: st.tone,
             word: st.tone === 'red' ? 'NOW' : (st.tone === 'amber' ? 'SOON' : ''),
             reason: st.tone === 'red' ? 'Buffer full · clear one' : (st.tone === 'amber' ? 'No empty' : ''),
             cards: opened ? ctx.partials : [], folded: !opened, openedByBoard: st.tone !== 'plain',
@@ -1595,7 +1619,7 @@ function boardHeight(zones, shown, step, cols, fixedTop, width) {
 //     zones give way from the last: cards are cut from the end of a zone, plain
 //     ones only (a red or amber card is never cut; they sort first), and a
 //     "+N more" card takes one slot, in a zone cut to no card too;
-//   - a folded Clear partials is one row and never cut; opened by the board
+//   - a folded Bring partials home is one row and never cut; opened by the board
 //     (amber or red) it keeps its first card and gives way only after every
 //     other zone has;
 //   - where the zones can give no more, a cell tile shows fewer rows (the rest

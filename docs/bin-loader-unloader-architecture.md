@@ -107,14 +107,16 @@ the manifest, the count and the location.
 ### Clear partials
 
 A dedicated loader keeps partly used bins in its buffer spots (`home_kind` `buffer`). When a home holds a stocked
-bin of its part and a buffer spot of the same loader holds a stocked bin of that part, the board's Clear partials
-section has a card for the home, "Pull the full · partial from" and the spot's name (the Edge stamps the spot on
-the home's tile, `bufferPartialFor`). The driver pulls the full and taps; the tap is Core's home clear (the `clear_home` ask,
-`Engine.ClearLoaderHome`), which records the full gone and brings the partial home.
+bin of its part that is not a partial and a buffer spot of the same loader holds a stocked bin of that part, the
+board's Bring partials home section has a card for the home, "Take the full bin off · partial on <spot> comes here"
+(the Edge stamps the spot on the home's tile, `bufferPartialFor`). The driver takes the full bin off and taps BIN IS
+OFF · CONFIRM; the tap is Core's home clear (the `clear_home` ask, `Engine.ClearLoaderHome`), which marks the cart
+empty, sends it away and brings the partial home. A home holding a partial of its part gets no card: its node modal
+offers REPLACE PARTIAL, a LOAD Core records as the partial leaving and a full arriving (`expect` `replace`).
 
 `bin_loaders.no_clear_partials` turns this off for one loader: the Clear partials switch on Core's loader settings,
 drawn for a dedicated loader with a pinned home and a buffer spot, on by default. Off, no home names a buffer
-partial, the board draws no buffer section (strip, words and cards) and no PULL FULL FROM HOME, and Core refuses
+partial, the board draws no buffer section (strip, words and cards) and no FULL BIN OFF HOME, and Core refuses
 the home clear. The buffer's partials stay in the loader's source pool (`Home.InSourcePool`). It rides the wire as
 `LoaderInfo.NoClearPartials`; a Core that predates the field sends nothing, which reads as on, so deploy Core
 first.

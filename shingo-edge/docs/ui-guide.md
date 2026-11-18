@@ -140,7 +140,7 @@ it whole.
 - **Header**: the station name, the process and its state ("Running `<style>`", "Changing over `<from>` →
   `<to>`", "No part running"), a staleness sign for the station's data, and the **STYLE** chip, which opens a
   read-only picture of the running style's flow. The header's buttons are **CHANGEOVER** (pick a style to change
-  to), or **CUTOVER** and **CANCEL** while a changeover is active, or **PULL FULL FROM HOME** at a station beside
+  to), or **CUTOVER** and **CANCEL** while a changeover is active, or **FULL BIN OFF HOME** at a station beside
   a dedicated home loader; **REFRESH** is always there.
 - **Tiles**: one per node the station claims, showing its payload, how full it is, and the orders coming to it.
   A tap opens the node's panel with the verbs its role and state allow: requesting material, a swap or an

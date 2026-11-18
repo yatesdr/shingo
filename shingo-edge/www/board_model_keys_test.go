@@ -90,7 +90,7 @@ func boardFixture() domain.OperatorStationView {
 			BinState: &domain.NodeBinState{BinID: 3, BinLabel: "BIN-3", BinTypeCode: "TOTE-1", Bare: true,
 				PayloadCode: "PART-A", UOPRemaining: 7, Manifest: &manifest, ManifestConfirmed: true, Occupied: true,
 				// A held partial: its line, its arrival and its count (held_uop).
-				UOPCapacity: 10, HeldSince: "2026-10-18T10:00:00Z", HeldFor: "PRESS-1"},
+				UOPCapacity: 10, HeldSince: "2026-10-18T10:00:00Z", HeldFor: "PRESS-1", Partial: true},
 			BinStocked:     &stocked,
 			BinTotes:       &domain.BinTotes{TotesOnCart: &have, TotesPerLayer: &have},
 			BinDisplayUOP:  &have,

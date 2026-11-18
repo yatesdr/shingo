@@ -69,7 +69,8 @@ var bumpPushCensus = map[string]censusNode{
 	// Clear for reuse.
 	"service:BinManifestService.ClearForReuseTx": {callers: []string{
 		"engine:Engine.ClearForReuseStampAndBookDeparture", "engine:Engine.issueClear",
-		"service:BinManifestService.ClearForReuseResolved", "uop:InventoryDeltaService.ApplyBinUOPDelta"}},
+		"service:BinManifestService.ClearForReuseResolved", "service:BinManifestService.ReplaceAtLine",
+		"uop:InventoryDeltaService.ApplyBinUOPDelta"}},
 	"engine:Engine.ClearForReuseStampAndBookDeparture": {push: pushBinsChanged},
 	"engine:Engine.issueClear":                         {callers: []string{"engine:Engine.clearLoaderHomeLocked"}},
 	"engine:Engine.clearLoaderHomeLocked":              {push: pushBinsChanged},
@@ -85,7 +86,10 @@ var bumpPushCensus = map[string]censusNode{
 
 	// Contents written: the Edge's LOAD, the admin Load Payload, an ingest.
 	"service:BinManifestService.writeProductionTx": {callers: []string{
-		"service:BinManifestService.recordProduced", "service:BinManifestService.setForProductionTx"}},
+		"service:BinManifestService.recordProduced", "service:BinManifestService.ReplaceAtLine",
+		"service:BinManifestService.setForProductionTx"}},
+	// The LOAD that replaces a tote: its clear and its load, one transaction.
+	"service:BinManifestService.ReplaceAtLine": {push: pushBinsChanged},
 	"service:BinManifestService.recordProduced": {callers: []string{
 		"service:BinManifestService.LoadAtLine", "service:BinManifestService.RecordProducedBin"}},
 	"service:BinManifestService.LoadAtLine":         {push: pushBinsChanged},

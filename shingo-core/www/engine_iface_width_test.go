@@ -138,6 +138,10 @@ func TestServiceAccessWidth(t *testing.T) {
 // from ClearForReuseAndBookDeparture when it took the two-stage stamp; the
 // width is unchanged.)
 //
+// ReplaceAndBookDeparture is there for the same reason: the LOAD that replaces
+// a tote clears the carrier, books what it held leaving the spot, and loads
+// the new count in one transaction.
+//
 // ClearLoaderHome is the home clear (engine/clear_home.go): it births the
 // clear's orders and zeroes the home's carrier in one transaction, under the
 // scanner's lock — no service owns all three.
@@ -201,6 +205,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReconfigureMessaging",
 		"ReconfigureNotifications",
 		"Recovery",
+		"ReplaceAndBookDeparture",
 		"RequestEdgeReregister",
 		"RobotGroups",
 		"SaveCleaningSetup",

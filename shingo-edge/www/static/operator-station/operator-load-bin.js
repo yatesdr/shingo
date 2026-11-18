@@ -12,10 +12,21 @@ let loadViewRef = null;
 
 export function setLoadView(fn) { loadViewRef = fn; }
 
+// REPLACE_NOTE is the line under REPLACE PARTIAL's title: what the floor does
+// before the tap.
+export const REPLACE_NOTE = 'Partial off, full on, then CONFIRM LOAD';
+
 // opts.typedCount: the count starts at 0, not the part's capacity, so the
 // person must type it (a stage 2's PARTIAL ON: a partial is less than a pack,
 // and CONFIRM LOAD refuses 0).
+//
+// opts.replace: REPLACE PARTIAL on a home holding a partial of its part. The
+// same screen and the same LOAD, titled "Replace partial · <spot>" with one
+// line of what to do; the count starts at the full pack, and a short tote's
+// count is typed first. The Edge sends the LOAD to Core as a replace: the
+// partial leaves the spot and the full is new stock (engine LoadBin).
 export function openLoadBin(nodeID, allowedCodes, defaultCapacity, opts) {
+    const replace = !!(opts && opts.replace);
     loadBinState = {
         nodeID: nodeID,
         payloadCode: '',
@@ -23,7 +34,9 @@ export function openLoadBin(nodeID, allowedCodes, defaultCapacity, opts) {
         manifest: [],
         submitting: false,
         typedCount: !!(opts && opts.typedCount),
+        replace: replace,
     };
+    drawReplaceTitle(nodeID, replace);
     const payloadEl = document.getElementById('load-bin-payload');
     payloadEl.innerHTML = '';
     const rows = document.getElementById('load-bin-rows');
@@ -47,6 +60,25 @@ export function openLoadBin(nodeID, allowedCodes, defaultCapacity, opts) {
     document.getElementById('load-bin-modal').classList.add('active');
     if (allowedCodes.length === 1) {
         selectLoadPayload(allowedCodes[0]);
+    }
+}
+
+// drawReplaceTitle sets the screen's title and its one line: "Load Bin" and no
+// line for a LOAD, "Replace partial · <spot>" and REPLACE_NOTE for a replace.
+// The spot is the tile's, its group prefix dropped.
+function drawReplaceTitle(nodeID, replace) {
+    const title = document.getElementById('load-bin-title');
+    const note = document.getElementById('load-bin-note');
+    let spot = '';
+    if (replace) {
+        const entry = findNodeByID(nodeID);
+        const node = (entry && entry.node) || {};
+        spot = String(node.name || node.core_node_name || '').replace(/^.*\./, '');
+    }
+    if (title) title.textContent = replace ? 'Replace partial' + (spot ? ' · ' + spot : '') : 'Load Bin';
+    if (note) {
+        note.textContent = replace ? REPLACE_NOTE : '';
+        note.style.display = replace ? '' : 'none';
     }
 }
 
@@ -265,7 +297,7 @@ async function submitLoadBin() {
     setSubmittingUI(true);
     const ok = await postAction('/api/process-nodes/' + nodeID + '/load-bin', body, loadViewRef);
     if (ok) {
-        showToast('Bin loaded', 'success');
+        showToast(state.replace ? 'Partial replaced' : 'Bin loaded', 'success');
         closeLoadBin();
     } else {
         // postAction already toasted the server error — re-enable so the

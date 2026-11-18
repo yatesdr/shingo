@@ -25,6 +25,7 @@ import (
 // Call sites:
 //   - wiring.go "CMS transaction logging" subscription -> RecordMovementTransactions
 //   - www/handlers_telemetry.go binClear (the bin.clear ask) -> ClearForReuseAndBookDeparture
+//   - www/handlers_telemetry.go binLoad, expect=replace (the bin.load ask) -> ReplaceAndBookDeparture
 //
 // There is deliberately no *Engine method wrapping
 // material.FindCMSBoundary. The one that used to live here collapsed
@@ -189,6 +190,36 @@ func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binType
 	e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})
 	e.notifyBinChanged(binID)
 	return epoch, nil
+}
+
+// ReplaceAndBookDeparture is the LOAD that replaces a tote
+// (BinManifestService.ReplaceAtLine) with the departure the old tote owes CMS
+// booked in its transaction, as ClearForReuseStampAndBookDeparture books a
+// CLEAR's: the old tote left the spot, so where the spot is a CMS boundary its
+// count leaves the ledger. A departure whose rows cannot be written refuses
+// the replace with them; a build that fails is counted and logged by
+// buildClearDeparture and does not block it, as at the CLEAR. The event goes
+// after the commit. Returns the final epoch and the count written.
+func (e *Engine) ReplaceAndBookDeparture(binID, nodeID int64, manifestJSON, payloadCode string, declared *int64) (int64, int, error) {
+	txns := e.buildClearDeparture(binID, nodeID)
+	var book func(*sql.Tx) error
+	if len(txns) > 0 {
+		book = func(tx *sql.Tx) error {
+			if err := cms.CreateInTx(tx, txns); err != nil {
+				return fmt.Errorf("book cms departure of bin %d: %w — the replace is REFUSED with it, "+
+					"because clearing the bin destroys the counts these rows carry", binID, err)
+			}
+			return nil
+		}
+	}
+	epoch, uop, err := e.binManifest.ReplaceAtLine(binID, manifestJSON, payloadCode, declared, book)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(txns) > 0 {
+		e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})
+	}
+	return epoch, uop, nil
 }
 
 // buildClearDeparture returns the rows a clear owes CMS, and is the loud half:

@@ -205,6 +205,68 @@ func TestCMSClearEndToEnd_AFailedBookingRefusesTheClear(t *testing.T) {
 	}
 }
 
+// TestCMSReplace_TheOldToteLeavesAndTheNewLoads: the LOAD that replaces a tote
+// (ReplaceAndBookDeparture) at a tagged spot books the old tote's departure as
+// a CLEAR there does, and loads the new count, in one commit. A booking that
+// cannot be written refuses the whole replace: the old count stays and nothing
+// is loaded, so the record never shows the spot empty with a tote on it.
+func TestCMSReplace_TheOldToteLeavesAndTheNewLoads(t *testing.T) {
+	t.Parallel()
+	manifest := func(code string) string {
+		body, err := json.Marshal(bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: code}}})
+		testutil.MustNoErr(t, err, "marshal manifest")
+		return string(body)
+	}
+	t.Run("booked and loaded", func(t *testing.T) {
+		t.Parallel()
+		db := testDB(t)
+		stub := newMiddlewareStub(t, http.StatusOK, `{"TransactionId":"MW-REPLACE-1"}`)
+		eng := cmsEngine(t, db, stub.srv.URL)
+		const code = "E2E-REPLACE-PAYLOAD"
+		bin, nodeID := clearBoundaryBin(t, db, code, 24, 10)
+		full := int64(24)
+		if _, uop, err := eng.ReplaceAndBookDeparture(bin.ID, nodeID, manifest(code), code, &full); err != nil || uop != 24 {
+			t.Fatalf("ReplaceAndBookDeparture = uop %d, %v; want 24, nil", uop, err)
+		}
+		after, err := db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "reload bin")
+		if after.PayloadCode != code || after.UOPRemaining != 24 || !after.ManifestConfirmed {
+			t.Errorf("bin after the replace = payload %q uop %d confirmed %v, want %s, 24, confirmed",
+				after.PayloadCode, after.UOPRemaining, after.ManifestConfirmed, code)
+		}
+		txns, err := db.ListAllCMSTransactions(50, 0)
+		testutil.MustNoErr(t, err, "list cms transactions")
+		if len(txns) != 1 || txns[0].SourceType != "clear" || txns[0].Delta != -240 {
+			t.Fatalf("cms transactions = %+v, want one clear of -240 (the old tote's 10 cycles x 24)", txns)
+		}
+	})
+	t.Run("a booking that cannot be written refuses the replace", func(t *testing.T) {
+		t.Parallel()
+		db := testDB(t)
+		stub := newMiddlewareStub(t, http.StatusOK, `{"TransactionId":"MW-NEVER"}`)
+		eng := cmsEngine(t, db, stub.srv.URL)
+		const code = "E2E-REPLACE-ATOMIC"
+		bin, nodeID := clearBoundaryBin(t, db, code, 24, 10)
+		if _, err := db.Exec(`ALTER TABLE cms_transactions
+			ADD CONSTRAINT e2e_refuse_replace CHECK (source_type <> 'clear')`); err != nil {
+			t.Fatalf("install the refusing constraint: %v", err)
+		}
+		full := int64(24)
+		if _, _, err := eng.ReplaceAndBookDeparture(bin.ID, nodeID, manifest(code), code, &full); err == nil {
+			t.Fatal("the replace SUCCEEDED while the old tote's departure could not be written")
+		}
+		after, err := db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "reload bin")
+		if after.PayloadCode != code || after.UOPRemaining != 10 {
+			t.Errorf("bin after the refused replace = payload %q uop %d, want %s and 10, as before it",
+				after.PayloadCode, after.UOPRemaining, code)
+		}
+		if got := stub.received(); len(got) != 0 {
+			t.Errorf("a refused replace posted %d bodies: %s", len(got), got)
+		}
+	})
+}
+
 // TestCMSClearEndToEnd_UntaggedClearPostsNothingAndStillClears. An untagged clear
 // is invisible to CMS and that is correct — but the door is the unloader's, and it
 // has to keep working for every station the plant has not tagged.

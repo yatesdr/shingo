@@ -112,8 +112,8 @@ export function renderHeader() {
     if (header === 'pull-full-from-home') {
         // A dedicated home loader beside a press: the header's act is a home's
         // clear (the full pulled, the partial brought home), not a changeover.
-        // (On the board its cards say it, in Clear partials.)
-        headerActions.appendChild(headerBtn('PULL FULL FROM HOME', 'pull-full-home', openPullFullFromHomePicker));
+        // (On the board its cards say it, in Bring partials home.)
+        headerActions.appendChild(headerBtn('FULL BIN OFF HOME', 'pull-full-home', openPullFullFromHomePicker));
     } else if (header === 'changeover') {
         if (view.active_changeover) {
             headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
@@ -707,13 +707,16 @@ function confirmClearLoaderHome(nodeID, home, spot) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title',
-        textContent: home ? 'Clear ' + home + '?' : 'Clear this home bin?' }));
+        textContent: home ? 'Full bin off ' + home + '?' : 'Full bin off this home?' }));
+    // The words say the bin comes off by hand first, and that the cart then
+    // leaves recorded empty (SPR SMN_029, 2026-11-17: the bin stayed on, and
+    // 800 parts rode off as an empty).
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: home && spot
-            ? 'Pull the full from ' + home + ' first. CONFIRM records it; Shingo brings the partial on ' + spot + ' home when it can.'
-            : 'Pull the full from this home first. CONFIRM records it.' }));
+            ? 'Take the full bin off the cart first. CONFIRM marks the cart empty: a robot takes it away and brings the partial from ' + spot + ' here.'
+            : 'Take the full bin off the cart first. CONFIRM marks the cart empty.' }));
 
-    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM CLEAR' });
+    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'BIN IS OFF · CONFIRM' });
     confirm.addEventListener('click', async function() {
         confirm.remove();
         cancel.remove();
@@ -746,7 +749,7 @@ function confirmClearLoaderHome(nodeID, home, spot) {
 // whose loader buffer holds a matching partial (the same gate as the Clear
 // partials card). Tapping one opens the clear's confirm. It is
 // offered on a dedicated loader beside a press (the node grid); the
-// board says the same in its Clear partials cards.
+// board says the same in its Bring partials home cards.
 function openPullFullFromHomePicker() {
     var eligible = claimedNodes().filter(function(n) {
         var bs = (n && n.bin_state) || {};
@@ -755,9 +758,9 @@ function openPullFullFromHomePicker() {
 
     var overlay = el('div', { className: 'os-co-picker-overlay' });
     var panel = el('div', { className: 'os-co-picker' });
-    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Pull full from home' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full bin off a home' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
-        textContent: 'Pick the home whose full you pulled. Shingo records it and brings the partial home when it can.' }));
+        textContent: 'Pick the home you took the full bin off. Shingo marks its cart empty and brings the partial home when it can.' }));
 
     if (eligible.length === 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',

@@ -41,6 +41,7 @@ type scWindow struct {
 	occupied bool
 	payload  string
 	uop      int // what node-bins reports as UOPRemaining
+	capacity int // the part's capacity; 0 is unknown, so never a partial
 }
 
 // scCore serves node-bins, bin-load and bin-clear from a per-node map the test
@@ -101,7 +102,7 @@ func (c *scCore) pushLocked() error {
 	rows := map[string]protocol.NodeBinInfo{}
 	for n, win := range c.windows {
 		rows[n] = protocol.NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77,
-			UOPRemaining: win.uop, DeltaEpoch: 5}
+			UOPRemaining: win.uop, UOPCapacity: win.capacity, DeltaEpoch: 5}
 	}
 	return pushBins(c.eng, binsRowsOf(rows)...)
 }
@@ -133,6 +134,14 @@ func (c *scCore) setCount(node string, occupied bool, payload string, uop int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.windows[node] = &scWindow{occupied: occupied, payload: payload, uop: uop}
+	_ = c.pushLocked()
+}
+
+// setPartial stands a carrier of payload holding uop of capacity at node.
+func (c *scCore) setPartial(node, payload string, uop, capacity int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.windows[node] = &scWindow{occupied: true, payload: payload, uop: uop, capacity: capacity}
 	_ = c.pushLocked()
 }
 

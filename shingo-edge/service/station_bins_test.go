@@ -232,7 +232,8 @@ func TestStampBins_BufferStrip(t *testing.T) {
 // TestStampBins_ClearPartialsOff: with the loader's Clear partials off, a home
 // holding a full of its part beside a buffer partial of the same part names no
 // buffer partial, so the board has no card to draw and the home's clear is not
-// offered; the same bins with the clear on name the spot.
+// offered; the same bins with the clear on name the spot. A home holding a
+// partial of its part names none either: its pad offers REPLACE PARTIAL.
 func TestStampBins_ClearPartialsOff(t *testing.T) {
 	db, _ := countingDB(t)
 	svc, _, _ := binsPlant(t, db)
@@ -265,6 +266,18 @@ func TestStampBins_ClearPartialsOff(t *testing.T) {
 		if got := stampJSON(t, v.Nodes[0].BufferPartial); got != tc.want {
 			t.Errorf("Clear partials %s: H1 buffer_partial = %s, want %s", tc.name, got, tc.want)
 		}
+	}
+	svc.SetLoaderResolver(loaderSet{homes()})
+	partial := httpBins(map[string]protocol.NodeBinInfo{
+		"H1": {NodeName: "H1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 30, UOPCapacity: 100},
+		"H2": {NodeName: "H2"},
+		"F1": {NodeName: "F1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4},
+		"F2": {NodeName: "F2"},
+	})
+	v := homesView()
+	svc.StampBins(v, partial, true, nil)
+	if got := stampJSON(t, v.Nodes[0].BufferPartial); got != `null` {
+		t.Errorf("a partial at the home: H1 buffer_partial = %s, want null", got)
 	}
 }
 
@@ -468,10 +481,10 @@ func TestNodeBinState_HeldPartialFromEitherSource(t *testing.T) {
 		}
 	}
 	notHeld := nodeBinState(BoardBinsFromCopy(map[string]protocol.NodeBinsRow{"L-1": {Node: "L-1", Occupied: true,
-		PayloadCode: "PART-H", Stocked: true, UOPCapacity: 100}})["L-1"])
-	if notHeld.UOPRemaining != 0 || notHeld.HeldSince != "" || notHeld.UOPCapacity != 100 {
-		t.Errorf("not held, from the copy: count %d, held since %q, capacity %d; want 0, none, 100",
-			notHeld.UOPRemaining, notHeld.HeldSince, notHeld.UOPCapacity)
+		PayloadCode: "PART-H", Stocked: true, UOPCapacity: 100, Partial: true}})["L-1"])
+	if notHeld.UOPRemaining != 0 || notHeld.HeldSince != "" || notHeld.UOPCapacity != 100 || !notHeld.Partial {
+		t.Errorf("not held, from the copy: count %d, held since %q, capacity %d, partial %v; want 0, none, 100, the row's true",
+			notHeld.UOPRemaining, notHeld.HeldSince, notHeld.UOPCapacity, notHeld.Partial)
 	}
 }
 

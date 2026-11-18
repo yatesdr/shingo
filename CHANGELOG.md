@@ -16,6 +16,14 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core first, then the Edges: an Edge on this release asking an older Core to replace a partial is told "not a carrier the door knows", and nothing is written.
+
+- REPLACE PARTIAL in a home's menu when it holds a partial of its part: partial off, full on, CONFIRM LOAD
+- A replaced partial is recorded as leaving the spot, as a CLEAR records it, and the new full gets a fresh FIFO date
+- A home holding a full bin says so instead of "wait for outbound move"
+- Clear partials is now Bring partials home: take the full bin off, then BIN IS OFF · CONFIRM
+- A home holding a partial no longer offers Bring partials home, and says "holds a partial"
+
 ## v0.11.1 — 2026-11-17
 
 Deploy: no migration; Core and Edges in either order. A box an earlier tag install left on a release needs `--tag` this once.

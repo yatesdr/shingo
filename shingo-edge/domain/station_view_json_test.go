@@ -42,6 +42,16 @@ func TestStationNodeView_JSONShape(t *testing.T) {
 	if string(b["stocked"]) != "false" || string(b["payload_code"]) != `"PART-A"` || string(b["occupied"]) != "true" {
 		t.Errorf("bin = %v, want stocked false at a count of 0, the part and occupied", b)
 	}
+	// PARTIAL IS THE ROW'S FLAG, carried as it is (REPLACE PARTIAL reads it);
+	// absent when false.
+	if _, ok := b["partial"]; ok {
+		t.Error("a bin the row did not call partial carries partial")
+	}
+	part := keys(keys(StationNodeView{Loader: &TileLoader{Role: "produce"},
+		BinState: &NodeBinState{PayloadCode: "PART-A", Occupied: true, UOPCapacity: 10, Partial: true}})["bin_state"])
+	if string(part["partial"]) != "true" {
+		t.Errorf("bin_state.partial = %s, want true: the row's Partial", part["partial"])
+	}
 
 	cell := keys(StationNodeView{ActiveClaim: claim, BinState: &NodeBinState{UOPRemaining: 3, Occupied: true}})
 	if _, ok := cell["active_claim"]; !ok {

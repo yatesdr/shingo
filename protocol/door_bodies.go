@@ -110,7 +110,8 @@ type BinLoadRequest struct {
 	// carrier's generation has moved since.
 	Epoch int64 `json:"epoch,omitempty"`
 	// Expect is what the sender read the carrier to be, in the door's own
-	// terms: LoadExpectBare or LoadExpectPartial; "" asserts nothing. Never
+	// terms: LoadExpectBare, LoadExpectPartial or LoadExpectReplace; ""
+	// asserts nothing. Never
 	// "empty": a node with no carrier has nothing to load. Core refuses the
 	// LOAD when the carrier is no longer what the sender read.
 	Expect      string `json:"expect,omitempty"`
@@ -133,6 +134,12 @@ const (
 	// LoadExpectPartial: the carrier holds the part being loaded, more than
 	// none and fewer than its capacity.
 	LoadExpectPartial = "partial"
+	// LoadExpectReplace: the carrier holds the part being loaded, more than
+	// none, and the person took that tote off and set a new one on. Core
+	// clears the carrier (the old count leaves the spot, booked as a CLEAR
+	// books it) and loads the new count with a fresh FIFO date, in one
+	// transaction. Needs Epoch.
+	LoadExpectReplace = "replace"
 )
 
 // BinLoadResponse is Core's response after loading a bin.
