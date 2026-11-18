@@ -1,6 +1,6 @@
 # Architecture
 
-Verified against: f6adca67
+Verified against: 22caad6b
 
 Developer reference for ShinGo Core internals. Covers package layout, data flow, key patterns, and extension points.
 
