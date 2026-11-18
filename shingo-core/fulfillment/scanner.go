@@ -401,12 +401,10 @@ func (s *Scanner) park(order *orders.Order) {
 			"left pending for the next pass (find the arm that parks without a cause)", fresh.ID)
 		return
 	}
+	// The park's own write tells the station `queued` with the cause.
 	if err := s.lifecycle.Park(fresh, "fulfillment"); err != nil {
 		s.logTransition(fresh.ID, "pending → queued after its acquire", err)
 		return
-	}
-	if s.dispatcher != nil {
-		s.dispatcher.NotifyWaitChanged(fresh)
 	}
 }
 
@@ -414,10 +412,6 @@ func (s *Scanner) park(order *orders.Order) {
 // acquiring order, or a door's just-born one. pick, when not nil, is the door's
 // pre-INSERT source.
 func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool {
-	// The wait the station holds, before the hand's `dispatched` write clears it:
-	// a fleet refusal re-parks against it (DemoteAfterFleetRefusal).
-	told := dispatch.WaitOf(order)
-
 	// Stage-3 tripwire: a simple-family order must never be classified coordinated,
 	// or the IsCoordinated discriminator below inverts (a plain order routed to the
 	// role gate + fast-path). The invariant is the order.Coordinated COLUMN, not
@@ -803,7 +797,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 		// which confirms by id and never re-acquires, and parked under
 		// claim-failed forever. Armor off, paper demoted, pointer kept.
 		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
-		s.dispatcher.DemoteAfterFleetRefusal(order, told, code, cause, params)
+		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
 		return false
 	}
 
@@ -880,7 +874,6 @@ func (s *Scanner) plannedSource(order *orders.Order) (dispatch.SourceResult, boo
 // KEEPS its soft hold, and retries next tick (the same bin re-confirms and
 // re-dispatches, owner-idempotent).
 func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
-	told := dispatch.WaitOf(order) // as in fulfill: what the station holds before the hand
 	// ── THE THREE ARMS BELOW ALL USED TO RETURN WITH A BLANK ROW ─────────
 	//
 	// This is the highest-probability blank-cause producer in the system, and the
@@ -1028,7 +1021,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// more: an order that is ALREADY holding its bin is the exact shape the
 		// pointer wedge traps, because dispatchHeldBin is where it comes back to.
 		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
-		s.dispatcher.DemoteAfterFleetRefusal(order, told, code, cause, params)
+		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
 		return false
 	}
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",
@@ -1165,11 +1158,7 @@ func (s *Scanner) logTransition(orderID int64, what string, err error) {
 // through a sink the process wires up, and the dispatch side writes through the
 // standard logger. One body, two destinations.
 func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams) {
-	var notify func(*orders.Order)
-	if s.dispatcher != nil {
-		notify = s.dispatcher.NotifyWaitChanged
-	}
-	dispatch.WriteQueueDetail(s.db, s.logFn, "fulfillment", order, code, cause, params, notify)
+	dispatch.WriteQueueDetail(s.db, s.logFn, "fulfillment", order, code, cause, params)
 }
 
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful

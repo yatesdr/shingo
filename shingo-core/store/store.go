@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"shingocore/config"
@@ -30,6 +31,9 @@ import (
 // GitHub root, OUTSIDE this repo — it was never committed in-tree).
 type DB struct {
 	*sql.DB
+	// tells is where an order's station tell is queued (SetStationTells);
+	// nil queues none. Atomic: test engines share one DB in parallel.
+	tells atomic.Pointer[stationTells]
 }
 
 // Timeout bounds for the Postgres driver. Without these, pgx/libpq

@@ -81,8 +81,8 @@ func abStrandFixture(t *testing.T, prefix string, v abStrand) *abStrandRun {
 	})
 	prScanPass(t, d, db, hUUID)
 	h := prReloadUUID(t, db, hUUID)
-	testutil.MustNoErr(t, d.lifecycle.MarkInTransit(h, "AMR-1", "fleet"), "the holder's robot drives to its wait")
-	testutil.MustNoErr(t, d.lifecycle.MarkStaged(h, "fleet"), "the holder's robot parks at its station wait")
+	testutil.MustNoErr(t, d.lifecycle.MarkInTransit(h, "AMR-1", "fleet", protocol.OrderUpdate{}), "the holder's robot drives to its wait")
+	testutil.MustNoErr(t, d.lifecycle.MarkStaged(h, "fleet", protocol.OrderUpdate{}), "the holder's robot parks at its station wait")
 	h = prReloadUUID(t, db, hUUID)
 	if b, err := db.GetBin(r.mouthBin); err != nil || b.ClaimedBy == nil || *b.ClaimedBy != h.ID {
 		t.Fatalf("fixture: the holder (order %d, %s) must hard-claim the mouth bin %d; bin = %+v (%v)",

@@ -847,11 +847,13 @@ func TestClearHomeDoor_AdapterArms(t *testing.T) {
 			// The carrier is zeroed and claimed by the empty's move, which is
 			// dispatched at once; the partial is held by reservation, not on its
 			// row. Three orders (the parent, the partial's move, the empty's
-			// move), each projected to the station, and the dispatched move's ack.
+			// move), each projected to the station, the dispatched move's ack, and
+			// two status tells, each queued by its write: the parent's move into
+			// reshuffling and the empty's move's dispatched.
 			wrote: func(f *doorFix) (map[int64][]string, map[string]int) {
 				return map[int64][]string{binIDOf(f, "CHW-E"): {"claimed_by", "delta_epoch", "loaded_at", "manifest",
 						"manifest_confirmed", "payload_code", "uop_remaining", "updated_at"}},
-					map[string]int{"orders": 3, "bin_uop_ledger": 1, "outbox": 4}
+					map[string]int{"orders": 3, "bin_uop_ledger": 1, "outbox": 6}
 			}},
 	})
 }

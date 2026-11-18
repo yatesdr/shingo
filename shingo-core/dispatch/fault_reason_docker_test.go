@@ -43,7 +43,7 @@ func TestMarkFaulted_RowCarriesTheFleetsReasonAndStaysUncoded(t *testing.T) {
 		Node: "ALN_003", Payload: "SYN-PART07A.06",
 		VendorCode: 60011, VendorDesc: "cannot replan",
 	}
-	testutil.MustNoErr(t, lc.MarkFaulted(ord, "AMR-04", ref, "Replanning"), "MarkFaulted")
+	testutil.MustNoErr(t, lc.MarkFaulted(ord, "AMR-04", ref, "Replanning", protocol.OrderUpdate{}), "MarkFaulted")
 
 	h := latestHistory(t, db, ord.ID, StatusFaulted)
 	if h.Ref == nil {
@@ -80,7 +80,7 @@ func TestMarkFaulted_EmptyRefStillDefaultsToTheOrdersOwnNode(t *testing.T) {
 	lc, _ := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fault-ref-2", StatusInTransit)
 
-	testutil.MustNoErr(t, lc.MarkFaulted(ord, "AMR-04", protocol.TermRef{}, "Replanning"), "MarkFaulted")
+	testutil.MustNoErr(t, lc.MarkFaulted(ord, "AMR-04", protocol.TermRef{}, "Replanning", protocol.OrderUpdate{}), "MarkFaulted")
 
 	h := latestHistory(t, db, ord.ID, StatusFaulted)
 	if h.Ref == nil || h.Ref.Node != "DELV.1" {
@@ -102,7 +102,7 @@ func TestMarkFaultedRecovered_RowSaysRecoveredAndCarriesTheFaultsRef(t *testing.
 
 	ref := protocol.TermRef{Node: "ALN_003", VendorCode: 60011, VendorDesc: "cannot replan"}
 	testutil.MustNoErr(t,
-		lc.MarkFaultedRecovered(ord, "AMR-04", ref, "Recovered after 18 s"),
+		lc.MarkFaultedRecovered(ord, "AMR-04", ref, "Recovered after 18 s", protocol.OrderUpdate{}),
 		"MarkFaultedRecovered")
 
 	if ord.Status != StatusInTransit {

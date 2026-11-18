@@ -97,7 +97,7 @@ func pencilParkingTx(tx *sql.Tx, legID int64, c CompoundChild) error {
 		return fmt.Errorf("pencil parking slot %d for leg %d: %w", c.Park, legID, err)
 	}
 	if c.ParkByRank {
-		_, tErr := takeSlotByRankTx(tx, c.Park, legID, c.ParkNamed, c.ParkNote)
+		_, _, tErr := takeSlotByRankTx(tx, c.Park, legID, c.ParkNamed, c.ParkNote)
 		if tErr == nil {
 			return nil
 		}
@@ -749,8 +749,11 @@ func (db *DB) TakeSlotByRank(nodeID, takerID, named int64, note HolderNote) (int
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	holder, err := takeSlotByRankTx(tx, nodeID, takerID, named, note)
+	holder, ht, err := takeSlotByRankTx(tx, nodeID, takerID, named, note)
 	if err != nil {
+		return 0, err
+	}
+	if err := db.QueueHolderTellTx(tx, ht); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -759,9 +762,26 @@ func (db *DB) TakeSlotByRank(nodeID, takerID, named int64, note HolderNote) (int
 	return holder, nil
 }
 
+// HolderTell is a slot take's tell for the order it took the slot from: its row
+// as the take wrote it, and whether that write is one its station is told. The
+// take's caller queues it on the take's transaction (QueueHolderTellTx).
+type HolderTell struct {
+	told  orders.Told
+	tells bool
+}
+
+// QueueHolderTellTx queues a slot take's tell for its holder on tx, when the
+// take wrote one the holder's station is told.
+func (db *DB) QueueHolderTellTx(tx *sql.Tx, ht HolderTell) error {
+	if !ht.tells {
+		return nil
+	}
+	return db.queueTellTx(tx, ht.told, protocol.OrderUpdate{}, "")
+}
+
 // takeSlotByRankTx is TakeSlotByRank on the caller's transaction: a dig leg's
 // release (TakeSlotByRank) or its birth's parking pencil (pencilParkingTx).
-func takeSlotByRankTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote) (int64, error) {
+func takeSlotByRankTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote) (int64, HolderTell, error) {
 	return takeSlotTx(tx, nodeID, takerID, named, note, SlotTakeByRank, "", "reserveSlot")
 }
 
@@ -792,7 +812,10 @@ const (
 // written (code slot-taken, naming the taker), the slot reserved for the taker.
 // Returns the holder; ErrNoSlotTake when no order holds the slot by a pending row
 // it has not yet handed to the fleet (a robot's hold, which nobody takes).
-func TakeSlotForPersonTx(tx *sql.Tx, nodeID, takerID int64, note HolderNote) (int64, error) {
+//
+// The holder's tell is returned for the issue's owner to queue on tx
+// (QueueHolderTellTx) before it commits.
+func TakeSlotForPersonTx(tx *sql.Tx, nodeID, takerID int64, note HolderNote) (int64, HolderTell, error) {
 	return takeSlotTx(tx, nodeID, takerID, takerID, note, SlotTakeByPerson, "", "reserveSlot")
 }
 
@@ -821,9 +844,12 @@ func (db *DB) TakeGroupRoomByRank(nodeID, takerID, named int64, note HolderNote)
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	holder, err := takeSlotTx(tx, nodeID, takerID, named, note, SlotTakeByRank, reservations.GroupRoomTag,
+	holder, ht, err := takeSlotTx(tx, nodeID, takerID, named, note, SlotTakeByRank, reservations.GroupRoomTag,
 		reservations.GroupRoomTag)
 	if err != nil {
+		return 0, err
+	}
+	if err := db.QueueHolderTellTx(tx, ht); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -873,8 +899,12 @@ func (db *DB) ConfirmReleaseDrop(laneID, slotID, orderID, leaveID int64, take *S
 	}
 	var holder int64
 	if take != nil {
-		if holder, err = takeSlotTx(tx, slotID, orderID, take.Named, take.Note, take.Mode,
+		var ht HolderTell
+		if holder, ht, err = takeSlotTx(tx, slotID, orderID, take.Named, take.Note, take.Mode,
 			reservations.GroupRoomTag, reservations.GroupRoomTag); err != nil {
+			return 0, err
+		}
+		if err := db.QueueHolderTellTx(tx, ht); err != nil {
 			return 0, err
 		}
 	} else {
@@ -936,7 +966,7 @@ func (db *DB) GiveBackReleaseDrop(slotID, orderID int64) error {
 // row of that tag: a group drop's paper (GroupRoomTag) is taken by a chooser,
 // never another kind of pending row; the dig leg's take passes "" as before.
 func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode SlotTakeMode,
-	onlyTag, reservedBy string) (int64, error) {
+	onlyTag, reservedBy string) (int64, HolderTell, error) {
 	var holder int64
 	var status string
 	var holderIsLeg bool
@@ -952,50 +982,51 @@ func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode 
 		  AND ($4::text = '' OR COALESCE(r.reserved_by, '') = $4::text)
 		FOR UPDATE OF o, r`, nodeID, string(reservations.StatePending), takerID, onlyTag).Scan(&holder, &status, &holderIsLeg)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNoSlotTake
+		return 0, HolderTell{}, ErrNoSlotTake
 	}
 	if err != nil {
-		return 0, fmt.Errorf("read the pending holder of slot %d: %w", nodeID, err)
+		return 0, HolderTell{}, fmt.Errorf("read the pending holder of slot %d: %w", nodeID, err)
 	}
 	if mode == SlotTakeByRank {
 		takerRank, err := orders.LoadDemandRank(tx, takerID)
 		if err != nil {
-			return 0, err
+			return 0, HolderTell{}, err
 		}
 		holderRank, err := orders.LoadDemandRank(tx, holder)
 		if err != nil {
-			return 0, err
+			return 0, HolderTell{}, err
 		}
 		if !takerRank.Outranks(holderRank) {
-			return 0, fmt.Errorf("%w: order %d's demand does not outrank holder %d's", ErrNoSlotTake, takerID, holder)
+			return 0, HolderTell{}, fmt.Errorf("%w: order %d's demand does not outrank holder %d's", ErrNoSlotTake, takerID, holder)
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM reservations
 		WHERE node_id = $1 AND order_id = $2 AND resource_kind = 'slot' AND state = $3`,
 		nodeID, holder, string(reservations.StatePending)); err != nil {
-		return 0, fmt.Errorf("release order %d's hold on slot %d: %w", holder, nodeID, err)
+		return 0, HolderTell{}, fmt.Errorf("release order %d's hold on slot %d: %w", holder, nodeID, err)
 	}
 	now := clock.Now().UTC()
 	// The holder is told its new wait when it is waiting and not a leg, and
 	// the write that tells it bumps its version (orders.WaitTells's rule; a
 	// take always changes the wait).
 	tells := !holderIsLeg && protocol.IsWaiting(protocol.Status(status))
-	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$2, queue_code=$3, queue_cause=$4, updated_at=$5,
+	told, err := orders.ScanTold(tx.QueryRow(`UPDATE orders SET queue_reason=$2, queue_code=$3, queue_cause=$4, updated_at=$5,
 		version=version+CASE WHEN $6 THEN 1 ELSE 0 END
-		WHERE id=$1`, holder, note.Reason, string(note.Code), note.Cause, now, tells); err != nil {
-		return 0, fmt.Errorf("tell order %d its slot was taken: %w", holder, err)
+		WHERE id=$1`+orders.ToldReturning, holder, note.Reason, string(note.Code), note.Cause, now, tells))
+	if err != nil {
+		return 0, HolderTell{}, fmt.Errorf("tell order %d its slot was taken: %w", holder, err)
 	}
 	ref, _ := json.Marshal(map[string]int64{"taken_by": named})
 	if _, err := tx.Exec(
 		`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
 		 VALUES ($1, $2, $3, 'slot-taken', NULLIF($4,''), $5, $6)`,
 		holder, status, note.Reason, note.Actor, ref, now); err != nil {
-		return 0, fmt.Errorf("record the take on order %d: %w", holder, err)
+		return 0, HolderTell{}, fmt.Errorf("record the take on order %d: %w", holder, err)
 	}
 	if err := reservations.AcquireSlot(tx, takerID, nodeID, reservedBy); err != nil {
-		return 0, fmt.Errorf("reserve slot %d for order %d: %w", nodeID, takerID, err)
+		return 0, HolderTell{}, fmt.Errorf("reserve slot %d for order %d: %w", nodeID, takerID, err)
 	}
-	return holder, nil
+	return holder, HolderTell{told: told, tells: tells}, nil
 }
 
 // stolenBin is one steal, held back for the log that runs AFTER the commit.
@@ -1232,9 +1263,21 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 // reason for the history row (migration 55). The →queued row is the important
 // caller: orders.queue_code is overwritten in place, so the history row is the
 // only place a queue reason becomes a time series.
-// It returns the version the write left (orders.version).
-func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string, reason HistoryReason) (int64, bool, error) {
-	return orders.UpdateStatusFromWithReason(db.DB, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
+//
+// The station is told in the same transaction (queueTellTx): tell is what the
+// row does not hold (the sentence, the ETA, the fault clock, the fleet's
+// robot). It returns the row as written (orders.Told).
+func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return orders.Told{}, false, err
+	}
+	defer tx.Rollback()
+	told, moved, err := db.UpdateOrderStatusFromWithReasonTx(tx, id, from, to, detail, reason, tell)
+	if err != nil || !moved {
+		return orders.Told{}, moved, err
+	}
+	return told, true, tx.Commit()
 }
 
 // ClaimAppend is orders.ClaimAppend: the compare-and-set a fleet append is made
@@ -1245,8 +1288,13 @@ func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string) (bool, erro
 
 // UpdateOrderStatusFromWithReasonTx is UpdateOrderStatusFromWithReason on the
 // caller's transaction (dispatch.acquireHand's status CAS).
-func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail string, reason HistoryReason) (int64, bool, error) {
-	return orders.UpdateStatusFromWithReasonTx(tx, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON())
+// The station's tell rides tx too: it commits with the status or not at all.
+func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
+	told, moved, err := orders.UpdateStatusFromWithReasonTx(tx, id, from, to, detail, reason.Code, reason.Actor, reason.refJSON(), tell.RobotID)
+	if err != nil || !moved {
+		return orders.Told{}, moved, err
+	}
+	return told, true, db.queueTellTx(tx, told, tell, detail)
 }
 
 // AdvanceOrderStepsDone raises the order's steps_done to n — see
@@ -1266,8 +1314,25 @@ func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {
 // in one write. code is typed (protocol.QueueCode) so a caller cannot pass free
 // text: the dispatch formatter generates the sentence and is the sole caller.
 // Pass "" / empty code to clear (on successful dispatch).
+//
+// A change of wait the station is told (orders.WaitTells) queues its tell in
+// the same transaction; any other write here tells nothing.
 func (db *DB) SetOrderQueueDetail(id int64, reason string, code protocol.QueueCode, cause string) error {
-	return orders.SetQueueDetail(db.DB, id, reason, string(code), cause)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	told, tells, err := orders.SetQueueDetailTx(tx, id, reason, string(code), cause)
+	if err != nil {
+		return err
+	}
+	if tells {
+		if err := db.queueTellTx(tx, told, protocol.OrderUpdate{}, ""); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // LinkOrderSiblingsByEdgeUUID records a two-robot swap pairing keyed on
@@ -1287,8 +1352,37 @@ func (db *DB) OrderSiblingUUID(id int64) (string, error) {
 	return orders.SiblingUUID(db.DB, id)
 }
 
+// UpdateOrderVendor stores the fleet's identifiers on an order. A robot it
+// changes to a named one is told to the station in the same transaction.
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
-	return orders.UpdateVendor(db.DB, id, vendorOrderID, vendorState, robotID)
+	// The common write keeps the robot (or names none): one statement, nothing
+	// told. Only a change to a named robot takes a transaction and a tell.
+	if kept, err := orders.UpdateVendorKeepingRobot(db.DB, id, vendorOrderID, vendorState, robotID); err != nil || kept {
+		return err
+	}
+	return db.robotWrite(func(tx *sql.Tx) (orders.Told, bool, error) {
+		return orders.UpdateVendorTx(tx, id, vendorOrderID, vendorState, robotID)
+	})
+}
+
+// robotWrite runs a robot write on its own transaction and, when it changed the
+// robot to a named one, queues the station's tell on it.
+func (db *DB) robotWrite(write func(*sql.Tx) (orders.Told, bool, error)) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	told, changed, err := write(tx)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err := db.queueTellTx(tx, told, protocol.OrderUpdate{}, ""); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // OrderRobotsByUUID is orders.RobotsByUUID: the station and robot of each
@@ -1583,7 +1677,7 @@ func (r HistoryReason) refJSON() any {
 }
 
 func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) (bool, error) {
-	_, won, err := db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{})
+	_, won, err := db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{}, protocol.OrderUpdate{})
 	return won, err
 }
 
@@ -1593,12 +1687,15 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 // detail down here — so the categories existed in memory and never reached
 // disk.
 //
-// It returns the version the winner's write left (orders.version), 0 for a
-// loser.
-func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason) (int64, bool, error) {
+// The winner's write tells the order's station in the same transaction
+// (queueTellTx), whoever called: the lifecycle's typed writers, and the doors
+// that end an order without it (a compound leg's fail, the boot retirement).
+// It returns the winner's row as written (orders.Told); a loser gets the zero
+// Told and tells nothing.
+func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, false, err
+		return orders.Told{}, false, err
 	}
 	defer tx.Rollback()
 
@@ -1643,12 +1740,11 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 	// The history row keeps it. The order waited for that reason, and ending does
 	// not unmake the fact; what is cleared is only the live column that claims it
 	// is STILL waiting.
-	var version int64
-	err = tx.QueryRow(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5, version=version+1,
+	told, err := orders.ScanTold(tx.QueryRow(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5, version=version+1,
 		queue_reason='', queue_code=NULL, queue_cause=NULL
-		WHERE id=$3 AND status <> ALL($4) RETURNING version`, string(status), errDetail, orderID, terminalNames, clock.Now().UTC()).Scan(&version)
+		WHERE id=$3 AND status <> ALL($4)`+orders.ToldReturning, string(status), errDetail, orderID, terminalNames, clock.Now().UTC()))
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, false, err
+		return orders.Told{}, false, err
 	}
 	won := err == nil
 	// History only for the winner — a losing terminalize must not add a second
@@ -1659,7 +1755,10 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 			 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7)`,
 			orderID, string(status), detail,
 			reason.Code, reason.Actor, reason.refJSON(), clock.Now().UTC()); err != nil {
-			return 0, false, err
+			return orders.Told{}, false, err
+		}
+		if err := db.queueTellTx(tx, told, tell, detail); err != nil {
+			return orders.Told{}, false, err
 		}
 	}
 	// EVERYTHING BELOW RUNS FOR THE LOSER TOO, and commits.
@@ -1681,18 +1780,18 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
 		WHERE claimed_by=$1
 		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
-		return 0, false, err
+		return orders.Told{}, false, err
 	}
 	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
-		return 0, false, err
+		return orders.Told{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, false, err
+		return orders.Told{}, false, err
 	}
 	if !won {
-		version = 0
+		return orders.Told{}, false, nil
 	}
-	return version, won, nil
+	return told, true, nil
 }
 
 // releaseOrderHoldingsTx gives an order's acquisitions back: its hard bin
@@ -1937,8 +2036,16 @@ func (db *DB) ReadPartAtLoader(windows, targets []string, payloadCode, intent st
 	return orders.ReadPartAtLoader(db.DB, windows, targets, payloadCode, intent)
 }
 
+// UpdateOrderRobotID rewrites the order's robot. A change to a named robot is
+// told to the station in the same transaction (a swap the fleet made without
+// changing the order's state).
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
-	return orders.UpdateRobotID(db.DB, id, robotID)
+	if kept, err := orders.RobotIDKeepingRobot(db.DB, id, robotID); err != nil || kept {
+		return err
+	}
+	return db.robotWrite(func(tx *sql.Tx) (orders.Told, bool, error) {
+		return orders.UpdateRobotIDTx(tx, id, robotID)
+	})
 }
 
 func (db *DB) ActiveOrderIDsByRobot() (map[string]int64, error) {

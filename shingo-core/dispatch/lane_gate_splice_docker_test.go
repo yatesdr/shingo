@@ -151,10 +151,10 @@ func TestSplice_FenceHoldsOnASplicedPlan(t *testing.T) {
 
 	// The robot drives to the gate and parks; RDS says WAITING and Core writes
 	// `staged`, which is what makes the board offer a RELEASE at all.
-	if err := d.lifecycle.MarkInTransit(o, "ROBOT-9", "fleet"); err != nil {
+	if err := d.lifecycle.MarkInTransit(o, "ROBOT-9", "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark in_transit: %v", err)
 	}
-	if err := d.lifecycle.MarkStaged(o, "fleet"); err != nil {
+	if err := d.lifecycle.MarkStaged(o, "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark staged: %v", err)
 	}
 	staged, err := db.GetOrder(o.ID)

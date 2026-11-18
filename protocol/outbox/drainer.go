@@ -283,9 +283,10 @@ func (d *Drainer) drain() (failed bool) {
 // ingest leaves a full produce bin with no confirmed manifest (its bin_epoch
 // fences a late one at Core); a dead-lettered bin pickup strands the slot's
 // clear and a changeover supply deferred to it; a dead-lettered release strands
-// a robot Core holds staged (see protocol/expiry.go). The panic path still
-// exhausts
-// them: a payload that panics the publisher on every pass must be stood down.
+// a robot Core holds staged (see protocol/expiry.go). The order messages below
+// are safe late by their own guards and say why at their entries. The panic
+// path still exhausts them: a payload that panics the publisher on every pass
+// must be stood down.
 var neverDeadLetter = map[string]bool{
 	protocol.SubjectBinUOPDelta:         true,
 	protocol.SubjectLinesideBucketLevel: true,
@@ -301,6 +302,16 @@ var neverDeadLetter = map[string]bool{
 	// An ask's answer is a fact already true at Core; one dead-lettered leaves
 	// the asking Edge's table and seat wrong until something else heals them.
 	"data.reply." + protocol.SubjectEdgeAnswer: true,
+	// Core's status tell (Core writes the row as "order.update"). A lost one
+	// leaves the station showing a status Core has left, and nothing repairs
+	// it on a healthy link. A late copy is safe: it carries the order's
+	// version, and a station applies only a newer one.
+	protocol.TypeOrderUpdate: true,
+	// The Edge's cancel (the Edge writes the row as "order.cancel"). A lost
+	// one leaves a robot working an order its operator ended. It never
+	// expires (protocol/expiry.go); a late copy is a no-op at Core on an order
+	// that has ended.
+	protocol.TypeOrderCancel: true,
 }
 
 // publishOne reports whether the message was acked. False means the publish

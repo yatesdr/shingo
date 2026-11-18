@@ -49,10 +49,11 @@ func queueDetailWrites(t *testing.T, db *store.DB) func() int {
 func TestBuriedReplay_AnIdlePassWritesNothingAndTellsNobody(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
+	tellToStations(db)
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
 		Prefix: "IDLEPASS", NumSlots: 2, NumShuffles: 1, TargetSlot: 2, TargetAge: 2 * time.Hour,
 	})
-	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// Another dig holds the lane for the whole test.
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -80,12 +81,12 @@ func TestBuriedReplay_AnIdlePassWritesNothingAndTellsNobody(t *testing.T) {
 		// The scanner reads the order afresh on every pass.
 		o, err := db.GetOrder(demand.ID)
 		testutil.MustNoErr(t, err, "reload the demand")
-		e0, w0 := len(emitter.waitChanged), writes()
+		e0, w0 := len(stationTellsOf(t, db, "idlepass-demand")), writes()
 		d.handleComplexBuriedOnReplay(o, buried)
-		emits = append(emits, len(emitter.waitChanged)-e0)
+		emits = append(emits, len(stationTellsOf(t, db, "idlepass-demand"))-e0)
 		wrote = append(wrote, writes()-w0)
 	}
-	t.Logf("per pass: wait-changed emits %v, queue-detail writes %v", emits, wrote)
+	t.Logf("per pass: station tells %v, queue-detail writes %v", emits, wrote)
 
 	after, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "read the demand back")
@@ -97,7 +98,7 @@ func TestBuriedReplay_AnIdlePassWritesNothingAndTellsNobody(t *testing.T) {
 	}
 	for i := 1; i < 3; i++ {
 		if emits[i] != 0 || wrote[i] != 0 {
-			t.Errorf("pass %d: %d wait-changed emit(s) and %d write(s), want 0 and 0 — the wait is "+
+			t.Errorf("pass %d: %d station tell(s) and %d write(s), want 0 and 0 — the wait is "+
 				"the same as the pass before", i+1, emits[i], wrote[i])
 		}
 	}

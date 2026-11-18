@@ -248,7 +248,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		return nil, "", lerr
 	}
 	s.failTakenForCart(taken, order, cart)
-	s.tellWindowTaken(taken, order)
+	s.logWindowTaken(taken, order)
 	// Emitted by the CALLER, not by admit, and deliberately with the RAW
 	// wire values: p.OrderType rather than the promoted orderType, and
 	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
@@ -420,19 +420,15 @@ func (s *LifecycleService) failTakenForCart(taken Taken, by *orders.Order, cart 
 	}
 }
 
-// tellWindowTaken pushes the new wait of the order whose pending hold on the
-// move's drop the station's move took at its issue (Taken.Window), as a dig's
-// take pushes its holder's (takeSlotByRank): the holder was told slot-taken in
-// the issue's transaction.
-func (s *LifecycleService) tellWindowTaken(taken Taken, by *orders.Order) {
+// logWindowTaken names the order whose pending hold on the window a station's
+// move took. That order was told its new wait (slot-taken) by the take's own
+// write, in the issue's transaction (issueOwnTx).
+func (s *LifecycleService) logWindowTaken(taken Taken, by *orders.Order) {
 	if taken.Window == 0 {
 		return
 	}
 	log.Printf("dispatch: order %d (a station's move) took %s from order %d's pending hold — "+
 		"order %d is told slot-taken", by.ID, by.DeliveryNode, taken.Window, taken.Window)
-	if h, err := s.db.GetOrder(taken.Window); err == nil && h != nil {
-		notifyWaitChanged(s.emitter, h)
-	}
 }
 
 // checkOrderRefs answers whether the things an order names actually exist.

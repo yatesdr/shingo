@@ -509,17 +509,24 @@ func TestApiReparentNode_ForceFailsBlockedOrdersEmitsEvents(t *testing.T) {
 	// populated. Missing fields here silently skip the Edge notification —
 	// this is the TC-38/TC-39-adjacent hardening contract the refactor must
 	// preserve.
-	seen := map[int64]engine.OrderFailedEvent{}
+	//
+	// ONE ANNOUNCEMENT PER ENDING, by the door that ended the order. The
+	// force-fail announces only an order its own write ended: one another door
+	// ended first (the scanner, woken by the first order's failure, can end
+	// the fixture's payload-less second order as structural) was announced by
+	// that door, and announcing it again told the station a second failure.
+	seen := map[int64][]engine.OrderFailedEvent{}
 	for _, e := range failedSnap() {
-		if e.ErrorCode == "group_restructured" {
-			seen[e.OrderID] = e
-		}
+		seen[e.OrderID] = append(seen[e.OrderID], e)
 	}
 	for _, o := range []*orders.Order{ord1, ord2} {
-		e, ok := seen[o.ID]
-		if !ok {
-			t.Errorf("no EventOrderFailed(group_restructured) for order %d", o.ID)
+		if len(seen[o.ID]) != 1 {
+			t.Errorf("order %d announced failed %d time(s), want once: %+v", o.ID, len(seen[o.ID]), seen[o.ID])
 			continue
+		}
+		e := seen[o.ID][0]
+		if e.ErrorCode != "group_restructured" {
+			continue // another door ended it first, and announced it
 		}
 		if e.EdgeUUID != o.EdgeUUID {
 			t.Errorf("order %d: EdgeUUID = %q, want %q", o.ID, e.EdgeUUID, o.EdgeUUID)
@@ -629,17 +636,24 @@ func TestApiDeleteNodeGroup_ForceFailsBlockedOrdersThenDeletes(t *testing.T) {
 
 	// One EventOrderFailed(group_deleted) per blocked order with
 	// EdgeUUID+StationID populated.
-	seen := map[int64]engine.OrderFailedEvent{}
+	//
+	// ONE ANNOUNCEMENT PER ENDING, by the door that ended the order. The
+	// force-fail announces only an order its own write ended: one another door
+	// ended first (the scanner, woken by the first order's failure, can end
+	// the fixture's payload-less second order as structural) was announced by
+	// that door, and announcing it again told the station a second failure.
+	seen := map[int64][]engine.OrderFailedEvent{}
 	for _, e := range failedSnap() {
-		if e.ErrorCode == "group_deleted" {
-			seen[e.OrderID] = e
-		}
+		seen[e.OrderID] = append(seen[e.OrderID], e)
 	}
 	for _, o := range []*orders.Order{ord1, ord2} {
-		e, ok := seen[o.ID]
-		if !ok {
-			t.Errorf("no EventOrderFailed(group_deleted) for order %d", o.ID)
+		if len(seen[o.ID]) != 1 {
+			t.Errorf("order %d announced failed %d time(s), want once: %+v", o.ID, len(seen[o.ID]), seen[o.ID])
 			continue
+		}
+		e := seen[o.ID][0]
+		if e.ErrorCode != "group_deleted" {
+			continue // another door ended it first, and announced it
 		}
 		if e.EdgeUUID != o.EdgeUUID {
 			t.Errorf("order %d: EdgeUUID = %q, want %q", o.ID, e.EdgeUUID, o.EdgeUUID)

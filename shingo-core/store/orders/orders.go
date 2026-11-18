@@ -488,6 +488,10 @@ func UpdateStatusFrom(db *sql.DB, id int64, from, to, detail string) (bool, erro
 // partial index small.
 //
 // It returns the version the write left on the row (orders.version).
+//
+// THIS FORM QUEUES NO TELL: this package cannot reach the outbox. Production
+// writes go through store.DB.UpdateOrderStatusFromWithReason, which runs the
+// Tx form below and queues the station's tell in the same transaction.
 func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, actor string, refJSON any) (int64, bool, error) {
 	if protocol.IsTerminal(protocol.Status(to)) {
 		return 0, false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
@@ -497,11 +501,41 @@ func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, ac
 		return 0, false, err
 	}
 	defer tx.Rollback()
-	version, moved, err := UpdateStatusFromWithReasonTx(tx, id, from, to, detail, code, actor, refJSON)
+	told, moved, err := UpdateStatusFromWithReasonTx(tx, id, from, to, detail, code, actor, refJSON, "")
 	if err != nil || !moved {
 		return 0, moved, err
 	}
-	return version, true, tx.Commit()
+	return told.Version, true, tx.Commit()
+}
+
+// Told is an order's row as a write its station is told about leaves it, read
+// back in that write's own statement (ToldReturning): what the station is sent,
+// and whether there is a station to send it to.
+type Told struct {
+	EdgeUUID       string
+	StationID      string
+	StationUnaware bool
+	IsLeg          bool
+	Status         protocol.Status
+	RobotID        string
+	QueueReason    string
+	QueueCode      string
+	Version        int64
+}
+
+// ToldReturning is the RETURNING clause that reads a Told; ScanTold scans it.
+// The values are the row's after the write.
+const ToldReturning = ` RETURNING edge_uuid, station_id, station_unaware, parent_order_id IS NOT NULL,
+	status, robot_id, COALESCE(queue_reason, ''), COALESCE(queue_code, ''), version`
+
+// ScanTold scans ToldReturning's columns, followed by any extra the caller's
+// RETURNING appends.
+func ScanTold(row interface{ Scan(...any) error }, extra ...any) (Told, error) {
+	var t Told
+	dest := append([]any{&t.EdgeUUID, &t.StationID, &t.StationUnaware, &t.IsLeg,
+		&t.Status, &t.RobotID, &t.QueueReason, &t.QueueCode, &t.Version}, extra...)
+	err := row.Scan(dest...)
+	return t, err
 }
 
 // UpdateStatusFromWithReasonTx is the status compare-and-swap plus its history
@@ -510,32 +544,38 @@ func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, ac
 // LifecycleService does on a ConcurrentTransition. Terminal writes are refused
 // here exactly as in the wrapper: they go through TerminalizeOrder.
 //
-// THE WRITE BUMPS orders.version IN ITS OWN STATEMENT and reads it back, so the
-// caller's copy of the order holds the version its station is told.
-func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, actor string, refJSON any) (int64, bool, error) {
+// THE WRITE BUMPS orders.version IN ITS OWN STATEMENT and reads the row back
+// (Told), so the caller queues the station's tell from what was written, and
+// its copy of the order holds the version that tell carries.
+//
+// robotID, when named, is written in the same statement: the fleet's robot
+// rides the transition it was reported with (a move to in_transit names it),
+// so the vendor write that follows finds it unchanged and tells nothing more.
+// An empty robotID leaves the stored one.
+func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, actor string, refJSON any, robotID string) (Told, bool, error) {
 	if protocol.IsTerminal(protocol.Status(to)) {
-		return 0, false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
+		return Told{}, false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
 	}
 	// error_detail is cleared exactly as UpdateStatus does on this path: its
 	// failed/cancelled branch is unreachable here because both are terminal
 	// and refused above.
-	var version int64
-	err := tx.QueryRow(`UPDATE orders SET status=$1, error_detail='', updated_at=$3, version=version+1`+waitEndsSQL(to)+`
-		WHERE id=$2 AND status=$4 RETURNING version`,
-		to, id, clock.Now().UTC(), from).Scan(&version)
+	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET status=$1, error_detail='', updated_at=$3, version=version+1,
+		robot_id=COALESCE(NULLIF($5, ''), robot_id)`+waitEndsSQL(to)+`
+		WHERE id=$2 AND status=$4`+ToldReturning,
+		to, id, clock.Now().UTC(), from, robotID))
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
+		return Told{}, false, nil
 	}
 	if err != nil {
-		return 0, false, err
+		return Told{}, false, err
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
 		 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7)`,
 		id, to, detail, code, actor, refJSON, clock.Now().UTC()); err != nil {
-		return 0, false, err
+		return Told{}, false, err
 	}
-	return version, true, nil
+	return told, true, nil
 }
 
 // UpdateWaitIndex increments the wait_index for a complex order after
@@ -641,7 +681,17 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if _, _, err := SetQueueDetailTx(tx, id, reason, code, cause); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
+// SetQueueDetailTx is SetQueueDetail on the caller's transaction. It returns
+// the row as written and whether the write is one the station is told
+// (WaitTells); the caller queues that tell on tx (store.DB.SetOrderQueueDetail).
+// A terminal order is not written and tells nothing.
+func SetQueueDetailTx(tx *sql.Tx, id int64, reason, code, cause string) (Told, bool, error) {
 	// NOT ONTO A TERMINAL ORDER. The history stamp below already refuses one — a
 	// QueueCode over a TermCode is a category error — but the live columns had no
 	// such guard, so a park racing a cancel could leave a finished order wearing
@@ -660,7 +710,7 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 			COALESCE(queue_cause, ''), COALESCE(queue_reason, '')
 			FROM orders WHERE id=$1 FOR UPDATE`, id).
 			Scan(&status, &parentOrderID, &prev.Code, &prev.Cause, &prev.Reason); err != nil {
-			return err
+			return Told{}, false, err
 		}
 	}
 	// A WAIT THE STATION IS TOLD BUMPS THE VERSION, in this statement: a
@@ -668,12 +718,17 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	// Any other write here is not told and leaves the version alone.
 	tells := code != "" && WaitTells(protocol.Status(status), parentOrderID.Valid, prev,
 		Wait{Code: code, Cause: cause, Reason: reason})
-	if _, err := tx.Exec(fmt.Sprintf(
+	told, err := ScanTold(tx.QueryRow(fmt.Sprintf(
 		`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3,
 		 version=version+CASE WHEN $6 THEN 1 ELSE 0 END
-		 WHERE id=$2 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
-		reason, id, clock.Now().UTC(), helpers.NullableText(code), helpers.NullableText(cause), tells); err != nil {
-		return err
+		 WHERE id=$2 AND status NOT IN (%s)`+ToldReturning, protocol.TerminalStatusSQLList()),
+		reason, id, clock.Now().UTC(), helpers.NullableText(code), helpers.NullableText(cause), tells))
+	if errors.Is(err, sql.ErrNoRows) {
+		// A terminal order: nothing written, nothing to stamp, nothing told.
+		return Told{}, false, nil
+	}
+	if err != nil {
+		return Told{}, false, err
 	}
 
 	// ── STAMP THE CODE ONTO THE EPISODE THE ORDER IS RESTING IN ───────────
@@ -755,7 +810,7 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 				`INSERT INTO order_history (order_id, status, detail, code, created_at)
 				 VALUES ($1, $2, $3, $4, $5)`,
 				id, status, reason, code, clock.Now().UTC()); err != nil {
-				return err
+				return Told{}, false, err
 			}
 		case s == protocol.StatusPending:
 			// Nothing. The door that wrote this is about to move the order, and
@@ -778,7 +833,7 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 			// is one `staged` row.
 			if !protocol.IsWaiting(s) {
 				if err := annotateEpisodeRow(tx, id, status, reason, code); err != nil {
-					return err
+					return Told{}, false, err
 				}
 				break
 			}
@@ -789,11 +844,11 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 				`INSERT INTO order_history (order_id, status, detail, code, created_at)
 				 VALUES ($1, $2, $3, $4, $5)`,
 				id, status, reason, code, clock.Now().UTC()); err != nil {
-				return err
+				return Told{}, false, err
 			}
 		}
 	}
-	return tx.Commit()
+	return told, tells, nil
 }
 
 // LinkSiblingsByEdgeUUID records a two-robot swap pairing (supply ↔ evac)
@@ -880,21 +935,85 @@ func SiblingUUID(db *sql.DB, id int64) (string, error) {
 	return s, err
 }
 
-// RobotTellsSQL is the SET fragment that bumps orders.version when a write
-// changes the robot to the one named by param: a robot the station is told.
-// A write that names none (an empty robot, a redirect's clear) or the robot already
-// held changes nothing the station hears; the station keeps the robot it has
-// when told none. Inside an UPDATE's SET, robot_id is the row's old value.
-func RobotTellsSQL(param string) string {
-	return `version=version+CASE WHEN ` + param + `::text <> '' AND robot_id IS DISTINCT FROM ` + param + `::text THEN 1 ELSE 0 END`
+// UpdateVendorKeepingRobot stores vendor-side identifiers on an order in one
+// statement when the write cannot change what its station is told: it names no
+// robot (the robot is written blank, as a redirect clears it) or the robot the
+// row already holds. It reports whether it wrote; false means the write would
+// change the robot, and the caller takes the telling path (UpdateVendorTx).
+func UpdateVendorKeepingRobot(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) (bool, error) {
+	res, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5
+		WHERE id=$4 AND ($3 = '' OR robot_id = $3)`, vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
-// UpdateVendor stores vendor-side identifiers on an order. A robot it changes
-// to one named bumps the version, in this statement (RobotTellsSQL).
+// RobotIDKeepingRobot is UpdateVendorKeepingRobot for a bare robot write: one
+// statement when it names no robot or the one held.
+func RobotIDKeepingRobot(db *sql.DB, id int64, robotID string) (bool, error) {
+	res, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=$3 WHERE id=$2 AND ($1 = '' OR robot_id = $1)`,
+		robotID, id, clock.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// UpdateVendor stores vendor-side identifiers on an order, on its own
+// transaction. It queues no tell: production writes go through
+// store.DB.UpdateOrderVendor, which runs UpdateVendorTx and tells the station.
 func UpdateVendor(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) error {
-	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5, `+RobotTellsSQL("$3")+` WHERE id=$4`,
-		vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
-	return err
+	return inTx(db, func(tx *sql.Tx) error {
+		_, _, err := UpdateVendorTx(tx, id, vendorOrderID, vendorState, robotID)
+		return err
+	})
+}
+
+// UpdateVendorTx stores vendor-side identifiers on an order, on the caller's
+// transaction. It returns the row as written and whether the write changed the
+// robot to a named one: the one write here its station is told, which bumps
+// orders.version in the same statement. A write that names no robot (a
+// redirect's clear) or the robot already held changes nothing the station
+// hears: told none, the station keeps the robot it has.
+func UpdateVendorTx(tx *sql.Tx, id int64, vendorOrderID, vendorState, robotID string) (Told, bool, error) {
+	was, err := lockRobot(tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Told{}, false, nil
+	}
+	if err != nil {
+		return Told{}, false, err
+	}
+	changed := robotID != "" && robotID != was
+	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5,
+		version=version+CASE WHEN $6 THEN 1 ELSE 0 END
+		WHERE id=$4`+ToldReturning,
+		vendorOrderID, vendorState, robotID, id, clock.Now().UTC(), changed))
+	return told, changed, err
+}
+
+// lockRobot reads the order's robot and locks its row for the write that
+// follows on tx, so whether that write changes the robot is decided against
+// the row it then writes.
+func lockRobot(tx *sql.Tx, id int64) (string, error) {
+	var was string
+	err := tx.QueryRow(`SELECT robot_id FROM orders WHERE id=$1 FOR UPDATE`, id).Scan(&was)
+	return was, err
+}
+
+// inTx runs fn on a transaction of its own and commits it.
+func inTx(db *sql.DB, fn func(*sql.Tx) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetCompoundOpen is THE writer of orders.open_for_children — the only thing
@@ -2391,11 +2510,32 @@ func ReadPartAtLoader(db helpers.RowsQuerier, windows, targets []string, payload
 	return out, rows.Err()
 }
 
-// UpdateRobotID rewrites just the robot_id field; a change to a robot named
-// bumps the version, in this statement (RobotTellsSQL).
+// UpdateRobotID rewrites just the robot_id field, on its own transaction. It
+// queues no tell: production writes go through store.DB.UpdateOrderRobotID.
 func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
-	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=$3, `+RobotTellsSQL("$1")+` WHERE id=$2`, robotID, id, clock.Now().UTC())
-	return err
+	return inTx(db, func(tx *sql.Tx) error {
+		_, _, err := UpdateRobotIDTx(tx, id, robotID)
+		return err
+	})
+}
+
+// UpdateRobotIDTx rewrites the robot on the caller's transaction, by
+// UpdateVendorTx's rule: it returns the row as written and whether the robot
+// changed to a named one, the write the station is told.
+func UpdateRobotIDTx(tx *sql.Tx, id int64, robotID string) (Told, bool, error) {
+	was, err := lockRobot(tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Told{}, false, nil
+	}
+	if err != nil {
+		return Told{}, false, err
+	}
+	changed := robotID != "" && robotID != was
+	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET robot_id=$1, updated_at=$3,
+		version=version+CASE WHEN $4 THEN 1 ELSE 0 END
+		WHERE id=$2`+ToldReturning,
+		robotID, id, clock.Now().UTC(), changed))
+	return told, changed, err
 }
 
 // ForgetHeldCart forgets the cart an order was going to take: its rows, in one

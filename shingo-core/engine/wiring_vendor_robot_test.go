@@ -273,9 +273,9 @@ func robotsOnUpdates(t *testing.T, db *store.DB, edgeUUID string) []string {
 // THE ROBOT RIDES EVERY STATUS UPDATE. The waybill names the robot on its first
 // assignment only, so a robot the fleet changed afterwards (AMB-42 -> AMB-99
 // here, with the move to staged) was written to orders.robot_id and the station
-// was never told. Every vendor-status update carries Core's robot, including a
+// was never told. Every status write's update carries Core's robot, including a
 // transition whose event names none (Case D: the FINISHED here), and so does the
-// completion notice.
+// confirm's. The dispatch's own write tells first, before any robot is named.
 func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
 	t.Parallel()
 	db, eng, sim, order := dispatchRetrieveOrderWithRobot(t)
@@ -289,7 +289,8 @@ func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
 	}
 
 	got := strings.Join(robotsOnUpdates(t, db, order.EdgeUUID), " ")
-	want := "in_transit/AMB-42 staged/AMB-99 delivered/AMB-99 confirmed/AMB-99"
+	// The dispatch's status write now tells `dispatched` too, with no robot yet.
+	want := "dispatched/ in_transit/AMB-42 staged/AMB-99 delivered/AMB-99 confirmed/AMB-99"
 	if got != want {
 		t.Errorf("order.update robots, in send order:\n got  %s\n want %s", got, want)
 	}
@@ -299,9 +300,9 @@ func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
 // another robot after Core released it (Core in_transit, RDS still WAITING at
 // the old wait). Read as a WAITING -> WAITING status event, it would stage the
 // order again; on its own event it writes the robot and a mission_events row,
-// and nothing else: the status stays, and nothing is sent to the station (the
-// robot reaches it on the order's next update). A report naming a vendor order
-// the Core order no longer runs is dropped.
+// and nothing else: the status stays, and the robot write tells the station one
+// order.update naming the new robot (in_transit, unchanged). A report naming a
+// vendor order the Core order no longer runs is dropped and tells nothing.
 func TestVendorRobotChange_WritesTheRobotAndNothingElse(t *testing.T) {
 	t.Parallel()
 	db, eng, sim, order := dispatchRetrieveOrderWithRobot(t)
@@ -325,6 +326,9 @@ func TestVendorRobotChange_WritesTheRobotAndNothingElse(t *testing.T) {
 	if got := testdb.RequireOrder(t, db, "rid-order-1"); got.RobotID != "AMB-42" {
 		t.Fatalf("a report for another vendor order wrote robot %q", got.RobotID)
 	}
+	if n := pending(); n != sent {
+		t.Errorf("a report for another vendor order sent %d message(s); want none", n-sent)
+	}
 
 	em.EmitOrderRobotChanged(order.ID, order.VendorOrderID, "WAITING", "AMB-42", "AMB-99")
 	got := testdb.AssertOrderStatus(t, db, "rid-order-1", "in_transit")
@@ -334,8 +338,13 @@ func TestVendorRobotChange_WritesTheRobotAndNothingElse(t *testing.T) {
 	if got.VendorState != "WAITING" {
 		t.Errorf("vendor_state = %q, want WAITING (a robot change is not a state)", got.VendorState)
 	}
-	if n := pending(); n != sent {
-		t.Errorf("the robot change sent %d message(s); want none", n-sent)
+	// The robot write now tells the station itself: one order.update, the new
+	// robot, the status unchanged.
+	if n := pending(); n != sent+1 {
+		t.Errorf("the robot change sent %d message(s); want one", n-sent)
+	}
+	if tail := robotsOnUpdates(t, db, order.EdgeUUID); len(tail) == 0 || tail[len(tail)-1] != "in_transit/AMB-99" {
+		t.Errorf("order.update robots = %v, want the robot change's in_transit/AMB-99 last", tail)
 	}
 	events, err := db.ListMissionEvents(order.ID)
 	if err != nil {

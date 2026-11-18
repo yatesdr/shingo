@@ -1698,7 +1698,7 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 	// out from under the dig — its other legs lose their admission and anybody may
 	// walk into the lane being worked. The door asks laneOwnerFor and releases
 	// nothing here.
-	d.DemoteAfterFleetRefusal(leg, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
+	d.DemoteAfterFleetRefusal(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
 		QueueParams{Destination: dest})
 }
 

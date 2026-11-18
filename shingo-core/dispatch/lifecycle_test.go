@@ -433,13 +433,13 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 			func(o *orders.Order) error { return lc.Release(o, "test") },
 			StatusInTransit},
 		{"MarkInTransit_AcknowledgedToInTransit", StatusAcknowledged,
-			func(o *orders.Order) error { return lc.MarkInTransit(o, "robot-1", "fleet") },
+			func(o *orders.Order) error { return lc.MarkInTransit(o, "robot-1", "fleet", protocol.OrderUpdate{}) },
 			StatusInTransit},
 		{"MarkStaged_InTransitToStaged", StatusInTransit,
-			func(o *orders.Order) error { return lc.MarkStaged(o, "fleet") },
+			func(o *orders.Order) error { return lc.MarkStaged(o, "fleet", protocol.OrderUpdate{}) },
 			StatusStaged},
 		{"MarkDelivered_InTransitToDelivered", StatusInTransit,
-			func(o *orders.Order) error { return lc.MarkDelivered(o, "fleet") },
+			func(o *orders.Order) error { return lc.MarkDelivered(o, "fleet", protocol.OrderUpdate{}) },
 			StatusDelivered},
 		{"Park_PendingToQueued", StatusPending,
 			func(o *orders.Order) error {
@@ -560,7 +560,7 @@ func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
 		lc, emitter := newLifecycleForTest(t, db)
 		ord := makeOrderAt(t, db, fmt.Sprintf("fault-in-%d", i), from)
 
-		if err := lc.MarkFaulted(ord, "robot-42", protocol.TermRef{}, "obstacle detected"); err != nil {
+		if err := lc.MarkFaulted(ord, "robot-42", protocol.TermRef{}, "obstacle detected", protocol.OrderUpdate{}); err != nil {
 			t.Fatalf("MarkFaulted from %s: %v", from, err)
 		}
 		if ord.Status != StatusFaulted {
@@ -585,7 +585,7 @@ func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fault-recover-1", StatusFaulted)
 
-	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42", protocol.TermRef{}, "Recovered after 18 s"),
+	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42", protocol.TermRef{}, "Recovered after 18 s", protocol.OrderUpdate{}),
 		"MarkFaultedRecovered")
 	if ord.Status != StatusInTransit {
 		t.Errorf("status = %q, want %q", ord.Status, StatusInTransit)

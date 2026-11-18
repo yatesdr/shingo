@@ -192,6 +192,7 @@ func assertDugAfterSlotFreed(t *testing.T, db *store.DB, parent *orders.Order) {
 func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
+	tellToStations(db)
 	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXNOSHUF", StatusPending)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -205,8 +206,8 @@ func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	// lane-locked, lane-lock-race, blocker-claimed) all announce the park, and a
 	// silent fifth would be the one wait the surface cannot show. (C1: the park
 	// tells the station once, through the wait-change notify.)
-	if len(emitter.waitChanged) != 1 {
-		t.Errorf("wait-changed tells = %d, want 1 — the intake site announces its parks", len(emitter.waitChanged))
+	if len(stationTellsOf(t, db, parent.EdgeUUID)) != 1 {
+		t.Errorf("station tells = %d, want 1 — the intake site announces its parks", len(stationTellsOf(t, db, parent.EdgeUUID)))
 	}
 	if len(emitter.failed) != 0 {
 		t.Errorf("failed events = %d, want 0 — a failure event against a parked order raises an "+
@@ -236,6 +237,7 @@ func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
+	tellToStations(db)
 	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXRPNOSHUF", StatusQueued)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -247,9 +249,9 @@ func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	// handleComplexBuriedOnReplay writes the row and emits nothing: the parent was
 	// already queued and already announced, and re-announcing it on every scan
 	// would put one event per tick on the station for an order that has not moved.
-	if len(emitter.waitChanged) != 0 {
-		t.Errorf("wait-changed tells = %d, want 0 — the replay site parks silently, so a scan loop over a "+
-			"crowded group does not become an event storm", len(emitter.waitChanged))
+	if len(stationTellsOf(t, db, parent.EdgeUUID)) != 0 {
+		t.Errorf("station tells = %d, want 0 — the replay site parks silently, so a scan loop over a "+
+			"crowded group does not become an event storm", len(stationTellsOf(t, db, parent.EdgeUUID)))
 	}
 	if len(emitter.failed) != 0 {
 		t.Errorf("failed events = %d, want 0", len(emitter.failed))

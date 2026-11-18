@@ -330,7 +330,7 @@ func (e *Engine) backfillETAsForInTransitOrders() {
 		return
 	}
 	const q = `
-SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node, o.status,
+SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node,
        (SELECT MAX(created_at) FROM order_history
             WHERE order_id = o.id AND status = 'in_transit') AS last_in_transit_at
 FROM orders o
@@ -347,11 +347,11 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 	var sent int
 	for rows.Next() {
 		var (
-			id                                                    int64
-			edgeUUID, stationID, sourceNode, deliveryNode, status string
-			inTransitAt                                           sql.NullTime
+			id                                            int64
+			edgeUUID, stationID, sourceNode, deliveryNode string
+			inTransitAt                                   sql.NullTime
 		)
-		if err := rows.Scan(&id, &edgeUUID, &stationID, &sourceNode, &deliveryNode, &status, &inTransitAt); err != nil {
+		if err := rows.Scan(&id, &edgeUUID, &stationID, &sourceNode, &deliveryNode, &inTransitAt); err != nil {
 			e.logFn("engine: eta backfill scan: %v", err)
 			continue
 		}
@@ -362,9 +362,14 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 		if etaStr == "" {
 			continue
 		}
+		// THE ETA ONLY, NO STATUS. The order's status reached its station from
+		// the write that set it (store queueTellTx); this restores a pill a Core
+		// restart lost, and claims nothing about the status. An empty status is
+		// no status claim: an Edge applies the ETA and leaves the status as it
+		// is. It once carried the row's status, which made the backfill the only
+		// thing that ever told a station a Core-side release happened.
 		if err := e.sendToEdge(protocol.TypeOrderUpdate, stationID, &protocol.OrderUpdate{
 			OrderUUID: edgeUUID,
-			Status:    status,
 			Detail:    "eta restored on boot",
 			ETA:       etaStr,
 		}); err != nil {

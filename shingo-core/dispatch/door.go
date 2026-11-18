@@ -98,18 +98,11 @@ func (d *Dispatcher) parkBorn(order *orders.Order) {
 	}
 }
 
-// ParkAndTell moves a `pending` order whose cause is on its row to `queued`, and
-// sends its station one `queued` update carrying that cause (the P0 rulings' Pi
-// paragraph: pending → queued has no action, so whoever parks says so). An order
-// already `queued` is left as it is and told nothing: its station heard when it
-// parked, and hears a changed cause through the wait-change notify.
+// ParkAndTell moves a `pending` order whose cause is on its row to `queued`. The
+// park's own write tells its station `queued` with that cause, in the write's
+// transaction (store queueTellTx). An order already `queued` is left as it is and
+// told nothing: its station heard when it parked, and hears a changed cause from
+// the write that changes it (orders.WaitTells).
 func (d *Dispatcher) ParkAndTell(order *orders.Order, actor string) error {
-	if order.Status != StatusPending {
-		return d.lifecycle.Park(order, actor)
-	}
-	if err := d.lifecycle.Park(order, actor); err != nil {
-		return err
-	}
-	d.NotifyWaitChanged(order)
-	return nil
+	return d.lifecycle.Park(order, actor)
 }

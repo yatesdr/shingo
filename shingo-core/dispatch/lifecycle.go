@@ -104,6 +104,21 @@ type Event struct {
 	// distribution is two values, so the code alone answers nothing and the
 	// reference is what makes a reason actionable.
 	Ref protocol.TermRef
+	// Tell is what the order's station is told beside the status, for the
+	// facts the row does not hold: the sentence (Detail; the write's own
+	// history detail when empty), the ETA, the fault clock. A RobotID named here
+	// (or on RobotID above) is written with the status. The status, robot, wait
+	// and version the station is sent are the row's after the write.
+	Tell protocol.OrderUpdate
+}
+
+// tellOf is the event's tell, naming the event's robot when the tell does not.
+func (s *LifecycleService) tellOf(ev Event) protocol.OrderUpdate {
+	t := ev.Tell
+	if t.RobotID == "" {
+		t.RobotID = ev.RobotID
+	}
+	return t
 }
 
 // Action runs after the status update is persisted. Actions may write to
@@ -147,13 +162,11 @@ var actionMap = map[transitionKey][]Action{
 	// A parent back at the ladder's start: a complex parent whose dig finished
 	// (ResumeCompound), or a parent whose dig was dissolved (Restart). Neither is
 	// waiting on anything, so neither says `queued` (F2). fireResumed hands the
-	// parent to engine wiring, which runs its one acquire at once and tells the
-	// station where it landed: `queued` with the cause its park wrote, or
-	// `dispatched`. The station is never told `pending`.
-	//
-	// The Edge's mirror sits at `reshuffling` and is walked out of it by that
-	// push. Without it the mirror stayed there and refused every later push as
-	// an illegal jump (lane-stress 2026-08-11: three robots for a whole soak).
+	// parent to engine wiring, which runs its one acquire at once. The station
+	// hears each step from its write: `pending` from this one, then `queued`
+	// with the cause its park wrote, or `dispatched`. A mirror never told the
+	// parent left `reshuffling` refused every later push as an illegal jump
+	// (lane-stress 2026-08-11: three robots for a whole soak).
 	{from: StatusReshuffling, to: StatusPending}: {fireResumed},
 
 	// Cancel paths from any non-terminal status notify engine wiring
@@ -227,8 +240,14 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	// plain status write. Keying on IsTerminal (derived from validTransitions)
 	// means a future terminal status can't silently skip release the way the
 	// success terminal 'confirmed' used to on the old status switch.
+	// THE STATION IS TOLD BY THE WRITE ITSELF: each store write below queues the
+	// order.update for the order's station in its own transaction (store
+	// queueTellTx), carrying what the row says after the write and what ev.Tell
+	// adds. A write that is refused or loses its compare-and-swap writes nothing
+	// and tells nothing.
+	tell := s.tellOf(ev)
 	var err error
-	var version int64
+	var told orders.Told
 	if protocol.IsTerminal(to) {
 		detail := ev.ErrorDetail
 		if detail == "" {
@@ -239,7 +258,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// status write and the history row belong to the winner — so a refusal
 		// here never strands a hold.
 		var won bool
-		version, won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev))
+		told, won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev), tell)
 		if err == nil && !won {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 		}
@@ -255,7 +274,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// fulfillment tick's queued→sourcing resurrected an order the
 		// recovery op had just cancelled.
 		var moved bool
-		version, moved, err = s.db.UpdateOrderStatusFromWithReason(ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
+		told, moved, err = s.db.UpdateOrderStatusFromWithReason(ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev), tell)
 		if err == nil && !moved {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 		}
@@ -263,7 +282,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	if err != nil {
 		return fmt.Errorf("persist %s→%s: %w", from, to, err)
 	}
-	s.afterTransition(ord, from, to, version, ev)
+	s.afterTransition(ord, from, to, told, ev)
 	return nil
 }
 
@@ -292,22 +311,28 @@ func (s *LifecycleService) transitionTx(tx *sql.Tx, ord *orders.Order, to protoc
 	if detail == "" {
 		detail = fmt.Sprintf("%s → %s by %s", from, to, ev.Actor)
 	}
-	version, moved, err := s.db.UpdateOrderStatusFromWithReasonTx(tx, ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev))
+	// The station's tell rides tx with the status: it is sent if and only if
+	// the caller commits.
+	told, moved, err := s.db.UpdateOrderStatusFromWithReasonTx(tx, ord.ID, string(from), string(to), detail, s.historyReason(ord, to, ev), s.tellOf(ev))
 	if err != nil {
 		return nil, fmt.Errorf("persist %s→%s: %w", from, to, err)
 	}
 	if !moved {
 		return nil, ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
 	}
-	return func() { s.afterTransition(ord, from, to, version, ev) }, nil
+	return func() { s.afterTransition(ord, from, to, told, ev) }, nil
 }
 
 // afterTransition is what a transition does once its write has committed: the
-// in-memory order catches up (its status and the version the write left), the
-// futility detector sees the step, and the transition's actions run.
-func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.Status, version int64, ev Event) {
+// in-memory order catches up with the row the write read back (its status, its
+// robot, the version its station was told), the futility detector sees the step,
+// and the transition's actions run.
+func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.Status, told orders.Told, ev Event) {
 	ord.Status = to
-	ord.Version = version
+	ord.Version = told.Version
+	if told.RobotID != "" {
+		ord.RobotID = told.RobotID
+	}
 	// The store cleared the wait in the same write (waitEndsSQL; terminalize
 	// always). Mirror it, or the copy in hand still holds the old sentence and
 	// setQueueReason's unchanged-cause short-circuit would refuse to re-write it
@@ -523,11 +548,13 @@ func (s *LifecycleService) Release(ord *orders.Order, actor string) error {
 
 // MarkInTransit transitions to InTransit. Called by the wiring layer
 // after fleet.MapState identifies the vendor state as in-transit.
-func (s *LifecycleService) MarkInTransit(ord *orders.Order, robotID, actor string) error {
+// tell is what the station hears beside it (the fleet's state, the ETA).
+func (s *LifecycleService) MarkInTransit(ord *orders.Order, robotID, actor string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusInTransit, Event{
 		Actor:   actor,
 		Reason:  "fleet reported in transit",
 		RobotID: robotID,
+		Tell:    tell,
 	})
 }
 
@@ -544,19 +571,23 @@ func (s *LifecycleService) Acknowledge(ord *orders.Order, actor string) error {
 
 // MarkStaged transitions InTransit → Staged. Called when the fleet
 // reports the robot is dwelling at a staging node.
-func (s *LifecycleService) MarkStaged(ord *orders.Order, actor string) error {
+// tell is what the station hears beside it (the fleet's state and robot).
+func (s *LifecycleService) MarkStaged(ord *orders.Order, actor string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusStaged, Event{
 		Actor:  actor,
 		Reason: "fleet reported dwelling at staging node",
+		Tell:   tell,
 	})
 }
 
 // MarkDelivered transitions {InTransit, Staged, Dispatched} → Delivered.
 // Called when the fleet reports the order has been delivered.
-func (s *LifecycleService) MarkDelivered(ord *orders.Order, actor string) error {
+// tell is what the station hears beside it (the fleet's state and robot).
+func (s *LifecycleService) MarkDelivered(ord *orders.Order, actor string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusDelivered, Event{
 		Actor:  actor,
 		Reason: "fleet reported delivered",
+		Tell:   tell,
 	})
 }
 
@@ -567,8 +598,9 @@ func (s *LifecycleService) MarkDelivered(ord *orders.Order, actor string) error 
 // left where it is: its new cause, if any, was written by the same door that
 // called this, and a wait re-asserted every pass writes nothing.
 //
-// No action fires on pending → queued: the station is told by whoever parked
-// (a door's one queued push, or the wait-change notify), never by the edge.
+// No action fires on pending → queued. The station is told by the park's own
+// write, `queued` with the cause on the row, in the write's transaction (store
+// queueTellTx).
 func (s *LifecycleService) Park(ord *orders.Order, actor string) error {
 	if ord.Status == StatusQueued {
 		return nil
@@ -732,16 +764,13 @@ func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
 }
 
 // fireResumed hands a parent that left `reshuffling` for `pending` to engine
-// wiring, which runs its one acquire and tells the EDGE where it landed
-// (engine/wiring.go, the resume handler). Both halves matter:
-//
-//   - the acquire: the parent is not waiting on anything, and the periodic pass
-//     is up to a minute away;
-//   - the push: the Edge's mirror sits at `reshuffling`, and a mirror never told
-//     the parent left it refused every later push as an illegal jump.
-//     lane-stress 2026-08-11: Core walked the parent on to `staged` while the
-//     Edge sat at `reshuffling`; the board never offered Release and three robots
-//     stood still for the whole soak.
+// wiring, which runs its one acquire at once (engine/wiring.go, the resume
+// handler): the parent is not waiting on anything, and the periodic pass is up
+// to a minute away. Where the acquire lands reaches the station from the write
+// that put it there; the restart's own write tells it the parent left
+// `reshuffling` (lane-stress 2026-08-11: Core walked the parent on to `staged`
+// while the Edge sat at `reshuffling`; the board never offered Release and
+// three robots stood still for the whole soak).
 func fireResumed(s *LifecycleService, ord *orders.Order, ev Event) error {
 	s.emitter.EmitOrderResumed(ord.ID, ord.EdgeUUID, ev.StationID)
 	return nil
@@ -797,12 +826,13 @@ func fireFaultedRecovered(s *LifecycleService, ord *orders.Order, ev Event) erro
 // The caller must fill ref.Node and ref.Payload itself when it sets any vendor
 // field. historyReason only defaults those two when the ref is EMPTY, so a ref
 // carrying just a vendor code would otherwise record why and lose where.
-func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID string, ref protocol.TermRef, reason string) error {
+func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID string, ref protocol.TermRef, reason string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusFaulted, Event{
 		Actor:   "fleet",
 		Reason:  reason,
 		RobotID: robotID,
 		Ref:     ref,
+		Tell:    tell,
 	})
 }
 
@@ -819,12 +849,13 @@ func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID string, ref pr
 // reason carries the dwell ("Recovered after 18 s"); ref is copied from the
 // faulted row so the recovery says what it recovered FROM, which is the only
 // place that reason survives once the order is moving again.
-func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID string, ref protocol.TermRef, reason string) error {
+func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID string, ref protocol.TermRef, reason string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusInTransit, Event{
 		Actor:   "fleet",
 		Reason:  reason,
 		RobotID: robotID,
 		Ref:     ref,
+		Tell:    tell,
 	})
 }
 

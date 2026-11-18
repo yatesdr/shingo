@@ -289,7 +289,7 @@ func TestOrderService_ListOrderHistory_ReturnsTransitions(t *testing.T) {
 	// (C1: a park carries its code on the row; a bare →queued write is a wait
 	// nobody can explain, and the teardown sweep reports it.)
 	_, moved, err := db.UpdateOrderStatusFromWithReason(o.ID, "pending", "queued", "ready",
-		store.HistoryReason{Code: string(protocol.QueueWaitingForMaterial)})
+		store.HistoryReason{Code: string(protocol.QueueWaitingForMaterial)}, protocol.OrderUpdate{})
 	testutil.MustNoErr(t, err, "park pending→queued")
 	if !moved {
 		t.Fatal("pending→queued was refused")

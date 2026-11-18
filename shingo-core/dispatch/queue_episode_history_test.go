@@ -159,9 +159,9 @@ func TestPark_ASameCauseWrittenAgainAddsNoRow(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	logf := func(string, ...any) {}
 	params := QueueParams{Payload: "PART-A"}
-	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params, nil)
-	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params, nil)
-	WriteQueueDetail(db, logf, "test", o, protocol.QueueStorageRearranging, CauseLaneHeldTraffic, QueueParams{Lane: "L1"}, nil)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueStorageRearranging, CauseLaneHeldTraffic, QueueParams{Lane: "L1"})
 
 	want := [][2]string{
 		{string(StatusQueued), ""},

@@ -37,7 +37,7 @@ func TestFleetRefusal_ADemotedOrderIsWatched(t *testing.T) {
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	code, cause, params := FleetRefusalCause(derr, order.DeliveryNode)
-	d.DemoteAfterFleetRefusal(order, QueueWait{}, code, cause, params)
+	d.DemoteAfterFleetRefusal(order, code, cause, params)
 
 	got, gerr := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, gerr, "re-read the order")

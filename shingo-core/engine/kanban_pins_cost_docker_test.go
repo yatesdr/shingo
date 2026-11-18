@@ -77,7 +77,10 @@ const (
 	// the hand to the fleet. Nothing in the tail is this work's; the second gate and
 	// resolve the arm used to leave in it went with the arm. 59 on order-carts' rows: the
 	// tail reads an order's cart as 4 SELECT order_bins where it read 5 SELECT orders.
-	parkedPass = 59
+	// 60 since Core tells the station from the write: the dispatch's tell, one
+	// INSERT outbox in the hand's transaction. The vendor write that names no
+	// robot stays one statement (UpdateVendorKeepingRobot).
+	parkedPass = 60
 	// cancelReturnDoor is the cancel-return's store of a window's cancelled push into
 	// K, Z45 short: the position's loader, the door's one read, Z45's three.
 	cancelReturnDoor = 5

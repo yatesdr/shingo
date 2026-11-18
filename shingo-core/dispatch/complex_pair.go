@@ -307,7 +307,7 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 	// STAGE 2: each leg's create, built and not sent.
 	commits := make([]*complexCommit, 0, len(ready))
 	for _, p := range ready {
-		c, err := d.buildComplexCommit(p.order, p.steps, p.hand, WaitOf(p.order))
+		c, err := d.buildComplexCommit(p.order, p.steps, p.hand)
 		if err != nil {
 			return d.pairLegStopped(legs, p.order, err)
 		}
@@ -340,7 +340,7 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 	takes := make([]handTake, 0, len(commits))
 	for _, c := range commits {
 		if err := d.assertDeclaredEveryLaneItEnters(c.order.ID, c.req, c.entering); err != nil {
-			d.refuseComplexHandover(c.order, c.told, err)
+			d.refuseComplexHandover(c.order, err)
 			return d.pairLegStopped(legs, c.order, err)
 		}
 		if d.preHandHook != nil {
@@ -358,7 +358,7 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 				c.order.ID, err)
 			return err
 		}
-		d.refuseComplexHandover(c.order, c.told, err)
+		d.refuseComplexHandover(c.order, err)
 		return d.pairLegStopped(legs, c.order, err)
 	}
 
@@ -368,14 +368,14 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 			if !concurrent {
 				d.ReleaseLaneOccupancy(c.order.ID)
 			}
-			d.refuseComplexHandover(c.order, c.told, err)
+			d.refuseComplexHandover(c.order, err)
 			if i == 0 && !concurrent {
 				// Nothing of the pair is with the fleet: the legs after this one
 				// were held with it and are let go with it, through the same door.
 				for _, rest := range commits[1:] {
 					d.ReleaseLaneOccupancy(rest.order.ID)
 					code, cause, params := FleetRefusalCause(err, rest.order.DeliveryNode)
-					d.DemoteAfterFleetRefusal(rest.order, rest.told, code, cause, params)
+					d.DemoteAfterFleetRefusal(rest.order, code, cause, params)
 				}
 			}
 			return err
@@ -483,7 +483,7 @@ func (d *Dispatcher) parkPair(legs []*orders.Order, blocked *orders.Order) {
 		if leg.ID == blocked.ID {
 			continue
 		}
-		writeQueueWait(d.db, log.Printf, "dispatch: pair park", leg, WaitOf(src), d.NotifyWaitChanged)
+		writeQueueWait(d.db, log.Printf, "dispatch: pair park", leg, WaitOf(src))
 	}
 	d.dbg("complex: pair parked on order %d's cause (%s); %d leg(s) holding nothing",
 		blocked.ID, src.QueueCause, len(legs))

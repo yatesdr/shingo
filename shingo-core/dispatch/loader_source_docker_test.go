@@ -272,13 +272,14 @@ func TestPlanRetrieveEmpty_DedicatedLoaderPool_FillFallsBackToEmpty(t *testing.T
 func TestPlanRetrieve_DedicatedLoaderPool_NoPartInPoolQueues(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
+	tellToStations(db)
 	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 	pos, _ := dedicatedLoaderFixture(t, db, "consume")
 
 	// A PART-X bin sits at an unrelated storage node — NOT in the loader pool.
 	stray := makeLoaderBin(t, db, "PART-X", storageNode.ID, "stray-global", 10, time.Now().UTC())
 
-	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 		OrderUUID:    "loader-empty-pool-1",
 		OrderType:    OrderTypeRetrieve,
@@ -293,8 +294,8 @@ func TestPlanRetrieve_DedicatedLoaderPool_NoPartInPoolQueues(t *testing.T) {
 	if o := testdb.AssertOrderStatus(t, db, "loader-empty-pool-1", StatusQueued); o != nil && o.QueueCode == "" {
 		t.Errorf("parked with no cause on the row")
 	}
-	if len(emitter.waitChanged) != 1 {
-		t.Fatalf("wait-changed tells = %d, want 1 (loader pool empty must queue, not pull globally)", len(emitter.waitChanged))
+	if len(stationTellsOf(t, db, "loader-empty-pool-1")) != 1 {
+		t.Fatalf("station tells = %d, want 1 (loader pool empty must queue, not pull globally)", len(stationTellsOf(t, db, "loader-empty-pool-1")))
 	}
 	order := dispatchSimpleViaScanner(t, d, db, "loader-empty-pool-1")
 	if testdb.OnlyCart(t, order) != nil {

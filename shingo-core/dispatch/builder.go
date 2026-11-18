@@ -172,6 +172,9 @@ type Taken struct {
 	Named     []int64
 	Unpointed int
 	Window    int64
+	// windowTell is the window holder's tell, queued on the issue's
+	// transaction by its owner (issueOwnTx) before it commits.
+	windowTell store.HolderTell
 }
 
 // row is the order a need and a plan describe, born `pending` (v4 §2.6). It
@@ -287,7 +290,7 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 	var taken Taken
 	if need.Window != nil {
 		var err error
-		if taken.Window, err = holdWindow(tx, o.ID, need.Window, need.By); err != nil {
+		if taken.Window, taken.windowTell, err = holdWindow(tx, o.ID, need.Window, need.By); err != nil {
 			return nil, Taken{}, err
 		}
 	}
@@ -337,16 +340,16 @@ func issue(tx *sql.Tx, need Need, p plan.Plan) (*orders.Order, Taken, error) {
 // dig's ranked take tells it (store.TakeSlotForPersonTx). A robot's hold (a
 // confirmed row, or a holder already handed to the fleet) refuses a person too,
 // naming its holder.
-func holdWindow(tx *sql.Tx, orderID int64, window *nodes.Node, by Actor) (int64, error) {
+func holdWindow(tx *sql.Tx, orderID int64, window *nodes.Node, by Actor) (int64, store.HolderTell, error) {
 	err := reservations.AcquireSlot(tx, orderID, window.ID, "reserveSlot")
 	if !errors.Is(err, reservations.ErrReservationConflict) {
 		if err != nil {
-			return 0, fmt.Errorf("hold window %s: %w", window.Name, err)
+			return 0, store.HolderTell{}, fmt.Errorf("hold window %s: %w", window.Name, err)
 		}
-		return 0, nil
+		return 0, store.HolderTell{}, nil
 	}
 	if by.person == "" {
-		return 0, fmt.Errorf("%w: %s", ErrWindowTaken, window.Name)
+		return 0, store.HolderTell{}, fmt.Errorf("%w: %s", ErrWindowTaken, window.Name)
 	}
 	note := store.HolderNote{
 		Reason: FormatQueueSentence(protocol.QueueWaitingForSlot, QueueParams{TakenByOrderID: orderID}),
@@ -354,15 +357,15 @@ func holdWindow(tx *sql.Tx, orderID int64, window *nodes.Node, by Actor) (int64,
 		Cause:  string(CauseSlotTaken),
 		Actor:  by.person,
 	}
-	holder, err := store.TakeSlotForPersonTx(tx, window.ID, orderID, note)
+	holder, ht, err := store.TakeSlotForPersonTx(tx, window.ID, orderID, note)
 	if !errors.Is(err, store.ErrNoSlotTake) {
-		return holder, err
+		return holder, ht, err
 	}
 	robot, err := store.SlotHolderTx(tx, window.ID, orderID)
 	if err != nil {
-		return 0, err
+		return 0, store.HolderTell{}, err
 	}
-	return 0, fmt.Errorf("%w: %s (order %d's robot holds it)", ErrWindowTaken, window.Name, robot)
+	return 0, store.HolderTell{}, fmt.Errorf("%w: %s (order %d's robot holds it)", ErrWindowTaken, window.Name, robot)
 }
 
 // IssueOrder issues an order in a transaction of its own: the row, its history
@@ -381,6 +384,11 @@ func issueOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, Taken, err
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
 	o, taken, err := issue(tx, need, p)
 	if err != nil {
+		return nil, Taken{}, err
+	}
+	// A window a person's order took from a stranger tells the stranger its new
+	// wait, in this transaction.
+	if err := db.QueueHolderTellTx(tx, taken.windowTell); err != nil {
 		return nil, Taken{}, err
 	}
 	if err := tx.Commit(); err != nil {

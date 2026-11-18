@@ -145,8 +145,6 @@ func (d *recordingDispatcher) DispatchDirect(o *orders.Order, src, dst *nodes.No
 	return "V-1", nil
 }
 
-func (d *recordingDispatcher) NotifyWaitChanged(*orders.Order) {}
-
 func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 	panic("recordingDispatcher: complex path not expected in this test")
 }
@@ -199,7 +197,7 @@ func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneC
 // DemoteAfterFleetRefusal records the one door a fleet refusal goes through. The
 // scanner carries no release logic of its own any more, so what these tests can
 // assert about a refusal is that the door was called, with which cause.
-func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, _ dispatch.QueueWait, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
+func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
 	d.demoteCalls = append(d.demoteCalls, demoteCall{orderID: o.ID, code: string(code), cause: string(cause)})
 	o.Status = protocol.StatusQueued
 	o.QueueCode, o.QueueCause = string(code), string(cause)

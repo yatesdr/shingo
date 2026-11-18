@@ -33,9 +33,10 @@ const (
 	costFinished = 24
 	// costTerminalize: TerminalizeOrder on a live order that wins (BEGIN, the
 	// status, the history row, the anomaly stamp, the claim release, the slot
-	// release, the reservations, COMMIT). Main f8f22f19: 9, with the junction
-	// DELETE the end no longer makes.
-	costTerminalize = 8
+	// release, the reservations, the station's tell, COMMIT). Main f8f22f19: 9,
+	// with the junction DELETE the end no longer makes; 8 until the terminal
+	// write queued its own tell (one INSERT outbox, in its transaction).
+	costTerminalize = 9
 )
 
 // countingCartsSwap is the swap on a database with a counting handle beside

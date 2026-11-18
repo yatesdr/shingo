@@ -147,9 +147,6 @@ func (d *Dispatcher) takeGroupRoomByRank(order *orders.Order, slot *nodes.Node) 
 	}
 	log.Printf("dispatch: order %d took %s from order %d's paper by rank — its demand outranks the holder's "+
 		"never-sent plan; order %d is told and re-plans on its next pass", order.ID, slot.Name, holder, holder)
-	if h, gErr := d.db.GetOrder(holder); gErr == nil && h != nil {
-		d.NotifyWaitChanged(h)
-	}
 	return true
 }
 
@@ -500,9 +497,6 @@ func (d *Dispatcher) releaseChosenDrop(order *orders.Order, c gateCandidate, ste
 			}
 			log.Printf("lane gate: order %d took %s from order %d's paper — it %s; order %d is told and "+
 				"re-plans on its next pass", order.ID, choice.Slot.Name, holder, how, holder)
-			if h, gErr := d.db.GetOrder(holder); gErr == nil && h != nil {
-				d.NotifyWaitChanged(h)
-			}
 		}
 		took = true
 		reads.NoteReleased(order.ID, choice.Slot.ID, leave, entryIsFinalIn(steps, c.entryIndex))

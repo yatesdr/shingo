@@ -87,7 +87,7 @@ func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
 		o := seedFutilityOrder(t, db, "fut-m-"+string(rune('a'+i)), key.ProcessNode, key.PayloadCode)
 		// queued → in_transit is a legal edge; the history row it writes is
 		// what the classifier reads back.
-		testutil.MustNoErr(t, d.Lifecycle().MarkInTransit(o, "AMR-01", "test"), "mark in transit")
+		testutil.MustNoErr(t, d.Lifecycle().MarkInTransit(o, "AMR-01", "test", protocol.OrderUpdate{}), "mark in transit")
 		d.Lifecycle().CancelOrder(o, o.StationID, "operator cancelled mid-flight",
 			CancelCause{Code: protocol.TermOperatorCancelled, Actor: "operator"})
 		clk.Advance(time.Minute)
@@ -117,7 +117,7 @@ func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 	}
 	// One order genuinely departs — the reset.
 	moved := seedFutilityOrder(t, db, "fut-r-moved", key.ProcessNode, key.PayloadCode)
-	testutil.MustNoErr(t, d.Lifecycle().MarkInTransit(moved, "AMR-02", "test"), "mark in transit")
+	testutil.MustNoErr(t, d.Lifecycle().MarkInTransit(moved, "AMR-02", "test", protocol.OrderUpdate{}), "mark in transit")
 
 	// Two more futile terminals: 4 total, but only 2 since the reset.
 	for i := range 2 {

@@ -138,7 +138,7 @@ func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 	o := parkOrder(t, db, "sv-moving", protocol.StatusQueued,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
 	_, moved, err := db.UpdateOrderStatusFromWithReason(o.ID,
-		string(protocol.StatusQueued), string(protocol.StatusDispatched), "on its way", store.HistoryReason{})
+		string(protocol.StatusQueued), string(protocol.StatusDispatched), "on its way", store.HistoryReason{}, protocol.OrderUpdate{})
 	testutil.MustNoErr(t, err, "queued→dispatched")
 	if !moved {
 		t.Fatal("queued→dispatched refused")

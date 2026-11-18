@@ -79,18 +79,28 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	// of MarkInTransit/MarkStaged; it never did that, the mapping does.
 	lc := e.dispatcher.Lifecycle()
 
-	// The fault fields for this transition, shared between the lifecycle write
-	// and the Edge push below. wasFaulted is captured BEFORE any transition
-	// runs: order.Status is the pre-transition status here and the recovery
-	// branch is the only thing that can tell a recovery from an ordinary
-	// transit row.
+	// wasFaulted is captured BEFORE any transition runs: order.Status is the
+	// pre-transition status here and the recovery branch is the only thing that
+	// can tell a recovery from an ordinary transit row.
 	now := clock.Now().UTC()
 	wasFaulted := order.Status == dispatch.StatusFaulted
-	var faultRef protocol.TermRef
-	var faultSince time.Time
 	// refused is the lifecycle turning down a non-terminal transition. Core then
 	// has NOT moved the order, so nothing below may tell the station it did.
 	var refused error
+
+	// WHAT THE STATION HEARS BESIDE THE STATUS. The station is told by the status
+	// write itself, in its transaction (store queueTellTx), so a refused write
+	// tells nothing and an accepted one cannot go untold. This is the part only
+	// the fleet's report holds: its state as the sentence, its robot (written
+	// with the status, so the vendor write below finds it unchanged), the ETA
+	// into in_transit (the route medians cache), the fault clock into faulted.
+	tell := protocol.OrderUpdate{
+		Detail:  fmt.Sprintf("fleet state: %s", ev.NewStatus),
+		RobotID: effectiveRobotID,
+	}
+	if newStatus == dispatch.StatusInTransit {
+		tell.ETA = eta.Stamp(e.etaCache, order.SourceNode, order.DeliveryNode)
+	}
 
 	switch newStatus {
 	case dispatch.StatusInTransit:
@@ -107,18 +117,18 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			ref, since := e.latestFaultReason(order.ID)
 			reason := protocol.FormatFaultSentence(
 				protocol.FaultPhaseRecovered, ref, since, now, false)
-			if err := lc.MarkFaultedRecovered(order, effectiveRobotID, ref, reason); err != nil {
+			if err := lc.MarkFaultedRecovered(order, effectiveRobotID, ref, reason, tell); err != nil {
 				e.logFn("engine: mark recovered order %d: %v", order.ID, err)
 				refused = err
 			}
 			break
 		}
-		if err := lc.MarkInTransit(order, effectiveRobotID, "fleet"); err != nil {
+		if err := lc.MarkInTransit(order, effectiveRobotID, "fleet", tell); err != nil {
 			e.logFn("engine: mark in_transit order %d: %v", order.ID, err)
 			refused = err
 		}
 	case dispatch.StatusStaged:
-		if err := lc.MarkStaged(order, "fleet"); err != nil {
+		if err := lc.MarkStaged(order, "fleet", tell); err != nil {
 			e.logFn("engine: mark staged order %d: %v", order.ID, err)
 			refused = err
 		}
@@ -130,7 +140,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// handleOrderDelivered first lands every cart at its row's drop step, so
 		// the net's "already at destination" check finds nothing left to do.
 		e.handleOrderDelivered(order)
-		if err := lc.MarkDelivered(order, "fleet"); err != nil {
+		if err := lc.MarkDelivered(order, "fleet", tell); err != nil {
 			e.logFn("engine: mark delivered order %d: %v", order.ID, err)
 		}
 		// Robot-internal compound children (reshuffle / buried-bin / restock
@@ -184,10 +194,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// because it always is at the instant of faulting — the row's detail is
 		// a record of what was true when it was written, and the live sentence
 		// an operator reads is computed at read time against the threshold.
-		faultRef, faultSince = faultRefFrom(ev.Snapshot, order), now
+		faultRef := faultRefFrom(ev.Snapshot, order)
 		reason := protocol.FormatFaultSentence(
 			protocol.FaultPhaseLive, faultRef, now, now, false)
-		if err := lc.MarkFaulted(order, effectiveRobotID, faultRef, reason); err != nil {
+		// The Edge board shows the sentence to an operator. "fleet state: FAILED"
+		// is the vendor's word for a state 97% of which recovers on its own in
+		// 20 seconds, and it is also the word this design refuses to use about a
+		// live order. The fault clock rides with it.
+		tell.Detail = reason
+		e.attachFaultFields(&tell, faultRef, now)
+		if err := lc.MarkFaulted(order, effectiveRobotID, faultRef, reason, tell); err != nil {
 			e.logFn("engine: mark faulted order %d: %v", order.ID, err)
 			refused = err
 		}
@@ -218,45 +234,6 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		e.logFn("engine: order %d: fleet reports %s but Core refused %s -> %s; the station is not told (%v)",
 			order.ID, ev.NewStatus, order.Status, newStatus, refused)
 		return
-	}
-
-	// Send status update to ShinGo Edge. On transitions INTO in_transit
-	// we compute a per-route ETA from the medians cache and include it
-	// on the update; Edge stores it and the operator HMI renders an ETA
-	// pill on the node tile. On any other status the ETA is left nil
-	// (Edge doesn't render pills on pre-in-transit statuses and treats
-	// terminal statuses as pill-hidden — see operator-render.js).
-	//
-	// The robot rides every one of these. The waybill names the robot on its
-	// first assignment only (above), so a robot the fleet changed afterwards
-	// reached orders.robot_id and Core's board and never the station; this
-	// carries Core's robot to it on the order's next transition.
-	update := &protocol.OrderUpdate{
-		OrderUUID: order.EdgeUUID,
-		Status:    string(newStatus),
-		Detail:    fmt.Sprintf("fleet state: %s", ev.NewStatus),
-		RobotID:   effectiveRobotID,
-	}
-	if newStatus == dispatch.StatusFaulted {
-		// The Edge board shows this string to an operator. "fleet state: FAILED"
-		// is the vendor's word for a state 97% of which recovers on its own in
-		// 20 seconds, and it is also the word this design refuses to use about a
-		// live order.
-		update.Detail = protocol.FormatFaultSentence(
-			protocol.FaultPhaseLive, faultRef, faultSince, now, false)
-		e.attachFaultFields(update, faultRef, faultSince)
-	}
-	if newStatus == dispatch.StatusInTransit {
-		if etaStr := eta.Stamp(e.etaCache, order.SourceNode, order.DeliveryNode); etaStr != "" {
-			update.ETA = etaStr
-		}
-	}
-	// An order its station has no row for is not reported to it (the orc's
-	// Stop 1 ruling); nor are its waybill and staged notices.
-	if !order.StationUnaware {
-		if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, update); err != nil {
-			e.logFn("engine: status update: %v", err)
-		}
 	}
 
 	// Send dedicated staged notification when robot is dwelling
@@ -323,8 +300,10 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 // not touched, whatever the vendor state maps to: this event is not a
 // transition (EventOrderRobotChanged).
 //
-// The station is not told here. The robot reaches it on the order's next
-// order.update, which carries Core's robot (handleVendorStatusChange).
+// The station is told by the write: a change to a named robot queues the
+// order.update in the robot write's own transaction (store UpdateOrderRobotID),
+// with the order's status unchanged and its version bumped, so the robot on the
+// station's tile is the one the fleet moved the order to.
 //
 // A report for a vendor order the Core order no longer runs (a redirect raced
 // the poll) names another job's robot, and is dropped.

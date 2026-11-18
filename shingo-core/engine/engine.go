@@ -339,6 +339,9 @@ func New(c Config) *Engine {
 		return e.dispatcher.AdvanceCompoundOrder(parentID)
 	}
 	e.recovery = newRecoveryService(e)
+	// Every write an order's station is told about queues its tell under this
+	// topic and station, in the write's own transaction (store queueTellTx).
+	e.db.SetStationTells(e.cfg.Messaging.DispatchTopic, e.cfg.Messaging.StationID)
 	epochAnnounce := service.EpochAnnounce{
 		Topic:       e.cfg.Messaging.DispatchTopic,
 		CoreStation: e.cfg.Messaging.StationID,

@@ -5,8 +5,11 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
+	"shingocore/store/orders"
 )
 
 // TestRegression_OrderCompletedNotifiesEdge — Core must tell Edge when it
@@ -28,11 +31,14 @@ import (
 // ALN_001's active list, where the operator-station modal picked it up as the
 // "blocker" during the NEXT changeover and displayed its stale queue_reason.
 //
-// Asserted on the EVENT, not on the sweep. Core confirms behind Edge's back
-// from three sites — the stuck-delivered sweep (engine.go), the compound-child
-// auto-confirm (wiring_vendor_status.go), and the operator force-confirm button
-// (recovery_service.go) — and all three funnel through EventOrderCompleted.
-// Pinning the sweep would leave the other two free to regress.
+// Asserted on a Core-side confirm's write, not on the sweep. Core confirms
+// behind Edge's back from three sites — the stuck-delivered sweep (engine.go),
+// the compound-child auto-confirm (wiring_vendor_status.go), and the operator
+// force-confirm button (recovery_service.go) — and all three funnel through
+// ConfirmReceipt's status write, which queues the station's `confirmed` in its
+// own transaction. This drives the force-confirm. It once emitted
+// EventOrderCompleted alone, when the event's subscriber sent the notice; the
+// write tells now, and the event tells nothing.
 func TestRegression_OrderCompletedNotifiesEdge(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -40,26 +46,32 @@ func TestRegression_OrderCompletedNotifiesEdge(t *testing.T) {
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
 
-	eng.Events.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID:   4017,
-		EdgeUUID:  "regr-complete-edge-uuid",
-		StationID: "line-1",
-	}})
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "regr-complete-edge-uuid"
+		o.StationID = "line-1"
+		o.Status = protocol.StatusDelivered
+	})
+	testutil.MustNoErr(t, eng.ForceConfirmDelivered(o.ID, "regr"), "force-confirm the delivered order")
 
-	var count int
-	testutil.MustNoErr(t, db.QueryRow(`
-		SELECT COUNT(*) FROM outbox
-		WHERE msg_type = 'order.update' AND station_id = $1`, "line-1").Scan(&count), "query outbox")
-	if count == 0 {
-		t.Errorf("expected order.update in outbox for line-1 after EventOrderCompleted; got 0 rows — " +
-			"Core completed an order and told Edge nothing, so the Edge row strands at 'delivered'")
+	var confirmed int
+	for _, u := range updatesAfter(t, db, o.EdgeUUID, 0) {
+		if u.Status == string(protocol.StatusConfirmed) {
+			confirmed++
+		}
+	}
+	if confirmed != 1 {
+		t.Errorf("order.update confirmed in outbox for line-1 after Core confirmed the order: %d, want 1 — "+
+			"Core completed an order and told Edge nothing, so the Edge row strands at 'delivered'", confirmed)
 	}
 }
 
 // TestRegression_OrderCompletedSkipsEmptyEdgeUUID — Core-internal orders
 // (synthetic reshuffle parents, auto-return legs) have no Edge counterpart, so
-// the notification gate must skip them rather than address an envelope to
-// nobody. Mirrors TestRegression_OrderFailedSkipsEmptyEdgeUUID.
+// the write's tell must skip them rather than address an envelope to nobody
+// (store queueTellTx: no edge uuid, no tell). Mirrors
+// TestRegression_OrderFailedSkipsEmptyEdgeUUID. It used to emit the completion
+// event by hand, when the event's subscriber sent the notice; the confirm's
+// own write tells now, so the confirm is what is driven.
 func TestRegression_OrderCompletedSkipsEmptyEdgeUUID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -67,11 +79,12 @@ func TestRegression_OrderCompletedSkipsEmptyEdgeUUID(t *testing.T) {
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
 
-	eng.Events.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID:   99,
-		EdgeUUID:  "", // Core-internal order
-		StationID: "line-1",
-	}})
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.Status = "", "line-1", protocol.StatusDelivered // Core-internal order
+	})
+	if _, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(o, "line-1", "confirmed", 0); err != nil {
+		t.Fatalf("confirm the internal order: %v", err)
+	}
 
 	var count int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order.update'`).Scan(&count), "query outbox")
