@@ -5,6 +5,8 @@ package dispatch
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,26 +18,31 @@ import (
 )
 
 // turnDoorBackend is a fleet that can turn a table and reports each
-// location's Wait key as the test sets it: waits[location] is the Wait key's
-// raw parameters, a location missing from it has no Wait key, and one missing
-// from exists is not a bin location at all.
+// location's binTask keys as the test sets them: tasks[location] is the keys
+// the location lists, each with its raw parameters, and a location missing
+// from exists is not a bin location at all. reads counts the fleet reads.
 type turnDoorBackend struct {
 	*testdb.MockBackend
-	waits  map[string]string
+	tasks  map[string]map[string]string
 	exists map[string]bool
 	err    error
+	reads  int
 }
 
 func (b *turnDoorBackend) CheckLocationTasks(locations []string) ([]fleet.LocationTasks, error) {
+	b.reads++
 	if b.err != nil {
 		return nil, b.err
 	}
 	var out []fleet.LocationTasks
 	for _, l := range locations {
 		lt := fleet.LocationTasks{Location: l, Exists: b.exists[l]}
-		if w, ok := b.waits[l]; ok {
-			lt.TaskNames = []string{"Wait"}
-			lt.TaskArgs = map[string]json.RawMessage{"Wait": json.RawMessage(w)}
+		for _, key := range slices.Sorted(maps.Keys(b.tasks[l])) {
+			if lt.TaskArgs == nil {
+				lt.TaskArgs = map[string]json.RawMessage{}
+			}
+			lt.TaskNames = append(lt.TaskNames, key)
+			lt.TaskArgs[key] = json.RawMessage(b.tasks[l][key])
 		}
 		out = append(out, lt)
 	}
@@ -45,6 +52,8 @@ func (b *turnDoorBackend) CheckLocationTasks(locations []string) ([]fleet.Locati
 const (
 	waitRecognizes = `{"operation":"Wait","recfile":"shelf/Hop_Carrier.shelf","recognize":true}`
 	waitPlain      = `{"operation":"Wait"}`
+	jackLoad       = `{"operation":"JackLoad","recfile":"shelf/Hop_Carrier.shelf","recognize":true}`
+	jackUnload     = `{"operation":"JackUnload"}`
 )
 
 // turnDoorFixture is a dispatcher on a turn-capable fleet with one physical
@@ -80,8 +89,11 @@ func newTurnDoorFixture(t *testing.T) *turnDoorFixture {
 
 	f.be = &turnDoorBackend{
 		MockBackend: testdb.NewSuccessBackend(),
-		waits: map[string]string{
-			f.recognizing.Name: waitRecognizes, f.plain.Name: waitPlain, f.slot.Name: waitRecognizes,
+		tasks: map[string]map[string]string{
+			f.recognizing.Name: {"Wait": waitRecognizes},
+			f.plain.Name:       {"Wait": waitPlain},
+			f.noWait.Name:      {"JackLoad": jackLoad, "JackUnload": jackUnload},
+			f.slot.Name:        {"Wait": waitRecognizes},
 		},
 		exists: map[string]bool{f.recognizing.Name: true, f.plain.Name: true, f.noWait.Name: true, f.slot.Name: true},
 	}
@@ -208,5 +220,82 @@ func TestTableTurnDoor_AdmitsAndCaches(t *testing.T) {
 	testutil.MustNoErr(t, f.d.ReloadTableTurns(), "reload")
 	if _, ok := f.d.turnAt(f.recognizing.Name); ok {
 		t.Fatal("a cleared angle still reads as a turn node")
+	}
+}
+
+// TestTableTurnDoor_ChecksEveryWaitKeyTheLocationLists: with a family keyed to
+// wait_4548, the door checks Wait and wait_4548 wherever the location lists
+// them, each against the side: before the lift each must recognize, before the
+// set-down none may. A key the location does not list is not checked, and a
+// location that lists no wait key at all is refused on either side.
+func TestTableTurnDoor_ChecksEveryWaitKeyTheLocationLists(t *testing.T) {
+	f := newTurnDoorFixture(t)
+	fam := keyFamily(t, f.db, "TT-4548")
+	testutil.MustNoErr(t, f.db.SetCarrierFamilyKeys(fam, "jackload_4548", "wait_4548"), "key 4548")
+	_, err := f.d.ReloadCarrierKeys()
+	testutil.MustNoErr(t, err, "load the keyed families")
+	// TT-KEYS stands at 90°; each case gives it its keys and writes a side.
+	n := &nodes.Node{Name: "TT-KEYS", Enabled: true}
+	testutil.MustNoErr(t, f.db.CreateNode(n), n.Name)
+	testutil.MustNoErr(t, f.db.SetNodeProperty(n.ID, PropTableTurnRad, "1.57"), "angle")
+	f.be.exists[n.Name] = true
+
+	lift, setDown := TableTurnSideLift, TableTurnSideSetDown
+	noWaitKey := map[string]string{"JackLoad": jackLoad, "JackUnload": jackUnload}
+	for _, tc := range []struct {
+		name string
+		side string
+		keys map[string]string
+		want string // "" is admitted; otherwise the refusal says this
+	}{
+		{"lift: Wait and wait_4548 both recognize", lift,
+			map[string]string{"Wait": waitRecognizes, "wait_4548": waitRecognizes}, ""},
+		{"lift: wait_4548 does not recognize", lift,
+			map[string]string{"Wait": waitRecognizes, "wait_4548": waitPlain}, "TT-KEYS's wait_4548 key does not recognize"},
+		{"lift: Wait does not recognize beside a recognizing wait_4548", lift,
+			map[string]string{"Wait": waitPlain, "wait_4548": waitRecognizes}, "TT-KEYS's Wait key does not recognize"},
+		{"lift: wait_4548 not listed is not checked", lift,
+			map[string]string{"Wait": waitRecognizes}, ""},
+		{"lift: wait_4548 listed alone, recognizing", lift,
+			map[string]string{"wait_4548": waitRecognizes}, ""},
+		{"set-down: wait_4548 recognizes", setDown,
+			map[string]string{"Wait": waitPlain, "wait_4548": waitRecognizes}, "TT-KEYS's wait_4548 key recognizes the cart"},
+		{"set-down: Wait recognizes beside a plain wait_4548", setDown,
+			map[string]string{"Wait": waitRecognizes, "wait_4548": waitPlain}, "TT-KEYS's Wait key recognizes the cart"},
+		{"set-down: neither recognizes", setDown,
+			map[string]string{"Wait": waitPlain, "wait_4548": waitPlain}, ""},
+		{"lift: no wait key listed", lift, noWaitKey, "TT-KEYS has no Wait key"},
+		{"set-down: no wait key listed", setDown, noWaitKey, "TT-KEYS has no Wait key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.be.tasks[n.Name] = tc.keys
+			err := f.d.CheckTableTurnProperty(n.ID, PropTableTurnSide, tc.side, false)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want a refusal saying %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestTableTurnDoor_ReadsTheFamiliesWhenTheSetNeverLoaded: a dispatcher that
+// never loaded the keyed families (a start whose load failed) reads them before
+// it checks, so a family's wait key the location lists is not skipped.
+func TestTableTurnDoor_ReadsTheFamiliesWhenTheSetNeverLoaded(t *testing.T) {
+	f := newTurnDoorFixture(t)
+	if f.d.familyKeys.Load() != nil {
+		t.Fatal("the fixture's dispatcher already holds the keyed families; this test needs one that never loaded them")
+	}
+	fam := keyFamily(t, f.db, "TT-4548")
+	testutil.MustNoErr(t, f.db.SetCarrierFamilyKeys(fam, "", "wait_4548"), "key 4548")
+	f.be.tasks[f.recognizing.Name]["wait_4548"] = waitPlain
+	err := f.d.CheckTableTurnProperty(f.recognizing.ID, PropTableTurnRad, "1.57", false)
+	if !errors.Is(err, ErrTableTurnRefused) || !strings.Contains(err.Error(), "TT-REC's wait_4548 key does not recognize") {
+		t.Fatalf("a lift-side angle where the unloaded family's wait key does not recognize: got %v, want a refusal naming it", err)
 	}
 }
