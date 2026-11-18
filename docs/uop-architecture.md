@@ -172,7 +172,13 @@ the part in Core. An assembly's consume spot draws its counter step times it (`h
 `handleABFallthrough`), resolved onto the claim when the Edge reads it from its catalog copy: one manifest line gives
 its ratio, several lines or no catalog row give 1. An assembly that uses 8 a cycle runs 100 cycles from that bin of
 800. A draw bigger than what is left takes the count below zero; nothing carries to the next cart. A press never
-reads the number: a produce spot adds its step as pieces.
+reads the number: a produce spot adds its step as pieces. Guards: `TestClaimPiecesPerCycle_ResolvesFromTheCatalogManifest`,
+`TestConsume_DrawsPiecesPerCycleAtEveryConsumePath` (the cell counter, the A/B fall-through and a station counter), and
+`TestTickWalk_GoldenOverEveryClaimShape`, which holds every cell at pieces per cycle 1 to what it counted before.
+
+**The ledger keeps its own units.** A held or off-plan share counts strokes, because its part is not known when it is
+held, and its release is multiplied where it lands; a "no cart" row counts the pieces the cart did not give, and its
+release draws them as they are (`TestConsume_ALedgerRowReleasesInItsOwnUnit`).
 
 **A kit counts cycles.** A payload of several manifest lines keeps the arithmetic it always had: its bin's UOP is
 cycles, and a line's pieces are the count times the line's parts per cycle. One integer cannot be pieces of two
@@ -189,7 +195,8 @@ rule's one statement in code is `protocol.ManifestItem`'s.
 its step: a spot alone takes it all, and an A/B pair is one spot. A step that does not divide gives each spot the
 floor share and the remainder to the first spots in node order. Spots running different parts are not grouped: when
 a die makes LH and RH halves into different bins, each receiving bin takes the whole step — one physical cycle,
-several bin-level increments. Per-part details live in the manifest.
+several bin-level increments. Per-part details live in the manifest. Guards: `TestShareStep_SumsToTheStepFloorFirst`,
+`TestProduce_TwoSpotsOfOnePartShareTheStep`, `TestProduce_AnABPairIsOneSpot`.
 
 **The PLC is the truth for a tick.** The Edge computes each delta from the last-seen counter value
 (`plc.CalculateDelta`). A 16- or 32-bit rollover below the jump threshold counts as the wrap; a backward count is a
