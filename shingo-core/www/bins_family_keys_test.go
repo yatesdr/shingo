@@ -194,7 +194,7 @@ func TestFamilyKeysRefusal_ATableTurnRefusalIsShownAsSaid(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("%w: node TT-1 lists wait_4548, which recognizes; a set-down-side turn needs one that does not",
 		dispatch.ErrTableTurnRefused)
-	status, sentence := (&Handlers{}).familyKeysRefusal(7, err)
+	status, sentence := familyKeysRefusal(err)
 	if status != http.StatusConflict || sentence != err.Error() {
 		t.Errorf("refusal = %d %q, want %d %q", status, sentence, http.StatusConflict, err.Error())
 	}

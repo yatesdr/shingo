@@ -177,7 +177,7 @@ func (h *Handlers) handleBinTypeFamilyKeys(w http.ResponseWriter, r *http.Reques
 	if err := h.engine.Dispatcher().SaveCarrierFamilyKeys(familyID, lift, wait); err != nil {
 		log.Printf("bins: carrier family %d keys refused: actor=%s lift=%q wait=%q: %v",
 			familyID, h.getUsername(r), lift, wait, err)
-		status, sentence := h.familyKeysRefusal(familyID, err)
+		status, sentence := familyKeysRefusal(err)
 		http.Error(w, sentence, status)
 		return
 	}
@@ -186,22 +186,14 @@ func (h *Handlers) handleBinTypeFamilyKeys(w http.ResponseWriter, r *http.Reques
 }
 
 // familyKeysRefusal is what the engineer is told when a family's keys were not
-// saved, and its status. A family gone since the page was drawn (deleted or
-// moved out with its last type) is told apart by asking whether it is still
-// there: the store's sentinel for it is below www's reach.
-func (h *Handlers) familyKeysRefusal(familyID int64, err error) (int, string) {
-	if errors.Is(err, dispatch.ErrTableTurnRefused) {
+// saved, and its status.
+func familyKeysRefusal(err error) (int, string) {
+	switch {
+	case errors.Is(err, dispatch.ErrTableTurnRefused):
 		return http.StatusConflict, err.Error()
+	case errors.Is(err, dispatch.ErrNoSuchFamily):
+		return http.StatusNotFound, "This carrier family is gone: its last bin type was deleted or moved to another " +
+			"family after the page was drawn. Reload the Bins page."
 	}
-	families, rerr := h.engine.BinService().ListCarrierFamilies()
-	if rerr != nil {
-		return http.StatusInternalServerError, err.Error()
-	}
-	for _, f := range families {
-		if f.ID == familyID {
-			return http.StatusInternalServerError, err.Error()
-		}
-	}
-	return http.StatusNotFound, "This carrier family is gone: its last bin type was deleted or moved to another " +
-		"family after the page was drawn. Reload the Bins page."
+	return http.StatusInternalServerError, err.Error()
 }

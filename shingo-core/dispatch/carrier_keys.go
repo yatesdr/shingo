@@ -5,6 +5,8 @@ import (
 	"log"
 	"maps"
 	"strings"
+
+	"shingocore/store/bins"
 )
 
 // ── CARRIER KEYS: THE BINTASK KEY A CARRIER FAMILY'S LIFT AND WAIT SEND ──────
@@ -66,6 +68,11 @@ func (d *Dispatcher) reloadCarrierKeysOnFloor() {
 			len(d.carrierKeys()))
 	}
 }
+
+// ErrNoSuchFamily is a family whose keys could not be saved because it is gone:
+// deleted, or moved out with its last type, since the caller read it. The
+// store's refusal (bins.ErrNoSuchFamily), named here for the Bins page.
+var ErrNoSuchFamily = bins.ErrNoSuchFamily
 
 // SaveCarrierFamilyKeys is the one door that sets a family's keys: it writes
 // them and reloads the set, so the next block built sends them. A blank key is
