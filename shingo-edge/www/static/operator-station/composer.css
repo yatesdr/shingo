@@ -99,6 +99,23 @@
 .os-comp-acts .os-btn-primary { min-width: 220px; }
 .os-comp-confirm .os-comp-refusal { margin-top: 14px; color: var(--os-red); font-size: 15px; font-weight: 600; }
 
+/* The New part form: a part Core does not have. The confirm card's frame,
+   wider for two fields a row, and scrolling inside itself rather than past
+   the top of a short screen. Fields are the search box's bordered field at
+   the touch floor; the carriers are chips at the same height. */
+.os-comp-newpart { width: 760px; max-height: calc(100vh - 24px); overflow: auto; }
+.os-comp-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; margin-top: 20px; }
+.os-comp-fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.os-comp-fld.wide { grid-column: 1 / -1; }
+.os-comp-fld input { height: var(--os-touch-min, 56px); padding: 0 16px; border: 1px solid var(--sub-3);
+    border-radius: 12px; background: var(--os-bg); color: var(--os-text); font: inherit; font-size: 17px; min-width: 0; }
+.os-comp-fld input:focus-visible { outline: none; border-color: var(--os-accent); }
+.os-comp-newpart .os-chip.btn { height: var(--os-touch-min, 56px); padding: 0 18px; font-size: 16px; }
+.os-comp-newpart .os-comp-acts .os-btn-quiet { border-color: var(--sub-3); }
+.os-comp-newpart .os-comp-say { margin-top: 14px; font-size: 15px; font-weight: 600; }
+.os-comp-newpart .os-comp-refusal { color: var(--os-red); }
+.os-comp-newpart .os-comp-pending { color: var(--os-amber); }
+
 /* ── chips ─────────────────────────────────────────────────────────────── */
 .os-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .os-chip { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px;
