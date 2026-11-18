@@ -79,6 +79,7 @@ func actLegsOf(lls []*legLoad) []release.ActLeg {
 // Core will not release is refused with Core's own account of why.
 func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition) error {
 	act := e.newAct(release.OriginStationOrder, 0, disp.CalledBy)
+	act.declareFull = disp.DeclareFull
 	unlock := e.lockOrderNode(orderID)
 	defer unlock()
 	_, _, err := e.runAct(act, []actLeg{{orderID: orderID, disp: disp}})
@@ -96,6 +97,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 // changeover act's (§6.4, and the single-leg shape, N1-d).
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	act := e.newAct(release.OriginStationPair, nodeID, disp.CalledBy)
+	act.declareFull = disp.DeclareFull
 	unlock := e.lockNode(nodeID)
 	pl := &pairLoad{snap: release.Pair{NodeID: nodeID}}
 	p := release.PlanPair(pl.snap)

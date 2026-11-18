@@ -16,6 +16,12 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Edge only; Core is unchanged and needs no install.
+
+- A produce node's RELEASE SHORT now asks RELEASE PARTIAL or RELEASE FULL; RELEASE PARTIAL sends the cart at its count, as before
+- RELEASE FULL sends the cart as full: Core books it at the pack and keeps the counted number beside it in the cart's count history
+- A changeover's release never offers RELEASE FULL; it always sends the real count
+
 ## v0.13.1 — 2026-11-18
 
 Deploy: no migration. Core only; the Edges are unchanged and need no install.

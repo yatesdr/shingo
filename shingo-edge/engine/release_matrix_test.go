@@ -93,6 +93,7 @@ func runRelCells(t *testing.T, cells []relCell) {
 var (
 	dispEmpty   = ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "operator"}
 	dispNone    = ReleaseDisposition{CalledBy: "operator"}
+	dispFull    = ReleaseDisposition{CalledBy: "operator", DeclareFull: true}
 	dispPartial = func(n int) ReleaseDisposition {
 		return ReleaseDisposition{Mode: DispositionSendPartialBack, PartialCount: &n, CalledBy: "operator"}
 	}
@@ -870,6 +871,47 @@ func TestStrictPack_TheStampIsAStationsAlone(t *testing.T) {
 		{name: "d6/co drop at the station button (to door 5, the drop arm)",
 			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=95",
 			build: within(coAt(drop, "evac", S)), act: pairClick(dispNone), probe: pStamp},
+
+		// ── RELEASE FULL: the person declares the pack, however short ──────
+		// The other answer to RELEASE SHORT. The count ships beside the pack
+		// (Core keeps it on the stamp's row); the same doors as the
+		// tolerance, and never a changeover's evac.
+		{name: "d1/RELEASE FULL at pct 0: 42 of 100 declared",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: at(100, 0, 42), act: pairClick(dispFull), probe: pStamp},
+		{name: "d1/RELEASE FULL within the tolerance: the same pack",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=95 declared=100 by=operator order=evac",
+			build: at(100, 5, 95), act: pairClick(dispFull), probe: pStamp},
+		// SPR ALN_011, 2026-11-18: 1990 of a 2400 pack at 5%. RELEASE SHORT
+		// shipped the count; RELEASE FULL declares the pack.
+		{name: "d1/pack 2400 at pct 5: 1990 ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=1990",
+			build: at(2400, 5, 1990), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/pack 2400 at pct 5: 1990 RELEASE FULL declared",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=1990 declared=2400 by=operator order=evac",
+			build: at(2400, 5, 1990), act: pairClick(dispFull), probe: pStamp},
+		{name: "d2/RELEASE FULL on the per-order door",
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: withTolerance(0, atCount(42, strict(pairAt(twoRobot, "evac", S, "supply", D)))), act: orderClick("evac", dispFull), probe: pStamp},
+		{name: "d1/RELEASE FULL at the pack declares nothing",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=100",
+			build: at(100, 0, 100), act: pairClick(dispFull), probe: pStamp},
+		{name: "d1/RELEASE FULL above the pack ships unclamped",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=130",
+			build: at(100, 0, 130), act: pairClick(dispFull), probe: pStamp},
+		{name: "d1/RELEASE FULL on a claim not strict declares nothing",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
+			build: atCount(42, strictPackAt(100, false, pairAt(twoRobot, "evac", S, "supply", S))),
+			act:   pairClick(dispFull), probe: pStamp},
+		{name: "d1/RELEASE FULL of an empty bin ships nothing",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | stamp:none",
+			build: at(100, 0, 0), act: pairClick(dispFull), probe: pStamp},
+		{name: "d1/co RELEASE FULL on a changeover's evac ships its count",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
+			build: withTolerance(0, atCount(42, strict(coAt(co, "evac", S, "supply", S)))), act: pairClick(dispFull), probe: pStamp},
+		{name: "d2/co RELEASE FULL on a changeover's evac ships its count",
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42",
+			build: withTolerance(0, atCount(42, strict(coAt(co, "evac", S, "supply", D)))), act: orderClick("evac", dispFull), probe: pStamp},
 
 		// ── Doors 3 and 4 never finalize ────────────────────────────────────
 		{name: "d3/material release of a strict bin within its tolerance",

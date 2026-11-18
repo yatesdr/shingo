@@ -79,6 +79,10 @@ type CurtainHeldError = release.CurtainHeldError
 type releaseAct struct {
 	release.Act
 	actFacts release.ActFacts
+	// declareFull is the station's RELEASE FULL, from the door's disposition:
+	// the departing produce bin is declared at its pack however short
+	// (finalizeBy.declareFull).
+	declareFull bool
 	// pressPaperwork is the door's own declaration at the press (the pair
 	// click's departing-bin finalize), run when the act covers a leg.
 	pressPaperwork  func() error

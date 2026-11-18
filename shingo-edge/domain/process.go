@@ -1054,6 +1054,21 @@ func (c *NodeClaim) ReleaseShort(n int) bool {
 	return pack > 0 && n > 0 && n < pack && c.DeclaresFullAt(n) == 0
 }
 
+// ReleaseFullAt is the pack a person's RELEASE FULL declares a bin counted at
+// n full at, or 0 for none: a strict claim and a bin short of its pack
+// (0 < n < pack), however far short. It is the other answer to RELEASE SHORT:
+// the person at the line says the cart is full when the count says it is not
+// (the count is the PLC's, and a stroke it never counted is not on it). Core
+// stamps the pack and keeps the counted number on the stamp's row, so the gap
+// is on record. A count at or above the pack is never declared.
+func (c *NodeClaim) ReleaseFullAt(n int) int {
+	pack := c.CappedPack()
+	if pack == 0 || n <= 0 || n >= pack {
+		return 0
+	}
+	return pack
+}
+
 // Ptr returns a pointer to v. It exists for the absent-means-untouched fields
 // on NodeClaimInput below, which cannot be written as &true / &1 inline.
 func Ptr[T any](v T) *T { return &v }

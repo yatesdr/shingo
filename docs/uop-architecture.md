@@ -220,8 +220,10 @@ in the bind's write. Core's lifecycle announcements never touch the hold or the 
 ## Release dispositions
 
 The operator's release and its count, capture and finalize are one commit, `engine/release_commit.go`: the
-operator station offers one release (or RELEASE SHORT where a strict claim ships short), and the release carries
-the declared count to Core (`OrderRelease.RemainingUOP`, applied by `BinManifestService.SyncOrClearForReleased`)
+operator station offers one release (or RELEASE SHORT where a strict claim ships short, which asks: RELEASE PARTIAL
+ships the count, RELEASE FULL (`declare_full`, `NodeClaim.ReleaseFullAt`) declares the claim's pack, which Core stamps
+as `release_declared_full` with the counted number on the row; a changeover's release never declares), and the
+release carries the declared count to Core (`OrderRelease.RemainingUOP`, applied by `BinManifestService.SyncOrClearForReleased`)
 or, for a capture, the paired `capture_reduction` delta from `CaptureToLineside`.
 
 ## Manifest-clearing trigger

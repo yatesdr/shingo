@@ -694,6 +694,35 @@ func TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows(t *testing.T) {
 	}
 }
 
+// TestApiOrders_ReleaseOrder_DeclareFullFlows: a produce station's RELEASE
+// FULL posts declare_full beside called_by and no disposition; the engine gets
+// the declaration with no manifest action, and a body without it declares
+// nothing.
+func TestApiOrders_ReleaseOrder_DeclareFullFlows(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		body map[string]any
+		want bool
+	}{
+		{"RELEASE FULL", map[string]any{"called_by": "SNF3", "declare_full": true}, true},
+		{"RELEASE PARTIAL", map[string]any{"called_by": "SNF3"}, false},
+	} {
+		h, router := newApiOrdersRouter(t)
+		orderID := seedOrder(t, dbOf(h), orders.TypeRetrieve, orders.StatusStaged)
+		resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", c.body, nil)
+		assertStatus(t, resp, http.StatusOK)
+		got := h.engine.(*stubEngine).lastReleaseOrderDisposition
+		if got == nil {
+			t.Fatalf("%s: expected ReleaseOrderWithLineside to have been called", c.name)
+		}
+		if got.DeclareFull != c.want || got.Mode != "" || got.CalledBy != "SNF3" {
+			t.Errorf("%s: disposition = {Mode:%q DeclareFull:%v CalledBy:%q}, want {Mode:\"\" DeclareFull:%v CalledBy:\"SNF3\"}",
+				c.name, got.Mode, got.DeclareFull, got.CalledBy, c.want)
+		}
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Submit — apiSubmitOrder
 // DB call sites: DB.GetOrder, DB.UpdateOrderStatus +

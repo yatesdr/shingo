@@ -659,7 +659,9 @@ func TestValidateNodeClaim_StrictModesRefuseFieldsTheyDoNotUse(t *testing.T) {
 // RELEASE's declaration (engine declaredFull) and the tile's label
 // (StationNodeView.ReleaseShort) read: T = max(1, floor(pack × pct / 100)); a
 // strict bin short of its pack within T declares the pack, further short
-// ships its count and reads short, and 0 is no tolerance at all.
+// ships its count and reads short, and 0 is no tolerance at all. A person's
+// RELEASE FULL (ReleaseFullAt) declares the pack for any strict bin short of
+// it, tolerance or not.
 func TestStrictPack_TheToleranceDecidesTheDeclaration(t *testing.T) {
 	t.Parallel()
 	strict := func(pack, pct int) *NodeClaim {
@@ -672,28 +674,29 @@ func TestStrictPack_TheToleranceDecidesTheDeclaration(t *testing.T) {
 		tol      int
 		declared int
 		short    bool
+		full     int // ReleaseFullAt: the pack for any strict bin short of it
 	}{
-		{"pct 0: 42 of 100 ships short", strict(100, 0), 42, 0, 0, true},
-		{"pct 0: 99 of 100 ships short", strict(100, 0), 99, 0, 0, true},
-		{"pct 5 (T 5): 95 of 100 declared", strict(100, 5), 95, 5, 100, false},
-		{"pct 5 (T 5): 94 of 100 short", strict(100, 5), 94, 5, 0, true},
-		{"pct 10 (T 10): 90 of 100 declared", strict(100, 10), 90, 10, 100, false},
-		{"pct 10 (T 10): 89 of 100 short", strict(100, 10), 89, 10, 0, true},
-		{"pack 10 at pct 5 (T 1): 9 declared", strict(10, 5), 9, 1, 10, false},
-		{"pack 10 at pct 5 (T 1): 8 short", strict(10, 5), 8, 1, 0, true},
-		{"pack 132 at pct 5 (T 6): 37 short", strict(132, 5), 37, 6, 0, true},
-		{"pack 132 at pct 10 (T 13): 37 short", strict(132, 10), 37, 13, 0, true},
-		{"pack 132 at pct 5: 113 short", strict(132, 5), 113, 6, 0, true},
-		{"pack 132 at pct 10: 113 short", strict(132, 10), 113, 13, 0, true},
-		{"pack 132 at pct 5: 124 short", strict(132, 5), 124, 6, 0, true},
-		{"pack 132 at pct 10: 124 declared", strict(132, 10), 124, 13, 132, false},
-		{"at the pack: neither", strict(132, 10), 132, 13, 0, false},
-		{"above the pack: neither", strict(132, 10), 140, 13, 0, false},
-		{"empty: neither", strict(132, 10), 0, 13, 0, false},
-		{"strict pack off: no reader", &NodeClaim{Role: protocol.ClaimRoleProduce, UOPCapacity: 132, PackTolerancePct: 10}, 124, 0, 0, false},
-		{"consume: no reader", &NodeClaim{Role: protocol.ClaimRoleConsume, StrictPack: true, UOPCapacity: 132, PackTolerancePct: 10}, 124, 0, 0, false},
-		{"no pack in the catalog: no reader", strict(0, 10), 124, 0, 0, false},
-		{"no claim", nil, 124, 0, 0, false},
+		{"pct 0: 42 of 100 ships short", strict(100, 0), 42, 0, 0, true, 100},
+		{"pct 0: 99 of 100 ships short", strict(100, 0), 99, 0, 0, true, 100},
+		{"pct 5 (T 5): 95 of 100 declared", strict(100, 5), 95, 5, 100, false, 100},
+		{"pct 5 (T 5): 94 of 100 short", strict(100, 5), 94, 5, 0, true, 100},
+		{"pct 10 (T 10): 90 of 100 declared", strict(100, 10), 90, 10, 100, false, 100},
+		{"pct 10 (T 10): 89 of 100 short", strict(100, 10), 89, 10, 0, true, 100},
+		{"pack 10 at pct 5 (T 1): 9 declared", strict(10, 5), 9, 1, 10, false, 10},
+		{"pack 10 at pct 5 (T 1): 8 short", strict(10, 5), 8, 1, 0, true, 10},
+		{"pack 132 at pct 5 (T 6): 37 short", strict(132, 5), 37, 6, 0, true, 132},
+		{"pack 132 at pct 10 (T 13): 37 short", strict(132, 10), 37, 13, 0, true, 132},
+		{"pack 132 at pct 5: 113 short", strict(132, 5), 113, 6, 0, true, 132},
+		{"pack 132 at pct 10: 113 short", strict(132, 10), 113, 13, 0, true, 132},
+		{"pack 132 at pct 5: 124 short", strict(132, 5), 124, 6, 0, true, 132},
+		{"pack 132 at pct 10: 124 declared", strict(132, 10), 124, 13, 132, false, 132},
+		{"at the pack: neither", strict(132, 10), 132, 13, 0, false, 0},
+		{"above the pack: neither", strict(132, 10), 140, 13, 0, false, 0},
+		{"empty: neither", strict(132, 10), 0, 13, 0, false, 0},
+		{"strict pack off: no reader", &NodeClaim{Role: protocol.ClaimRoleProduce, UOPCapacity: 132, PackTolerancePct: 10}, 124, 0, 0, false, 0},
+		{"consume: no reader", &NodeClaim{Role: protocol.ClaimRoleConsume, StrictPack: true, UOPCapacity: 132, PackTolerancePct: 10}, 124, 0, 0, false, 0},
+		{"no pack in the catalog: no reader", strict(0, 10), 124, 0, 0, false, 0},
+		{"no claim", nil, 124, 0, 0, false, 0},
 	} {
 		if got := c.claim.PackTolerance(); got != c.tol {
 			t.Errorf("%s: PackTolerance = %d, want %d", c.name, got, c.tol)
@@ -703,6 +706,9 @@ func TestStrictPack_TheToleranceDecidesTheDeclaration(t *testing.T) {
 		}
 		if got := c.claim.ReleaseShort(c.n); got != c.short {
 			t.Errorf("%s: ReleaseShort(%d) = %v, want %v", c.name, c.n, got, c.short)
+		}
+		if got := c.claim.ReleaseFullAt(c.n); got != c.full {
+			t.Errorf("%s: ReleaseFullAt(%d) = %d, want %d", c.name, c.n, got, c.full)
 		}
 	}
 }

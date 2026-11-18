@@ -352,7 +352,9 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 // partial_count, partial_count_suggested) so Core can record any divergence
 // between the operator's submission and the system-suggested baseline.
 func buildReleaseDisposition(req releaseRequest) engine.ReleaseDisposition {
-	return releaseDispositionForMode(req)
+	disp := releaseDispositionForMode(req)
+	disp.DeclareFull = req.DeclareFull
+	return disp
 }
 
 func releaseDispositionForMode(req releaseRequest) engine.ReleaseDisposition {
