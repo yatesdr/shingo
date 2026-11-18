@@ -86,8 +86,11 @@ type floorSubmit struct {
 //     submit goes back to step 2;
 //  6. the payloads hook (payloadsWritten).
 //
-// The returned payload is the stored row; repeat is true when nothing was
-// written.
+// The returned payload is the row as written, its id set (its timestamps are
+// not read back), or on a repeat the stored row; repeat is true when nothing
+// was written. Pinned by TestPayloadService_FloorCreate_OneCommit,
+// TestPayloadService_FloorCreate_Refusals and
+// TestPayloadService_FloorCreate_ConcurrentSubmitIsARepeat.
 func (s *PayloadService) CreateFromFloor(station string, req protocol.PartCreateRequest) (*payloads.Payload, bool, error) {
 	p := &payloads.Payload{Code: req.PartNumber, UOPCapacity: req.StandardPack,
 		ToteLayers: req.ToteLayers, UOPPerTote: req.UOPPerTote}
