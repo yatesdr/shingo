@@ -1481,6 +1481,9 @@ from Core's. The Edge merges it per field and re-sends what it owns that Core is
 
 Sent on `edge.ask`: a question that wants an answer — a kind (`AskKinds`, `protocol/ask.go`) and that kind's
 request body (`protocol/door_bodies.go`; `loader.retrieve`'s `LoaderRetrieveRequest` is in `protocol/ask.go`).
+`part.create` carries `PartCreateRequest`, a part made new at a station's changeover picker, and is answered with
+`PartCreateResponse`: the asking process's id, the part's catalog row (`CatalogPayloadInfo`) and its carrier rows
+(`PayloadBinTypeInfo`), which the edge writes with no memory of the ask.
 An edge sends a kind only while Core's last heartbeat ack named it (`asks`). The ask rides the edge outbox and
 expires after `AskTTL` (25 s); Core answers it with `edge.answer` (a reply carrying the ask's envelope ID as
 `cor`), and answers one that arrives expired with status 408 (`AnswerExpired`) and does nothing.

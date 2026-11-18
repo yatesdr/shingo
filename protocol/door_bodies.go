@@ -373,3 +373,30 @@ type HeldPartial struct {
 	// HeldSince is when it entered its home, RFC 3339.
 	HeldSince string `json:"held_since"`
 }
+
+// PartCreateRequest is the part.create ask's body (AskPartCreate): a part Core
+// does not have, submitted at a station's changeover picker. ProcessID is the
+// asking Edge's own process id, which Core records and echoes in the answer so
+// the Edge applies it with no memory of the ask. BinTypeCode names one of
+// Core's carrier types by code; Core resolves it. CATID, ToteLayers and
+// UOPPerTote are optional: blank and nil are not given.
+type PartCreateRequest struct {
+	ProcessID    int64  `json:"process_id"`
+	PartNumber   string `json:"part_number"`
+	StandardPack int    `json:"standard_pack"`
+	BinTypeCode  string `json:"bin_type_code"`
+	CATID        string `json:"catid,omitempty"`
+	ToteLayers   *int   `json:"tote_layers,omitempty"`
+	UOPPerTote   *int   `json:"uop_per_tote,omitempty"`
+}
+
+// PartCreateResponse is what applying a yes needs: the asking process, the
+// part's catalog row as the catalog feed builds it, and its carrier rows as the
+// node list carries them. Repeat is true when this station and process had
+// already made the part with the same fields, and nothing was written.
+type PartCreateResponse struct {
+	ProcessID int64                `json:"process_id"`
+	Payload   CatalogPayloadInfo   `json:"payload"`
+	BinTypes  []PayloadBinTypeInfo `json:"bin_types"`
+	Repeat    bool                 `json:"repeat,omitempty"`
+}

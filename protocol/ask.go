@@ -69,12 +69,17 @@ const (
 	// plan.LoaderWindows) and authors the orders. Born on the ask: no HTTP door
 	// ever answered it.
 	AskLoaderRetrieve = "loader.retrieve" // LoaderRetrieveRequest → LoaderRetrieveResponse
+	// AskPartCreate: a part Core does not have, made at a station's changeover
+	// picker; Core creates it through the checks every create runs and answers
+	// with its catalog row and carrier rows. Born on the ask: no HTTP door ever
+	// answered it.
+	AskPartCreate = "part.create" // PartCreateRequest → PartCreateResponse
 )
 
 // AskKinds is every kind Core answers, in a fixed order.
 func AskKinds() []string {
 	return []string{AskBinLoad, AskBinCount, AskBinClear, AskQualityHold, AskClearHome,
-		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat, AskLoaderRetrieve}
+		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat, AskLoaderRetrieve, AskPartCreate}
 }
 
 // EdgeAsk is one question. Body is the kind's request, encoded.
