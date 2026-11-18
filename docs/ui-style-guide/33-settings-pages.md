@@ -1,6 +1,6 @@
 ## Settings pages
 
-Verified against: c609d9a3
+Verified against: 0378a217
 
 A settings page is the shape of the Edge Processes page's Settings tab,
 shared so the Core and Edge Configuration pages are built from it too. The

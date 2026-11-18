@@ -1,6 +1,6 @@
 # Deploy artifacts
 
-Verified against: c609d9a3
+Verified against: 0378a217
 
 Files installed onto a plant core box.
 
