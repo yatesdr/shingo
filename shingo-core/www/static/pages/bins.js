@@ -1340,6 +1340,11 @@ function toggleBinTypesAccordion() {
   if (el) el.classList.toggle('open');
 }
 
+// A family keys Save answers with /bins#bt-accordion
+// (handleBinTypeFamilyKeys): open the table the Save was made from, so the
+// saved keys are in view.
+if (location.hash === '#bt-accordion') toggleBinTypesAccordion();
+
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
 // on document.body. Multiple event types share the same handler

@@ -162,11 +162,18 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	binTypesJSON, _ := json.Marshal(binTypes)
 	payloadBinTypesJSON, _ := json.Marshal(payloadBinTypeIDs)
 
+	// The Bin Types table: each type's family keys from the one families read,
+	// the pickers' options from the one scene_points read (bins_family_keys.go).
+	familyCodes, familyKeys := h.carrierFamilies()
+	sceneKeys := h.readSceneKeys()
+
 	data := map[string]any{
 		"Page":                "bins",
 		"Bins":                rows,
 		"BinTypes":            binTypes,
-		"CarrierFamilies":     h.carrierFamilyCodes(),
+		"BinTypeRows":         binTypeRows(binTypes, familyKeys, sceneKeys),
+		"KeyScene":            sceneKeys,
+		"CarrierFamilies":     familyCodes,
 		"Payloads":            payloads,
 		"BinHasNotes":         binHasNotes,
 		"NodesJSON":           template.JS(nodesJSON),
@@ -554,17 +561,21 @@ func (h *Handlers) apiBinsByNode(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, bins)
 }
 
-// carrierFamilyCodes is the Bin Types form's picker. A failed read leaves it empty, and the box
-// still takes a typed code.
-func (h *Handlers) carrierFamilyCodes() []string {
+// carrierFamilies is the page's one read of the carrier families: their codes
+// for the Bin Types form's Family list, and each family's keys by id for the
+// table's key pickers. A failed read leaves both empty: the box still takes a
+// typed code, and no row offers a key to save (binTypeRows).
+func (h *Handlers) carrierFamilies() ([]string, map[int64]pageFamilyKeys) {
 	families, err := h.engine.BinService().ListCarrierFamilies()
 	if err != nil {
 		log.Printf("bins: list carrier families: %v", err)
-		return nil
+		return nil, nil
 	}
-	out := make([]string, 0, len(families))
+	codes := make([]string, 0, len(families))
+	keys := make(map[int64]pageFamilyKeys, len(families))
 	for _, f := range families {
-		out = append(out, f.Code)
+		codes = append(codes, f.Code)
+		keys[f.ID] = pageFamilyKeys{lift: f.LiftBinTask, wait: f.WaitBinTask}
 	}
-	return out
+	return codes, keys
 }

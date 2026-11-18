@@ -12,11 +12,15 @@
       Bin Types <span class="text-muted">({{len .BinTypes}})</span>
     </button>
     <div class="accordion-body">
-      <div class="mb-1 text-right">
+      <div class="flex flex-between mb-1">
+        {{/* Where the RDS keys come from, and how fresh (bins_family_keys.go). */}}
+        <span class="form-hint">{{with .KeyScene}}{{if .Err}}The scene copy could not be read, so no RDS key from it is offered.
+          {{else if .SyncedAt.IsZero}}Core has no copy of the RDS scene yet, so no RDS key from it is offered.
+          {{else}}RDS keys from Core's copy of the RDS scene, synced {{formatTime .SyncedAt}}.{{end}}{{end}}</span>
         <button class="btn btn-primary btn-sm" data-action="openCreateBTModal">+ Bin Type</button>
       </div>
       {{if .BinTypes}}
-      <table>
+      <table class="bt-table">
         <thead>
           <tr>
             <th>ID</th>
@@ -25,11 +29,12 @@
             <th>Family</th>
             <th>Dimensions (in, W x L x H)</th>
             <th>Empty carrier robots</th>
+            <th>RDS keys</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {{range .BinTypes}}
+          {{range .BinTypeRows}}
           <tr>
             <td>{{.ID}}</td>
             <td><code>{{.Code}}</code>{{if .Bare}} <span class="badge badge-empty badge-sm" title="Bare bin type: holds no container, never handed out as an empty">bare</span>{{end}}</td>
@@ -37,6 +42,21 @@
             <td><code>{{.FamilyCode}}</code></td>
             <td>{{if .WidthIn}}{{.WidthIn}} x {{.LengthIn}}{{if .HeightIn}} x {{.HeightIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>{{if .RequiredRobotGroup}}<code>{{.RequiredRobotGroup}}</code>{{else}}<span class="text-muted">Any robot</span>{{end}}</td>
+            {{/* The family's keys: a Save sets every type of the family, and the
+                 line under it names them (bins_family_keys.go). */}}
+            <td>
+              {{if .Lift}}
+              <form method="POST" action="/bin-types/family-keys" class="bt-keys">
+                <input type="hidden" name="family_id" value="{{.FamilyID}}">
+                <label for="bt-lift-{{.ID}}">Lift</label>
+                <select name="lift_bintask" id="bt-lift-{{.ID}}">{{range .Lift}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+                <label for="bt-wait-{{.ID}}">Wait</label>
+                <select name="wait_bintask" id="bt-wait-{{.ID}}">{{range .Wait}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+                <button type="submit" class="btn btn-sm">Save</button>
+              </form>
+              <div class="form-hint">Saves for family <code>{{.FamilyCode}}</code>{{with .FamilyOthers}}, also {{range $i, $c := .}}{{if $i}}, {{end}}<code>{{$c}}</code>{{end}}{{end}}</div>
+              {{else}}<span class="text-muted">Family keys not read</span>{{end}}
+            </td>
             <td>
               <button class="btn btn-sm" data-action="openEditBTModal"
                 data-id="{{.ID}}"

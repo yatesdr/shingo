@@ -607,6 +607,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Post("/bin-types/create", h.handleBinTypeCreate)
 			r.Post("/bin-types/update", h.handleBinTypeUpdate)
 			r.Post("/bin-types/delete", h.handleBinTypeDelete)
+			r.Post("/bin-types/family-keys", h.handleBinTypeFamilyKeys)
 			r.Post("/bins/create", h.handleBinCreate)
 			r.Post("/bins/retire", h.handleBinRetire)
 		})

@@ -803,8 +803,16 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Bin content state dots */
 .bin-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
-/* Labels and payload codes read as one token: a hyphen is not a line break. */
+/* Labels, payload codes and type codes read as one token: a hyphen is not a
+   line break. */
 #bin-table td code { white-space: nowrap; }
+.bt-table td code { white-space: nowrap; }
+/* The Bin Types table's RDS keys (bins_family_keys.go): each picker beside its
+   label, one Save for both, the family line under them. */
+.bt-keys { display:grid; grid-template-columns:auto auto auto; justify-content:start; gap:0.25rem 0.5rem; align-items:center; }
+.bt-keys label { margin:0; font-weight:400; color:var(--text-muted); }
+.bt-keys select { width:auto; max-width:18rem; padding:0.2rem 0.4rem; font-size:0.82rem; }
+.bt-keys button { grid-column:3; grid-row:1 / span 2; }
 .bin-dot-loaded { background:#22c55e; }
 .bin-dot-unconfirmed { background:#f97316; }
 .bin-dot-depleted { background:var(--danger); }
