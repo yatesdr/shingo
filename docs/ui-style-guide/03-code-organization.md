@@ -1,6 +1,6 @@
 ## Code organization
 
-Verified against: bc632a9e
+Verified against: f6adca67
 
 ### The shared module
 

@@ -1,6 +1,6 @@
 ## Mission detail — stages
 
-Verified against: bc632a9e
+Verified against: f6adca67
 
 **Mission detail shows an order's life as stages.** The source is
 `order_history`, with one row per status span (stage, where, started, took,

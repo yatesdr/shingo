@@ -1,6 +1,6 @@
 ## Glyphs: slots, bins and streams
 
-Verified against: bc632a9e
+Verified against: f6adca67
 
 **A glyph is a picture of the press, not an icon.** Icons are monochrome
 affordances that take `currentColor` and live in the Lucide sprite (see

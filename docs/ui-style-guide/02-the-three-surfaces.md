@@ -1,6 +1,6 @@
 ## The three surfaces
 
-Verified against: bc632a9e
+Verified against: f6adca67
 
 | Surface | Path | Audience | Loading model |
 |---|---|---|---|

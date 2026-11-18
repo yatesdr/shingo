@@ -1,6 +1,6 @@
 ## The Nodes page — tiles, groups, sections
 
-Verified against: bc632a9e
+Verified against: f6adca67
 
 ### Node tile
 

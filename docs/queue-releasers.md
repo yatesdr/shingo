@@ -1,6 +1,6 @@
 # Queue releasers
 
-Verified against: bc632a9e
+Verified against: f6adca67
 
 Why an order is waiting, and what will end it. A queued order is one instance
 of a **machine-owned wait**, and every such wait has to declare how it ends.
