@@ -106,9 +106,11 @@ the manifest, the count and the location.
 
 ### Clear partials
 
-A dedicated loader keeps partly used bins in its buffer spots (`home_kind` `buffer`). When a home holds a stocked
-bin of its part that is not a partial and a buffer spot of the same loader holds a stocked bin of that part, the
-board's Bring partials home section has a card for the home, "Take the full bin off · partial on <spot> comes here"
+A dedicated loader keeps partly used bins in its buffer spots (`home_kind` `buffer`). A partial is a bin of a part
+with a count above 0 and below the part's capacity (`Bin.Partial`, the bins feed's `partial`); at or over the capacity
+it is a full, which the buffer strip draws as "F" and no clear brings home. When a home holds a stocked bin of its
+part that is not a partial and a buffer spot of the same loader holds a partial of that part, the board's Bring
+partials home section has a card for the home, "Take the full bin off · partial on <spot> comes here"
 (the Edge stamps the spot on the home's tile, `bufferPartialFor`). The driver takes the full bin off and taps BIN IS
 OFF · CONFIRM; the tap is Core's home clear (the `clear_home` ask, `Engine.ClearLoaderHome`), which marks the cart
 empty, sends it away and brings the partial home. A home holding a partial gets the card too ("Take the partial bin

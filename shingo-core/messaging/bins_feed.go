@@ -593,7 +593,7 @@ func binRow(name string, b *bins.Bin) protocol.NodeBinsRow {
 		count := b.UOPRemaining
 		row.DisplayUOP = &count
 	}
-	row.Partial = row.Stocked && b.UOPRemaining < row.UOPCapacity
+	row.Partial = b.Partial()
 	if b.HeldSince != nil {
 		row.HeldSince = b.HeldSince.UTC().Format(time.RFC3339)
 		row.HeldUOP = b.UOPRemaining

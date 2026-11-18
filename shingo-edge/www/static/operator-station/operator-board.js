@@ -310,14 +310,15 @@ function buildPresses(p, layout, open, acts) {
 }
 
 // buildStrip draws the buffer's spots in the plant's order: a numbered outline
-// a partial, a filled box an empty bin, a filled box with an outline one
-// coming (a clear is moving an empty there), a dashed box open, "?" a spot
-// the board cannot place.
+// a partial, "F" a full, a filled box an empty bin, a filled box with an
+// outline one coming (a clear is moving an empty there), a dashed box open,
+// "?" a spot the board cannot place.
 function buildStrip(z) {
     const strip = el('span', { className: 'os-pc-strip' });
     z.strip.forEach(function (s) {
         const box = el('span', { className: 'os-pc-spot-box os-pc-spot-box--' + s.state });
         if (s.state === 'partial') box.textContent = String(s.number);
+        else if (s.state === 'full') box.textContent = 'F';
         else if (s.state === 'unknown') box.textContent = '?';
         strip.appendChild(box);
     });

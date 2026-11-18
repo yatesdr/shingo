@@ -158,9 +158,10 @@ func homesView(orders ...domain.Order) *domain.OperatorStationView {
 }
 
 // TestStampBins_BufferStrip: each spot's state from its row, in the plant's
-// order, on every tile of the loader; a home's clear in flight makes its spot
-// an empty; a bins read that failed leaves every spot unknown and stamps no
-// bin and no partial.
+// order, on every tile of the loader; a bin at or over its part's capacity is
+// a full, not a partial, and no home names it; a home's clear in flight makes
+// its spot an empty; a bins read that failed leaves every spot unknown and
+// stamps no bin and no partial.
 func TestStampBins_BufferStrip(t *testing.T) {
 	db, _ := countingDB(t)
 	svc, _, _ := binsPlant(t, db)
@@ -174,7 +175,7 @@ func TestStampBins_BufferStrip(t *testing.T) {
 		wantPartly string
 	}{
 		{name: "a partial of the home's part and an open spot",
-			f1:        &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4},
+			f1:        &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4, UOPCapacity: 10},
 			read:      true,
 			wantStrip: `[{"node":"F1","state":"partial"},{"node":"F2","state":"open"}]`, wantPartly: `{"node":"F1"}`},
 		{name: "an emptied bin, and a part at a count of 0",
@@ -184,11 +185,16 @@ func TestStampBins_BufferStrip(t *testing.T) {
 			wantStrip: `[{"node":"F1","state":"empty"},{"node":"F2","state":"unknown"}]`, wantPartly: `null`},
 		{name: "a count with no part, and a partial of another part",
 			f1:        &protocol.NodeBinInfo{Occupied: true, UOPRemaining: 3},
-			f2:        &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-B", UOPRemaining: 3},
+			f2:        &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-B", UOPRemaining: 3, UOPCapacity: 10},
 			read:      true,
 			wantStrip: `[{"node":"F1","state":"unknown"},{"node":"F2","state":"partial"}]`, wantPartly: `null`},
+		{name: "a full of the home's part at its capacity, and one over it",
+			f1:        &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-A", UOPRemaining: 10, UOPCapacity: 10},
+			f2:        &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-A", UOPRemaining: 16, UOPCapacity: 10},
+			read:      true,
+			wantStrip: `[{"node":"F1","state":"full"},{"node":"F2","state":"full"}]`, wantPartly: `null`},
 		{name: "the home's clear in flight to F2",
-			f2:   &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4},
+			f2:   &protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4, UOPCapacity: 10},
 			read: true,
 			orders: []domain.Order{{ID: 1, OrderType: protocol.OrderTypeMove, Status: protocol.StatusQueued,
 				SourceNode: "H1", DeliveryNode: "F2"}},
@@ -241,7 +247,7 @@ func TestStampBins_ClearPartialsOff(t *testing.T) {
 	rows := httpBins(map[string]protocol.NodeBinInfo{
 		"H1": {NodeName: "H1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 30},
 		"H2": {NodeName: "H2"},
-		"F1": {NodeName: "F1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4},
+		"F1": {NodeName: "F1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4, UOPCapacity: 100},
 		"F2": {NodeName: "F2"},
 	})
 	homes := func(opts ...domain.LoaderOption) *domain.Loader {
@@ -272,7 +278,7 @@ func TestStampBins_ClearPartialsOff(t *testing.T) {
 	partial := httpBins(map[string]protocol.NodeBinInfo{
 		"H1": {NodeName: "H1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 30, UOPCapacity: 100},
 		"H2": {NodeName: "H2"},
-		"F1": {NodeName: "F1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4},
+		"F1": {NodeName: "F1", Occupied: true, PayloadCode: "PART-A", UOPRemaining: 4, UOPCapacity: 100},
 		"F2": {NodeName: "F2"},
 	})
 	v := homesView()

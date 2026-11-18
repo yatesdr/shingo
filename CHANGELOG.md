@@ -22,6 +22,8 @@ Deploy: no migration. Edge and Core, in either order.
 - RELEASE FULL sends the cart as full: Core books it at the pack and keeps the counted number beside it in the cart's count history
 - A changeover's release never offers RELEASE FULL; it always sends the real count
 - Core no longer runs one last sourcing check after it has stopped
+- A bin at or over its part's capacity on a buffer spot is a full: Bring partials home no longer offers it
+- The buffer strip draws a full as "F" and counts it apart from the partials
 
 ## v0.13.1 — 2026-11-18
 

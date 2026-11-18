@@ -461,6 +461,10 @@ eq([NOBIN, FULLBIN('PART-A'), Object.assign(FULLBIN('PART-A'), { partial: true }
     z = P(spots(['partial', 'unknown', 'partial']), 'SMN_B1');
     eq([z.tone, z.stripWords, z.strip.map(s => s.number)], ['red', '2 partials · 0 empty · 0 open · 1 ?', [1, 0, 2]],
         'an unknown spot is neither open nor empty: "?" in the words; partials numbered in the plant\'s order');
+    z = P(spots(['full', 'partial', 'open']), 'SMN_B2');
+    eq([z.tone, z.stripWords, z.strip.map(s => [s.state, s.number])],
+        ['amber', '1 partial · 0 empty · 1 open · 1 full', [['full', 0], ['partial', 1], ['open', 0]]],
+        'a full on a buffer spot (at or over the capacity of its part) is not a partial: unnumbered, counted on its own');
     z = P(spots(['unknown', 'unknown', 'unknown']), '');
     eq([z.tone, z.folded, z.stripWords], ['plain', true, '0 partials · 0 empty · 0 open · 3 ?'],
         'a failed bins read: every spot "?", the section keeps its title (it never vanishes)');

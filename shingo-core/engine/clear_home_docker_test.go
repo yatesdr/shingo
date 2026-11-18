@@ -296,6 +296,33 @@ func TestClearHome_SpotArm(t *testing.T) {
 	}
 }
 
+// TestClearHome_AFullOnTheBufferIsNotBroughtHome: a bin on a buffer spot at
+// or over its part's capacity is a full, not a partial. The home's clear finds
+// no partial to bring home and refuses before anything is written: no parent,
+// and the carrier on the home keeps its count. SPR 2026-11-18: 480 of a
+// 300-capacity part on SMN_0013 was offered as the partial to bring home.
+func TestClearHome_AFullOnTheBufferIsNotBroughtHome(t *testing.T) {
+	for _, uop := range []int{10, 12} {
+		t.Run(fmt.Sprintf("uop %d of 10", uop), func(t *testing.T) {
+			r := newClearRig(t, fmt.Sprintf("cfb%d", uop), true)
+			_, err := r.db.DB.Exec(`UPDATE bins SET uop_remaining=$1 WHERE id=$2`, uop, r.p.ID)
+			testutil.MustNoErr(t, err, "P to a full")
+			ans := r.tap(t)
+			if ans.Status != http.StatusBadRequest || !strings.Contains(ans.Body.Error, "no buffer spot holds a partial") {
+				t.Fatalf("tap: %d %+v, want 400 no buffer spot holds a partial", ans.Status, ans.Body)
+			}
+			if p := r.parent(t); p != nil {
+				t.Errorf("a refused clear wrote parent %d", p.ID)
+			}
+			e, err := r.db.GetBin(r.e.ID)
+			testutil.MustNoErr(t, err, "reload E")
+			if e.PayloadCode != r.part || e.UOPRemaining != 10 {
+				t.Errorf("E after a refused clear: payload=%q uop=%d, want %s 10", e.PayloadCode, e.UOPRemaining, r.part)
+			}
+		})
+	}
+}
+
 // TestClearHome_DemandArm_DryPull: a pull for another node queued dry (no
 // empty anywhere it can see) takes the home's carrier through its own finder
 // once the clear makes it sourceable; no empty's move is born. The pull's lift

@@ -399,11 +399,13 @@ func bufferStrip(l *domain.Loader, tiles []domain.StationNodeView, rows map[stri
 //     no payload" is unknown, but that is exactly what a clear leaves (Core
 //     empties a carrier to a blank part and a count of 0, emptiedCarrierSET),
 //     so read literally no spot could ever be empty; this reading was ruled;
-//   - partial: a part, stocked;
+//   - partial: a part, stocked, below its capacity (Core's Partial);
+//   - full: a part, stocked, at or over its capacity, or with none: anything
+//     over the part's UOP is a full;
 //   - unknown: a part that is not stocked, a stocked bin with no part, or a
 //     spot not read (bufferStrip).
 //
-// The wire carries these four states only. A spot a home's clear is in flight
+// The wire carries these five states only. A spot a home's clear is in flight
 // to is stamped empty (bufferStrip); the glass draws it as coming from the
 // home's orders, where that move stands. Pinned by
 // TestStampBins_BufferStrip.
@@ -413,8 +415,10 @@ func spotState(row BoardBin) string {
 		return domain.SpotOpen
 	case row.PayloadCode == "" && !row.Stocked:
 		return domain.SpotEmpty
-	case row.PayloadCode != "" && row.Stocked:
+	case row.PayloadCode != "" && row.Partial:
 		return domain.SpotPartial
+	case row.PayloadCode != "" && row.Stocked:
+		return domain.SpotFull
 	default:
 		return domain.SpotUnknown
 	}
@@ -422,8 +426,10 @@ func spotState(row BoardBin) string {
 
 // bufferPartialFor is the spot whose partial a clear of the home at node would
 // bring home: the home holds a stocked bin of its own part, full or partial,
-// and the first buffer spot in the plant's order holds a stocked bin of the
-// same part. Nil when node is not a home, no spot qualifies, or the loader's
+// and the first buffer spot in the plant's order holds a partial of the same
+// part (Core's Partial: below the part's capacity). A full on a buffer spot is
+// not one; it goes out oldest first from where it stands. Nil when node is not
+// a home, no spot qualifies, or the loader's
 // Clear partials is off (Loader.NoClearPartials): its board never asks for the
 // clear. Pinned by TestStampBins_ClearPartialsOff.
 func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *domain.BufferPartial {
@@ -442,7 +448,7 @@ func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *
 		if !pos.IsBuffer() || spot == node {
 			continue
 		}
-		if row, ok := rows[spot]; ok && row.Occupied && row.PayloadCode == home.PayloadCode && row.Stocked {
+		if row, ok := rows[spot]; ok && row.Occupied && row.PayloadCode == home.PayloadCode && row.Partial {
 			return &domain.BufferPartial{Node: spot}
 		}
 	}

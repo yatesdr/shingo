@@ -136,7 +136,7 @@ type binsRig struct {
 var binsRigRows = map[string]protocol.NodeBinInfo{
 	"SMN_H1": {NodeName: "SMN_H1", BinID: 1, BinLabel: "BIN-1", BinTypeCode: "KD-1", PayloadCode: "PART-A", UOPRemaining: 12, Occupied: true},
 	"SMN_H2": {NodeName: "SMN_H2", BinID: 2, BinLabel: "BIN-2", BinTypeCode: "KD-1", Occupied: true},
-	"SMN_F1": {NodeName: "SMN_F1", BinID: 3, BinLabel: "BIN-3", BinTypeCode: "KD-1", PayloadCode: "PART-A", UOPRemaining: 5, Occupied: true},
+	"SMN_F1": {NodeName: "SMN_F1", BinID: 3, BinLabel: "BIN-3", BinTypeCode: "KD-1", PayloadCode: "PART-A", UOPRemaining: 5, UOPCapacity: 10, Occupied: true},
 	"ULN_1":  {NodeName: "ULN_1", BinID: 4, BinLabel: "CART-4", BinTypeCode: "TOTE-1", PayloadCode: "PART-C", UOPRemaining: 40, Occupied: true},
 	"E1":     {NodeName: "E1", BinID: 5, BinLabel: "CART-5", BinTypeCode: "TOTE-1", Occupied: true},
 	"E2":     {NodeName: "E2", BinID: 6, BinLabel: "CART-6", BinTypeCode: "TOTE-1", Occupied: true},
@@ -569,7 +569,7 @@ func TestStationView_BinsFromTheCopyOnly(t *testing.T) {
 	}
 
 	snap := protocol.NodeBinsSnapshot{Rows: []protocol.NodeBinsRow{
-		{Node: "SMN_F1", Occupied: true, BinID: 3, BinLabel: "BIN-3", BinTypeCode: "KD-1", PayloadCode: "PART-A", Stocked: true},
+		{Node: "SMN_F1", Occupied: true, BinID: 3, BinLabel: "BIN-3", BinTypeCode: "KD-1", PayloadCode: "PART-A", Stocked: true, Partial: true, UOPCapacity: 10},
 		{Node: "SMN_F2"},
 		{Node: "SMN_H1", Occupied: true, BinID: 1, BinLabel: "BIN-1", BinTypeCode: "KD-1", PayloadCode: "PART-A", Stocked: true},
 		{Node: "SMN_H2", Occupied: true, BinID: 2, BinLabel: "BIN-2", BinTypeCode: "KD-1"},

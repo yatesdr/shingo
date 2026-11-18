@@ -213,8 +213,8 @@ type StationNodeView struct {
 	ContainmentFlagged bool `json:"containment_flagged,omitempty"`
 	// BufferPartial names the buffer spot a clear of this home would bring
 	// home: set on a dedicated home holding a stocked bin of its part when a
-	// spot of its loader's buffer holds a stocked bin of the same part, the
-	// first such spot in the plant's order. The board draws its Clear partials
+	// spot of its loader's buffer holds a partial of the same part (below its
+	// capacity), the first such spot in the plant's order. The board draws its Clear partials
 	// card from it, naming that spot. Stamped by
 	// StationService.StampBins; pinned by
 	// TestStationView_BinsStampedFromTheCopy (www).
@@ -443,8 +443,13 @@ type BufferPartial struct {
 // The states of a buffer spot, as a loader's buffer strip draws them
 // (StationService.StampBins decides them).
 const (
-	// SpotPartial: a bin holding parts of a part stands there.
+	// SpotPartial: a partial stands there, a bin holding parts of a part
+	// below the part's capacity (Core's Partial).
 	SpotPartial = "partial"
+	// SpotFull: a bin holding parts of a part at or over the part's capacity
+	// stands there, or of a part with no capacity. Not a partial: no home's
+	// clear brings it home.
+	SpotFull = "full"
 	// SpotEmpty: an emptied bin stands there (occupied, no part, not
 	// stocked), or a home's clear is in flight to the spot: its emptied
 	// carrier is on the way, and the glass draws the spot as coming from the

@@ -213,6 +213,14 @@ func (b *Bin) Layers() (int, bool) { return protocol.ToteLayers(b.TotesOnCart, b
 // twin, and the bins feed's Stocked, the Edge's one reading of it, is this.
 func (b *Bin) Stocked() bool { return b.UOPRemaining > 0 }
 
+// Partial is whether the carrier is a partial of its part: it has a part, is
+// stocked, and is below the part's capacity (UOPCapacity, off the payloads
+// join). At or over the capacity it is a full; with no part or no capacity it
+// is never a partial. The bins feed's Partial is this.
+func (b *Bin) Partial() bool {
+	return b.PayloadCode != "" && b.Stocked() && b.UOPRemaining < b.UOPCapacity
+}
+
 // CarrierState is what stands on the cart (protocol.CarrierStateOf): loaded,
 // bare, tops & bottoms, leftover, unverified or empty.
 func (b *Bin) CarrierState() protocol.CarrierState {

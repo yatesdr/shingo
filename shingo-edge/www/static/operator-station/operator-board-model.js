@@ -772,18 +772,21 @@ export function bufferOf(tiles) {
 // holds a partial and no spot is empty or open ("NOW · Buffer full · clear
 // one"); amber when it holds a partial and no empty ("SOON · No empty");
 // plain, and folded, otherwise. An unknown spot is neither open nor empty; a
-// coming one counts as an empty.
+// coming one counts as an empty. A full (at or over its part's capacity) is
+// not a partial: counted on its own, it grades nothing.
 export function partialsState(spots) {
-    const n = { partial: 0, empty: 0, open: 0, unknown: 0 };
+    const n = { partial: 0, empty: 0, open: 0, full: 0, unknown: 0 };
     spots.forEach(function (s) {
         if (s.state === 'partial') n.partial++;
         else if (s.state === 'empty' || s.state === 'coming') n.empty++;
         else if (s.state === 'open') n.open++;
+        else if (s.state === 'full') n.full++;
         else n.unknown++;
     });
     let tone = 'plain';
     if (n.partial > 0 && n.empty === 0) tone = n.open === 0 ? 'red' : 'amber';
     const words = [n.partial + (n.partial === 1 ? ' partial' : ' partials'), n.empty + ' empty', n.open + ' open'];
+    if (n.full > 0) words.push(n.full + ' full');
     if (n.unknown > 0) words.push(n.unknown + ' ?');
     return { tone: tone, counts: n, words: words.join(' · ') };
 }

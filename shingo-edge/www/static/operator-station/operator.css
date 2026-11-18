@@ -1584,6 +1584,7 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-spot-box--partial { border: calc(2px * var(--os-pc-scale)) solid var(--text-strong); }
 .os-pc-zone--amber .os-pc-spot-box--partial { border-color: var(--status-faulted-ink); color: var(--status-faulted-ink); }
 .os-pc-zone--red .os-pc-spot-box--partial { border-color: var(--status-failed-ink); color: var(--status-failed-ink); }
+.os-pc-spot-box--full { border: calc(2px * var(--os-pc-scale)) solid var(--sub-2); color: var(--text-strong); }
 .os-pc-spot-box--empty { background: var(--sub-3); }
 .os-pc-spot-box--coming { background: var(--sub-3); border: calc(2px * var(--os-pc-scale)) solid var(--text-strong); }
 .os-pc-spot-box--open { border: calc(2px * var(--os-pc-scale)) dashed var(--sub-2); }
