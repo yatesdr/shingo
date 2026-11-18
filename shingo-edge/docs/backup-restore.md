@@ -1,6 +1,6 @@
 # Backup and Restore
 
-Verified against: 61ebd7ef
+Verified against: bc632a9e
 
 This document describes how ShinGo Edge backups work, how to enable automatic backups, and how to restore a failed edge machine onto replacement hardware.
 

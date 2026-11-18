@@ -1,6 +1,6 @@
 # Wall Display Platform
 
-Verified against: 61ebd7ef
+Verified against: bc632a9e
 
 > **Naming, and where the seam is.** The human-facing concept is **wall
 > displays**, so the PAGE routes are `/wall-display/{id}` and
