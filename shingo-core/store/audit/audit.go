@@ -46,6 +46,18 @@ func ListForEntity(db *sql.DB, entityType string, entityID int64) ([]*Entry, err
 	return scanEntries(rows)
 }
 
+// ListForAction returns every audit-log entry of one action on one entity
+// type, oldest first: one statement for a page that marks each entity the
+// action touched.
+func ListForAction(db *sql.DB, entityType, action string) ([]*Entry, error) {
+	rows, err := db.Query(`SELECT id, entity_type, entity_id, action, old_value, new_value, actor, created_at FROM audit_log WHERE entity_type=$1 AND action=$2 ORDER BY id`, entityType, action)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEntries(rows)
+}
+
 func scanEntries(rows *sql.Rows) ([]*Entry, error) {
 	var entries []*Entry
 	for rows.Next() {

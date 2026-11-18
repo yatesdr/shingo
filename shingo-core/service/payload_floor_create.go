@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 	"unicode"
 
 	"shingo/protocol"
@@ -187,6 +188,36 @@ func (s *PayloadService) floorRepeat(existing *payloads.Payload, submit floorSub
 		}
 	}
 	return nil, false, &PartExistsError{Code: existing.Code}
+}
+
+// FloorMade is who made a part at the floor, and when: the station, its
+// process's id, and the time the create committed (the audit row's).
+type FloorMade struct {
+	Station   string
+	ProcessID int64
+	At        time.Time
+}
+
+// FloorMade reads, for every part made at the floor, who made it and when,
+// keyed by payload id, from the audit rows its creates wrote
+// (FloorCreateAction): one statement. The payloads page shows it on the
+// part's row. A row whose record does not decode is left out.
+func (s *PayloadService) FloorMade() (map[int64]*FloorMade, error) {
+	entries, err := s.db.ListAuditByAction(store.PayloadAuditEntity, FloorCreateAction)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*FloorMade, len(entries))
+	for _, e := range entries {
+		var made floorSubmit
+		if err := json.Unmarshal([]byte(e.NewValue), &made); err != nil {
+			continue
+		}
+		if _, seen := out[e.EntityID]; !seen {
+			out[e.EntityID] = &FloorMade{Station: made.Station, ProcessID: made.ProcessID, At: e.CreatedAt}
+		}
+	}
+	return out, nil
 }
 
 // refuseNearOrTaken is steps 3 and 4: a payload whose code is code spelled

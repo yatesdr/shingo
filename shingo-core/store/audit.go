@@ -20,6 +20,12 @@ func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*audit.Entry
 	return audit.ListForEntity(db.DB, entityType, entityID)
 }
 
+// ListAuditByAction returns every audit-log entry of one action on one entity
+// type, oldest first (audit.ListForAction).
+func (db *DB) ListAuditByAction(entityType, action string) ([]*audit.Entry, error) {
+	return audit.ListForAction(db.DB, entityType, action)
+}
+
 // AddBinNote appends a typed note to a bin's audit trail.
 func (db *DB) AddBinNote(binID int64, noteType, message, actor string) error {
 	return db.AppendAudit("bin", binID, "note:"+noteType, "", message, actor)
