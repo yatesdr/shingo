@@ -1446,3 +1446,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: as `TestIsPickupBlock`'s row
 - verified at: the commit that adds this row
+
+### STALE — `TestBuildMovement_DerivesFromUOPTimesPartsPerCycle`
+- test: `TestBuildMovement_DerivesFromUOPTimesPartsPerCycle` · pkg `shingocore/material` · run `-run '^TestBuildMovement_DerivesFromUOPTimesPartsPerCycle$'` · `shingo-core/material/material_test.go:317` @ `68105255` · tags `none`
+- code: STALE
+- assertion map: the test pinned a CMS posting of a one-line template's bin as `uop_remaining × parts_per_cycle` (8 left at a ratio of 2 posted 16). The owner ruled (2026-11-18) that a bin of one part counts pieces and the line's ratio is an assembly's consume setting no reader multiplies, so the rule it pinned is retired, not lost. Its fixture moves whole to `TestBuildMovement_OnePartPostsTheBinsCount` (`shingo-core/material/material_test.go:321`), asserting the bin's count (−8/+8); a kit keeps the product and its pin, `TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart`, is unchanged.
+- mutation: a one-line template given its ratio again (`shingo-core/material/material.go` `postablePerUnit`, `len(template) == 1` → never) · survivor red at tip: `go test -count=1 -run '^TestBuildMovement_OnePartPostsTheBinsCount$' ./material/` in `shingo-core` → `material_test.go:340: deltas = -16, 16; want -8, +8 (the bin's 8 pieces, not 8 x the ratio 2)`
+- coverage Δ: not measured (no before/after profile was taken); the replacement runs the same fixture through the same function
+- citations rewritten: `docs/uop-architecture.md` names the replacement; the replacement's own comment names the retired test
+- verified at: the commit that adds this row
