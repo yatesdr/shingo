@@ -486,6 +486,12 @@ func (e *Engine) newDispatcher(emitter dispatch.Emitter, resolver *dispatch.Defa
 		d.SetTableTurner(t, e.polledRobotStatus)
 	}
 	d.SetTableTurnAlarm(e.tableTurnAlarm)
+	// The carrier families that name a binTask key (dispatch/carrier_keys.go).
+	// Unread, the set is empty and every block sends the default until the lane
+	// floor's next tick reads it.
+	if _, err := d.ReloadCarrierKeys(); err != nil {
+		e.logFn("engine: carrier keys: %v (every block sends the default key until the next read)", err)
+	}
 	return d
 }
 

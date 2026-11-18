@@ -103,6 +103,10 @@ type Dispatcher struct {
 	// production; set via SetPostBirthHook.
 	postBirthHook func(orderID int64)
 
+	// familyKeys is the carrier families that name a binTask key, by family id
+	// (carrier_keys.go); nil until the first load.
+	familyKeys atomic.Pointer[map[int64]familyKeys]
+
 	// binsRows reads Core's current bins rows for node names, for a refusal
 	// to carry (protocol.OrderError.Rows); wired by the engine
 	// (SetBinsRowsFunc). Nil reads nothing.
