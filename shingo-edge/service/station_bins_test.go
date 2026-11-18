@@ -233,7 +233,8 @@ func TestStampBins_BufferStrip(t *testing.T) {
 // holding a full of its part beside a buffer partial of the same part names no
 // buffer partial, so the board has no card to draw and the home's clear is not
 // offered; the same bins with the clear on name the spot. A home holding a
-// partial of its part names none either: its pad offers REPLACE PARTIAL.
+// partial of its part names the spot too: Bring partials home is offered on
+// every home with parts (its node modal offers REPLACE PARTIAL beside it).
 func TestStampBins_ClearPartialsOff(t *testing.T) {
 	db, _ := countingDB(t)
 	svc, _, _ := binsPlant(t, db)
@@ -276,8 +277,8 @@ func TestStampBins_ClearPartialsOff(t *testing.T) {
 	})
 	v := homesView()
 	svc.StampBins(v, partial, true, nil)
-	if got := stampJSON(t, v.Nodes[0].BufferPartial); got != `null` {
-		t.Errorf("a partial at the home: H1 buffer_partial = %s, want null", got)
+	if got := stampJSON(t, v.Nodes[0].BufferPartial); got != `{"node":"F1"}` {
+		t.Errorf("a partial at the home: H1 buffer_partial = %s, want {\"node\":\"F1\"}", got)
 	}
 }
 

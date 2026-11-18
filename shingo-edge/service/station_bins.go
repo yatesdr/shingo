@@ -421,13 +421,11 @@ func spotState(row BoardBin) string {
 }
 
 // bufferPartialFor is the spot whose partial a clear of the home at node would
-// bring home: the home holds a stocked bin of its own part that is not a
-// partial (Core's row flag), and the first buffer spot in the plant's order
-// holds a stocked bin of the same part. Nil when node is not a home, the home
-// holds a partial (its pad offers REPLACE PARTIAL instead, so the floor never
-// sees both on one spot), no spot qualifies, or the loader's Clear partials
-// is off (Loader.NoClearPartials): its board never asks for the clear.
-// Pinned by TestStampBins_ClearPartialsOff.
+// bring home: the home holds a stocked bin of its own part, full or partial,
+// and the first buffer spot in the plant's order holds a stocked bin of the
+// same part. Nil when node is not a home, no spot qualifies, or the loader's
+// Clear partials is off (Loader.NoClearPartials): its board never asks for the
+// clear. Pinned by TestStampBins_ClearPartialsOff.
 func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *domain.BufferPartial {
 	if l.NoClearPartials() {
 		return nil
@@ -436,7 +434,7 @@ func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *
 		return nil
 	}
 	home, ok := rows[node]
-	if !ok || !home.Occupied || !home.Stocked || home.Partial || home.PayloadCode == "" {
+	if !ok || !home.Occupied || !home.Stocked || home.PayloadCode == "" {
 		return nil
 	}
 	for _, pos := range l.Positions() {

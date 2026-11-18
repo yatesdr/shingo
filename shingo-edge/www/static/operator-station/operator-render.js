@@ -285,7 +285,7 @@ const boardActs = {
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit, a.cart); break;
         case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo); break;
         case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo, a.cart); break;
-        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot); break;
+        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot, a.partial); break;
         case 'modal': openModalRef(a.node); break;
         case 'request-empty': postFromBar(a, '/api/process-nodes/' + a.node + '/request-empty', {}); break;
         case 'request-full': postFromBar(a, '/api/process-nodes/' + a.node + '/request-full', { payload_code: a.payload }); break;
@@ -703,18 +703,20 @@ function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo, cartType) {
 // the tap, so the tap sends one request. Recorded, the confirm closes and the
 // sentence is the board's success toast; refused, the confirm stays and shows
 // the refusal in place of its buttons.
-function confirmClearLoaderHome(nodeID, home, spot) {
+function confirmClearLoaderHome(nodeID, home, spot, partial) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
+    // What is on the home: a full bin, or a partial (Core's row flag).
+    const held = partial ? 'partial' : 'full';
     panel.appendChild(el('div', { className: 'os-co-picker-title',
-        textContent: home ? 'Full bin off ' + home + '?' : 'Full bin off this home?' }));
+        textContent: (partial ? 'Partial' : 'Full') + ' bin off ' + (home || 'this home') + '?' }));
     // The words say the bin comes off by hand first, and that the cart then
     // leaves recorded empty (SPR SMN_029, 2026-11-17: the bin stayed on, and
     // 800 parts rode off as an empty).
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: home && spot
-            ? 'Take the full bin off the cart first. CONFIRM marks the cart empty: a robot takes it away and brings the partial from ' + spot + ' here.'
-            : 'Take the full bin off the cart first. CONFIRM marks the cart empty.' }));
+            ? 'Take the ' + held + ' bin off the cart first. CONFIRM marks the cart empty: a robot takes it away and brings the partial from ' + spot + ' here.'
+            : 'Take the ' + held + ' bin off the cart first. CONFIRM marks the cart empty.' }));
 
     const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'BIN IS OFF · CONFIRM' });
     confirm.addEventListener('click', async function() {
@@ -776,7 +778,7 @@ function openPullFullFromHomePicker() {
             style: 'font-size:17px;font-weight:600;margin-top:5px;' }));
         btn.addEventListener('click', function() {
             overlay.remove();
-            confirmClearLoaderHome(n.node.id, n.node.name, '');
+            confirmClearLoaderHome(n.node.id, n.node.name, '', !!bs.partial);
         });
         panel.appendChild(btn);
     });

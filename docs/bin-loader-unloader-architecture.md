@@ -111,8 +111,9 @@ bin of its part that is not a partial and a buffer spot of the same loader holds
 board's Bring partials home section has a card for the home, "Take the full bin off · partial on <spot> comes here"
 (the Edge stamps the spot on the home's tile, `bufferPartialFor`). The driver takes the full bin off and taps BIN IS
 OFF · CONFIRM; the tap is Core's home clear (the `clear_home` ask, `Engine.ClearLoaderHome`), which marks the cart
-empty, sends it away and brings the partial home. A home holding a partial of its part gets no card: its node modal
-offers REPLACE PARTIAL, a LOAD Core records as the partial leaving and a full arriving (`expect` `replace`).
+empty, sends it away and brings the partial home. A home holding a partial gets the card too ("Take the partial bin
+off"); under Show all it opens its node modal instead, whose REPLACE PARTIAL is a LOAD Core records as the partial
+leaving and a full arriving (`expect` `replace`).
 
 `bin_loaders.no_clear_partials` turns this off for one loader: the Clear partials switch on Core's loader settings,
 drawn for a dedicated loader with a pinned home and a buffer spot, on by default. Off, no home names a buffer

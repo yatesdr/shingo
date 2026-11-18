@@ -951,10 +951,12 @@ function loaderCards(t, ctx) {
     if (!ctx.known) return;
     if (bp && bp.node && !inFlight && bin.occupied && bin.payload_code) {
         const from = shortNode(bp.node);
+        // What is on the home, Core's row flag: a full bin or a partial.
+        const held = bin.partial ? 'partial' : 'full';
         ctx.partials.push(ctx.card(t, 'partial', [0], {
-            spotWords: 'full', headline: bin.payload_code,
-            reason: 'Take the full bin off · partial on ' + from + ' comes here', partialSpot: from,
-            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from },
+            spotWords: held, headline: bin.payload_code,
+            reason: 'Take the ' + held + ' bin off · partial on ' + from + ' comes here', partialSpot: from,
+            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from, partial: !!bin.partial },
         }));
     } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
         ctx.other('Check bin', ctx.card(t, 'check', [0], {
@@ -1257,7 +1259,10 @@ export function boardModel(view, ui) {
     cards.forEach(function (c) { byTile[c.tile].push(c); });
     const all = [];
     tiles.forEach(function (t, i) {
-        if (byTile[i].length > 0) { all.push.apply(all, byTile[i]); return; }
+        // A home holding a partial of its part opens its node modal from Show
+        // all, whatever cards it has on the board: REPLACE PARTIAL is there.
+        const replacing = ctx.known && replacePartialPart(t);
+        if (byTile[i].length > 0 && !replacing) { all.push.apply(all, byTile[i]); return; }
         const spot = spotWords(t);
         all.push(ctx.card(t, 'tile', [0], {
             spotWords: spot.words, spotCode: spot.code, headline: headlineOf(t),

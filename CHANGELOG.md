@@ -16,6 +16,11 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration; Core and Edges in either order.
+
+- Bring partials home offers a home holding a partial again, saying "Take the partial bin off"
+- Under Show all, a home holding a partial opens its menu, where REPLACE PARTIAL is
+
 ## v0.12.0 — 2026-11-18
 
 Deploy: no migration. Core first, then the Edges: an Edge on this release asking an older Core to replace a partial is told "not a carrier the door knows", and nothing is written.
