@@ -623,10 +623,10 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 // another robot without changing its state (EventOrderRobotChanged,
 // handleVendorRobotChange). The robot write tells the station: one
 // order.update naming the new robot, the status unchanged, and a version newer
-// than the station held. It flipped from TestStatusTellPin_RobotSwapTellsNobody
-// when Core began telling the station from the write: the robot write told
-// nobody, and the robot reached the station only on the order's next
-// order.update.
+// than the station held. It flipped when Core began telling the station from
+// the write; it was written as the pin that a robot swap tells nobody: the
+// robot write told nobody, and the robot reached the station only on the
+// order's next order.update.
 func TestStatusTellPin_ARobotSwapIsTold(t *testing.T) {
 	t.Parallel()
 	db, eng, sim, order, before := pinRetrieve(t, "tell-robot-swap")
@@ -701,9 +701,9 @@ func TestStatusTellPin_DeliveredIsNotToldConfirmed(t *testing.T) {
 // as an order.update with no status, no version and no robot: the ETA, the last
 // in_transit time plus the route's transit estimate, and nothing the status
 // write already told. An empty status is no status claim; the station applies
-// the ETA and keeps the status it holds. It flipped from
-// TestStatusTellPin_BootETABackfillCarriesTheRowStatus when Core began telling
-// the station from the write: the backfill carried the row's own status
+// the ETA and keeps the status it holds. It flipped when Core began telling
+// the station from the write; it was written as the pin that the backfill
+// carries the row's status: the backfill carried the row's own status
 // (staged stayed staged), which made it the only thing that ever told a station
 // of a Core-side release.
 func TestStatusTellPin_BootETABackfillCarriesTheETAOnly(t *testing.T) {

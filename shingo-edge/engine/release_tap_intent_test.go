@@ -86,7 +86,7 @@ func board(t *testing.T, h *relHarness) (swapReady bool, releaseSent map[string]
 			id, _ := o["id"].(float64)
 			v := "-"
 			if sent, ok := o["release_sent"]; ok {
-				v = strings.TrimSpace(strings.ToLower(jsonText(sent)))
+				v = strings.TrimSpace(strings.ToLower(jsonText(t, sent)))
 			}
 			releaseSent[names[int64(id)]] = v
 		}
@@ -96,8 +96,10 @@ func board(t *testing.T, h *relHarness) (swapReady bool, releaseSent map[string]
 	return false, nil
 }
 
-func jsonText(v any) string {
-	raw, _ := json.Marshal(v)
+func jsonText(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	testutil.MustNoErr(t, err, "marshal the board's release_sent")
 	return string(raw)
 }
 

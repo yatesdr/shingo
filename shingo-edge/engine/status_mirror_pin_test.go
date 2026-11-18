@@ -237,11 +237,11 @@ func TestStatusMirrorPin_ACoreSideReleaseLeavesTheRowStaged(t *testing.T) {
 // order, its history is the two rows it made, and Core's confirm is not
 // answered with a second receipt.
 //
-// Flipped from TestStatusMirrorPin_TheReconcileMovesAConfirmedRowBack when the
-// reconcile got the live path's terminal guard (ApplyCoreStatusSnapshot now
-// returns on a terminal row before any write, as ApplyCoreStatus does). Before
-// it, the delivered snapshot forced the row back to delivered and Core's
-// confirmed confirmed it again, so both events fired twice.
+// Flipped when the reconcile got the live path's terminal guard
+// (ApplyCoreStatusSnapshot now returns on a terminal row before any write, as
+// ApplyCoreStatus does). Before it, the delivered snapshot forced the row back
+// to delivered and Core's confirmed confirmed it again, so both events fired
+// twice.
 func TestStatusMirrorPin_TheReconcileLeavesAConfirmedRowConfirmed(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -309,8 +309,7 @@ func TestStatusMirrorPin_TheReconcileLeavesAConfirmedRowConfirmed(t *testing.T) 
 // (the projection's quantity and blank payload do not land), with no status
 // event and no history row beyond the abort's.
 //
-// Flipped from TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionSetACancelledRowLive
-// when the projection upsert got the live path's terminal guard
+// Flipped when the projection upsert got the live path's terminal guard
 // (UpsertProjection's conflict arm updates no row that has ended, as
 // ApplyCoreStatus moves none). Before it, the projection wrote in_transit over
 // the cancelled row and nothing an operator or a subscriber was told. It holds
