@@ -16,6 +16,20 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core first, then each Edge. When this lands, an engineer restates in pieces, on Core, the standard pack of every part whose pieces per cycle is above 1 (a full bin's pieces, not its cycles).
+
+- At a cell's changeover picker with HMI setup on, New part adds a part Core does not have: part number, standard pack, one carrier type, and an optional CATID and tote numbers; Core adds it and the picker carries on setting it up
+- Core refuses a part from the floor that its desktop form would refuse, and also a blank part number, one that differs from a part it has only by case, spaces, hyphens or underscores, a CATID another part carries, and a carrier type it does not have; the same station sending the same part again gets its first answer
+- Core's payload page says which station made a part at the floor, and when
+- Core's desktop create and edit refuse a blank part code and trim spaces from it
+- A payload saved on Core reaches every Edge on its next heartbeat instead of up to two minutes later
+- A group deleted or moved on Core no longer comes back on an Edge for up to two minutes after the Edge has fetched the new layout
+- A bin of one part counts pieces: an assembly spot whose part is used more than one a cycle draws that many each cycle, and its tile shows the cycles left; a press never reads the number
+- Produce spots of one style running the same part on one counter share each count between them; an LH/RH die's two parts count as before
+- Inventory and its export, the Bins page, CMS postings, the payload form, LOAD and the Production page show a one-part bin's count as it is, no longer multiplied by pieces per cycle; a bin of several parts is unchanged
+- The payload form labels pieces per cycle as an assembly consume setting and the standard pack as pieces in a full bin
+- A "no cart" line on the strip counts pieces
+
 ## v0.13.2 — 2026-11-18
 
 Deploy: no migration. Edge and Core, in either order.
