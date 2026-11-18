@@ -783,7 +783,7 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
 	// sequence is scoped to the simple transport path the child-cart delivery
 	// uses. Complex is "every other order kind" — byte-identical to before.
-	blocks := stepsToBlocks(vendorOrderID, preWait, 0, nil)
+	blocks := stepsToBlocks(vendorOrderID, preWait, nil, 0, nil)
 	if len(blocks) == 0 {
 		d.failOrderInternal(order, "invalid_steps", "no actionable steps before wait")
 		return nil, fmt.Errorf("no actionable blocks")

@@ -764,7 +764,7 @@ func (d *Dispatcher) appendSegment(order *orders.Order, segment []resolvedStep, 
 			return err
 		}
 	}
-	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset, nil)
+	blocks := stepsToBlocks(order.VendorOrderID, segment, nil, blockOffset, nil)
 	complete := !moreWaits
 
 	d.dbg("%s: order=%d vendor=%s wait_index=%d adding %d blocks complete=%v",

@@ -831,7 +831,7 @@ func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedSte
 	// ("F4c is scoped to the simple transport path"). Resolving it in here would
 	// have silently started expanding complex orders the moment they began using
 	// this valve.
-	blocks := stepsToBlocks(vendorOrderID, preWait, 0, loadSeq)
+	blocks := stepsToBlocks(vendorOrderID, preWait, nil, 0, loadSeq)
 
 	// The order's own priority - the depth-derived lane boost was deleted.
 	req = fleet.CreateOrderRequest{

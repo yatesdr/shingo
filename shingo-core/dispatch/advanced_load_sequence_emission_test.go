@@ -16,7 +16,7 @@ func TestStepsToBlocks_UnconfiguredByteIdentical(t *testing.T) {
 	t.Parallel()
 
 	plan := buildTransportPlan("SRC", "DST", false)
-	blocks := stepsToBlocks("v-1", plan, 0, nil)
+	blocks := stepsToBlocks("v-1", plan, nil, 0, nil)
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -43,7 +43,7 @@ func TestStepsToBlocks_ConfiguredExpandsLoadLeg(t *testing.T) {
 
 	plan := buildTransportPlan("A", "DST", false)
 	seq := &payloads.LoadSequence{TaskNames: []string{"Go_AP1", "Spin_90", "load", "Spin_inverse_90"}, LiftAt: 2}
-	blocks := stepsToBlocks("v-2", plan, 0, seq)
+	blocks := stepsToBlocks("v-2", plan, nil, 0, seq)
 	if len(blocks) != 5 {
 		t.Fatalf("want 5 blocks (4 load + 1 deliver), got %d: %+v", len(blocks), blocks)
 	}
@@ -77,7 +77,7 @@ func TestStepsToBlocks_ConfiguredSingleName(t *testing.T) {
 	t.Parallel()
 
 	plan := buildTransportPlan("A", "DST", false)
-	blocks := stepsToBlocks("v-3", plan, 0, &payloads.LoadSequence{TaskNames: []string{"load"}})
+	blocks := stepsToBlocks("v-3", plan, nil, 0, &payloads.LoadSequence{TaskNames: []string{"load"}})
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -105,7 +105,7 @@ func TestStepsToBlocks_TheSequenceRecordsItsPickupAtLiftAt(t *testing.T) {
 	}
 	seq := &payloads.LoadSequence{TaskNames: []string{"Go_AP1", "jacklift_4548", "load_after"}, LiftAt: 1}
 	got := map[string]string{}
-	for _, b := range stepsToBlocks("v-4", plan, 0, seq) {
+	for _, b := range stepsToBlocks("v-4", plan, nil, 0, seq) {
 		got[b.BlockID+" "+b.BinTask] = b.Action
 	}
 	want := map[string]string{
@@ -123,7 +123,7 @@ func TestStepsToBlocks_TheSequenceRecordsItsPickupAtLiftAt(t *testing.T) {
 			t.Errorf("block %s records %q (sent: %v), want %q", k, action, ok, a)
 		}
 	}
-	if acts := blockActions(stepsToBlocks("v-4", plan, 0, seq)); len(acts) != 5 || acts["v-4-b1-1"] != protocol.ActionPickup {
+	if acts := blockActions(stepsToBlocks("v-4", plan, nil, 0, seq)); len(acts) != 5 || acts["v-4-b1-1"] != protocol.ActionPickup {
 		t.Errorf("the record of the blocks is %v, want each block's action by its id", acts)
 	}
 }

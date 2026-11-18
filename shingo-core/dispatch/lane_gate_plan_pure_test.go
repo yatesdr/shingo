@@ -173,7 +173,7 @@ func TestSplicedPlan_BlockOffsetsContinue(t *testing.T) {
 	if !hasWait || len(preWait) != 2 {
 		t.Fatalf("preWait = %+v (hasWait=%v), want the pickup and the wait", preWait, hasWait)
 	}
-	createBlocks := stepsToBlocks("V1", preWait, 0, nil)
+	createBlocks := stepsToBlocks("V1", preWait, nil, 0, nil)
 	if len(createBlocks) != 2 {
 		t.Fatalf("create blocks = %d, want 2 — a wait WITH a node is a real block", len(createBlocks))
 	}
@@ -185,7 +185,7 @@ func TestSplicedPlan_BlockOffsetsContinue(t *testing.T) {
 	if blockOffset != 2 {
 		t.Fatalf("blockOffset = %d, want 2 (the pickup and the wait both produce blocks)", blockOffset)
 	}
-	tailBlocks := stepsToBlocks("V1", segment, blockOffset, nil)
+	tailBlocks := stepsToBlocks("V1", segment, nil, blockOffset, nil)
 	if len(tailBlocks) != 3 {
 		t.Fatalf("tail blocks = %d, want 3", len(tailBlocks))
 	}

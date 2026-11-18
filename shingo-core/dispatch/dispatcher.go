@@ -810,7 +810,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 
 	// F4c: expand the load leg into the payload's configured binTask sequence
 	// (nil for an unconfigured payload → byte-identical single JackLoad block).
-	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(payloadCode))
+	blocks := stepsToBlocks(vendorOrderID, plan, nil, 0, d.loadSequenceForPayload(payloadCode))
 	// The order's own priority, and nothing else. Core used to add a depth-derived
 	// lane boost here; that was deleted (see lane_gate.go). Lane entries are
 	// first-come-first-serve until priority is something the system plans around.
