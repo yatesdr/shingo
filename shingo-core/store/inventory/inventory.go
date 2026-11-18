@@ -41,9 +41,9 @@ type Row struct {
 
 	PayloadCode string `json:"payload_code"`
 	PartNumber  string `json:"part_number"`
-	// Qty is derived at query time as UOPRemaining x the payload template's
-	// parts_per_cycle for this part, not read off the bin manifest. Zero
-	// when the template carries no line for the part.
+	// Qty is derived at query time from UOPRemaining and the payload template's
+	// line for this part (protocol.ManifestItem's count rule), not read off the
+	// bin manifest. Zero when the template carries no line for the part.
 	Qty          int64 `json:"qty"`
 	UOPRemaining int   `json:"uop_remaining"`
 	Confirmed    bool  `json:"confirmed"`
@@ -55,13 +55,15 @@ type Row struct {
 var inventorySQL = fmt.Sprintf(`
 WITH bin_items AS (
     -- Bins with manifest items
-    -- qty is DERIVED: uop_remaining x the template's parts_per_cycle. The
+    -- qty is DERIVED from uop_remaining by protocol.ManifestItem's count rule:
+    -- a template of one line (pl.lines = 1) lists the bin's count as it
+    -- stands, and a kit's line is that count times its parts_per_cycle. The
     -- manifest line carries no count of its own — it used to, and nothing
     -- rewrote that number as the bin was drawn down, so this column reported
     -- a stale count for every partially-consumed bin.
     -- The LEFT JOIN keeps a bin listed when its template has no line for
-    -- the part; the count is then 0, which is the honest answer when there
-    -- is no ratio to count by.
+    -- the part; the count is then 0, which is the honest answer when the
+    -- template cannot count it.
     -- EITHER KEY: the line is written as 'part_number' and every bin already on
     -- a plant floor carries 'catid'. Both spellings named the same thing, and a
     -- jsonb column is not rewritten under a running plant, so reads take the
@@ -70,10 +72,14 @@ WITH bin_items AS (
            b.node_id, b.status, b.payload_code, b.uop_remaining,
            b.manifest_confirmed AS confirmed, b.claimed_by,
            COALESCE(item->>'part_number', item->>'catid') AS part_number,
-           COALESCE(b.uop_remaining * pm.parts_per_cycle, 0)::bigint AS qty
+           COALESCE(b.uop_remaining * CASE WHEN pm.id IS NULL THEN NULL
+                                           WHEN pl.lines = 1 THEN 1
+                                           ELSE pm.parts_per_cycle END, 0)::bigint AS qty
     FROM bins b
     JOIN bin_types bt ON bt.id = b.bin_type_id
     LEFT JOIN payloads p ON p.code = b.payload_code
+    LEFT JOIN (SELECT payload_id, count(*) AS lines
+               FROM payload_manifest GROUP BY payload_id) pl ON pl.payload_id = p.id
     LEFT JOIN LATERAL jsonb_array_elements(
         CASE WHEN b.manifest IS NOT NULL AND b.manifest != 'null'
              AND jsonb_typeof(b.manifest->'items') = 'array'

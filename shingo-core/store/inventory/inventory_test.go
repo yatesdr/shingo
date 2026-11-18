@@ -33,10 +33,11 @@ func TestCoverage_ListInventory(t *testing.T) {
 	nodes.Create(db.DB, nodeA)
 	nodeB := &nodes.Node{Name: "INV-NODE-B", Zone: "ZB", Enabled: true}
 	nodes.Create(db.DB, nodeB)
-	// The listing's qty is DERIVED — uop_remaining x the template's
-	// parts_per_cycle — so the fixture needs a template. Without one the
-	// manifest names parts nobody can count and every qty is 0, which is what
-	// this test asserted against before the derivation landed.
+	// The listing's qty is DERIVED from uop_remaining and the template, so the
+	// fixture needs a template. Without one the manifest names parts nobody can
+	// count and every qty is 0, which is what this test asserted against before
+	// the derivation landed. The template is a kit (two lines), and a kit's line
+	// is the count times its parts_per_cycle.
 	pay := &payloads.Payload{Code: "PAY-I", UOPCapacity: 10}
 	payloads.Create(db.DB, pay)
 	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "CAT-1", PartsPerCycle: 2}, "")
@@ -121,7 +122,12 @@ func TestCoverage_ListInventory(t *testing.T) {
 // rewrite anywhere. The stored qty this replaced could not — nothing rewrote a
 // bin's manifest as production consumed it, so a bin at 1 of 10 listed as 10.
 //
-// It also covers the other half: a manifest line the template has no ratio for
+// The template has ONE line, at 2 pieces per assembly cycle: a bin of one part
+// counts pieces, so its qty is the bin's count and the ratio is not read. It
+// listed 20 and 8 (the count x 2) until a bin of one part counted pieces; the
+// kit's product is TestCoverage_ListInventory's.
+//
+// It also covers the other half: a manifest line the template has no line for
 // reads 0 rather than dropping the bin out of the listing.
 func TestListInventory_QtyFollowsUOPNotTheManifest(t *testing.T) {
 	t.Parallel()
@@ -133,11 +139,11 @@ func TestListInventory_QtyFollowsUOPNotTheManifest(t *testing.T) {
 
 	pay := &payloads.Payload{Code: "PAY-DRAIN", UOPCapacity: 10}
 	payloads.Create(db.DB, pay)
-	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "KNOWN", PartsPerCycle: 3}, "")
+	payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: "KNOWN", PartsPerCycle: 2}, "")
 
 	b := &bins.Bin{BinTypeID: bt.ID, Label: "DRAIN-BIN", NodeID: &node.ID, Status: "available"}
 	bins.Create(db.DB, b)
-	// ORPHAN is in the carrier but not in the template — no ratio, no count.
+	// ORPHAN is in the carrier but not in the template — no line, no count.
 	bins.SetManifest(db.DB, b.ID, `{"items":[{"catid":"KNOWN"},{"catid":"ORPHAN"}]}`, "PAY-DRAIN", 10)
 
 	qtyOf := func(catID string) int64 {
@@ -155,18 +161,18 @@ func TestListInventory_QtyFollowsUOPNotTheManifest(t *testing.T) {
 		return 0
 	}
 
-	if got := qtyOf("KNOWN"); got != 30 {
-		t.Errorf("full bin KNOWN qty = %d, want 30 (10 x 3)", got)
+	if got := qtyOf("KNOWN"); got != 10 {
+		t.Errorf("full bin KNOWN qty = %d, want 10 (the bin's pieces, not 10 x its ratio 2)", got)
 	}
 	if got := qtyOf("ORPHAN"); got != 0 {
-		t.Errorf("untemplated part qty = %d, want 0 — there is no ratio to count it by", got)
+		t.Errorf("untemplated part qty = %d, want 0 — there is no template line to count it by", got)
 	}
 
 	// Production draws the bin down. Nothing touches the manifest.
 	if _, err := db.Exec(`UPDATE bins SET uop_remaining = 4 WHERE id = $1`, b.ID); err != nil {
 		t.Fatalf("draw down: %v", err)
 	}
-	if got := qtyOf("KNOWN"); got != 12 {
-		t.Errorf("drawn-down KNOWN qty = %d, want 12 (4 x 3) — the count did not follow uop_remaining", got)
+	if got := qtyOf("KNOWN"); got != 4 {
+		t.Errorf("drawn-down KNOWN qty = %d, want 4 — the count did not follow uop_remaining", got)
 	}
 }
