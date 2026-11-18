@@ -216,10 +216,11 @@ func ckHeldRetrieve(t *testing.T, d *Dispatcher, p ckPlant, uuid string) (*nodes
 }
 
 // TestCarrierKeys_ALocationTheSceneDoesNotListGetsTheDefault: the lift's sized
-// key is kept only where Core's scene copy lists it at the lift's location. A
-// copy that lists the defaults only, no row for the location, and a binTask
-// property with no value each send the default, with no error and no log line.
-// Not parallel: it reads the package logger.
+// key is kept only where Core's scene copy lists it at the lift's location, in
+// every row it holds for it. A copy that lists the defaults only, no row for
+// the location, a binTask property with no value, and a location two areas
+// hold of which one lacks the key each send the default, with no error and no
+// log line. Not parallel: it reads the package logger.
 func TestCarrierKeys_ALocationTheSceneDoesNotListGetsTheDefault(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -231,6 +232,14 @@ func TestCarrierKeys_ALocationTheSceneDoesNotListGetsTheDefault(t *testing.T) {
 		{"the copy has no row for the location", func(*testing.T, *store.DB, string) {}},
 		{"the binTask property has no value", func(t *testing.T, db *store.DB, loc string) {
 			testdb.SeedSceneBinTasks(t, db, loc)
+		}},
+		{"a second area's row lacks the key", func(t *testing.T, db *store.DB, loc string) {
+			testdb.SeedSceneBinTasks(t, db, loc, ckSized()...)
+			testdb.SeedSceneBinTasks(t, db, "CK-AREA2", testdb.DefaultSceneBinTasks()...)
+			rows, err := db.SceneLocationsNamed([]string{"CK-AREA2"})
+			testutil.MustNoErr(t, err, "read the defaults-only row")
+			rows[0].AreaName, rows[0].InstanceName = "Area-02", loc
+			testutil.MustNoErr(t, db.UpsertScenePoint(rows[0]), "the location in a second area")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -342,15 +351,20 @@ func TestCarrierKeys_AnAppendNamesItsStepByPlanPosition(t *testing.T) {
 }
 
 // TestCarrierKeys_WhatAKeyCosts measures, per order shape, the statements and
-// the fleet calls a keyed plant adds over an unkeyed one: a sealed create and a
-// complex create add the scene read (1), an append adds its carts' read and the
-// scene read (2), and no shape adds a fleet call. The unkeyed numbers are each
-// shape's cost with the builder reading nothing.
+// the fleet calls of the call that sends it, at a plant with no key and at one
+// whose families name keys. Unkeyed, a sealed create, a complex create and an
+// append cost what they cost before the carrier keys (measured at d5b9fac7:
+// 21, 60 and 6), less the sealed create's second payload read. Keyed, a create
+// adds the scene read (1) and an append its carts' read and the scene read
+// (2); a sealed create of a payload with a load sequence adds nothing (the
+// sequence names its lift, and the set-down sends the default). No shape adds
+// a fleet call.
 func TestCarrierKeys_WhatAKeyCosts(t *testing.T) {
 	t.Parallel()
 	type cost struct{ stmts, fleet int }
-	measure := func(t *testing.T, keyed bool, shape func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant,
-		backend *testdb.MockTrackingBackend, counter *store.QueryCounter)) cost {
+	// shape sets an order up and returns the call that sends it.
+	type shape func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, backend fleet.Backend) func()
+	measure := func(t *testing.T, keyed bool, sh shape) cost {
 		db, cfg := testdb.OpenWithConfig(t)
 		p := newCKPlant(t, db)
 		for _, loc := range []string{p.storage.Name, p.line.Name, "CK-STG"} {
@@ -364,52 +378,62 @@ func TestCarrierKeys_WhatAKeyCosts(t *testing.T) {
 		if keyed {
 			p.key(t, d)
 		}
-		shape(t, d, db, p, backend, counter)
-		n := counter.Count()
-		calls := len(backend.CreateRequests()) + len(backend.ReleaseCalls())
-		t.Logf("COST: keyed=%v %d statements, %d fleet calls: %s", keyed, n, calls,
+		send := sh(t, d, db, p, backend)
+		calls := func() int { return len(backend.CreateRequests()) + len(backend.ReleaseCalls()) }
+		before := calls()
+		counter.Reset()
+		send()
+		c := cost{stmts: int(counter.Count()), fleet: calls() - before}
+		t.Logf("COST: keyed=%v %d statements, %d fleet calls: %s", keyed, c.stmts, c.fleet,
 			testutil.StatementBreakdown(counter.Statements()))
-		return cost{stmts: int(n), fleet: calls}
+		return c
+	}
+	sealed := func(uuid string) shape {
+		return func(t *testing.T, d *Dispatcher, _ *store.DB, p ckPlant, _ fleet.Backend) func() {
+			src, dst, o := ckHeldRetrieve(t, d, p, uuid)
+			return func() {
+				_, err := d.DispatchDirect(o, src, dst)
+				testutil.MustNoErr(t, err, "dispatch")
+			}
+		}
 	}
 	for _, tc := range []struct {
-		name  string
-		added int
-		shape func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, backend *testdb.MockTrackingBackend,
-			counter *store.QueryCounter)
+		name           string
+		unkeyed, added int
+		sh             shape
 	}{
-		{"a sealed create", 1, func(t *testing.T, d *Dispatcher, _ *store.DB, p ckPlant, _ *testdb.MockTrackingBackend,
-			counter *store.QueryCounter) {
-			src, dst, o := ckHeldRetrieve(t, d, p, "ck-cost-sealed")
-			counter.Reset()
-			_, err := d.DispatchDirect(o, src, dst)
-			testutil.MustNoErr(t, err, "dispatch")
-		}},
-		{"a complex create", 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ *testdb.MockTrackingBackend,
-			counter *store.QueryCounter) {
+		{"a sealed create", costUnkeyedSealedCreate, 1, sealed("ck-cost-sealed")},
+		{"a sealed create with a load sequence", 27, 0,
+			func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, backend fleet.Backend) func() {
+				_, err := db.Exec(`UPDATE payloads SET advanced_load_sequence = 'Child cart interlock' WHERE code = $1`, p.payload.Code)
+				testutil.MustNoErr(t, err, "the payload's load sequence")
+				return sealed("ck-cost-sequence")(t, d, db, p, backend)
+			}},
+		{"a complex create", 60, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
 			d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{OrderUUID: "ck-cost-complex",
 				PayloadCode: p.payload.Code, Quantity: 1, ProcessNode: p.line.Name,
 				Steps: []protocol.ComplexOrderStep{{Action: protocol.ActionPickup, Node: p.storage.Name},
 					{Action: protocol.ActionDropoff, Node: p.line.Name}}})
 			o := testdb.RequireOrder(t, db, "ck-cost-complex")
-			counter.Reset()
-			testutil.MustNoErr(t, d.DispatchPreparedComplex(o), "dispatch")
+			return func() { testutil.MustNoErr(t, d.DispatchPreparedComplex(o), "dispatch") }
 		}},
-		{"an append", 2, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, backend *testdb.MockTrackingBackend,
-			counter *store.QueryCounter) {
+		{"an append", 6, 2, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, backend fleet.Backend) func() {
 			o := ckAppendOrder(t, db, backend, p, "ck-cost-append")
-			counter.Reset()
-			ckAppend(t, d, o)
+			return func() { ckAppend(t, d, o) }
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			unkeyed, keyed := measure(t, false, tc.shape), measure(t, true, tc.shape)
+			unkeyed, keyed := measure(t, false, tc.sh), measure(t, true, tc.sh)
+			t.Logf("COST %s: unkeyed %d statements, keyed %d (+%d); fleet calls %d and %d", tc.name,
+				unkeyed.stmts, keyed.stmts, keyed.stmts-unkeyed.stmts, unkeyed.fleet, keyed.fleet)
+			if unkeyed.stmts != tc.unkeyed {
+				t.Errorf("a plant with no key: %d statements, pinned at %d", unkeyed.stmts, tc.unkeyed)
+			}
 			if keyed.stmts-unkeyed.stmts != tc.added || keyed.fleet != unkeyed.fleet {
 				t.Errorf("a keyed plant: %d statements and %d fleet calls; unkeyed: %d and %d; want +%d statements, +0 calls",
 					keyed.stmts, keyed.fleet, unkeyed.stmts, unkeyed.fleet, tc.added)
 			}
-			t.Logf("COST %s: unkeyed %d statements, keyed %d (+%d); fleet calls %d and %d", tc.name,
-				unkeyed.stmts, keyed.stmts, keyed.stmts-unkeyed.stmts, unkeyed.fleet, keyed.fleet)
 		})
 	}
 }
