@@ -324,3 +324,9 @@ func (db *DB) ApplyCoreWord(id int64, w orders.CoreWordRow) (bool, error) {
 func (db *DB) NoteCoreVersion(id, version int64) error {
 	return orders.NoteCoreVersion(db.DB, id, version)
 }
+
+// LiveMoveOffNode reports whether a live move already takes a carrier off
+// node (orders.LiveMoveOffNode).
+func (db *DB) LiveMoveOffNode(node string) (bool, error) {
+	return orders.LiveMoveOffNode(db.DB, node)
+}

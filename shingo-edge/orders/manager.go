@@ -27,6 +27,15 @@ type Manager struct {
 	// OnStagedMessage is the release layer's wake on Core's OrderStaged
 	// (engine.onStagedMessage); nil until the engine wires it.
 	OnStagedMessage func(orderID int64, stationWait *int)
+	// OnDeliveredMessage and OnCancelledMessage are the follow-ons that hang on
+	// Core's order.delivered and order.cancelled for an order whose status is
+	// Core's versioned word (the engine's held pulling leg and carrier return),
+	// on the message that carries their cause rather than on a status change.
+	// previous is Core's status when it cancelled (protocol.OrderCancelled.
+	// PreviousStatus). nil until the engine wires them.
+	OnDeliveredMessage func(orderID int64, processNodeID *int64)
+	OnCancelledMessage func(orderID int64, previous protocol.Status)
+
 	// deliveredFacts and deliveredAwaiting are the two halves of a versioned
 	// delivery, keyed by order id: order.delivered's carrier facts waiting for
 	// Core's delivered, and Core's delivered waiting for the facts. Whichever

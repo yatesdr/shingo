@@ -65,6 +65,9 @@ func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stag
 		// delivered (core_word.go, deliveredFactsIn).
 		m.lifecycle.writeDeliveredFacts(order, stagedExpireAt, binID)
 		m.deliveredFactsIn(order, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
+		if m.OnDeliveredMessage != nil {
+			m.OnDeliveredMessage(order.ID, order.ProcessNodeID)
+		}
 		return nil
 	}
 	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode, landingSent); err != nil {
@@ -176,6 +179,25 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	default:
 		return fmt.Errorf("unknown reply type: %s", replyType)
 	}
+}
+
+// HandleCancelledNotice is the wire's order.cancelled. For an order whose
+// status is Core's versioned word it writes no status (Core's tell did, and its
+// toast and hold), and its follow-on runs from what Core says the order was
+// when it cancelled (OnCancelledMessage). For an older Core's order it is the
+// cancelled reply, as it always was.
+func (m *Manager) HandleCancelledNotice(p *protocol.OrderCancelled) error {
+	order, err := m.db.GetOrderByUUID(p.OrderUUID)
+	if err != nil {
+		return fmt.Errorf("order %s not found: %w", p.OrderUUID, err)
+	}
+	if versioned(order) {
+		if m.OnCancelledMessage != nil {
+			m.OnCancelledMessage(order.ID, protocol.Status(p.PreviousStatus))
+		}
+		return nil
+	}
+	return m.HandleDispatchReply(p.OrderUUID, ReplyCancelled, "", "", p.Reason)
 }
 
 // HandleWaybill is the wire's order.waybill: the vendor order, the robot Core

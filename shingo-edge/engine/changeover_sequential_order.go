@@ -92,24 +92,34 @@ func (e *Engine) sequentialPartnerToHoldFor(action changeover.NodeAction) (*proc
 	return partner, true
 }
 
-// createHeldPullingLeg creates the held pulling side's leg when its partner's
-// changeover leg delivers (an EventOrderStatusChanged subscriber): its current
-// next-material leg, so a retried partner's delivery counts and a failed one
-// does not. The
-// leg is planned again from the held task alone: its claims, its situation,
-// the pulling bit as the start read it, and the two styles' tooling. The task
-// is left alone unless it still has no order and is in the state the start
-// created it in.
+// createHeldPullingLeg is heldLegAfterDelivery on the status event, for an
+// order whose status is not Core's versioned word (an older Core's): its
+// delivered or confirmed. A versioned order's runs from Core's order.delivered
+// instead (onDeliveredMessage), the message that carries the delivery, so a
+// status the Edge learns late or twice cannot make the leg.
 func (e *Engine) createHeldPullingLeg(changed OrderStatusChangedEvent) {
 	switch protocol.Status(changed.NewStatus) {
 	case orders.StatusDelivered, orders.StatusConfirmed:
 	default:
 		return
 	}
-	if changed.ProcessNodeID == nil {
+	if changed.ProcessNodeID == nil || e.statusIsCoresWord(changed.OrderID) {
 		return
 	}
-	node, err := e.db.GetProcessNode(*changed.ProcessNodeID)
+	e.heldLegAfterDelivery(changed.OrderID, changed.ProcessNodeID, changed.NewStatus)
+}
+
+// heldLegAfterDelivery creates the held pulling side's leg when its partner's
+// changeover leg delivers: its current next-material leg, so a retried
+// partner's delivery counts and a failed one does not. The leg is planned again
+// from the held task alone: its claims, its situation, the pulling bit as the
+// start read it, and the two styles' tooling. The task is left alone unless it
+// still has no order and is in the state the start created it in.
+func (e *Engine) heldLegAfterDelivery(orderID int64, processNodeID *int64, why string) {
+	if processNodeID == nil {
+		return
+	}
+	node, err := e.db.GetProcessNode(*processNodeID)
 	if err != nil || node == nil {
 		return
 	}
@@ -118,7 +128,7 @@ func (e *Engine) createHeldPullingLeg(changed OrderStatusChangedEvent) {
 		return
 	}
 	task, err := e.db.GetChangeoverNodeTaskByNode(co.ID, node.ID)
-	if err != nil || task == nil || task.NextMaterialOrderID == nil || *task.NextMaterialOrderID != changed.OrderID {
+	if err != nil || task == nil || task.NextMaterialOrderID == nil || *task.NextMaterialOrderID != orderID {
 		return
 	}
 	claim := e.claimAtNode(node)
@@ -139,7 +149,7 @@ func (e *Engine) createHeldPullingLeg(changed OrderStatusChangedEvent) {
 		return
 	}
 	log.Printf("changeover: %s's leg is created now that %s's leg %d is %s", pulling.CoreNodeName,
-		node.CoreNodeName, changed.OrderID, changed.NewStatus)
+		node.CoreNodeName, orderID, why)
 	e.applyNodeAction(held, action)
 }
 

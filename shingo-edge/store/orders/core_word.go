@@ -85,3 +85,15 @@ func NoteCoreVersion(db *sql.DB, id, version int64) error {
 	_, err := db.Exec(`UPDATE orders SET core_version = ? WHERE id = ? AND core_version < ?`, version, id, version)
 	return err
 }
+
+// LiveMoveOffNode reports whether a live move order already takes a carrier
+// off node: the guard that makes sending a carrier back once per carrier, not
+// once per message about it (a redelivered order.cancelled names the same
+// carrier again). One statement.
+func LiveMoveOffNode(db *sql.DB, node string) (bool, error) {
+	var live bool
+	err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM orders
+		WHERE source_node = ? AND order_type = ? AND status NOT IN (`+protocol.TerminalStatusSQLList()+`))`,
+		node, string(protocol.OrderTypeMove)).Scan(&live)
+	return live, err
+}

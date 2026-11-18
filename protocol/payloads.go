@@ -709,6 +709,13 @@ type OrderCancelled struct {
 	OrderUUID string `json:"order_uuid"`
 	// Reason is the cancellation reason, echoed from the cancel.
 	Reason string `json:"reason"`
+	// PreviousStatus is the status Core held when it cancelled the order. A
+	// station acts on it where the cancel's moment matters, not its own copy
+	// of the status: an order cancelled while staged at a station wait left
+	// its carrier there, and the station sends it back. "" from an older Core,
+	// and on the cancel reply to a station's own cancel request (the
+	// cancellation notice that follows it carries it). Additive.
+	PreviousStatus string `json:"previous_status,omitempty"`
 }
 
 // --- Complex order payloads ---

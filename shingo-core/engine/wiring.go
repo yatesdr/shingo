@@ -247,8 +247,9 @@ func (e *Engine) wireEventHandlers() {
 		if ev.StationID != "" && ev.EdgeUUID != "" && !e.stationUnaware(ev.OrderID) {
 			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
 				&protocol.OrderCancelled{
-					OrderUUID: ev.EdgeUUID,
-					Reason:    ev.Reason,
+					OrderUUID:      ev.EdgeUUID,
+					Reason:         ev.Reason,
+					PreviousStatus: ev.PreviousStatus,
 				}); err != nil {
 				e.logFn("engine: cancel notification to edge: %v", err)
 			} else {

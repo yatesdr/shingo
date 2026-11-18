@@ -166,7 +166,7 @@ type OrderCancelledEvent struct {
 	EdgeUUID       string
 	StationID      string
 	Reason         string
-	PreviousStatus string // status before cancellation; carried on the event, read by no engine subscriber today
+	PreviousStatus string // status before cancellation; the cancellation notice carries it to the station (order.cancelled)
 	// RecoversOrderID is the emitting order's recovers_order_id: set only on a
 	// cancel-return order (the cancelled order whose bin it returns), nil on
 	// every other order. Carried so a subscriber that cares about returns can

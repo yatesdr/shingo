@@ -2142,6 +2142,7 @@ Confirms that an order has been successfully cancelled on the core side.
 |---|---|---|---|
 | `order_uuid` | string |  | OrderUUID is the cancelled order's UUID. |
 | `reason` | string |  | Reason is the cancellation reason, echoed from the cancel. |
+| `previous_status` | string | omitempty | PreviousStatus is the status Core held when it cancelled the order. A station acts on it where the cancel's moment matters, not its own copy of the status: an order cancelled while staged at a station wait left its carrier there, and the station sends it back. "" from an older Core, and on the cancel reply to a station's own cancel request (the cancellation notice that follows it carries it). Additive. |
 
 <!-- /generated -->
 

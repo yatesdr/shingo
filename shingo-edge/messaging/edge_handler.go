@@ -287,7 +287,7 @@ func (h *EdgeHandler) HandleOrderSkipped(env *protocol.Envelope, p *protocol.Ord
 func (h *EdgeHandler) HandleOrderCancelled(env *protocol.Envelope, p *protocol.OrderCancelled) {
 	h.DebugLog.Log("order_cancelled uuid=%s reason=%s", p.OrderUUID, p.Reason)
 	log.Printf("edge_handler: order cancelled: uuid=%s reason=%s", p.OrderUUID, p.Reason)
-	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyCancelled, "", "", p.Reason); err != nil {
+	if err := h.orderMgr.HandleCancelledNotice(p); err != nil {
 		log.Printf("edge_handler: handle cancelled for %s: %v", p.OrderUUID, err)
 	}
 }

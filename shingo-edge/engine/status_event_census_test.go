@@ -57,10 +57,16 @@ var statusDerivedEmitterMethods = map[string]bool{
 // this tree: "<file>:<func> <event>" -> how.
 var statusEventSubscribers = map[string]string{
 	// the engine's handlers (wiring.go)
-	"engine/wiring.go:wireEventHandlers EventOrderCompleted":     "subscribe(e.handleNodeOrderCompleted)",
-	"engine/wiring.go:wireEventHandlers EventOrderDelivered":     "subscribe(e.handleNodeOrderDelivered)",
-	"engine/wiring.go:wireEventHandlers EventOrderFailed":        "subscribe(e.handleNodeOrderFailed)",
-	"engine/wiring.go:wireEventHandlers EventOrderStatusChanged": "subscribe(e.createHeldPullingLeg e.onReleaseStatusChanged e.returnCarrierLeftWaiting)",
+	// The terminal wake rides Completed: it fires once, at the edge where the
+	// order ended, for a versioned order (the applier) and an older Core's
+	// (the lifecycle's transition) alike.
+	"engine/wiring.go:wireEventHandlers EventOrderCompleted": "subscribe(e.handleNodeOrderCompleted e.onTerminalForIntents)",
+	"engine/wiring.go:wireEventHandlers EventOrderDelivered": "subscribe(e.handleNodeOrderDelivered)",
+	"engine/wiring.go:wireEventHandlers EventOrderFailed":    "subscribe(e.handleNodeOrderFailed)",
+	// An older Core's order only: each declines a versioned one, whose
+	// follow-ons hang on order.delivered and order.cancelled
+	// (engine/order_follow_ons.go).
+	"engine/wiring.go:wireEventHandlers EventOrderStatusChanged": "subscribe(e.createHeldPullingLeg e.returnCarrierLeftWaiting)",
 	// the sim operator (-tags sim)
 	"engine/sim_operator.go:StartSimOperator EventOrderDelivered":     "subscribe(op.onDelivered)",
 	"engine/sim_operator.go:StartSimOperator EventOrderStatusChanged": "subscribe(op.onStatusChanged)",
