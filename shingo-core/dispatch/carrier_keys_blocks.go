@@ -138,11 +138,13 @@ func (d *Dispatcher) runKeyNames(order *orders.Order, run blockRun, loadSeq *pay
 // its step's location, in every row the copy holds for that location
 // (domain.ScenePoint.ListsBinTask), and blanks the rest: a location with no
 // row, without the key, or whose binTask property has no value sends the
-// default, which every keyed location lists. So an engineer adds a size's keys
-// location by location, and a location still without them gets today's block
-// rather than an order RDS refuses. One read for the run's locations, made only
-// when a step named a key; a read that fails sends the default for the whole
-// run, said once. nil when no name is kept.
+// default, as it does today. So an engineer adds a size's keys location by
+// location, and a location still without them gets today's block rather than
+// an order RDS refuses. One read for the run's locations, made only when a step
+// named a key; a read that fails sends the default for the whole run, said
+// once. nil when no name is kept. Pinned by
+// TestCarrierKeys_ALocationTheSceneDoesNotListGetsTheDefault and
+// TestCarrierKeys_AFailedSceneReadSendsTheDefaultOnce.
 func (d *Dispatcher) namesTheSceneLists(orderID int64, steps []resolvedStep, names []string) []string {
 	var locations []string
 	for i, n := range names {
