@@ -1,0 +1,101 @@
+
+== lone produce
+-- stroke 1
+   bin 101 SYN-LONE +1 produce_tick epoch=0
+   seat GLP_1 bin=101 count=11 hold=0 holdPart=""
+-- stroke 3 (past the pack, no strict pack)
+   bin 101 SYN-LONE +3 produce_tick epoch=0
+   seat GLP_1 bin=101 count=14 hold=0 holdPart=""
+
+== lone produce, strict pack
+-- stroke 5 (2 fit, 3 held)
+   bin 111 SYN-STRICT +2 produce_tick epoch=0
+   seat GSP_1 bin=111 count=12 hold=3 holdPart="SYN-STRICT"
+
+== LH/RH, two produce spots of two parts
+-- stroke 1
+   bin 121 SYN-LH +1 produce_tick epoch=0
+   bin 122 SYN-RH +1 produce_tick epoch=0
+   seat GLR_LH bin=121 count=1 hold=0 holdPart=""
+   seat GLR_RH bin=122 count=1 hold=0 holdPart=""
+-- stroke 2
+   bin 121 SYN-LH +2 produce_tick epoch=0
+   bin 122 SYN-RH +2 produce_tick epoch=0
+   seat GLR_LH bin=121 count=3 hold=0 holdPart=""
+   seat GLR_RH bin=122 count=3 hold=0 holdPart=""
+
+== A/B consume pair
+-- stroke 4, A lit
+   bin 131 SYN-AB -4 consume_tick epoch=0
+   seat GAB_A bin=131 count=46 hold=0 holdPart=""
+   seat GAB_B bin=132 count=50 hold=0 holdPart=""
+-- stroke 3, both dark (fall-through)
+   bin 131 SYN-AB -3 ab_fallthrough epoch=0
+   seat GAB_A bin=131 count=43 hold=0 holdPart=""
+   seat GAB_B bin=132 count=50 hold=0 holdPart=""
+
+== press-index front beside a dark pair
+-- stroke 2
+   bin 141 SYN-PI +2 produce_tick epoch=0
+   bin 142 SYN-PIQ -2 ab_fallthrough epoch=0
+   seat GPI_F bin=141 count=7 hold=0 holdPart=""
+   seat GPI_QA bin=142 count=38 hold=0 holdPart=""
+   seat GPI_QB bin=143 count=40 hold=0 holdPart=""
+
+== consume with a lineside pile; consume with no cart
+-- stroke 10 (7 off the pile, 3 off the cart)
+   bin 151 SYN-PILE -3 consume_tick epoch=0
+   pile GCP_1 SYN-PILE active drained=7
+   seat GCP_1 bin=151 count=37 hold=0 holdPart=""
+   seat GCP_NOCART bin=- count=0 hold=0 holdPart=""
+   ledger GCP_NOCART catid="9100" part="SYN-PILE2" no-cart qty=10 strokes=1
+-- stroke 5
+   bin 151 SYN-PILE -5 consume_tick epoch=0
+   seat GCP_1 bin=151 count=32 hold=0 holdPart=""
+   seat GCP_NOCART bin=- count=0 hold=0 holdPart=""
+   ledger GCP_NOCART catid="9100" part="SYN-PILE2" no-cart qty=15 strokes=2
+
+== consume of a kit (two manifest lines)
+-- stroke 4
+   bin 161 SYN-KIT -4 consume_tick epoch=0
+   seat GKT_1 bin=161 count=26 hold=0 holdPart=""
+
+== station counter
+-- cell stroke 2
+   bin 173 SYN-ST1 -2 consume_tick epoch=0
+   seat GST_1 bin=171 count=40 hold=0 holdPart=""
+   seat GST_2 bin=172 count=40 hold=0 holdPart=""
+   seat GST_CELL bin=173 count=38 hold=0 holdPart=""
+-- station stroke 3
+   bin 171 SYN-ST1 -3 consume_tick epoch=0
+   bin 172 SYN-ST2 -3 consume_tick epoch=0
+   seat GST_1 bin=171 count=37 hold=0 holdPart=""
+   seat GST_2 bin=172 count=37 hold=0 holdPart=""
+   seat GST_CELL bin=173 count=38 hold=0 holdPart=""
+
+== held, off-plan, today's and a release
+-- held stroke 3
+   seat GHO_1 bin=181 count=40 hold=0 holdPart=""
+   seat GHO_2 bin=182 count=40 hold=0 holdPart=""
+   ledger cell catid="9001" part="" held qty=3 strokes=1
+-- off-plan stroke 2 of B
+   bin 182 SYN-HO-B -2 consume_tick epoch=0
+   seat GHO_1 bin=181 count=40 hold=0 holdPart=""
+   seat GHO_2 bin=182 count=38 hold=0 holdPart=""
+   ledger cell catid="9001" part="" held qty=3 strokes=1
+   ledger GHO_1 catid="9002" part="SYN-HO-B" off-plan qty=2 strokes=1
+-- today's stroke 1 of A
+   bin 181 SYN-HO-A -1 consume_tick epoch=0
+   seat GHO_1 bin=181 count=39 hold=0 holdPart=""
+   seat GHO_2 bin=182 count=38 hold=0 holdPart=""
+   ledger cell catid="9001" part="" held qty=3 strokes=1
+   ledger GHO_1 catid="9002" part="SYN-HO-B" off-plan qty=2 strokes=1
+   ledger GHO_2 catid="9003" part="SYN-HO-A" no-cart qty=1 strokes=1
+-- the held draw released under A
+   bin 181 SYN-HO-A -3 consume_tick epoch=0
+   seat GHO_1 bin=181 count=36 hold=0 holdPart=""
+   seat GHO_2 bin=182 count=38 hold=0 holdPart=""
+   ledger cell catid="9001" part="" held qty=3 strokes=1
+   ledger GHO_1 catid="9002" part="SYN-HO-B" off-plan qty=2 strokes=1
+   ledger GHO_2 catid="9003" part="SYN-HO-A" no-cart qty=1 strokes=1
+   ledger GHO_2 catid="9001" part="SYN-HO-A" held qty=3 strokes=1
