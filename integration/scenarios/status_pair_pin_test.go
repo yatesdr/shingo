@@ -461,12 +461,13 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 // TestStatusPairPin_ConfirmVsCoreCancel pins the confirm that loses to Core's
 // own cancel. Core cancels a delivered order through the lifecycle cancel
 // (LifecycleService.CancelOrder, the door the swap-peer cascade and the fleet
-// stop take; the admin terminate refuses a delivered order) and tells the Edge
-// with order.cancelled. Before that reaches the Edge, the operator confirms
+// stop take; the admin terminate refuses a delivered order), and tells the Edge
+// twice: the cancel's status write queues its order.update cancelled, and the
+// cancellation subscriber its order.cancelled. Before either reaches the Edge, the operator confirms
 // there (Manager.ConfirmDelivery: the Edge writes confirmed and queues
 // order.receipt). Core's ConfirmReceipt refuses cancelled to confirmed and
-// answers nothing. The order.cancelled lands on the Edge's confirmed row and
-// does not move it.
+// answers nothing. Core's cancelled, told and announced, lands on the Edge's
+// confirmed row and does not move it.
 //
 // End: Core cancelled, the Edge confirmed. A known pair, kept as it is until
 // abort and confirm become intents.
@@ -485,8 +486,9 @@ func TestStatusPairPin_ConfirmVsCoreCancel(t *testing.T) {
 			if s := c.coreRow(o.UUID).Status; s != protocol.StatusCancelled {
 				t.Fatalf("after Core's cancel Core reads %q, want cancelled", s)
 			}
-			if p := c.coreOut.pending(o.UUID); len(p) != 1 || p[0].Type != protocol.TypeOrderCancelled {
-				t.Fatalf("after Core's cancel Core holds %v, want one order.cancelled", p)
+			if p := c.coreOut.pending(o.UUID); len(p) != 2 || p[0].Type != protocol.TypeOrderUpdate ||
+				p[0].Status != string(protocol.StatusCancelled) || p[1].Type != protocol.TypeOrderCancelled {
+				t.Fatalf("after Core's cancel Core holds %v, want its order.update cancelled, then order.cancelled", p)
 			}
 
 			// The operator, not yet told, confirms at the Edge.
@@ -500,11 +502,11 @@ func TestStatusPairPin_ConfirmVsCoreCancel(t *testing.T) {
 			}
 
 			if order.coreFirst {
-				// Core's order.cancelled reaches the Edge's confirmed row.
+				// Core's cancelled reaches the Edge's confirmed row.
 				c.coreOut.hold(false)
 				c.settle()
 				if s := c.edgeRow(o.ID).Status; s != protocol.StatusConfirmed {
-					t.Fatalf("Core's order.cancelled moved the Edge's confirmed row to %q", s)
+					t.Fatalf("Core's cancelled moved the Edge's confirmed row to %q", s)
 				}
 				// Then the Edge's receipt reaches Core's cancelled order.
 				c.edgeOut.hold(false)
@@ -516,7 +518,7 @@ func TestStatusPairPin_ConfirmVsCoreCancel(t *testing.T) {
 				if s := c.coreRow(o.UUID).Status; s != protocol.StatusCancelled {
 					t.Fatalf("the Edge's receipt moved Core's cancelled order to %q", s)
 				}
-				// Then Core's order.cancelled reaches the Edge's confirmed row.
+				// Then Core's cancelled reaches the Edge's confirmed row.
 				c.coreOut.hold(false)
 				c.settle()
 			}
@@ -543,8 +545,9 @@ func TestStatusPairPin_ConfirmVsCoreCancel(t *testing.T) {
 				t.Errorf("the Edge sent %+v, want one order.receipt confirmed, count 1", edgeSent)
 			}
 			coreSent := c.coreOut.forOrder(o.UUID)
-			if len(coreSent) != 1 || coreSent[0].Type != protocol.TypeOrderCancelled || coreSent[0].Reason != sppCoreCancel {
-				t.Errorf("Core sent %+v, want one order.cancelled %q and no answer to the refused receipt",
+			if len(coreSent) != 2 || coreSent[0].Type != protocol.TypeOrderUpdate || coreSent[0].Status != string(protocol.StatusCancelled) ||
+				coreSent[0].Detail != sppCoreCancel || coreSent[1].Type != protocol.TypeOrderCancelled || coreSent[1].Reason != sppCoreCancel {
+				t.Errorf("Core sent %+v, want its order.update cancelled and order.cancelled, both %q, and no answer to the refused receipt",
 					coreSent, sppCoreCancel)
 			}
 			if p := c.edgeOut.pending(o.UUID); len(p) != 0 {
