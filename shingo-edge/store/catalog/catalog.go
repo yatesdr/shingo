@@ -107,8 +107,9 @@ func manifestColumn(lines []protocol.ManifestItem) (string, error) {
 	return string(b), nil
 }
 
-// upsertCatalogSQL is the conditional upsert both writes use: an unchanged
-// row, its lines included, is not written.
+// upsertCatalogSQL is the conditional upsert every write uses (UpsertCatalog,
+// UpsertCatalogWith, SyncCatalog): an unchanged row, its lines included, is
+// not written.
 const upsertCatalogSQL = `INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, manifest, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
@@ -135,6 +136,38 @@ func UpsertCatalog(db *sql.DB, entry *CatalogEntry) error {
 	}
 	if _, err = db.Exec(upsertCatalogSQL,
 		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID, manifest); err != nil {
+		return err
+	}
+	generation.Add(1)
+	return nil
+}
+
+// UpsertCatalogWith is UpsertCatalog with also's statements in ONE
+// transaction: the row and whatever also writes commit together or not at
+// all. The same conditional statement (upsertCatalogSQL), so an unchanged row
+// is not written, and generation moves only after the commit. A nil also is
+// the row alone. The floor's new part writes its part-list row through also
+// (engine applyPartCreate).
+func UpsertCatalogWith(db *sql.DB, entry *CatalogEntry, also func(tx *sql.Tx) error) error {
+	manifest, err := manifestColumn(entry.Manifest)
+	if err != nil {
+		return fmt.Errorf("encode catalog %s manifest: %w", entry.Code, err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(upsertCatalogSQL,
+		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID, manifest); err != nil {
+		return fmt.Errorf("upsert catalog entry %s: %w", entry.Code, err)
+	}
+	if also != nil {
+		if err := also(tx); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	generation.Add(1)

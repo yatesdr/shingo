@@ -935,13 +935,7 @@ func (e *Engine) RequestCatalogSync() {
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) error {
 	rows := make([]*catalog.CatalogEntry, 0, len(entries))
 	for _, b := range entries {
-		rows = append(rows, &catalog.CatalogEntry{
-			ID: b.ID, Name: b.Name, Code: b.Code,
-			Description: b.Description,
-			UOPCapacity: b.UOPCapacity,
-			CATID:       b.CATID,
-			Manifest:    b.Manifest,
-		})
+		rows = append(rows, catalogEntryOf(b))
 	}
 	if err := e.db.SyncPayloadCatalog(rows); err != nil {
 		log.Printf("engine: sync payload catalog: %v", err)
@@ -959,6 +953,19 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) err
 	// cmd/shingoedge door_walk_test.go).
 	e.nudgeBoards()
 	return nil
+}
+
+// catalogEntryOf is one catalog row as the Edge stores it, from the row Core
+// sends: the catalog feed's and a new part's answer (applyPartCreate) map it
+// the same way, so the feed after a new part rewrites nothing.
+func catalogEntryOf(b protocol.CatalogPayloadInfo) *catalog.CatalogEntry {
+	return &catalog.CatalogEntry{
+		ID: b.ID, Name: b.Name, Code: b.Code,
+		Description: b.Description,
+		UOPCapacity: b.UOPCapacity,
+		CATID:       b.CATID,
+		Manifest:    b.Manifest,
+	}
 }
 
 // ── Outbound messaging ──────────────────────────────────────────────

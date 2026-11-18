@@ -304,6 +304,10 @@ func askAppliersByKind() map[string]askApplier {
 		// The reseat: with no carrier at the node, the seat's carrier left; a
 		// carrier there was bound by its landing (applyReseat).
 		protocol.AskReseat: applyReseat,
+		// A new part: Core's yes puts it in the catalog, on the asking
+		// process's part set and in the carrier rule (applyPartCreate); a
+		// refusal applies nothing.
+		protocol.AskPartCreate: applyPartCreate,
 		// A count refused for an ended generation carries the carrier's current
 		// stamp: the seat adopts it, as from a bin epoch refresh. A waiting tap
 		// re-sends its count under it (declareCount); a late one leaves the

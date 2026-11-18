@@ -10,7 +10,8 @@ import (
 )
 
 // ListProcessPayloads is the STORED half of the part set — the rows an
-// engineer typed — in payload-code order.
+// engineer typed, and the parts a station made new at its changeover picker
+// (AddProcessPayload) — in payload-code order.
 //
 // The engineer's half alone, because it is the only half a write may touch. A
 // screen that offers parts wants ProcessPalette below; this one is for the
@@ -74,12 +75,25 @@ func ReplaceProcessPayloads(db DBTX, processID int64, codes []string) error {
 	return nil
 }
 
+// AddProcessPayload puts one part on a process's stored part set, if the
+// process still exists: the Edge runs SQLite with foreign keys off, so a row
+// for a deleted process would be written and never read. A part already on the
+// set is left as it is (INSERT OR IGNORE), so a replayed answer writes
+// nothing. db is the transaction the part's catalog row is written in (engine
+// applyPartCreate), so the part is in the catalog and on the set together.
+func AddProcessPayload(db DBTX, processID int64, code string) error {
+	_, err := db.Exec(`INSERT OR IGNORE INTO process_payloads (process_id, payload_code)
+		SELECT ?, ? WHERE EXISTS (SELECT 1 FROM processes WHERE id = ?)`, processID, code, processID)
+	return err
+}
+
 // ProcessPalette is the OFFER LIST: the stored rows and every payload the
 // process's live claims already name, as one sorted set.
 //
 // THE UNION IS THE RULE (SYNTH §2). Only the stored half is writable, so this
-// is not two sources of truth — it is one list assembled from the one place a
-// part can be typed and the one place a part is already in use. A backfill of
+// is not two sources of truth — it is one list assembled from the stored rows
+// (an engineer's list, and a station's new part) and the one place a part is
+// already in use. A backfill of
 // the claimed half into rows would repeat the routing set's "21 rows nobody
 // switched on", and there is nothing here for an engineer to adopt: a part the
 // cell demonstrably runs is not a name waiting for a decision.

@@ -16,6 +16,37 @@ func (e *Engine) SetPayloadBinTypes(entries []protocol.PayloadBinTypeInfo) {
 	e.nudgeBoards()
 }
 
+// addPayloadBinTypes merges rows into the held mapping, each row once: a new
+// part's carrier rows (applyPartCreate), which the next node list carries too.
+// COPY-ON-WRITE, so a reader holding the old slice (PayloadBinTypes hands it
+// out unlocked) never sees it change. It leaves payloadBinTypesHeld as it was:
+// whether Core's catalog has arrived is the node list's to say, not one part's.
+// Reports whether any row was new.
+func (e *Engine) addPayloadBinTypes(rows []protocol.PayloadBinTypeInfo) bool {
+	e.payloadBinTypesMu.Lock()
+	defer e.payloadBinTypesMu.Unlock()
+	held := make(map[protocol.PayloadBinTypeInfo]bool, len(e.payloadBinTypes))
+	for _, r := range e.payloadBinTypes {
+		held[r] = true
+	}
+	var next []protocol.PayloadBinTypeInfo
+	for _, r := range rows {
+		if held[r] {
+			continue
+		}
+		if next == nil {
+			next = append(make([]protocol.PayloadBinTypeInfo, 0, len(e.payloadBinTypes)+len(rows)), e.payloadBinTypes...)
+		}
+		held[r] = true
+		next = append(next, r)
+	}
+	if next == nil {
+		return false
+	}
+	e.payloadBinTypes = next
+	return true
+}
+
 // setBinTypeFamilies holds Core's carrier family per bin type (NodeListResponse.Family),
 // replaced whole with the catalog, which nudges the boards. In memory for the same
 // reason; none from an older Core leaves the CLEAR panels unfiltered.

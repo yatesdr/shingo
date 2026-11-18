@@ -6,7 +6,7 @@ package store
 import "shingoedge/store/processes"
 
 // ListProcessPayloads returns the stored half of a process's part set — the
-// rows an engineer typed — in payload-code order.
+// rows an engineer typed and a station's new parts — in payload-code order.
 func (db *DB) ListProcessPayloads(processID int64) ([]string, error) {
 	return processes.ListProcessPayloads(db.DB, processID)
 }
