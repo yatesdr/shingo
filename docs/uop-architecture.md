@@ -2,10 +2,10 @@
 
 Verified against: 16138e57
 
-UOP (Unit of Production) is the count of consumable parts in a physical bin and the count of parts on a lineside
-bench. This document describes how UOP is tracked, mutated, audited, and propagated across `shingo-core` and
-`shingo-edge`. What a count triggers (thresholds and cell autoreorder) is
-[uop-threshold-replenishment.md](uop-threshold-replenishment.md)'s.
+UOP (Unit of Production) is a physical bin's count and a lineside bench's count: for a bin of one part, the pieces of
+that part in it (a kit counts cycles; [Process semantics](#process-semantics) has the rule). This document describes
+how UOP is tracked, mutated, audited, and propagated across `shingo-core` and `shingo-edge`. What a count triggers
+(thresholds and cell autoreorder) is [uop-threshold-replenishment.md](uop-threshold-replenishment.md)'s.
 
 ## Ownership: Edge-authoritative, Core-aggregating
 
@@ -160,14 +160,36 @@ bumps `delta_epoch`, which retires the old generation's in-flight deltas.
 
 ## Process semantics
 
-These are SME-locked and treated as ground truth across the codebase.
+The rules the counting code is held to, each with its guard.
 
-**UOP is assembly-normalized.** UOP counts production-cycle increments per bin's claim, not raw physical parts. A bin
-holding 100 UOP of a part that's used twice per assembly physically contains 200 parts; a bin holding 100 UOP of a
-part used once per assembly contains 100. The "unit of production" is the cycle of the consuming assembly,
-normalized to what each bin is tracking. When a multi-cavity die produces parts that fan out to separate bins (e.g.,
-LH and RH halves into different containers), each receiving bin gets its own UOP delta per cycle — one physical
-cycle, multiple bin-level increments, each normalized to that bin's claim. Per-part details live in the manifest.
+**A bin of one part counts pieces.** A bin whose payload has one manifest line counts the pieces of that part in it:
+its UOP is how many are there, the standard pack (`payloads.uop_capacity`) is how many a full bin holds, and no
+reader multiplies either. A press that packs 800 fills a bin of 800.
+
+**Pieces per cycle is an assembly consume setting.** `payload_manifest.parts_per_cycle` (the catalog line's
+`PartsPerCycle`) is how many pieces of the part one cycle of an assembly that consumes it uses, set by an engineer on
+the part in Core. An assembly's consume spot draws its counter step times it (`handleConsumeTick`,
+`handleABFallthrough`), resolved onto the claim when the Edge reads it from its catalog copy: one manifest line gives
+its ratio, several lines or no catalog row give 1. An assembly that uses 8 a cycle runs 100 cycles from that bin of
+800. A draw bigger than what is left takes the count below zero; nothing carries to the next cart. A press never
+reads the number: a produce spot adds its step as pieces.
+
+**A kit counts cycles.** A payload of several manifest lines keeps the arithmetic it always had: its bin's UOP is
+cycles, and a line's pieces are the count times the line's parts per cycle. One integer cannot be pieces of two
+parts.
+
+**Every reader that turns a count into pieces follows the same rule:** CMS postings
+(`material.BuildMovementTransactions`; `TestBuildMovement_OnePartPostsTheBinsCount`, and for a kit
+`TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart`), Core's inventory list and its export
+(`TestListInventory_QtyFollowsUOPNotTheManifest`), the Bins page and the payload form's readout, and the Edge's LOAD
+screens and the line counts a LOAD sends (`Engine.loadManifest`; `TestLoadBin_BuildsTheManifestFromTheCatalog`). The
+rule's one statement in code is `protocol.ManifestItem`'s.
+
+**Produce spots of one part share a step.** The produce spots of a style that run the same part on one counter share
+its step: a spot alone takes it all, and an A/B pair is one spot. A step that does not divide gives each spot the
+floor share and the remainder to the first spots in node order. Spots running different parts are not grouped: when
+a die makes LH and RH halves into different bins, each receiving bin takes the whole step — one physical cycle,
+several bin-level increments. Per-part details live in the manifest.
 
 **The PLC is the truth for a tick.** The Edge computes each delta from the last-seen counter value
 (`plc.CalculateDelta`). A 16- or 32-bit rollover below the jump threshold counts as the wrap; a backward count is a

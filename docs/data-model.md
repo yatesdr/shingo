@@ -31,8 +31,11 @@ A **Payload** defines what a container should hold. A **Bin** is the physical co
 
 A template defining a container's expected contents and capacity. Analogous to a product SKU for containers.
 
-Columns: [`payloads`](#core-payloads). `uop_capacity` is the production cycles a full load supports; the template
-manifest (parts and quantities for a full load) is its rows in [`payload_manifest`](#core-payload_manifest).
+Columns: [`payloads`](#core-payloads). `uop_capacity` is the standard pack, in the bin's count: the pieces a full
+bin of a part alone holds, or the cycles a full bin of a kit feeds. The template manifest is its rows in
+[`payload_manifest`](#core-payload_manifest): one per part, each with `parts_per_cycle`, the pieces of the part one
+cycle of an assembly that consumes it uses (an assembly consume setting; a press never reads it). How a count turns
+into pieces is [uop-architecture.md](uop-architecture.md#process-semantics)'s.
 
 **Relationships:**
 - Has many compatible **bin_types** (via `payload_bin_types` junction)
@@ -51,7 +54,8 @@ Columns: [`bins`](#core-bins). Notes the schema does not say:
 - `claimed_by` is the order that has claimed the bin for transport, set with a `confirmed` **reservation** (see
   [Reservations](#reservations)). They can drift briefly: `ReleaseOrphanedClaims` clears the claim and leaves the
   reservation row for `ReapOrphanedReservations`.
-- `manifest` is the actual contents; `uop_remaining` the production cycles of material left.
+- `manifest` is the actual contents (which parts, no counts); `uop_remaining` the count left, in the unit of the
+  payload's `uop_capacity` (pieces, for a part alone).
 - `loaded_at` is when the manifest was confirmed, and drives FIFO ordering.
 - `staged_expires_at` is written NULL by every staging writer (`helpers.StagedSetSQL`): staging does not expire
   (`resolveNodeStaging` stamps no expiry). A non-NULL value is an old stamp, which reconciliation reports and
