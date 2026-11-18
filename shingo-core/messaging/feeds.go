@@ -42,10 +42,11 @@ const (
 	// worst-case heal for a write that changes a station's node list and drops
 	// no memo: that write reaches the Edge up to two minutes and a heartbeat
 	// later. A payload write drops every station's node-list memo
-	// (PayloadsChanged: the list carries each part's carrier rows). Nothing else
-	// does: a node or carrier-type edit waits out the memo, and
-	// NodeStructureChanged (a group deleted or reparented) makes the Edge re-ask
-	// the list without touching the memo the heartbeat compares.
+	// (PayloadsChanged: the list carries each part's carrier rows), and an
+	// Edge's re-ask drops its own (HandleNodeListRequest), which is how
+	// NodeStructureChanged (a group deleted or reparented) reaches it: Core
+	// announces it, the Edge re-asks. A node or carrier-type edit with no
+	// notice waits out the memo.
 	feedMemoStation = 2 * time.Minute
 )
 

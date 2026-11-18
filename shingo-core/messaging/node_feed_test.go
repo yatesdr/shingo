@@ -186,6 +186,58 @@ func TestNodeFeed_ReplyDigestIsTheFeedDigest(t *testing.T) {
 	}
 }
 
+// TestNodeFeed_AReAskedListIsNotSentBack: a write that changes a station's
+// node list and drops no memo (a group deleted or reparented, which Core
+// announces with NodeStructureChanged) makes the Edge re-ask the list and
+// hold the fresh answer's digest. The heartbeats that followed inside the
+// memo's life compared that digest with the build from before the write and
+// sent the old list back, which the Edge applied, undoing the change until
+// the memo aged out. A re-ask forgets the station's memo, so the next
+// heartbeat compares against a build as new as the answer and sends nothing.
+func TestNodeFeed_AReAskedListIsNotSentBack(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	testutil.MustNoErr(t, err, "enroll")
+	seedFeedsPinNodes(t, db)
+	resp := &feedsPinResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+
+	ack, _ := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: ""})
+	before := ack.Feeds[protocol.FeedNodes]
+	if before == "" {
+		t.Fatal("no node-list digest in the first ack")
+	}
+	// The Edge applied that list and quotes it back: converged.
+	heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: before})
+
+	// The write, with no memo dropped: LN-9 joins the station's list.
+	ln9, err := db.GetNodeByName("LN-9")
+	testutil.MustNoErr(t, err, "LN-9")
+	testutil.MustNoErr(t, db.AssignNodeToStation(ln9.ID, "edge.test"), "assign LN-9")
+
+	// The Edge re-asks, as a NodeStructureChanged makes it, and holds the answer.
+	svc.HandleNodeListRequest(feedsPinEnv("edge.test"), &protocol.NodeListRequest{})
+	reply := resp.events[len(resp.events)-1].payload.(*protocol.NodeListResponse)
+	if reply.Digest == before {
+		t.Fatalf("the re-asked list's digest %s is the old one: the write changed nothing", reply.Digest)
+	}
+
+	// Three heartbeats inside the memo's life, the Edge still holding the answer.
+	for i := 1; i <= 3; i++ {
+		ack, sends := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: reply.Digest})
+		for _, s := range sends {
+			if nl, ok := s.payload.(*protocol.NodeListResponse); ok {
+				t.Errorf("heartbeat %d after the re-ask sent a node list of digest %s (the re-asked one is %s): "+
+					"the build from before the write, sent back over the answer", i, nl.Digest, reply.Digest)
+			}
+		}
+		if ack.Feeds[protocol.FeedNodes] != reply.Digest {
+			t.Errorf("heartbeat %d: the ack quotes %s, want the re-asked list's %s", i, ack.Feeds[protocol.FeedNodes], reply.Digest)
+		}
+	}
+}
+
 // The feed path is strict: a failed read leaves the key out of the ack and
 // sends nothing, where the reply path still answers with what it could read.
 func TestNodeFeed_FailedReadLeavesTheKeyOut(t *testing.T) {

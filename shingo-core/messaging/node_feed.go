@@ -30,7 +30,20 @@ import (
 // HandleNodeListRequest answers an Edge's node-list sync. req carries the
 // scene revision the Edge already holds (empty from an older binary); see
 // sceneSlices for what that decides.
+//
+// A RE-ASK FORGETS THE STATION'S NODE-LIST MEMO first. The Edge holds this
+// answer's digest from now on, and the heartbeat compares against the memo:
+// one built before a write that drops no memo (a group deleted or
+// reparented, which Core announces with NodeStructureChanged, the very
+// notice that makes the Edge re-ask) would differ from it, and a converged
+// Edge quoting a new digest reads as one that lost its copy, so the old list
+// went back at once and the Edge applied it until the memo aged out. With the
+// memo gone the next heartbeat builds afresh. The window left is a heartbeat
+// whose build began before this drop and is stored after it
+// (feedState.store), healed when that memo ages out. Pinned by
+// TestNodeFeed_AReAskedListIsNotSentBack.
 func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *protocol.NodeListRequest) {
+	s.feeds.dropStation(env.Src.Station, protocol.FeedNodes)
 	resp, err := s.buildNodeList(env.Src.Station, false)
 	if err != nil {
 		log.Printf("core_handler: node list for %s: %v — not sent", env.Src.Station, err)
