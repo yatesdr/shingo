@@ -175,7 +175,8 @@ func TestPayloadCodeIsRequiredAtEveryDoor(t *testing.T) {
 	if n := count(); n != before {
 		t.Errorf("refused creates left %d payload rows, want %d", n, before)
 	}
-	if got, _ := db.GetPayload(existing.ID); got == nil || got.Code != "SYN-CODE-KEEP" {
+	kept, err := db.GetPayload(existing.ID)
+	if got := testutil.Must(t, kept, err, "read the kept part"); got.Code != "SYN-CODE-KEEP" {
 		t.Errorf("code after refused updates = %+v, want SYN-CODE-KEEP", got)
 	}
 

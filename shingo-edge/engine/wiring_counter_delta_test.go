@@ -654,8 +654,8 @@ func piecesPerCycle(t *testing.T, db *store.DB, part string, ratio int64) {
 	testutil.MustNoErr(t, err, "manifest")
 	res, err := db.DB.Exec(`UPDATE payload_catalog SET manifest=? WHERE code=?`, string(b), part)
 	testutil.MustNoErr(t, err, "manifest "+part)
-	if n, _ := res.RowsAffected(); n != 1 {
-		t.Fatalf("manifest %s: %d catalog rows, want 1", part, n)
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("manifest %s: %d catalog rows (%v), want 1", part, n, err)
 	}
 }
 

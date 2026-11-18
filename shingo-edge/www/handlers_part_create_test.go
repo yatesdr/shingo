@@ -171,9 +171,12 @@ func TestCreatePart_DoneIsOnThePicker(t *testing.T) {
 	t.Parallel()
 	f := newPartDoor(t)
 	f.answerParts(t, func(req protocol.PartCreateRequest) *protocol.EdgeAnswer {
-		body, _ := json.Marshal(protocol.PartCreateResponse{ProcessID: req.ProcessID,
+		body, err := json.Marshal(protocol.PartCreateResponse{ProcessID: req.ProcessID,
 			Payload:  protocol.CatalogPayloadInfo{ID: 601, Name: req.PartNumber, Code: req.PartNumber, UOPCapacity: req.StandardPack},
 			BinTypes: []protocol.PayloadBinTypeInfo{{PayloadCode: req.PartNumber, BinTypeCode: req.BinTypeCode}}})
+		if err != nil {
+			t.Errorf("encode the answer: %v", err)
+		}
 		return &protocol.EdgeAnswer{Kind: protocol.AskPartCreate, Status: protocol.AnswerOK, Body: body}
 	})
 	b := f.body()
