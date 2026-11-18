@@ -1,6 +1,6 @@
 # Shingo → CMS Integration
 
-Verified against: c9af0b33
+Verified against: 2166cac5
 
 The **reference** for the CMS feed: what the integration does, where each piece
 lives, and which rules are load-bearing. Where a claim here is subtle, the file
