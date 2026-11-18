@@ -21,8 +21,7 @@ func (e *Engine) SetPayloadBinTypes(entries []protocol.PayloadBinTypeInfo) {
 // COPY-ON-WRITE, so a reader holding the old slice (PayloadBinTypes hands it
 // out unlocked) never sees it change. It leaves payloadBinTypesHeld as it was:
 // whether Core's catalog has arrived is the node list's to say, not one part's.
-// Reports whether any row was new.
-func (e *Engine) addPayloadBinTypes(rows []protocol.PayloadBinTypeInfo) bool {
+func (e *Engine) addPayloadBinTypes(rows []protocol.PayloadBinTypeInfo) {
 	e.payloadBinTypesMu.Lock()
 	defer e.payloadBinTypesMu.Unlock()
 	held := make(map[protocol.PayloadBinTypeInfo]bool, len(e.payloadBinTypes))
@@ -40,11 +39,9 @@ func (e *Engine) addPayloadBinTypes(rows []protocol.PayloadBinTypeInfo) bool {
 		held[r] = true
 		next = append(next, r)
 	}
-	if next == nil {
-		return false
+	if next != nil {
+		e.payloadBinTypes = next
 	}
-	e.payloadBinTypes = next
-	return true
 }
 
 // setBinTypeFamilies holds Core's carrier family per bin type (NodeListResponse.Family),
