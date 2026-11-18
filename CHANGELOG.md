@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.13.1 — 2026-11-18
+
 Deploy: no migration. Core only; the Edges are unchanged and need no install.
 
 - On the Bins page a bare cart's line under its type has no Edit or Delete of its own: the type's Edit sets the robot group for both, and its Delete removes both
