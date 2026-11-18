@@ -239,3 +239,30 @@ func TestCreatePart_CoreRefusalIs409(t *testing.T) {
 		}
 	}
 }
+
+// TestCreatePart_TheComposerReadDrawsTheDoor: the engine hands the station's
+// composer read what draws the door — Core's carriers, and whether Core names
+// the kind — so the read says new_part with SYN-CART while Core does, and
+// nothing once an ack stops naming it.
+func TestCreatePart_TheComposerReadDrawsTheDoor(t *testing.T) {
+	t.Parallel()
+	f := newPartDoor(t)
+	read := func() (bool, []string) {
+		t.Helper()
+		resp := doRequest(t, f.router, "GET", fmt.Sprintf("/api/operator-stations/%d/composer", f.station), nil, nil)
+		assertStatus(t, resp, http.StatusOK)
+		var got struct {
+			NewPart      bool     `json:"new_part"`
+			CarrierTypes []string `json:"carrier_types"`
+		}
+		decodeJSON(t, resp, &got)
+		return got.NewPart, got.CarrierTypes
+	}
+	if on, carriers := read(); !on || len(carriers) != 1 || carriers[0] != "SYN-CART" {
+		t.Errorf("Core naming part.create: new_part %v, carrier_types %v; want the door with SYN-CART", on, carriers)
+	}
+	f.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	if on, carriers := read(); on || carriers != nil {
+		t.Errorf("an ack without the kind: new_part %v, carrier_types %v; want the door not drawn", on, carriers)
+	}
+}

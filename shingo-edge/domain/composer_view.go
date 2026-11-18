@@ -112,6 +112,15 @@ type ComposerData struct {
 	// style expects, so a scan of either finds it. The station's composer read
 	// only; fetched on CHANGEOVER, never on the poll.
 	PartRows []ComposerPartRow `json:"part_rows,omitempty"`
+	// NewPart is whether the station's part list draws the New part door, the
+	// form that asks Core for a part it does not have (POST
+	// /api/processes/{id}/parts): HMI setup on, Core's last heartbeat ack
+	// naming the part.create ask, and a carrier type to offer. CarrierTypes is
+	// those types, sorted: the non-bare types Core sent with the node list,
+	// the only ones the door takes. Both the station's composer read only, and
+	// absent where the door is not drawn.
+	NewPart      bool     `json:"new_part,omitempty"`
+	CarrierTypes []string `json:"carrier_types,omitempty"`
 	// Map is the plant's drivable network in the shared scene shape
 	// (LEAD-NOTES D11): placed points and the shape of every stored segment.
 	// The desktop's key-route walk reads it

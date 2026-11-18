@@ -419,6 +419,8 @@ func New(c Config) *Engine {
 	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
 	e.stationService.SetCarrierCatalog(e.PayloadBinTypes)
 	e.stationService.SetBinTypeFamilies(e.BinTypeFamilies)
+	// The composer read draws the new-part door only where Core answers it.
+	e.stationService.SetCoreAnswersResolver(e.CoreAnswers)
 	// A station's node list is matched by core_node_name everywhere, so a name
 	// Core does not have configures a row that resolves to nothing. Give the
 	// service the live name set to check against.
