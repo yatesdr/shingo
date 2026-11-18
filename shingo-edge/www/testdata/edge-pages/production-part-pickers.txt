@@ -106,8 +106,8 @@ opened again: (no request)
     value="PART-A" note="Part A"
     value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
-  rows: UoP count="24" PN-A1=48 "left"
-POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
+  rows: UoP count="24" PN-A1=24 "left"
+POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":24,"description":"left"}],"uop_count":24}
 answer: 200 {"status":"ok"}
 shows: toast success: "Bin loaded"
 modal closed, rb-payload="PART-A"
@@ -150,8 +150,8 @@ opened again: GET /api/payload-catalog
     value="PART-A" note="Part A"
     value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
-  rows: UoP count="24" PN-A1=48 "left"
-POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
+  rows: UoP count="24" PN-A1=24 "left"
+POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":24,"description":"left"}],"uop_count":24}
 answer: 200 {"status":"ok"}
 shows: toast success: "Bin loaded"
 modal closed, rb-payload="PART-A"
@@ -164,8 +164,8 @@ on open: GET /api/payload-catalog
     value="PART-A" note="Part A"
     value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
-  rows: UoP count="24" PN-A1=48 "left"
-POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
+  rows: UoP count="24" PN-A1=24 "left"
+POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":24,"description":"left"}],"uop_count":24}
 answer: 400 {"error":"node Slot one: a bin is already loaded"}
 shows: toast error: "Error: node Slot one: a bin is already loaded"
 modal open, rb-payload="PART-A"
@@ -178,8 +178,8 @@ on open: GET /api/payload-catalog
     value="PART-A" note="Part A"
     value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
-  rows: UoP count="24" PN-A1=48 "left"
-POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
+  rows: UoP count="24" PN-A1=24 "left"
+POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":24,"description":"left"}],"uop_count":24}
 answer: 202 {"notice":"sent — waiting for Core","pending":true,"status":"pending"}
 shows: toast info: "sent — waiting for Core"
 modal closed, rb-payload="PART-A"
@@ -192,8 +192,8 @@ on open: GET /api/payload-catalog
     value="PART-A" note="Part A"
     value="PART-C"
 picked "PART-A": GET /api/payload/PART-A/manifest
-  rows: UoP count="24" PN-A1=48 "left"
-POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":48,"description":"left"}],"uop_count":24}
+  rows: UoP count="24" PN-A1=24 "left"
+POST /api/process-nodes/2/load-bin {"payload_code":"PART-A","manifest":[{"part_number":"PN-A1","quantity":24,"description":"left"}],"uop_count":24}
 answer: fetch rejects (TypeError: Failed to fetch)
 shows: toast error: "Error: TypeError: Failed to fetch"
 modal open, rb-payload="PART-A"
