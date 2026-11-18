@@ -270,9 +270,11 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// called worth taking: it gives the projection path real production traffic
 	// before it becomes load-bearing, on orders that are low-volume and already
 	// visible, where a bug shows up as a redundant update rather than as a
-	// missing order. The applier is an idempotent upsert by UUID, so the second
-	// arrival is a no-op — and if it is NOT a no-op, that is precisely the defect
-	// worth finding here rather than after the cutover.
+	// missing order. The applier is an upsert by UUID, and the projection carries
+	// the order's version: an Edge that versions applies its status only when it
+	// is newer, so a projection that lands after the order moved on changes
+	// nothing. An Edge that does not version wrote its status over the row
+	// whatever arrived since; that was the defect this path was kept to find.
 	s.projectOrder(order)
 	return order, payloadCode, nil
 }

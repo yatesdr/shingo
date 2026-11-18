@@ -16,8 +16,16 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration; Core and Edges in either order. A box an earlier tag install left on a release needs `--tag` this once.
+Deploy: Edge v58 first, at every Edge of the plant; then Core v179. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit. A box an earlier tag install left on a release needs `--tag` this once.
 
+- The station hears every status Core writes, from the write itself: a Core-side release reads in transit
+- An order Core has dispatched reads dispatched on its tile, with its robot once the fleet names one
+- RELEASE goes at the tap and the tile says released, sent; the leg reads in transit when its robot moves
+- A refused release never leaves staged; its tile shows Core's sentence and RELEASE again
+- A finished or cancelled order stays as it ended through a re-sync with Core
+- A robot the fleet swaps under an order shows on its tile at once, and a reshuffling order reads reshuffling
+- A cancel the station sent that Core never had is sent again while Core still holds the order
+- Core's order messages and a station's cancel are no longer dropped after ten failed sends
 - A plain install run installs the newest release; `--tag vX.Y.Z` picks one, `--main` builds main
 - A box an earlier tag install left on a release takes a plain run instead of stopping
 - Before it asks to go on, an installer prints the Deploy line of every release it brings or takes off

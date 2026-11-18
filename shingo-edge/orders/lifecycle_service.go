@@ -85,7 +85,10 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 }
 
 // ApplyCoreStatus maps a status Core pushes onto the Edge order row, on the
-// live-push path (HandleOrderUpdate → HandleCoreStatusPush). The reconcile
+// live-push path (HandleOrderUpdate → HandleCoreStatusPush). It is the arms for a
+// Core that does not version its orders (version 0): a versioned word goes
+// through the one applier instead (core_word.go), and these arms are what that
+// Core's words still need. The reconcile
 // snapshot is a second function, ApplyCoreStatusSnapshot, with its own arms;
 // what the two share is this one's terminal guard: neither moves a row that has
 // already ended. It replaces the older partial mapping that branched on

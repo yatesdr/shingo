@@ -230,7 +230,8 @@ func (e *Engine) notifyBinReturn(cancelled *orders.Order, bin *bins.Bin, state, 
 
 // orderTheEdgeHolds is the order a notice about o's bin is keyed on: o itself,
 // or, for a compound child (a dig leg), its nearest ancestor with no parent.
-// Core mints a child's uuid and never sends it to the Edge, so a notice keyed
+// Core mints a child's uuid, and the station placed no order under it: its
+// leg's own messages reach the station and match no row there. A notice keyed
 // on it would be stored at the station and shown on no order; the root is the
 // order the station placed. One read per hop, only when a notice is sent. A
 // read that fails keeps what it has.

@@ -249,7 +249,9 @@ const mirrorJumpDetail = "MIRROR JUMP"
 
 // expectedMirrorJumps are the forward jumps Core NEVER PROMISED TO ANNOUNCE, so
 // the mirror catching up across them is the design working rather than a defect
-// to go find. Each entry names the pure transition being skipped and why its
+// to go find. They are an older Core's: a Core that versions its orders
+// tells the station every status it writes, and its words never come here
+// (core_word.go). Each entry names the pure transition being skipped and why its
 // silence is intended — at the transition, where the next reader will look.
 //
 // ── WHY THIS LIST HAD TO EXIST ────────────────────────────────────────────
