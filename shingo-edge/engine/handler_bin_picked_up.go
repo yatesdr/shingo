@@ -260,8 +260,11 @@ func (e *Engine) leaveSeatAtLift(node *processes.Node, order *domain.Order, bp p
 // time T = bp.PickedUpAt, and refuses every window of that generation that
 // started at or after T as after_lift. The same windows are taken out of the
 // Edge's books here, BEFORE the pickup's flush: the unflushed one is never
-// sent, and the flushed ones are summed (uop.Mutator.TakeAfterLift). Those m
-// ticks were charged to the carrier because it was still bound when they were
+// sent, and the flushed ones are summed (uop.Mutator.TakeAfterLift). That sum
+// m is what the windows charged the carrier, in its own count's unit: a
+// consume seat's draws already carry the part's pieces per cycle
+// (consumeDraw), so m is pieces and is not multiplied again. Those strokes
+// were charged to the carrier because it was still bound when they were
 // counted; they belong to what the line drew from after the robot took it.
 // So they go back the way a tick goes when no carrier takes it: on a consume
 // seat the pile first (drainLinesideFirst), then the ledger (decision 55: no

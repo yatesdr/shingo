@@ -22,7 +22,7 @@ GET /api/processes/2/catid-health
     {
       "kind": "held",
       "severity": "info",
-      "headline": "2 strokes of PART-H at HELD-POS with no PART-H cart — no cart released there yet",
+      "headline": "2 pieces of PART-H at HELD-POS with no PART-H cart — no cart released there yet",
       "detail": "logged from 2026-11-02 06:00 to 06:00, 1 strokes (no CATID); Charge it to a cart of PART-H, or write it off",
       "since": "2026-11-02T06:00:00Z",
       "data": {

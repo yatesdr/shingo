@@ -65,9 +65,11 @@ type (
 // claimSelect names the claim columns in scan order. uop_capacity is NOT among
 // them: the column is dead and the value is resolved from the payload catalog
 // on every read — see capacity.SQL for why it is resolved here rather
-// than by each of the readers.
+// than by each of the readers. The part's pieces per cycle is resolved beside
+// it the same way (capacity.PiecesPerCycleSQL); no column holds it.
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
-	` + capacity.SQL("style_node_claims") + `, reorder_point, auto_reorder, inbound_staging, outbound_staging,
+	` + capacity.SQL("style_node_claims") + `, ` + capacity.PiecesPerCycleSQL("style_node_claims") + `,
+	reorder_point, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
@@ -85,12 +87,12 @@ const liveClaims = ` retired_at IS NULL`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var resolvedCapacity int
+	var resolvedCapacity, resolvedPiecesPerCycle int
 	var createdAt, allowedJSON, evacNodesJSON, keyRouteJSON string
 	var belowSince, updatedAt, retiredAt sql.NullString
 	var presetID, presetVersion sql.NullInt64
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
-		&resolvedCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
+		&resolvedCapacity, &resolvedPiecesPerCycle, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON,
 		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
@@ -101,6 +103,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		return c, err
 	}
 	c.UOPCapacity = capacity.Resolved(resolvedCapacity, c.PayloadCode)
+	c.PiecesPerCycle = capacity.PiecesPerCycle(resolvedPiecesPerCycle)
 	c.UpdatedAt = helpers.ScanTimePtr(updatedAt)
 	c.RetiredAt = helpers.ScanTimePtr(retiredAt)
 	if presetID.Valid {

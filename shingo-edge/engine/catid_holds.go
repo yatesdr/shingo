@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingoedge/plc"
 	"shingoedge/store"
@@ -59,12 +60,16 @@ const tickRelease plc.TickKind = "release"
 // holdCatidDraw adds a stroke's draw to the ledger: node 0 is the cell
 // counter's held stroke's whole draw, a node a share there — an off-plan
 // tick's share of part, a station's held share (part ""), or a release's
-// share held again. The reason is off-plan for an off-plan tick, held
-// otherwise.
+// share held again. The reason is off-plan for an off-plan tick, no-cart for
+// a "no cart" row's release held again (its quantity stays pieces, so it must
+// stay a row whose release is not multiplied: releaseUnit), held otherwise.
 func (e *Engine) holdCatidDraw(tick tickScope, nodeID int64, part string, qty int) {
 	reason := holdReasonHeld
-	if tick.kind == plc.TickOffPlan {
+	switch {
+	case tick.kind == plc.TickOffPlan:
 		reason = holdReasonOffPlan
+	case tick.unit == drawPieces:
+		reason = holdReasonNoCart
 	}
 	_, err := e.db.HoldCatidDraw(tick.processID, tick.catid, nodeID, part, reason, int64(qty), clock.Now())
 	if err != nil {
@@ -101,6 +106,11 @@ func (e *Engine) logNoCart(processID int64, catid string, node *processes.Node, 
 // on a cart of the style's part, read by the walk itself; any other is held
 // again for a person, and a position the style does not claim is named in the
 // walk's unattributed line. Returns the positions charged.
+//
+// A held or off-plan row counts strokes, whose part was not known when they
+// were held, so its release is multiplied by the part's pieces per cycle where
+// it lands (consumeDraw); a "no cart" row already counts the pieces the cart
+// did not give, and its release draws them as they are (releaseUnit).
 func (e *Engine) chargeHold(h *store.CatidHold, styleID int64) int {
 	nodes, err := e.db.ListProcessNodesByProcess(h.ProcessID)
 	if err != nil {
@@ -114,8 +124,18 @@ func (e *Engine) chargeHold(h *store.CatidHold, styleID int64) int {
 	return e.walkTick(process, nodes, claims, runtimes, tickScope{
 		processID: h.ProcessID, styleID: styleID, delta: int(h.Qty),
 		source: fmt.Sprintf("hold=%d", h.ID), catid: h.CATID, kind: tickRelease,
-		counter: holdCounter(h, process, nodes, claims, styleID),
+		counter: holdCounter(h, process, nodes, claims, styleID), unit: releaseUnit(h),
 	}).charged()
+}
+
+// releaseUnit is what a ledger row's quantity counts: pieces for a "no cart"
+// row (chargeOrLog logs the draw the cart did not take), strokes for a held or
+// off-plan share.
+func releaseUnit(h *store.CatidHold) drawUnit {
+	if h.Reason == holdReasonNoCart {
+		return drawPieces
+	}
+	return drawCycles
 }
 
 // holdCounter is the counter a hold's draw is walked as: a share's position's
@@ -239,6 +259,10 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 			continue
 		}
 		row := CatidHoldChargeRow{Node: nodes[i].Name, ClaimPart: claim.PayloadCode, Qty: h.Qty}
+		if claim.Role == protocol.ClaimRoleConsume {
+			// What the cart is drawn, in pieces, as the release's walk draws it.
+			row.Qty = int64(tickScope{delta: int(h.Qty), unit: releaseUnit(h)}.consumeDraw(claim))
+		}
 		switch {
 		case rt.ActiveBinID == nil:
 			if refusal == "" {

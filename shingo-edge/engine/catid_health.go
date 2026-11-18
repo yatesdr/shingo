@@ -523,17 +523,20 @@ func (e *Engine) heldItems(processID int64, holds []store.CatidHold, now time.Ti
 	return items
 }
 
-// noCartItem is a "no cart" row as the strip says it: "N strokes of P at NODE
+// noCartItem is a "no cart" row as the strip says it: "N pieces of P at NODE
 // with no P cart — last cart off: bin B at D, HH:MM", or "— no cart released
-// there yet" when none was, the times in the plant's zone. Severity info: a
-// line that ran off-system for a shift is a row, not an alarm.
+// there yet" when none was, the times in the plant's zone. N is the row's
+// quantity, the pieces the cart did not give (chargeOrLog logs the draw left
+// after the pile, the step times the part's pieces per cycle), so it is not
+// the strokes, which the detail counts. Severity info: a line that ran
+// off-system for a shift is a row, not an alarm.
 func noCartItem(h store.CatidHold, node string, loc *time.Location) CatidHealthItem {
 	if node == "" {
 		node = fmt.Sprintf("node %d", h.ProcessNodeID)
 	}
-	noun := "strokes"
+	noun := "pieces"
 	if h.Qty == 1 {
-		noun = "stroke"
+		noun = "piece"
 	}
 	last := "no cart released there yet"
 	if h.LastBinID != 0 && h.LastLeftAt != nil {
@@ -545,6 +548,7 @@ func noCartItem(h store.CatidHold, node string, loc *time.Location) CatidHealthI
 	}
 	t := h.FirstTickAt
 	return CatidHealthItem{Kind: catidKindHeld, Severity: CatidHealthInfo,
+		// OWNER-WORDS
 		Headline: fmt.Sprintf("%d %s of %s at %s with no %s cart — %s", h.Qty, noun, h.PayloadCode, node, h.PayloadCode, last),
 		Detail: fmt.Sprintf("logged from %s to %s, %d strokes (%s); Charge it to a cart of %s, or write it off",
 			h.FirstTickAt.In(loc).Format("2006-01-02 15:04"), h.LastTickAt.In(loc).Format("15:04"), h.Strokes, catid, h.PayloadCode),

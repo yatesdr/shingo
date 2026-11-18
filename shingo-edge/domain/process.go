@@ -344,6 +344,12 @@ type NodeClaim struct {
 	SwapMode     protocol.SwapMode  `json:"swap_mode"`
 	PayloadCode  string             `json:"payload_code"`
 	UOPCapacity  int                `json:"uop_capacity"`
+	// PiecesPerCycle is how many pieces of its part one counted cycle of this
+	// spot uses: the part's manifest ratio in Core, resolved on every claim
+	// read from the catalog copy (capacity.PiecesPerCycleSQL), never stored.
+	// 1 when the part has no ratio, is a kit, or is not in the catalog. Only a
+	// consume draw reads it (ConsumeDraw); a produce spot never does.
+	PiecesPerCycle int `json:"pieces_per_cycle"`
 	// ReorderPoint has role-dependent semantics, and DemandLevel below is
 	// the one place that resolves them. Read that method, not this field,
 	// for any "what level does this claim act on" question.
@@ -1005,6 +1011,15 @@ func PackToleranceRefusal(pct int) string {
 // silence. Nil-safe: no claim, no cap.
 func (c *NodeClaim) StrictPackApplies() bool {
 	return c != nil && c.StrictPack && c.Role == protocol.ClaimRoleProduce && c.UOPCapacity > 0
+}
+
+// ConsumeDraw is the pieces a consume stroke of step counted cycles takes:
+// step × PiecesPerCycle, a claim built without a catalog read (0) counting 1.
+// The owner's example: 8 per cycle draws an 800-piece bin to 0 in 100 cycles.
+// A draw bigger than what is left takes the count below 0, as any stroke does.
+// Pinned by TestConsume_DrawsPiecesPerCycleAtEveryConsumePath.
+func (c *NodeClaim) ConsumeDraw(step int) int {
+	return step * max(c.PiecesPerCycle, 1)
 }
 
 // CappedPack is the pack the strict arm caps the seat's bound bin at, or 0

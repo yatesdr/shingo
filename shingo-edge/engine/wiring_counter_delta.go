@@ -138,6 +138,32 @@ type tickScope struct {
 	// carrier is the tick's style's part; the other shares go to the ledger.
 	catid string
 	kind  plc.TickKind
+	// unit is what delta counts: counted cycles (a stroke, a held or
+	// off-plan share's release), which a consume spot multiplies by its
+	// part's pieces per cycle, or pieces (a "no cart" row's release, whose
+	// quantity is what the cart did not give), drawn as they are.
+	unit drawUnit
+}
+
+// drawUnit is what a walk's delta counts (tickScope.unit).
+type drawUnit int
+
+const (
+	// drawCycles: the counter's step, or a ledger share kept in strokes. The
+	// zero value: every stroke the PLC counts.
+	drawCycles drawUnit = iota
+	// drawPieces: a "no cart" row's quantity, already pieces.
+	drawPieces
+)
+
+// consumeDraw is the pieces this tick takes at a consume spot of claim: the
+// step times the part's pieces per cycle (NodeClaim.ConsumeDraw), or the
+// pieces a "no cart" row's release carries. A produce spot never reads it.
+func (t tickScope) consumeDraw(claim *processes.NodeClaim) int {
+	if t.unit == drawPieces {
+		return t.delta
+	}
+	return claim.ConsumeDraw(t.delta)
 }
 
 // walkTick charges one tick to the process's nodes. Each node's claim is the
@@ -871,12 +897,14 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// the lineside report must see all of it or none (countMu).
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
+	// The draw is pieces: the step times the part's pieces per cycle
+	// (tickScope.consumeDraw), taken before the pile and the cart see it.
 	// Lineside first: drain the active pile of this node's primary part
 	// before touching the node counter. The pile is parts the operator
 	// pulled to lineside at the release, which physically leave the station
 	// before the new bin is tapped, until the cutover strands it. Remainder
 	// flows to the cart, or to the ledger.
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.delta)
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim))
 	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, binRemainder)
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
@@ -1228,8 +1256,8 @@ func (e *Engine) handleABFallthrough(tick tickScope, node *processes.Node, runti
 	// re-derive via requestedClaimAtNode here: it prefers the process
 	// ActiveStyleID claim, which during a changeover can differ from the
 	// tick's style and mis-attribute the lineside drain and bin delta
-	// (R43-1).
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.delta)
+	// (R43-1). The draw is pieces, as at any consume spot (consumeDraw).
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim))
 	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, binRemainder)
 	e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
 }
@@ -1331,14 +1359,15 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 }
 
 // drainLinesideFirst decrements the node's active lineside pile(s) for the
-// claim's parts and returns:
+// claim's parts by delta, the stroke's draw in pieces (consumeDraw), and
+// returns:
 //
 //   - drains: per-part qty actually drained from each pile. Empty map (not
 //     nil-valued — the caller iterates safely) means no pile drained.
-//   - binRemainder: the units that should flow to the node counter
+//   - binRemainder: the pieces that should flow to the node counter
 //     after the primary-part drain. The primary's drain reduces
 //     binRemainder; secondary drains do not (they keep the UI
-//     honest but the node counter is one unit per assembly).
+//     honest; the node counter is the primary part's cart).
 //
 // The caller hands the drains to the mutator, which marks each pile's level
 // dirty with its drain, and the binRemainder becomes a BinUOPDelta
@@ -1349,13 +1378,14 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 // through the changeover window until the cutover strands it.
 //
 // Multi-part claims (claims with more than one entry in
-// AllowedPayloads) drain each part by up to delta independently. The
-// rationale: the node counter is a single integer (one UOP = one
-// assembly), and staging/reorder thresholds key off that value;
-// secondary part piles drain so the UI stays honest, even though
-// their draining doesn't affect the node counter arithmetic. If a
-// plant ever ships a claim where secondary parts can deplete
-// independently (e.g. consumables), revisit this.
+// AllowedPayloads) drain each part by up to delta independently: the
+// primary's draw, its pieces per cycle included, since only the claim's own
+// part's ratio is resolved. The rationale: the node counter is a single
+// integer (the primary part's cart, in pieces), and staging/reorder
+// thresholds key off that value; secondary part piles drain so the UI stays
+// honest, even though their draining doesn't affect the node counter
+// arithmetic. If a plant ever ships a claim where secondary parts can deplete
+// independently (e.g. consumables), or at a ratio of their own, revisit this.
 func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, delta int) (drains map[string]int, binRemainder int) {
 	drains = make(map[string]int)
 	binRemainder = delta

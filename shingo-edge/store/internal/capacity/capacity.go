@@ -1,4 +1,5 @@
-// Package capacity resolves a claim's UOP capacity.
+// Package capacity resolves a claim's UOP capacity, and its part's pieces per
+// cycle, from the payload catalog Core syncs.
 //
 // It lives under store/internal because both store/processes (which reads
 // claims) and the outer store/ (which re-exports it for the sim's own claim
@@ -74,4 +75,33 @@ func Resolved(raw int, payloadCode string) int {
 		log.Printf("catalog: no payload_catalog row for %q — capacity reads 0 until Core syncs it", payloadCode)
 	}
 	return 0
+}
+
+// A CLAIM'S PIECES PER CYCLE IS READ THE SAME WAY, beside its capacity.
+//
+// A bin of a one-line payload counts pieces, and an assembly that uses more
+// than one piece a cycle draws its counter's step times this number
+// (engine handleConsumeTick, handleABFallthrough). It is the part's manifest
+// line's ratio in Core (payload_manifest.parts_per_cycle), which the catalog
+// feed carries in payload_catalog.manifest. Resolved in the claim's SELECT
+// for capacity's reason: the tick reads its claims once (NodeClaimsForStyles),
+// so the number costs no statement of its own per tick.
+//
+// Exactly one manifest line gives that line's ratio. Anything else gives 1: a
+// kit (several lines) keeps the arithmetic it always had, one per stroke; a
+// row with no lines, or no row at all, is a part nobody set a ratio on. A
+// missing row is already said once per code by Resolved.
+
+// PiecesPerCycleSQL is the SELECT-list expression that resolves a claim's
+// pieces per cycle, 0 when it does not give one. Pair it with PiecesPerCycle.
+func PiecesPerCycleSQL(table string) string {
+	return `COALESCE((SELECT CASE WHEN json_valid(pc.manifest) AND json_array_length(pc.manifest) = 1
+		THEN CAST(json_extract(pc.manifest, '$[0].parts_per_cycle') AS INTEGER) END
+		FROM payload_catalog pc WHERE pc.code = ` + table + `.payload_code), 0)`
+}
+
+// PiecesPerCycle normalises what PiecesPerCycleSQL scanned: a ratio below 1
+// (none given, or a value Core would refuse) is 1.
+func PiecesPerCycle(raw int) int {
+	return max(raw, 1)
 }
