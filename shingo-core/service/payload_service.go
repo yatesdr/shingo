@@ -112,7 +112,8 @@ var (
 // stored is what was checked.
 //
 // THE CAPACITY IS 1 OR MORE. uop_capacity is the standard pack — how many
-// production cycles a full bin of this payload holds — and 0 is not "unknown":
+// pieces of its part a full bin holds, or for a kit (several manifest lines)
+// how many cycles it feeds (protocol.ManifestItem) — and 0 is not "unknown":
 // the standard-pack fallback hands the line a carrier with nothing in it, and
 // the near-empty and over-capacity arithmetic divide by it. Rows already
 // stored at 0 are left alone until somebody edits them, as parts_per_cycle
@@ -397,9 +398,10 @@ func (s *PayloadService) ListManifest(payloadID int64) ([]*payloads.ManifestItem
 // that way (payload_manifest ids 117/123/137/150) and were corrected by hand at
 // the plant once the owner declared them entry oversights.
 //
-// Non-positive is refused rather than only missing, because the count a bin
-// ships to the inventory ledger is uop_remaining x this number: a zero line
-// contributes nothing to any count while looking configured. A part that
+// Non-positive is refused rather than only missing, because a zero line
+// looks configured and is not: a kit's line counts uop_remaining x this number
+// (zero, whatever is in the bin), and a one-part payload's is an assembly's
+// draw per cycle, which the Edge would read as 1 (protocol.ManifestItem). A part that
 // genuinely is not in the carrier is a line that does not belong on the
 // manifest.
 //
