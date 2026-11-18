@@ -1,6 +1,6 @@
 ## Data visualization
 
-Verified against: 2166cac5
+Verified against: c609d9a3
 
 ### Which shape answers which question
 

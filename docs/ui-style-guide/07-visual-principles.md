@@ -1,6 +1,6 @@
 ## Visual principles
 
-Verified against: 2166cac5
+Verified against: c609d9a3
 
 Three named principles generalize the look people like on the map — the
 best-looking surface in the system — to every other surface. They sit above the

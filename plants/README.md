@@ -1,6 +1,6 @@
 # plants/ — the one plant
 
-Verified against: 2166cac5
+Verified against: c609d9a3
 
 `plants/master.yaml` is the plant spec the dev stack seeds (`docker-compose.dev.yml`
 mounts this directory at `/plants`), the rig scripts drive, the planner golden is cut

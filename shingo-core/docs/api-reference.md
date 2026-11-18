@@ -1,6 +1,6 @@
 # API Reference
 
-Verified against: 2166cac5
+Verified against: c609d9a3
 
 The `/api` endpoints return JSON; the routes outside `/api` are pages and form posts. Protected endpoints require authentication via session cookie (log in through the web UI).
 
