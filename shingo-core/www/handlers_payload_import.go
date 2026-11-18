@@ -25,9 +25,9 @@
 //
 // THE FOURTH COLUMN IS RENAMED, NOT REDEFINED. It was labelled Qty and it has
 // always been the per-cycle ratio — measured at both plants, ~1 on essentially
-// every row. What changed is that the name now says so, and that the Payloads
-// page shows the full-bin figure (ratio x UoP Capacity) beside it. An existing
-// sheet imports unchanged.
+// every row; it is how many of the part one assembly cycle uses. What changed
+// is that the name now says so, and that the Payloads page shows a readout
+// beside it (payloads.js renderFullBin). An existing sheet imports unchanged.
 package www
 
 import (
@@ -281,8 +281,9 @@ func validateGroupQuantities(g *importGroup, report *importReport) bool {
 				blank = " (the cell is empty)"
 			}
 			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
+				// OWNER-WORDS
 				Reason: fmt.Sprintf("parts-per-cycle for part %s is %d%s — it must be 1 or more. "+
-					"It is how many of the part ONE production cycle uses, usually 1, not the "+
+					"It is how many of the part one assembly cycle uses, usually 1, not the "+
 					"number in a full bin. The whole payload was skipped so its manifest is not "+
 					"imported missing a line.", e.part, q, blank)})
 			return false

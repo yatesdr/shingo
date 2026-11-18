@@ -262,11 +262,12 @@ bin delete** — retire is the terminal action.
 **Route:** `/payloads` (login)
 
 Payload definitions (container content templates): create, edit and delete
-payloads with their UOP capacity, template manifest (the parts and how many of
-each one production cycle uses) and compatible bin types; **Import** reads
-payloads from a file. The **Containment** column activates and releases quality
-containment for a payload: while active, every finished-goods delivery of it
-diverts to its claims' containment destination.
+payloads with their UOP capacity (a part alone's standard pack, in pieces),
+template manifest (the parts, and how many of each one assembly cycle uses: an
+assembly consume setting a press never reads) and compatible bin types;
+**Import** reads payloads from a file. The **Containment** column activates and
+releases quality containment for a payload: while active, every finished-goods
+delivery of it diverts to its claims' containment destination.
 
 ## Preview
 

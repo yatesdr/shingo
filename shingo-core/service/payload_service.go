@@ -79,8 +79,9 @@ var ErrPayloadCapacity = errors.New("payload capacity")
 // it before Create instead.
 func ValidatePayloadCapacity(p *payloads.Payload) error {
 	if p.UOPCapacity < 1 {
-		return fmt.Errorf("%w: payload %q needs a UoP capacity of 1 or more — how many production "+
-			"cycles a full bin of it holds (got %d)", ErrPayloadCapacity, p.Code, p.UOPCapacity)
+		// OWNER-WORDS
+		return fmt.Errorf("%w: %q needs a UoP capacity of 1 or more — how many pieces of the part "+
+			"a full bin holds (got %d)", ErrPayloadCapacity, p.Code, p.UOPCapacity)
 	}
 	return nil
 }
@@ -363,8 +364,9 @@ func ValidateManifestLines(lines []payloads.Line) error {
 	if len(bad) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: every manifest line needs a part number and a parts_per_cycle of 1 "+
-		"or more — how many of the part ONE production cycle uses, usually 1. Fix: %s",
+	// OWNER-WORDS
+	return fmt.Errorf("%w: every manifest line needs a part number and pieces per assembly cycle of 1 "+
+		"or more — how many of the part one assembly cycle uses, usually 1. Fix: %s",
 		ErrManifestLine, strings.Join(bad, ", "))
 }
 

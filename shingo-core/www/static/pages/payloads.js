@@ -278,8 +278,9 @@ function collectManifestRows(containerId) {
       'names a part; fill it in or remove the row.'};
   }
   if (bad.length > 0) {
-    return {items: items, error: 'Per cycle is required and must be 1 or more. Fix: ' +
-      bad.join(', ') + '. It is how many of the part ONE production cycle uses — usually 1, ' +
+    // OWNER-WORDS
+    return {items: items, error: 'Pieces per assembly cycle is required and must be 1 or more. Fix: ' +
+      bad.join(', ') + '. It is how many of the part one assembly cycle uses — usually 1, ' +
       'not the number in a full bin.'};
   }
   return {items: items, error: ''};

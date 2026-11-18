@@ -16,8 +16,8 @@ import (
 // payload_capacity_doors_test.go — a payload's UoP capacity is required at
 // every door that writes it (I1).
 //
-// uop_capacity is the standard pack: how many production cycles a full bin of
-// the payload holds. A zero there is not "unknown", it is a bin that holds
+// uop_capacity is the standard pack: how many pieces a full bin of a part holds
+// (a kit's: cycles). A zero there is not "unknown", it is a bin that holds
 // nothing — the standard-pack fallback hands the line a carrier with 0 in it,
 // and the near-empty and over-capacity arithmetic divide by it. The form doors
 // used to discard the Atoi error, so a blank or mistyped box saved 0 with no
