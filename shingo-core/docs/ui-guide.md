@@ -232,7 +232,8 @@ saved key the scene no longer lists says "not in RDS"); it opens on its own keys
 and **All** offers every key. A picked key reads "not saved" until **Save keys**;
 **Cancel** puts both back. Every type of the family sends them. Under them are
 the family's types, with Edit (the type's id in its heading) and Delete; a bare
-marker is a quiet line under its type, and a tote carrier's line says its top is
+marker is a quiet line under its type with no buttons (the type's Edit sets its
+robot group, and its Delete removes it too), and a tote carrier's line says its top is
 totes, so many per layer, with its marker's line its bottom. **+ Bin Type** opens
 with the open tab's family filled in. **+ Bin** creates 1 to 100 carriers from a
 label prefix; **Cycle Count** walks the filtered bins for a count. The **Lineside Buckets** section is Core's mirror of the Edges' piles.

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
 )
@@ -16,6 +17,7 @@ import (
 // ever names a marker.
 
 type bareFixture struct {
+	db      *store.DB
 	bin     *BinService
 	payload *PayloadService
 	bare    *bins.BinType
@@ -27,6 +29,7 @@ func newBareFixture(t *testing.T) bareFixture {
 	t.Helper()
 	db := testDB(t)
 	f := bareFixture{
+		db:      db,
 		bin:     NewBinService(db, nil),
 		payload: NewPayloadService(db),
 		plain:   &bins.BinType{Code: "BARE-STD"},
@@ -102,4 +105,52 @@ func TestBareBinType_NeverInAPayloadRule(t *testing.T) {
 		t.Errorf("refused rule save wrote %d rows", len(rules))
 	}
 	testutil.MustNoErr(t, f.payload.SetBinTypes(f.pl.ID, []int64{f.plain.ID}), "legal rule")
+}
+
+// TestBareBinType_TakesItsCarriersRobotGroup: the marker has no edit of its own
+// on the Bins page, so the carrier's save carries its robot group to it; the
+// two are one cart, with a bin on it or without.
+func TestBareBinType_TakesItsCarriersRobotGroup(t *testing.T) {
+	t.Parallel()
+	f := newBareFixture(t)
+	for _, group := range []string{"JACK-2", ""} {
+		carrier, err := f.bin.GetBinType(f.plain.ID)
+		carrier = testutil.Must(t, carrier, err, "read the carrier")
+		carrier.RequiredRobotGroup = group
+		testutil.MustNoErr(t, f.bin.UpdateBinType(carrier), "save the carrier's robot group")
+		marker, err := f.bin.GetBinType(f.bare.ID)
+		marker = testutil.Must(t, marker, err, "read the marker")
+		if marker.RequiredRobotGroup != group {
+			t.Errorf("after the carrier's save with group %q the marker's group is %q", group, marker.RequiredRobotGroup)
+		}
+	}
+}
+
+// TestBareBinType_GoesWithItsCarrier: the carrier's delete takes its marker
+// along, and a bin on the marker holds the whole delete back.
+func TestBareBinType_GoesWithItsCarrier(t *testing.T) {
+	t.Parallel()
+	t.Run("a bin on the marker holds it back", func(t *testing.T) {
+		t.Parallel()
+		f := newBareFixture(t)
+		testutil.MustNoErr(t, f.db.CreateBin(&bins.Bin{BinTypeID: f.bare.ID, Label: "BARE-CART-1", Status: "available"}), "a bare cart")
+		if err := f.bin.DeleteBinType(f.plain.ID); err == nil {
+			t.Fatal("the carrier was deleted with a bare cart of its marker in the plant")
+		}
+		for _, id := range []int64{f.plain.ID, f.bare.ID} {
+			if _, err := f.bin.GetBinType(id); err != nil {
+				t.Errorf("type %d is gone after a refused delete: %v", id, err)
+			}
+		}
+	})
+	t.Run("no bins: both go", func(t *testing.T) {
+		t.Parallel()
+		f := newBareFixture(t)
+		testutil.MustNoErr(t, f.bin.DeleteBinType(f.plain.ID), "delete the carrier")
+		for _, id := range []int64{f.plain.ID, f.bare.ID} {
+			if _, err := f.bin.GetBinType(id); err == nil {
+				t.Errorf("type %d outlived its carrier's delete", id)
+			}
+		}
+	})
 }

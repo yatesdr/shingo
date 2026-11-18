@@ -380,8 +380,8 @@ func TestBinsPage_AMarkerIsALineUnderItsType(t *testing.T) {
 			t.Errorf("%s's marker is not the quiet line %q under it", c.bt.Code, c.line)
 		} else if j := strings.Index(panel, "<code>"+c.bt.Code+"</code>"); j < 0 || j > i {
 			t.Errorf("%s's marker line is not under %s", c.bt.Code, c.bt.Code)
-		} else if !strings.Contains(panel[i:], `data-code="`+c.marker+`"`) {
-			t.Errorf("%s's marker line has no Edit of its own", c.bt.Code)
+		} else if line := panel[i : i+strings.Index(panel[i:], "</tr>")]; strings.Contains(line, "<button") || strings.Contains(line, "/bin-types/delete") {
+			t.Errorf("%s's marker line draws a button; the type's own Edit and Delete cover it", c.bt.Code)
 		}
 		for _, s := range c.says {
 			if !strings.Contains(panel, s) {

@@ -1,7 +1,8 @@
 {{define "importmap"}}{{importMap "/static/app.js" "/static/pages/bins.js" "/static/pages/bins-lineside.js"}}{{end}}
-{{/* A bin type's Edit and Delete, on its line in a family tab or on its bare
-     marker's line under it. Delete is .btn .btn-sm (style guide 12): the
-     confirm carries the warning. */}}
+{{/* A bin type's Edit and Delete, on its line in a family tab. Its bare
+     marker's line has none: the type's Edit sets the marker's robot group and
+     its Delete takes the marker along. Delete is .btn .btn-sm (style guide 12):
+     the confirm carries the warning. */}}
 {{define "bin-type-actions"}}<button type="button" class="btn btn-sm" data-action="openEditBTModal"
   data-id="{{.ID}}"
   data-code="{{.Code}}"
@@ -94,8 +95,7 @@
               {{with $line.Marker}}
               <tr class="bt-marker">
                 <td><code>{{.Code}}</code></td>
-                <td colspan="3">{{if $line.TotesPerLayer}}Bottom: the cart with its totes off{{else}}Bare: the cart with no bin on it{{end}}</td>
-                <td>{{template "bin-type-actions" .}}</td>
+                <td colspan="4">{{if $line.TotesPerLayer}}Bottom: the cart with its totes off{{else}}Bare: the cart with no bin on it{{end}}</td>
               </tr>
               {{end}}
               {{end}}

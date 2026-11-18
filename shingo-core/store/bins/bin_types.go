@@ -67,10 +67,15 @@ func CreateType(db *sql.DB, bt *BinType) error {
 
 // UpdateType writes the mutable columns on a bin type, totes_per_layer among
 // them: every caller reads the type and lays its edit over it. Bare and BareOf
-// are not among them (see CreateType).
+// are not among them (see CreateType). The type's robot group carries to its
+// bare marker: the two are one cart, with a bin on it or without, and the
+// marker has no edit of its own on the Bins page.
 func UpdateType(db *sql.DB, bt *BinType) error {
-	_, err := db.Exec(`UPDATE bin_types SET code=$1, description=$2, width_in=$3, height_in=$4, length_in=$5,
-		required_robot_group=$6, totes_per_layer=$7, updated_at=NOW() WHERE id=$8`,
+	_, err := db.Exec(`WITH t AS (
+		UPDATE bin_types SET code=$1, description=$2, width_in=$3, height_in=$4, length_in=$5,
+			required_robot_group=$6, totes_per_layer=$7, updated_at=NOW() WHERE id=$8 RETURNING id)
+		UPDATE bin_types m SET required_robot_group=$6, updated_at=NOW()
+		  FROM t WHERE m.bare_of = t.id AND m.required_robot_group <> $6`,
 		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup, bt.TotesPerLayer, bt.ID)
 	return err
 }
@@ -198,14 +203,17 @@ func BareTypeCodes(db *sql.DB, ids []int64) ([]string, error) {
 	return out, rows.Err()
 }
 
-// DeleteType removes a bin type.
+// DeleteType removes a bin type and its bare marker: the marker stands for the
+// type and has no delete of its own on the Bins page. A bin of either holds the
+// delete back whole.
 func DeleteType(db *sql.DB, id int64) error {
 	// A family left with no member goes with its last type, or a type later created
 	// under this code would find its family of one's code already taken.
-	_, err := db.Exec(`WITH gone AS (DELETE FROM bin_types WHERE id=$1 RETURNING family_id)
+	_, err := db.Exec(`WITH gone AS (DELETE FROM bin_types WHERE id=$1 OR bare_of=$1 RETURNING family_id)
 		DELETE FROM carrier_families f USING gone
 		 WHERE f.id = gone.family_id
-		   AND NOT EXISTS (SELECT 1 FROM bin_types o WHERE o.family_id = f.id AND o.id <> $1)`, id)
+		   AND NOT EXISTS (SELECT 1 FROM bin_types o WHERE o.family_id = f.id AND o.id <> $1
+		                      AND o.bare_of IS DISTINCT FROM $1)`, id)
 	return err
 }
 
