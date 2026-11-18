@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,6 +17,8 @@ import (
 
 	"shingocore/asks"
 	"shingocore/internal/testdb"
+	"shingocore/messaging"
+	"shingocore/service"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
@@ -350,5 +353,112 @@ func TestDoorAsk_LoaderRetrieve(t *testing.T) {
 	if o.SourceNode != "" || o.DeliveryNode != "LE-U2" || o.SkipAutoConfirm {
 		t.Errorf("a person's full, any source: from %q to %q skip_auto_confirm %v, want no source, LE-U2, false",
 			o.SourceNode, o.DeliveryNode, o.SkipAutoConfirm)
+	}
+}
+
+// TestDoorAsk_PartCreate: a part submitted at a station's changeover picker,
+// through the ask server as the composition root registers it (replay on).
+// The yes carries the asking process, the part's catalog row and its carrier
+// rows as the feeds build them (PayloadService.CatalogRow, wired as the
+// composition root wires it), so the Edge applies it with no memory of the ask.
+// The same submit again on a new envelope (a resend after Core acted and never
+// answered) gets the part back marked a repeat, writing nothing; another
+// station's is refused. The floor's own refusals carry Core's sentence at 409;
+// a body that does not decode or names no process is 400. No refusal writes.
+func TestDoorAsk_PartCreate(t *testing.T) {
+	t.Parallel()
+	f := newDoorFix(t)
+	f.h.engine.PayloadService().SetCatalogRowFunc(messaging.NewCoreDataService(f.db, nil, service.EpochAnnounce{}).CatalogRow)
+	mintBinType(t, f.db, "SYN-PD-BT")
+	rec := postJSON(t, f.h.apiCreatePayloadTemplate, "/api/payloads/templates/create", map[string]any{
+		"code": "SYN-PD-DESK", "uop_capacity": 5,
+		"manifest": []map[string]any{{"part_number": "SYN-PD-DESK", "catid": "SYN-PD-C9", "parts_per_cycle": 1}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("desktop part: status %d; body=%s", rec.Code, rec.Body.String())
+	}
+	a := doorAsk{protocol.AskPartCreate, func(d *Doors) asks.Door { return d.AskPartCreate }, "", true}
+	req := protocol.PartCreateRequest{ProcessID: 17, PartNumber: "SYN-PD-1", StandardPack: 800,
+		BinTypeCode: "SYN-PD-BT", CATID: "SYN-PD-C1"}
+	ask := func(station string, r protocol.PartCreateRequest) (*protocol.EdgeAnswer, protocol.PartCreateResponse) {
+		t.Helper()
+		raw, err := json.Marshal(r)
+		testutil.MustNoErr(t, err, "marshal")
+		ans := askThrough(t, f, a, station, raw)
+		var out protocol.PartCreateResponse
+		if ans.Status == http.StatusOK {
+			testutil.MustNoErr(t, json.Unmarshal(ans.Body, &out), "decode the answer")
+		}
+		return ans, out
+	}
+	payloadCount := func() int {
+		var n int
+		testutil.MustNoErr(t, f.db.QueryRow(`SELECT COUNT(*) FROM payloads`).Scan(&n), "count payloads")
+		return n
+	}
+
+	ans, got := ask("edge.pd", req)
+	if ans.Status != http.StatusOK || got.Repeat || got.ProcessID != 17 {
+		t.Fatalf("a new part: %d %q, %+v; want 200, process 17, not a repeat", ans.Status, ans.Sentence, got)
+	}
+	feedRow, feedBinTypes, err := f.h.engine.PayloadService().CatalogRow("SYN-PD-1")
+	testutil.MustNoErr(t, err, "the feeds' row")
+	if !reflect.DeepEqual(got.Payload, feedRow) || !reflect.DeepEqual(got.BinTypes, feedBinTypes) {
+		t.Errorf("the answer's rows are not the feeds':\n got %+v %+v\nwant %+v %+v", got.Payload, got.BinTypes, feedRow, feedBinTypes)
+	}
+	wantRow := protocol.CatalogPayloadInfo{ID: got.Payload.ID, Name: "SYN-PD-1", Code: "SYN-PD-1", UOPCapacity: 800,
+		CATID: "SYN-PD-C1", Manifest: []protocol.ManifestItem{{PartNumber: "SYN-PD-1", PartsPerCycle: 1}}}
+	if got.Payload.ID == 0 || !reflect.DeepEqual(got.Payload, wantRow) {
+		t.Errorf("catalog row = %+v, want %+v", got.Payload, wantRow)
+	}
+	if want := []protocol.PayloadBinTypeInfo{{PayloadCode: "SYN-PD-1", BinTypeCode: "SYN-PD-BT"}}; !reflect.DeepEqual(got.BinTypes, want) {
+		t.Errorf("carrier rows = %+v, want %+v", got.BinTypes, want)
+	}
+
+	before := payloadCount()
+	ans, again := ask("edge.pd", req)
+	if ans.Status != http.StatusOK || !again.Repeat || again.Payload.ID != got.Payload.ID || again.ProcessID != 17 {
+		t.Errorf("the same submit again: %d %q, %+v; want 200, the same part, marked a repeat", ans.Status, ans.Sentence, again)
+	}
+
+	other := func(f func(r *protocol.PartCreateRequest)) protocol.PartCreateRequest {
+		r := req
+		f(&r)
+		return r
+	}
+	for _, c := range []struct {
+		name     string
+		station  string
+		raw      []byte
+		status   int
+		sentence string
+	}{
+		{"another station's same submit", "edge.other", nil, http.StatusConflict,
+			"Part SYN-PD-1 already exists on Core. An engineer adds it to this process."},
+		{"a desktop part", "edge.pd", mustJSON(t, other(func(r *protocol.PartCreateRequest) { r.PartNumber, r.CATID = "SYN-PD-DESK", "" })),
+			http.StatusConflict, "Part SYN-PD-DESK already exists on Core. An engineer adds it to this process."},
+		{"a near spelling", "edge.pd", mustJSON(t, other(func(r *protocol.PartCreateRequest) { r.PartNumber, r.CATID = "syn pd_desk", "" })),
+			http.StatusConflict, "This part already exists on Core as SYN-PD-DESK."},
+		{"a CATID another part carries", "edge.pd", mustJSON(t, other(func(r *protocol.PartCreateRequest) { r.PartNumber, r.CATID = "SYN-PD-2", "SYN-PD-C9" })),
+			http.StatusConflict, "CATID SYN-PD-C9 is already on part SYN-PD-DESK."},
+		{"an unknown carrier", "edge.pd", mustJSON(t, other(func(r *protocol.PartCreateRequest) { r.PartNumber, r.BinTypeCode = "SYN-PD-3", "SYN-NO-BT" })),
+			http.StatusConflict, `Core has no carrier type "SYN-NO-BT".`},
+		{"a blank number", "edge.pd", mustJSON(t, other(func(r *protocol.PartCreateRequest) { r.PartNumber = " " })),
+			http.StatusConflict, "The part number is blank."},
+		{"no process", "edge.pd", mustJSON(t, other(func(r *protocol.PartCreateRequest) { r.PartNumber, r.ProcessID = "SYN-PD-4", 0 })),
+			http.StatusBadRequest, "process_id is required"},
+		{"a body that does not decode", "edge.pd", []byte("{"), http.StatusBadRequest, "unexpected EOF"},
+	} {
+		raw := c.raw
+		if raw == nil {
+			raw = mustJSON(t, req)
+		}
+		ans := askThrough(t, f, a, c.station, raw)
+		if ans.Status != c.status || ans.Sentence != c.sentence || ans.Body != nil {
+			t.Errorf("%s: %d %q body %s, want %d %q and no body", c.name, ans.Status, ans.Sentence, ans.Body, c.status, c.sentence)
+		}
+	}
+	if after := payloadCount(); after != before {
+		t.Errorf("a repeat and the refusals wrote %d payloads", after-before)
 	}
 }

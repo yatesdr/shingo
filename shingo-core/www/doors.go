@@ -106,13 +106,16 @@ type AskDoor struct {
 }
 
 // AskDoors is every kind Core answers (protocol.AskKinds, in its order), each
-// over its body. Only the home clear replays: it authors orders and refuses a
+// over its body. Two kinds replay. The home clear authors orders and refuses a
 // second clear of a live one ("already being cleared", engine/clear_home.go),
-// so a repeat must get its first answer, not that refusal. Every other kind's
-// repeat is harmless (the reads, the reseat's re-announce) or refused by the
-// assertion fields its request carries (bin_id, epoch, expect), or bounded by
-// the windows and what is already coming (the loader retrieve: ReplenishLoader
-// under its loader's lock). Pinned by TestCensus_AskKinds.
+// so a repeat must get its first answer, not that refusal. The part create
+// writes a part: a repeat acted on again would be answered as a repeat by its
+// content (CreateFromFloor), but one that arrives expired would be told that
+// nothing was done, over a part that was made. Every other kind's repeat is
+// harmless (the reads, the reseat's re-announce) or refused by the assertion
+// fields its request carries (bin_id, epoch, expect), or bounded by the windows
+// and what is already coming (the loader retrieve: ReplenishLoader under its
+// loader's lock). Pinned by TestCensus_AskKinds.
 func (d *Doors) AskDoors() []AskDoor {
 	return []AskDoor{
 		{protocol.AskBinLoad, d.AskBinLoad, false},
@@ -125,6 +128,7 @@ func (d *Doors) AskDoors() []AskDoor {
 		{protocol.AskHeldPartials, d.AskHeldPartials, false},
 		{protocol.AskReseat, d.AskReseat, false},
 		{protocol.AskLoaderRetrieve, d.AskLoaderRetrieve, false},
+		{protocol.AskPartCreate, d.AskPartCreate, true},
 	}
 }
 
@@ -223,6 +227,15 @@ func (d *Doors) reseat(station string, req protocol.ReseatRequest) asks.Result {
 func (d *Doors) AskLoaderRetrieve(station string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, func(req protocol.LoaderRetrieveRequest) asks.Result {
 		return d.loaderRetrieve(station, req)
+	})
+}
+
+// AskPartCreate answers protocol.AskPartCreate: a part made new at the asking
+// station's changeover picker (partCreate). Born on the ask: there is no HTTP
+// door.
+func (d *Doors) AskPartCreate(station string, raw json.RawMessage) asks.Result {
+	return askDoor(raw, errText, func(req protocol.PartCreateRequest) asks.Result {
+		return d.partCreate(station, req)
 	})
 }
 

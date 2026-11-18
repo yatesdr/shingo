@@ -387,3 +387,57 @@ func TestPayloadsChanged_DropsTheMemos(t *testing.T) {
 		t.Errorf("an Edge holding the old digest was not sent the catalog with the new part: %+v", cat)
 	}
 }
+
+// TestCatalogRow_IsTheFeedsRow: one payload's catalog row is the row the
+// catalog feed builds for it, CATID and manifest line included, and its carrier
+// rows are the node list's rows for that payload and no other's, so an Edge
+// that writes them from the part create's answer holds what the next feeds
+// carry, and their conditional upsert writes nothing new.
+func TestCatalogRow_IsTheFeedsRow(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	testutil.MustNoErr(t, err, "enroll")
+	seedFeedsPinNodes(t, db)
+	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
+	ps := service.NewPayloadService(db)
+	var ids []int64
+	for _, code := range []string{"SYN-CR-BT-A", "SYN-CR-BT-B", "SYN-CR-BT-C"} {
+		bt := &bins.BinType{Code: code}
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create "+code)
+		ids = append(ids, bt.ID)
+	}
+	testutil.MustNoErr(t, ps.CreateWithSets(&payloads.Payload{Code: "SYN-CR-1", Description: "one", UOPCapacity: 40},
+		service.PayloadSets{BinTypeIDs: &[]int64{ids[0], ids[1]},
+			Manifest: &[]service.ManifestLine{{PartNumber: "SYN-CR-1", CATID: "SYN-CR-C1", PartsPerCycle: 1}}}), "create SYN-CR-1")
+	testutil.MustNoErr(t, ps.CreateWithSets(&payloads.Payload{Code: "SYN-CR-2", UOPCapacity: 10},
+		service.PayloadSets{BinTypeIDs: &[]int64{ids[2]}}), "create SYN-CR-2")
+
+	row, binTypes, err := svc.CatalogRow("SYN-CR-1")
+	testutil.MustNoErr(t, err, "CatalogRow")
+	cat, err := svc.buildCatalog(true)
+	testutil.MustNoErr(t, err, "the catalog feed")
+	var feedRow *protocol.CatalogPayloadInfo
+	for i := range cat.Payloads {
+		if cat.Payloads[i].Code == "SYN-CR-1" {
+			feedRow = &cat.Payloads[i]
+		}
+	}
+	if feedRow == nil || !reflect.DeepEqual(row, *feedRow) {
+		t.Errorf("CatalogRow = %+v, the catalog feed's row %+v", row, feedRow)
+	}
+	if row.CATID != "SYN-CR-C1" || len(row.Manifest) != 1 || row.Manifest[0].PartsPerCycle != 1 {
+		t.Errorf("CatalogRow lost the CATID or the manifest line: %+v", row)
+	}
+	nl, err := svc.buildNodeList("edge.test", true)
+	testutil.MustNoErr(t, err, "the node list")
+	var feedBinTypes []protocol.PayloadBinTypeInfo
+	for _, r := range nl.PayloadBinTypes {
+		if r.PayloadCode == "SYN-CR-1" {
+			feedBinTypes = append(feedBinTypes, r)
+		}
+	}
+	if len(binTypes) != 2 || !reflect.DeepEqual(binTypes, feedBinTypes) {
+		t.Errorf("carrier rows = %+v, the node list's for SYN-CR-1 %+v", binTypes, feedBinTypes)
+	}
+}

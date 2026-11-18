@@ -75,6 +75,14 @@ func (e *Engine) SetPayloadsChangedFunc(fn func()) {
 	e.payloadService.SetPayloadsChangedFunc(fn)
 }
 
+// SetCatalogRowFunc wires the read of one part's catalog row and carrier rows,
+// as the catalog feed and the node list build them (the messaging layer's
+// CoreDataService.CatalogRow), that the part.create door answers with. Set once
+// at the composition root.
+func (e *Engine) SetCatalogRowFunc(fn func(code string) (protocol.CatalogPayloadInfo, []protocol.PayloadBinTypeInfo, error)) {
+	e.payloadService.SetCatalogRowFunc(fn)
+}
+
 // SetBinChangedFunc wires the push that follows a station door's write to a
 // bin (LOAD, count, CLEAR) to the messaging layer, which rebuilds the bins
 // snapshot of every Edge watching that bin. The LOAD and the count reach it

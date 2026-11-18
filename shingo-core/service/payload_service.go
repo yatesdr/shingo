@@ -32,6 +32,10 @@ type PayloadService struct {
 	// manifest or a part's cat id), so the Edges' feeds compare against a build
 	// made after it. Atomic, and nil, as containmentChanged.
 	payloadsChanged atomic.Pointer[func()]
+	// catalogRow reads one part's catalog row and carrier rows as the feeds
+	// build them, for the floor create's answer (CatalogRow). Atomic, as the
+	// hooks above.
+	catalogRow atomic.Pointer[catalogRowFunc]
 }
 
 // SetContainmentChangedFunc installs the hook called after a successful
@@ -124,7 +128,8 @@ var (
 func checkPayload(p *payloads.Payload) error {
 	p.Code = strings.TrimSpace(p.Code)
 	if p.Code == "" {
-		return fmt.Errorf("%w: a payload needs a code", ErrPayloadCode)
+		// OWNER-WORDS
+		return fmt.Errorf("%w: a part needs a part number", ErrPayloadCode)
 	}
 	if p.UOPCapacity < 1 {
 		// OWNER-WORDS
@@ -136,6 +141,7 @@ func checkPayload(p *payloads.Payload) error {
 		v    *int
 	}{{"tote_layers", p.ToteLayers}, {"uop_per_tote", p.UOPPerTote}} {
 		if f.v != nil && *f.v < 1 {
+			// OWNER-WORDS
 			return fmt.Errorf("%w: %s must be 1 or more, or blank for unknown (got %d)",
 				ErrPayloadToteNumber, f.name, *f.v)
 		}

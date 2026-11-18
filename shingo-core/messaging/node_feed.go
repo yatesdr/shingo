@@ -132,10 +132,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list payload bin types for %s: %v", stationID, pbtErr)
 	}
-	var payloadBinTypes []protocol.PayloadBinTypeInfo
-	for _, p := range pbtPairs {
-		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
-	}
+	payloadBinTypes := payloadBinTypeRows(pbtPairs)
 
 	// Each bin type's family, for the Edge's CLEAR panels. Memory-only on the Edge
 	// like the slice above, and degrades the same way: a reply with none leaves
@@ -161,6 +158,16 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		PlantWide:       !stationScoped,
 		Digest:          digest,
 	}, nil
+}
+
+// payloadBinTypeRows is NodeListResponse.PayloadBinTypes: one row per (payload
+// code, bin type code) pair, in the order read. Nil with no pairs.
+func payloadBinTypeRows(pairs [][2]string) []protocol.PayloadBinTypeInfo {
+	var out []protocol.PayloadBinTypeInfo
+	for _, p := range pairs {
+		out = append(out, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
+	}
+	return out
 }
 
 // loadersNameAnEdge reports whether any loader names the Edge that works it.
@@ -355,6 +362,41 @@ func (s *CoreDataService) buildCatalog(strict bool) (*protocol.CatalogPayloadsRe
 		return nil, fmt.Errorf("digest catalog: %w", err)
 	}
 	return &protocol.CatalogPayloadsResponse{Payloads: infos, Digest: digest}, nil
+}
+
+// CatalogRow is one payload's catalog row and its carrier rows, built by the
+// builders the feeds use (catalogRows, payloadBinTypeRows), so an answer that
+// carries them holds exactly what the next catalog feed and node list carry for
+// it, and the Edge's conditional upsert of the next feed writes nothing new.
+// Strict, as the feed path is: any failed read fails it. It reads the
+// plant-wide sets the feeds read (the cat ids, the manifest lines, the carrier
+// pairs) and keeps this payload's: it runs once per part made at the floor
+// (wired to service.PayloadService.CatalogRow at the composition root).
+// Pinned by TestCatalogRow_IsTheFeedsRow.
+func (s *CoreDataService) CatalogRow(code string) (protocol.CatalogPayloadInfo, []protocol.PayloadBinTypeInfo, error) {
+	p, err := s.db.GetPayloadByCode(code)
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("read payload %s: %w", code, err)
+	}
+	catids, err := s.db.PayloadCATIDs()
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("payload catids: %w", err)
+	}
+	lines, err := s.db.PayloadManifestLines()
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("payload manifest lines: %w", err)
+	}
+	pairs, err := s.db.ListPayloadBinTypeMappings()
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("list payload bin types: %w", err)
+	}
+	var own [][2]string
+	for _, pair := range pairs {
+		if pair[0] == p.Code {
+			own = append(own, pair)
+		}
+	}
+	return catalogRows([]*payloads.Payload{p}, catids, lines)[0], payloadBinTypeRows(own), nil
 }
 
 // catalogRows is the catalog's rows: one per payload, in the order read, with

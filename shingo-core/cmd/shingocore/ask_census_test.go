@@ -19,9 +19,10 @@ import (
 //
 // The server is built as main builds it (buildAskServer, over
 // www.Doors.AskDoors); it answers exactly protocol.AskKinds, each kind over the
-// www.Doors body named beside it. Only the home clear replays a repeat. No
-// machine door is routed over HTTP any more: each retired route is absent from
-// www/router.go, so Core's unauthenticated machine-write surface stays gone.
+// www.Doors body named beside it. The home clear and the part create replay a
+// repeat. No machine door is routed over HTTP any more: each retired route is
+// absent from www/router.go, so Core's unauthenticated machine-write surface
+// stays gone.
 //
 // A nil *www.Doors is enough: registration takes method values and nothing is
 // invoked.
@@ -48,6 +49,9 @@ func TestCensus_AskKinds(t *testing.T) {
 		{protocol.AskReseat, "", d.AskReseat, false},
 		// Born on the ask.
 		{protocol.AskLoaderRetrieve, "", d.AskLoaderRetrieve, false},
+		// Born on the ask. Writes a part: a repeat, an expired one included,
+		// gets its first answer.
+		{protocol.AskPartCreate, "", d.AskPartCreate, true},
 	}
 
 	s, err := buildAskServer(nil, nil, d)

@@ -475,6 +475,9 @@ func main() {
 	// A payload write, from the desktop or the floor, drops the catalog and
 	// node-list memos so the next heartbeats compare against it. No broadcast.
 	eng.SetPayloadsChangedFunc(coreDataService.PayloadsChanged)
+	// A part made at the floor is answered with its catalog row and carrier
+	// rows, built by the builders the catalog feed and the node list use.
+	eng.SetCatalogRowFunc(coreDataService.CatalogRow)
 	// A change at a node an Edge watches pushes that Edge its bins snapshot:
 	// the station doors (LOAD, count, CLEAR) through the engine's hook, bin
 	// and order events from the bus.

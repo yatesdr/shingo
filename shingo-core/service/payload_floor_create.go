@@ -144,6 +144,28 @@ func (s *PayloadService) CreateFromFloor(station string, req protocol.PartCreate
 	return nil, false, fmt.Errorf("part %s: the code was taken twice while it was being made", p.Code)
 }
 
+// catalogRowFunc reads one part's catalog row and carrier rows as the feeds
+// build them (messaging's CoreDataService.CatalogRow).
+type catalogRowFunc = func(code string) (protocol.CatalogPayloadInfo, []protocol.PayloadBinTypeInfo, error)
+
+// SetCatalogRowFunc installs the read behind CatalogRow. Set once, through
+// Engine.SetCatalogRowFunc.
+func (s *PayloadService) SetCatalogRowFunc(fn catalogRowFunc) {
+	s.catalogRow.Store(&fn)
+}
+
+// CatalogRow is one part's catalog row and its carrier rows, built by the
+// builders the catalog feed and the node list use, for the floor create's
+// answer: what the Edge writes from it is what the next feeds carry. An error
+// when nothing is wired.
+func (s *PayloadService) CatalogRow(code string) (protocol.CatalogPayloadInfo, []protocol.PayloadBinTypeInfo, error) {
+	fn := s.catalogRow.Load()
+	if fn == nil || *fn == nil {
+		return protocol.CatalogPayloadInfo{}, nil, errors.New("the catalog read is not wired")
+	}
+	return (*fn)(code)
+}
+
 // floorRepeat answers a floor submit whose part number Core already has: the
 // stored part, repeat true, when a floor create of it recorded this very
 // submit (the same station, process and fields); otherwise PartExistsError.
