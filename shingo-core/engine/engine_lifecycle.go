@@ -387,6 +387,9 @@ func (e *Engine) Stop() {
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
+	if e.sourceabilityMonitor != nil {
+		e.sourceabilityMonitor.stop()
+	}
 	e.logFn("engine: stopped")
 }
 

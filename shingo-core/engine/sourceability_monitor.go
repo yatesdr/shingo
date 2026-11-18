@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -85,6 +85,12 @@ type SourceabilityMonitor struct {
 	computed bool
 	// timer arms the debounced flush; nil when idle.
 	timer *time.Timer
+	// stopped is set by stop, with the engine's Stop: no debounce arms or
+	// fires after it, and the safety-net loop runs no further pass.
+	stopped bool
+	// inflight counts the recomputes running off the debounce or the safety
+	// net, so stop can wait for them before the caller closes the database.
+	inflight sync.WaitGroup
 	// recomputes counts recompute passes (full + dirty) for the batching test.
 	recomputes int
 }
@@ -240,7 +246,11 @@ func (m *SourceabilityMonitor) Run(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C():
+				if !m.begin() {
+					return
+				}
 				m.recomputeAll()
+				m.inflight.Done()
 			}
 		}
 	}()
@@ -266,8 +276,12 @@ func (m *SourceabilityMonitor) onPayloadChanged(payload string) {
 	m.mu.Unlock()
 }
 
-// arm (re)starts the debounce timer. Caller holds mu.
+// arm (re)starts the debounce timer. Caller holds mu. A stopped monitor arms
+// nothing.
 func (m *SourceabilityMonitor) arm() {
+	if m.stopped {
+		return
+	}
 	if m.timer == nil {
 		m.timer = time.AfterFunc(m.debounceWindow, m.flush)
 		return
@@ -279,7 +293,7 @@ func (m *SourceabilityMonitor) arm() {
 // timer, so many events in a window collapse to a single recompute.
 func (m *SourceabilityMonitor) flush() {
 	m.mu.Lock()
-	if len(m.dirty) == 0 {
+	if m.stopped || len(m.dirty) == 0 {
 		m.timer = nil
 		m.mu.Unlock()
 		return
@@ -290,9 +304,42 @@ func (m *SourceabilityMonitor) flush() {
 	}
 	m.dirty = map[plantclaims.ProcessKey]struct{}{}
 	m.timer = nil
+	m.inflight.Add(1)
 	m.mu.Unlock()
+	defer m.inflight.Done()
 
 	m.recomputeFn(keys)
+}
+
+// begin counts a safety-net pass in flight, or reports false once the monitor
+// has stopped. A true is paired with inflight.Done.
+func (m *SourceabilityMonitor) begin() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stopped {
+		return false
+	}
+	m.inflight.Add(1)
+	return true
+}
+
+// stop ends the monitor with the engine (Engine.Stop). The debounce is an
+// AfterFunc, outside the Run context, so cancelling that context never reached
+// it: a flush armed by a bin event just before Stop fired after it, read a
+// database the caller had closed, and logged through a logger whose owner was
+// gone (a race under -race: CI, 2026-11-18). After stop nothing arms or fires,
+// and a recompute already running finishes before it returns. The add in
+// flush and begin is under mu, the same lock that sets stopped, so it is
+// ordered before the Wait.
+func (m *SourceabilityMonitor) stop() {
+	m.mu.Lock()
+	m.stopped = true
+	if m.timer != nil {
+		m.timer.Stop()
+		m.timer = nil
+	}
+	m.mu.Unlock()
+	m.inflight.Wait()
 }
 
 // recomputeKeys recomputes just the dirty styles (set-based) and updates their
