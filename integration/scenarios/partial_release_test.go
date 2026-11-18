@@ -251,8 +251,8 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 			"prior manifest being preserved.", item.PartNumber, wantPart)
 	}
 	// The line carries no count of its own — uop_remaining, asserted above, is
-	// the count, and the part count derives from it times the template's
-	// parts_per_cycle. A second copy on the manifest is what went stale as the
+	// the count, and the part count derives from it (protocol.ManifestItem's
+	// count rule). A second copy on the manifest is what went stale as the
 	// bin drained.
 	if strings.Contains(*got.Manifest, `"qty"`) {
 		t.Errorf("reconstructed manifest carries a qty key: %s", *got.Manifest)

@@ -58,8 +58,9 @@ CREATE TABLE IF NOT EXISTS payloads (
     near_empty_threshold_pct INTEGER NOT NULL DEFAULT 0,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- v161: the layers of totes a full cart stands, and the cycles (UOP) that
-    -- fill one tote. NULL is unknown.
+    -- v161: the layers of totes a full cart stands, and the UOP (in the
+    -- capacity's unit: pieces, for a payload of one part) that fill one tote.
+    -- NULL is unknown.
     tote_layers             INTEGER CHECK (tote_layers > 0),
     uop_per_tote            INTEGER CHECK (uop_per_tote > 0)
 );

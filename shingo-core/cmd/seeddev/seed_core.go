@@ -923,8 +923,8 @@ func ensureBin(db *store.DB, label string, binTypeID, nodeID int64) (int64, bool
 // reproducing the release-path defect rather than being a place it would show up.
 // ensurePayloadTemplate seeds the line this names.
 //
-// No quantity: the count is uop_remaining x the template's parts_per_cycle,
-// and uop is written separately by the caller's SetBinManifest.
+// No quantity: the count is derived from uop_remaining (protocol.ManifestItem's
+// count rule), and uop is written separately by the caller's SetBinManifest.
 func buildManifest(partNumber string) string {
 	m := domain.Manifest{Items: []domain.ManifestEntry{{PartNumber: partNumber}}}
 	b, err := json.Marshal(m)

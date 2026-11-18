@@ -14,7 +14,7 @@ import (
 type ManifestItem = domain.PayloadManifestItem
 
 // Line is what a caller STATES about one manifest line: which part, what that
-// part's controls identity is, and how many of it one production cycle uses.
+// part's controls identity is, and how many of it one assembly cycle uses.
 //
 // CATID IS NOT A COLUMN ON THIS TABLE and never becomes one. It travels here
 // because the payloads page is where a part is originated — the person typing

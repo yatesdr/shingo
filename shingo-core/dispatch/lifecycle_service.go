@@ -770,17 +770,17 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
 		for i, item := range p.Manifest {
 			// item.Quantity is not carried: the bin manifest lists parts, and
-			// the count comes from uop_remaining (set just below from the
-			// operator-measured p.Quantity) times the template's
-			// parts_per_cycle.
+			// the count is derived from uop_remaining (set just below from the
+			// operator-measured p.Quantity) by protocol.ManifestItem's count
+			// rule.
 			manifest.Items[i] = bins.ManifestEntry{PartNumber: item.PartNumber}
 		}
 		manifestJSON, _ := json.Marshal(manifest)
 		// Use the operator-measured count Edge captured at finalize time
 		// (carried in p.Quantity == runtime.RemainingUOP from produce_plan.go),
-		// not tmpl.UOPCapacity. UOP is assembly-normalized: a finalized bin may
-		// hold fewer than capacity cycles when the operator finalizes early or
-		// the run wrapped on a non-multiple-of-capacity count. Falls back to
+		// not tmpl.UOPCapacity: a finalized bin may hold fewer than its
+		// standard pack when the operator finalizes early or the run wrapped
+		// on a non-multiple-of-capacity count. Falls back to
 		// tmpl.UOPCapacity only if the wire value is missing (transitional Edge
 		// builds and the no-Quantity test fixtures).
 		uop := int(p.Quantity)

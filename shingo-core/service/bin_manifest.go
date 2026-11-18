@@ -522,11 +522,12 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	if err != nil {
 		return "", 0, fmt.Errorf("payload manifest: %w", err)
 	}
-	// The manifest records WHICH parts, not how many. The count is
-	// uop_remaining x parts_per_cycle wherever it is asked for, so a bin
-	// loaded at 5 of 24 answers 5. This loop used to copy the template's
-	// per-cycle ratio into the manifest as if it were a count, regardless of
-	// uopOverride — a number that meant nothing about this bin.
+	// The manifest records WHICH parts, not how many. The count is derived
+	// from uop_remaining wherever it is asked for (protocol.ManifestItem's
+	// count rule), so a bin loaded at 5 of 24 answers 5. This loop used to
+	// copy the template's per-cycle ratio into the manifest as if it were a
+	// count, regardless of uopOverride — a number that meant nothing about
+	// this bin.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
 	for i, item := range items {
 		manifest.Items[i] = domain.ManifestEntry{PartNumber: item.PartNumber}
@@ -950,9 +951,9 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 // a row; nothing is stamped when Pack does not exceed the count, so a count is
 // never written down.
 type DeclaredFull struct {
-	// Pack is the catalog pack (uop_capacity, cycles) of the part the bin is
-	// booked under: the count a stamp writes. <= 0 is no pack: the count
-	// stands and the row says DeclaredFullNoPack.
+	// Pack is the catalog pack (uop_capacity, in the bin's count) of the
+	// part the bin is booked under: the count a stamp writes. <= 0 is no
+	// pack: the count stands and the row says DeclaredFullNoPack.
 	Pack int
 	// DeclaredQty is what the station declared (the departing order's pack),
 	// kept in the row's detail; it is not the count stamped.
@@ -1329,8 +1330,9 @@ func LoadRefusalFor(b *domain.Bin, claimant *domain.Order) string {
 
 // standardPackUOP is the one statement of the standard-pack rule: absence of a
 // declared count means a full bin, and a full bin is the payload's
-// uop_capacity CYCLES. A declared count is honoured as given, including zero —
-// "I counted none" is an answer, not a missing one.
+// uop_capacity, in the bin's own count (pieces, for a bin of one part:
+// protocol.ManifestItem). A declared count is honoured as given, including
+// zero — "I counted none" is an answer, not a missing one.
 func standardPackUOP(capacity int, declared *int) int {
 	if declared != nil {
 		return *declared
@@ -2011,10 +2013,10 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	// no read-then-update race.
 	//
 	// The line no longer carries a qty at all, which retires that bug class
-	// rather than re-fixing it: the count is uop_remaining (the $1 this same
-	// statement writes) times the template's parts_per_cycle, so there is no
-	// second copy to fall out of step. The rewrite still has to happen —
-	// the manifest's PART LIST must match the released payload.
+	// rather than re-fixing it: the count is derived from uop_remaining (the
+	// $1 this same statement writes) by protocol.ManifestItem's count rule, so
+	// there is no second copy to fall out of step. The rewrite still has to
+	// happen — the manifest's PART LIST must match the released payload.
 	//
 	// THE LINES, NOT THE PAYLOAD CODE, and writing the code here was a silent
 	// loss. Everything downstream keys a manifest line against

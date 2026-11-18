@@ -79,7 +79,8 @@ func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 
 	// The manifest stores WHICH parts. The per-line counts Edge sends are not
 	// stored: a stored count goes stale as the bin is drawn down and nothing
-	// rewrites it. The count is uop_remaining x parts_per_cycle at read time.
+	// rewrites it. The count is derived from uop_remaining at read time, by
+	// protocol.ManifestItem's count rule.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(req.Manifest))}
 	for i, item := range req.Manifest {
 		manifest.Items[i] = domain.ManifestEntry{PartNumber: item.PartNumber}
