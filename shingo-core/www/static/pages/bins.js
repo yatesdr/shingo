@@ -1,4 +1,4 @@
-import { debounce, delegateActions, el, escapeHtml, h } from '/static/shared/dom.js';
+import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
@@ -1154,7 +1154,10 @@ function uopBar(remaining, template) {
 }
 
 // ===== BIN TYPE MODALS =====
+// "+ Bin Type" opens with the open family tab's family filled in.
 function openCreateBTModal() {
+  var family = document.getElementById('bt-create-family');
+  if (family) family.value = openFamilyCode();
   renderRobotGroupChoices(document.getElementById('bt-create-robot-group'), '');
   showModal('bt-create-modal');
 }
@@ -1219,6 +1222,8 @@ function closeBTCreateModal() { hideModal('bt-create-modal'); }
 function openEditBTModal(btn) {
   var d = btn.dataset;
   document.getElementById('bt-edit-id').value = d.id;
+  // The type's id is in the window's heading: the tabs draw no ID column.
+  document.getElementById('bt-edit-heading-id').textContent = d.id ? '#' + d.id : '';
   document.getElementById('bt-edit-code').value = d.code;
   document.getElementById('bt-edit-desc').value = d.desc || '';
   document.getElementById('bt-edit-family').value = d.family || '';
@@ -1346,10 +1351,66 @@ function toggleBinTypesAccordion() {
 // saved keys are in view.
 if (location.hash === '#bt-accordion') toggleBinTypesAccordion();
 
-// The Bin Types table's RDS keys: each row's Lift and Wait field is the shared
-// picker through the page's RDS keys adapter (bins-rdskeys.js), drawn from the
-// field the server put in the host's data-field. Its pick is posted by the
-// row's form, so the Save is the form's.
+// ─── THE BIN TYPES SECTION: A TAB PER CARRIER FAMILY ─────────────────
+// The tabs are the shared ones (style guide 22): dom.js's switchTab, wrapped to
+// remember the open family. Every form of the section posts and the page comes
+// back on /bins, so the family a form was for is kept in sessionStorage and its
+// tab reopened: the keys' Save comes back on its own family, a type made or
+// edited on its family's tab (a type moved to another family on that family's),
+// and a type form also reopens the section. The server is unchanged.
+var BT_FAMILY = 'bins.btFamily';
+var BT_REOPEN = 'bins.btReopen';
+
+function showFamilyTab(key, btn) {
+  switchTab(key, btn);
+  rememberFamily(btn && btn.dataset ? btn.dataset.family : '');
+}
+
+function rememberFamily(code) {
+  try { if (code) sessionStorage.setItem(BT_FAMILY, code); } catch (e) { /* no storage: the first tab opens */ }
+}
+
+// openFamilyCode is the open tab's family, '' for none.
+function openFamilyCode() {
+  var tab = document.querySelector('#bt-accordion .tabs .tab.active');
+  return tab ? (tab.dataset.family || '') : '';
+}
+
+function openFamilyTab(code) {
+  if (!code) return;
+  var tabs = document.querySelectorAll('#bt-accordion .tabs .tab');
+  for (var i = 0; i < tabs.length; i++) {
+    if (tabs[i].dataset.family === code) { switchTab(tabs[i].dataset.tab, tabs[i]); return; }
+  }
+}
+
+// rememberFormFamily is a section form's submit: the family it was for. A type
+// made with no family has a family of its own, under its code.
+function rememberFormFamily(evt) {
+  var form = evt.target;
+  if (!form || !form.getAttribute) return;
+  var action = form.getAttribute('action');
+  if (action === '/bin-types/family-keys') { rememberFamily(form.dataset.family); return; }
+  if (action !== '/bin-types/create' && action !== '/bin-types/update') return;
+  var family = form.elements.family ? form.elements.family.value.trim() : '';
+  var code = form.elements.code ? form.elements.code.value.trim() : '';
+  rememberFamily(family || (action === '/bin-types/create' ? code : openFamilyCode()));
+  try { sessionStorage.setItem(BT_REOPEN, '1'); } catch (e) { /* the section stays as it was */ }
+}
+document.addEventListener('submit', rememberFormFamily);
+
+try {
+  openFamilyTab(sessionStorage.getItem(BT_FAMILY));
+  if (sessionStorage.getItem(BT_REOPEN) === '1') {
+    sessionStorage.removeItem(BT_REOPEN);
+    if (location.hash !== '#bt-accordion') toggleBinTypesAccordion();
+  }
+} catch (e) { /* no storage: the first tab, the section as the page drew it */ }
+
+// Each family's Lift and Wait field is the shared picker through the page's
+// RDS keys adapter (bins-rdskeys.js), drawn from the field the server put in
+// the host's data-field. Its pick is posted by the tab's form, so the Save is
+// the form's.
 for (const host of document.querySelectorAll('.bt-key-pick')) {
   let field = null;
   try { field = JSON.parse(host.dataset.field || 'null'); } catch (e) { field = null; }
@@ -1394,6 +1455,7 @@ delegateActions(document.body, {
     recordCount,
     requestMove,
     switchTab: showBinTab,
+    showFamilyTab,
     toggleAllBins,
     toggleBinTypesAccordion,
     toggleManifest,

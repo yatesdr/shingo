@@ -49,6 +49,24 @@ func fkPickers(t *testing.T, page string) map[string][]string {
 	return out
 }
 
+// fkTabPanel is a family tab's panel: from its id to the next panel or the end
+// of the section.
+func fkTabPanel(t *testing.T, page, key string) string {
+	t.Helper()
+	i := strings.Index(page, `id="tab-`+key+`"`)
+	if i < 0 {
+		t.Fatalf("no panel tab-%s", key)
+	}
+	rest := page[i+1:]
+	end := len(rest)
+	for _, stop := range []string{`class="tab-panel`, `id="bin-type-filter"`} {
+		if j := strings.Index(rest, stop); j >= 0 && j < end {
+			end = j
+		}
+	}
+	return rest[:end]
+}
+
 func fkStatementsNaming(stmts []string, word string) int {
 	n := 0
 	for _, s := range stmts {
@@ -85,7 +103,7 @@ func TestBinsPage_FamilyKeys(t *testing.T) {
 	if !strings.Contains(page, "Core has no copy of the RDS scene yet") {
 		t.Error("with no scene copy the table does not say so")
 	}
-	if got, want := fkPickers(t, page)["bt-lift-"+strconv.FormatInt(a.ID, 10)],
+	if got, want := fkPickers(t, page)["bt-lift-"+strconv.FormatInt(a.FamilyID, 10)],
 		[]string{"|JackLoad (default)", "jackload_4548|jackload_4548 · not in RDS*"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("with no scene copy, A's lift picker = %q, want %q", got, want)
 	}
@@ -114,25 +132,46 @@ func TestBinsPage_FamilyKeys(t *testing.T) {
 		"lift": append([]string{"|JackLoad (default)*"}, listed...),
 		"wait": append([]string{"|Wait (default)*"}, listed...),
 	}
+	// One pair of pickers per family, on its tab, not one per type.
 	pickers := fkPickers(t, page)
-	for _, row := range []struct {
+	if len(pickers) != 4 {
+		t.Errorf("the page draws %d key fields, want 4: a lift and a wait for each of two families", len(pickers))
+	}
+	for _, fam := range []struct {
 		bt   *bins.BinType
 		want map[string][]string
-	}{{a, keyed}, {b, keyed}, {c, blank}} {
+	}{{a, keyed}, {c, blank}} {
 		for _, key := range []string{"lift", "wait"} {
-			id := "bt-" + key + "-" + strconv.FormatInt(row.bt.ID, 10)
-			if got := pickers[id]; !reflect.DeepEqual(got, row.want[key]) {
-				t.Errorf("%s's %s picker:\n got  %q\n want %q", row.bt.Code, key, got, row.want[key])
+			id := "bt-" + key + "-" + strconv.FormatInt(fam.bt.FamilyID, 10)
+			if got := pickers[id]; !reflect.DeepEqual(got, fam.want[key]) {
+				t.Errorf("family %s's %s picker:\n got  %q\n want %q", fam.bt.FamilyCode, key, got, fam.want[key])
 			}
 		}
 	}
-	for _, say := range []string{
-		"Saves for family <code>FK-4548</code>, also <code>FK-4548-B</code>",
-		"Saves for family <code>FK-4548</code>, also <code>FK-4548-A</code>",
-		"Saves for family <code>" + c.FamilyCode + "</code></div>",
+	// A tab per family, counting its types, its types under it.
+	for _, fam := range []struct {
+		bt        *bins.BinType
+		count     string
+		has, lack []string
+	}{
+		{a, "2", []string{"FK-4548-A", "FK-4548-B"}, []string{"FK-3230"}},
+		{c, "1", []string{"FK-3230"}, []string{"FK-4548-A", "FK-4548-B"}},
 	} {
-		if !strings.Contains(page, say) {
-			t.Errorf("no row says %q", say)
+		key := "bt-family-" + strconv.FormatInt(fam.bt.FamilyID, 10)
+		tab := `data-tab="` + key + `" data-family="` + fam.bt.FamilyCode + `"`
+		if !strings.Contains(page, tab) || !strings.Contains(page, fam.bt.FamilyCode+` <span class="text-muted">`+fam.count+`</span>`) {
+			t.Errorf("no tab for family %s counting %s type(s)", fam.bt.FamilyCode, fam.count)
+		}
+		panel := fkTabPanel(t, page, key)
+		for _, code := range fam.has {
+			if !strings.Contains(panel, "<code>"+code+"</code>") {
+				t.Errorf("family %s's tab does not list %s", fam.bt.FamilyCode, code)
+			}
+		}
+		for _, code := range fam.lack {
+			if strings.Contains(panel, "<code>"+code+"</code>") {
+				t.Errorf("family %s's tab lists %s, another family's type", fam.bt.FamilyCode, code)
+			}
 		}
 	}
 
@@ -194,12 +233,13 @@ func TestFamilyKeysSave_SetsEveryTypeOfTheFamily(t *testing.T) {
 		t.Errorf("a reload after the save changed the dispatcher's keys (%v, %v): the save went around its door", changed, err)
 	}
 	pickers := fkPickers(t, binsPage(t, h, cookie))
-	for _, bt := range []*bins.BinType{a, b} {
-		for key, want := range map[string]string{"lift": "jackload_4548", "wait": "wait_4548"} {
-			id := "bt-" + key + "-" + strconv.FormatInt(bt.ID, 10)
-			if got := pickers[id]; len(got) < 2 || got[1] != want+"|"+want+" · not in RDS*" {
-				t.Errorf("%s's %s picker = %q, want %s selected", bt.Code, key, got, want)
-			}
+	if b.FamilyID != a.FamilyID {
+		t.Fatalf("A and B are in families %d and %d; the fixture needs them in one", a.FamilyID, b.FamilyID)
+	}
+	for key, want := range map[string]string{"lift": "jackload_4548", "wait": "wait_4548"} {
+		id := "bt-" + key + "-" + strconv.FormatInt(a.FamilyID, 10)
+		if got := pickers[id]; len(got) < 2 || got[1] != want+"|"+want+" · not in RDS*" {
+			t.Errorf("family %s's %s picker = %q, want %s selected", a.FamilyCode, key, got, want)
 		}
 	}
 
@@ -248,5 +288,71 @@ func TestFamilyKeysSave_AFamilyGoneSaysSo(t *testing.T) {
 	code, _, body := fkSave(t, h, a.FamilyID, "jackload_4548", "")
 	if code != http.StatusNotFound || !strings.Contains(body, "This carrier family is gone") {
 		t.Errorf("a save for a gone family answered %d %q, want 404 saying it is gone", code, body)
+	}
+}
+
+// TestBinsPage_AMarkerIsALineUnderItsType: a bare marker is no row of its own
+// and no count of its own: it is the quiet line under the type it stands for,
+// with its own Edit and Delete. A tote carrier's line says its top is totes and
+// how many per layer, and its marker's line is its bottom; "bare" is not said
+// of it. Delete on a line is .btn .btn-sm, never .btn-danger (style guide 12).
+func TestBinsPage_AMarkerIsALineUnderItsType(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	loadTestTemplates(t, h)
+	cookie := loginCookie(t, h)
+	cart := fkType(t, h, db, "BM-CART", "")
+	tote := fkType(t, h, db, "BM-TOTE", "")
+	_, err := db.Exec(`UPDATE bin_types SET totes_per_layer = 8 WHERE id = $1`, tote.ID)
+	testutil.MustNoErr(t, err, "make BM-TOTE a tote carrier")
+	marker := func(bt *bins.BinType) string {
+		t.Helper()
+		id, err := db.EnsureBareMarker(bt.ID)
+		testutil.MustNoErr(t, err, "the marker of "+bt.Code)
+		m, err := db.GetBinType(id)
+		m = testutil.Must(t, m, err, "read the marker of "+bt.Code)
+		return m.Code
+	}
+	cartMarker, toteMarker := marker(cart), marker(tote)
+
+	page := binsPage(t, h, cookie)
+	for _, c := range []struct {
+		bt            *bins.BinType
+		marker, line  string
+		says, saysNot []string
+	}{
+		{cart, cartMarker, "Bare: the cart with no bin on it", nil, []string{"Top: totes"}},
+		{tote, toteMarker, "Bottom: the cart with its totes off", []string{"Top: totes, 8 per layer"}, []string{"Bare:", ">bare<"}},
+	} {
+		key := "bt-family-" + strconv.FormatInt(c.bt.FamilyID, 10)
+		if !strings.Contains(page, c.bt.FamilyCode+` <span class="text-muted">1</span>`) {
+			t.Errorf("family %s's tab does not count one type (its marker is not a type of its own)", c.bt.FamilyCode)
+		}
+		panel := fkTabPanel(t, page, key)
+		if n := strings.Count(panel, "<code>"+c.marker+"</code>"); n != 1 {
+			t.Errorf("%s's marker %s is drawn %d times, want once", c.bt.Code, c.marker, n)
+		}
+		i := strings.Index(panel, `<tr class="bt-marker">`)
+		if i < 0 || !strings.Contains(panel[i:], "<code>"+c.marker+"</code>") || !strings.Contains(panel[i:], c.line) {
+			t.Errorf("%s's marker is not the quiet line %q under it", c.bt.Code, c.line)
+		} else if j := strings.Index(panel, "<code>"+c.bt.Code+"</code>"); j < 0 || j > i {
+			t.Errorf("%s's marker line is not under %s", c.bt.Code, c.bt.Code)
+		} else if !strings.Contains(panel[i:], `data-code="`+c.marker+`"`) {
+			t.Errorf("%s's marker line has no Edit of its own", c.bt.Code)
+		}
+		for _, s := range c.says {
+			if !strings.Contains(panel, s) {
+				t.Errorf("family %s's tab does not say %q", c.bt.FamilyCode, s)
+			}
+		}
+		for _, s := range c.saysNot {
+			if strings.Contains(panel, s) {
+				t.Errorf("family %s's tab says %q", c.bt.FamilyCode, s)
+			}
+		}
+	}
+	section := page[strings.Index(page, `id="bt-accordion"`):strings.Index(page, `id="bin-type-filter"`)]
+	if strings.Contains(section, "btn-danger") {
+		t.Error("the Bin Types section draws a .btn-danger: a Delete on a line is .btn .btn-sm")
 	}
 }

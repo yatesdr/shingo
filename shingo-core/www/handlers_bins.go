@@ -162,16 +162,19 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	binTypesJSON, _ := json.Marshal(binTypes)
 	payloadBinTypesJSON, _ := json.Marshal(payloadBinTypeIDs)
 
-	// The Bin Types table: each type's family keys from the one families read,
-	// the pickers' options from the one scene_points read (bins_family_keys.go).
+	// The Bin Types section: a tab per family, its keys from the one families
+	// read, the pickers' options from the one scene_points read
+	// (bins_family_keys.go).
 	familyCodes, familyKeys := h.carrierFamilies()
 	sceneKeys := h.readSceneKeys()
+	btFamilies := binTypeFamilies(binTypes, familyKeys, sceneKeys)
 
 	data := map[string]any{
 		"Page":                "bins",
 		"Bins":                rows,
 		"BinTypes":            binTypes,
-		"BinTypeRows":         binTypeRows(binTypes, familyKeys, sceneKeys),
+		"BinTypeFamilies":     btFamilies,
+		"BinTypeCount":        binTypeCount(btFamilies),
 		"KeyScene":            sceneKeys,
 		"CarrierFamilies":     familyCodes,
 		"Payloads":            payloads,
@@ -563,8 +566,8 @@ func (h *Handlers) apiBinsByNode(w http.ResponseWriter, r *http.Request) {
 
 // carrierFamilies is the page's one read of the carrier families: their codes
 // for the Bin Types form's Family list, and each family's keys by id for the
-// table's key pickers. A failed read leaves both empty: the box still takes a
-// typed code, and no row offers a key to save (binTypeRows).
+// family tabs' key pickers. A failed read leaves both empty: the box still
+// takes a typed code, and no tab offers a key to save (binTypeFamilies).
 func (h *Handlers) carrierFamilies() ([]string, map[int64]pageFamilyKeys) {
 	families, err := h.engine.BinService().ListCarrierFamilies()
 	if err != nil {

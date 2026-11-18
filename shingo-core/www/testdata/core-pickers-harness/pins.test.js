@@ -385,6 +385,7 @@ function binsPage() {
         echoesFor: echo.ctx.echoesFor, newEchoLedger: echo.ctx.newEchoLedger,
         binRowView: row.ctx.binRowView, uopText: row.ctx.uopText,
         rdsKeyPicker: keys.ctx.rdsKeyPicker,
+        switchTab(key) { return key; },
     }));
     return { p, doc, net, rec };
 }

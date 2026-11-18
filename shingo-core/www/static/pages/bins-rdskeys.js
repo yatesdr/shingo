@@ -1,5 +1,6 @@
 // bins-rdskeys.js — the RDS keys adapter over the picker's shell (style guide
-// §34), for the Bin Types table's Lift and Wait fields. One pick each.
+// §34), for the Lift and Wait fields at the top of each family tab of the Bin
+// Types section. One pick each.
 //
 // The server hands each field whole (bins_family_keys.go, keyField, in the
 // host's data-field): its form name, its first view's label, the operations

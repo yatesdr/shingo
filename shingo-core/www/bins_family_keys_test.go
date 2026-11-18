@@ -154,26 +154,34 @@ func TestKeyOptions_DefaultFirstThenEveryKey(t *testing.T) {
 	}
 }
 
-// TestBinTypeRows_EachTypeShowsItsFamilysKeys: every type of a family shows
-// the family's keys and names the family's other types (a bare marker among
-// them); the defaults are labelled with what Core sends (seerrds); a type
-// whose family the page did not read offers nothing to save.
-func TestBinTypeRows_EachTypeShowsItsFamilysKeys(t *testing.T) {
+// TestBinTypeFamilies_ATabPerFamilyItsKeysOnceItsTypesUnder: the Bin Types
+// section is a tab per family, in family code order, counting its types; the
+// family's keys are on the tab once (the defaults labelled with what Core sends,
+// seerrds); its types are listed under it in code order. A bare marker is no
+// line of its own but the line under the type it stands for, a tote carrier's
+// included; a marker whose type the page did not read is a line of its own. A
+// family whose keys were not read offers nothing to save.
+func TestBinTypeFamilies_ATabPerFamilyItsKeysOnceItsTypesUnder(t *testing.T) {
 	t.Parallel()
 	scene := gatherSceneKeys(fkScenePoints(t)[:2])
+	of := func(id int64) *int64 { return &id }
+	eight := 8
 	types := []*domain.BinType{
-		{ID: 1, Code: "C4548-A", FamilyID: 10, FamilyCode: "C4548"},
-		{ID: 2, Code: "C4548-A-BARE", FamilyID: 10, FamilyCode: "C4548", Bare: true},
-		{ID: 3, Code: "C4548-B", FamilyID: 10, FamilyCode: "C4548"},
-		{ID: 4, Code: "C3230", FamilyID: 20, FamilyCode: "C3230"},
-		{ID: 5, Code: "UNREAD", FamilyID: 30, FamilyCode: "UNREAD"},
+		{ID: 1, Code: "C4548-STD", FamilyID: 10, FamilyCode: "C4548"},
+		{ID: 2, Code: "C4548-STD-BARE", FamilyID: 10, FamilyCode: "C4548", Bare: true, BareOf: of(1)},
+		{ID: 3, Code: "C4548-HI", FamilyID: 10, FamilyCode: "C4548"},
+		{ID: 4, Code: "TOTE-8", FamilyID: 20, FamilyCode: "TOTE-CART", TotesPerLayer: &eight},
+		{ID: 5, Code: "TOTE-8-BARE", FamilyID: 20, FamilyCode: "TOTE-CART", Bare: true, BareOf: of(4)},
+		{ID: 6, Code: "C3230", FamilyID: 30, FamilyCode: "C3230"},
+		{ID: 7, Code: "LOST-BARE", FamilyID: 30, FamilyCode: "C3230", Bare: true, BareOf: of(99)},
+		{ID: 8, Code: "UNREAD", FamilyID: 40, FamilyCode: "A-UNREAD"},
 	}
-	families := map[int64]pageFamilyKeys{10: {lift: "jackload_4548", wait: "wait_4548"}, 20: {}}
-	rows := binTypeRows(types, families, scene)
-	if len(rows) != len(types) {
-		t.Fatalf("%d rows for %d types", len(rows), len(types))
-	}
+	families := map[int64]pageFamilyKeys{10: {lift: "jackload_4548", wait: "wait_4548"}, 20: {}, 30: {}}
+	tabs := binTypeFamilies(types, families, scene)
 	sel := func(f *keyField) string {
+		if f == nil {
+			return "(not read)"
+		}
 		for _, o := range f.Options {
 			if o.Selected {
 				return optionText(o)
@@ -181,20 +189,39 @@ func TestBinTypeRows_EachTypeShowsItsFamilysKeys(t *testing.T) {
 		}
 		return "(none)"
 	}
-	want := []struct{ lift, wait, others string }{
-		{"jackload_4548 · JackLoad", "wait_4548 · Wait", "[C4548-A-BARE C4548-B]"},
-		{"jackload_4548 · JackLoad", "wait_4548 · Wait", "[C4548-A C4548-B]"},
-		{"jackload_4548 · JackLoad", "wait_4548 · Wait", "[C4548-A C4548-A-BARE]"},
-		{"JackLoad (default)", "Wait (default)", "[]"},
-	}
-	for i, w := range want {
-		r := rows[i]
-		if got := [3]string{sel(r.LiftField), sel(r.WaitField), fmt.Sprint(r.FamilyOthers)}; got != [3]string{w.lift, w.wait, w.others} {
-			t.Errorf("%s: lift %q, wait %q, others %s; want %q, %q, %s", r.Code, got[0], got[1], got[2], w.lift, w.wait, w.others)
+	lines := func(tab binTypeFamilyTab) []string {
+		var out []string
+		for _, l := range tab.Types {
+			line := l.Code
+			if l.Bare {
+				line += " (bare)"
+			}
+			if l.Marker != nil {
+				line += " / " + l.Marker.Code
+			}
+			out = append(out, line)
 		}
+		return out
 	}
-	if r := rows[4]; r.LiftField != nil || r.WaitField != nil {
-		t.Errorf("%s, whose family was not read, offers keys %+v / %+v", r.Code, r.LiftField, r.WaitField)
+	var got []string
+	for _, tab := range tabs {
+		got = append(got, fmt.Sprintf("%s %s %d %v | %s | %s", tab.Key(), tab.Code, len(tab.Types), lines(tab),
+			sel(tab.LiftField), sel(tab.WaitField)))
+	}
+	want := []string{
+		"bt-family-40 A-UNREAD 1 [UNREAD] | (not read) | (not read)",
+		"bt-family-30 C3230 2 [C3230 LOST-BARE (bare)] | JackLoad (default) | Wait (default)",
+		"bt-family-10 C4548 2 [C4548-HI C4548-STD / C4548-STD-BARE] | jackload_4548 · JackLoad | wait_4548 · Wait",
+		"bt-family-20 TOTE-CART 1 [TOTE-8 / TOTE-8-BARE] | JackLoad (default) | Wait (default)",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("tabs:\n got  %q\n want %q", got, want)
+	}
+	if n := binTypeCount(tabs); n != 6 {
+		t.Errorf("the section counts %d types, want 6 (two markers drawn under their types)", n)
+	}
+	if none := binTypeFamilies(nil, families, scene); len(none) != 0 {
+		t.Errorf("no types: %d tab(s), want none (a family goes with its last type)", len(none))
 	}
 }
 
@@ -207,8 +234,8 @@ func TestKeyFields_TheFirstViewKeepsByTheDefaultKeysOperation(t *testing.T) {
 	t.Parallel()
 	scene := gatherSceneKeys(fkScenePoints(t))
 	types := []*domain.BinType{{ID: 1, Code: "C4548", FamilyID: 10}}
-	rows := binTypeRows(types, map[int64]pageFamilyKeys{10: {lift: "jackload_9999", wait: "wait_4548"}}, scene)
-	lift, wait := rows[0].LiftField, rows[0].WaitField
+	tabs := binTypeFamilies(types, map[int64]pageFamilyKeys{10: {lift: "jackload_9999", wait: "wait_4548"}}, scene)
+	lift, wait := tabs[0].LiftField, tabs[0].WaitField
 	if lift.Name != "lift_bintask" || lift.View != "Lift keys" || !slices.Equal(lift.ViewOps, []string{"JackLoad"}) {
 		t.Errorf("lift field %s / %q keeps by %q, want lift_bintask / Lift keys by [JackLoad]", lift.Name, lift.View, lift.ViewOps)
 	}

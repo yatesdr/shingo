@@ -822,6 +822,14 @@ textarea { resize: vertical; min-height: 60px; }
 .bt-key-pick .picker-field { grid-column:1; grid-row:3; }
 .bt-key-pick .picker-filters { grid-column:2; grid-row:3; flex-wrap:nowrap; }
 .bt-key-pick .picker-filters button { white-space:nowrap; }
+.bt-families .bt-keys { margin:0.75rem 0 0.25rem; }
+/* A type's bare marker is no row of its own: a quiet line under the type it
+   stands for (a tote carrier's is its bottom), its Edit and Delete with it. */
+.bt-table tr.bt-has-marker td { border-bottom:none; }
+.bt-table tr.bt-marker td { border-top:none; padding-top:0; color:var(--text-muted); font-size:0.85em; }
+.bt-table tr.bt-marker td code { color:var(--text-muted); }
+.bt-table tr.bt-marker .btn { font-size:0.72rem; padding:0.1rem 0.4rem; }
+.bt-line-note { color:var(--text-muted); font-size:0.85em; }
 .bin-dot-loaded { background:#22c55e; }
 .bin-dot-unconfirmed { background:#f97316; }
 .bin-dot-depleted { background:var(--danger); }

@@ -1,4 +1,21 @@
 {{define "importmap"}}{{importMap "/static/app.js" "/static/pages/bins.js" "/static/pages/bins-lineside.js"}}{{end}}
+{{/* A bin type's Edit and Delete, on its line in a family tab or on its bare
+     marker's line under it. Delete is .btn .btn-sm (style guide 12): the
+     confirm carries the warning. */}}
+{{define "bin-type-actions"}}<button type="button" class="btn btn-sm" data-action="openEditBTModal"
+  data-id="{{.ID}}"
+  data-code="{{.Code}}"
+  data-family="{{.FamilyCode}}"
+  data-desc="{{.Description}}"
+  data-width="{{.WidthIn}}"
+  data-height="{{.HeightIn}}"
+  data-length="{{.LengthIn}}"
+  data-totes-per-layer="{{with .TotesPerLayer}}{{.}}{{end}}"
+  data-robot-group="{{.RequiredRobotGroup}}">Edit</button>
+<form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
+  <input type="hidden" name="id" value="{{.ID}}">
+  <button type="submit" class="btn btn-sm">Delete</button>
+</form>{{end}}
 {{define "content"}}
 <div>
   <div class="flex flex-between mb-2">
@@ -6,80 +23,80 @@
   </div>
 
   {{if .Authenticated}}
-  <!-- Bin Types accordion -->
+  <!-- Bin Types accordion: a tab per carrier family (bins_family_keys.go,
+       binTypeFamilies; the shared tabs, style guide 22) -->
   <div class="accordion mb-2" id="bt-accordion">
     <button class="accordion-toggle" data-action="toggleBinTypesAccordion">
-      Bin Types <span class="text-muted">({{len .BinTypes}})</span>
+      Bin Types <span class="text-muted">({{.BinTypeCount}})</span>
     </button>
     <div class="accordion-body">
       <div class="flex flex-between mb-1">
-        {{/* Where the RDS keys come from, and how fresh (bins_family_keys.go). */}}
-        <span class="form-hint">{{with .KeyScene}}{{if .Err}}The scene copy could not be read, so no RDS key from it is offered.
-          {{else if .SyncedAt.IsZero}}Core has no copy of the RDS scene yet, so no RDS key from it is offered.
-          {{else}}RDS keys from Core's copy of the RDS scene, synced {{formatTime .SyncedAt}}.{{end}}{{end}}</span>
+        <span class="form-hint">One tab per carrier family: its RDS keys, then its types.</span>
         <button class="btn btn-primary btn-sm" data-action="openCreateBTModal">+ Bin Type</button>
       </div>
-      {{if .BinTypes}}
-      <table class="bt-table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Code</th>
-            <th>Description</th>
-            <th>Family</th>
-            <th>Dimensions (in, W x L x H)</th>
-            <th>Empty carrier robots</th>
-            <th>RDS keys</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{range .BinTypeRows}}
-          <tr>
-            <td>{{.ID}}</td>
-            <td><code>{{.Code}}</code>{{if .Bare}} <span class="badge badge-empty badge-sm" title="Bare bin type: holds no container, never handed out as an empty">bare</span>{{end}}</td>
-            <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
-            <td><code>{{.FamilyCode}}</code></td>
-            <td>{{if .WidthIn}}{{.WidthIn}} x {{.LengthIn}}{{if .HeightIn}} x {{.HeightIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
-            <td>{{if .RequiredRobotGroup}}<code>{{.RequiredRobotGroup}}</code>{{else}}<span class="text-muted">Any robot</span>{{end}}</td>
-            {{/* The family's keys: a Save sets every type of the family, and the
-                 line under it names them (bins_family_keys.go). */}}
-            <td>
-              {{if .LiftField}}
-              {{/* Each field is the shared picker through the page's RDS keys
-                   adapter (bins-rdskeys.js), which posts its pick as the
-                   field's name. */}}
-              <form method="POST" action="/bin-types/family-keys" class="bt-keys">
-                <input type="hidden" name="family_id" value="{{.FamilyID}}">
-                <span class="bt-keys-label">Lift</span>
-                <div class="bt-key-pick" id="bt-lift-{{.ID}}" data-label="Lift key" data-field="{{.LiftField.JSON}}"></div>
-                <span class="bt-keys-label">Wait</span>
-                <div class="bt-key-pick" id="bt-wait-{{.ID}}" data-label="Wait key" data-field="{{.WaitField.JSON}}"></div>
-                <button type="submit" class="btn btn-sm">Save</button>
-              </form>
-              <div class="form-hint">Saves for family <code>{{.FamilyCode}}</code>{{with .FamilyOthers}}, also {{range $i, $c := .}}{{if $i}}, {{end}}<code>{{$c}}</code>{{end}}{{end}}</div>
-              {{else}}<span class="text-muted">Family keys not read</span>{{end}}
-            </td>
-            <td>
-              <button class="btn btn-sm" data-action="openEditBTModal"
-                data-id="{{.ID}}"
-                data-code="{{.Code}}"
-                data-family="{{.FamilyCode}}"
-                data-desc="{{.Description}}"
-                data-width="{{.WidthIn}}"
-                data-height="{{.HeightIn}}"
-                data-length="{{.LengthIn}}"
-                data-totes-per-layer="{{with .TotesPerLayer}}{{.}}{{end}}"
-                data-robot-group="{{.RequiredRobotGroup}}">Edit</button>
-              <form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
-                <input type="hidden" name="id" value="{{.ID}}">
-                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-              </form>
-            </td>
-          </tr>
+      {{if .BinTypeFamilies}}
+      <div class="bt-families">
+        <div class="tabs" role="tablist">
+          {{range $i, $f := .BinTypeFamilies}}
+          <button type="button" class="tab{{if eq $i 0}} active{{end}}" data-tab="{{$f.Key}}" data-family="{{$f.Code}}"
+            data-action="showFamilyTab:{{$f.Key}}">{{$f.Code}} <span class="text-muted">{{len $f.Types}}</span></button>
           {{end}}
-        </tbody>
-      </table>
+        </div>
+        {{range $i, $f := .BinTypeFamilies}}
+        <div class="tab-panel{{if eq $i 0}} active{{end}}" id="tab-{{$f.Key}}">
+          {{/* The family's keys, once: every type below sends them. Each field
+               is the shared picker through the page's RDS keys adapter
+               (bins-rdskeys.js), which posts its pick as the field's name. */}}
+          {{if $f.LiftField}}
+          <form method="POST" action="/bin-types/family-keys" class="bt-keys" data-family="{{$f.Code}}">
+            <input type="hidden" name="family_id" value="{{$f.ID}}">
+            <span class="bt-keys-label">Lift</span>
+            <div class="bt-key-pick" id="bt-lift-{{$f.ID}}" data-label="Lift key" data-field="{{$f.LiftField.JSON}}"></div>
+            <span class="bt-keys-label">Wait</span>
+            <div class="bt-key-pick" id="bt-wait-{{$f.ID}}" data-label="Wait key" data-field="{{$f.WaitField.JSON}}"></div>
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+          {{else}}<p class="text-muted">This family's RDS keys were not read.</p>{{end}}
+          {{/* Where the keys come from, and how fresh. */}}
+          <div class="form-hint mb-1">One lift key and one wait key for every type of this family.
+            {{with $.KeyScene}}{{if .Err}}The scene copy could not be read, so no RDS key from it is offered.
+            {{else if .SyncedAt.IsZero}}Core has no copy of the RDS scene yet, so no RDS key from it is offered.
+            {{else}}RDS keys from Core's copy of the RDS scene, synced {{formatTime .SyncedAt}}.{{end}}{{end}}</div>
+          <table class="bt-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Description</th>
+                <th>Dimensions (in, W x L x H)</th>
+                <th>Empty carrier robots</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range $line := $f.Types}}
+              <tr{{if $line.Marker}} class="bt-has-marker"{{end}}>
+                <td><code>{{$line.Code}}</code>{{if $line.Bare}} <span class="badge badge-empty badge-sm" title="Bare marker: a cart with no bin on it, never handed out as an empty">bare</span>{{end}}</td>
+                <td>{{if $line.Description}}{{$line.Description}}{{else}}<span class="text-muted">-</span>{{end}}
+                  {{with $line.TotesPerLayer}}<div class="bt-line-note">Top: totes, {{.}} per layer</div>{{end}}</td>
+                <td>{{if $line.WidthIn}}{{$line.WidthIn}} x {{$line.LengthIn}}{{if $line.HeightIn}} x {{$line.HeightIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+                <td>{{if $line.RequiredRobotGroup}}<code>{{$line.RequiredRobotGroup}}</code>{{else}}<span class="text-muted">Any robot</span>{{end}}</td>
+                <td>{{template "bin-type-actions" $line.BinType}}</td>
+              </tr>
+              {{/* Its bare marker: not a row of its own, a quiet line under the
+                   type it stands for. A tote carrier's is its bottom. */}}
+              {{with $line.Marker}}
+              <tr class="bt-marker">
+                <td><code>{{.Code}}</code></td>
+                <td colspan="3">{{if $line.TotesPerLayer}}Bottom: the cart with its totes off{{else}}Bare: the cart with no bin on it{{end}}</td>
+                <td>{{template "bin-type-actions" .}}</td>
+              </tr>
+              {{end}}
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{end}}
+      </div>
       {{else}}
       <p class="text-muted">No bin types defined yet.</p>
       {{end}}
@@ -262,7 +279,7 @@
       </div>
       <div class="form-group">
         <label>Family <span class="tooltip-trigger" title="The physical cart this type is one setting of. A CLEAR may set a cart as any type of its family, never another. Blank keeps a family of its own.">?</span></label>
-        <input type="text" name="family" list="bt-families" placeholder="(a family of its own)">
+        <input type="text" name="family" id="bt-create-family" list="bt-families" placeholder="(a family of its own)">
       </div>
       <div class="form-group">
         <label>Dimensions (in) <span class="tooltip-trigger" title="Width and length are the cart's footprint: a family's types should agree on it, and the Kanban save says when they do not.">?</span></label>
@@ -295,7 +312,7 @@
 <div id="bt-edit-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:480px">
     <div class="modal-header flex flex-between">
-      <h2>Edit Bin Type</h2>
+      <h2>Edit Bin Type <span class="text-muted" id="bt-edit-heading-id"></span></h2>
       <button class="modal-close" data-action="closeBTEditModal">&times;</button>
     </div>
     <form method="POST" action="/bin-types/update">

@@ -18,14 +18,14 @@ import (
 	"shingocore/fleet/seerrds"
 )
 
-// ── THE BIN TYPES TABLE'S RDS KEYS ──────────────────────────────────────────
+// ── THE BIN TYPES SECTION'S RDS KEYS ────────────────────────────────────────
 //
 // A carrier family names the RDS binTask key a lift of its carts sends and the
 // one a wait directly in front of such a lift sends (carrier_families
-// .lift_bintask, .wait_bintask; dispatch/carrier_keys.go). The Bin Types table
-// shows each type's family keys as two pickers with one Save. The keys are the
-// family's, so a Save on one row sets every type of the family, and the row
-// names them.
+// .lift_bintask, .wait_bintask; dispatch/carrier_keys.go). Each family's tab of
+// the Bin Types section shows its keys once, as two pickers with one Save, over
+// the family's types (binTypeFamilies): one key per family, every type of it
+// sends them.
 //
 // The options are the distinct keys Core's scene copy lists at bin locations
 // (GeneralLocation rows), each with the operation RDS gives it there as the
@@ -170,41 +170,98 @@ type pageFamilyKeys struct {
 	lift, wait string
 }
 
-// binTypeRow is one row of the Bin Types table: the type, its family's two
-// pickers, and the family's other types, which a Save sets too. A row whose
-// family the page did not read has no pickers, so it offers nothing to save.
-type binTypeRow struct {
-	*domain.BinType
+// ── THE BIN TYPES SECTION: A TAB PER CARRIER FAMILY (owner, 2026-11-18) ────
+//
+// One tab per family, in family code order, each with its count of types. At
+// the top of a tab, the family's Lift and Wait keys once, with one Save; under
+// it, the family's types. A bare marker is no row of its own: it is a quiet
+// line under the type it stands for (BareOf). A tote carrier's line says its
+// top is totes, and its marker's line is its bottom. Everything is drawn from
+// the types and the families the page already reads; a family's tab goes with
+// its last type, as the family does.
+
+// binTypeFamilyTab is one family's tab.
+type binTypeFamilyTab struct {
+	ID   int64
+	Code string
+	// Types are the family's types, bare markers left out, in code order: the
+	// tab's count.
+	Types []binTypeLine
+	// LiftField and WaitField are the family's keys; nil when the page's read
+	// of the families failed, and the tab then offers nothing to save.
 	LiftField, WaitField *keyField
-	FamilyOthers         []string
 }
 
-// binTypeRows is the Bin Types table: each type with its family's keys.
-func binTypeRows(types []*domain.BinType, families map[int64]pageFamilyKeys, scene sceneKeyCopy) []binTypeRow {
-	members := map[int64][]string{}
+// Key is the tab's key: its tab carries it, its panel is tab-<key> (shared
+// switchTab, style guide 22).
+func (t binTypeFamilyTab) Key() string { return "bt-family-" + strconv.FormatInt(t.ID, 10) }
+
+// binTypeLine is one type of a tab, with the bare marker that stands for it
+// drawn as the line under it (nil for none). A marker whose type the page did
+// not read is a line of its own, with Bare set.
+type binTypeLine struct {
+	*domain.BinType
+	Marker *domain.BinType
+}
+
+// binTypeCount is the section's count of types: its tabs' lines, a bare marker
+// drawn under its type not counted again.
+func binTypeCount(tabs []binTypeFamilyTab) int {
+	n := 0
+	for _, t := range tabs {
+		n += len(t.Types)
+	}
+	return n
+}
+
+// binTypeFamilies is the Bin Types section: each family that has a type, as a
+// tab, from the page's one read of the types and its one read of the families
+// (families nil when that read failed).
+func binTypeFamilies(types []*domain.BinType, families map[int64]pageFamilyKeys, scene sceneKeyCopy) []binTypeFamilyTab {
+	marker := map[int64]*domain.BinType{} // carrier type id -> its bare marker
+	read := map[int64]bool{}
 	for _, bt := range types {
-		members[bt.FamilyID] = append(members[bt.FamilyID], bt.Code)
+		read[bt.ID] = true
+	}
+	for _, bt := range types {
+		if bt.Bare && bt.BareOf != nil && read[*bt.BareOf] {
+			marker[*bt.BareOf] = bt
+		}
 	}
 	lift, wait := seerrds.BinTaskForAction(protocol.ActionPickup), seerrds.BinTaskForAction(protocol.ActionWait)
 	liftOps, waitOps := viewOps(lift, scene), viewOps(wait, scene)
-	rows := make([]binTypeRow, len(types))
-	for i, bt := range types {
-		rows[i] = binTypeRow{BinType: bt}
-		keys, read := families[bt.FamilyID]
-		if !read {
-			continue
+	byFamily := map[int64]*binTypeFamilyTab{}
+	var tabs []*binTypeFamilyTab
+	for _, bt := range types {
+		if bt.Bare && bt.BareOf != nil && read[*bt.BareOf] {
+			continue // drawn under its type
 		}
-		rows[i].LiftField = &keyField{Name: "lift_bintask", View: "Lift keys", ViewOps: liftOps,
-			Options: keyOptions(lift, keys.lift, scene)}
-		rows[i].WaitField = &keyField{Name: "wait_bintask", View: "Wait keys", ViewOps: waitOps,
-			Options: keyOptions(wait, keys.wait, scene)}
-		rows[i].FamilyOthers = slices.DeleteFunc(slices.Clone(members[bt.FamilyID]),
-			func(code string) bool { return code == bt.Code })
+		tab := byFamily[bt.FamilyID]
+		if tab == nil {
+			tab = &binTypeFamilyTab{ID: bt.FamilyID, Code: bt.FamilyCode}
+			if keys, ok := families[bt.FamilyID]; ok {
+				tab.LiftField = &keyField{Name: "lift_bintask", View: "Lift keys", ViewOps: liftOps,
+					Options: keyOptions(lift, keys.lift, scene)}
+				tab.WaitField = &keyField{Name: "wait_bintask", View: "Wait keys", ViewOps: waitOps,
+					Options: keyOptions(wait, keys.wait, scene)}
+			}
+			byFamily[bt.FamilyID] = tab
+			tabs = append(tabs, tab)
+		}
+		tab.Types = append(tab.Types, binTypeLine{BinType: bt, Marker: marker[bt.ID]})
 	}
-	return rows
+	out := make([]binTypeFamilyTab, len(tabs))
+	for i, t := range tabs {
+		slices.SortFunc(t.Types, func(a, b binTypeLine) int { return strings.Compare(a.Code, b.Code) })
+		out[i] = *t
+	}
+	slices.SortFunc(out, func(a, b binTypeFamilyTab) int {
+		return cmp.Or(strings.Compare(a.Code, b.Code), cmp.Compare(a.ID, b.ID))
+	})
+	return out
 }
 
-// handleBinTypeFamilyKeys is the Bin Types table's Save of a family's keys,
+// handleBinTypeFamilyKeys is a family tab's Save of the family's keys,
 // through the dispatcher's one door (SaveCarrierFamilyKeys), so the next block
 // built sends them. A refusal is answered as the page's other bin-type forms
 // answer theirs: its sentence, which the browser shows.
