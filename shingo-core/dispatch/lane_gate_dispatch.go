@@ -831,7 +831,11 @@ func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedSte
 	// ("F4c is scoped to the simple transport path"). Resolving it in here would
 	// have silently started expanding complex orders the moment they began using
 	// this valve.
-	blocks := stepsToBlocks(vendorOrderID, preWait, nil, 0, loadSeq)
+	//
+	// The carts are read once, for the robot group and the carrier keys both;
+	// the keys read the order's rows against the plan just persisted.
+	carts := d.capabilityBins(order)
+	blocks := d.orderBlocks(order, vendorOrderID, createRun(plan, preWait, carts), loadSeq)
 
 	// The order's own priority - the depth-derived lane boost was deleted.
 	req = fleet.CreateOrderRequest{
@@ -839,7 +843,7 @@ func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedSte
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForOrder(order),
+		RobotGroup: d.robotGroupForOrder(order, carts),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.

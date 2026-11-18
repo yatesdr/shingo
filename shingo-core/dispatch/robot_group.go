@@ -196,8 +196,10 @@ func decideRobotGroup(f groupFacts) (string, rule) {
 //
 // ── EVERY CART THE ROBOT WILL LIFT, AND A STRICT VERDICT OUTRANKS ─────────────
 //
-// The decision is made per cart, over the order's rows (read fresh, one
-// statement): a consume swap lifts the drained cart off the line (near-empty: the
+// The decision is made per cart, over carts: the order's carts as the create
+// read them (capabilityBins, one statement), the same read the carrier keys
+// take their families from (orderBlocks), so a create reads its carts once. A
+// consume swap lifts the drained cart off the line (near-empty: the
 // relaxed group) and a full one from storage (the payload's own group), and one
 // robot does both, so it must be the one that can lift the full. A cart decided
 // by its payload's own group (above the threshold, or no capacity to judge by)
@@ -205,8 +207,7 @@ func decideRobotGroup(f groupFacts) (string, rule) {
 // naming different groups is a configuration conflict: logged, never relaxed to
 // "" (the census lists it). With no strict cart, the first cart's relaxed group
 // stands. It used to read orders.bin_id alone, the drained cart (finding 1).
-func (d *Dispatcher) robotGroupForOrder(order *orders.Order) string {
-	carts := d.capabilityBins(order)
+func (d *Dispatcher) robotGroupForOrder(order *orders.Order, carts []*bins.Bin) string {
 	if len(carts) == 0 {
 		// No cart to read. Fall back to the payload the ORDER names, which is
 		// the pre-feature behaviour verbatim, and say bin=none so the verdict
@@ -265,18 +266,21 @@ func cartGroupFacts(order *orders.Order, bin *bins.Bin) groupFacts {
 	return facts
 }
 
-// capabilityBins returns the carts whose contents decide this order's robot
-// group, read fresh (the rows a moment ago, not the copy in hand: the scanner's
-// hold writes them just before dispatch), or the bin the order means when it
-// carries none.
+// capabilityBins returns the order's carts, read fresh from its rows (one
+// statement), or the bin the order means when none is on record. A create
+// reads them once and hands them to the robot group decision
+// (robotGroupForOrder) and to the carrier keys (orderBlocks, createRun).
 //
-// An order with no carts is the coordinated-pair evac leg: it dispatches as
-// wait(LINE) and its pickup is appended at release, so at the moment the fleet
-// order is created there is nothing claimed. findFallbackBinAtSource is the
+// The coordinated pair's evac leg is no exception, though its create sends
+// only wait(LINE) and its pickup is appended at release: the hand claims the
+// line cart and writes its rows (recordClaimedBins, from handFromComplexPlan)
+// before the fleet create, so the read finds it. Pinned by
+// TestCarrierKeysWire_TheTwoRobotSwap, whose evac create sends the line cart's
+// wait key. For an order with no cart on record, findFallbackBinAtSource is the
 // existing answer to "which bin does this order mean" — claim-first, then the
-// bin at the line node, already preferring ProcessNode when several are
-// present. If it finds nothing too, the caller degrades to the payload group,
-// which is what the evac leg dispatched with before this.
+// bin at the line node, preferring ProcessNode when several are present; the
+// carrier keys never read it (they size a step by its row). If it finds
+// nothing too, the caller degrades to the payload group.
 func (d *Dispatcher) capabilityBins(order *orders.Order) []*bins.Bin {
 	carts, err := d.db.CartsOfOrder(order.ID)
 	if err == nil && len(carts) > 0 {

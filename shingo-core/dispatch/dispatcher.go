@@ -663,10 +663,11 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) *payloads.LoadSe
 // A simple order's plan [pickup@src, dropoff@dst] is a 2-block no-wait staged
 // order — the same shape the complex tail builds, just Complete=true. The blocks
 // come from buildTransportPlan (the plan-builder the simple planner emits) via
-// stepsToBlocks, so simple and complex share one create primitive (CreateOrder);
-// the only difference is the Complete flag. blockId/goodsId differ from the old
-// dedicated transport primitive, but SEER acts only on location + binTask
-// (blockId/goodsId are cosmetic) — both preserved here.
+// the one block builder (orderBlocks), so simple and complex share one create
+// primitive (CreateOrder); the only difference is the Complete flag.
+// blockId/goodsId differ from the old dedicated transport primitive, but SEER
+// acts only on location + binTask (blockId/goodsId are cosmetic) — both
+// preserved here.
 //
 // It is also the single fleet-create seam for every plain order, which is why the
 // gated-lane valve branches HERE rather than in the scanner: routing on the
@@ -809,8 +810,11 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	vendorOrderID := mintVendorOrderID(order.ID)
 
 	// F4c: expand the load leg into the payload's configured binTask sequence
-	// (nil for an unconfigured payload → byte-identical single JackLoad block).
-	blocks := stepsToBlocks(vendorOrderID, plan, nil, 0, d.loadSequenceForPayload(payloadCode))
+	// (nil for an unconfigured payload → byte-identical single JackLoad block),
+	// the sequence resolved once, above. The carts are read once, for the
+	// robot group and the carrier keys both.
+	carts := d.capabilityBins(order)
+	blocks := d.orderBlocks(order, vendorOrderID, createRun(plan, plan, carts), loadSeq)
 	// The order's own priority, and nothing else. Core used to add a depth-derived
 	// lane boost here; that was deleted (see lane_gate.go). Lane entries are
 	// first-come-first-serve until priority is something the system plans around.
@@ -820,7 +824,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   priority,
-		RobotGroup: d.robotGroupForOrder(order),
+		RobotGroup: d.robotGroupForOrder(order, carts),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.

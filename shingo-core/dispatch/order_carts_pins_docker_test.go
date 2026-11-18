@@ -48,7 +48,7 @@ func TestOrderCartsPin_AConsumeSwapLiftingAFullTakesTheStrictGroup(t *testing.T)
 	testdb.SeedCartRow(t, db, o.ID, drained.ID, 0, 1)
 	testdb.SeedCartRow(t, db, o.ID, full.ID, 2, 3)
 
-	if got := d.robotGroupForOrder(o); got != "GRP-STRICT" {
+	if got := d.robotGroupForOrder(o, d.capabilityBins(o)); got != "GRP-STRICT" {
 		t.Fatalf("the swap's robot group = %q, want GRP-STRICT (it lifts a full cart)", got)
 	}
 }
@@ -209,7 +209,7 @@ func TestOrderCartsCost_RobotGroup(t *testing.T) {
 	}
 	testutil.MustNoErr(t, d.allocator.recordClaimedBins(o, steps, claimed), "record the carts")
 	counter.Reset()
-	d.robotGroupForOrder(o)
+	d.robotGroupForOrder(o, d.capabilityBins(o))
 	n := counter.Count()
 	t.Logf("COST: robot group %d statements: %s", n, testutil.StatementBreakdown(counter.Statements()))
 	if n != costRobotGroup {

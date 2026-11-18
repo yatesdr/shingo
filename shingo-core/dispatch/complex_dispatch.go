@@ -779,22 +779,27 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 	}
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
-	vendorOrderID := mintVendorOrderID(order.ID)
-	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
-	// sequence is scoped to the simple transport path the child-cart delivery
-	// uses. Complex is "every other order kind" — byte-identical to before.
-	blocks := stepsToBlocks(vendorOrderID, preWait, nil, 0, nil)
-	if len(blocks) == 0 {
+	// Every step before the first wait sends a block (a bare wait is never in
+	// preWait), so an empty preWait is a create with no blocks. Refused before
+	// the carts are read: a plan that cannot be sent reads nothing.
+	if len(preWait) == 0 {
 		d.failOrderInternal(order, "invalid_steps", "no actionable steps before wait")
 		return nil, fmt.Errorf("no actionable blocks")
 	}
+	vendorOrderID := mintVendorOrderID(order.ID)
+	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
+	// sequence is scoped to the simple transport path the child-cart delivery
+	// uses. Complex is "every other order kind" — byte-identical to before. The
+	// carts are read once, for the robot group and the carrier keys both.
+	carts := d.capabilityBins(order)
+	blocks := d.orderBlocks(order, vendorOrderID, createRun(resolvedSteps, preWait, carts), nil)
 
 	req := fleet.CreateOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForOrder(order),
+		RobotGroup: d.robotGroupForOrder(order, carts),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.
