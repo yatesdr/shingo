@@ -17,7 +17,6 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine"
-	"shingoedge/store/stations"
 )
 
 // flowPreviewBody is POST /api/processes/{id}/flow/preview.
@@ -296,11 +295,11 @@ func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	station, ok := h.stationOfProcess(w, processID, body.StationID, "a style is minted at a station")
+	stationName, ok := h.stationOfProcess(w, processID, body.StationID, "a style is minted at a station")
 	if !ok {
 		return
 	}
-	body.Source, body.CalledBy = domain.ClaimSourceHMI, station.Name
+	body.Source, body.CalledBy = domain.ClaimSourceHMI, stationName
 	if user, ok := h.sessions.getUser(r); ok && user != "" {
 		body.Source, body.CalledBy = domain.ClaimSourceAdmin, user
 	}
@@ -332,23 +331,24 @@ func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 // stationOfProcess is the floor doors' station: the body's station_id, which
-// must name a station of processID. Each refusal is a 400, written here; ok
-// false means one was. why says what the door does at a station.
-func (h *Handlers) stationOfProcess(w http.ResponseWriter, processID, stationID int64, why string) (*stations.Station, bool) {
+// must name a station of processID; its name is what the door records. Each
+// refusal is a 400, written here; ok false means one was. why says what the
+// door does at a station.
+func (h *Handlers) stationOfProcess(w http.ResponseWriter, processID, stationID int64, why string) (string, bool) {
 	if stationID == 0 {
 		writeError(w, http.StatusBadRequest, "station_id is required: "+why)
-		return nil, false
+		return "", false
 	}
 	station, err := h.engine.StationService().Get(stationID)
 	if err != nil || station == nil {
 		writeError(w, http.StatusBadRequest, "unknown station")
-		return nil, false
+		return "", false
 	}
 	if station.ProcessID != processID {
 		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
-		return nil, false
+		return "", false
 	}
-	return station, true
+	return station.Name, true
 }
 
 // partCreateBody is POST /api/processes/{id}/parts: a part Core does not have,
