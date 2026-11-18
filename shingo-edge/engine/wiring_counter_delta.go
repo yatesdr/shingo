@@ -199,8 +199,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// many of a part one hit made, so two spots of the tick's style running
 	// that part on this counter split it (produceShares); a spot alone, an
 	// LH/RH die's two parts, an A/B pair (one spot) each take the whole step.
-	shares, uneven := produceShares(process, nodes, claims, runtimes, tick, ab.byCore)
-	e.logUnevenShares(tick, uneven)
+	shares := e.produceSharesLogged(process, nodes, claims, runtimes, tick, ab.byCore)
 
 	for _, node := range nodes {
 		runtime := runtimes[node.ID]
@@ -413,15 +412,19 @@ func shareStep(step, n int) []int {
 	return out
 }
 
-// logUnevenShares says once per process and part that a step did not divide
-// between its produce spots, and where the odd pieces went.
-func (e *Engine) logUnevenShares(tick tickScope, uneven []string) {
+// produceSharesLogged is produceShares for the walk: the shares, with a step
+// that did not divide said once per process and part, and where the odd
+// pieces went. A Charge's preview reads produceShares and says nothing.
+func (e *Engine) produceSharesLogged(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet,
+	runtimes map[int64]*processes.RuntimeState, tick tickScope, byCore map[string]*processes.Node) map[int64]int {
+	shares, uneven := produceShares(process, nodes, claims, runtimes, tick, byCore)
 	for _, u := range uneven {
 		if _, seen := e.unevenShareLogged.LoadOrStore(fmt.Sprintf("%d|%s", tick.processID, u), struct{}{}); !seen {
 			log.Printf("counter delta: process %d: a step of %d did not divide for part %s; the odd pieces went to "+
 				"the first spots in node order (logged once)", tick.processID, tick.delta, u)
 		}
 	}
+	return shares
 }
 
 // tickAttribution is the running account of one counter tick's walk over a
