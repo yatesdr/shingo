@@ -375,6 +375,10 @@ func TestCarrierKeys_WhatAKeyCosts(t *testing.T) {
 		t.Cleanup(func() { cdb.Close() })
 		backend := testdb.NewTrackingBackend()
 		d, _ := newTestDispatcher(t, cdb, backend)
+		// Loaded as the engine loads it at start: an unkeyed plant holds an
+		// empty set, not none.
+		_, err = d.ReloadCarrierKeys()
+		testutil.MustNoErr(t, err, "load the keyed families")
 		if keyed {
 			p.key(t, d)
 		}
