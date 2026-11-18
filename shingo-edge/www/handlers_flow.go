@@ -1,9 +1,11 @@
 // handlers_flow.go — the flow composer's endpoints: preview a draft flow,
-// save it, both on the shop-floor group beside the changeover routes.
+// save it, mint a style from a recipe and parts, and ask Core for a new part,
+// all on the shop-floor group beside the changeover routes.
 //
-// The engine does the work (engine.PreviewFlow / SaveFlow); this file maps a
-// request body to a request, an error to a status, and a saved flow to the
-// one per-process claims publish the plant-claims mirror needs.
+// The engine does the work (engine.PreviewFlow / SaveFlow / MintStyle /
+// CreatePart); this file maps a request body to a request, an error to a
+// status, and a saved flow to the one per-process claims publish the
+// plant-claims mirror needs.
 
 package www
 
@@ -15,6 +17,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/store/stations"
 )
 
 // flowPreviewBody is POST /api/processes/{id}/flow/preview.
@@ -293,17 +296,8 @@ func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.StationID == 0 {
-		writeError(w, http.StatusBadRequest, "station_id is required: a style is minted at a station")
-		return
-	}
-	station, err := h.engine.StationService().Get(body.StationID)
-	if err != nil || station == nil {
-		writeError(w, http.StatusBadRequest, "unknown station")
-		return
-	}
-	if station.ProcessID != processID {
-		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
+	station, ok := h.stationOfProcess(w, processID, body.StationID, "a style is minted at a station")
+	if !ok {
 		return
 	}
 	body.Source, body.CalledBy = domain.ClaimSourceHMI, station.Name
@@ -335,4 +329,102 @@ func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 		h.requestSpecChangePublish(processID)
 	}
 	writeJSON(w, result)
+}
+
+// stationOfProcess is the floor doors' station: the body's station_id, which
+// must name a station of processID. Each refusal is a 400, written here; ok
+// false means one was. why says what the door does at a station.
+func (h *Handlers) stationOfProcess(w http.ResponseWriter, processID, stationID int64, why string) (*stations.Station, bool) {
+	if stationID == 0 {
+		writeError(w, http.StatusBadRequest, "station_id is required: "+why)
+		return nil, false
+	}
+	station, err := h.engine.StationService().Get(stationID)
+	if err != nil || station == nil {
+		writeError(w, http.StatusBadRequest, "unknown station")
+		return nil, false
+	}
+	if station.ProcessID != processID {
+		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
+		return nil, false
+	}
+	return station, true
+}
+
+// partCreateBody is POST /api/processes/{id}/parts: a part Core does not have,
+// from the station's new-part form (composer-render.js). The process is the
+// URL's; the numbers are whole, and blank optional fields are null.
+type partCreateBody struct {
+	StationID    int64  `json:"station_id"`
+	PartNumber   string `json:"part_number"`
+	StandardPack int    `json:"standard_pack"`
+	BinTypeCode  string `json:"bin_type_code"`
+	CATID        string `json:"catid"`
+	ToteLayers   *int   `json:"tote_layers"`
+	UOPPerTote   *int   `json:"uop_per_tote"`
+}
+
+// partCreator is what the new-part door asks of the engine beyond
+// EngineOrchestration: the part.create ask (engine.CreatePart). Asserted, as
+// holdMarker is, so the orchestration interface does not widen for it.
+type partCreator interface {
+	CreatePart(processID int64, req protocol.PartCreateRequest) (*protocol.PartCreateResponse, error)
+}
+
+// apiCreatePart is POST /api/processes/{id}/parts: the station asks Core to
+// make a new part for this process, gated as the mint is — the station must
+// be the process's, and a process whose HMI setup is off is refused (403,
+// engine.ErrFlowComposerDisabled's sentence).
+//
+//   - 200: Core made it, or this cell had made it before (repeat true). The
+//     body is Core's answer (protocol.PartCreateResponse), already applied:
+//     the part is in the catalog and on this process's part set.
+//   - 202: sent, and Core had not answered within the wait (writeAskPending).
+//     The answer is applied when it comes.
+//   - 400: refused before anything was sent (engine.PartCreateInvalid, a Core
+//     that does not answer the kind yet), or a bad body.
+//   - 409: Core refused it, with Core's sentence; nothing applied.
+func (h *Handlers) apiCreatePart(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	var body partCreateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, ok := h.stationOfProcess(w, processID, body.StationID, "a part is made at a station"); !ok {
+		return
+	}
+	creator, ok := h.orchestration.(partCreator)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "a new part cannot be made from here")
+		return
+	}
+	made, err := creator.CreatePart(processID, protocol.PartCreateRequest{
+		PartNumber: body.PartNumber, StandardPack: body.StandardPack, BinTypeCode: body.BinTypeCode,
+		CATID: body.CATID, ToteLayers: body.ToteLayers, UOPPerTote: body.UOPPerTote,
+	})
+	if err != nil {
+		var invalid *engine.PartCreateInvalid
+		var refusal *engine.CoreRefusal
+		switch {
+		case errors.Is(err, engine.ErrFlowComposerDisabled):
+			writeError(w, http.StatusForbidden, err.Error())
+		case writeAskPending(w, r, err):
+			// Sent; the answer is applied when it comes.
+		case errors.As(err, &refusal):
+			// Core's sentence, whatever status Core answered with: a 408
+			// passed through would read to a browser as its own timeout.
+			writeError(w, http.StatusConflict, refusal.Sentence)
+		case errors.As(err, &invalid), errors.Is(err, engine.ErrCoreDoesNotAnswer):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, made)
 }

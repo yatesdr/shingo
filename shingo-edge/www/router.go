@@ -364,6 +364,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// The mint: a style from (recipe, parts), resolved or minted — the
 			// floor's one write (pick-a-part U3).
 			r.Post("/processes/{id}/flow/mint", h.apiMintFlow)
+			// A part Core does not have, asked of Core from the station's
+			// part list and gated as the mint is (apiCreatePart): the
+			// picker then mints with it.
+			r.Post("/processes/{id}/parts", h.apiCreatePart)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 			r.Get("/processes/{id}/post-cutover-flag", h.apiGetPostCutoverFlag)

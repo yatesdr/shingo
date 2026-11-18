@@ -120,6 +120,14 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/flow/mint": {want: 422, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/flow/mint", map[string]any{"station_id": w.pressStation}
 		})},
+		// A new part is Core's to make. The walk's Core never sent a node list,
+		// so no carrier type is known and the door refuses the carrier before
+		// anything is sent; with one it would refuse a Core that does not name
+		// the kind. Either is a 400 that writes nothing.
+		"POST /api/processes/{id}/parts": {want: 400, req: on(func(w *walk) (string, any) {
+			return pr(w) + "/parts", map[string]any{"station_id": w.pressStation, "part_number": "SYN-WALK-1",
+				"standard_pack": 10, "bin_type_code": "SYN-CART"}
+		})},
 		"POST /api/processes/{id}/changeover/cutover": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/changeover/cutover", map[string]any{}
 		})},
