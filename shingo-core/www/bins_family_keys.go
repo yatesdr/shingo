@@ -133,8 +133,8 @@ type pageFamilyKeys struct {
 // family the page did not read has no pickers, so it offers nothing to save.
 type binTypeRow struct {
 	*domain.BinType
-	Lift, Wait   []keyOption
-	FamilyOthers []string
+	LiftOptions, WaitOptions []keyOption
+	FamilyOthers             []string
 }
 
 // binTypeRows is the Bin Types table: each type with its family's keys.
@@ -151,8 +151,8 @@ func binTypeRows(types []*domain.BinType, families map[int64]pageFamilyKeys, sce
 		if !read {
 			continue
 		}
-		rows[i].Lift = keyOptions(lift, keys.lift, scene)
-		rows[i].Wait = keyOptions(wait, keys.wait, scene)
+		rows[i].LiftOptions = keyOptions(lift, keys.lift, scene)
+		rows[i].WaitOptions = keyOptions(wait, keys.wait, scene)
 		rows[i].FamilyOthers = slices.DeleteFunc(slices.Clone(members[bt.FamilyID]),
 			func(code string) bool { return code == bt.Code })
 	}

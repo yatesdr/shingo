@@ -178,12 +178,12 @@ func TestBinTypeRows_EachTypeShowsItsFamilysKeys(t *testing.T) {
 	}
 	for i, w := range want {
 		r := rows[i]
-		if got := [3]string{sel(r.Lift), sel(r.Wait), fmt.Sprint(r.FamilyOthers)}; got != [3]string{w.lift, w.wait, w.others} {
+		if got := [3]string{sel(r.LiftOptions), sel(r.WaitOptions), fmt.Sprint(r.FamilyOthers)}; got != [3]string{w.lift, w.wait, w.others} {
 			t.Errorf("%s: lift %q, wait %q, others %s; want %q, %q, %s", r.Code, got[0], got[1], got[2], w.lift, w.wait, w.others)
 		}
 	}
-	if r := rows[4]; r.Lift != nil || r.Wait != nil {
-		t.Errorf("%s, whose family was not read, offers keys %q / %q", r.Code, optionLines(r.Lift), optionLines(r.Wait))
+	if r := rows[4]; r.LiftOptions != nil || r.WaitOptions != nil {
+		t.Errorf("%s, whose family was not read, offers keys %q / %q", r.Code, optionLines(r.LiftOptions), optionLines(r.WaitOptions))
 	}
 }
 
