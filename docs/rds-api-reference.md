@@ -153,9 +153,13 @@ a block with only `blockId` and `location` (leave `binTask` and `operation`
 blank). The robot stops there but runs no action or script.
 
 **`binTask` is a free string:** the key an engineer gives the location's action
-in the scene. Shingo sends `JackLoad`, `JackUnload`, `Wait` and a payload's
-advanced load sequence names, and never reads a key back for what the block did:
-it keeps its own record of each block it sends ([bin-transit-state.md](bin-transit-state.md#what-a-block-was)).
+in the scene. Shingo sends `JackLoad`, `JackUnload`, `Wait`, a payload's
+advanced load sequence names, and a carrier family's own lift and wait keys
+where an engineer has picked them on the Bins page and Core's copy of the scene
+lists them at the block's location
+([order-builder-dispatch.md](order-builder-dispatch.md#the-blocks-an-order-sends)).
+It never reads a key back for what the block did: it keeps its own record of
+each block it sends ([bin-transit-state.md](bin-transit-state.md#what-a-block-was)).
 
 **Response:** Standard envelope.
 

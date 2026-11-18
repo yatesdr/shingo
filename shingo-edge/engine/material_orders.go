@@ -317,7 +317,7 @@ func twoRobotSupplyTail(wait, collect protocol.ComplexOrderStep, line string) []
 // carry the old bin to the outbound destination.
 func twoRobotEvac(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		stationWait(claim.CoreNodeName, release.PurposeSwap), // drive to node + hold (RDS BinTask=Wait)
+		stationWait(claim.CoreNodeName, release.PurposeSwap), // drive to node + hold (Core picks the key: Wait or the cart family's)
 		{Action: "pickup", Node: claim.CoreNodeName},         // remove old from production
 		buildStep("dropoff", claim.OutboundDestination),      // deliver to destination
 	}
@@ -352,7 +352,7 @@ func BuildStagedDeliverSteps(claim *processes.NodeClaim) []protocol.ComplexOrder
 // BuildSingleSwapSteps builds a 9-step single-robot swap sequence:
 //  1. pickup(InboundSource)           — pick new from source
 //  2. dropoff(InboundStaging)         — park new at inbound staging
-//  3. wait(CoreNodeName)              — drive to node and hold (RDS BinTask=Wait)
+//  3. wait(CoreNodeName)              — drive to node and hold (Core picks the RDS wait key)
 //  4. pickup(CoreNodeName)            — pick up old from line
 //  5. dropoff(OutboundStaging)        — quick-park old nearby
 //  6. pickup(InboundStaging)          — grab new from staging
@@ -526,7 +526,7 @@ func composePressIndexPair(p pressIndexPair) (r1, r2 []protocol.ComplexOrderStep
 
 // BuildSequentialRemovalSteps builds Order A for sequential mode (removal robot).
 // Robot drives to line and holds, waits for operator release, picks up old bin, delivers to destination.
-//  1. wait(CoreNodeName)            — drive to node + hold (RDS BinTask=Wait)
+//  1. wait(CoreNodeName)            — drive to node + hold (Core picks the RDS wait key)
 //  2. pickup(CoreNodeName)          — pick up old from line
 //  3. dropoff(OutboundDestination)  — deliver old to destination
 func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {

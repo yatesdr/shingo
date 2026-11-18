@@ -10,7 +10,7 @@ Base URL: `http://<host>:8083`
 
 <!-- generated: shingo-core/www/router.go routes -->
 
-247 routes (124 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
+248 routes (125 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
 
 ### Pages and forms
 
@@ -20,6 +20,7 @@ Base URL: `http://<host>:8083`
 | `GET` | `/admin/cells` | `handleCellsAdmin` | login |
 | `POST` | `/bin-types/create` | `handleBinTypeCreate` | login |
 | `POST` | `/bin-types/delete` | `handleBinTypeDelete` | login |
+| `POST` | `/bin-types/family-keys` | `handleBinTypeFamilyKeys` | login |
 | `POST` | `/bin-types/update` | `handleBinTypeUpdate` | login |
 | `GET` | `/bins` | `handleBins` | login |
 | `POST` | `/bins/create` | `handleBinCreate` | login |

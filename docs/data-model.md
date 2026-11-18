@@ -86,7 +86,11 @@ Columns: [`bin_types`](#core-bin_types). Notes the schema does not say:
 
 - `width_in`, `length_in`, `height_in` are inches; width and length are the footprint.
 - `family_id` is the carrier family ([`carrier_families`](#core-carrier_families)): the physical cart this type is
-  one setting of. Every type has one, by default its own.
+  one setting of. Every type has one, by default its own. A family goes with its last type, deleted or moved out.
+- A family's `lift_bintask` and `wait_bintask` are the RDS binTask keys a lift of a cart of the family sends, and a
+  wait directly in front of that lift at the same node; blank sends the default (`JackLoad`, `Wait`). Every type of
+  the family sends them; the Bins page's Bin Types table picks them
+  ([order-builder-dispatch.md](order-builder-dispatch.md#the-blocks-an-order-sends)).
 - `required_robot_group` is the robot group an empty of this type needs; empty is any.
 - `bare_of`, on a bare marker, is the carrier it stands for.
 - `totes_per_layer` is how many totes one layer holds; null is not a tote carrier, or not said.

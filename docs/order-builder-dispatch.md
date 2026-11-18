@@ -183,3 +183,56 @@ order is the one-need case of the same machinery a multi-step complex order
 uses, which is what lets the reservation substrate serve both families without
 forking. The simple and complex dispatch paths are still two paths over the
 shared finder, intent-keyed sourcing and plan-shape primitives.
+
+## The blocks an order sends
+
+One builder makes every block an order sends the fleet: `orderBlocks`
+(`shingo-core/dispatch/carrier_keys_blocks.go`), the only caller of
+`stepsToBlocks`. The four sites that send an order's blocks call it: the sealed
+create (`dispatchToFleetCore`), the unsealed create (`buildUnsealedCreate`), the
+ungated complex create (`buildComplexCommit`) and the append (`appendSegment`).
+`TestCensus_OneBlockBuilder` holds that, and names the orderless doors that build
+blocks of their own (the cleaning mission, the Robots page's send-to, the RDS
+adapter's command order).
+
+**The binTask each block carries.** By default the step's: `JackLoad` for a lift,
+`JackUnload` for a set-down, `Wait` for a wait with a node
+(`seerrds.BinTaskForAction`); a lift a payload's load sequence expands sends the
+sequence's names. A carrier family can name its own lift key and wait key
+(`carrier_families.lift_bintask`, `wait_bintask`, picked on the Bins page), and
+then, by one rule (`carrierKeyNames`):
+
+- a lift at plan step p sends the lift key of the family of the cart whose
+  `order_bins` row picks at p;
+- a wait with a node at step p, when step p+1 is a lift at the same node, sends
+  that lift's cart's family's wait key: the robot stands at a cart it is about to
+  recognize;
+- everything else sends the default: a set-down, a wait made while carrying (a
+  lane gate point, a dig dwell, a turn wait in front of a set-down), a step no row
+  lifts at, a blank key.
+
+The rule keys on the pick step, never on the bin: one cart can be lifted twice in
+one order. An append places its segment by `segmentStart` in the stored plan; its
+block number is `blockOffset`, and the two differ when a bare wait stands before
+the segment. A sized key is sent only where Core's copy of the RDS scene lists it
+at the block's location, in every row the copy holds for it (`namesTheSceneLists`,
+`ScenePoint.ListsBinTask`), so engineers add a size's keys location by location
+and a location without them gets today's block, not an order RDS refuses. A key
+removed in RDS but still in the copy is sent and refused until the next scene
+sync; the Bins page shows the sync time.
+
+**What it costs.** The dispatcher holds the families that name a key in memory
+(`ReloadCarrierKeys`: at start, on the save `SaveCarrierFamilyKeys`, and on the
+lane floor's 60 s tick). With none, the builder reads nothing and sends today's
+bytes. With keys: a create reads the scene copy once (its carts come from the read
+the robot group already makes), and an append reads the order's carts once and the
+scene copy once, each only when a step needs it. No fleet call is added.
+`TestCarrierKeysPin_EveryPinShapeKeyed` runs every shape of the block-record pin
+with every family keyed and holds that only lifts and the waits in front of them
+change, and that no finished block does anything else.
+
+**The table turn.** A turn node's door reads the live fleet's keys at the node:
+`Wait` must be listed, and `Wait` and every family wait key the location lists
+must recognize on the lift side and must not on the set-down side
+(`turnWaitKeysRefusal`). Saving a family's wait key re-runs that check at every
+turn node and writes nothing if one fails (`turnsAdmitWaitKey`).
