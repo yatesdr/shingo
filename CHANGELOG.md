@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.12.0 — 2026-11-18
+
 Deploy: no migration. Core first, then the Edges: an Edge on this release asking an older Core to replace a partial is told "not a carrier the door knows", and nothing is written.
 
 - REPLACE PARTIAL in a home's menu when it holds a partial of its part: partial off, full on, CONFIRM LOAD
