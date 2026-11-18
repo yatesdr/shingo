@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
@@ -37,8 +38,14 @@ const (
 	// later, and the Edge's next heartbeat carries it there.
 	feedMemoBins = 10 * time.Second
 	// feedMemoStation bounds the per-station feeds (nodes, scene). Two minutes is
-	// the cadence the node list was re-asked at before feeds, and node edits
-	// still push through NodeStructureChanged, so it costs no freshness.
+	// the cadence the node list was re-asked at before feeds. It is the
+	// worst-case heal for a write that changes a station's node list and drops
+	// no memo: that write reaches the Edge up to two minutes and a heartbeat
+	// later. A payload write drops every station's node-list memo
+	// (PayloadsChanged: the list carries each part's carrier rows). Nothing else
+	// does: a node or carrier-type edit waits out the memo, and
+	// NodeStructureChanged (a group deleted or reparented) makes the Edge re-ask
+	// the list without touching the memo the heartbeat compares.
 	feedMemoStation = 2 * time.Minute
 )
 
@@ -133,6 +140,19 @@ func (f *feedState) drop(key string) {
 func (f *feedState) dropStation(station, key string) {
 	f.mu.Lock()
 	delete(f.memo, memoKey(station, key))
+	f.mu.Unlock()
+}
+
+// dropEveryStation forgets every station's memo of a per-station feed, for a
+// write that changes every station's build of it.
+func (f *feedState) dropEveryStation(key string) {
+	prefix := memoKey("", key)
+	f.mu.Lock()
+	for k := range f.memo {
+		if strings.HasPrefix(k, prefix) {
+			delete(f.memo, k)
+		}
+	}
 	f.mu.Unlock()
 }
 

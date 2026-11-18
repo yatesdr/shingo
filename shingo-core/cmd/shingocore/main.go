@@ -472,6 +472,9 @@ func main() {
 	// A known containment write (a flag, a bin hold, a diverted bin stamped on
 	// arrival) pushes the containment snapshot to every Edge at once.
 	eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)
+	// A payload write, from the desktop or the floor, drops the catalog and
+	// node-list memos so the next heartbeats compare against it. No broadcast.
+	eng.SetPayloadsChangedFunc(coreDataService.PayloadsChanged)
 	// A change at a node an Edge watches pushes that Edge its bins snapshot:
 	// the station doors (LOAD, count, CLEAR) through the engine's hook, bin
 	// and order events from the bus.

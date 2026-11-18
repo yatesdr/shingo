@@ -4,13 +4,17 @@ package messaging
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/service"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
+	"shingocore/store/payloads"
 )
 
 // nodeFeedSetup is one enrolled station with a node of its own and a scene.
@@ -281,5 +285,105 @@ func TestNodeFeed_LoaderNamesItsEdge(t *testing.T) {
 	pick("")
 	if _, err := svc.buildNodeList("edge.test", true); err != nil {
 		t.Errorf("no loader names an Edge, registry unread: the feed build failed (%v); want no registry read", err)
+	}
+}
+
+// TestPayloadsChanged_DropsTheMemos: a payload write through the payload
+// service, wired as the composition root wires it, drops the catalog memo and
+// every station's node-list memo, and a heartbeat right after it compares
+// against a build made after the write. An Edge whose catalog digest differs
+// from the build before the write (one that restarted, holding nothing) is
+// sent the catalog with the new row, not that older build, and its node list
+// carries the part's carrier row; an Edge holding the old digest is sent the
+// new catalog at once rather than when the memo ages out.
+func TestPayloadsChanged_DropsTheMemos(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	stations := []string{"edge.test", "edge.other"}
+	for _, st := range stations {
+		_, err := db.EnrollEdge(st, "", st)
+		testutil.MustNoErr(t, err, "enroll "+st)
+	}
+	seedFeedsPinNodes(t, db)
+	resp := &feedsPinResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+	ps := service.NewPayloadService(db)
+	ps.SetPayloadsChangedFunc(svc.PayloadsChanged)
+	bt := &bins.BinType{Code: "SYN-PC-BT"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+
+	heartbeat := func(station string, feeds map[string]string) (*protocol.EdgeHeartbeatAck, *protocol.CatalogPayloadsResponse, *protocol.NodeListResponse) {
+		t.Helper()
+		before := len(resp.events)
+		svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{StationID: station, Feeds: feeds})
+		var ack *protocol.EdgeHeartbeatAck
+		var cat *protocol.CatalogPayloadsResponse
+		var nl *protocol.NodeListResponse
+		for _, e := range resp.events[before:] {
+			switch p := e.payload.(type) {
+			case *protocol.EdgeHeartbeatAck:
+				ack = p
+			case *protocol.CatalogPayloadsResponse:
+				cat = p
+			case *protocol.NodeListResponse:
+				nl = p
+			}
+		}
+		if ack == nil {
+			t.Fatalf("%s: no ack", station)
+		}
+		return ack, cat, nl
+	}
+	held := map[string]map[string]string{}
+	for _, st := range stations {
+		ack, _, _ := heartbeat(st, map[string]string{protocol.FeedNodes: "", protocol.FeedCatalog: ""})
+		held[st] = ack.Feeds
+	}
+	now := clock.Now()
+	if _, ok := svc.feeds.lookup("", protocol.FeedCatalog, now); !ok {
+		t.Fatal("no catalog memo after the heartbeats")
+	}
+	for _, st := range stations {
+		if _, ok := svc.feeds.lookup(st, protocol.FeedNodes, now); !ok {
+			t.Fatalf("no node-list memo for %s after its heartbeat", st)
+		}
+	}
+
+	p := &payloads.Payload{Code: "SYN-PC-NEW", UOPCapacity: 10}
+	testutil.MustNoErr(t, ps.CreateWithSets(p, service.PayloadSets{BinTypeIDs: &[]int64{bt.ID}}), "create the part")
+
+	now = clock.Now()
+	if _, ok := svc.feeds.lookup("", protocol.FeedCatalog, now); ok {
+		t.Error("the catalog memo survived a payload create")
+	}
+	for _, st := range stations {
+		if _, ok := svc.feeds.lookup(st, protocol.FeedNodes, now); ok {
+			t.Errorf("%s's node-list memo survived a payload create", st)
+		}
+	}
+
+	hasRow := func(cat *protocol.CatalogPayloadsResponse) bool {
+		for _, r := range cat.Payloads {
+			if r.Code == "SYN-PC-NEW" {
+				return true
+			}
+		}
+		return false
+	}
+	ack, cat, nl := heartbeat("edge.other", map[string]string{protocol.FeedCatalog: "", protocol.FeedNodes: ""})
+	if cat == nil || !hasRow(cat) {
+		t.Errorf("an Edge holding nothing was sent a catalog without the new part: %+v", cat)
+	}
+	if ack.Feeds[protocol.FeedCatalog] == held["edge.other"][protocol.FeedCatalog] {
+		t.Errorf("the ack quotes the catalog digest from before the create (%s)", ack.Feeds[protocol.FeedCatalog])
+	}
+	want := protocol.PayloadBinTypeInfo{PayloadCode: "SYN-PC-NEW", BinTypeCode: "SYN-PC-BT"}
+	if nl == nil || !slices.Contains(nl.PayloadBinTypes, want) {
+		t.Errorf("the node list after the create does not carry %+v", want)
+	}
+
+	_, cat, _ = heartbeat("edge.test", held["edge.test"])
+	if cat == nil || !hasRow(cat) {
+		t.Errorf("an Edge holding the old digest was not sent the catalog with the new part: %+v", cat)
 	}
 }

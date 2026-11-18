@@ -233,3 +233,61 @@ func TestPayloadService_CompatibleNodeNamesByPayload_EmptyByDefault(t *testing.T
 		t.Errorf("db rows = %d, svc names = %d, should match", len(dbRows), len(byPayload[p.ID]))
 	}
 }
+
+// TestPayloadService_PayloadsChangedHook: every payload write the service
+// makes calls the payloads hook once, after it succeeded, so the feeds drop
+// their memos for a desktop edit as for a floor create; a refused write calls
+// nothing.
+func TestPayloadService_PayloadsChangedHook(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewPayloadService(db)
+	calls := 0
+	svc.SetPayloadsChangedFunc(func() { calls++ })
+
+	bt := &bins.BinType{Code: "SYN-HOOK-BT"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	bare, err := db.EnsureBareMarker(bt.ID)
+	testutil.MustNoErr(t, err, "bare marker")
+	p := &payloads.Payload{Code: "SYN-HOOK-1", UOPCapacity: 5}
+	item := &payloads.ManifestItem{PartNumber: "SYN-HOOK-PART", PartsPerCycle: 1}
+
+	for _, w := range []struct {
+		name string
+		do   func() error
+	}{
+		{"create (the importer's)", func() error { return svc.Create(&payloads.Payload{Code: "SYN-HOOK-0", UOPCapacity: 5}) }},
+		{"create with sets", func() error { return svc.CreateWithSets(p, PayloadSets{}) }},
+		{"update", func() error { p.Description = "edited"; return svc.Update(p) }},
+		{"update with sets", func() error {
+			return svc.UpdateWithSets(p, PayloadSets{BinTypeIDs: &[]int64{bt.ID}})
+		}},
+		{"set bin types", func() error { return svc.SetBinTypes(p.ID, nil) }},
+		{"create manifest item", func() error { item.PayloadID = p.ID; return svc.CreateManifestItem(item, "") }},
+		{"update manifest item", func() error { return svc.UpdateManifestItem(item.ID, "SYN-HOOK-PART", "", 2) }},
+		{"delete manifest item", func() error { return svc.DeleteManifestItem(item.ID) }},
+		{"replace manifest", func() error {
+			return svc.ReplaceManifest(p.ID, []payloads.Line{{PartNumber: "SYN-HOOK-PART", PartsPerCycle: 1}})
+		}},
+		{"set a part's cat id", func() error { return svc.SetPartCATID("SYN-HOOK-PART", "SYN-CAT-1") }},
+		{"delete", func() error { return svc.Delete(p.ID) }},
+	} {
+		before := calls
+		testutil.MustNoErr(t, w.do(), w.name)
+		if calls != before+1 {
+			t.Errorf("%s called the hook %d times, want 1", w.name, calls-before)
+		}
+	}
+
+	q := makePayload(t, svc, "SYN-HOOK-2", "", 5)
+	before := calls
+	if err := svc.CreateWithSets(&payloads.Payload{Code: "  ", UOPCapacity: 5}, PayloadSets{}); err == nil {
+		t.Error("a blank code was created")
+	}
+	if err := svc.SetBinTypes(q.ID, []int64{bare}); err == nil {
+		t.Error("a bare carrier type was set on a payload")
+	}
+	if calls != before {
+		t.Errorf("refused writes called the hook %d times, want none", calls-before)
+	}
+}

@@ -27,6 +27,11 @@ type PayloadService struct {
 	// while HTTP handlers may already be writing. Nil: nothing is pushed and
 	// the heartbeat carries the change.
 	containmentChanged atomic.Pointer[func()]
+	// payloadsChanged is called after every successful payload write this
+	// service makes (a create, an update, a delete, a carrier-type set, a
+	// manifest or a part's cat id), so the Edges' feeds compare against a build
+	// made after it. Atomic, and nil, as containmentChanged.
+	payloadsChanged atomic.Pointer[func()]
 }
 
 // SetContainmentChangedFunc installs the hook called after a successful
@@ -41,6 +46,24 @@ func (s *PayloadService) notifyContainmentChanged() {
 	}
 }
 
+// SetPayloadsChangedFunc installs the hook called after a successful payload
+// write. Set once, through Engine.SetPayloadsChangedFunc.
+func (s *PayloadService) SetPayloadsChangedFunc(fn func()) {
+	s.payloadsChanged.Store(&fn)
+}
+
+// payloadsWritten calls the payload hook after a write that succeeded, and
+// returns err untouched: a failed write calls nothing.
+func (s *PayloadService) payloadsWritten(err error) error {
+	if err != nil {
+		return err
+	}
+	if fn := s.payloadsChanged.Load(); fn != nil && *fn != nil {
+		(*fn)()
+	}
+	return nil
+}
+
 func NewPayloadService(db *store.DB) *PayloadService {
 	return &PayloadService{db: db}
 }
@@ -51,7 +74,7 @@ func NewPayloadService(db *store.DB) *PayloadService {
 // importer's path (importPayloadGroups), which checks its rows its own way.
 // Every other create goes through CreateWithSets (checkPayload).
 func (s *PayloadService) Create(p *payloads.Payload) error {
-	return s.db.CreatePayload(p)
+	return s.payloadsWritten(s.db.CreatePayload(p))
 }
 
 // Get loads a payload template by ID.
@@ -127,7 +150,7 @@ func (s *PayloadService) Update(p *payloads.Payload) error {
 	if err := s.checkUpdate(p); err != nil {
 		return err
 	}
-	return s.db.UpdatePayload(p)
+	return s.payloadsWritten(s.db.UpdatePayload(p))
 }
 
 // checkUpdate is Update's refusals: checkPayload's, and a code change while
@@ -166,7 +189,7 @@ func (s *PayloadService) CreateWithSets(p *payloads.Payload, sets PayloadSets) e
 	if err := s.checkSets(sets); err != nil {
 		return err
 	}
-	return s.db.CreatePayloadWithSets(p, sets)
+	return s.payloadsWritten(s.db.CreatePayloadWithSets(p, sets))
 }
 
 // UpdateWithSets is Update with the carrier types and the manifest the save
@@ -178,7 +201,7 @@ func (s *PayloadService) UpdateWithSets(p *payloads.Payload, sets PayloadSets) e
 	if err := s.checkSets(sets); err != nil {
 		return err
 	}
-	return s.db.UpdatePayloadWithSets(p, sets)
+	return s.payloadsWritten(s.db.UpdatePayloadWithSets(p, sets))
 }
 
 // checkSets refuses a stated set SetBinTypes or ReplaceManifest would refuse:
@@ -208,7 +231,7 @@ func (s *PayloadService) Delete(id int64) error {
 			return err
 		}
 	}
-	return s.db.DeletePayload(id)
+	return s.payloadsWritten(s.db.DeletePayload(id))
 }
 
 // refuseIfBinsCarry blocks a rename or delete that would orphan live bins.
@@ -421,7 +444,7 @@ func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem, catid s
 	}}); err != nil {
 		return err
 	}
-	return s.db.CreatePayloadManifestItem(item, catid)
+	return s.payloadsWritten(s.db.CreatePayloadManifestItem(item, catid))
 }
 
 // UpdateManifestItem adjusts a manifest item's part, that part's cat id, and
@@ -432,12 +455,12 @@ func (s *PayloadService) UpdateManifestItem(id int64, partNumber, catid string, 
 	}}); err != nil {
 		return err
 	}
-	return s.db.UpdatePayloadManifestItem(id, partNumber, catid, partsPerCycle)
+	return s.payloadsWritten(s.db.UpdatePayloadManifestItem(id, partNumber, catid, partsPerCycle))
 }
 
 // DeleteManifestItem removes a manifest item from a payload template.
 func (s *PayloadService) DeleteManifestItem(id int64) error {
-	return s.db.DeletePayloadManifestItem(id)
+	return s.payloadsWritten(s.db.DeletePayloadManifestItem(id))
 }
 
 // ReplaceManifest swaps out a payload template's whole manifest in one pass,
@@ -446,7 +469,7 @@ func (s *PayloadService) ReplaceManifest(payloadID int64, lines []payloads.Line)
 	if err := ValidateManifestLines(lines); err != nil {
 		return err
 	}
-	return s.db.ReplacePayloadManifest(payloadID, lines)
+	return s.payloadsWritten(s.db.ReplacePayloadManifest(payloadID, lines))
 }
 
 // --- parts ----------------------------------------------------------------
@@ -465,7 +488,7 @@ func (s *PayloadService) GetPart(partNumber string) (*payloads.Part, error) {
 // conflict prompt — it is deliberately a separate, explicit call rather than
 // something an ordinary manifest save can do by accident.
 func (s *PayloadService) SetPartCATID(partNumber, catid string) error {
-	return s.db.SetPartCATID(partNumber, catid)
+	return s.payloadsWritten(s.db.SetPartCATID(partNumber, catid))
 }
 
 // --- Bin-type associations ------------------------------------------------
@@ -478,7 +501,7 @@ func (s *PayloadService) SetBinTypes(payloadID int64, binTypeIDs []int64) error 
 	if err := CheckNoBareInPayloadRule(s.db, binTypeIDs); err != nil {
 		return err
 	}
-	return s.db.SetPayloadBinTypes(payloadID, binTypeIDs)
+	return s.payloadsWritten(s.db.SetPayloadBinTypes(payloadID, binTypeIDs))
 }
 
 // CheckNoBareInPayloadRule refuses a payload rule naming a bare type. Exported
