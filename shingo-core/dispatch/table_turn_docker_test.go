@@ -226,8 +226,9 @@ func TestTableTurnDoor_AdmitsAndCaches(t *testing.T) {
 // TestTableTurnDoor_ChecksEveryWaitKeyTheLocationLists: with a family keyed to
 // wait_4548, the door checks Wait and wait_4548 wherever the location lists
 // them, each against the side: before the lift each must recognize, before the
-// set-down none may. A key the location does not list is not checked, and a
-// location that lists no wait key at all is refused on either side.
+// set-down none may. A family's key the location does not list is not checked.
+// A location that does not list Wait is refused on either side, whatever
+// family key it lists, as is one that lists no wait key at all.
 func TestTableTurnDoor_ChecksEveryWaitKeyTheLocationLists(t *testing.T) {
 	f := newTurnDoorFixture(t)
 	fam := keyFamily(t, f.db, "TT-4548")
@@ -256,8 +257,10 @@ func TestTableTurnDoor_ChecksEveryWaitKeyTheLocationLists(t *testing.T) {
 			map[string]string{"Wait": waitPlain, "wait_4548": waitRecognizes}, "TT-KEYS's Wait key does not recognize"},
 		{"lift: wait_4548 not listed is not checked", lift,
 			map[string]string{"Wait": waitRecognizes}, ""},
-		{"lift: wait_4548 listed alone, recognizing", lift,
-			map[string]string{"wait_4548": waitRecognizes}, ""},
+		{"lift: wait_4548 listed without Wait", lift,
+			map[string]string{"wait_4548": waitRecognizes}, "TT-KEYS has no Wait key"},
+		{"set-down: wait_4548 listed without Wait", setDown,
+			map[string]string{"wait_4548": waitPlain}, "TT-KEYS has no Wait key"},
 		{"set-down: wait_4548 recognizes", setDown,
 			map[string]string{"Wait": waitPlain, "wait_4548": waitRecognizes}, "TT-KEYS's wait_4548 key recognizes the cart"},
 		{"set-down: Wait recognizes beside a plain wait_4548", setDown,

@@ -219,7 +219,7 @@ func IsTableTurnProperty(key string) bool {
 //   - a side that is neither lift nor set-down;
 //   - a lane slot, a group or a synthetic node;
 //   - a fleet that cannot turn a table;
-//   - a node whose wait keys do not suit its side, or that lists none
+//   - a node whose wait keys do not suit its side, or that lists no Wait key
 //     (turnWaitKeysRefusal: on the lift side every wait key the location
 //     lists must recognize the cart, on the set-down side none may).
 func (d *Dispatcher) CheckTableTurnProperty(nodeID int64, key, value string, del bool) error {
@@ -305,11 +305,14 @@ func (d *Dispatcher) turnNodeShapeRefusal(node *nodes.Node) error {
 //     under it when it waits there and the table turns with the cart on it;
 //   - the set-down side: none may recognize: a loaded robot pausing on a
 //     recognizing wait has nothing under it to find;
-//   - a location that lists none of them is refused on either side: there is
-//     no wait there to check.
+//   - a location that does not list Wait is refused on either side, whatever
+//     family keys it lists: a cart whose family names no wait key, or one the
+//     location does not list, should still send Wait on the turn wait there
+//     (a set-down's turn wait, a carrying wait, always should), and RDS
+//     should refuse it.
 //
-// A key the location does not list is not checked: RDS should refuse a block
-// that names it there, so no robot runs it at the node.
+// A family's key the location does not list is not checked: RDS should refuse
+// a block that names it there, so no robot runs it at the node.
 //
 // It reads the live fleet (/binCheck, one call for every node in turns), not
 // Core's scene copy (scene_points), which the block builder reads to choose a
@@ -359,13 +362,16 @@ func (d *Dispatcher) turnWaitKeysRefusal(turns map[string]string, families map[i
 		if !lt.Exists {
 			return fmt.Errorf("%w: the fleet has no bin location %s", ErrTableTurnRefused, name)
 		}
-		listed := false
+		if _, ok := lt.TaskArgs[def]; !ok {
+			return fmt.Errorf("%w: %s has no %s key in the fleet's scene, and a turn wait there goes out as %s for "+
+				"every cart whose family's wait key the location does not list, which the fleet would refuse — add a "+
+				"%s key to %s in the fleet's scene first", ErrTableTurnRefused, name, def, def, def, name)
+		}
 		for _, key := range waits {
 			raw, ok := lt.TaskArgs[key]
 			if !ok {
 				continue
 			}
-			listed = true
 			recognizes, err := waitArgsRecognize(key, raw)
 			if err != nil {
 				return fmt.Errorf("%w: %s: %v", ErrTableTurnRefused, name, err)
@@ -381,11 +387,6 @@ func (d *Dispatcher) turnWaitKeysRefusal(turns map[string]string, families map[i
 					"waits there and the table would turn with nothing on it — set recognize on %s's %s key in the "+
 					"fleet's scene first", ErrTableTurnRefused, name, key, name, key)
 			}
-		}
-		if !listed {
-			return fmt.Errorf("%w: %s has no %s key in the fleet's scene, nor any carrier family's wait key, so the "+
-				"wait a turn needs there cannot be checked — add a %s key to %s in the fleet's scene first",
-				ErrTableTurnRefused, name, def, def, name)
 		}
 	}
 	return nil
