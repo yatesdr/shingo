@@ -291,7 +291,7 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	// And the station's own composer read carries what the pick-a-part modal
 	// reads (U4): the part rows, the recipe cards and the picture — and none
 	// of an editor's read: no cells, no routing lists, no travel graph.
-	stn, err := svc.ComposerForStation(seeded.ProcessID)
+	stn, err := svc.ComposerForStation(seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
