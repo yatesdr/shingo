@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Verified against: 79ee5e66
+Verified against: 16138e57
 
 ShinGo Core reads its configuration from a YAML file (default: `shingocore.yaml`). **No config file is written on first run.** If the file is absent, `config.Load` returns `config.Defaults()` and creates nothing; the file is written only by a save on the `/config` page (`PUT /api/config`, `apiConfigSave` in `www/handlers_config.go`), which is the one place Core writes it.
 

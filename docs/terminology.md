@@ -1,6 +1,6 @@
 # Terminology Reference
 
-Verified against: 79ee5e66
+Verified against: 16138e57
 
 The canonical glossary: one statement per term, in Shingo's vendor-neutral words, mapped to the equivalent in common
 fleet management systems where one exists. Other docs link here for a definition; where a term has a mechanism,
