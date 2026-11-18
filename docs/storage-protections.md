@@ -1,6 +1,6 @@
 # Storage / handoff protections — mechanism map
 
-Verified against: 0378a217
+Verified against: 79ee5e66
 
 An INDEX, not an explanation. The code comments at each anchor are the source of
 truth; this page only says which mechanism lives where, how the tiers compose,

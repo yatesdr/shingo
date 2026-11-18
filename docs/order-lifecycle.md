@@ -1,6 +1,6 @@
 # Order Status Lifecycle
 
-Verified against: 0378a217
+Verified against: 79ee5e66
 
 **What this is:** the order lifecycle status vocabulary — every status × who
 writes it × who reads it × what the operator sees — then the swap modes that

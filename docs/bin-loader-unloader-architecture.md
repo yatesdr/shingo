@@ -1,6 +1,6 @@
 # Bin Loader / Unloader
 
-Verified against: 0378a217
+Verified against: 79ee5e66
 
 This document covers the bin loader and unloader: the forklift-worked staging points where material enters and
 leaves the AMR system. Loaders bring material in (an operator fills empties); unloaders take it out (an operator

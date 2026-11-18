@@ -1,6 +1,6 @@
 # When code may be promoted to a shared layer
 
-Verified against: 0378a217
+Verified against: 79ee5e66
 
 The rule for moving code into `protocol/` or `shared/`. It is deliberately the
 strict version: a shared layer is far cheaper to decline than to reverse.
