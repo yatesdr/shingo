@@ -1,6 +1,6 @@
 # Shingo Core
 
-Verified against: 13eb5034
+Verified against: c9af0b33
 
 Central server for the Shingo material tracking system. Receives transport orders from edge stations, resolves source and destination nodes, dispatches to the robot fleet, and tracks fulfillment through delivery.
 

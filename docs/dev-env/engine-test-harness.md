@@ -1,6 +1,6 @@
 # The engine test harness
 
-Verified against: 13eb5034
+Verified against: c9af0b33
 
 How Core's engine tests drive a real Engine against the fleet simulator, for anyone who needs to add a test
 or modify the simulator.

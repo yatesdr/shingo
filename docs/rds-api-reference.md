@@ -1,6 +1,6 @@
 # Seer RDS HTTP API Reference
 
-Verified against: 13eb5034
+Verified against: c9af0b33
 
 Reference for the Seer RDS Core HTTP API endpoints used by Shingo. Extracted from the RDS Core HTTP API PDF and the shingo-core/rds client implementation.
 
