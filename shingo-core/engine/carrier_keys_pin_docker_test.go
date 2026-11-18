@@ -47,7 +47,8 @@ func keyEveryFamilyAndLocation(t *testing.T, db *store.DB) {
 	}
 	res, err := db.Exec(`UPDATE carrier_families SET lift_bintask = 'jackload_' || lower(code), wait_bintask = 'wait_' || lower(code)`)
 	testutil.MustNoErr(t, err, "key every family")
-	keyedFamilies, _ := res.RowsAffected() // none for a shape with no cart (the cleaning door): its prediction is "no change"
+	keyedFamilies, err := res.RowsAffected() // none for a shape with no cart (the cleaning door): its prediction is "no change"
+	testutil.MustNoErr(t, err, "count the keyed families")
 	tasks := []map[string]map[string]any{
 		{"JackLoad": {"operation": "JackLoad"}}, {"JackUnload": {"operation": "JackUnload"}}, {"Wait": {"operation": "Wait"}},
 	}
