@@ -1,6 +1,6 @@
 ## Drift detection
 
-Verified against: 22caad6b
+Verified against: 13eb5034
 
 Every `*_drift_test.go` in the workspace's modules, each test with the first
 sentence of its doc comment. A rule chapter names the guard that holds it; this

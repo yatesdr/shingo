@@ -1,6 +1,6 @@
 # Shingo Wire Protocol Specification
 
-Verified against: 22caad6b
+Verified against: 13eb5034
 
 **Protocol version:** 1
 
