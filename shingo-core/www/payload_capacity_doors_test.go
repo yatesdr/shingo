@@ -29,6 +29,10 @@ import (
 // NOT covered: the bulk importer. It creates through PayloadService.Create and
 // still admits 0 with a warning, and PayloadService.Create does not carry the
 // check for that reason; see the lane report.
+//
+// The code is held the same way (TestPayloadCodeIsRequiredAtEveryDoor): the
+// service trims it and refuses it blank at every door but the importer, which
+// trims and refuses its own.
 
 func TestPayloadCapacityIsRequiredAtEveryDoor(t *testing.T) {
 	t.Parallel()
@@ -108,5 +112,78 @@ func TestPayloadCapacityIsRequiredAtEveryDoor(t *testing.T) {
 	}
 	if got, _ := db.GetPayload(existing.ID); got.UOPCapacity != 11 {
 		t.Errorf("capacity after refused update = %d, want 11 (the last accepted value)", got.UOPCapacity)
+	}
+}
+
+// TestPayloadCodeIsRequiredAtEveryDoor: a blank or all-space code is refused
+// at both desktop creates and both desktop updates, writing nothing, and a
+// padded code is stored trimmed. The template API's create took a blank code
+// before the check moved into the service: only the browser's required box
+// stood in the way.
+func TestPayloadCodeIsRequiredAtEveryDoor(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+
+	existing := &payloads.Payload{Code: "SYN-CODE-KEEP", Description: "d", UOPCapacity: 7}
+	if err := db.CreatePayload(existing); err != nil {
+		t.Fatalf("seed payload: %v", err)
+	}
+	count := func() int {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM payloads`).Scan(&n); err != nil {
+			t.Fatalf("count payloads: %v", err)
+		}
+		return n
+	}
+	before := count()
+
+	formCreate := func(code string) int {
+		return postFormPL(t, h.handlePayloadCreate, "/payloads/create",
+			url.Values{"code": {code}, "uop_capacity": {"5"}}).Code
+	}
+	formUpdate := func(code string) int {
+		return postFormPL(t, h.handlePayloadUpdate, "/payloads/update",
+			url.Values{"id": {fmt.Sprint(existing.ID)}, "code": {code}, "uop_capacity": {"7"}}).Code
+	}
+	jsonCreate := func(code string) int {
+		return postJSON(t, h.apiCreatePayloadTemplate, "/api/payloads/templates/create",
+			map[string]any{"code": code, "uop_capacity": 4}).Code
+	}
+	jsonUpdate := func(code string) int {
+		return postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update",
+			map[string]any{"id": existing.ID, "code": code, "uop_capacity": 7}).Code
+	}
+	for _, c := range []struct {
+		door string
+		got  int
+	}{
+		{"json create, blank", jsonCreate("")},
+		{"json create, spaces", jsonCreate("   ")},
+		{"form create, blank", formCreate("")},
+		{"form create, spaces", formCreate(" \t ")},
+		{"json update, blank", jsonUpdate("")},
+		{"form update, spaces", formUpdate("  ")},
+	} {
+		if c.got != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", c.door, c.got)
+		}
+	}
+	if n := count(); n != before {
+		t.Errorf("refused creates left %d payload rows, want %d", n, before)
+	}
+	if got, _ := db.GetPayload(existing.ID); got == nil || got.Code != "SYN-CODE-KEEP" {
+		t.Errorf("code after refused updates = %+v, want SYN-CODE-KEEP", got)
+	}
+
+	// A padded code is stored as the part's number, trimmed: never a second
+	// part beside the unpadded one.
+	if got := jsonCreate("  SYN-CODE-PAD  "); got != http.StatusOK {
+		t.Fatalf("json create, padded: status %d, want 200", got)
+	}
+	if p, err := db.GetPayloadByCode("SYN-CODE-PAD"); err != nil || p == nil {
+		t.Errorf("padded create not stored trimmed: %v", err)
+	}
+	if got := jsonCreate("SYN-CODE-PAD "); got == http.StatusOK {
+		t.Errorf("json create of a padded spelling of an existing code: status %d, want a refusal", got)
 	}
 }

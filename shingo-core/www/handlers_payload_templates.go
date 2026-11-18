@@ -30,13 +30,20 @@ func (h *Handlers) manifestWriteError(w http.ResponseWriter, err error) {
 	}
 }
 
-// payloadWriteStatus answers a refused capacity as the caller's error and
-// anything else as the server's.
+// payloadWriteStatus answers a refused field (a blank code, a capacity below
+// 1, a tote number below 1: the service's checkPayload) as the caller's error
+// and anything else as the server's.
 func payloadWriteStatus(err error) int {
-	if errors.Is(err, service.ErrPayloadCapacity) {
+	if isPayloadFieldRefusal(err) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
+}
+
+// isPayloadFieldRefusal reports a refusal of one of the payload's own fields.
+func isPayloadFieldRefusal(err error) bool {
+	return errors.Is(err, service.ErrPayloadCode) || errors.Is(err, service.ErrPayloadCapacity) ||
+		errors.Is(err, service.ErrPayloadToteNumber)
 }
 
 // formUOPCapacity reads the form's UoP capacity. A blank or unparseable box is
@@ -77,17 +84,16 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := service.ValidatePayloadCapacity(p); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 	if _, err := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if err := h.engine.PayloadService().Create(p); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// No sets: the form carries neither carrier types nor a manifest. Through
+	// CreateWithSets for its checks (checkPayload), which Create leaves to the
+	// importer.
+	if err := h.engine.PayloadService().CreateWithSets(p, service.PayloadSets{}); err != nil {
+		http.Error(w, err.Error(), payloadWriteStatus(err))
 		return
 	}
 
@@ -158,13 +164,14 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 
 // formToteNumbers lays the form's tote layers and UOP per tote over p. A field
 // the form did not carry leaves p's value standing; a blank box is unknown.
-// false means the refusal has been written.
+// Only a box that is not a whole number is refused here (false: the refusal
+// has been written); the value's range is the service's (checkPayload).
 func formToteNumbers(w http.ResponseWriter, r *http.Request, p *domain.Payload) bool {
 	for _, f := range []struct {
 		name string
 		dst  **int
 	}{{"tote_layers", &p.ToteLayers}, {"uop_per_tote", &p.UOPPerTote}} {
-		v, set, err := formCount(r, f.name, 1)
+		v, set, err := formWholeNumber(r, f.name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return false
@@ -177,24 +184,17 @@ func formToteNumbers(w http.ResponseWriter, r *http.Request, p *domain.Payload) 
 }
 
 // apiToteNumbers lays a template API request's tote layers and UOP per tote
-// over p: an absent key leaves p's value standing, null is unknown. false
-// means the refusal has been written.
-func (h *Handlers) apiToteNumbers(w http.ResponseWriter, p *domain.Payload, layers, uopPerTote optionalCount) bool {
+// over p: an absent key leaves p's value standing, null is unknown. The
+// value's range is the service's (checkPayload).
+func apiToteNumbers(p *domain.Payload, layers, uopPerTote optionalCount) {
 	for _, f := range []struct {
-		name string
-		in   optionalCount
-		dst  **int
-	}{{"tote_layers", layers, &p.ToteLayers}, {"uop_per_tote", uopPerTote, &p.UOPPerTote}} {
-		if !f.in.Set {
-			continue
+		in  optionalCount
+		dst **int
+	}{{layers, &p.ToteLayers}, {uopPerTote, &p.UOPPerTote}} {
+		if f.in.Set {
+			*f.dst = f.in.Value
 		}
-		if err := countAtLeast(f.name, f.in.Value, 1); err != nil {
-			h.jsonError(w, err.Error(), http.StatusBadRequest)
-			return false
-		}
-		*f.dst = f.in.Value
 	}
-	return true
 }
 
 // clampPct holds a configured percentage inside 0-100.
@@ -245,13 +245,13 @@ func templateSets(binTypeIDs *[]int64, manifest *[]templateManifestLine) service
 // payloadSaveError answers a template API save that wrote nothing: the row,
 // the carrier types and the manifest commit together, so whichever part
 // refused, none of it was saved. A refused carrier type keeps its "bin types:"
-// prefix; a cat-id conflict is a question (409); a capacity or a manifest line
-// is the caller's error.
+// prefix; a cat-id conflict is a question (409); a refused field (code,
+// capacity, tote number) or a manifest line is the caller's error.
 func (h *Handlers) payloadSaveError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrBareTypeInPayloadRule):
 		h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
-	case errors.Is(err, service.ErrPayloadCapacity):
+	case isPayloadFieldRefusal(err):
 		h.jsonError(w, err.Error(), payloadWriteStatus(err))
 	default:
 		h.manifestWriteError(w, err)
@@ -288,16 +288,11 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		NearEmptyRobotGroup:   req.NearEmptyRobotGroup,
 		NearEmptyThresholdPct: clampPct(req.NearEmptyThreshold),
 	}
-	if !h.apiToteNumbers(w, p, req.ToteLayers, req.UOPPerTote) {
-		return
-	}
+	apiToteNumbers(p, req.ToteLayers, req.UOPPerTote)
 	// Config-time validation (fail loud on a real missing key, warn-and-save when
 	// unverifiable). A new payload has no assigned nodes yet, so this rejects only
 	// an unknown sequence name; a real key check happens on later edits / Check.
-	if err := service.ValidatePayloadCapacity(p); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	// The payload's own fields are checked by CreateWithSets (checkPayload).
 	check, verr := h.engine.ValidateAdvancedLoadSequence(0, p.AdvancedLoadSequence)
 	if verr != nil {
 		h.jsonError(w, verr.Error(), http.StatusBadRequest)
@@ -351,9 +346,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	p.NearEmptyRobotGroup = req.NearEmptyRobotGroup
 	p.NearEmptyThresholdPct = clampPct(req.NearEmptyThreshold)
 	p.AdvancedLoadSequence = req.AdvancedLoadSequence
-	if !h.apiToteNumbers(w, p, req.ToteLayers, req.UOPPerTote) {
-		return
-	}
+	apiToteNumbers(p, req.ToteLayers, req.UOPPerTote)
 
 	// Validate the (possibly new) sequence against this payload's assigned node
 	// locations BEFORE persisting: a real missing key rejects the save; an

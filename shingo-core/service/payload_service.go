@@ -47,7 +47,9 @@ func NewPayloadService(db *store.DB) *PayloadService {
 
 // --- Payload CRUD ---------------------------------------------------------
 
-// Create inserts a new payload template.
+// Create inserts a new payload template as given, with no checks: the bulk
+// importer's path (importPayloadGroups), which checks its rows its own way.
+// Every other create goes through CreateWithSets (checkPayload).
 func (s *PayloadService) Create(p *payloads.Payload) error {
 	return s.db.CreatePayload(p)
 }
@@ -62,33 +64,65 @@ func (s *PayloadService) GetByCode(code string) (*payloads.Payload, error) {
 	return s.db.GetPayloadByCode(code)
 }
 
-// ErrPayloadCapacity marks a payload write refused for a UoP capacity below 1,
-// so a handler can answer 400 rather than 500 without matching on text.
-var ErrPayloadCapacity = errors.New("payload capacity")
+// The refusals of a payload's own fields (checkPayload), each its own sentinel
+// so a handler can answer 400 rather than 500, and the floor's door can say
+// which field in its own words, without matching on text.
+var (
+	ErrPayloadCode       = errors.New("payload code")
+	ErrPayloadCapacity   = errors.New("payload capacity")
+	ErrPayloadToteNumber = errors.New("payload tote number")
+)
 
-// ValidatePayloadCapacity refuses a UoP capacity below 1.
+// checkPayload is every check a payload's own fields are held to, in one place
+// for every door that writes them: the desktop's form and template API, on a
+// create and on an update, and the floor's part create. The importer alone
+// creates through Create without it (below).
 //
-// uop_capacity is the standard pack — how many production cycles a full bin of
-// this payload holds — and 0 is not "unknown": the standard-pack fallback
-// hands the line a carrier with nothing in it, and the near-empty and
-// over-capacity arithmetic divide by it. Rows already stored at 0 are left
-// alone until somebody edits them, as parts_per_cycle was.
+// THE CODE IS TRIMMED, IN PLACE, AND MUST NOT BE BLANK. payloads.code is
+// unique but case-sensitive and untrimmed, so " SYN-A" would sit beside
+// "SYN-A" as a second part, and "" would be a part nobody can name; only the
+// browser's required box stood in the way. Trimming p.Code here means what is
+// stored is what was checked.
+//
+// THE CAPACITY IS 1 OR MORE. uop_capacity is the standard pack — how many
+// production cycles a full bin of this payload holds — and 0 is not "unknown":
+// the standard-pack fallback hands the line a carrier with nothing in it, and
+// the near-empty and over-capacity arithmetic divide by it. Rows already
+// stored at 0 are left alone until somebody edits them, as parts_per_cycle
+// was.
+//
+// EACH TOTE NUMBER IS UNKNOWN (nil) OR 1 OR MORE. The doors read nil from a
+// blank box or a null; a door that does not carry the field leaves the stored
+// value on p, which is checked again here.
 //
 // Create does NOT call this: the bulk importer creates through Create and
-// still admits 0 with a warning. The handler doors that create a payload call
-// it before Create instead.
-func ValidatePayloadCapacity(p *payloads.Payload) error {
+// still admits a capacity of 0 with a warning, and its code is a spreadsheet
+// cell it has already trimmed and refused blank (groupImportRows).
+func checkPayload(p *payloads.Payload) error {
+	p.Code = strings.TrimSpace(p.Code)
+	if p.Code == "" {
+		return fmt.Errorf("%w: a payload needs a code", ErrPayloadCode)
+	}
 	if p.UOPCapacity < 1 {
 		// OWNER-WORDS
 		return fmt.Errorf("%w: %q needs a UoP capacity of 1 or more — how many pieces of the part "+
 			"a full bin holds (got %d)", ErrPayloadCapacity, p.Code, p.UOPCapacity)
 	}
+	for _, f := range []struct {
+		name string
+		v    *int
+	}{{"tote_layers", p.ToteLayers}, {"uop_per_tote", p.UOPPerTote}} {
+		if f.v != nil && *f.v < 1 {
+			return fmt.Errorf("%w: %s must be 1 or more, or blank for unknown (got %d)",
+				ErrPayloadToteNumber, f.name, *f.v)
+		}
+	}
 	return nil
 }
 
-// Update persists field changes on a payload template, refusing a capacity
-// below 1 (ValidatePayloadCapacity) and a CODE change while bins still carry
-// the old one. Every other field is freely editable.
+// Update persists field changes on a payload template, refusing what
+// checkPayload refuses and a CODE change while bins still carry the old one.
+// Every other field is freely editable.
 func (s *PayloadService) Update(p *payloads.Payload) error {
 	if err := s.checkUpdate(p); err != nil {
 		return err
@@ -96,10 +130,14 @@ func (s *PayloadService) Update(p *payloads.Payload) error {
 	return s.db.UpdatePayload(p)
 }
 
-// checkUpdate is Update's refusals: a capacity below 1, and a code change
-// while bins still carry the old code.
+// checkUpdate is Update's refusals: checkPayload's, and a code change while
+// bins still carry the old code. An update runs checkPayload as a create does
+// because it writes the same columns: an edit that blanked the code renamed
+// the part to nothing, and the tote numbers' check left the template API's
+// handler for here. The trim can rename a part stored with padding; the
+// in-use guard below refuses that as it refuses any rename.
 func (s *PayloadService) checkUpdate(p *payloads.Payload) error {
-	if err := ValidatePayloadCapacity(p); err != nil {
+	if err := checkPayload(p); err != nil {
 		return err
 	}
 	if before, err := s.db.GetPayload(p.ID); err == nil && before != nil && before.Code != p.Code {
@@ -117,10 +155,14 @@ type PayloadSets = payloads.Sets
 
 // CreateWithSets inserts a payload template with the carrier types and the
 // manifest the save states, in one transaction, so a refused manifest (a
-// cat-id conflict) leaves no payload behind. The sets are checked first, as
-// SetBinTypes and ReplaceManifest check them. Like Create, it does not check
-// the capacity: the door that creates calls ValidatePayloadCapacity.
+// cat-id conflict) leaves no payload behind. The payload's fields are checked
+// first (checkPayload), then the sets, as SetBinTypes and ReplaceManifest
+// check them. Every desktop create comes through here; the importer alone
+// creates through Create.
 func (s *PayloadService) CreateWithSets(p *payloads.Payload, sets PayloadSets) error {
+	if err := checkPayload(p); err != nil {
+		return err
+	}
 	if err := s.checkSets(sets); err != nil {
 		return err
 	}
