@@ -81,6 +81,20 @@ func ckrKeyBoth(t *testing.T, r *pinRig, big, small int64) {
 	ckrKey(t, r, small, "jackload_3230", "wait_3230")
 }
 
+// ckrKeyBothAroundTheSave keys the two families as the save would, but without
+// its door: the save re-checks every table-turn node against the fleet's keys
+// there (turnsAdmitWaitKey), and the simulator cannot report a location's keys,
+// so on a plant with a turn node it refuses every wait key. The case it serves
+// pins what the builder sends at a turn node, not that door
+// (TestTableTurnDoor_AFamilyWaitKeySaveIsCheckedAtEveryTurnNode pins the door).
+func ckrKeyBothAroundTheSave(t *testing.T, r *pinRig, big, small int64) {
+	t.Helper()
+	testutil.MustNoErr(t, r.db.SetCarrierFamilyKeys(big, "jackload_4548", "wait_4548"), "key 4548")
+	testutil.MustNoErr(t, r.db.SetCarrierFamilyKeys(small, "jackload_3230", "wait_3230"), "key 3230")
+	_, err := r.eng.Dispatcher().ReloadCarrierKeys()
+	testutil.MustNoErr(t, err, "reload the keyed families")
+}
+
 // TestCarrierKeysWire_TheTwoRobotSwap is the third wire: the incoming 32x30
 // from SRC via STG, the outgoing 45x48 at LINE, OUT a set-down location. The
 // supply's create sends its lift and the wait in front of its relay's lift
@@ -410,7 +424,7 @@ func ckrTurnSetDown(t *testing.T) *pinRig {
 	bigType, big, _, small := ckrTypes(t, db)
 	ckrScene(t, db, []string{storage.Name, line.Name}, nil)
 	r := pinTurnRig(t, db, line, dispatch.TableTurnSideSetDown)
-	ckrKeyBoth(t, r, big, small)
+	ckrKeyBothAroundTheSave(t, r, big, small)
 	r.cart("A", confirmedCart(t, db, bp.Code, storage.ID, bigType, "CKR-A", 5))
 	r.eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 		OrderUUID: "ckr-turn-sd", OrderType: protocol.OrderTypeMove, PayloadCode: bp.Code,
