@@ -16,6 +16,11 @@ func (db *DB) ListBinTypes() ([]*bins.BinType, error) { return bins.ListTypes(db
 // ListCarrierFamilies reads every family and its members.
 func (db *DB) ListCarrierFamilies() ([]bins.CarrierFamily, error) { return bins.ListFamilies(db.DB) }
 
+// SetCarrierFamilyKeys sets a family's lift key and wait key (bins.SetFamilyKeys).
+func (db *DB) SetCarrierFamilyKeys(familyID int64, lift, wait string) error {
+	return bins.SetFamilyKeys(db.DB, familyID, lift, wait)
+}
+
 // EnsureCarrierFamily answers the family of this code, creating it when absent.
 func (db *DB) EnsureCarrierFamily(code string) (int64, error) { return bins.EnsureFamily(db.DB, code) }
 

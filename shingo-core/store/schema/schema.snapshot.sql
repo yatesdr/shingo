@@ -306,7 +306,9 @@ CREATE TABLE public.carrier_families (
     code text NOT NULL,
     description text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lift_bintask text DEFAULT ''::text NOT NULL,
+    wait_bintask text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.carrier_families_id_seq

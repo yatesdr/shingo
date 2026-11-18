@@ -4583,7 +4583,31 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "orders", "block_actions") && schema.ColumnExists(q, "load_sequences", "lift_at")
 			}},
+		{180, "carrier_families.lift_bintask, wait_bintask - the RDS binTask key a family's lift sends, and its wait in front of a lift; blank on every family, and blank sends the default",
+			v180CarrierFamilyKeys,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "carrier_families", "lift_bintask") &&
+					schema.ColumnExists(q, "carrier_families", "wait_bintask")
+			}},
 	}
+}
+
+// v180CarrierFamilyKeys adds a carrier family's two RDS binTask keys: the one a
+// lift of a cart of the family sends, and the one a wait directly in front of
+// that lift at the same node sends (dispatch's carrier keys). Blank on every
+// existing family, and blank sends the default (seerrds.BinTaskForAction), so a
+// plant sends what it sent until an engineer picks a key on the Bins page.
+// ROLLBACK is the previous binary: it reads neither column.
+func v180CarrierFamilyKeys(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE carrier_families ADD COLUMN IF NOT EXISTS lift_bintask TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE carrier_families ADD COLUMN IF NOT EXISTS wait_bintask TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v180 carrier family keys: %w", err)
+		}
+	}
+	return nil
 }
 
 // v179BlockRecord is where Core keeps what each block it sends is, so a block

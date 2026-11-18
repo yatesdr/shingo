@@ -272,12 +272,18 @@ type CarrierFamily struct {
 	Code        string   `json:"code"`
 	Description string   `json:"description"`
 	Types       []string `json:"types"`
+	// LiftBinTask is the RDS binTask key a lift of a cart of this family sends,
+	// and WaitBinTask the one a wait directly in front of such a lift at the
+	// same node sends (v180). Blank sends the default; dispatch's carrier keys
+	// read them, the Bins page shows and sets them (SetFamilyKeys).
+	LiftBinTask string `json:"lift_bintask"`
+	WaitBinTask string `json:"wait_bintask"`
 }
 
-// ListFamilies reads every family and its members' codes, markers left out: one
-// statement.
+// ListFamilies reads every family, its keys and its members' codes, markers
+// left out: one statement.
 func ListFamilies(db *sql.DB) ([]CarrierFamily, error) {
-	rows, err := db.Query(`SELECT f.id, f.code, f.description,
+	rows, err := db.Query(`SELECT f.id, f.code, f.description, f.lift_bintask, f.wait_bintask,
 			COALESCE(array_to_json(array_agg(bt.code ORDER BY bt.code) FILTER (WHERE bt.code IS NOT NULL)), '[]')
 		  FROM carrier_families f
 		  LEFT JOIN bin_types bt ON bt.family_id = f.id AND NOT bt.bare
@@ -292,7 +298,7 @@ func ListFamilies(db *sql.DB) ([]CarrierFamily, error) {
 			f   CarrierFamily
 			raw []byte
 		)
-		if err := rows.Scan(&f.ID, &f.Code, &f.Description, &raw); err != nil {
+		if err := rows.Scan(&f.ID, &f.Code, &f.Description, &f.LiftBinTask, &f.WaitBinTask, &raw); err != nil {
 			return nil, fmt.Errorf("scan family: %w", err)
 		}
 		if err := json.Unmarshal(raw, &f.Types); err != nil {
@@ -301,6 +307,27 @@ func ListFamilies(db *sql.DB) ([]CarrierFamily, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// ErrNoSuchFamily is a family that is not there to set: deleted with its last
+// type since the page that names it was drawn.
+var ErrNoSuchFamily = errors.New("no such carrier family")
+
+// SetFamilyKeys sets a family's lift key and wait key, blank for the default:
+// the one writer of both. Every type of the family sends them. A family gone
+// since the caller read it is ErrNoSuchFamily.
+func SetFamilyKeys(db *sql.DB, familyID int64, lift, wait string) error {
+	res, err := db.Exec(`UPDATE carrier_families SET lift_bintask = $2, wait_bintask = $3, updated_at = NOW() WHERE id = $1`,
+		familyID, lift, wait)
+	if err != nil {
+		return fmt.Errorf("set keys of family %d: %w", familyID, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("set keys of family %d: %w", familyID, err)
+	} else if n == 0 {
+		return fmt.Errorf("family %d: %w", familyID, ErrNoSuchFamily)
+	}
+	return nil
 }
 
 // EnsureFamily answers the family of this code, creating it when absent.

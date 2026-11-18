@@ -443,7 +443,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`bin_uop_exception`](#core-bin_uop_exception) | 13 | `id` |  |
 | [`bin_uop_ledger`](#core-bin_uop_ledger) | 16 | `id` |  |
 | [`bins`](#core-bins) | 33 | `id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
-| [`carrier_families`](#core-carrier_families) | 5 | `id` |  |
+| [`carrier_families`](#core-carrier_families) | 7 | `id` |  |
 | [`cell_config`](#core-cell_config) | 6 | `cell_id` |  |
 | [`cell_part_events`](#core-cell_part_events) | 9 |  |  |
 | [`cell_targets`](#core-cell_targets) | 5 | `cell_id`, `payload_code` |  |
@@ -772,6 +772,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `description` | `text` | yes | `''` |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+| `lift_bintask` | `text` | yes | `''` |  |
+| `wait_bintask` | `text` | yes | `''` |  |
 
 #### Core: `cell_config`
 
