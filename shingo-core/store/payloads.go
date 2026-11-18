@@ -5,10 +5,12 @@ package store
 // payloads and bins aggregates.
 
 import (
+	"database/sql"
 	"fmt"
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
 )
@@ -26,6 +28,21 @@ func (db *DB) ListPayloads() ([]*payloads.Payload, error) { return payloads.List
 // transaction. See payloads.CreateWithSets.
 func (db *DB) CreatePayloadWithSets(p *payloads.Payload, sets payloads.Sets) error {
 	return payloads.CreateWithSets(db.DB, p, sets)
+}
+
+// PayloadAuditEntity is the audit_log entity_type of a row about a payload; its
+// entity_id is the payload's id.
+const PayloadAuditEntity = "payload"
+
+// CreatePayloadWithSetsAudited inserts a payload with the sets the save states
+// and one audit_log row about it (PayloadAuditEntity, its id), in one
+// transaction: the payload never stands without the record its readers look
+// for, and a refused write leaves neither. A code another payload holds is
+// payloads.ErrCodeTaken. Pin: TestPayloadService_FloorCreate_OneCommit.
+func (db *DB) CreatePayloadWithSetsAudited(p *payloads.Payload, sets payloads.Sets, action, newValue, actor string) error {
+	return payloads.CreateWithSetsAlso(db.DB, p, sets, func(tx *sql.Tx, id int64) error {
+		return audit.Append(tx, PayloadAuditEntity, id, action, "", newValue, actor)
+	})
 }
 
 // UpdatePayloadWithSets writes a payload's row and the sets the save states, in
