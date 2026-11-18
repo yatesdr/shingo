@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.12.1 — 2026-11-18
+
 Deploy: no migration; Core and Edges in either order.
 
 - Bring partials home offers a home holding a partial again, saying "Take the partial bin off"
