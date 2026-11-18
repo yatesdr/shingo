@@ -162,13 +162,16 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	// three times while the evac sat parked — a supply gate would have taken the
 	// button away during each fault, in the very window the operator was trying
 	// to use it.
-	if evac.Status == "staged" {
+	// A leg whose release for its wait has gone out is released, still staged
+	// until Core says its robot moves (release.ReleasedFromWait): the pair is
+	// not ready to release again.
+	if evac.Status == "staged" && !evac.ReleaseSent {
 		return true
 	}
 	// press-index: role labels are inverted and the legs are fleet-sequenced,
 	// so accept the pair as release-ready when the SIBLING leg is parked too.
 	if claim.IsPressIndex() && supplyOrderID != nil {
-		if sib, serr := db.GetOrder(*supplyOrderID); serr == nil && sib != nil && sib.Status == "staged" {
+		if sib, serr := db.GetOrder(*supplyOrderID); serr == nil && sib != nil && sib.Status == "staged" && !sib.ReleaseSent {
 			return true
 		}
 	}

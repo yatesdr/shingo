@@ -162,18 +162,15 @@ func (e *Engine) orderSteps(o *orders.Order) ([]protocol.ComplexOrderStep, bool)
 }
 
 // releasedWaits is how many of the order's station waits it has been released
-// past: those before the one it is staged at or heading to (release.PointOf),
-// and that one too once its release has gone out.
+// past: those before the one it is staged at or heading to (release.PointOf,
+// which counts the one it stands at once its release has gone out:
+// release.ReleasedFromWait).
 func releasedWaits(o *orders.Order) int {
 	intent, err := release.DecodeIntent(o.ReleaseIntent)
 	if err != nil {
 		intent = nil
 	}
-	p := release.PointOf(o.Status, o.StationWait, o.WaitKind, intent, nil)
-	if p.AtWait && intent != nil && intent.Sent() && intent.StationWait == p.Ordinal {
-		return p.Ordinal + 1
-	}
-	return p.Ordinal
+	return release.PointOf(o.Status, o.StationWait, o.WaitKind, intent, nil).Ordinal
 }
 
 // Seat is what a process node's seat says stands on it.

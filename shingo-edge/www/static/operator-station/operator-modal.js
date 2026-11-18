@@ -893,6 +893,11 @@ function cellCardAction(entry, claim, remaining) {
             return { label: inFlight.queue_reason ? 'IN QUEUE: ' + inFlight.queue_reason : 'IN QUEUE',
                 cls: 'close', enabled: false, action: '' };
         }
+        if (inFlight.status === 'staged' && inFlight.release_sent) {
+            // Released here, and sent: the robot is still parked until Core says
+            // it moves, and then this reads ROBOT IN TRANSIT.
+            return { label: RELEASED_SENT_LABEL, cls: 'close', enabled: false, action: '' };
+        }
         if (inFlight.status === 'acknowledged') {
             // acknowledged is Core's intake ack, pre-dispatch — not a
             // moving robot. Show its own label instead of pretending a
@@ -1033,8 +1038,10 @@ function changeoverReleaseAction(entry, purpose) {
     };
 }
 
+// A leg whose release for its wait has gone out (release_sent) is released,
+// still staged until Core says its robot moves: RELEASE goes at the tap.
 function isStationReleasable(o) {
-    return o.status === 'staged' && !o.lane_held;
+    return o.status === 'staged' && !o.lane_held && !o.release_sent;
 }
 
 const WAITING_BASE = 'WAITING FOR OTHER ROBOT';
@@ -1107,8 +1114,10 @@ function pairWaitingLabel(pair) {
     const legs = (pair || []).filter(Boolean);
     if (legs.length < 2) return waitingLabel(legs[0] || null);
 
-    const parked = legs.filter(function (o) { return o.status === 'staged'; });
-    const moving = legs.filter(function (o) { return o.status !== 'staged'; });
+    // A leg released here and sent counts as moving: it read in transit at the
+    // tap, and its robot leaves as soon as Core says so.
+    const parked = legs.filter(function (o) { return o.status === 'staged' && !o.release_sent; });
+    const moving = legs.filter(function (o) { return o.status !== 'staged' || o.release_sent; });
     const outside = legs.some(function (o) { return o.queue_code === 'waiting_for_outside'; });
 
     let label = (outside ? OUTSIDE_WAIT : WAITING_BASE) + ' — ' + parked.length + ' of ' + legs.length + ' parked';
@@ -1142,6 +1151,11 @@ function statusWordOf(o) {
 // operator can do nothing. TO MARKET is a cell that is already balanced, and
 // the operator can order the next swap right now.
 const TO_MARKET_LABEL = 'TO MARKET';
+
+// RELEASED_SENT_LABEL is a leg released at this station whose robot has not yet
+// moved: the release went out, and Core keeps the leg staged until the robot
+// leaves. One short phrase, the tile pill's too.
+const RELEASED_SENT_LABEL = 'RELEASED · SENT';
 
 // orderStatusChip renders one order for the modal's status line, returning
 // ESCAPED HTML (its caller no longer escapes, because a departed chip carries

@@ -475,8 +475,12 @@ func TestFollowOns_ALegThatEndsWakesItsSiblingsHeldReleaseOnce(t *testing.T) {
 				tc.ends(h)
 			}
 
-			// The supply's release moves it at the tap, whichever Core holds it.
-			supplyAfter, supplyTrail := protocol.StatusInTransit, "supply staged->in_transit"
+			// A versioned supply's release leaves it staged with its intent
+			// sent; an older Core's moves it at the tap.
+			supplyAfter, supplyTrail := protocol.StatusStaged, "supply touched"
+			if !tc.versioned {
+				supplyAfter, supplyTrail = protocol.StatusInTransit, "supply staged->in_transit"
+			}
 			want := fmt.Sprintf("ok | evac=%s supply=%s | rel=supply | ingest=0 capred=0", tc.end, supplyAfter)
 			if got := h.outcome(nil); got != want {
 				t.Errorf("after R1 ends:\n got  %q\n want %q", got, want)

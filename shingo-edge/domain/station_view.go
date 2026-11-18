@@ -662,6 +662,11 @@ type stationOrder struct {
 	// all (operator-robot-panel.js robotOrders); the robot it draws is the one
 	// the position stream names, since this one can be stale (LEAD-NOTES D14).
 	RobotID string `json:"robot_id,omitempty"`
+	// ReleaseSent: staged, and this station's release for the wait went out
+	// (Order.ReleaseSent). The board drops RELEASE at the tap and says the
+	// release was sent; the order stays staged until Core says its robot moves.
+	// Absent while false.
+	ReleaseSent bool `json:"release_sent,omitempty"`
 }
 
 func stationOrders(orders []Order) []stationOrder {
@@ -676,7 +681,7 @@ func stationOrders(orders []Order) []stationOrder {
 			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
 			QueueReason: o.QueueReason, QueueCode: o.QueueCode, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
 			Departed: o.Departed, CreatedAt: o.CreatedAt, FaultLine: stationFaultLine(o, now),
-			RobotID: o.RobotID,
+			RobotID: o.RobotID, ReleaseSent: o.ReleaseSent,
 		}
 	}
 	return out

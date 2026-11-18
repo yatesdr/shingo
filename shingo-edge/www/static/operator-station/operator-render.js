@@ -1106,6 +1106,8 @@ function createNodeButton(entry) {
 //   - dispatched                       → the robot's name, "Dispatched" until the
 //     fleet names one (Core tells dispatched before any robot moves)
 //   - in_transit + no bin at this node → ETA countdown ("ETA: ~3 min")
+//   - staged, released here and sent   → "Released · sent" (the robot
+//     leaves when Core says so)
 //   - staged                           → "Arrived" (robot at the spot)
 //   - in_transit + bin already at node → skip (the order has reverted
 //     to in_transit on the back half of a two-robot swap — partner
@@ -1124,6 +1126,9 @@ function appendETAPills(btn, inboundOrders, binState) {
     inboundOrders.forEach(o => {
         if (o.status === 'dispatched') {
             pills.push({ text: o.robot_id || 'Dispatched', overdue: false });
+        } else if (o.status === 'staged' && o.release_sent) {
+            // Released here and sent; the robot leaves when Core says so.
+            pills.push({ text: 'Released · sent', overdue: false });
         } else if (o.status === 'staged') {
             pills.push({ text: 'Arrived', overdue: false });
         } else if (o.status === 'faulted') {

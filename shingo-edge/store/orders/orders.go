@@ -17,6 +17,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingoedge/domain"
+	"shingoedge/release"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -224,6 +225,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		}
 		readWant(&o, want)
 		o.StagedAt = helpers.ScanTimePtr(stagedAt)
+		o.ReleaseSent = o.Status == protocol.StatusStaged && release.ReleasedFromWait(o.Status, nullInt(stationWait), o.ReleaseIntent)
 		o.LaneHeld = laneHeld == 1
 		o.StationWait = nullInt(stationWait)
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
@@ -273,6 +275,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	}
 	readWant(o, want)
 	o.StagedAt = helpers.ScanTimePtr(stagedAt)
+	o.ReleaseSent = o.Status == protocol.StatusStaged && release.ReleasedFromWait(o.Status, nullInt(stationWait), o.ReleaseIntent)
 	o.LaneHeld = laneHeld == 1
 	o.StationWait = nullInt(stationWait)
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
