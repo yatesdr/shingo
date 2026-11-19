@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.15.0 — 2026-11-19
+
 Deploy: Edge v58 (style_node_claims.hold_limit). Each Edge, then Core.
 
 - A strict-pack position has a new setting, Most held off the cart: the most parts its packer, conveyor or accumulator holds while the cart is full or swapping. Past it the held parts are thrown away and logged, and the next cart counts only its own. Blank is one pack, as before
