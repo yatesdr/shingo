@@ -9,7 +9,7 @@ import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.j
 import { createBoard } from '/static/components/localization-board.js';
 import { loadEMaintReport, loadRobotHours } from '/static/components/robot-fleet-tab.js';
 import { addCleaningPoint, loadCleaning, removeCleaningPoint, suggestPoints } from '/static/components/robot-cleaning-tab.js';
-import { loadDeviceConfig, pullFleetDeviceConfig, toggleDeviceConfigSection, filterDeviceConfig } from '/static/components/robot-deviceconfig-tab.js';
+import { loadDeviceConfig, pullFleetDeviceConfig, toggleDeviceConfigSection, toggleAllDeviceConfig, filterDeviceConfig } from '/static/components/robot-deviceconfig-tab.js';
 
 var currentRobotVehicle = '';
 

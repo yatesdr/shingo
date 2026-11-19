@@ -73,8 +73,9 @@ export async function pullFleetDeviceConfig() {
   pulling = true;
   const line = (t) => { const el = document.getElementById('dc-pull-status'); if (el) el.textContent = t; };
   try {
-    for (const r of matrix.robots) {
-      line('Pulling ' + r.vehicle + '…');
+    for (let i = 0; i < matrix.robots.length; i++) {
+      const r = matrix.robots[i];
+      line('Pulling ' + r.vehicle + '… (' + (i + 1) + ' of ' + matrix.robots.length + ')');
       const out = await send('POST', '/api/robots/device-config/pull', { vehicle: r.vehicle },
         { timeout: 60000, notice: false });
       line(out.ok ? (r.vehicle + ': ' + (out.body && out.body.params || '?') + ' params')
@@ -131,7 +132,9 @@ function render() {
     + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:true">Expand all</button>'
     + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:false">Collapse all</button>'
     + '</div>'
-    + (canEdit ? '<button type="button" class="btn btn-sm btn-primary" data-action="pullFleetDeviceConfig">Pull fleet</button>' : '')
+    + (canEdit && matrix.can_pull
+        ? '<button type="button" class="btn btn-sm btn-primary" data-action="pullFleetDeviceConfig">Pull fleet</button>'
+        : '')
     + '</div>'
     + '<div class="text-muted text-sm mb-1" id="dc-pull-status"></div>'
     + '<div class="dc-legend text-muted text-sm mb-1">red = differs from fleet · yellow = no value from pull · light blue = device-specific (calibration) value · •••••••• = credential — compared, never stored or shown · click a section to expand/collapse</div>'
@@ -148,7 +151,7 @@ function render() {
     h += '<tr class="dc-sec' + (filterText && !f ? ' dc-hidden' : '') + '">'
       + '<td class="dc-lead0"><button type="button" class="dc-toggle" data-action="toggleDeviceConfigSection:' + escapeHtml(s.name) + '">' + (secOpen ? '▾' : '▸') + ' ' + escapeHtml(s.name) + '</button></td>'
       + '<td class="dc-lead1"></td><td class="dc-lead2">' + s.subs.length + ' subsections · ' + s.rows.length + ' rows</td>'
-      + robots.map(r => { const u = rollup(s.rows, r.vehicle); return rollupCell(u, s.name); }).join('')
+      + robots.map(r => { const u = rollup(s.rows, r.vehicle); return rollupCell(u); }).join('')
       + '</tr>';
     if (!secOpen && !f) continue;
     for (const sub of s.subs) {
@@ -158,7 +161,7 @@ function render() {
         + '<td class="dc-lead0"></td>'
         + '<td class="dc-lead1"><button type="button" class="dc-toggle" data-action="toggleDeviceConfigSection:' + escapeHtml(s.name + '|' + sub.name) + '">' + (subOpen ? '▾' : '▸') + ' ' + escapeHtml(sub.name) + '</button></td>'
         + '<td class="dc-lead2">' + sub.rows.length + ' rows</td>'
-        + robots.map(r => { const u = rollup(sub.rows, r.vehicle); return rollupCell(u, key); }).join('')
+        + robots.map(r => { const u = rollup(sub.rows, r.vehicle); return rollupCell(u); }).join('')
         + '</tr>';
       if (!subOpen) continue;
       for (const row of sub.rows) {
@@ -179,7 +182,7 @@ function matchesFilter(row) {
   return (row.section + ' ' + row.subsection + ' ' + row.path).toLowerCase().indexOf(filterText) >= 0;
 }
 
-function rollupCell(u, tooltipKey) {
+function rollupCell(u) {
   const cls = u.k === 'red' ? 'dc-red' : u.k === 'blue' ? 'dc-blue' : '';
   const tip = u.k === 'red' ? ' title="differs under here: ' + escapeHtml(u.diff.slice(0, 10).join(', ')) + (u.diff.length > 10 ? '…' : '') + '"' : '';
   return '<td class="dc-cell ' + cls + '"' + tip + '>–</td>';
@@ -197,7 +200,12 @@ function leafCell(row, vehicle) {
     case 'absent_differs': cls = 'dc-red'; text = '–'; break;
     default: text = c.value || '';
   }
-  if (row.credential) { text = '••••••••'; }
+  // Mask only VALUED credential cells: yellow stays yellow (no pull) and an
+  // absent credential stays a dash — masking those would hide the state the
+  // colours exist to show (round-2, argent-condor).
+  if (row.credential && (c.state === 'ok' || c.state === 'differs' || c.state === 'calibration')) {
+    text = '••••••••';
+  }
   tip.push(row.credential
     ? 'credential — compared, never stored or shown; ' + (c.state === 'differs' ? 'differs from fleet' : c.state === 'ok' ? 'agrees with fleet' : c.state)
     : (c.value === '' && text === '–' ? 'absent' : c.value));

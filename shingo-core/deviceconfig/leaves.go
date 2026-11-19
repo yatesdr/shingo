@@ -92,22 +92,33 @@ func walkParams(section, subsection string, prefix []string, ps []Param, out *[]
 	}
 }
 
-// emitSub emits one live subparam of a combo's selected choice, recursing
-// if the subparam is itself a group or a choice-bearing combo (none
-// measured; the recursion keeps the identity rule total).
+// emitSub emits one live subparam of a combo's selected choice.
+//
+// IDENTITY IS THE FULL CHAIN (round-2, cinder-otter F3): `base` carries the
+// group-path segments (an arrayParam under a choice folds its key in, as
+// walkParams folds top-level groups) and `choice` carries the WHOLE chain of
+// selected choices walked so far ("mode/omni/inner"). A shorter identity —
+// only the outermost choice, as this used to be — collapses two different
+// nested-choice subparams into one row identity, and the matrix then ties
+// them into a false red. The DISPLAY stays folded: `param: key`, the choice
+// segment returning only on collision (BuildMatrix's union rule).
 func emitSub(section, subsection string, p *Param, base []string, choice string, sub Param, out *[]Leaf) {
 	ident := joinPath(base) + "/" + choice + ": " + sub.Key
 	display := joinPath(base) + ": " + sub.Key
 	if sub.Array != nil {
+		// The group's key folds into the path — dropping it (as this once
+		// did) merges the group's leaves into the choice's own namespace.
+		grouped := append(append([]string{}, base...), sub.Key)
 		for _, s2 := range sub.Array.Params {
-			emitSub(section, subsection, p, base, choice, s2, out)
+			emitSub(section, subsection, p, grouped, choice, s2, out)
 		}
 		return
 	}
 	if sub.Combo != nil && sub.hasSubparams() {
+		inner := choice + "/" + sub.Combo.ChildKey
 		*out = append(*out, leafOf(section, subsection, &sub, display+": type", ident+": type"))
 		for _, s2 := range sub.choiceParams() {
-			emitSub(section, subsection, p, base, choice, s2, out)
+			emitSub(section, subsection, p, base, inner, s2, out)
 		}
 		return
 	}
@@ -125,9 +136,11 @@ func leafOf(section, subsection string, p *Param, path, ident string) Leaf {
 
 func joinPath(parts []string) string { return strings.Join(parts, ": ") }
 
-// disambiguate restores the choice segment to any display that would name
-// two different rows ("type/RS485: devName" vs "type/RS232: devName") —
-// the one place the identity segment returns to the display.
+// disambiguate is the PER-ROBOT half of the collision rule — defensive
+// only, since one robot emits just its selected choice's subparams and so
+// cannot collide with itself. The LIVE half runs over the union, in
+// BuildMatrix: that is where a mixed fleet's RS485 and RS232 rows share a
+// display (round-2).
 func disambiguate(rows []Leaf) []Leaf {
 	seen := map[string]int{}
 	for _, r := range rows {

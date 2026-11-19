@@ -9,13 +9,17 @@ import (
 )
 
 // credentialKeys are the param keys whose VALUES are never stored or shown
-// (brief, credential masking). Matched case-insensitively on the param key.
+// (brief, credential masking). Matched case-insensitively on the exact key —
+// never by substring (the fixture's passive/passiveMotorName keys would
+// trip). 密码 is measured live on both plants' payloads (empty today;
+// plaintext the day it isn't — round-2, cobalt-heron M4 / umber-lynx).
 var credentialKeys = map[string]bool{
 	"password": true,
 	"passwd":   true,
 	"pwd":      true,
 	"secret":   true,
 	"token":    true,
+	"密码":       true,
 }
 
 // CredentialKey reports whether a param key names a credential.

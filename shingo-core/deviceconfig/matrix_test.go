@@ -1,6 +1,12 @@
 package deviceconfig
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+)
 
 // The matrix rules under test are Eric's decided UI-spec semantics, each
 // with its one-line reason. Synthetic pulls — the rules are the product;
@@ -197,6 +203,27 @@ func TestCredentialComparesOnFingerprint(t *testing.T) {
 			}
 		}
 	}
+
+	// Round-2 (3-of-4 reviewers): the fingerprint must not ship by ANY
+	// route — marshal the WHOLE view and forbid the prefix outright.
+	// Plurality is "" on credential rows; Counts speaks in agree/differ.
+	b, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "sha256:") {
+		t.Error("fingerprint shipped in the matrix payload (Plurality/Counts) — redact, don't just blank cells")
+	}
+	for _, r := range view.Rows {
+		if r.Credential {
+			if r.Plurality != "" {
+				t.Errorf("credential plurality = %q, want \"\"", r.Plurality)
+			}
+			if r.Counts["agree"] != 2 || r.Counts["differ"] != 1 {
+				t.Errorf("credential counts = %v, want agree=2 differ=1 (neutral buckets)", r.Counts)
+			}
+		}
+	}
 }
 
 // The union: rows only one robot has enter by themselves; a uniform fleet
@@ -218,5 +245,90 @@ func TestUnionRows(t *testing.T) {
 	}
 	if c := cellOf(t, view, "aOnly", "C"); c.State != StateAbsentDiffers {
 		t.Errorf("structural absence on union row = %s, want absent_differs", c.State)
+	}
+}
+
+// CROSS-ROBOT COLLISION (the brief's named RS485/RS232 case, round-2): one
+// robot can never emit two rows with the same display — only its SELECTED
+// choice's subparams exist — so the collision rule runs over the UNION and
+// both rows fall back to the identity, which keeps the choice segment.
+func TestUnionCollisionFallsBackToIdent(t *testing.T) {
+	mk := func(v, choice string) Pull {
+		return Pull{Vehicle: v, Leaves: []Leaf{{
+			Section: "battery", Subsection: "bms", Kind: KindParam,
+			Path: "type: devName", Ident: "type/" + choice + ": devName", Value: v,
+		}}}
+	}
+	view := BuildMatrix([]string{"A", "B"}, map[string]Pull{
+		"A": mk("A", "RS485"),
+		"B": mk("B", "RS232"),
+	})
+	paths := map[string]bool{}
+	for _, r := range view.Rows {
+		paths[r.Path] = true
+	}
+	if paths["type: devName"] {
+		t.Errorf("two rows share the display %q — the union rule must fall back to the identity", "type: devName")
+	}
+	if !paths["type/RS485: devName"] || !paths["type/RS232: devName"] {
+		t.Errorf("identity fallback missing, paths = %v", paths)
+	}
+}
+
+// PHANTOM VEHICLE (round-2, otter F4): a stored pull whose vehicle has no
+// column must not vote — a decommissioned robot's stale row bending every
+// plurality it ever held, with no cell to see it by.
+func TestPhantomPullDoesNotVote(t *testing.T) {
+	view := BuildMatrix([]string{"A", "B"}, map[string]Pull{
+		"A": pull("A", leaf("d", "v", "1")),
+		"B": pull("B", leaf("d", "v", "1")),
+		"Z": pull("Z", leaf("d", "v", "9")), // stored row, no column
+	})
+	row := view.Rows[1] // [0] is the name row
+	if row.Plurality != "1" || row.Counts["1"] != 2 || row.Counts["9"] != 0 {
+		t.Errorf("phantom pull voted: plurality=%q counts=%v, want 1 ×2 and no 9", row.Plurality, row.Counts)
+	}
+	if _, has := row.Cells["Z"]; has {
+		t.Error("phantom vehicle got a cell")
+	}
+}
+
+// NESTED-CHOICE IDENTITY (round-2, otter F3): the choice chain threads —
+// two robots selecting different INNER choices are two distinct rows, not
+// one false tie that reds both.
+func TestNestedChoiceIdentityThreads(t *testing.T) {
+	mk := func(v, inner string) Pull {
+		val := v
+		l := Param{Key: "L", Type: "string", StringValue: &val}
+		innerCombo := Param{Key: "inner", Type: "comboParam", Combo: &ComboParam{
+			ChildKey: inner,
+			ChildParams: []ChildParam{
+				{Key: "y1", Params: []Param{l}},
+				{Key: "y2", Params: []Param{l}},
+			},
+		}}
+		outer := Param{Key: "outer", Type: "comboParam", Combo: &ComboParam{
+			ChildKey:    "x",
+			ChildParams: []ChildParam{{Key: "x", Params: []Param{innerCombo}}},
+		}}
+		m := &ModelFile{Model: "T", DeviceTypes: []DeviceType{{
+			Name: "S", Devices: []Device{{Name: "d", DeviceParams: []Param{outer}}},
+		}}}
+		return Pull{Vehicle: v, Leaves: Leaves(m)}
+	}
+	view := BuildMatrix([]string{"A", "B"}, map[string]Pull{
+		"A": mk("A", "y1"),
+		"B": mk("B", "y2"),
+	})
+	var idents []string
+	for _, r := range view.Rows {
+		if strings.HasSuffix(r.Ident, ": L") {
+			idents = append(idents, r.Ident)
+		}
+	}
+	sort.Strings(idents)
+	want := []string{"outer/x/y1: L", "outer/x/y2: L"}
+	if !reflect.DeepEqual(idents, want) {
+		t.Errorf("nested-choice idents = %v, want %v (the full chain, so the rows never merge)", idents, want)
 	}
 }

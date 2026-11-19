@@ -193,8 +193,8 @@ func TestRobotsPage_TabsAndTheirDoors(t *testing.T) {
 	testutil.MustNoErr(t, err, "read robots.html")
 	tabRe := regexp.MustCompile(`class="tab[^"]*" data-tab="(\w+)" data-action="switchTab:(\w+)"`)
 	tabs := tabRe.FindAllStringSubmatch(string(page), -1)
-	if len(tabs) != 3 {
-		t.Fatalf("robots.html has %d tabs, want Robots, Fleet, Cleaning", len(tabs))
+	if len(tabs) != 4 {
+		t.Fatalf("robots.html has %d tabs, want Robots, Fleet, Cleaning, Device Config", len(tabs))
 	}
 	for _, m := range tabs {
 		if m[1] != m[2] {
@@ -211,12 +211,14 @@ func TestRobotsPage_TabsAndTheirDoors(t *testing.T) {
 		"/api/robots/hours":               "GET",
 		"/api/robots/cleaning":            "GET",
 		"/api/map/marks":                  "GET",
+		"/api/robots/device-config":       "GET",
 		"/api/robots/cleaning/setup":      "POST",
 		"/api/robots/cleaning/clean-now":  "POST",
 		"/api/robots/cleaning/opt-out":    "POST",
+		"/api/robots/device-config/pull":  "POST",
 	}
 	var src strings.Builder
-	for _, f := range []string{"static/pages/robots.js", "static/components/robot-fleet-tab.js", "static/components/robot-cleaning-tab.js", "templates/robots.html"} {
+	for _, f := range []string{"static/pages/robots.js", "static/components/robot-fleet-tab.js", "static/components/robot-cleaning-tab.js", "static/components/robot-deviceconfig-tab.js", "templates/robots.html"} {
 		b, err := os.ReadFile(f)
 		testutil.MustNoErr(t, err, "read "+f)
 		src.Write(b)

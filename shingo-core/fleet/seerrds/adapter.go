@@ -296,6 +296,11 @@ func (a *Adapter) ReadDeviceConfig(vehicleID string) ([]byte, error) {
 	return a.client.GetRobotModel(vehicleID, modelFetchTimeout)
 }
 
+// The capability is compile-pinned like its siblings (TableTurner,
+// LidarFrameReader): losing the method must fail the build, not surface as
+// a runtime 501 from the handler's type assertion (SYNTH-round1 §c).
+var _ fleet.DeviceConfigReader = (*Adapter)(nil)
+
 func (a *Adapter) SetAvailability(vehicleID string, available bool) error {
 	dispatchType := "undispatchable_unignore"
 	if available {

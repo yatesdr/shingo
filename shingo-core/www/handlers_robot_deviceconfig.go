@@ -50,7 +50,13 @@ func (h *Handlers) apiRobotDeviceConfig(w http.ResponseWriter, r *http.Request) 
 	sort.Strings(extra)
 	vehicles = append(vehicles, extra...)
 
-	h.jsonOK(w, deviceconfig.BuildMatrix(vehicles, pulls))
+	// CanPull is the same type assertion the POST answers 501 with,
+	// surfaced to the page so its Pull button hides on a fleet (the
+	// simulator) that cannot pull — the gate the handler comment promised.
+	_, canPull := h.engine.Fleet().(fleet.DeviceConfigReader)
+	view := deviceconfig.BuildMatrix(vehicles, pulls)
+	view.CanPull = canPull
+	h.jsonOK(w, view)
 }
 
 // The pull's own guards — single-flight and a server-owned relay gap. The

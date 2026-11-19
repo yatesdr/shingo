@@ -123,6 +123,11 @@ type RowView struct {
 type MatrixView struct {
 	Robots []RobotColumn `json:"robots"`
 	Rows   []RowView     `json:"rows"`
+	// CanPull reports whether the fleet backend implements
+	// fleet.DeviceConfigReader — the same type assertion the pull handler
+	// answers 501 with, surfaced so the page can hide its Pull button on a
+	// fleet (the simulator) that cannot pull at all.
+	CanPull bool `json:"can_pull"`
 }
 
 // rowIdent is the subsection-scoped identity of a leaf: the same param in
@@ -153,9 +158,22 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 		view.Robots = append(view.Robots, col)
 	}
 
+	// A pull whose vehicle has no column must not vote: intersect to the
+	// fleet list handed in. The GET handler deliberately unions
+	// stored-pull robots into that list, so a decommissioned robot keeps
+	// its column; the guard makes the function total for any other caller
+	// (a stale store row for a robot the fleet no longer names would
+	// otherwise bend every plurality it ever held, with no cell to see it
+	// by — round-2, cinder-otter F4).
+	vset := make(map[string]bool, len(vehicles))
+	for _, v := range vehicles {
+		vset[v] = true
+	}
 	pulled := make([]string, 0, len(pulls))
 	for v := range pulls {
-		pulled = append(pulled, v)
+		if vset[v] {
+			pulled = append(pulled, v)
+		}
 	}
 	sort.Strings(pulled)
 
@@ -176,6 +194,26 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 				values[id] = map[string]string{}
 			}
 			values[id][v] = l.Value
+		}
+	}
+
+	// The collision rule runs over the UNION, never over one robot: a
+	// single robot emits only its SELECTED choice's subparams, so two rows
+	// with the same display can only be cross-robot — the brief's named
+	// RS485/RS232 devName case, one mixed pull away. Where one subsection's
+	// rows share a display Path, both fall back to the identity, which
+	// keeps the choice segment (round-2, cinder-otter F2 / argent-condor).
+	type displayKey struct{ sec, sub, path string }
+	collisions := map[displayKey]int{}
+	for _, id := range order {
+		l := leafOf[id]
+		collisions[displayKey{l.Section, l.Subsection, l.Path}]++
+	}
+	for _, id := range order {
+		l := leafOf[id]
+		if collisions[displayKey{l.Section, l.Subsection, l.Path}] > 1 && l.Ident != l.Path {
+			l.Path = l.Ident
+			leafOf[id] = l
 		}
 	}
 
@@ -214,11 +252,32 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 		if !tie && best != absentToken {
 			row.Plurality = best
 		}
-		for val, n := range counts {
-			if val == absentToken {
-				row.Counts["absent"] = n
-			} else {
-				row.Counts[val] = n
+		if row.Credential {
+			// The fingerprint never ships (rule 4) — and this GET is
+			// public, where an unsalted SHA-256 of a factory default is a
+			// dictionary lookup away from the value. A credential row
+			// speaks in agree/differ buckets only; the per-cell states
+			// already carry agreement (round-2, 3-of-4 reviewers).
+			row.Plurality = ""
+			agree, differ, absent := 0, 0, 0
+			for val, n := range counts {
+				switch {
+				case val == absentToken:
+					absent += n
+				case !tie && val == best:
+					agree += n
+				default:
+					differ += n
+				}
+			}
+			row.Counts["agree"], row.Counts["differ"], row.Counts["absent"] = agree, differ, absent
+		} else {
+			for val, n := range counts {
+				if val == absentToken {
+					row.Counts["absent"] = n
+				} else {
+					row.Counts[val] = n
+				}
 			}
 		}
 
