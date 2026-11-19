@@ -398,6 +398,34 @@ func TestCreatePart_ANoAfterAskWaitIsCoresSentence(t *testing.T) {
 	}
 }
 
+// TestCreatePart_AWaitingTapKeepsItsAskPastTheForgetTime: the tap's wait runs
+// on the wait clock and the ask's forget time on the message clock; in the sim
+// the two differ (the forget slack is not scaled with the message clock, so an
+// entry was forgotten about 26 real seconds after its send while the tap
+// waited 35). An entry whose tap still waits is kept, so an answer that comes
+// after the forget time still reaches the tap: here Core's no, the sentence
+// the form shows. Seen on the sim stack: Core's "too late" answer to a resend
+// came at 27 s and the form said no answer.
+func TestCreatePart_AWaitingTapKeepsItsAskPastTheForgetTime(t *testing.T) {
+	t.Parallel()
+	f := newMintFixture(t)
+	req := synNewPart
+	req.ProcessID = f.plant.ProcessID
+	_, env, end := startPartTap(t, f, req)
+	f.eng.asks.mu.Lock()
+	f.eng.asks.pending[env.ID].expires = time.Now().Add(-time.Hour) // past its forget time
+	f.eng.asks.mu.Unlock()
+	f.eng.PendingAsks() // a sweep, as any other ask or the status read runs one
+	const sentence = "the request reached Core too late — nothing was done"
+	f.eng.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPartCreate,
+		Status: protocol.AnswerExpired, Sentence: sentence})
+	var refusal *CoreRefusal
+	r := tapEnd(t, end)
+	if !errors.As(r.err, &refusal) || refusal.Sentence != sentence {
+		t.Fatalf("the tap = %+v, %v; want Core's %q", r.made, r.err, sentence)
+	}
+}
+
 // TestCreatePart_NoAnswerEndsTheTapAndAResendMakesOnePart: Core never answers.
 // Past AskWait the tap still waits; at the end of the ask's life and its slack
 // it ends with ErrPartCreateNoAnswer, and nothing is on the picker. The

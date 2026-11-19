@@ -183,10 +183,16 @@ func (e *Engine) ask(kind string, body any, wait time.Duration, late func(*proto
 	}
 }
 
-// forgetExpiredLocked drops the pending entries past their forget time.
+// forgetExpiredLocked drops the pending entries past their forget time, but
+// never one whose tap still waits (done set): that tap ends its own wait, and
+// an answer that comes before it does must reach it. The wait runs on the wait
+// clock and the forget time on the message clock, and they differ (in the sim
+// the forget slack is not scaled with the message clock); a long wait (Add
+// part's partCreateWait) would otherwise lose a late answer it was waiting
+// for. Pinned by TestCreatePart_AWaitingTapKeepsItsAskPastTheForgetTime.
 func (e *Engine) forgetExpiredLocked(now time.Time) {
 	for id, p := range e.asks.pending {
-		if now.After(p.expires) {
+		if now.After(p.expires) && p.done == nil {
 			delete(e.asks.pending, id)
 		}
 	}
