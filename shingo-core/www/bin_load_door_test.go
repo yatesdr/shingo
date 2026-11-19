@@ -210,8 +210,9 @@ type heldCase struct {
 // behind is not a hold).
 var heldCases = []heldCase{
 	{"claimed by a live order", func(t *testing.T, db *store.DB, binID int64) int64 {
-		// At dispatched: a hard hold is taken for the fleet call.
-		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+		// Asking the fleet: the hand takes the hard hold for the fleet call while
+		// the order rests pending with its ask open.
+		o := testdb.CreateOrder(t, db, testdb.AskingFor(protocol.StatusPending, "sg-held-asking"))
 		testdb.ClaimBinForTest(t, db, binID, o.ID)
 		return o.ID
 	}, true},
@@ -587,7 +588,7 @@ func TestBinLoadDoor_Arms(t *testing.T) {
 		{name: "a carrier a live order holds is refused",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "LD-A-HELD")
-				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				o := testdb.CreateOrder(t, f.db, testdb.FleetHas("sg-ld-a-held"))
 				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
 				f.holder = o.ID
 				return loadBody(f, map[string]any{"uop_count": 30}), []int64{b.ID}

@@ -76,10 +76,10 @@ func TestLaneAcceptsInbound(t *testing.T) {
 		t.Fatalf("empty lane: got ok=%v err=%v, want compatible", ok, err)
 	}
 
-	// (C1.5: each lane holder is built at dispatched; a confirmed mouth is a hard hold.)
+	// (C1.5: each lane holder is one the fleet has; a confirmed mouth is a hard hold.)
 
 	// An inbound hold shares fine — still compatible.
-	oIn := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	oIn := testdb.CreateOrder(t, db, testdb.FleetHas("sg-accept-in"))
 	if err := reservations.AcquireLanes(db.DB, oIn.ID, reservations.ModeInbound, "test", laneID); err != nil {
 		t.Fatalf("AcquireLanes inbound: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestLaneAcceptsInbound(t *testing.T) {
 	}
 
 	// An outbound hold conflicts — incompatible for an inbound store.
-	oOut := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	oOut := testdb.CreateOrder(t, db, testdb.FleetHas("sg-accept-out"))
 	if err := reservations.AcquireLanes(db.DB, oOut.ID, reservations.ModeOutbound, "test", laneID); err != nil {
 		t.Fatalf("AcquireLanes outbound: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestLaneAcceptsInbound(t *testing.T) {
 	}
 
 	// A dig excludes everyone — incompatible.
-	oDig := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	oDig := testdb.CreateOrder(t, db, testdb.FleetHas("sg-accept-dig"))
 	if err := reservations.AcquireLanes(db.DB, oDig.ID, reservations.ModeDig, "test", laneID); err != nil {
 		t.Fatalf("AcquireLanes dig: %v", err)
 	}

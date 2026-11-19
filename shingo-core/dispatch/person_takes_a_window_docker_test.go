@@ -36,9 +36,12 @@ func windowHeldBy(t *testing.T, prefix string, confirmed bool) (*store.DB, *node
 		OrderType: OrderTypeRetrieveEmpty, Status: StatusQueued, Quantity: 1, DeliveryNode: drop.Name,
 		OriginClass: protocol.OriginClassNoDemand}
 	if confirmed {
-		holder.Status = StatusDispatched
+		holder.Status = StatusPending // born resting; the fleet's yes below names its job
 	}
 	testutil.MustNoErr(t, db.CreateOrder(holder), "the holder")
+	if confirmed {
+		testdb.SeedDispatched(t, db, holder.ID, "sg-"+holder.EdgeUUID)
+	}
 	testutil.MustNoErr(t, db.ReserveSlot(drop.ID, holder.ID), "the holder's hold on the drop")
 	if confirmed {
 		testutil.MustNoErr(t, db.ConfirmSlotReservation(drop.ID, holder.ID), "its hand confirms it")

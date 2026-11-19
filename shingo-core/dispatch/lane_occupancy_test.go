@@ -281,24 +281,27 @@ func TestCompound_UnrecordableOccupancyHoldsTheChild(t *testing.T) {
 	}
 }
 
-// blockSourcingFor makes the leg's claim write fail for exactly one order,
-// through the production CAS, and restores the table on cleanup. (C1: the claim
-// is the hand's `pending → dispatched` CAS, so that is the write blocked; the
-// name is the old `pending → sourcing` claim's.) Scoped
-// to one id for the reason blockOccupancyFor is: these tests share a database.
-func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
+// blockAskFor makes the leg's claim write fail for exactly one order, through
+// the production CAS, and restores the table on cleanup. The claim is the
+// hand's ask (orders.TakeAskTx: asked_vendor_order_id written on a row with no
+// ask open, status untouched), so that is the write blocked. Blocking a write of
+// `dispatched` instead would let the hand commit and the fleet create the job,
+// and fail only the fleet's yes: a different arm (handoverToFleet's unwritable
+// yes), not the refused claim this file pins. Scoped to one id for the reason
+// blockOccupancyFor is: these tests share a database.
+func blockAskFor(t *testing.T, db *store.DB, orderID int64) func() {
 	t.Helper()
-	name := fmt.Sprintf("tmp_block_sourcing_%d", orderID)
+	name := fmt.Sprintf("tmp_block_ask_%d", orderID)
 	drop := func() {
 		if _, dErr := db.Exec(fmt.Sprintf(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS %s`, name)); dErr != nil {
-			t.Errorf("drop sourcing block %s: %v", name, dErr)
+			t.Errorf("drop ask block %s: %v", name, dErr)
 		}
 	}
 	_, err := db.Exec(fmt.Sprintf(
 		`ALTER TABLE orders ADD CONSTRAINT %s
-		 CHECK (NOT (id = %d AND status = 'dispatched')) NOT VALID`, name, orderID))
+		 CHECK (NOT (id = %d AND asked_vendor_order_id <> '')) NOT VALID`, name, orderID))
 	if err != nil {
-		t.Fatalf("install sourcing block for order %d: %v", orderID, err)
+		t.Fatalf("install ask block for order %d: %v", orderID, err)
 	}
 	t.Cleanup(drop)
 	return drop
@@ -312,8 +315,8 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 // It does not need one. transition() compare-and-swaps on the status the caller
 // loaded, and GetNextChildOrder selects `status='pending' … LIMIT 1` — so two
 // concurrent callers resolve to the SAME child and exactly one CAS matches a
-// row. pending→sourcing IS the claim (C1: the hand's pending→dispatched CAS
-// is now the claim, and the constraint below blocks that). This line used to
+// row. pending→sourcing IS the claim (now the hand's ask CAS, which writes no
+// status; the constraint below blocks that). This line used to
 // log the refusal and dispatch regardless, and nothing downstream caught it: the loser's struct
 // still reads `pending`, so Dispatch fails IllegalTransition, while the
 // orphan-mission guard that cancels the vendor order is scoped to
@@ -336,7 +339,7 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 //  3. the leg still goes once the refusal lifts. A hold that no re-drive can
 //     clear is a wedge with better logging.
 //
-// DESIGN §16 rule 7: the status write is the FIRST refusal reachable here. The
+// DESIGN §16 rule 7: the claim write (the ask) is the FIRST refusal reachable here. The
 // child is pending with both nodes set, both lookups resolve, the lane is empty,
 // the exactly-once re-read passes (no vendor id yet), and the occupancy take
 // succeeds — that last one matters, because if it refused instead the test would
@@ -369,7 +372,7 @@ func TestCompound_RefusedStatusClaimDoesNotDispatch(t *testing.T) {
 	parent, children, lane, _ := twoLegCompound(t, db, "CASREFUSE")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	unblock := blockSourcingFor(t, db, children[0].ID)
+	unblock := blockAskFor(t, db, children[0].ID)
 
 	if err := d.AdvanceCompoundOrder(parent.ID); err != nil {
 		t.Fatalf("a refused claim must hold the child, not error out: %v", err)
@@ -378,7 +381,7 @@ func TestCompound_RefusedStatusClaimDoesNotDispatch(t *testing.T) {
 	// 1. The loser sends nothing.
 	if inFlight(t, db, children[0].ID) {
 		c0, _ := db.GetOrder(children[0].ID)
-		t.Errorf("leg one was dispatched as %q after the database REFUSED its pending→sourcing claim — "+
+		t.Errorf("leg one was dispatched as %q after the database REFUSED its claim (the ask) — "+
 			"that refusal is another caller already owning this child, and dispatching anyway is two "+
 			"robots sent to do one leg", c0.VendorOrderID)
 	}

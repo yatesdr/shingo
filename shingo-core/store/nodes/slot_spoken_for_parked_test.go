@@ -40,13 +40,22 @@ func spokenForLane(t *testing.T, db *store.DB, prefix string) (int64, *nodes.Nod
 }
 
 // namingOrder is an order at status whose delivery_node names slot and that
-// holds no row for it.
+// holds no row for it. A `dispatched` one is an order the fleet has, and names
+// its job: it is born pending (the INSERT binds no vendor id) and moved to
+// `dispatched` with the job sg-<uuid> in one write.
 func namingOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status, slot *nodes.Node) int64 {
 	t.Helper()
-	o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex", Status: status, Quantity: 1,
+	born := status
+	if status == protocol.StatusDispatched {
+		born = protocol.StatusPending
+	}
+	o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex", Status: born, Quantity: 1,
 		DeliveryNode: slot.Name}
 	if err := orders.Create(db.DB, o); err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)
+	}
+	if status == protocol.StatusDispatched {
+		testdb.SeedDispatched(t, db, o.ID, "sg-"+uuid)
 	}
 	return o.ID
 }

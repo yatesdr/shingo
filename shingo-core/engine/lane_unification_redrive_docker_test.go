@@ -85,9 +85,8 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 	// the lane through it (LaneIDsForOrder).
 	occupant := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "redrive-occupant"
-		o.Status = dispatch.StatusDispatched
 		o.DeliveryNode = slots[1].Name
-	})
+	}, testdb.FleetHas("sg-redrive-occupant"))
 	if _, err := reservations.AcquireOccupancy(db.DB, occupant.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}

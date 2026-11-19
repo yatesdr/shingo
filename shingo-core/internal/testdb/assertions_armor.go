@@ -1,6 +1,7 @@
 package testdb
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -20,11 +21,12 @@ import (
 // suite and the floor disagreed about what a violation is — the shape where a
 // green suite certifies a plant that is reporting the fault.
 //
-// The window itself is one handover attempt: handoverToFleet CASes the order to
-// `dispatched` and THEN asks the fleet to create, deliberately (it is the
-// racing-dispatchers lock, and reordering trades a swept transient for an orphan
-// vendor order). Inside that window the state is correct and expected. Five
-// minutes is many multiples of one RDS request, so nothing healthy reaches it,
+// The window was one handover attempt: the hand used to CAS the order to
+// `dispatched` and THEN ask the fleet to create. It no longer does: the hand opens
+// an ask and `dispatched` is the fleet's yes, written with the vendor id, and since
+// v181 orders_dispatched_names_its_job refuses a vendorless `dispatched` write. So
+// the clause finds only a row from before v181 (the rule is NOT VALID). Five
+// minutes is many multiples of one RDS request, so nothing healthy reached it,
 // and it is short enough to catch the wedge inside a shift.
 const crashSliverAge = 5 * time.Minute
 
@@ -244,21 +246,32 @@ var askLeftOpenOK = map[string]bool{}
 
 // ExpectAskLeftOpen opts one test out of the end-of-test open-ask clause: a test
 // that stops Core inside a create, whose ask is then the one record of the job
-// it asked for, or one that writes an ask to ask a reader about it. Like
-// DisableWedgeSweep, call it before Open: cleanups are LIFO.
+// it asked for, or one that writes an ask to ask a reader about it. A fixture
+// ask (testdb.AskingFor, SeedAsk) calls it.
+//
+// KEYED BY THE TOP-LEVEL TEST, AND NEVER CLEARED. A subtest's fixture ask lands
+// in a database its parent opened and its parent's sweep reads; a test can open
+// two databases, each swept. The flag only widens one test's allowance, test
+// names are unique in a run, and a cleanup to clear it would have to run after
+// every sweep, which cleanups registered after Open do not (they are LIFO). So
+// it is callable any time and stays set.
 func ExpectAskLeftOpen(t testing.TB, why string) {
 	t.Helper()
 	if why == "" {
 		t.Fatal("ExpectAskLeftOpen needs a reason")
 	}
 	wedgeSweepMu.Lock()
-	askLeftOpenOK[t.Name()] = true
+	askLeftOpenOK[rootTestName(t)] = true
 	wedgeSweepMu.Unlock()
-	t.Cleanup(func() {
-		wedgeSweepMu.Lock()
-		delete(askLeftOpenOK, t.Name())
-		wedgeSweepMu.Unlock()
-	})
+}
+
+// rootTestName is the top-level test of t: its name up to the first slash.
+func rootTestName(t testing.TB) string {
+	name := t.Name()
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		return name[:i]
+	}
+	return name
 }
 
 // assertNoAskLeftOpen is the open-ask clause: every ask is answered before the
@@ -271,7 +284,7 @@ func ExpectAskLeftOpen(t testing.TB, why string) {
 func assertNoAskLeftOpen(t testing.TB, db *store.DB) {
 	t.Helper()
 	wedgeSweepMu.Lock()
-	ok := askLeftOpenOK[t.Name()]
+	ok := askLeftOpenOK[rootTestName(t)]
 	wedgeSweepMu.Unlock()
 	if ok {
 		return

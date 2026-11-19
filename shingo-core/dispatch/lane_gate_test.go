@@ -191,7 +191,7 @@ func TestLaneGate_SameLaneSourceAndDest_OneHoldStrongestMode(t *testing.T) {
 	}
 
 	// And the acquire admits: one row, no self-conflict, no wedge.
-	mover := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
+	mover := testdb.CreateOrder(t, db, testdb.AskingFor(StatusPending, "sg-same-lane-mover")) // the hand takes its lanes inside its ask
 	adm := d.acquireOrderLanes(mover.ID, holds)
 	admitted, err := adm.admitted, adm.err
 	if err != nil || !admitted {

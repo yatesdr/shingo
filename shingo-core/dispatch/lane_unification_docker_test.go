@@ -198,7 +198,7 @@ func TestUnification_UnoccupiedLaneIsUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve line: %v", err)
 	}
-	store := admitOrder(t, db, "uni-clear", shallow, asDispatched) // (C1.5: a lane holder is dispatched)
+	store := admitOrder(t, db, "uni-clear", shallow, testdb.AskingFor(StatusPending, "sg-uni-clear")) // the hand takes its lanes inside its ask
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(store, line, shallow, EntryFreshBin)
 	if err != nil {
 		t.Fatalf("AcquireLanesForOrder: %v", err)

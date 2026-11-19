@@ -38,8 +38,8 @@ func TestRecovery_ADropAnotherOrderHoldsRefusesItAtItsIssue(t *testing.T) {
 	bin, _ := seedCancelledCarry(t, db, "AMR-RWT", "RWT-P", "LINE-RWT")
 	cacheRobot(eng, loadedDispatchable("AMR-RWT"))
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusDispatched, slot.Name
-	})
+		o.OrderType, o.DeliveryNode = protocol.OrderTypeMove, slot.Name
+	}, testdb.FleetHas("sg-rwt-holder"))
 	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, holder.ID), "another order holds the slot")
 
 	_, _, err := eng.orderCarriedBinDown(bin.ID, "", onDeckRequest{actor: "system:test", action: "carried_bin_returned",

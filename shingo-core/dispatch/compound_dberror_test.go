@@ -100,13 +100,14 @@ func TestAdvanceCompoundChapterEnd_UnreadableChildListDoesNotComplete(t *testing
 		EdgeUUID:      "child-chapter-dberr",
 		StationID:     parent.StationID,
 		OrderType:     OrderTypeMove,
-		Status:        StatusDispatched,
+		Status:        StatusPending,
 		ParentOrderID: &parent.ID,
 		Sequence:      1,
 		SourceNode:    lineNode.Name,
 		DeliveryNode:  lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(child), "create child")
+	testdb.SeedDispatched(t, db, child.ID, "sg-child-chapter-dberr") // in flight: the fleet has it
 
 	_, err := db.DB.Exec(`ALTER TABLE orders RENAME COLUMN status TO status_renamed`)
 	testutil.MustNoErr(t, err, "rename status column")

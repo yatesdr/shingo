@@ -18,6 +18,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/orders"
 )
 
@@ -33,6 +34,45 @@ func newPendingOrder(uuid string) *domain.Order {
 		DeliveryNode: "LINE1-IN",
 		SourceNode:   "STORAGE-A1",
 	}
+}
+
+// createAt inserts o at its status. The INSERT binds no vendor id, and a
+// `dispatched` row names the fleet's job (orders_dispatched_names_its_job), so
+// an order the fleet has is born pending and written `dispatched` naming job
+// in one statement.
+func createAt(t *testing.T, d *store.DB, o *domain.Order, job string) {
+	t.Helper()
+	status := o.Status
+	if status == protocol.StatusDispatched {
+		o.Status = protocol.StatusPending
+	}
+	testutil.MustNoErr(t, orders.Create(d.DB, o), "create "+o.EdgeUUID)
+	if status == protocol.StatusDispatched {
+		testdb.SeedDispatched(t, d, o.ID, job)
+		o.Status, o.VendorOrderID = status, job
+	}
+}
+
+// fleetYes writes `dispatched` the one way production does: the hand's ask on
+// the row's resting status (orders.TakeAskTx), then the fleet's yes naming
+// job, which writes the status, the job and its history row in one
+// transaction (orders.FleetYesTx).
+func fleetYes(t *testing.T, db *sql.DB, id int64, from protocol.Status, job, detail string) {
+	t.Helper()
+	tx, err := db.Begin()
+	testutil.MustNoErr(t, err, "begin the fleet's yes")
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	took, err := orders.TakeAskTx(tx, id, from, job)
+	testutil.MustNoErr(t, err, "open the ask")
+	if !took {
+		t.Fatalf("order %d: the ask found it moved from %s or already asking", id, from)
+	}
+	_, yes, err := orders.FleetYesTx(tx, id, from, job, "", detail, "", "", nil)
+	testutil.MustNoErr(t, err, "the fleet's yes")
+	if !yes {
+		t.Fatalf("order %d: the fleet's yes found no ask %s in %s", id, job, from)
+	}
+	testutil.MustNoErr(t, tx.Commit(), "commit the fleet's yes")
 }
 
 // TestLinkSiblingsByEdgeUUID pins the two-robot swap pairing write: a single
@@ -133,11 +173,13 @@ func TestOrderCRUD(t *testing.T) {
 		t.Errorf("GetByUUID.ID = %d, want %d", gotUUID.ID, o.ID)
 	}
 
-	// UpdateStatus -> dispatched (also writes history)
-	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, "dispatched", "sent to RDS"), "UpdateStatus dispatched")
+	// -> dispatched by the fleet's yes naming rds-123 (also writes history).
+	// UpdateStatus writes the status alone, and a `dispatched` row names its job
+	// (orders_dispatched_names_its_job).
+	fleetYes(t, db, o.ID, protocol.StatusPending, "rds-123", "sent to RDS")
 	got2, err := orders.Get(db, o.ID)
 	if err != nil {
-		t.Fatalf("Get after UpdateStatus: %v", err)
+		t.Fatalf("Get after the fleet's yes: %v", err)
 	}
 	if got2.Status != "dispatched" {
 		t.Errorf("Status = %q, want dispatched", got2.Status)
@@ -241,6 +283,13 @@ func TestHistory_AppendAndList(t *testing.T) {
 		{"delivered", "arrived at line"}, // non-terminal; UpdateStatus refuses terminals now
 	}
 	for _, e := range events[1:] {
+		if e.status == "dispatched" {
+			// The fleet's yes writes `dispatched` with its job and its history row;
+			// UpdateStatus writes the status alone, which the rule refuses
+			// (orders_dispatched_names_its_job).
+			fleetYes(t, db, o.ID, protocol.StatusPending, "sg-uuid-history", e.detail)
+			continue
+		}
 		if err := orders.UpdateStatus(db, o.ID, e.status, e.detail); err != nil {
 			t.Fatalf("UpdateStatus %s: %v", e.status, err)
 		}
@@ -381,9 +430,7 @@ func TestListFiltered(t *testing.T) {
 		o := newPendingOrder(uuid)
 		o.Status = protocol.Status(status)
 		o.StationID = station
-		if err := orders.Create(db, o); err != nil {
-			t.Fatalf("Create %s: %v", uuid, err)
-		}
+		createAt(t, d, o, "sg-"+uuid)
 		return o.ID
 	}
 	mk("u1", "pending", "line-1")
@@ -615,9 +662,7 @@ func TestCountByDeliveryNode(t *testing.T) {
 		o := newPendingOrder(uuid)
 		o.Status = protocol.Status(status)
 		o.DeliveryNode = dest
-		if err := orders.Create(db, o); err != nil {
-			t.Fatalf("Create %s: %v", uuid, err)
-		}
+		createAt(t, d, o, "sg-"+uuid)
 		return o.ID
 	}
 	mk("q", "queued", "LINE1-IN")
@@ -698,7 +743,7 @@ func TestListInFlightByDeliveryNodes_IsTheGatesSet(t *testing.T) {
 		o.Status = protocol.Status(status)
 		o.DeliveryNode = dest
 		o.PayloadCode = "PART-" + uuid
-		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
+		createAt(t, d, o, "sg-"+uuid)
 		return o.ID
 	}
 	ids := map[string]int64{}
@@ -775,9 +820,7 @@ func TestCountLiveByOrigin(t *testing.T) {
 		o.Status = protocol.Status(status)
 		o.DeliveryNode = "LINE1-IN"
 		o.OriginID = origin
-		if err := orders.Create(db, o); err != nil {
-			t.Fatalf("Create %s: %v", uuid, err)
-		}
+		createAt(t, d, o, "sg-"+uuid)
 		return o.ID
 	}
 	mk("ep-q", "queued", episode)     // this episode, queued — counts
@@ -842,17 +885,21 @@ func TestListTrackedVendorOrderIDs(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
+	// The no-vendor row stands for a `dispatched` row written before v181, which
+	// the rule (NOT VALID) leaves at a plant; this database drops it to hold one.
+	_, err := db.Exec(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_dispatched_names_its_job`)
+	testutil.MustNoErr(t, err, "drop the rule to hold a row from before v181")
 
 	mk := func(uuid, status, vendorID string) int64 {
 		o := newPendingOrder(uuid)
 		o.Status = protocol.Status(status)
-		if err := orders.Create(db, o); err != nil {
-			t.Fatalf("Create %s: %v", uuid, err)
+		if vendorID == "" {
+			testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
+			return o.ID
 		}
-		if vendorID != "" {
-			if err := orders.UpdateVendor(db, o.ID, vendorID, "RUNNING", ""); err != nil {
-				t.Fatalf("UpdateVendor %s: %v", uuid, err)
-			}
+		createAt(t, d, o, vendorID)
+		if err := orders.UpdateVendor(db, o.ID, vendorID, "RUNNING", ""); err != nil {
+			t.Fatalf("UpdateVendor %s: %v", uuid, err)
 		}
 		return o.ID
 	}
@@ -898,9 +945,7 @@ func TestListActiveBySourceRef(t *testing.T) {
 		o := newPendingOrder(uuid)
 		o.Status = protocol.Status(status)
 		o.SourceNode = src
-		if err := orders.Create(db, o); err != nil {
-			t.Fatalf("Create %s: %v", uuid, err)
-		}
+		createAt(t, d, o, "sg-"+uuid)
 		return o.ID
 	}
 	mk("p", "pending", "STORAGE-A1")
@@ -1156,12 +1201,19 @@ func TestScanOrders_DirectSQL(t *testing.T) {
 // has driven off), one with no robot yet, or one not named.
 func TestRobotsByUUID_OrdersTheFleetHoldsOnARobot(t *testing.T) {
 	t.Parallel()
-	db := testdb.Open(t).DB
+	d := testdb.Open(t)
+	db := d.DB
 	mk := func(uuid, station string, status protocol.Status, robot string) {
 		t.Helper()
 		o := newPendingOrder(uuid)
 		o.StationID, o.Status = station, status
-		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
+		// A `dispatched` order names its job in the write that makes it so: the
+		// one the vendor write below names, or its own when it has no robot.
+		job := "sg-" + uuid
+		if robot != "" {
+			job = "v-" + uuid
+		}
+		createAt(t, d, o, job)
 		if robot != "" {
 			testutil.MustNoErr(t, orders.UpdateVendor(db, o.ID, "v-"+uuid, "RUNNING", robot), "robot on "+uuid)
 		}

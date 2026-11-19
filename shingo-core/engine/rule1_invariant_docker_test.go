@@ -82,7 +82,7 @@ func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
 
 	// The slot is another order's, hard: a robot on its way to it. That order
 	// is dispatched, so the sweep does not count its claim.
-	other := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	other := testdb.CreateOrder(t, db, testdb.FleetHas("sg-r1inv-other"))
 	testdb.ClaimSlotForTest(t, db, slot.ID, other.ID)
 
 	order := &orders.Order{

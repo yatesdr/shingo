@@ -216,11 +216,10 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 		reservations.AcquireLanes(db.DB, leg.ID, reservations.ModeInbound, "test-leg", dropLane),
 		"the leg takes its own dropoff lane")
 
+	// The leg reaches the refusal door resting `pending`, its ask already closed
+	// by the refusal (refuseAsk): the hand writes no status.
 	legRow, gerr := db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, gerr, "read the leg")
-	_, execErr := db.DB.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, string(StatusDispatched), leg.ID)
-	testutil.MustNoErr(t, execErr, "force the leg row to dispatched")
-	legRow.Status = StatusDispatched
 
 	d.DemoteAfterFleetRefusal(legRow, errDoorRefusal, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 

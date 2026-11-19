@@ -245,17 +245,16 @@ func (g *goldenPlant) exec(q string, args ...any) {
 }
 
 // holder makes an order that exists only to hold something, so a case can take
-// a bin or a slot away from the need under test. It is `dispatched` with a
-// vendor id: an order that is on its way, which is the only legal holder of a
-// hard claim.
+// a bin or a slot away from the need under test. It is `dispatched` naming its
+// job, in one write (v181): an order that is on its way, which is the only
+// legal holder of a hard claim. The record names no vendor id and leaves
+// holders out by uuid, so the job never reaches a golden.
 func (g *goldenPlant) holder(uuid string) *orders.Order {
 	g.t.Helper()
 	return testdb.CreateOrder(g.t, g.db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
 		o.OrderType = protocol.OrderTypeMove
-		o.Status = protocol.StatusDispatched
-		o.VendorOrderID = "vendor-" + uuid
-	})
+	}, testdb.FleetHas("sg-"+uuid))
 }
 
 // claimBin takes a bin away the way dispatch does: a reservation, then the claim.

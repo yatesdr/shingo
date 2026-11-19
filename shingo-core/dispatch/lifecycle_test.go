@@ -55,7 +55,15 @@ func makeOrderAt(t *testing.T, db *store.DB, uuid string, status protocol.Status
 	// CreateOrder persists Status directly, so the fixture is already at the
 	// requested (possibly terminal) status — no round-trip through
 	// UpdateOrderStatus, which now refuses terminal writes. This helper
-	// deliberately bypasses lifecycle validation to seed arbitrary states.
+	// deliberately bypasses lifecycle validation to seed arbitrary states. A
+	// `dispatched` seed is an order the fleet has, and names its job
+	// (orders_dispatched_names_its_job): testdb.CreateOrder writes the two together.
+	if status == StatusDispatched {
+		return testdb.CreateOrder(t, db, func(o *orders.Order) {
+			*o = *ord
+			o.VendorOrderID = "sg-" + uuid
+		})
+	}
 	if err := db.CreateOrder(ord); err != nil {
 		t.Fatalf("create order at status %s: %v", status, err)
 	}
@@ -80,7 +88,16 @@ func TestLifecycle_LegalTransitions_AllPersist(t *testing.T) {
 				// park whose cause is not on the order.
 				ord.QueueCode = string(protocol.QueueWaitingForMaterial)
 			}
-			err := lc.transition(ord, to, Event{Actor: "test", Reason: "matrix"})
+			var err error
+			if to == StatusDispatched {
+				// `dispatched` is the fleet's yes: the order asks, and Dispatch
+				// writes the status with the job (transition refuses it).
+				job := fmt.Sprintf("sg-legal-%d", i)
+				openAsk(t, db, ord.ID, job)
+				err = lc.Dispatch(ord, job, "", "test")
+			} else {
+				err = lc.transition(ord, to, Event{Actor: "test", Reason: "matrix"})
+			}
 			if err != nil {
 				t.Errorf("legal %s→%s rejected: %v", from, to, err)
 				continue

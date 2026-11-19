@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"shingo/protocol/testutil"
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
@@ -234,18 +233,15 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 	db := testDB(t)
 	testdb.SetupTestData(t, db)
 
-	// Seed an order carrying a known vendor_order_id.
-	order := &orders.Order{
-		EdgeUUID:     "resolver-uuid",
-		StationID:    "line-1",
-		OrderType:    "retrieve",
-		Status:       "dispatched",
-		SourceNode:   "STORAGE-A1",
-		DeliveryNode: "LINE1-IN",
-	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	// CreateOrder doesn't set vendor_order_id — use UpdateOrderVendor.
-	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "V-FOUND-1", "RUNNING", "AMR-5"), "update vendor")
+	// Seed an order the fleet has, carrying a known vendor_order_id: a
+	// `dispatched` row names its job in the same write (v181).
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "resolver-uuid"
+		o.StationID = "line-1"
+		o.OrderType = "retrieve"
+		o.SourceNode = "STORAGE-A1"
+		o.DeliveryNode = "LINE1-IN"
+	}, testdb.FleetHas("V-FOUND-1"))
 
 	r := &orderResolver{db: db}
 	got, err := r.ResolveVendorOrderID("V-FOUND-1")

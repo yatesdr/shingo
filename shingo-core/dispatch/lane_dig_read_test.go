@@ -173,13 +173,13 @@ func TestAcquireLanesForOrder_OwnDigAdmitsItsOwnLeg(t *testing.T) {
 
 // TestAcquireLanesForOrder_NoDigUnaffected — with no dig on the lane, a plain
 // retrieve is admitted with no cause. The wiring must add a refusal where a dig
-// exists, not a new way for ordinary work to park. It takes its source lock, so
-// the order is built dispatched (C1.5: a lane holder is dispatched).
+// exists, not a new way for ordinary work to park. It takes its source lock in
+// its hand, so the order rests `pending` with its ask open (C1.5).
 func TestAcquireLanesForOrder_NoDigUnaffected(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	o, _, src, dest := plainOrderIntoLane(t, db, "NODIG")
-	testdb.SeedOrderStatus(t, db, o.ID, string(StatusDispatched), "")
+	testdb.SeedAsk(t, db, o.ID, StatusPending, "sg-NODIG-plain")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(o, src, dest, EntryFreshBin)

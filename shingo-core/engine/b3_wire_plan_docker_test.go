@@ -105,7 +105,7 @@ func TestB3D1_ScannerTakesAStandingPlan(t *testing.T) {
 func TestB3D1_ScannerRepicksWhenThePlannedBinIsHeld(t *testing.T) {
 	p := newPlanPlant(t)
 	// The holder is past acquiring, so no pass touches it and its hold stays.
-	holder := testdb.CreateOrder(t, p.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	holder := testdb.CreateOrder(t, p.db, testdb.FleetHas("sg-b3-holder"))
 	testutil.MustNoErr(t, reservations.Acquire(p.db, holder.ID, holder.ID, p.newer.ID, "b3-holder"), "hold the planned bin")
 	o := p.planned(t)
 	if got := p.dispatchedBin(t, o.ID); got != p.older.ID {

@@ -971,7 +971,7 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 			http.StatusBadRequest, func(*clearRig) string { return "CRG-H has no bin with parts to clear" }},
 		{"a carrier an order has claimed", "CRH", true,
 			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
-				o := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				o := testdb.CreateOrder(t, r.db, testdb.FleetHas("sg-crh-claimant"))
 				testdb.ClaimBinForTest(t, r.db, r.e.ID, o.ID)
 				return home(r)
 			},

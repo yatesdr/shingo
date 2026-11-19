@@ -294,14 +294,13 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-ACTIVE")
-	order := &orders.Order{
-		EdgeUUID:  "active-claim",
-		StationID: "line-1",
-		OrderType: "retrieve",
-		Status:    "dispatched", // non-terminal
-	}
-	order.HoldFromBirth(bin.ID)
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	// Non-terminal: the fleet has it, and its claim is live.
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "active-claim"
+		o.StationID = "line-1"
+		o.OrderType = "retrieve"
+		o.HoldFromBirth(bin.ID)
+	}, testdb.FleetHas("sg-active-claim"))
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	if err := eng.Recovery().ReleaseTerminalBinClaim(bin.ID, "op"); err == nil {

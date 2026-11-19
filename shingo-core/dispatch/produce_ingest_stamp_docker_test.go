@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
 )
@@ -50,8 +51,9 @@ func TestIngestStamp_DeclaredFullStampsTheBin(t *testing.T) {
 	t.Parallel()
 	d, bin, bp := s1bIngestFixture(t)
 	order := &orders.Order{EdgeUUID: "edge-order-stamp-1", StationID: "test", OrderType: protocol.OrderTypeComplex,
-		Status: "dispatched", Quantity: 1, PayloadCode: bp.Code}
+		Status: protocol.StatusPending, Quantity: 1, PayloadCode: bp.Code}
 	testutil.MustNoErr(t, d.db.CreateOrder(order), "the departing order")
+	testdb.SeedDispatched(t, d.db, order.ID, "sg-edge-order-stamp-1") // departing: the fleet has it
 
 	if lerr := d.lifecycle.ApplyIngestManifest(&protocol.OrderIngestRequest{
 		OrderUUID: "msg-stamp-1", PayloadCode: bp.Code, BinID: bin.ID, BinEpoch: bin.DeltaEpoch,

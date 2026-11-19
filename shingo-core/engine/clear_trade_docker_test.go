@@ -118,9 +118,9 @@ func TestClearTrade_BothLegsGoInOnePassOrNeither(t *testing.T) {
 			t.Parallel()
 			r := newClearRig(t, "CT1"+strings.ToUpper(held[:1]), false)
 			parent, l1, l2 := r.bornTrade(t)
-			stranger := &orders.Order{EdgeUUID: "ct1-stranger-" + held, StationID: "edge.other", OrderType: dispatch.OrderTypeMove,
-				Status: protocol.StatusDispatched, Quantity: 1}
-			testutil.MustNoErr(t, r.db.CreateOrder(stranger), "stranger")
+			stranger := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
+				o.EdgeUUID, o.StationID, o.OrderType, o.Quantity = "ct1-stranger-"+held, "edge.other", dispatch.OrderTypeMove, 1
+			}, testdb.FleetHas("sg-ct1-stranger-"+held))
 			bin := r.p.ID
 			if held == "empty" {
 				bin = r.e.ID

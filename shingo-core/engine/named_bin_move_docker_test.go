@@ -378,8 +378,8 @@ func TestNamedBinMove_HoldsAnExclusiveDropFromItsIssue(t *testing.T) {
 			// A robot's move on its way to the drop holds it (a dispatched order:
 			// no scanner pass acts on it, so its row stands while the move is sent).
 			stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
-				o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeMove, protocol.StatusDispatched, drop.Name
-			})
+				o.OrderType, o.DeliveryNode = protocol.OrderTypeMove, drop.Name
+			}, testdb.FleetHas("sg-"+strings.ToLower(prefix)+"-stranger"))
 			testutil.MustNoErr(t, db.ReserveSlot(drop.ID, stranger.ID), "a stranger holds the drop")
 		}
 		spare := createTestBinAtNode(t, db, "", spot.ID, prefix+"-SPARE")

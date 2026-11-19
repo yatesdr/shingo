@@ -126,7 +126,6 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 // executed at all, by the thing that executes it in production.
 func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	t.Parallel()
-	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testdb.Open(t)
 
 	node := &nodes.Node{Name: "STUCK-LINE", Enabled: true}
@@ -151,12 +150,20 @@ func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 		// created a second ago, which is not the order this fixture is about. In
 		// production the two instants are the same value, which is why this changes
 		// no reading of a real plant.
+		//
+		// A `dispatched` row names the fleet's job in the same write
+		// (orders_dispatched_names_its_job); a resting row names none.
+		job := ""
+		if status == "dispatched" {
+			job = "sg-" + uuid
+		}
 		if _, err := db.DB.Exec(`UPDATE orders
 			SET status=$1,
 			    queue_cause=$4,
+			    vendor_order_id=$5,
 			    updated_at = NOW() - ($2 * INTERVAL '1 second'),
 			    created_at = NOW() - ($2 * INTERVAL '1 second')
-			WHERE id=$3`, status, ageSeconds, o.ID, cause); err != nil {
+			WHERE id=$3`, status, ageSeconds, o.ID, cause, job); err != nil {
 			t.Fatalf("backdate %s: %v", uuid, err)
 		}
 		if _, err := db.DB.Exec(

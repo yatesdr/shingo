@@ -23,10 +23,13 @@ func mkSlotOrder(t *testing.T, sdb *sql.DB, uuid string) int64 {
 }
 
 // mkSlotHolder is an order that ends the test holding a confirmed slot claim, so
-// it is built at dispatched (C1.5: holds-at-rest).
-func mkSlotHolder(t *testing.T, sdb *sql.DB, uuid string) int64 {
+// it is built as the hand holds it: resting pending with its ask open, the
+// create in flight (C1.5: holds-at-rest exempts an order Core is asking for).
+func mkSlotHolder(t *testing.T, db *store.DB, uuid string) int64 {
 	t.Helper()
-	return mkSlotOrderAt(t, sdb, uuid, "dispatched")
+	id := mkSlotOrderAt(t, db.DB, uuid, protocol.StatusPending)
+	testdb.SeedAsk(t, db, id, protocol.StatusPending, "sg-"+uuid)
+	return id
 }
 
 func mkSlotOrderAt(t *testing.T, sdb *sql.DB, uuid string, status protocol.Status) int64 {
@@ -145,7 +148,7 @@ func TestConfirmSlotClaim_OwnerIdempotentHeal(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	slot := mkSlotNode(t, db.DB, "CS-HEAL")
-	order := mkSlotHolder(t, db.DB, "cs-heal-o")
+	order := mkSlotHolder(t, db, "cs-heal-o")
 
 	if err := reservations.AcquireSlot(db.DB, order, slot, "test"); err != nil {
 		t.Fatalf("AcquireSlot: %v", err)
@@ -214,7 +217,7 @@ func seatStagingWithBin(t *testing.T, db *store.DB, prefix string, holder, claim
 func TestConfirmSlotClaim_ClearsABinThePlanTakesFirst(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	order := mkSlotHolder(t, db.DB, "cs-step-own")
+	order := mkSlotHolder(t, db, "cs-step-own")
 	node, bin := seatStagingWithBin(t, db, "CS-STEP-OWN", order, order)
 
 	if err := db.ConfirmSlotClaim(node, order, []int64{bin}); err != nil {
@@ -278,7 +281,7 @@ func TestConfirmSlotClaim_OneTx(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	slot := mkSlotNode(t, db.DB, "CS-ONETX")
-	order := mkSlotHolder(t, db.DB, "cs-onetx-o")
+	order := mkSlotHolder(t, db, "cs-onetx-o")
 
 	// Failure path (no reservation → claim refused → neither half commits).
 	if err := db.ConfirmSlotClaim(slot, order, nil); err == nil {

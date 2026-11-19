@@ -107,7 +107,7 @@ func TestC2bPin_AGroupPickupWhoseBinIsTakenIsReChosen(t *testing.T) {
 	// The stranger takes the chosen slot's bin before this order's reserve.
 	taken, err := db.ListBinsByNode(nodeID(t, db, chosen))
 	testutil.MustNoErr(t, err, "list the chosen slot's bins")
-	stranger := testdb.CreateOrder(t, db, func(s *orders.Order) { s.EdgeUUID = "c2bp1-stranger"; s.Status = StatusDispatched })
+	stranger := testdb.CreateOrder(t, db, func(s *orders.Order) { s.EdgeUUID = "c2bp1-stranger" }, testdb.FleetHas("sg-c2bp1-stranger"))
 	testdb.ClaimBinForTest(t, db, taken[0].ID, stranger.ID)
 
 	for range 3 {
@@ -228,7 +228,7 @@ func TestC2bPin_ARefusedGatedOrderWhosePickupMovesLaneIsSentWithOneWait(t *testi
 	// taken from under it all the same, which the fixture does by hand.
 	sup := prReloadUUID(t, db, "c2bp4-supply")
 	testutil.MustNoErr(t, db.ReleaseReservation(sup.ID, taken[0].ID), "give up the supply's pending row")
-	stranger := testdb.CreateOrder(t, db, func(s *orders.Order) { s.EdgeUUID = "c2bp4-stranger"; s.Status = StatusDispatched })
+	stranger := testdb.CreateOrder(t, db, func(s *orders.Order) { s.EdgeUUID = "c2bp4-stranger" }, testdb.FleetHas("sg-c2bp4-stranger"))
 	testdb.ClaimBinForTest(t, db, taken[0].ID, stranger.ID)
 
 	for range 3 {

@@ -43,7 +43,7 @@ func TestRedirect_ReleasesTheOldDestinationsSlot(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = oldDest.Name
-		o.Status = StatusDispatched
+		o.Status, o.VendorOrderID = StatusDispatched, "sg-redir-slot-leak"
 	})
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testdb.HoldCart(t, db, order.ID, bin.ID)
@@ -96,7 +96,7 @@ func TestRedirect_ToTheSameNodeKeepsItsSlot(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = dest.Name
-		o.Status = StatusDispatched
+		o.Status, o.VendorOrderID = StatusDispatched, "sg-redir-same-node"
 	})
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testdb.HoldCart(t, db, order.ID, bin.ID)

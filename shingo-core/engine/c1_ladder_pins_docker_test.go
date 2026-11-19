@@ -133,8 +133,7 @@ func TestLadder_WalkPath(t *testing.T) {
 	bin := createTestBinAtNode(t, db, bp.Code, storage.ID, "WALK-BIN")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "walk-holder"
-		o.Status = protocol.StatusDispatched
-	})
+	}, testdb.FleetHas("sg-walk-holder"))
 	eng := newTestEngine(t, db, simulator.New())
 	d := eng.Dispatcher()
 

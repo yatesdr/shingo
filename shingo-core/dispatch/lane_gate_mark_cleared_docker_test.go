@@ -43,7 +43,7 @@ func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "dwellcause-blocker"
-		o.Status = StatusDispatched
+		o.Status, o.VendorOrderID = StatusDispatched, "sg-dwellcause-blocker"
 	})
 	testutil.MustNoErr(t, d.TakeLaneOccupancy(blocker.ID, mouth), "somebody is inside the lane")
 

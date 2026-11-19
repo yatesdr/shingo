@@ -12,6 +12,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingo/shared/comingvectors"
+	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -82,9 +83,10 @@ func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 			_, delivery = extractEndpoints(stepsAsResolved(steps))
 		}
 		coreDelivery = strings.TrimPrefix(delivery, prefix)
-		o := &orders.Order{EdgeUUID: prefix + "ROW", StationID: "line-1", OrderType: typ, Status: StatusDispatched,
+		o := &orders.Order{EdgeUUID: prefix + "ROW", StationID: "line-1", OrderType: typ, Status: StatusPending,
 			Quantity: 1, DeliveryNode: delivery, StepsJSON: raw, SourceIntent: SourceIntentForType(typ)}
 		testutil.MustNoErr(t, db.CreateOrder(o), c.Name)
+		testdb.SeedDispatched(t, db, o.ID, "sg-"+prefix+"ROW") // the fleet has it: `dispatched` names the job
 		b := &bins.Bin{BinTypeID: cartType.ID, Label: prefix + "CART", NodeID: &carry.ID, Status: "available"}
 		testutil.MustNoErr(t, db.CreateBin(b), "the row's cart")
 		_, err := db.DB.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, b.ID)

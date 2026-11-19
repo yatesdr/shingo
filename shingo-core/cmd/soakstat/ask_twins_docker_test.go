@@ -24,7 +24,12 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 	testdb.ExpectAskLeftOpen(t, "the pin writes an ask onto a row to ask soakstat's readers about it")
 	db := testdb.Open(t)
 	seed := func(status protocol.Status, asked string) int64 {
-		id := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = status }).ID
+		id := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.Status = status
+			if status == protocol.StatusDispatched {
+				o.VendorOrderID = "sg-twin-fleet" // an order the fleet has
+			}
+		}).ID
 		_, err := db.Exec(`UPDATE orders SET asked_vendor_order_id = $2 WHERE id = $1`, id, asked)
 		testutil.MustNoErr(t, err, "write the ask")
 		return id
@@ -52,7 +57,7 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 
 	c := orderCounts(db, &unrun{})
 	if c.queued.n != 1 || c.inFlight.n != 2 {
-		t.Errorf("order counts: queued %s, in flight %s; want 1 (the row at rest) and 2 (the old in-create order and the asked one)",
+		t.Errorf("order counts: queued %s, in flight %s; want 1 (the row at rest) and 2 (the fleet's and the asked one)",
 			c.queued, c.inFlight)
 	}
 
@@ -70,6 +75,6 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 		bringer[id] = live
 	}
 	if !bringer[before] || !bringer[asking] || bringer[atRest] {
-		t.Errorf("the stranded releaser reads bringers %v; want the old in-create order and the asked one live, the row at rest not", bringer)
+		t.Errorf("the stranded releaser reads bringers %v; want the fleet's order and the asked one live, the row at rest not", bringer)
 	}
 }

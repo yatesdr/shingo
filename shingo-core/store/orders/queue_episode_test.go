@@ -38,8 +38,10 @@ func episodeCodes(t *testing.T, db *sql.DB, orderID int64) [][2]string {
 //
 // So: two waits, two causes. Each lands on a row of its own, at the status the
 // order was resting in, and the first wait's row is not rewritten by the second.
-// (C1: sourcing is no longer a status; the second wait is the fleet refusal's
-// dispatched → queued, the one way back into a wait after a dispatch.)
+// (C1: sourcing is no longer a status. The second wait follows a fleet
+// refusal: Core's ask writes no status and the refusal closes it, so the order
+// never leaves `queued`, and the refusal's cause is a park of its own like any
+// other; `dispatched → queued` is no longer an edge.)
 // Since the orc's Stop 3 ruling (2026-09-26) a park INSERTS its row rather than
 // stamping the row the transition wrote, so the transition rows stay blank and
 // each cause is its own dated row.
@@ -57,19 +59,13 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 		"Storage is being rearranged", string(protocol.QueueStorageRearranging), "lane-held-traffic"),
 		"stamp episode 1")
 
-	// Episode 2: it dispatched, the fleet refused it back into a wait under the
-	// refusal's code, and the next hunt is what is now failing.
-	moved, err := orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusDispatched), "dispatched")
-	testutil.MustNoErr(t, err, "queued→dispatched")
-	if !moved {
-		t.Fatal("queued→dispatched was refused")
-	}
-	_, moved, err = orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusDispatched), string(protocol.StatusQueued),
-		"fleet refused", string(protocol.QueueFleetUnavailable), "", nil)
-	testutil.MustNoErr(t, err, "dispatched→queued")
-	if !moved {
-		t.Fatal("dispatched→queued was refused")
-	}
+	// Episode 2: Core asked the fleet for it and the fleet refused. The ask wrote
+	// no status and the refusal closed it, so the order is still `queued`; the
+	// refusal writes its cause (a park, as DemoteAfterFleetRefusal writes one on
+	// an order already queued), and the next hunt is what is now failing.
+	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
+		"fleet refused", string(protocol.QueueFleetUnavailable), "fleet-error"),
+		"the refusal's cause")
 	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
 		"Waiting for material: PART-A", string(protocol.QueueWaitingForMaterial), "reserve-holding"),
 		"stamp episode 2")
@@ -78,7 +74,6 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 	want := [][2]string{
 		{string(protocol.StatusQueued), ""},
 		{string(protocol.StatusQueued), string(protocol.QueueStorageRearranging)},
-		{string(protocol.StatusDispatched), ""},
 		{string(protocol.StatusQueued), string(protocol.QueueFleetUnavailable)},
 		{string(protocol.StatusQueued), string(protocol.QueueWaitingForMaterial)},
 	}

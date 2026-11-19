@@ -18,11 +18,11 @@ import (
 
 // THE ASK'S SQL READERS, AT THE STORE TIER. Every reader of "Core has claimed
 // this order" answers for a `pending` or `queued` row with an ask open exactly
-// what it answers for the old in-create row (`dispatched`, no vendor id, no
-// ask), and answers a `queued` row at rest the other way, so each assertion is
-// about the ask and not about the status. The rows are written directly: the
-// hand writes `dispatched` until the status moves on the fleet's answer, so no
-// production path builds a resting status with an ask yet.
+// what it answers for an order the fleet has (`dispatched`, naming its job),
+// and answers a `queued` row at rest the other way, so each assertion is about
+// the ask and not about the status. The rows are written directly. (As built
+// before, the reference was the hand's in-create row, `dispatched` with no
+// vendor id; orders_dispatched_names_its_job, v181, refuses that row now.)
 
 // askRow is one order in one of the four states, holding its bin by claim (the
 // hand's hard hold).
@@ -30,6 +30,7 @@ type askRow struct {
 	state  string
 	status protocol.Status
 	asked  string
+	job    string // the fleet's job, on the row the fleet has
 	order  *orders.Order
 	child  *orders.Order // a compound leg in the same state, under its own parent
 	binID  int64
@@ -45,7 +46,7 @@ func seedAskRows(t *testing.T, db *store.DB) askFixture {
 	t.Helper()
 	srcNode, line, bp := testdb.SetupTestData(t, db)
 	rows := []*askRow{
-		{state: "as built before, inside the create", status: protocol.StatusDispatched},
+		{state: "an order the fleet has", status: protocol.StatusDispatched, job: "sg-ask-fleet"},
 		{state: "pending with an ask open", status: protocol.StatusPending, asked: "sg-ask-p"},
 		{state: "queued with an ask open", status: protocol.StatusQueued, asked: "sg-ask-q"},
 		{state: "queued at rest", status: protocol.StatusQueued},
@@ -68,7 +69,8 @@ func seedAskRows(t *testing.T, db *store.DB) askFixture {
 			o.Sequence = 1
 		})
 		for _, id := range []int64{r.order.ID, r.child.ID} {
-			_, err := db.Exec(`UPDATE orders SET status=$2, asked_vendor_order_id=$3 WHERE id=$1`, id, string(r.status), r.asked)
+			_, err := db.Exec(`UPDATE orders SET status=$2, asked_vendor_order_id=$3, vendor_order_id=$4 WHERE id=$1`,
+				id, string(r.status), r.asked, r.job)
 			testutil.MustNoErr(t, err, "seed "+r.state)
 		}
 		_, err := db.Exec(`UPDATE bins SET claimed_by=$2 WHERE id=$1`, bin.ID, r.order.ID)
@@ -116,9 +118,9 @@ func queryIDs(t *testing.T, db *sql.DB, q string, args ...any) []int64 {
 	return ids
 }
 
-// TestAskReaders_SQLAnswersAsTheOldCreateWindow: the SQL readers, each asked of
+// TestAskReaders_SQLAnswersAsForAnOrderTheFleetHas: the SQL readers, each asked of
 // all four rows. The orphan sweep writes, so it is read last.
-func TestAskReaders_SQLAnswersAsTheOldCreateWindow(t *testing.T) {
+func TestAskReaders_SQLAnswersAsForAnOrderTheFleetHas(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "the rows pair states on purpose (a row at rest holding a claimed bin beside asked ones) to ask the readers about each, not a plant state")
 	db := testdb.Open(t)
 	fx := seedAskRows(t, db)
@@ -214,6 +216,11 @@ func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 	if o := mustOrder(t, db, rows[1].order.ID); o.AskedVendorOrderID != rows[1].asked || o.Status != protocol.StatusPending {
 		t.Errorf("a refused yes changed the row: %s, ask %q", o.Status, o.AskedVendorOrderID)
 	}
+	// The order waited before it asked: the yes ends the wait in its statement
+	// (waitEndsSQL), or every board that prints the column shows a wait that is over.
+	_, err = db.Exec(`UPDATE orders SET queue_reason='Waiting for material', queue_code='waiting_for_material' WHERE id=$1`,
+		rows[1].order.ID)
+	testutil.MustNoErr(t, err, "a wait on the asked row")
 	if !yes(rows[1].order.ID, protocol.StatusPending, rows[1].asked) {
 		t.Fatal("the yes write naming the asked job found no row")
 	}
@@ -221,6 +228,9 @@ func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 		o.VendorOrderID != rows[1].asked || o.VendorState != "CREATED" {
 		t.Errorf("the yes left %s, ask %q, vendor %q (%s); want dispatched naming the job with the ask closed",
 			o.Status, o.AskedVendorOrderID, o.VendorOrderID, o.VendorState)
+	}
+	if o := mustOrder(t, db, rows[1].order.ID); o.QueueReason != "" || o.QueueCode != "" {
+		t.Errorf("the yes left the wait %q (%s) on a dispatched order", o.QueueReason, o.QueueCode)
 	}
 
 	won, err := db.TerminalizeOrder(asked.order.ID, protocol.StatusCancelled, "pin: an ending lands")

@@ -113,8 +113,7 @@ func TestPointerWedge_AssertionLeavesHealthyOwnershipAlone(t *testing.T) {
 	//    acquiring set, and its pointer is a fact rather than a plan.
 	gone := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "wedge-ok-dispatched"
-		o.Status = protocol.StatusDispatched
-	})
+	}, testdb.FleetHas("sg-wedge-ok-dispatched"))
 	goneBin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "WEDGE-OK-GONE")
 	testdb.HoldCart(t, db, gone.ID, goneBin.ID)
 

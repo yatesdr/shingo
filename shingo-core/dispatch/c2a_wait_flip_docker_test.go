@@ -51,7 +51,7 @@ func TestC2aPin_ABuriedRetrieveWaitingForParkingHasOneWait(t *testing.T) {
 	target := createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "C2AF-TGT")
 
 	// A robot from another order inside the only lane with room.
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "c2af-inside"; o.Status = StatusDispatched })
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "c2af-inside" }, testdb.FleetHas("sg-c2af-inside"))
 	_, aErr := reservations.AcquireOccupancy(db.DB, inside.ID, sib.ID)
 	testutil.MustNoErr(t, aErr, "occupy the sibling lane")
 

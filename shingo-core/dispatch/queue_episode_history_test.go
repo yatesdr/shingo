@@ -49,8 +49,9 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(nodeA), "node A")
 	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "QEH-BIN-A")
 	other := &orders.Order{EdgeUUID: "qeh-other", StationID: "s", OrderType: OrderTypeRetrieve,
-		Status: StatusDispatched, Quantity: 1}
+		Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create the holding order")
+	testdb.SeedDispatched(t, db, other.ID, "sg-qeh-other") // the fleet has it, holding its bin
 	testdb.ClaimBinForTest(t, db, binA.ID, other.ID)
 
 	steps := []resolvedStep{

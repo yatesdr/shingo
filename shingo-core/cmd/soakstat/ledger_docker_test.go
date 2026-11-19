@@ -88,11 +88,9 @@ func TestLedger_BooksAndClasses(t *testing.T) {
 	soft := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusQueued })
 	seedRes(t, db, soft.ID, "slot", "pending", "", slot[3])
 
-	moving := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
-	_, err := db.Exec(`UPDATE orders SET vendor_order_id = 'sg-ledger-1' WHERE id = $1`, moving.ID)
-	testutil.MustNoErr(t, err, "give the order a fleet id")
+	moving := testdb.CreateOrder(t, db, testdb.FleetHas("sg-ledger-1"))
 	b := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "LDG-MOVING")
-	_, err = db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, moving.ID, b.ID)
+	_, err := db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, moving.ID, b.ID)
 	testutil.MustNoErr(t, err, "claim the bin")
 
 	// (C1: was sourcing; the planner locks the lane inside the acquire, from `pending`.)
@@ -193,7 +191,7 @@ func TestLedger_ReadingsEqualTheSQL(t *testing.T) {
 	seedRes(t, db, order(protocol.StatusQueued, nil), "mouth", "confirmed", "lanegate", laneA)
 	seedRes(t, db, order(protocol.StatusPending, nil), "occupancy", "confirmed", "", laneA)
 	seedRes(t, db, order(protocol.StatusQueued, nil), "mouth", "confirmed", orders.DigLockTags[1], laneA)
-	holdBin(order(protocol.StatusDispatched, nil), "LP-DISPATCHED")
+	holdBin(testdb.CreateOrder(t, db, testdb.FleetHas("sg-lp-dispatched")).ID, "LP-DISPATCHED")
 	asking := func() int64 {
 		id := order(protocol.StatusQueued, nil)
 		_, err := db.Exec(`UPDATE orders SET asked_vendor_order_id = 'sg-lp-ask' WHERE id = $1`, id)

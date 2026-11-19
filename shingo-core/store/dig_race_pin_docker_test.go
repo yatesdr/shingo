@@ -54,16 +54,28 @@ func newDigRace(t *testing.T, prefix string, holderPoints bool) *digRace {
 	return &digRace{db: db, binID: bin.ID, holder: holder, parent: parent, child: child}
 }
 
-// hand is the hand's claim, in its order: the holder's order row (the status
-// CAS, takeHandTx's first row lock), the bin (claimBin), the reservation
-// (Confirm). Returns the open transaction, or the error that refused it.
+// hand is the hand's claim, in its order: the holder's order row (the ask's
+// compare-and-swap, takeHandTx's first row lock; it writes no status), the bin
+// (claimBin), the reservation (Confirm). Returns the open transaction, or the
+// error that refused it.
+//
+// A hand that is not refused leaves its ask open: the race stops inside the
+// create, and nothing answers it. Each database's end-of-test sweep consumes
+// the open-ask opt-out, and a test here can open two races, so the opt-out is
+// registered as a cleanup: cleanups run last-in first-out, so it runs just
+// before this race's own database is swept.
 func (r *digRace) hand(t *testing.T) (*sql.Tx, error) {
 	t.Helper()
 	tx, err := r.db.Begin()
 	testutil.MustNoErr(t, err, "begin the hand")
-	if _, err := tx.Exec(`UPDATE orders SET status = 'dispatched', updated_at = NOW() WHERE id = $1`, r.holder.ID); err != nil {
+	took, err := orders.TakeAskTx(tx, r.holder.ID, r.holder.Status, "sg-"+r.holder.EdgeUUID)
+	if err != nil {
 		tx.Rollback()
 		return nil, err
+	}
+	if !took {
+		tx.Rollback()
+		return nil, errors.New("the hand's ask CAS found the holder moved or already asking")
 	}
 	if err := bins.ClaimTx(tx, r.binID, r.holder.ID); err != nil {
 		tx.Rollback()
@@ -73,6 +85,9 @@ func (r *digRace) hand(t *testing.T) (*sql.Tx, error) {
 		tx.Rollback()
 		return nil, err
 	}
+	t.Cleanup(func() {
+		testdb.ExpectAskLeftOpen(t, "the race stops inside the hand's create; nothing answers its ask")
+	})
 	return tx, nil
 }
 

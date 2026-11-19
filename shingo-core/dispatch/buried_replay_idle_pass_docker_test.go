@@ -58,7 +58,7 @@ func TestBuriedReplay_AnIdlePassWritesNothingAndTellsNobody(t *testing.T) {
 	// Another dig holds the lane for the whole test.
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "idlepass-holder"
-		o.Status = StatusDispatched
+		o.Status, o.VendorOrderID = StatusDispatched, "sg-idlepass-holder"
 		o.PayloadCode = sc.Payload.Code
 	})
 	if !d.laneLock.TryLock(sc.Lane.ID, holder.ID) {

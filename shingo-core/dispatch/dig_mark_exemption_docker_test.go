@@ -406,12 +406,12 @@ func TestDigMarkExemption_SourceLockRetrieveIsAdmittedPastAMarkHolder(t *testing
 		o.OrderType = protocol.OrderTypeRetrieve
 		o.SourceNode = w[2].Name
 		o.DeliveryNode = line.Name
-		o.Status = protocol.StatusDispatched
+		o.Status, o.AskedVendorOrderID = protocol.StatusPending, "sg-dme6-retrieve"
 		o.HoldFromBirth(deeper.ID)
 	})
 	// It holds the bin it points at (EntryHeldBin): an order pointing at a bin it
-	// holds nothing on is a pointer wedge. (C1.5: the lane hold it takes below is
-	// a committed robot's, so the order is dispatched and its bin claimed.)
+	// holds nothing on is a pointer wedge. (C1.5: the lane hold below is taken in
+	// its hand, so the order rests `pending` with its ask open, its bin claimed.)
 	testdb.ClaimBinForTest(t, db, deeper.ID, retrieve.ID)
 
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(retrieve, w[2], line, EntryHeldBin)

@@ -131,9 +131,8 @@ func TestIntakeBuried_CongestionWaits(t *testing.T) {
 			// A dig already in the fleet's hands: dispatched, so the scanner leaves
 			// it alone and its lock stands for the whole test.
 			holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
-				o.Status = dispatch.StatusDispatched
 				o.PayloadCode = sc.Payload.Code
-			})
+			}, testdb.FleetHas("sg-ib-lane-holder"))
 			if !eng.Dispatcher().LaneLock().TryLock(sc.Lane.ID, holder.ID) {
 				t.Fatal("fixture: could not take the lane lock")
 			}

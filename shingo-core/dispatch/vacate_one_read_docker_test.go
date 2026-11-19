@@ -108,11 +108,11 @@ func TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead(t *testing.T) {
 		{Action: protocol.ActionWait, WaitKind: WaitKindVacate},
 		{Action: protocol.ActionDropoff, Node: home.Name, Vacate: &plan.Vacate{Node: home.Name, Bin: e.ID, StampedAt: &stamped}}})
 	testutil.MustNoErr(t, err, "steps")
-	leg := testdb.Holding(&orders.Order{EdgeUUID: "vtl-l1", StationID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusDispatched,
+	leg := testdb.Holding(&orders.Order{EdgeUUID: "vtl-l1", StationID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusPending,
 		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, SourceNode: spot.Name,
 		DeliveryNode: home.Name, StepsJSON: string(steps)}, p.ID)
 	testutil.MustNoErr(t, db.CreateOrder(leg), "the trade leg")
-	testutil.MustNoErr(t, db.UpdateOrderVendor(leg.ID, "V-vtl-l1", "CREATED", ""), "with the fleet")
+	testdb.SeedDispatched(t, db, leg.ID, "V-vtl-l1") // with the fleet: `dispatched` and the job in one write
 	vhLift(t, db, e.ID)
 	vhLift(t, db, p.ID)
 

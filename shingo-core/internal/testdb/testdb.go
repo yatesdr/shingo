@@ -1341,10 +1341,77 @@ func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *order
 	for _, opt := range opts {
 		opt(o)
 	}
+	// `dispatched` MEANS THE FLEET HAS THE JOB, and the row names it
+	// (orders_dispatched_names_its_job, v181). The INSERT does not bind a vendor
+	// id, so a `dispatched` fixture is born `pending` and moved to `dispatched`
+	// with its job in one statement, as the fleet's yes writes it. An order Core
+	// is still asking for is not `dispatched`: it rests pending or queued with an
+	// ask (AskingFor).
+	status, job, asked := o.Status, o.VendorOrderID, o.AskedVendorOrderID
+	if status == protocol.StatusDispatched {
+		if job == "" {
+			t.Fatalf("testdb.CreateOrder: a `dispatched` fixture names the job the fleet has (VendorOrderID, " +
+				"FleetHas); an order Core is still asking for rests pending or queued with an ask (AskingFor)")
+		}
+		o.Status = protocol.StatusPending
+	}
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("testdb.CreateOrder: %v", err)
 	}
+	if status == protocol.StatusDispatched {
+		if _, err := db.DB.Exec(`UPDATE orders SET status=$2, vendor_order_id=$3,
+			vendor_state=CASE WHEN vendor_state='' THEN 'CREATED' ELSE vendor_state END WHERE id=$1`,
+			o.ID, string(status), job); err != nil {
+			t.Fatalf("testdb.CreateOrder: the fleet's job %s: %v", job, err)
+		}
+		o.Status = status
+	}
+	if asked != "" {
+		SeedAsk(t, db, o.ID, o.Status, asked)
+	}
 	return o
+}
+
+// FleetHas is a CreateOrder option: an order the fleet has, `dispatched` and
+// naming its job.
+func FleetHas(job string) func(*orders.Order) {
+	return func(o *orders.Order) {
+		o.Status = protocol.StatusDispatched
+		o.VendorOrderID = job
+	}
+}
+
+// AskingFor is a CreateOrder option: an order Core is asking the fleet for,
+// resting in status (pending or queued) with its ask naming job. The fixture's
+// ask is left open on purpose, so the end-of-test open-ask clause lets it be.
+func AskingFor(status protocol.Status, job string) func(*orders.Order) {
+	return func(o *orders.Order) {
+		o.Status = status
+		o.AskedVendorOrderID = job
+	}
+}
+
+// SeedDispatched writes an existing order `dispatched` naming the fleet's job,
+// in one statement (orders_dispatched_names_its_job).
+func SeedDispatched(t *testing.T, db *store.DB, orderID int64, job string) {
+	t.Helper()
+	if _, err := db.DB.Exec(`UPDATE orders SET status='dispatched', vendor_order_id=$2,
+		vendor_state=CASE WHEN vendor_state='' THEN 'CREATED' ELSE vendor_state END, error_detail='', updated_at=NOW()
+		WHERE id=$1`, orderID, job); err != nil {
+		t.Fatalf("testdb.SeedDispatched(order=%d, %s): %v", orderID, job, err)
+	}
+}
+
+// SeedAsk writes an existing order resting in status with an open ask naming
+// job: Core asking the fleet for it, as the hand leaves it. The fixture's ask
+// is left open on purpose (ExpectAskLeftOpen).
+func SeedAsk(t *testing.T, db *store.DB, orderID int64, status protocol.Status, job string) {
+	t.Helper()
+	if _, err := db.DB.Exec(`UPDATE orders SET status=$2, asked_vendor_order_id=$3, updated_at=NOW() WHERE id=$1`,
+		orderID, string(status), job); err != nil {
+		t.Fatalf("testdb.SeedAsk(order=%d, %s, %s): %v", orderID, status, job, err)
+	}
+	ExpectAskLeftOpen(t, "a fixture writes an ask to stand for a create in flight")
 }
 
 // ClaimBinForTest reserves then claims binID for orderID, mirroring the
@@ -1404,6 +1471,9 @@ func ReserveBin(t *testing.T, db *store.DB, orderID, binID int64) {
 // claims + reservations).
 func SeedOrderStatus(t *testing.T, db *store.DB, orderID int64, status, detail string) {
 	t.Helper()
+	if status == string(protocol.StatusDispatched) {
+		t.Fatalf("testdb.SeedOrderStatus: `dispatched` names the fleet's job; use SeedDispatched (the fleet has it) or SeedAsk (Core is asking)")
+	}
 	if _, err := db.DB.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`,
 		status, detail, orderID); err != nil {
 		t.Fatalf("testdb.SeedOrderStatus(order=%d, %s): %v", orderID, status, err)

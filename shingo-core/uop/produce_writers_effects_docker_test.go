@@ -18,7 +18,6 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/orders"
 	"shingocore/store/plantclaims"
 	"shingocore/uop"
 )
@@ -98,7 +97,8 @@ func setupEffectsFixture(t *testing.T) *effectsFixture {
 }
 
 // heldBin creates a carrier of binTypeID at the seat, optionally
-// labelled payloadCode with uop aboard, claimed by a dispatched order.
+// labelled payloadCode with uop aboard, claimed by an order the fleet has
+// (`dispatched`, naming its job).
 func (f *effectsFixture) heldBin(t *testing.T, label string, binTypeID int64, payloadCode string, uop int) int64 {
 	t.Helper()
 	b := &bins.Bin{BinTypeID: binTypeID, Label: label, NodeID: &f.nodeID, Status: "available"}
@@ -108,7 +108,7 @@ func (f *effectsFixture) heldBin(t *testing.T, label string, binTypeID int64, pa
 			"label bin "+label)
 		testutil.MustNoErr(t, f.db.ConfirmBinManifest(b.ID, fixedProducedAt), "confirm bin "+label)
 	}
-	o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	o := testdb.CreateOrder(t, f.db, testdb.FleetHas("sg-"+label))
 	testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
 	f.name("bin", b.ID, "<bin>")
 	f.name("order", o.ID, "<order>")

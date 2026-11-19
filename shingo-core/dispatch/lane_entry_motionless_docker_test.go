@@ -102,13 +102,13 @@ func TestLaneEntry_MotionlessWitnessStopsBlocking(t *testing.T) {
 	}
 
 	// ── leg 3: the FLAPPING witness still parks ────────────────────────────
-	// The aged witness transitions (queued → dispatched → queued, a fleet refusal
-	// and its park): a real status change writes fresh rows, the clock restarts,
-	// and the witness is live again no matter how old its earlier rows are. (C1:
-	// the flap was queued → sourcing → queued, and `sourcing` is no longer a
-	// status; a park into `queued` carries its cause on its row.)
+	// The aged witness is asked for and refused (a fleet refusal and its park):
+	// the park writes a fresh row, the clock restarts, and the witness is live
+	// again no matter how old its earlier rows are. (C1: the flap was queued →
+	// sourcing → queued, then queued → dispatched → queued; the hand now writes
+	// no status, so a refused queued order stays `queued`, and the one row the
+	// refusal writes is its park's, carrying the cause.)
 	for _, flap := range []struct{ status, code string }{
-		{"dispatched", ""},
 		{"queued", "fleet_unavailable"},
 	} {
 		if _, err := db.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, flap.status, aged.ID); err != nil {

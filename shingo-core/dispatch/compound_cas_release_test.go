@@ -5,46 +5,55 @@ package dispatch
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/reservations"
 )
 
-// stealChildAtOccupancyInsert makes the CAS loss DETERMINISTIC instead of racing
+// stealChildBeforeTheHand makes the CAS loss DETERMINISTIC instead of racing
 // for it.
 //
 // The window this exercises is real but narrow: two callers resolve to the same
-// child (GetNextChildOrder selects `status='pending' … LIMIT 1`), both clear
-// admission, one inserts the occupancy row, and then exactly one of their
-// compare-and-swaps matches a row. Reproducing that with goroutines gives a test
-// that passes identically whether or not the interleaving ever occurred — the
-// vacuous shape compound_concurrency_test.go's header warns about.
+// child (GetNextChildOrder selects the first leg awaiting the fleet … LIMIT 1),
+// both clear admission, and then exactly one of their compare-and-swaps matches
+// a row. Reproducing that with goroutines gives a test that passes identically
+// whether or not the interleaving ever occurred — the vacuous shape
+// compound_concurrency_test.go's header warns about.
 //
-// So the winner is played by a trigger that fires ON the occupancy insert, which
-// is precisely where a winning caller's status write lands: after this caller
-// took the row (dispatch.TakeLaneOccupancy) and before it CASes (the hand's
-// status write, pending → dispatched). The trigger moves the child pending →
-// dispatched, so the CAS finds no `pending` row and returns ConcurrentTransition.
-// That is the loser's arm, entered on demand.
+// So the winner is played at the pre-hand seam (SetPreHandHook), which is
+// precisely where a winning caller's hand lands: after this caller read the
+// child and before its own hand. The claim is the hand's ask CAS (it writes no
+// status), and the occupancy row is taken in the same hand, so the winner opens
+// the child's ask and takes its occupancy row. This caller's ask CAS then finds
+// an ask already open and returns ConcurrentTransition. That is the loser's arm,
+// entered on demand. The winner is stopped inside its create, so its ask stays
+// open.
 //
-// Scoped to occupancy inserts so setup reservations are untouched.
-func stealChildAtOccupancyInsert(t *testing.T, db *store.DB) {
+// It was a trigger on the occupancy insert, standing in for a winner's status
+// write that landed after the take and before the CAS. The hand's CAS moved
+// ahead of its occupancy take, so a trigger there fires after the caller's own
+// CAS, matches no row, and the hand dispatches: the loss it stood for no longer
+// happened.
+func stealChildBeforeTheHand(t *testing.T, d *Dispatcher, db *store.DB, childID, laneID int64) {
 	t.Helper()
-	stmts := []string{
-		`CREATE OR REPLACE FUNCTION test_steal_child() RETURNS trigger AS $$
-		 BEGIN
-		   UPDATE orders SET status='dispatched' WHERE id = NEW.order_id AND status='pending';
-		   RETURN NEW;
-		 END; $$ LANGUAGE plpgsql`,
-		`CREATE TRIGGER test_steal_child AFTER INSERT ON reservations
-		 FOR EACH ROW WHEN (NEW.resource_kind='occupancy')
-		 EXECUTE FUNCTION test_steal_child()`,
-	}
-	for _, s := range stmts {
-		if _, err := db.DB.Exec(s); err != nil {
-			t.Fatalf("install steal-child trigger: %v", err)
+	const winnerJob = "sg-winner-of-the-child"
+	stolen := false
+	d.SetPreHandHook(func(orderID int64) {
+		if orderID != childID || stolen {
+			return
 		}
-	}
+		stolen = true
+		res, err := db.DB.Exec(`UPDATE orders SET asked_vendor_order_id = $2
+			WHERE id = $1 AND status = 'pending' AND asked_vendor_order_id = ''`, childID, winnerJob)
+		testutil.MustNoErr(t, err, "the winner opens the child's ask")
+		if n, rerr := res.RowsAffected(); rerr != nil || n != 1 {
+			t.Fatalf("the winner's ask CAS matched %d rows (%v), want 1", n, rerr)
+		}
+		_, err = reservations.AcquireOccupancy(db.DB, childID, laneID)
+		testutil.MustNoErr(t, err, "the winner takes the child's occupancy row")
+	})
+	testdb.ExpectAskLeftOpen(t, "the winning caller is stopped inside its create")
 }
 
 // TestAdvanceCompound_CASLoserDoesNotClearWinnersOccupancy
@@ -72,7 +81,7 @@ func TestAdvanceCompound_CASLoserDoesNotClearWinnersOccupancy(t *testing.T) {
 	parent, children, lane, _ := twoLegCompound(t, db, "CASREL")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	stealChildAtOccupancyInsert(t, db)
+	stealChildBeforeTheHand(t, d, db, children[0].ID, lane)
 
 	if err := d.AdvanceCompoundOrder(parent.ID); err != nil {
 		t.Fatalf("advance: %v", err)
@@ -102,9 +111,13 @@ func TestAdvanceCompound_CASLoserDoesNotClearWinnersOccupancy(t *testing.T) {
 // and no re-drive can clear it. AdvanceCompoundOrder's own comment (compound.go)
 // states the rule: a hold is only fail-closed if the thing held can be released.
 //
-// The trigger here raises on the status write itself, so the claim returns a
-// plain DB error rather than ConcurrentTransition. (The claim is the hand's
-// `pending → dispatched` CAS, so the trigger fires on `dispatched`.)
+// The trigger here raises on the status write itself, so the write returns a
+// plain DB error rather than ConcurrentTransition. The `dispatched` write is
+// now the fleet's yes, after the hand (ask and occupancy) has committed and the
+// fleet has taken the job: handoverToFleet cancels the job it cannot name,
+// closes the ask, and commitToFleet's non-CAS arm releases the row. (A failure
+// on the hand's own claim, the ask, rolls the occupancy back with the hand and
+// never reaches the release.)
 //
 // MUTATION: widen the guard to `if false` (never release) and this fails — the
 // lane stays occupied by a child that was never dispatched.

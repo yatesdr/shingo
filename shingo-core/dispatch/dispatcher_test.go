@@ -661,8 +661,9 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := testdb.SetupTestData(t, db)
 
-	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusDispatched}
-	db.CreateOrder(order)
+	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusPending}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-unclaim")
 
 	// Create a bin at the storage node
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-UC-1", NodeID: &storageNode.ID, Status: "available"}
@@ -803,8 +804,9 @@ func TestCancelOrder_NonCompound_NoSpuriousChildCancel(t *testing.T) {
 	// status would have skipped cancelCompoundChildren entirely; post-
 	// fix we always call it, but the call must no-op because there are
 	// no child rows.
-	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationID: "line-1", Status: StatusDispatched}
+	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationID: "line-1", Status: StatusPending}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-nc-cancel")
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -924,8 +926,9 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := testdb.SetupTestData(t, db)
 
-	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
-	db.CreateOrder(order)
+	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusPending, SourceNode: lineNode.Name}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-redir-own")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -1022,11 +1025,12 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 		EdgeUUID:     "receipt-err-1",
 		StationID:    "edge.line1",
 		OrderType:    OrderTypeRetrieve,
-		Status:       StatusDispatched,
+		Status:       StatusPending,
 		Quantity:     1,
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-receipt-err-1")
 
 	env := testEnvelope()
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -1358,13 +1362,14 @@ func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 	order := &orders.Order{
 		EdgeUUID:      "redir-noexist",
 		StationID:     "edge.line1",
-		Status:        StatusDispatched,
+		Status:        StatusPending,
 		SourceNode:    lineNode.Name,
 		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-123-test",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"), "set dispatched")
+	// The INSERT does not bind the vendor id: `dispatched` and its job land together.
+	testdb.SeedDispatched(t, db, order.ID, order.VendorOrderID)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -1400,12 +1405,13 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 	order := &orders.Order{
 		EdgeUUID:      "redir-nosrc",
 		StationID:     "edge.line1",
-		Status:        StatusDispatched,
+		Status:        StatusPending,
 		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-456-test",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"), "set dispatched")
+	// The INSERT does not bind the vendor id: `dispatched` and its job land together.
+	testdb.SeedDispatched(t, db, order.ID, order.VendorOrderID)
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

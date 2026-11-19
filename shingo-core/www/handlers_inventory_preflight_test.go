@@ -6,10 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
-	"shingocore/store/orders"
 	"shingocore/store/payloads"
 )
 
@@ -40,7 +38,7 @@ func TestPreflightDoor_Arms(t *testing.T) {
 				free := testdb.CreateBinAtNode(t, f.db, "PART-A", f.sd.StorageNode.ID, "PF-FREE")
 				testutil.MustNoErr(t, f.db.CreatePayload(&payloads.Payload{Code: "PF-HELD", UOPCapacity: 10}), "PF-HELD")
 				held := testdb.CreateBinAtNode(t, f.db, "PF-HELD", f.sd.StorageNode.ID, "PF-HELD-BIN")
-				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				o := testdb.CreateOrder(t, f.db, testdb.FleetHas("sg-pf-held"))
 				testdb.ClaimBinForTest(t, f.db, held.ID, o.ID)
 				return map[string]any{"payloads": []string{"PF-ABSENT", "PF-HELD", "PART-A"}},
 					[]int64{free.ID, held.ID}

@@ -21,9 +21,9 @@ import (
 //
 // As built before, the row read `dispatched` with no vendor id. Now it rests at
 // its waiting status with its ask open, and the arms count an open ask as they
-// counted `dispatched` (orders.PastPreDispatchSQL), or a dig parks a blocker in
+// count an order the fleet has (orders.PastPreDispatchSQL), or a dig parks a blocker in
 // front of a slot a robot is about to be sent to (EntombsASpokenForSlotSQL's
-// measured bubbles). Each reader is asked of the row as it read before, of a `queued` row with
+// measured bubbles). Each reader is asked of an order the fleet has, of a `queued` row with
 // an ask open, and of a `queued` row at rest, which only names the slot and so
 // does not hold it (TestSlotSpokenFor_AParkedOrderThatOnlyNamesASlotDoesNotHoldIt).
 // A claimed pin: it never changed.
@@ -37,13 +37,22 @@ func TestCreateWindow_SpokenForSlotReadersCountTheOrder(t *testing.T) {
 		asked     string
 		spokenFor bool
 	}{
-		{"as built before, inside the create", protocol.StatusDispatched, "", true},
+		{"an order the fleet has", protocol.StatusDispatched, "", true},
 		{"queued with an ask open", protocol.StatusQueued, "sg-cwsf-ask", true},
 		{"queued at rest", protocol.StatusQueued, "", false},
 	} {
 		grp, mouth, deep := spokenForLane(t, db, fmt.Sprintf("CWSF%d", i))
-		id := namingOrder(t, db, fmt.Sprintf("cwsf-%d", i), row.status, deep)
-		if _, err := db.Exec(`UPDATE orders SET asked_vendor_order_id=$2 WHERE id=$1`, id, row.asked); err != nil {
+		status := row.status
+		if status == protocol.StatusDispatched {
+			status = protocol.StatusPending // born resting, then the fleet's yes below
+		}
+		id := namingOrder(t, db, fmt.Sprintf("cwsf-%d", i), status, deep)
+		job := ""
+		if row.status == protocol.StatusDispatched {
+			job = fmt.Sprintf("sg-cwsf-%d", i)
+		}
+		if _, err := db.Exec(`UPDATE orders SET status=$2, asked_vendor_order_id=$3, vendor_order_id=$4 WHERE id=$1`,
+			id, string(row.status), row.asked, job); err != nil {
 			t.Fatalf("%s: write the ask: %v", row.state, err)
 		}
 

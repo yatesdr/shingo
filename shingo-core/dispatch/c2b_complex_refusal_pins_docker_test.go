@@ -49,9 +49,10 @@ func c2bComplexOrder(t *testing.T, uuid string) (*Dispatcher, *mockEmitter, *ord
 }
 
 // A LOST CAS IS ANOTHER CALLER'S ORDER. Between this pass's read and its hand,
-// a second dispatcher takes the order to `dispatched` (the pre-hand seam stands
-// in for it). The hand's status CAS loses and returns ConcurrentTransition:
-// nothing held, nothing sent. The plain path yields (Scanner.yieldLostHand).
+// a second dispatcher's hand takes the order: it opens its ask (the pre-hand
+// seam stands in for it). The hand's ask CAS loses and returns
+// ConcurrentTransition: nothing held, nothing sent. The plain path yields
+// (Scanner.yieldLostHand).
 //
 // It was red at the base: the complex door did not ask, fell through to
 // failOrderInternal("fleet_failed"), and emitted a failure for an order the
@@ -59,13 +60,20 @@ func c2bComplexOrder(t *testing.T, uuid string) (*Dispatcher, *mockEmitter, *ord
 func TestC2bPin_AComplexOrderThatLosesItsCASIsLeftToItsOwner(t *testing.T) {
 	t.Parallel()
 	d, emitter, order, reload := c2bComplexOrder(t, "c2b-lost-cas")
+	const winnerJob = "sg-c2b-lost-cas-winner"
 	d.SetPreHandHook(func(orderID int64) {
 		if orderID == order.ID {
-			// The winner's hand, as it commits: the status, the bin's claim and
-			// its confirmed row. A bare status write would leave a `dispatched`
-			// order unarmored, which the teardown's assertion rightly calls a bug.
-			testdb.SeedOrderStatus(t, d.db, orderID, string(StatusDispatched), "another dispatcher won")
-			_, err := d.db.DB.Exec(`UPDATE bins SET claimed_by = $1 WHERE label = $2`, orderID, "BIN-c2b-lost-cas")
+			// The winner's hand, as it commits: its ask's CAS (the order keeps
+			// its status), the bin's claim and its confirmed row. The winner is
+			// stopped inside its create, so its ask stays open.
+			res, err := d.db.DB.Exec(`UPDATE orders SET asked_vendor_order_id = $2
+				WHERE id = $1 AND status = $3 AND asked_vendor_order_id = ''`, orderID, winnerJob, string(StatusQueued))
+			testutil.MustNoErr(t, err, "the winner opens its ask")
+			if n, rerr := res.RowsAffected(); rerr != nil || n != 1 {
+				t.Fatalf("the winner's ask CAS matched %d rows (%v), want 1", n, rerr)
+			}
+			testdb.ExpectAskLeftOpen(t, "the winning dispatcher is stopped inside its create")
+			_, err = d.db.DB.Exec(`UPDATE bins SET claimed_by = $1 WHERE label = $2`, orderID, "BIN-c2b-lost-cas")
 			testutil.MustNoErr(t, err, "the winner claims the bin")
 			_, err = d.db.DB.Exec(`UPDATE reservations SET state = 'confirmed' WHERE order_id = $1 AND resource_kind = 'bin'`, orderID)
 			testutil.MustNoErr(t, err, "the winner confirms its row")
@@ -78,11 +86,12 @@ func TestC2bPin_AComplexOrderThatLosesItsCASIsLeftToItsOwner(t *testing.T) {
 	for _, f := range emitter.failed {
 		if f.orderID == order.ID {
 			violations = append(violations, fmt.Sprintf("a failure (%s) was emitted for order %d, which "+
-				"another caller had already dispatched", f.errorCode, f.orderID))
+				"another caller already owned", f.errorCode, f.orderID))
 		}
 	}
-	if after := reload(); after.Status != StatusDispatched {
-		violations = append(violations, fmt.Sprintf("the winner's row reads %s, not %s", after.Status, StatusDispatched))
+	if after := reload(); after.Status != StatusQueued || after.AskedVendorOrderID != winnerJob {
+		violations = append(violations, fmt.Sprintf("the winner's row reads %s asking for %q, not %s asking for %q",
+			after.Status, after.AskedVendorOrderID, StatusQueued, winnerJob))
 	}
 	if len(violations) != 0 {
 		t.Fatalf("the loser touched the winner's order: %v", violations)

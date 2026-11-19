@@ -50,14 +50,17 @@ func TestWaitEndsWhenTheOrderMoves(t *testing.T) {
 		t.Error("pending→queued cleared the wait — the order is still waiting")
 	}
 
-	// Moving: queued→dispatched ends it.
-	moved, err = orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusDispatched), "dispatched")
-	testutil.MustNoErr(t, err, "queued→dispatched")
+	// Moving: queued→in_transit ends it. (The CAS writes the status alone, and
+	// `dispatched` names the fleet's job, written by the fleet's yes
+	// (orders_dispatched_names_its_job), so the CAS's moving status here is
+	// in_transit, the other moving status reachable from queued.)
+	moved, err = orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusInTransit), "robot moving")
+	testutil.MustNoErr(t, err, "queued→in_transit")
 	if !moved {
-		t.Fatal("queued→dispatched was refused")
+		t.Fatal("queued→in_transit was refused")
 	}
-	if r, c, k := wait("dispatched"); r != "" || c != "" || k != "" {
-		t.Errorf("dispatched order still carries its wait: reason=%q code=%q cause=%q", r, c, k)
+	if r, c, k := wait("in_transit"); r != "" || c != "" || k != "" {
+		t.Errorf("in-transit order still carries its wait: reason=%q code=%q cause=%q", r, c, k)
 	}
 
 	// The history keeps the wait it had.

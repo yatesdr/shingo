@@ -45,7 +45,9 @@ func TestLadder_NoQueuedWriteWithoutACode(t *testing.T) {
 	})
 
 	t.Run("a fleet-refusal undo with no code leaves no wait without a cause", func(t *testing.T) {
-		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "nq-demote"; o.Status = StatusDispatched })
+		// The refusal door is reached with the ask already closed (refuseAsk), so
+		// the order rests where it was: `pending`, no ask.
+		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "nq-demote"; o.Status = StatusPending })
 		d.DemoteAfterFleetRefusal(o, errDoorRefusal, "", "", QueueParams{})
 		got := testdb.RequireOrder(t, db, "nq-demote")
 		if (got.Status == StatusQueued || got.Status == StatusSourcing) && got.QueueCode == "" {

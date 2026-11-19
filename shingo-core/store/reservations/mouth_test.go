@@ -43,11 +43,15 @@ func laneWithSlots(t *testing.T, db *store.DB, laneName string, slotCount int) i
 	return lane.ID
 }
 
-// holder creates an order at `dispatched` (C1.5): a confirmed mouth row is a hard hold,
-// and only a committed robot holds hard (holds-at-rest).
+// holder creates an order as the hand holds it (C1.5): a confirmed mouth row is
+// a hard hold, taken for the fleet call, so the order rests pending with its ask
+// open (holds-at-rest exempts an order Core is asking the fleet for). The job
+// is named from the order's own unique EdgeUUID.
 func holder(t *testing.T, db *store.DB) *orders.Order {
 	t.Helper()
-	return testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	return testdb.CreateOrder(t, db, func(o *orders.Order) {
+		testdb.AskingFor(protocol.StatusPending, "sg-"+o.EdgeUUID)(o)
+	})
 }
 
 func mouthCount(t *testing.T, db *store.DB, laneID int64) int {
