@@ -35,10 +35,16 @@ type askRow struct {
 	binID  int64
 }
 
-func seedAskRows(t *testing.T, db *store.DB) (rows []*askRow, src string) {
+// askFixture is the four rows and the source node they draw from.
+type askFixture struct {
+	rows []*askRow
+	src  string
+}
+
+func seedAskRows(t *testing.T, db *store.DB) askFixture {
 	t.Helper()
 	srcNode, line, bp := testdb.SetupTestData(t, db)
-	rows = []*askRow{
+	rows := []*askRow{
 		{state: "today, inside the create", status: protocol.StatusDispatched},
 		{state: "pending with an ask open", status: protocol.StatusPending, asked: "sg-ask-p"},
 		{state: "queued with an ask open", status: protocol.StatusQueued, asked: "sg-ask-q"},
@@ -68,7 +74,7 @@ func seedAskRows(t *testing.T, db *store.DB) (rows []*askRow, src string) {
 		_, err := db.Exec(`UPDATE bins SET claimed_by=$2 WHERE id=$1`, bin.ID, r.order.ID)
 		testutil.MustNoErr(t, err, "claim the bin for "+r.state)
 	}
-	return rows, srcNode.Name
+	return askFixture{rows: rows, src: srcNode.Name}
 }
 
 func idsHave(ids []int64, id int64) bool {
@@ -93,7 +99,8 @@ func queryIDs(t *testing.T, db *sql.DB, q string, args ...any) []int64 {
 	rows, err := db.Query(q, args...)
 	testutil.MustNoErr(t, err, q)
 	defer rows.Close()
-	cols, _ := rows.Columns()
+	cols, err := rows.Columns()
+	testutil.MustNoErr(t, err, "columns")
 	var ids []int64
 	for rows.Next() {
 		dest := make([]any, len(cols))
@@ -113,7 +120,8 @@ func queryIDs(t *testing.T, db *sql.DB, q string, args ...any) []int64 {
 // all four rows. The orphan sweep writes, so it is read last.
 func TestAskReaders_SQLAnswersAsTodaysCreateWindow(t *testing.T) {
 	db := testdb.Open(t)
-	rows, src := seedAskRows(t, db)
+	fx := seedAskRows(t, db)
+	rows, src := fx.rows, fx.src
 
 	type reader struct {
 		name string
@@ -169,7 +177,7 @@ func TestAskReaders_SQLAnswersAsTodaysCreateWindow(t *testing.T) {
 // statement, and one naming any other job leaves it.
 func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 	db := testdb.Open(t)
-	rows, _ := seedAskRows(t, db)
+	rows := seedAskRows(t, db).rows
 	asked := rows[2] // queued with an ask open
 	history := func(id int64) int {
 		var n int
@@ -182,7 +190,7 @@ func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 	_, moved, err := orders.UpdateStatusFromWithReason(db.DB, asked.order.ID, string(protocol.StatusQueued),
 		string(protocol.StatusPending), "pin", "", "", nil)
 	testutil.MustNoErr(t, err, "the status CAS")
-	after, _ := db.GetOrder(asked.order.ID)
+	after := mustOrder(t, db, asked.order.ID)
 	if moved || after.Status != before.Status || after.Version != before.Version || history(asked.order.ID) != h {
 		t.Errorf("the status CAS moved an asked row: moved %v, %s v%d -> %s v%d, history %d -> %d",
 			moved, before.Status, before.Version, after.Status, after.Version, h, history(asked.order.ID))
@@ -194,21 +202,28 @@ func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 	}
 
 	testutil.MustNoErr(t, db.UpdateOrderVendor(rows[1].order.ID, "sg-some-other-job", "CREATED", ""), "vendor write")
-	if o, _ := db.GetOrder(rows[1].order.ID); o.AskedVendorOrderID != rows[1].asked {
+	if o := mustOrder(t, db, rows[1].order.ID); o.AskedVendorOrderID != rows[1].asked {
 		t.Errorf("a vendor write naming another job changed the ask to %q", o.AskedVendorOrderID)
 	}
 	testutil.MustNoErr(t, db.UpdateOrderVendor(rows[1].order.ID, rows[1].asked, "CREATED", ""), "vendor write")
-	if o, _ := db.GetOrder(rows[1].order.ID); o.AskedVendorOrderID != "" || o.VendorOrderID != rows[1].asked {
+	if o := mustOrder(t, db, rows[1].order.ID); o.AskedVendorOrderID != "" || o.VendorOrderID != rows[1].asked {
 		t.Errorf("the vendor write naming the asked job left ask %q, vendor %q", o.AskedVendorOrderID, o.VendorOrderID)
 	}
 
 	won, err := db.TerminalizeOrder(asked.order.ID, protocol.StatusCancelled, "pin: an ending lands")
 	testutil.MustNoErr(t, err, "terminalize")
-	if o, _ := db.GetOrder(asked.order.ID); !won || o.Status != protocol.StatusCancelled || o.AskedVendorOrderID != asked.asked {
+	if o := mustOrder(t, db, asked.order.ID); !won || o.Status != protocol.StatusCancelled || o.AskedVendorOrderID != asked.asked {
 		t.Errorf("the ending: won %v, status %s, ask %q; want cancelled with the ask kept as the record",
 			won, o.Status, o.AskedVendorOrderID)
 	}
 	if strings.TrimSpace(asked.asked) == "" {
 		t.Fatal("fixture: the asked row has no ask")
 	}
+}
+
+func mustOrder(t *testing.T, db *store.DB, id int64) *orders.Order {
+	t.Helper()
+	o, err := db.GetOrder(id)
+	testutil.MustNoErr(t, err, "read the order")
+	return o
 }

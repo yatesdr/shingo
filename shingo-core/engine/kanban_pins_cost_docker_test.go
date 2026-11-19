@@ -80,7 +80,9 @@ const (
 	// 60 since Core tells the station from the write: the dispatch's tell, one
 	// INSERT outbox in the hand's transaction. The vendor write that names no
 	// robot stays one statement (UpdateVendorKeepingRobot).
-	parkedPass = 60
+	// 61 while the hand writes both `dispatched` and the ask it holds for the
+	// fleet's answer (orders.SetAskTx, one UPDATE in the hand's transaction).
+	parkedPass = 61
 	// cancelReturnDoor is the cancel-return's store of a window's cancelled push into
 	// K, Z45 short: the position's loader, the door's one read, Z45's three.
 	cancelReturnDoor = 5

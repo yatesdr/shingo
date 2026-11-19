@@ -37,7 +37,10 @@ func TestAskReaders_AnOpenAskAnswersAsTodaysCreateWindow(t *testing.T) {
 	// pickup (0); one standing at its first wait enters after it (2).
 	steps := []resolvedStep{{Action: protocol.ActionPickup}, {Action: protocol.ActionWait}, {Action: protocol.ActionDropoff}}
 	entry := func(o *orders.Order) int {
-		i, _ := entryStepIndex(o, steps)
+		i, ok := entryStepIndex(o, steps)
+		if !ok {
+			return -1
+		}
 		return i
 	}
 	readers := []struct {

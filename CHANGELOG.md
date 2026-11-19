@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v58 first, at every Edge of the plant; then Core v179. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit. A box an earlier tag install left on a release needs `--tag` this once.
+Deploy: Edge v58 first, at every Edge of the plant; then Core v179–v180. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit. A box an earlier tag install left on a release needs `--tag` this once.
 
 - The station hears every status Core writes, from the write itself: a Core-side release reads in transit
 - An order Core has dispatched reads dispatched on its tile, with its robot once the fleet names one

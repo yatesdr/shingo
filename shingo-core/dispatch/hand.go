@@ -292,7 +292,7 @@ func (d *Dispatcher) acquireHands(takes []handTake) (int, error) {
 }
 
 // takeHandTx is one take on the hand's transaction, after its lanes' advisory
-// locks: the status CAS, the ask, slots, bins, lane mouths, occupancy. It
+// locks: the status CAS, slots, bins, lane mouths, occupancy, the ask. It
 // returns the CAS's finish, to run after the commit.
 func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 	order := t.order
@@ -316,21 +316,6 @@ func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 		}
 		return nil, &StatusWriteFailed{OrderID: order.ID, Err: err}
 	}
-	// THE ASK, on the row the CAS just locked: the vendor order id Core is about
-	// to ask the fleet for, held until the fleet answers (orders.SetAskTx). The
-	// CAS refuses a row that already carries one, so it finds none here.
-	if asked, err := d.db.SetOrderAskTx(tx, order.ID, t.ask); err != nil || !asked {
-		if err == nil {
-			err = fmt.Errorf("the row already carries an ask")
-		}
-		return nil, &StatusWriteFailed{OrderID: order.ID, Err: fmt.Errorf("open the ask %s: %w", t.ask, err)}
-	}
-	moved := finish
-	finish = func() {
-		moved()
-		order.AskedVendorOrderID = t.ask
-	}
-
 	for _, s := range t.hand.Slots {
 		if err := store.ConfirmSlotClaimWithPartnerTx(tx, s.Node.ID, order.ID, s.TakenFirst, s.Partner, s.PartnerTaken); err != nil {
 			if NotAWait(err) {
@@ -387,7 +372,20 @@ func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 			return nil, fmt.Errorf("take occupancy for order %d on lane %d: %w", order.ID, laneID, err)
 		}
 	}
-	return finish, nil
+	// THE ASK, last, on the row the CAS locked: the vendor order id Core is about
+	// to ask the fleet for, held until the fleet answers (orders.SetAskTx). Last,
+	// so a hand a leg refuses writes no ask it would roll back. The CAS refuses a
+	// row that already carries one, so it finds none here.
+	if asked, err := d.db.SetOrderAskTx(tx, order.ID, t.ask); err != nil || !asked {
+		if err == nil {
+			err = fmt.Errorf("the row already carries an ask")
+		}
+		return nil, &StatusWriteFailed{OrderID: order.ID, Err: fmt.Errorf("open the ask %s: %w", t.ask, err)}
+	}
+	return func() {
+		finish()
+		order.AskedVendorOrderID = t.ask
+	}, nil
 }
 
 // StatusWriteFailed is a hand whose `→ dispatched` write failed for a reason
