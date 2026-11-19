@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -105,6 +106,34 @@ func (d *Dispatcher) reindexCartsForSplice(order *orders.Order, spliced []resolv
 			"the wrong cart. It refuses rather than wedges, but the answer never changes. This is a "+
 			"defect in the shift, not a plant condition, and it will not clear on a retry",
 			order.ID, vErr)
+	}
+	return nil
+}
+
+// unspliceCarts is reindexCartsForSplice run backwards, for a writer about to
+// store a plan without the waits the stored one carries: each row on a spliced
+// position goes back to the position its step has without them. The map is
+// read off the stored plan (spliceStepShift) and inverted. Nothing moves when
+// the stored plan carries no inserted wait, or when the plan being written
+// keeps its own (its positions are the stored ones).
+func (d *Dispatcher) unspliceCarts(order *orders.Order, unspliced []resolvedStep) error {
+	if len(spliceStepShift(unspliced)) != 0 {
+		return nil
+	}
+	var stored []resolvedStep
+	if err := json.Unmarshal([]byte(order.StepsJSON), &stored); err != nil {
+		return nil // an unreadable stored plan names no positions to move from
+	}
+	back := map[int]int{}
+	for pre, post := range spliceStepShift(stored) {
+		back[post] = pre
+	}
+	n, err := d.moveCarts(order, back)
+	if err != nil {
+		return fmt.Errorf("unsplice the carts of order %d: %w", order.ID, err)
+	}
+	if n > 0 {
+		d.dbg("splice: order %d's carts moved off the spliced plan (%d position(s) moved)", order.ID, n)
 	}
 	return nil
 }

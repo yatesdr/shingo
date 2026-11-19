@@ -1275,7 +1275,20 @@ func (d *Dispatcher) SkipOrder(order *orders.Order, code, detail string) {
 // widening silently means re-deriving it forever if the plan ever contains
 // something unmarshalable, with no cause on the row and no line in the log --
 // and every neighbouring write in this block already logs its failure.
+//
+// A SPLICED PLAN GOES WITH ITS ROWS. A create the fleet refused leaves the
+// spliced plan stored and the order's rows on its positions (Q6); a pass works
+// the plan without the waits (withoutInsertedWaits), so writing its result
+// drops them, and every row at or after a wait is then one or more steps past
+// where its lift now is, the last ones past the end of the plan. The rows move
+// back first (unspliceCarts), and a plan whose rows could not be moved is not
+// written: the stored pair stays as it was and the next pass re-widens.
 func (d *Dispatcher) persistWidenedPlan(order *orders.Order, newSteps []resolvedStep) {
+	if err := d.unspliceCarts(order, newSteps); err != nil {
+		log.Printf("dispatch: complex order %d: its rows could not leave the spliced plan: %v "+
+			"(the plan is not rewritten this pass)", order.ID, err)
+		return
+	}
 	stepsJSON, mErr := json.Marshal(newSteps)
 	if mErr != nil {
 		log.Printf("dispatch: marshal widened steps for complex order %d: %v", order.ID, mErr)

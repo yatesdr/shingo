@@ -1,6 +1,8 @@
 package store
 
 import (
+	"fmt"
+
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store/orders"
@@ -77,7 +79,10 @@ func (db *DB) BinTypeForOrder(orderID int64, group string) (*int64, protocol.Car
 		return nil, "", nil
 	}
 
-	cart, several := cartIntoGroup(order, group)
+	cart, several, err := cartIntoGroup(order, group)
+	if err != nil {
+		return nil, "", err
+	}
 	if several && cart == nil {
 		return nil, "", nil // several carts, none set down into group: no answer
 	}
@@ -145,18 +150,26 @@ func (db *DB) heldBinType(orderID int64) (*int64, protocol.CarrierState, error) 
 // or of several the one whose row sets it down into group — the drop step
 // names the group (its node, or its group stamp beside a node the plan
 // resolved). several reports an order carrying more than one cart.
-func cartIntoGroup(order *orders.Order, group string) (cart *int64, several bool) {
-	only, err := order.OnlyBin()
-	if err == nil {
-		return only, false
+//
+// A row whose drop step lies outside the plan is an error, not a guess: the
+// rows describe a different plan than the stored one (a writer moved the plan
+// and not its rows), and the caller resolves untyped and says so.
+func cartIntoGroup(order *orders.Order, group string) (cart *int64, several bool, err error) {
+	only, oerr := order.OnlyBin()
+	if oerr == nil {
+		return only, false, nil
 	}
 	steps := domain.OrderPlan(order)
 	for _, c := range order.FinalDrops() {
+		if *c.DropStep < 0 || *c.DropStep >= len(steps) {
+			return nil, true, fmt.Errorf("order %d's row for cart %d sets it down at step %d, but its plan has %d steps",
+				order.ID, c.BinID, *c.DropStep, len(steps))
+		}
 		s := steps[*c.DropStep]
 		if group != "" && (s.Node == group || s.Group == group) {
 			b := c.BinID
-			return &b, true
+			return &b, true, nil
 		}
 	}
-	return nil, true
+	return nil, true, nil
 }
