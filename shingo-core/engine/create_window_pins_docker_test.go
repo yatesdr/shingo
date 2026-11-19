@@ -81,19 +81,20 @@ func cwAnomalies(t *testing.T, db *store.DB, orderID int64) []string {
 
 // TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag: Core dies inside an order's
 // create, once before the fleet answers and once after the fleet took the job.
-// Either way the row is what the hand committed: `dispatched`, no vendor id,
-// the bin claimed. A restarted Core does not track it (no vendor id), does not
-// scan it (not acquiring), does not ask the fleet again, and names it in no
-// anomaly; only the 30-minute stuck flag finds it. After the fleet took the
-// job, the fleet holds a job Core cannot name. The asked id survives only in
-// the history row's sentence.
+// Either way the row is what the hand committed: its waiting status (`pending`
+// here), the ask naming the job it asked for, no vendor id, the bin claimed. A
+// restarted Core does not track it (no vendor id), does not scan it (an ask is
+// open, so it is not acquiring), does not ask the fleet again, and names it in
+// no anomaly; only the 30-minute stuck flag finds it. After the fleet took the
+// job, the fleet holds a job Core cannot name but by the ask. No history row
+// names the asked id: `dispatched` is the fleet's yes, which never came.
 //
 // It also asks the one reader the reviews missed, isParkedOnDeckOrder, inside
-// the create: today it reads the order as in flight.
+// the create: it reads the order as in flight.
 //
-// The shape changes when the claim becomes a column (the row reads its waiting
-// status with the claim set), and it flips when boot lists the claim as an
-// anomaly naming the asked id.
+// As built before, the row read `dispatched` with no vendor id and only the
+// hand's history sentence carried the asked id. It flips when boot lists an
+// open ask as an anomaly naming the asked id.
 func TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -129,9 +130,9 @@ func TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag(t *testing.T) {
 			if len(asked) != 1 {
 				t.Fatalf("the fleet was asked %d time(s) before the death, want 1", len(asked))
 			}
-			if o.Status != protocol.StatusDispatched || o.VendorOrderID != "" {
-				t.Fatalf("after the death the row reads %s vendor %q; as built the hand left `dispatched` with no vendor id",
-					o.Status, o.VendorOrderID)
+			if o.Status != protocol.StatusPending || o.VendorOrderID != "" || o.AskedVendorOrderID != asked[0] {
+				t.Fatalf("after the death the row reads %s vendor %q ask %q; want pending, no vendor id, asking %s",
+					o.Status, o.VendorOrderID, o.AskedVendorOrderID, asked[0])
 			}
 			if b, err := db.GetBin(bin.ID); err != nil || b.ClaimedBy == nil || *b.ClaimedBy != o.ID {
 				t.Errorf("the dead hand's bin claim is gone (bin %+v, err %v); a crash keeps its holds", b, err)
@@ -145,8 +146,9 @@ func TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag(t *testing.T) {
 			eng2.RunFulfillmentScan()
 
 			o = testdb.RequireOrder(t, db, "cw-crash")
-			if o.Status != protocol.StatusDispatched || o.VendorOrderID != "" {
-				t.Errorf("after the restart the row reads %s vendor %q, want it untouched", o.Status, o.VendorOrderID)
+			if o.Status != protocol.StatusPending || o.VendorOrderID != "" || o.AskedVendorOrderID != asked[0] {
+				t.Errorf("after the restart the row reads %s vendor %q ask %q, want it untouched",
+					o.Status, o.VendorOrderID, o.AskedVendorOrderID)
 			}
 			if got := f.Asked(); len(got) != 1 {
 				t.Errorf("the restarted Core asked the fleet again: %v", got)
@@ -169,12 +171,10 @@ func TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag(t *testing.T) {
 			if err != nil {
 				t.Fatalf("history: %v", err)
 			}
-			named := false
 			for _, h := range hist {
-				named = named || (h.Status == protocol.StatusDispatched && h.Detail == fmt.Sprintf("vendor order %s created", asked[0]))
-			}
-			if !named {
-				t.Errorf("no history row names the asked id %s; as built only the hand's sentence carries it", asked[0])
+				if h.Status == protocol.StatusDispatched {
+					t.Errorf("a `dispatched` history row (%q) for a job the fleet never confirmed", h.Detail)
+				}
 			}
 			if got := cwAnomalies(t, db, o.ID); len(got) != 0 {
 				t.Errorf("anomalies naming the order straight after the restart = %v, want none as built", got)
@@ -187,14 +187,14 @@ func TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag(t *testing.T) {
 	}
 }
 
-// TestRefusingFleet_TheStuckFlagNeverAgesIt: a fleet that refuses an order on
-// every pass for more than half an hour. Each pass writes the hand's
-// `dispatched` row and the park's `queued` row, and the stuck flag ages an
-// order by its newest history row, so it never finds an order the robot
-// system has refused all along. A FLEET pin: it flips when a refused pass
-// writes no history, and the flag then finds the order 30 minutes after its
-// first park.
-func TestRefusingFleet_TheStuckFlagNeverAgesIt(t *testing.T) {
+// TestRefusingFleet_TheStuckFlagAgesItFromTheFirstPark: a fleet that refuses an
+// order on every pass for more than half an hour. The first refusal parks it
+// `queued`; a refusal after that, under the same wait, writes no history row,
+// and the stuck flag ages an order by its newest history row, so it finds the
+// order 30 minutes after its first park. A FLEET pin: as built before, each pass
+// wrote the hand's `dispatched` row and the park's `queued` row, and the flag
+// never found an order the robot system had refused all along.
+func TestRefusingFleet_TheStuckFlagAgesItFromTheFirstPark(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -214,8 +214,8 @@ func TestRefusingFleet_TheStuckFlagNeverAgesIt(t *testing.T) {
 	if got := len(f.Asked()); got < 5 {
 		t.Fatalf("the fleet was asked %d times, want a create every pass (5)", got)
 	}
-	if got := cwAnomalies(t, db, o.ID); len(got) != 0 {
-		t.Errorf("anomalies naming an order refused for forty minutes = %v; as built the stuck flag never ages it", got)
+	if got := cwAnomalies(t, db, o.ID); strings.Join(got, ",") != "active_order_stuck" {
+		t.Errorf("anomalies naming an order refused for forty minutes = %v, want the stuck flag", got)
 	}
 }
 

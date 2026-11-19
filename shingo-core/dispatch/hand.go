@@ -203,31 +203,31 @@ func HandHeld(d heldHand, order *orders.Order, binID int64, sourceNode *nodes.No
 }
 
 // acquireHand takes the hand, the occupancy of every lane `entering` lies in,
-// and the `dispatched` status, in one transaction.
+// and the order's ask (the vendor order id it is about to ask the fleet for), in
+// one transaction. The order keeps its status: `dispatched` is the fleet's yes
+// (LifecycleService.Dispatch).
 //
 // Returns:
-//   - nil: everything is held and the order is `dispatched` (in memory too);
+//   - nil: everything is held and the ask is open (in memory too);
 //   - *HandRefusal: a leg refused; nothing is held;
 //   - reservations.ErrOwnerEnded or ErrNotTheNamedBin (wrapped): the order ended,
 //     or the one bin it names has left its source; nothing is held; not a wait;
-//   - ConcurrentTransition: the order moved under us; nothing is held; yield;
+//   - ConcurrentTransition: the order moved under us, or another caller is
+//     asking for it; nothing is held; yield;
 //   - any other error: a database fault; nothing is held.
-func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.Node, ask, actor, reason string) error {
-	_, err := d.acquireHands([]handTake{{order: order, hand: h, entering: entering, ask: ask, actor: actor, reason: reason}})
+func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.Node, ask string) error {
+	_, err := d.acquireHands([]handTake{{order: order, hand: h, entering: entering, ask: ask}})
 	return err
 }
 
 // handTake is one order's part of a hand transaction: its hand, the nodes its
-// first segment enters (their lanes' occupancy), the vendor order id it is about
-// to ask the fleet for (its ask, orders.SetAskTx), and the `dispatched` write's
-// actor and reason.
+// first segment enters (their lanes' occupancy), and the vendor order id it is
+// about to ask the fleet for (its ask, orders.TakeAskTx).
 type handTake struct {
 	order    *orders.Order
 	hand     Hand
 	entering []*nodes.Node
 	ask      string
-	actor    string
-	reason   string
 }
 
 // acquireHands takes several orders' hands in ONE transaction, in the order
@@ -292,29 +292,34 @@ func (d *Dispatcher) acquireHands(takes []handTake) (int, error) {
 }
 
 // takeHandTx is one take on the hand's transaction, after its lanes' advisory
-// locks: the status CAS, slots, bins, lane mouths, occupancy, the ask. It
-// returns the CAS's finish, to run after the commit.
+// locks: the ask's compare-and-swap, slots, bins, lane mouths, occupancy. It
+// returns what to do to the order in hand after the commit.
 func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 	order := t.order
 	if t.ask == "" {
 		return nil, &StatusWriteFailed{OrderID: order.ID, Err: errors.New("the hand names no vendor order id to ask for")}
 	}
-	// THE STATUS CAS IS THE FIRST ROW LOCK: the detector (SYNTH §2.4). Two
-	// dispatchers can reach one order: a hand door queues it, and a scanner pass
-	// takes it through the held-bin arm before the door's own hand. When the CAS
-	// came last, the loser was stopped earlier, at the bin leg, because the
-	// winner already held the bin, and a bin refusal reads as "wait for
-	// material": the door released the winner's reservation and the scanner
+	if !protocol.IsValidTransition(order.Status, StatusDispatched) {
+		return nil, &StatusWriteFailed{OrderID: order.ID, Err: IllegalTransition{From: order.Status, To: StatusDispatched}}
+	}
+	// THE ASK'S COMPARE-AND-SWAP IS THE FIRST ROW LOCK: the detector (SYNTH
+	// §2.4). Two dispatchers can reach one order: a hand door queues it, and a
+	// scanner pass takes it through the held-bin arm before the door's own hand.
+	// When the CAS came last, the loser was stopped earlier, at the bin leg,
+	// because the winner already held the bin, and a bin refusal reads as "wait
+	// for material": the door released the winner's reservation and the scanner
 	// parked a dispatched order. First, the loser gets ConcurrentTransition and
-	// yields. Same statements, same transaction; only the order moved.
-	finish, err := d.lifecycle.transitionTx(tx, order, StatusDispatched, Event{Actor: t.actor, Reason: t.reason})
+	// yields. It writes no status, history, version or tell: the order rests where
+	// it rested until the fleet answers.
+	asked, err := d.db.TakeOrderAskTx(tx, order.ID, order.Status, t.ask)
 	if err != nil {
-		if IsConcurrentTransition(err) {
-			log.Printf("dispatch: order %d moved under us before the fleet order was created — "+
-				"NOT dispatching (another caller owns it now): %v", order.ID, err)
-			return nil, err
-		}
-		return nil, &StatusWriteFailed{OrderID: order.ID, Err: err}
+		return nil, &StatusWriteFailed{OrderID: order.ID, Err: fmt.Errorf("open the ask %s: %w", t.ask, err)}
+	}
+	if !asked {
+		cerr := ConcurrentTransition{OrderID: order.ID, Expected: order.Status, To: StatusDispatched}
+		log.Printf("dispatch: order %d moved under us, or another caller is asking for it, before the fleet "+
+			"order was created — NOT dispatching (another caller owns it now): %v", order.ID, cerr)
+		return nil, cerr
 	}
 	for _, s := range t.hand.Slots {
 		if err := store.ConfirmSlotClaimWithPartnerTx(tx, s.Node.ID, order.ID, s.TakenFirst, s.Partner, s.PartnerTaken); err != nil {
@@ -372,20 +377,7 @@ func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 			return nil, fmt.Errorf("take occupancy for order %d on lane %d: %w", order.ID, laneID, err)
 		}
 	}
-	// THE ASK, last, on the row the CAS locked: the vendor order id Core is about
-	// to ask the fleet for, held until the fleet answers (orders.SetAskTx). Last,
-	// so a hand a leg refuses writes no ask it would roll back. The CAS refuses a
-	// row that already carries one, so it finds none here.
-	if asked, err := d.db.SetOrderAskTx(tx, order.ID, t.ask); err != nil || !asked {
-		if err == nil {
-			err = fmt.Errorf("the row already carries an ask")
-		}
-		return nil, &StatusWriteFailed{OrderID: order.ID, Err: fmt.Errorf("open the ask %s: %w", t.ask, err)}
-	}
-	return func() {
-		finish()
-		order.AskedVendorOrderID = t.ask
-	}, nil
+	return func() { order.AskedVendorOrderID = t.ask }, nil
 }
 
 // StatusWriteFailed is a hand whose `→ dispatched` write failed for a reason

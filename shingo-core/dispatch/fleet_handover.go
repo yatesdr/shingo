@@ -149,7 +149,7 @@ func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderReq
 	if d.preHandHook != nil {
 		d.preHandHook(order.ID)
 	}
-	if err := d.acquireHand(order, hand, entering, req.OrderID, actor, fmt.Sprintf("vendor order %s created", req.OrderID)); err != nil {
+	if err := d.acquireHand(order, hand, entering, req.OrderID); err != nil {
 		return err // nothing held, nothing sent; the caller parks a refusal and yields a lost CAS
 	}
 	if err := d.handoverToFleet(order, req, actor); err != nil {
@@ -290,98 +290,117 @@ func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.Cr
 func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string) error {
 	vendorOrderID := req.OrderID
 
-	// 1. CLAIM — done before this function is called. The status CAS is the
-	// hand's first row lock (acquireHand, after only its lanes' advisory locks),
-	// committed together with the slot, the bins, the lane mouths and the
-	// occupancy. Everything the old comment here said
-	// about it still holds, it just holds there: a lost CAS stops the caller
-	// having touched nothing outside the database, and a failed claim of any kind
-	// — a lost race, an illegal transition, a database error — aborts before the
-	// fleet is asked. No fleet order is created for an order whose hand did not
-	// commit.
+	// 1. CLAIM — done before this function is called. The ask's compare-and-swap
+	// is the hand's first row lock (acquireHand, after only its lanes' advisory
+	// locks), committed together with the slot, the bins, the lane mouths and the
+	// occupancy. A lost CAS stops the caller having touched nothing outside the
+	// database, and a failed claim of any kind — a lost race, an illegal
+	// transition, a database error — aborts before the fleet is asked. No fleet
+	// order is created for an order whose hand did not commit. The order keeps
+	// the status it rests in, and names the job it is about to ask for.
 
-	// 2. COMMIT. The order is claimed; this is where a robot is actually spent.
+	// 2. ASK. This is where a robot is actually spent.
 	if _, err := d.backend.CreateOrder(req); err != nil {
-		// The fleet answered no: the ask closes here, before the caller disposes
-		// of the refusal, so the caller's own status write (a park, a fail) finds
-		// a row it may move. The status is NOT rolled back by this function. If
-		// the caller's own write fails, nothing ends it on a timer: Diagnostics
-		// flags it stuck after 30 minutes (active_order_stuck) for a person.
-		log.Printf("dispatch: order %d claimed but the fleet refused the create: %v (nothing is moving; "+
-			"the order is left claimed for its caller to fail)", order.ID, err)
-		d.closeAsk(order, vendorOrderID, "the fleet refused the create")
-		return err
-	}
-
-	// 2b. THE TERMINALIZER RACE, WHICH ORDERING CANNOT CLOSE.
-	//
-	// Moving the CAS first removes the race between two DISPATCHERS — a loser now
-	// stops before spending a robot. It does NOT remove the race with a
-	// TERMINALIZER, and that was missed when this reorder was specified: the claim
-	// is taken before the create, but an operator cancel (or any TerminalizeOrder,
-	// which is a direct write and does not go through the CAS) can still land
-	// WHILE the fleet call is in flight. The CAS has already succeeded by then, so
-	// it cannot catch it a second time.
-	//
-	// Without this arm the reorder is a regression on exactly the case the old
-	// post-create guard existed for: the robot flies, the row says cancelled, the
-	// order's claims have been released underneath it, and Core announces a
-	// dispatch for something it has already given up on.
-	//
-	// So the guard keeps TWO causes, not one. They are different races and only
-	// one of them is fixable by ordering.
-	if fresh, ferr := d.db.GetOrder(order.ID); ferr != nil {
-		// Could not tell. Proceed: the id write below is what makes the job
-		// findable, and cancelling on an unreadable row would throw away a live
-		// mission on a database blip.
-		log.Printf("dispatch: order %d post-create re-read failed: %v (proceeding; the vendor order stands)",
-			order.ID, ferr)
-	} else if fresh != nil && protocol.IsTerminal(fresh.Status) {
-		log.Printf("dispatch: order %d went %s while the fleet order was being created — cancelling vendor order %s",
-			order.ID, fresh.Status, vendorOrderID)
-		d.cancelEndedAsk(order, fresh.Status, vendorOrderID)
-		return fmt.Errorf("order %d went %s during fleet create; vendor order %s cancelled",
-			order.ID, fresh.Status, vendorOrderID)
-	}
-
-	// 3. NAME IT. The fleet has the job; the row must say which one. The write
-	// that names it closes the ask in the same statement (orders.closesAskSQL).
-	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
-		// THE SURVIVING ORPHAN-GUARD CAUSE. Core cannot name this job, so nothing
-		// will track it, nothing will re-track it after a restart
-		// (loadActiveOrders selects on a non-empty vendor_order_id), and no later
-		// cancel can reach it. Cancel it now, while the id is still in hand.
-		log.Printf("dispatch: order %d vendor id %s FAILED to persist: %v — cancelling the fleet order "+
-			"Core cannot name", order.ID, vendorOrderID, err)
-		if cerr := d.backend.CancelOrder(vendorOrderID); cerr != nil {
-			// Both ids on one line: the operator's breadcrumb for a robot moving
-			// with nothing to account for it. The ask stays on the row, the one
-			// record of the job.
-			log.Printf("ERROR dispatch: ORPHAN MISSION — order %d has no vendor id recorded and vendor "+
-				"order %s could not be cancelled: %v (robot may still be moving; cancel it in the fleet manager)",
-				order.ID, vendorOrderID, cerr)
+		log.Printf("dispatch: order %d: the fleet refused the create: %v (nothing is moving; the ask "+
+			"closes and the hand is let go, for its caller to dispose of)", order.ID, err)
+		if !d.refuseAsk(order, vendorOrderID) {
 			return err
 		}
-		d.closeAsk(order, vendorOrderID, "the fleet took the cancel of a job Core could not name")
-		return err
+		return &AskClosed{OrderID: order.ID, Err: err}
 	}
 
-	// The in-memory row matches the database, so a caller that keeps using this
-	// struct (the gated valves append a tail from it) sees the id.
-	order.VendorOrderID = vendorOrderID
-	order.AskedVendorOrderID = ""
-	return nil
+	// 3. THE YES. One statement guarded on the status and the ask: `dispatched`,
+	// the job, the robot the create pinned (an on-deck recovery's; any other is
+	// not this job's), the ask and the wait cleared; its history row and the
+	// station's tell with it (LifecycleService.Dispatch).
+	err := d.lifecycle.Dispatch(order, vendorOrderID, req.Vehicle, actor)
+	if err == nil {
+		return nil
+	}
+	if IsConcurrentTransition(err) {
+		// 3b. THE TERMINALIZER RACE. Nothing moves a row with an ask open but an
+		// ending, so a yes that finds no row means the order was cancelled or
+		// failed while the fleet was creating its job (an operator cancel lands
+		// whenever it lands). The robot must not fly for an order Core has given
+		// up on: cancel the job, and keep it named until the fleet has let it go.
+		status := protocol.Status("ended")
+		if fresh, ferr := d.db.GetOrder(order.ID); ferr == nil && fresh != nil {
+			status = fresh.Status
+		}
+		log.Printf("dispatch: order %d went %s while the fleet order was being created — cancelling vendor order %s",
+			order.ID, status, vendorOrderID)
+		d.cancelEndedAsk(order, status, vendorOrderID)
+		return fmt.Errorf("order %d went %s during fleet create; vendor order %s cancelled",
+			order.ID, status, vendorOrderID)
+	}
+
+	// 3c. THE YES COULD NOT BE WRITTEN (a database fault). Core cannot name this
+	// job, so nothing will track it and no later cancel can reach it. Cancel it
+	// now, while the id is still in hand; the ask closes only once the fleet has
+	// taken the cancel, and until then it is the one record of the job.
+	log.Printf("dispatch: order %d: the fleet took vendor order %s but the yes could not be written: %v — "+
+		"cancelling the fleet order Core cannot name", order.ID, vendorOrderID, err)
+	if cerr := d.backend.CancelOrder(vendorOrderID); cerr != nil {
+		log.Printf("ERROR dispatch: ORPHAN MISSION — order %d has no vendor id recorded and vendor "+
+			"order %s could not be cancelled: %v (robot may still be moving; cancel it in the fleet manager; "+
+			"the order's ask names it)", order.ID, vendorOrderID, cerr)
+		return err
+	}
+	if !d.refuseAsk(order, vendorOrderID) {
+		return err
+	}
+	return &AskClosed{OrderID: order.ID, Err: err}
 }
 
-// closeAsk closes the order's ask when the fleet answered without a job Core
-// keeps (orders.ClearAsk), in the database and on the order in hand. A failed
-// write leaves the ask on the row, and the order with it: no status move lands
-// on a row with an ask open, so the caller's own write is refused and the order
-// waits for a person, as a crash inside the create leaves it.
+// AskClosed is a handover whose ask closed with no job Core keeps: the fleet
+// refused the create, or Core could not name the job it took and the fleet took
+// its cancel. The ask was closed and the order's hard holds demoted in one
+// transaction (RefuseOrderAsk) before it returned, so the caller disposes of
+// the order (a wait, a fail, a cancel) with nothing of the hand left to undo. It
+// unwraps to its cause and reads as it.
+type AskClosed struct {
+	OrderID int64
+	Err     error
+}
+
+func (e *AskClosed) Error() string { return e.Err.Error() }
+
+func (e *AskClosed) Unwrap() error { return e.Err }
+
+// askClosed reports a refusal that already closed the ask and demoted the hand.
+func askClosed(err error) bool {
+	var a *AskClosed
+	return errors.As(err, &a)
+}
+
+// refuseAsk is the fleet's no for the order in hand: its ask closes and its hard
+// holds are demoted in one transaction (store.DB.RefuseOrderAsk). Its lane
+// mouths go only when the order owns them: a leg's belong to its parent, one
+// dig chapter holds one corridor for the whole excavation, and an unreadable
+// parent keeps the lane (a kept lane costs the next pass; a wrong release tears
+// the corridor out from under a live dig). False means the write failed: the
+// ask is still open, so the order is held as asked, with its holds, and no
+// status move lands on it; its caller's park is refused and a person releases
+// it, as a crash inside a create leaves it.
+func (d *Dispatcher) refuseAsk(order *orders.Order, askedVendorOrderID string) bool {
+	laneOwner, resolved := d.laneOwnerFor(order.ID)
+	if err := d.db.RefuseOrderAsk(order.ID, askedVendorOrderID, resolved && laneOwner == order.ID); err != nil {
+		log.Printf("ERROR dispatch: order %d: the fleet's no to ask %s could not be written: %v (the order "+
+			"is held as asked, with its holds, until a person releases it)", order.ID, askedVendorOrderID, err)
+		return false
+	}
+	order.AskedVendorOrderID = ""
+	return true
+}
+
+// closeAsk closes the ask of an order that ended during its create once the
+// fleet has taken the cancel of its job (orders.ClearAsk), in the database and
+// on the order in hand. The ending released the holds. A failed write leaves
+// the ask on the ended row, the one record of the job; boot lists it.
 func (d *Dispatcher) closeAsk(order *orders.Order, askedVendorOrderID, why string) {
 	if _, err := d.db.ClearOrderAsk(order.ID, askedVendorOrderID); err != nil {
-		log.Printf("ERROR dispatch: order %d: %s, but its ask %s could not be closed: %v (the order is "+
-			"held until a person releases it)", order.ID, why, askedVendorOrderID, err)
+		log.Printf("ERROR dispatch: order %d: %s, but its ask %s could not be closed: %v",
+			order.ID, why, askedVendorOrderID, err)
 		return
 	}
 	order.AskedVendorOrderID = ""

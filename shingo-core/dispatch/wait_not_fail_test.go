@@ -89,11 +89,12 @@ func TestDispatchDirect_FleetRefusalIsNotTerminal(t *testing.T) {
 		t.Fatal("failed → queued is a legal transition now; this test's premise is gone and the " +
 			"scanner's rollback would have worked all along — re-derive the finding before deleting it")
 	}
-	// The recovery edge (C1.1.3): a fleet refusal queues the order under
-	// fleet_unavailable, from the `dispatched` its hand wrote.
-	if !protocol.IsValidTransition(protocol.StatusDispatched, protocol.StatusQueued) {
-		t.Error("dispatched → queued must be legal: it is the fleet-refusal recovery edge the caller " +
-			"takes after DispatchDirect returns an error")
+	// The recovery edge: a fleet refusal parks a `pending` order `queued` under
+	// fleet_unavailable. The order never left the status it rests in (the hand
+	// opens an ask and writes no status), so a `queued` one stays where it is.
+	if !protocol.IsValidTransition(protocol.StatusPending, protocol.StatusQueued) {
+		t.Error("pending → queued must be legal: it is the fleet-refusal park the caller takes after " +
+			"DispatchDirect returns an error")
 	}
 }
 

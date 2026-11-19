@@ -11,7 +11,7 @@ import (
 // `claimed_by` status writers.
 //
 // WHY THESE PINS EXIST. The coupled release helpers (ReleaseClaimForBin,
-// TerminalizeOrder, DemoteHoldsAfterFleetRefusal) clear bins/nodes.claimed_by
+// TerminalizeOrder, demoteHoldsTx, the fleet-refusal demote) clear bins/nodes.claimed_by
 // WITH the coupled reservation release, and the forbidigo Unclaim guard stops
 // a bare bins.Unclaim call from coming back. But the raw SQL sites below
 // write `claimed_by=NULL` as string literals inside larger statements —
@@ -56,7 +56,7 @@ var rawClaimWriters = []struct {
 		why:         "The one-bin coupled release. Bin-AND-owner scoped: a dropped owner arm would clear another order's claim off a bin this order never held.",
 	},
 	{
-		file: "../orders.go", fn: "func (db *DB) DemoteHoldsAfterFleetRefusal(",
+		file: "../orders.go", fn: "func demoteHoldsTx(",
 		mustContain: "WHERE claimed_by=$1",
 		why:         "The fleet-refusal demote. Order-scoped: this releases only the refusing order's armor, not the corridor's.",
 	},

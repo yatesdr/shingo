@@ -1297,14 +1297,55 @@ func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, 
 	return told, true, db.queueTellTx(tx, told, tell, detail)
 }
 
-// SetOrderAskTx opens the order's ask on the hand's transaction: see
-// orders.SetAskTx.
-func (db *DB) SetOrderAskTx(tx *sql.Tx, id int64, askedVendorOrderID string) (bool, error) {
-	return orders.SetAskTx(tx, id, askedVendorOrderID)
+// TakeOrderAskTx is the hand's first row lock: the compare-and-swap that opens
+// the order's ask. See orders.TakeAskTx.
+func (db *DB) TakeOrderAskTx(tx *sql.Tx, id int64, from protocol.Status, askedVendorOrderID string) (bool, error) {
+	return orders.TakeAskTx(tx, id, from, askedVendorOrderID)
 }
 
-// ClearOrderAsk closes an ask the fleet answered without a job: see
-// orders.ClearAsk.
+// FleetYes is the fleet's yes (orders.FleetYesTx) on a transaction of its own,
+// with the station's tell queued on it: `dispatched`, the job, the robot the
+// create pinned and the version in one statement, its history row and its tell
+// commit together or not at all. False means the order ended during the create.
+func (db *DB) FleetYes(id int64, from protocol.Status, askedVendorOrderID, robotID, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return orders.Told{}, false, err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	told, moved, err := orders.FleetYesTx(tx, id, from, askedVendorOrderID, robotID, detail, reason.Code, reason.Actor, reason.refJSON())
+	if err != nil || !moved {
+		return orders.Told{}, moved, err
+	}
+	if err := db.queueTellTx(tx, told, tell, detail); err != nil {
+		return orders.Told{}, false, err
+	}
+	return told, true, tx.Commit()
+}
+
+// RefuseOrderAsk is the fleet's no: the order's ask closes and its hard holds
+// are demoted (DemoteHoldsAfterFleetRefusal's), in ONE transaction. Closing the
+// ask makes the order acquiring again; holds demoted after that, in a write of
+// their own, could be the holds a second pass had just taken for its own ask.
+// An ask already closed (the order ended, and its ending released the holds)
+// leaves nothing to demote that the ending did not.
+func (db *DB) RefuseOrderAsk(orderID int64, askedVendorOrderID string, releaseLanes bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if _, err := orders.ClearAskTx(tx, orderID, askedVendorOrderID); err != nil {
+		return fmt.Errorf("refuse: close the ask %s of order %d: %w", askedVendorOrderID, orderID, err)
+	}
+	if err := demoteHoldsTx(tx, orderID, releaseLanes); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ClearOrderAsk closes the ask of an order that ended during its create, once
+// the fleet took the cancel of its job: see orders.ClearAsk.
 func (db *DB) ClearOrderAsk(id int64, askedVendorOrderID string) (bool, error) {
 	return orders.ClearAsk(db.DB, id, askedVendorOrderID)
 }
@@ -1985,6 +2026,15 @@ func (db *DB) DemoteHoldsAfterFleetRefusal(orderID int64, releaseLanes bool) err
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if err := demoteHoldsTx(tx, orderID, releaseLanes); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// demoteHoldsTx is the demotion on the caller's transaction: claims released,
+// confirmed paper back to pending, and the order's lane mouths when it owns them.
+func demoteHoldsTx(tx *sql.Tx, orderID int64, releaseLanes bool) error {
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return fmt.Errorf("demote: release bin claims for order %d: %w", orderID, err)
 	}
@@ -2001,7 +2051,7 @@ func (db *DB) DemoteHoldsAfterFleetRefusal(orderID int64, releaseLanes bool) err
 			return fmt.Errorf("demote: release lane holds for order %d: %w", orderID, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // CountInFlightOrdersByDeliveryNodeExcluding counts the orders delivering to a

@@ -350,8 +350,7 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 		if d.preHandHook != nil {
 			d.preHandHook(c.order.ID)
 		}
-		takes = append(takes, handTake{order: c.order, hand: c.hand, entering: c.entering, ask: c.req.OrderID, actor: c.actor,
-			reason: fmt.Sprintf("vendor order %s created", c.req.OrderID)})
+		takes = append(takes, handTake{order: c.order, hand: c.hand, entering: c.entering, ask: c.req.OrderID})
 	}
 	if i, err := d.acquireHands(takes); err != nil {
 		c := commits[i]
@@ -376,13 +375,17 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 			if i == 0 && !concurrent {
 				// Nothing of the pair is with the fleet: the legs after this one
 				// were held with it and are let go with it, through the same door.
-				// Their asks were opened with the lifter's and never sent: they
-				// close first, so the demote finds rows it may move.
+				// Their asks were opened with the lifter's and never sent: each
+				// closes with its holds demoted in one transaction, as the
+				// lifter's did, and then waits under the lifter's cause.
 				for _, rest := range commits[1:] {
-					d.closeAsk(rest.order, rest.req.OrderID, "its pair's lifter was not taken by the fleet")
+					refusal := err
+					if d.refuseAsk(rest.order, rest.req.OrderID) {
+						refusal = &AskClosed{OrderID: rest.order.ID, Err: err}
+					}
 					d.ReleaseLaneOccupancy(rest.order.ID)
 					code, cause, params := FleetRefusalCause(err, rest.order.DeliveryNode)
-					d.DemoteAfterFleetRefusal(rest.order, code, cause, params)
+					d.DemoteAfterFleetRefusal(rest.order, refusal, code, cause, params)
 				}
 			}
 			return err

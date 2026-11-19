@@ -197,7 +197,7 @@ func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneC
 // DemoteAfterFleetRefusal records the one door a fleet refusal goes through. The
 // scanner carries no release logic of its own any more, so what these tests can
 // assert about a refusal is that the door was called, with which cause.
-func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
+func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, _ error, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
 	d.demoteCalls = append(d.demoteCalls, demoteCall{orderID: o.ID, code: string(code), cause: string(cause)})
 	o.Status = protocol.StatusQueued
 	o.QueueCode, o.QueueCause = string(code), string(cause)

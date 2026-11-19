@@ -10,7 +10,7 @@ import (
 // TestParkedOnDeck_AnOrderBeingAskedForIsNotParked: a Recover press cancels a
 // parked on-deck order as parked (cancelParkedOnDeckOrder). An order Core is
 // asking the fleet for is its own door's create in flight, and reads not
-// parked, as today's in-create `dispatched` row does; the same row at rest
+// parked, as the old in-create `dispatched` row does; the same row at rest
 // reads parked.
 func TestParkedOnDeck_AnOrderBeingAskedForIsNotParked(t *testing.T) {
 	t.Parallel()
@@ -19,7 +19,7 @@ func TestParkedOnDeck_AnOrderBeingAskedForIsNotParked(t *testing.T) {
 		o    orders.Order
 		want bool
 	}{
-		{"today, inside the create", orders.Order{Status: protocol.StatusDispatched}, false},
+		{"as built before, inside the create", orders.Order{Status: protocol.StatusDispatched}, false},
 		{"queued with an ask open", orders.Order{Status: protocol.StatusQueued, AskedVendorOrderID: "sg-1-ask"}, false},
 		{"queued at rest", orders.Order{Status: protocol.StatusQueued}, true},
 	}

@@ -14,7 +14,7 @@ import (
 
 // TestAskTwins_AnOrderBeingAskedForCountsInFlight: soakstat's own spellings of
 // "parked" and "in flight", read against real rows. An order Core is asking the
-// fleet for is in flight whatever its status says, as today's in-create
+// fleet for is in flight whatever its status says, as the old in-create
 // `dispatched` row is: the stall kinds' rendered SQL puts it under "in flight",
 // the order counts count it in flight and not queued, and the stranded report's
 // releaser reads it as live work bringing its resource. A `queued` row at rest
@@ -28,7 +28,7 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 		testutil.MustNoErr(t, err, "write the ask")
 		return id
 	}
-	today := seed(protocol.StatusDispatched, "")
+	before := seed(protocol.StatusDispatched, "")
 	asking := seed(protocol.StatusQueued, "sg-twin-ask")
 	atRest := seed(protocol.StatusQueued, "")
 
@@ -43,7 +43,7 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 		}
 		testutil.MustNoErr(t, rows.Close(), "close")
 	}
-	for id, want := range map[int64]string{today: "in flight", asking: "in flight", atRest: "parked"} {
+	for id, want := range map[int64]string{before: "in flight", asking: "in flight", atRest: "parked"} {
 		if got := kindOf[id]; len(got) != 1 || got[0] != want {
 			t.Errorf("order %d falls in stall kinds %v, want [%s]", id, got, want)
 		}
@@ -51,12 +51,12 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 
 	c := orderCounts(db, &unrun{})
 	if c.queued.n != 1 || c.inFlight.n != 2 {
-		t.Errorf("order counts: queued %s, in flight %s; want 1 (the row at rest) and 2 (today's and the asked)",
+		t.Errorf("order counts: queued %s, in flight %s; want 1 (the row at rest) and 2 (the old in-create order and the asked one)",
 			c.queued, c.inFlight)
 	}
 
 	bringer := map[int64]bool{}
-	for _, id := range []int64{today, asking, atRest} {
+	for _, id := range []int64{before, asking, atRest} {
 		var status string
 		testutil.MustNoErr(t, db.QueryRow(`SELECT status FROM orders WHERE id=$1`, id).Scan(&status), "status")
 		var asked string
@@ -68,7 +68,7 @@ func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 		_, live := re.bringer(nearProgress{})(waiter)
 		bringer[id] = live
 	}
-	if !bringer[today] || !bringer[asking] || bringer[atRest] {
-		t.Errorf("the stranded releaser reads bringers %v; want today's and the asked order live, the row at rest not", bringer)
+	if !bringer[before] || !bringer[asking] || bringer[atRest] {
+		t.Errorf("the stranded releaser reads bringers %v; want the old in-create order and the asked one live, the row at rest not", bringer)
 	}
 }

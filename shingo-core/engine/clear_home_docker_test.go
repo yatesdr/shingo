@@ -622,7 +622,7 @@ func TestClearHome_PullDemoted_RerunOnTheFloor(t *testing.T) {
 	}
 	parent := r.parent(t)
 	pull := testdb.RequireOrder(t, r.db, "chr-pull")
-	r.d.DemoteAfterFleetRefusal(pull, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
+	r.d.DemoteAfterFleetRefusal(pull, errors.New("clear-home pin: the fleet refused"), protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
 	testutil.MustNoErr(t, r.db.DeleteBin(r.xBin.ID), "a spot opens")
 
 	if n := r.d.RerunClears(); n != 0 {

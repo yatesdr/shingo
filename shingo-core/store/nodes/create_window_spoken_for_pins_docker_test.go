@@ -19,14 +19,14 @@ import (
 // entombing it, and the one-read group state agrees (StoreSlot passes the deep
 // slot over).
 //
-// Today the row reads `dispatched` with no vendor id. Once the claim is a column
-// and the row stays at its waiting status, the arms count an open ask as they
-// count `dispatched` (orders.PastPreDispatchSQL), or a dig parks a blocker in
+// As built before, the row read `dispatched` with no vendor id. Now it rests at
+// its waiting status with its ask open, and the arms count an open ask as they
+// counted `dispatched` (orders.PastPreDispatchSQL), or a dig parks a blocker in
 // front of a slot a robot is about to be sent to (EntombsASpokenForSlotSQL's
-// measured bubbles). Each reader is asked of today's row, of a `queued` row with
+// measured bubbles). Each reader is asked of the row as it read before, of a `queued` row with
 // an ask open, and of a `queued` row at rest, which only names the slot and so
 // does not hold it (TestSlotSpokenFor_AParkedOrderThatOnlyNamesASlotDoesNotHoldIt).
-// A claimed pin: it stays green.
+// A claimed pin: it never changed.
 func TestCreateWindow_SpokenForSlotReadersCountTheOrder(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -36,7 +36,7 @@ func TestCreateWindow_SpokenForSlotReadersCountTheOrder(t *testing.T) {
 		asked     string
 		spokenFor bool
 	}{
-		{"today, inside the create", protocol.StatusDispatched, "", true},
+		{"as built before, inside the create", protocol.StatusDispatched, "", true},
 		{"queued with an ask open", protocol.StatusQueued, "sg-cwsf-ask", true},
 		{"queued at rest", protocol.StatusQueued, "", false},
 	} {

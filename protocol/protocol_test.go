@@ -587,7 +587,6 @@ func TestValidForwardTransitions(t *testing.T) {
 		{StatusDelivered, StatusCancelled},
 		{StatusQueued, StatusInTransit},
 		{StatusDispatched, StatusInTransit},
-		{StatusDispatched, StatusQueued},
 		{StatusReshuffling, StatusPending},
 	}
 	for _, tt := range tests {
@@ -605,6 +604,8 @@ func TestInvalidBackwardTransitions(t *testing.T) {
 		{StatusAcknowledged, StatusSubmitted},
 		{StatusConfirmed, StatusDelivered},
 		{StatusCancelled, StatusPending},
+		// `dispatched` is the fleet's yes; a refusal never wrote it, so none undoes it.
+		{StatusDispatched, StatusQueued},
 	}
 	for _, tt := range tests {
 		if IsValidTransition(tt.from, tt.to) {

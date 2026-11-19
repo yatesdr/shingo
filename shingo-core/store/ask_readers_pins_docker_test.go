@@ -18,7 +18,7 @@ import (
 
 // THE ASK'S SQL READERS, AT THE STORE TIER. Every reader of "Core has claimed
 // this order" answers for a `pending` or `queued` row with an ask open exactly
-// what it answers for today's in-create row (`dispatched`, no vendor id, no
+// what it answers for the old in-create row (`dispatched`, no vendor id, no
 // ask), and answers a `queued` row at rest the other way, so each assertion is
 // about the ask and not about the status. The rows are written directly: the
 // hand writes `dispatched` until the status moves on the fleet's answer, so no
@@ -45,7 +45,7 @@ func seedAskRows(t *testing.T, db *store.DB) askFixture {
 	t.Helper()
 	srcNode, line, bp := testdb.SetupTestData(t, db)
 	rows := []*askRow{
-		{state: "today, inside the create", status: protocol.StatusDispatched},
+		{state: "as built before, inside the create", status: protocol.StatusDispatched},
 		{state: "pending with an ask open", status: protocol.StatusPending, asked: "sg-ask-p"},
 		{state: "queued with an ask open", status: protocol.StatusQueued, asked: "sg-ask-q"},
 		{state: "queued at rest", status: protocol.StatusQueued},
@@ -116,9 +116,9 @@ func queryIDs(t *testing.T, db *sql.DB, q string, args ...any) []int64 {
 	return ids
 }
 
-// TestAskReaders_SQLAnswersAsTodaysCreateWindow: the SQL readers, each asked of
+// TestAskReaders_SQLAnswersAsTheOldCreateWindow: the SQL readers, each asked of
 // all four rows. The orphan sweep writes, so it is read last.
-func TestAskReaders_SQLAnswersAsTodaysCreateWindow(t *testing.T) {
+func TestAskReaders_SQLAnswersAsTheOldCreateWindow(t *testing.T) {
 	db := testdb.Open(t)
 	fx := seedAskRows(t, db)
 	rows, src := fx.rows, fx.src
@@ -157,12 +157,12 @@ func TestAskReaders_SQLAnswersAsTodaysCreateWindow(t *testing.T) {
 		return !claimed.Valid
 	}})
 
-	today, atRest := rows[0], rows[3]
+	before, atRest := rows[0], rows[3]
 	for _, rd := range readers {
-		want := rd.read(today)
+		want := rd.read(before)
 		for _, r := range rows[1:3] {
 			if got := rd.read(r); got != want {
-				t.Errorf("%s: %s reads %v, want %v (%s)", rd.name, r.state, got, want, today.state)
+				t.Errorf("%s: %s reads %v, want %v (%s)", rd.name, r.state, got, want, before.state)
 			}
 		}
 		if got := rd.read(atRest); got == want {
@@ -173,8 +173,8 @@ func TestAskReaders_SQLAnswersAsTodaysCreateWindow(t *testing.T) {
 
 // TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow: the status CAS refuses
 // a row with an ask open (no row, no history, no version); the terminal CAS
-// lands on it; a vendor write naming the asked job closes the ask in its own
-// statement, and one naming any other job leaves it.
+// lands on it; the fleet's yes (FleetYes) lands only on a row asking for that
+// job, writing `dispatched` and the job and closing the ask in one statement.
 func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 	db := testdb.Open(t)
 	rows := seedAskRows(t, db).rows
@@ -201,13 +201,24 @@ func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 		t.Errorf("the status CAS refused a row at rest (moved %v, err %v): the clause is not about the ask", moved, err)
 	}
 
-	testutil.MustNoErr(t, db.UpdateOrderVendor(rows[1].order.ID, "sg-some-other-job", "CREATED", ""), "vendor write")
-	if o := mustOrder(t, db, rows[1].order.ID); o.AskedVendorOrderID != rows[1].asked {
-		t.Errorf("a vendor write naming another job changed the ask to %q", o.AskedVendorOrderID)
+	yes := func(id int64, from protocol.Status, job string) bool {
+		_, moved, err := db.FleetYes(id, from, job, "", "vendor order "+job+" created", store.HistoryReason{}, protocol.OrderUpdate{})
+		testutil.MustNoErr(t, err, "the yes write")
+		return moved
 	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(rows[1].order.ID, rows[1].asked, "CREATED", ""), "vendor write")
-	if o := mustOrder(t, db, rows[1].order.ID); o.AskedVendorOrderID != "" || o.VendorOrderID != rows[1].asked {
-		t.Errorf("the vendor write naming the asked job left ask %q, vendor %q", o.AskedVendorOrderID, o.VendorOrderID)
+	if yes(rows[1].order.ID, protocol.StatusPending, "sg-some-other-job") {
+		t.Error("the yes write naming another job landed on a row asking for a different one")
+	}
+	if o := mustOrder(t, db, rows[1].order.ID); o.AskedVendorOrderID != rows[1].asked || o.Status != protocol.StatusPending {
+		t.Errorf("a refused yes changed the row: %s, ask %q", o.Status, o.AskedVendorOrderID)
+	}
+	if !yes(rows[1].order.ID, protocol.StatusPending, rows[1].asked) {
+		t.Fatal("the yes write naming the asked job found no row")
+	}
+	if o := mustOrder(t, db, rows[1].order.ID); o.Status != protocol.StatusDispatched || o.AskedVendorOrderID != "" ||
+		o.VendorOrderID != rows[1].asked || o.VendorState != "CREATED" {
+		t.Errorf("the yes left %s, ask %q, vendor %q (%s); want dispatched naming the job with the ask closed",
+			o.Status, o.AskedVendorOrderID, o.VendorOrderID, o.VendorState)
 	}
 
 	won, err := db.TerminalizeOrder(asked.order.ID, protocol.StatusCancelled, "pin: an ending lands")

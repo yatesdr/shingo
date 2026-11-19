@@ -344,7 +344,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		// asserting a disposition production no longer produced. Calling the door
 		// means it cannot drift again.
 		code, cause, params := FleetRefusalCause(err, o.DeliveryNode)
-		d.DemoteAfterFleetRefusal(o, code, cause, params)
+		d.DemoteAfterFleetRefusal(o, err, code, cause, params)
 		o, _ = db.GetOrderByUUID(orderUUID)
 		return o
 	}
@@ -1263,10 +1263,10 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	// and its parent with it through the sibling cascade.
 	//
 	// What DispatchDirect owes its caller is an error and an order in a state the
-	// caller can act on. It does not undo its own move (C1): the hand CAS'd the
-	// order into `dispatched` before the create, and it is left there, with no
-	// vendor id, for the caller to dispose of. The scanner parks it under
-	// fleet_unavailable (dispatched → queued) and retries. The bin-move door,
+	// caller can act on. The order never left the status it rests in: the hand
+	// opened its ask, the refusal closed it and demoted the hand in one
+	// transaction, and `dispatched` is written only on the fleet's yes. The scanner
+	// parks it under fleet_unavailable (pending → queued) and retries. The bin-move door,
 	// which has a person waiting, used to fail the row itself (that pin was
 	// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim); since
 	// "refactor(core): every Core door births its order through the planner and
@@ -1278,9 +1278,9 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 		t.Errorf("status = %q — DispatchDirect terminalized, so no caller can dispose of the order "+
 			"and a transient fleet refusal is permanent", persisted.Status)
 	}
-	if persisted.Status != StatusDispatched {
-		t.Errorf("status = %q, want %q — the disposition is the caller's; DispatchDirect leaves the "+
-			"hand's `dispatched` for it", persisted.Status, StatusDispatched)
+	if persisted.Status != StatusPending || persisted.AskedVendorOrderID != "" {
+		t.Errorf("status = %q, ask %q; want %q with the ask closed — the disposition is the caller's, "+
+			"and the order never left the status it rests in", persisted.Status, persisted.AskedVendorOrderID, StatusPending)
 	}
 	if persisted.VendorOrderID != "" {
 		t.Errorf("vendor order ID = %q, want empty — the fleet never accepted it", persisted.VendorOrderID)
@@ -1290,11 +1290,10 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 			len(emitter.failed))
 	}
 
-	// The waiting caller's disposition brings it back out of `dispatched`, where it
-	// has no vendor id and nothing tracks it, into `queued` under its cause.
+	// The waiting caller's disposition parks it `queued` under its cause.
 	order.Status = persisted.Status
 	code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
-	d.DemoteAfterFleetRefusal(order, code, cause, params)
+	d.DemoteAfterFleetRefusal(order, err, code, cause, params)
 	after, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
 	if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) {
@@ -1303,17 +1302,15 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	}
 }
 
-// TestDemoteAfterFleetRefusal_EachRefusalTellsTheDispatchAndThePark: a fleet
-// that refuses the same order on every pass tells its station two things per
-// pass, each from its write: the hand's `dispatched` (in the hand's
-// transaction, before the fleet is asked) and the park's `queued` (after the
-// refusal), each at a newer version. The station holds Core's status at every
-// moment; the price is two tells and two station writes per scanner pass for as
-// long as the fleet refuses (the C1 rig's long refusal window: 300 passes for
-// one held-bin order). It was one tell for the whole window, the first park's,
-// while the hand's `dispatched` was told nobody: this pin flipped when Core
-// began telling the station from every status write.
-func TestDemoteAfterFleetRefusal_EachRefusalTellsTheDispatchAndThePark(t *testing.T) {
+// TestDemoteAfterFleetRefusal_OnlyTheFirstRefusalTellsThePark: a fleet that
+// refuses the same order on every pass tells its station one thing for the
+// whole window: the first park's `queued` with its cause. The order never
+// leaves the status it rests in while Core asks (its ask is a column, not a
+// status), so a refusal after the first, under the same wait, writes no status
+// and tells nothing. As built before, each pass told the hand's `dispatched` and
+// the park's `queued` (two tells and two station writes per scanner pass for as
+// long as the fleet refused: 300 passes for one held-bin order on the C1 rig).
+func TestDemoteAfterFleetRefusal_OnlyTheFirstRefusalTellsThePark(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	tellToStations(db)
@@ -1337,19 +1334,17 @@ func TestDemoteAfterFleetRefusal_EachRefusalTellsTheDispatchAndThePark(t *testin
 		if err == nil {
 			t.Fatalf("pass %d: expected a fleet refusal", pass)
 		}
-		order.Status = StatusDispatched
 		code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
-		d.DemoteAfterFleetRefusal(order, code, cause, params)
+		d.DemoteAfterFleetRefusal(order, err, code, cause, params)
 		after, err := db.GetOrder(order.ID)
 		testutil.MustNoErr(t, err, "reload order")
-		if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) {
-			t.Fatalf("pass %d: status %q code %q, want %q under %q", pass,
-				after.Status, after.QueueCode, StatusQueued, protocol.QueueFleetUnavailable)
+		if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) || after.AskedVendorOrderID != "" {
+			t.Fatalf("pass %d: status %q code %q ask %q, want %q under %q with the ask closed", pass,
+				after.Status, after.QueueCode, after.AskedVendorOrderID, StatusQueued, protocol.QueueFleetUnavailable)
 		}
-		order.Status = after.Status
 	}
-	// Born pending at version 1: each pass is a dispatched tell then a queued one.
-	want := []string{"dispatched v2", "queued v3", "dispatched v4", "queued v5", "dispatched v6", "queued v7"}
+	// Born pending at version 1: the first park is v2, and nothing after it.
+	want := []string{"queued v2"}
 	if got := stationTellsOf(t, db, "direct-fail-repeat"); strings.Join(got, ", ") != strings.Join(want, ", ") {
 		t.Errorf("station tells over 3 refusals = %v, want %v", got, want)
 	}

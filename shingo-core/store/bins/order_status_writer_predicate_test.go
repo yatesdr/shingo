@@ -50,8 +50,13 @@ var orderStatusWriters = []struct {
 	},
 	{
 		file: "../orders/orders.go", fn: "func UpdateStatusFromWithReasonTx(",
-		mustStatusGuard: "AND status=$4",
-		why:             "The CAS write transition() rides on. The AND status=$4 arm is the compare-and-swap itself; without it every transition is a blind overwrite and the resurrect incident (stale scanner wrote queued→sourcing over a cancel) is re-opened.",
+		mustStatusGuard: "AND status=$4 AND asked_vendor_order_id=''",
+		why:             "The CAS write transition() rides on. The AND status=$4 arm is the compare-and-swap itself; without it every transition is a blind overwrite and the resurrect incident (stale scanner wrote queued→sourcing over a cancel) is re-opened. The ask arm refuses a row Core is asking the fleet for: only the fleet's answer or an ending moves it.",
+	},
+	{
+		file: "../orders/ask.go", fn: "func FleetYesTx(",
+		mustStatusGuard: "WHERE id=$5 AND status=$6 AND asked_vendor_order_id=$2",
+		why:             "The fleet's yes, the one write of `dispatched`. Guarded on the status the hand found and on the ask it opened: an order that ended during the create is not resurrected, and its job is cancelled instead.",
 	},
 	// ── Edge: order store ──────────────────────────────────────────────
 	{

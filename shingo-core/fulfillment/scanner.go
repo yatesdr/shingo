@@ -797,7 +797,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 		// which confirms by id and never re-acquires, and parked under
 		// claim-failed forever. Armor off, paper demoted, pointer kept.
 		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
-		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
+		s.dispatcher.DemoteAfterFleetRefusal(order, err, code, cause, params)
 		return false
 	}
 
@@ -1021,7 +1021,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// more: an order that is ALREADY holding its bin is the exact shape the
 		// pointer wedge traps, because dispatchHeldBin is where it comes back to.
 		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
-		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
+		s.dispatcher.DemoteAfterFleetRefusal(order, err, code, cause, params)
 		return false
 	}
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",

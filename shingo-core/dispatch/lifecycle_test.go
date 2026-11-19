@@ -270,7 +270,7 @@ func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 
 	// The stale caller now tries the transition that was legal when it loaded.
 	stale.QueueCode = string(protocol.QueueWaitingForMaterial)
-	err = lc.Dispatch(&stale, "vendor-stale", "fulfillment")
+	err = lc.Dispatch(&stale, "vendor-stale", "", "fulfillment")
 	if err == nil {
 		t.Fatal("stale queued→dispatched was accepted; a cancelled order must not be resurrectable")
 	}
@@ -447,11 +447,18 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 				return lc.Park(o, "scanner")
 			},
 			StatusQueued},
+		// The fleet's yes lands only on a row asking for that job (the hand's ask).
 		{"Dispatch_PendingToDispatched", StatusPending,
-			func(o *orders.Order) error { return lc.Dispatch(o, "vendor-id-0", "hand") },
+			func(o *orders.Order) error {
+				openAsk(t, db, o.ID, "vendor-id-0")
+				return lc.Dispatch(o, "vendor-id-0", "", "hand")
+			},
 			StatusDispatched},
 		{"Dispatch_QueuedToDispatched", StatusQueued,
-			func(o *orders.Order) error { return lc.Dispatch(o, "vendor-id-1", "dispatcher") },
+			func(o *orders.Order) error {
+				openAsk(t, db, o.ID, "vendor-id-1")
+				return lc.Dispatch(o, "vendor-id-1", "", "dispatcher")
+			},
 			StatusDispatched},
 		{"Acknowledge_QueuedToAcknowledged", StatusQueued,
 			func(o *orders.Order) error { return lc.Acknowledge(o, "fleet") },
@@ -623,4 +630,12 @@ func TestLifecycle_Faulted_IllegalTransitions(t *testing.T) {
 			t.Errorf("Faulted → %s: persisted status changed to %q", to, persisted.Status)
 		}
 	}
+}
+
+// openAsk writes the ask the hand opens (orders.TakeAskTx) onto an order's row,
+// for a test that drives the fleet's yes directly.
+func openAsk(t *testing.T, db *store.DB, id int64, ask string) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE orders SET asked_vendor_order_id=$2 WHERE id=$1`, id, ask)
+	testutil.MustNoErr(t, err, "open the ask")
 }

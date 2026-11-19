@@ -946,11 +946,8 @@ func SiblingUUID(db *sql.DB, id int64) (string, error) {
 // robot (the robot is written blank, as a redirect clears it) or the robot the
 // row already holds. It reports whether it wrote; false means the write would
 // change the robot, and the caller takes the telling path (UpdateVendorTx).
-//
-// A write naming the job the row is asking for is the fleet's yes, and closes
-// the ask in the same statement (closesAskSQL).
 func UpdateVendorKeepingRobot(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) (bool, error) {
-	res, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5, `+closesAskSQL+`
+	res, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5
 		WHERE id=$4 AND ($3 = '' OR robot_id = $3)`, vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
 	if err != nil {
 		return false, err
@@ -997,7 +994,7 @@ func UpdateVendorTx(tx *sql.Tx, id int64, vendorOrderID, vendorState, robotID st
 	}
 	changed := robotID != "" && robotID != was
 	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5,
-		version=version+CASE WHEN $6 THEN 1 ELSE 0 END, `+closesAskSQL+`
+		version=version+CASE WHEN $6 THEN 1 ELSE 0 END
 		WHERE id=$4`+ToldReturning,
 		vendorOrderID, vendorState, robotID, id, clock.Now().UTC(), changed))
 	return told, changed, err

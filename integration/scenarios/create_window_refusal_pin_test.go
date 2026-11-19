@@ -3,17 +3,16 @@
 // Core's fleet the simulator wrapped so the test stands inside every create and
 // chooses its answer.
 //
-// Inside each refused create, Core's hand has already written `dispatched` and
-// told the station, before the fleet was asked. Pumped through, the Edge's row
-// reads `dispatched`, so a changeover START pressed there is refused as if a
-// robot carried the order (ChangeoverStartActionFor: block), and every surface
-// that reads the row shows a robot coming. The park after the refusal tells
-// `queued` again. Each refused pass writes two rows of Edge history.
+// Inside each refused create Core's hand holds the order's ask and writes no
+// status, so the station hears nothing: pumped through, the Edge's row reads
+// `queued` with its cause, a changeover START pressed there cancels the order
+// (ChangeoverStartActionFor: cancel), and a refused pass after the first writes
+// no Edge history. The station hears `dispatched` once, at the fleet's yes.
 //
-// A FLEET pin: it flips when `dispatched` is written at the fleet's yes. The
-// Edge then holds `queued` with its cause through every refusal, START cancels
-// the order, and a refused pass after the first writes no Edge history
-// (the dispatch-claim pin list, P11).
+// A FLEET pin (the dispatch-claim pin list, P11). As built before, the hand
+// wrote `dispatched` and told the station before the fleet was asked: the Edge
+// read `dispatched` inside every refused create, START was refused as if a
+// robot carried the order, and each refused pass wrote two rows of Edge history.
 //
 //go:build docker
 
@@ -72,7 +71,7 @@ func (f *cwrFleet) set(inside func(n int) error) {
 	f.mu.Unlock()
 }
 
-func TestRefusalLoop_TheStationBlocksStartInsideEachCreate(t *testing.T) {
+func TestRefusalLoop_TheStationHoldsQueuedInsideEachCreate(t *testing.T) {
 	t.Parallel()
 	refused := errors.New("RDS error 50001: robot system refused the order")
 	f := &cwrFleet{SimulatorBackend: simulator.New()}
@@ -152,11 +151,11 @@ func TestRefusalLoop_TheStationBlocksStartInsideEachCreate(t *testing.T) {
 		histPerPass = append(histPerPass, r-rows)
 		rows = r
 	}
-	if want := "dispatched/block, dispatched/block, dispatched/block"; strings.Join(inside, ", ") != want {
-		t.Errorf("inside each refused create the Edge reads %v, want %s as built", inside, want)
+	if want := "queued/cancel, queued/cancel, queued/cancel"; strings.Join(inside, ", ") != want {
+		t.Errorf("inside each refused create the Edge reads %v, want %s", inside, want)
 	}
-	if fmt.Sprint(histPerPass) != "[2 2 2]" {
-		t.Errorf("Edge history rows per refused pass = %v, want [2 2 2] as built (dispatched, then queued)", histPerPass)
+	if fmt.Sprint(histPerPass) != "[0 0 0]" {
+		t.Errorf("Edge history rows per refused pass = %v, want [0 0 0]: the order never left queued", histPerPass)
 	}
 
 	// The fleet comes back: one more pass, and the station hears the dispatch.

@@ -78,7 +78,7 @@ type Dispatcher interface {
 	// The scanner used to release the claim and the lanes here itself, through a
 	// primitive that also deleted the reservations — the pointer wedge. It carries
 	// no release logic of its own now, which is the point of there being a door.
-	DemoteAfterFleetRefusal(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
+	DemoteAfterFleetRefusal(order *orders.Order, refusal error, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
 
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).

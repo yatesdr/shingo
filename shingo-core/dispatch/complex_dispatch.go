@@ -1383,7 +1383,7 @@ func (d *Dispatcher) refuseComplexHandover(order *orders.Order, err error) {
 	default:
 		log.Printf("dispatch: complex order %d was not taken by the fleet, re-queuing (paper kept): %v", order.ID, err)
 		code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
-		d.DemoteAfterFleetRefusal(order, code, cause, params)
+		d.DemoteAfterFleetRefusal(order, err, code, cause, params)
 	}
 }
 

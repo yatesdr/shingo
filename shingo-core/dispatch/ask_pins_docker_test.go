@@ -10,6 +10,7 @@ package dispatch
 // it go.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 )
 
 // TestAsk_TheRowNamesTheJobUntilTheFleetAnswers: inside each create, refused or
@@ -63,9 +65,10 @@ func TestAsk_TheRowNamesTheJobUntilTheFleetAnswers(t *testing.T) {
 	}
 }
 
-// TestAsk_NoStatusMoveLandsOnARowBeingAskedFor: inside a create, a non-terminal
-// status move from a FRESH read of the row (one that agrees with the status in
-// the database) is refused with ConcurrentTransition, and the row is as it was:
+// TestAsk_NoStatusMoveLandsOnARowBeingAskedFor: inside a create, every
+// non-terminal status move legal from the status the row rests in, made from a
+// FRESH read of the row, is refused with ConcurrentTransition, and the row is as
+// it was:
 // only the fleet's answer, or an ending, moves an order Core is asking for.
 // The stale-copy moves are TestCreateWindow_StaleMovesAndARivalHandLose's.
 func TestAsk_NoStatusMoveLandsOnARowBeingAskedFor(t *testing.T) {
@@ -75,28 +78,29 @@ func TestAsk_NoStatusMoveLandsOnARowBeingAskedFor(t *testing.T) {
 	c.refuseThenTake(1, func(n int) {
 		moves := []struct {
 			name string
+			to   protocol.Status
 			move func() error
 		}{
-			{"Park", func() error {
+			{"Park", StatusQueued, func() error {
 				o := c.row()
 				o.QueueCode = string(protocol.QueueWaitingForMaterial)
 				return c.d.lifecycle.Park(o, "ask pin")
 			}},
-			{"MarkInTransit", func() error {
+			{"BeginReshuffle", StatusReshuffling, func() error { return c.d.lifecycle.BeginReshuffle(c.row(), "ask pin") }},
+			{"Acknowledge", StatusAcknowledged, func() error { return c.d.lifecycle.Acknowledge(c.row(), "ask pin") }},
+			{"MarkInTransit", StatusInTransit, func() error {
 				return c.d.lifecycle.MarkInTransit(c.row(), "AMR-PIN", "ask pin", protocol.OrderUpdate{})
 			}},
-			{"MarkStaged", func() error { return c.d.lifecycle.MarkStaged(c.row(), "ask pin", protocol.OrderUpdate{}) }},
 		}
 		for _, m := range moves {
 			before := c.row()
-			if !protocol.IsValidTransition(before.Status, map[string]protocol.Status{
-				"Park": StatusQueued, "MarkInTransit": StatusInTransit, "MarkStaged": StatusStaged,
-			}[m.name]) {
-				t.Fatalf("inside create %d: %s is illegal from %s, so the pin proves nothing", n, m.name, before.Status)
+			if !protocol.IsValidTransition(before.Status, m.to) {
+				continue // illegal from the status the row rests in, whatever the ask
 			}
 			tried++
 			if err := m.move(); !IsConcurrentTransition(err) {
-				t.Errorf("inside create %d: %s from a fresh read = %v, want ConcurrentTransition", n, m.name, err)
+				t.Errorf("inside create %d (%s): %s from a fresh read = %v, want ConcurrentTransition",
+					n, before.Status, m.name, err)
 			}
 			after := c.row()
 			if after.Status != before.Status || after.Version != before.Version {
@@ -105,8 +109,10 @@ func TestAsk_NoStatusMoveLandsOnARowBeingAskedFor(t *testing.T) {
 			}
 		}
 	})
-	if tried != 6 {
-		t.Fatalf("tried %d moves, want 6 (3 in each of 2 creates)", tried)
+	// Create 1 finds the row `pending` (Park, BeginReshuffle); create 2 finds it
+	// `queued` after the first refusal (BeginReshuffle, Acknowledge, MarkInTransit).
+	if tried != 5 {
+		t.Fatalf("tried %d moves, want 5 (2 from pending, 3 from queued)", tried)
 	}
 }
 
@@ -175,4 +181,61 @@ func TestAsk_ACancelInsideTheCreateKeepsTheJobNamed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAsk_TheYesNamesAPinnedRobotAndDropsAStaleOne: the fleet's yes writes the
+// robot the create pinned and no other. An on-deck recovery pins its robot
+// (pinnedVehicleFor), and its `dispatched` tell names it; an order carrying a
+// robot from an earlier attempt pins none, and the yes clears it, so its tell
+// names no robot until the fleet reports one. As built before, the hand told
+// `dispatched` with whatever robot the row held, the stale one included.
+func TestAsk_TheYesNamesAPinnedRobotAndDropsAStaleOne(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, intent, robot, want string
+	}{
+		{"an on-deck recovery pins its robot", SourceIntentOnDeck, "AMR-PIN", "AMR-PIN"},
+		{"a robot from an earlier attempt", "", "AMR-OLD", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newCWCell(t, "ask-robot-"+tc.robot)
+			_, err := c.db.Exec(`UPDATE orders SET source_intent=$2, robot_id=$3 WHERE id=$1`, c.order.ID, tc.intent, tc.robot)
+			testutil.MustNoErr(t, err, "seed the robot")
+			if _, err := c.pass(); err != nil {
+				t.Fatalf("the fleet's yes came back as %v", err)
+			}
+			if got := c.fleet.CreateRequests()[0].Vehicle; got != tc.want {
+				t.Errorf("the create pinned %q, want %q", got, tc.want)
+			}
+			if row := c.row(); row.Status != StatusDispatched || row.RobotID != tc.want {
+				t.Errorf("after the yes the row reads %s robot %q, want dispatched robot %q", row.Status, row.RobotID, tc.want)
+			}
+			if got := dispatchedTellRobot(t, c.db, c.order.EdgeUUID); got != tc.want {
+				t.Errorf("the `dispatched` tell names robot %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// dispatchedTellRobot is the robot the station's `dispatched` tell for uuid
+// names.
+func dispatchedTellRobot(t *testing.T, db *store.DB, uuid string) string {
+	t.Helper()
+	msgs, err := db.ListPendingOutbox(500)
+	testutil.MustNoErr(t, err, "list outbox")
+	robot := "(no dispatched tell)"
+	for _, m := range msgs {
+		if m.MsgType != protocol.TypeOrderUpdate {
+			continue
+		}
+		var env protocol.Envelope
+		var u protocol.OrderUpdate
+		if json.Unmarshal(m.Payload, &env) != nil || json.Unmarshal(env.Payload, &u) != nil ||
+			u.OrderUUID != uuid || u.Status != string(StatusDispatched) {
+			continue
+		}
+		robot = u.RobotID
+	}
+	return robot
 }

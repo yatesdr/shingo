@@ -9,11 +9,11 @@ package dispatch
 // accepted) and takes its answer from it.
 //
 // Each test is one of two kinds. A CLAIMED reader (Core holds the order for its
-// create) must keep its answer when the claim stops being a status; those pins
-// stay green through the change. A FLEET reader (the fleet has the job) answers
-// yes today only because the hand writes `dispatched` before asking; those pins
-// flip when `dispatched` is written at the fleet's yes
-// (the dispatch-claim pin list).
+// create) kept its answer when the claim stopped being a status and became the
+// order's ask (orders.asked_vendor_order_id); those pins never changed. A FLEET
+// reader (the fleet has the job) answered yes inside a create only because the
+// hand wrote `dispatched` before asking; those pins flipped when `dispatched`
+// became the fleet's yes, and each says what it read before.
 
 import (
 	"encoding/json"
@@ -100,7 +100,7 @@ func (c *cwCell) pass() (string, error) {
 			c.t.Fatalf("the hand refused (%v); these pins need a hand that commits", err)
 		}
 		code, cause, params := FleetRefusalCause(err, fresh.DeliveryNode)
-		c.d.DemoteAfterFleetRefusal(fresh, code, cause, params)
+		c.d.DemoteAfterFleetRefusal(fresh, err, code, cause, params)
 	}
 	return vendor, err
 }
@@ -131,10 +131,10 @@ func (c *cwCell) refuseThenTake(refusals int, inside func(n int)) {
 
 // TestCreateWindow_ClaimedReadersSayClaimed: inside every create, refused or
 // accepted, each reader that means "Core holds this order for its create" says
-// so. Today the row reads `dispatched` with no vendor id; once the claim is a
-// column and the row stays at its waiting status, every one of these must say
-// the same thing (during an ask, every reader answers what it answers today).
-// A claimed pin: it stays green.
+// so. The row rests at its waiting status with its ask open; as built before it
+// read `dispatched` with no vendor id, and every one of these says what it said
+// then (during an ask, every reader answers as it did). A claimed pin: it never
+// changed.
 func TestCreateWindow_ClaimedReadersSayClaimed(t *testing.T) {
 	t.Parallel()
 	c := newCWCell(t, "cw-claimed")
@@ -199,10 +199,9 @@ func TestCreateWindow_ClaimedReadersSayClaimed(t *testing.T) {
 
 // TestCreateWindow_StaleMovesAndARivalHandLose: inside a create, every
 // non-terminal move from the copy the pass read before its hand loses, and so
-// does a second dispatcher's hand from that copy (the lock). Today the status
-// CAS refuses them; once the claim is a column, the column's clause on the one
-// status statement and the claim's own compare-and-swap must refuse them the
-// same way. A claimed pin: it stays green.
+// does a second dispatcher's hand from that copy (the lock). The ask's clause on
+// the one status statement and the ask's own compare-and-swap refuse them, as
+// the hand's status write did before. A claimed pin: it never changed.
 func TestCreateWindow_StaleMovesAndARivalHandLose(t *testing.T) {
 	t.Parallel()
 	c := newCWCell(t, "cw-lock")
@@ -254,11 +253,10 @@ func TestCreateWindow_StaleMovesAndARivalHandLose(t *testing.T) {
 
 // TestCreateWindow_ARedirectIsRefusedAndChangesNothing: a redirect that lands
 // inside a create is refused (invalid_state), and the order's status,
-// destination and vendor id are as they were. Today the gate refuses it because
-// the row reads `dispatched`; once the row stays at its waiting status, the
-// re-keyed gate must refuse it on the claim, or PrepareRedirect rewrites the
-// destination under a create that may already be driving to the old one
-// (cinder Break 2). A claimed pin: it stays green.
+// destination and vendor id are as they were. The row rests at its waiting
+// status, and the gate refuses it on the ask (Order.PreDispatch), or
+// PrepareRedirect would rewrite the destination under a create that may already
+// be driving to the old one (cinder Break 2). A claimed pin: it never changed.
 func TestCreateWindow_ARedirectIsRefusedAndChangesNothing(t *testing.T) {
 	t.Parallel()
 	c := newCWCell(t, "cw-redirect")
@@ -285,12 +283,14 @@ func TestCreateWindow_ARedirectIsRefusedAndChangesNothing(t *testing.T) {
 	}
 }
 
-// TestCreateWindow_FleetReadersSayTheFleetHasIt: inside a create the fleet then
-// refuses, every reader that means "the fleet has this job" says yes, because
-// the hand wrote `dispatched` before asking. It is a lie the station acts on: a
-// changeover START is refused as if a robot carried the order. A FLEET pin: it
-// flips when `dispatched` is written at the fleet's yes.
-func TestCreateWindow_FleetReadersSayTheFleetHasIt(t *testing.T) {
+// TestCreateWindow_FleetReadersSayTheFleetDoesNotHaveIt: inside a create the
+// fleet then refuses, every reader that means "the fleet has this job" says no:
+// the order rests where it rested (`pending` on its first ask, `queued` after),
+// holding an ask and no vendor id, and `dispatched` waits for the fleet's yes. A
+// changeover START cancels the order rather than refusing as if a robot carried
+// it. A FLEET pin: as built before, the hand wrote `dispatched` before asking
+// and each of these said yes.
+func TestCreateWindow_FleetReadersSayTheFleetDoesNotHaveIt(t *testing.T) {
 	t.Parallel()
 	c := newCWCell(t, "cw-fleet")
 	c.refuseThenTake(2, func(n int) {
@@ -299,32 +299,35 @@ func TestCreateWindow_FleetReadersSayTheFleetHasIt(t *testing.T) {
 		}
 		row := c.row()
 		where := fmt.Sprintf("inside refused create %d", n)
-		if row.Status != StatusDispatched || row.VendorOrderID != "" {
-			t.Errorf("%s: the row reads %s vendor %q, want dispatched with no vendor id", where, row.Status, row.VendorOrderID)
+		wantStatus := map[int]protocol.Status{1: StatusPending, 2: StatusQueued}[n]
+		asked := c.fleet.Asked()
+		if row.Status != wantStatus || row.VendorOrderID != "" || row.AskedVendorOrderID != asked[len(asked)-1] {
+			t.Errorf("%s: the row reads %s vendor %q ask %q, want %s with no vendor id, asking %s", where,
+				row.Status, row.VendorOrderID, row.AskedVendorOrderID, wantStatus, asked[len(asked)-1])
 		}
-		if !protocol.IsVendorActive(row.Status) || !protocol.IsVendorTracked(row.Status) {
-			t.Errorf("%s: IsVendorActive=%v IsVendorTracked=%v, want both true as built", where,
+		if protocol.IsVendorActive(row.Status) || protocol.IsVendorTracked(row.Status) {
+			t.Errorf("%s: IsVendorActive=%v IsVendorTracked=%v, want both false: the fleet has no job", where,
 				protocol.IsVendorActive(row.Status), protocol.IsVendorTracked(row.Status))
 		}
-		if got := protocol.ChangeoverStartActionFor(row.Status); got != protocol.ChangeoverStartBlock {
-			t.Errorf("%s: changeover START reads %s, want block as built", where, got)
+		if got := protocol.ChangeoverStartActionFor(row.Status); got != protocol.ChangeoverStartCancel {
+			t.Errorf("%s: changeover START reads %s, want cancel", where, got)
 		}
 		_, ok, err := c.db.OrderCommittedToFleetAt(c.order.ID)
 		testutil.MustNoErr(t, err, "committed-to-fleet time")
-		if !ok {
-			t.Errorf("%s: OrderCommittedToFleetAt has no row, want the hand's `dispatched` row as built", where)
+		if ok {
+			t.Errorf("%s: OrderCommittedToFleetAt has a row; nothing has been committed to the fleet", where)
 		}
 	})
 }
 
-// TestRefusedPasses_StationIsToldEachPassTwice: three refusals and then the
-// fleet's yes. Every pass tells the station `dispatched` (the hand, before the
-// fleet is asked) and then `queued` (the park after the refusal); inside each
-// create the projection and the snapshot (both copy the row) read `dispatched`
-// with no wait, because the hand's write ended it. A FLEET pin: it flips to
-// `queued` once and then `dispatched`, with each create read at its waiting
-// status.
-func TestRefusedPasses_StationIsToldEachPassTwice(t *testing.T) {
+// TestRefusedPasses_StationIsToldTheParkThenTheYes: three refusals and then the
+// fleet's yes. The station hears `queued` once (the first refusal parks the
+// `pending` order) and `dispatched` once (the yes); a refusal after the first,
+// under the same wait, tells nothing. Inside each create the projection and the
+// snapshot (both copy the row) read the order at its waiting status. A FLEET
+// pin: as built before, every pass told `dispatched` then `queued`, and every
+// create read `dispatched` with no wait.
+func TestRefusedPasses_StationIsToldTheParkThenTheYes(t *testing.T) {
 	t.Parallel()
 	c := newCWCell(t, "cw-tells")
 	var inside []string
@@ -337,22 +340,22 @@ func TestRefusedPasses_StationIsToldEachPassTwice(t *testing.T) {
 				p.Status, p.QueueCode, p.Version, row.Status, row.QueueCode, row.Version)
 		}
 	})
-	if want := "dispatched/ v2, dispatched/ v4, dispatched/ v6, dispatched/ v8"; strings.Join(inside, ", ") != want {
+	want := "pending/ v1, queued/fleet_unavailable v2, queued/fleet_unavailable v2, queued/fleet_unavailable v2"
+	if strings.Join(inside, ", ") != want {
 		t.Errorf("the projection inside each create = %v, want %s", inside, want)
 	}
-	want := "dispatched v2, queued v3, dispatched v4, queued v5, dispatched v6, queued v7, dispatched v8"
-	if got := strings.Join(stationTellsOf(t, c.db, "cw-tells"), ", "); got != want {
-		t.Errorf("the station's tells = %s, want %s", got, want)
+	if got := strings.Join(stationTellsOf(t, c.db, "cw-tells"), ", "); got != "queued v2, dispatched v3" {
+		t.Errorf("the station's tells = %s, want queued v2, dispatched v3", got)
 	}
 }
 
-// TestRefusedPasses_HistoryNamesEveryAskedJob: each pass asks under a new id,
-// and each writes a `dispatched` history row "vendor order X created" for the
-// id it asked, before the fleet answers; the fleet created only the last. Three
-// of the four rows name a job that never existed, and the time-to-dispatch and
-// soakstat readers count them. A FLEET pin: it flips to one row, the created
-// job's.
-func TestRefusedPasses_HistoryNamesEveryAskedJob(t *testing.T) {
+// TestRefusedPasses_HistoryNamesOnlyTheCreatedJob: each pass asks under a new
+// id, and the fleet created only the last. The one `dispatched` history row is
+// the yes's, "vendor order X created" for the job the fleet has; the asks it
+// refused write no `dispatched` row, so the time-to-dispatch and soakstat
+// readers count no job that never existed. A FLEET pin: as built before, every
+// ask wrote one.
+func TestRefusedPasses_HistoryNamesOnlyTheCreatedJob(t *testing.T) {
 	t.Parallel()
 	c := newCWCell(t, "cw-history")
 	c.refuseThenTake(3, func(int) {})
@@ -369,12 +372,8 @@ func TestRefusedPasses_HistoryNamesEveryAskedJob(t *testing.T) {
 			named = append(named, h.Detail)
 		}
 	}
-	var want []string
-	for _, id := range asked {
-		want = append(want, fmt.Sprintf("vendor order %s created", id))
-	}
-	if strings.Join(named, " | ") != strings.Join(want, " | ") {
-		t.Errorf("`dispatched` history rows = %q, want one per asked id %q", named, want)
+	if want := fmt.Sprintf("vendor order %s created", asked[3]); strings.Join(named, " | ") != want {
+		t.Errorf("`dispatched` history rows = %q, want the created job's alone, %q", named, want)
 	}
 	if row := c.row(); row.VendorOrderID != asked[3] {
 		t.Errorf("Core names %q, want the created job %q", row.VendorOrderID, asked[3])
