@@ -230,6 +230,12 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	if !protocol.IsValidTransition(from, to) {
 		return IllegalTransition{From: from, To: to}
 	}
+	if to == StatusDispatched {
+		// `dispatched` names the fleet's job (orders_dispatched_names_its_job), and
+		// only the fleet's yes knows it: Dispatch writes both in one statement.
+		return fmt.Errorf("transition: %s→%s is the fleet's yes; LifecycleService.Dispatch writes it with the vendor id",
+			from, to)
+	}
 	if to == StatusQueued && ord.QueueCode == "" {
 		return WaitWithoutCause{OrderID: ord.ID, From: from}
 	}

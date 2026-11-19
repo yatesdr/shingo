@@ -1866,6 +1866,9 @@ ALTER TABLE ONLY public.order_history
 ALTER TABLE ONLY public.order_intake_refusals
     ADD CONSTRAINT order_intake_refusals_pkey PRIMARY KEY (edge_uuid);
 
+ALTER TABLE public.orders
+    ADD CONSTRAINT orders_dispatched_names_its_job CHECK (((status <> 'dispatched'::text) OR (vendor_order_id <> ''::text))) NOT VALID;
+
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
 

@@ -180,6 +180,17 @@ func IndexExists(c Querier, indexName string) bool {
 	return exists
 }
 
+// ConstraintExists reports whether the named constraint is on the table, valid
+// or not. Returns false on any query error.
+func ConstraintExists(c Querier, table, constraint string) bool {
+	var exists bool
+	c.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname=$2 AND conrelid=$1::regclass)`,
+		table, constraint,
+	).Scan(&exists)
+	return exists
+}
+
 // ColumnNullable reports whether the named column exists and accepts NULL.
 // False on a query error, so a verify predicate built on it re-runs an
 // idempotent DROP NOT NULL rather than recording a check that never ran.

@@ -137,7 +137,10 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 - `order_type` is an [Order Type](#order-types); `status` a [status](#order-statuses).
 - `delivery_node` — see the caveat below. `source_node` and `delivery_node` are node names, not keys: the table
   has no reference to `nodes`.
-- `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string.
+- `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string. A `dispatched`
+  order names its job (`orders_dispatched_names_its_job`, v181): `dispatched` is written once, by the fleet's
+  yes, with the vendor id. The rule is NOT VALID, so rows written before v181 that break it are kept (v181 counts
+  and logs them) and every new write is held to it.
 - `named_bin_id` is the one bin the asker named the order for, if any — a constraint, not a record.
 - `parent_order_id` is the parent compound order (for reshuffle child orders); `sequence` the step sequence within
   it.
@@ -1429,6 +1432,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `version` | `bigint` | yes | `1` |  |
 | `asked_vendor_order_id` | `text` | yes | `''` |  |
 
+- Check `((status <> 'dispatched') OR (vendor_order_id <> ''))`
 - Unique (edge_uuid) where `edge_uuid <> ''`
 
 #### Core: `outbox`

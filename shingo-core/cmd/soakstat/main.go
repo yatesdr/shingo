@@ -1960,14 +1960,18 @@ func checkQueuedWithoutCause(db *store.DB) []string {
 // ListTrackedVendorOrderIDs), so an order in this state is watched by nothing at
 // all.
 //
-// It is reachable. Core writes `dispatched` and then creates the vendor order —
-// the CAS-before-create ordering, kept deliberately because it is the
-// racing-dispatchers lock — so there is a window, and a crash inside it leaves an
-// order armored, claimed, holding its lane, and invisible to the one loop that
-// would have noticed it stopped moving.
+// It was reachable, and on a plant's old rows it still is. Core used to write
+// `dispatched` and then create the vendor order, so a crash inside that window left
+// an order armored, claimed, holding its lane, and invisible to the one loop that
+// would have noticed it stopped moving. Since v181 a `dispatched` row names its
+// job (`dispatched` is the fleet's yes, written with the vendor id, and
+// orders_dispatched_names_its_job holds every new write), so a new one cannot
+// arise; the rule is NOT VALID, and a row from before it can still be here. Core
+// asking the fleet now rests at its waiting status with an open ask, which Core
+// lists itself.
 //
 // THE AGE BOUND IS WHAT MAKES IT A FINDING rather than a race report. Inside the
-// window the state is correct and expected; minutes later it is a wedge. Five
+// old window the state was correct and expected; minutes later it is a wedge. Five
 // minutes is the same bound checkQueuedWithoutCause uses for the same reason —
 // long enough that a transient cannot reach it, short enough to catch the wedge
 // inside a shift.

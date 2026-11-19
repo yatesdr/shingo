@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"shingo/protocol/migrate"
@@ -4583,7 +4584,66 @@ func migrationList() []migration {
 		{180, "orders.asked_vendor_order_id - the fleet order Core is asking the fleet to create for this order, for as long as it asks; blank on every existing order",
 			v180OrderAskedVendorOrderID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "asked_vendor_order_id") }},
+		{181, "orders_dispatched_names_its_job - a `dispatched` order names its fleet job (vendor_order_id); NOT VALID: the rows already breaking it are counted and logged, not rewritten",
+			v181DispatchedNamesItsJob,
+			func(q schema.Querier) bool {
+				return schema.ConstraintExists(q, "orders", "orders_dispatched_names_its_job")
+			}},
 	}
+}
+
+// v181DispatchedNamesItsJob adds the rule that `dispatched` means the fleet has
+// the job: a `dispatched` row names it in vendor_order_id. `dispatched` is
+// written once, by the fleet's yes, with the vendor id (orders.FleetYesTx), so
+// no write since v180 breaks it. Rows written before, by a hand that wrote
+// `dispatched` before asking and died or was refused before the id, may: they
+// are counted and logged by id, and left as they are, because nothing says
+// which side of the fleet's answer each is on. The rule is added NOT VALID, so
+// it holds every new write and does not reject the rows it found. ROLLBACK is
+// the previous binary plus DROP CONSTRAINT. Pin:
+// TestOrderMigration_V181_TheRuleRefusesANewBreakAndKeepsTheOldRows.
+func v181DispatchedNamesItsJob(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id FROM orders WHERE status = 'dispatched' AND vendor_order_id = '' ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("v181 count dispatched orders naming no job: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("v181 count dispatched orders naming no job: %w", err)
+		}
+		ids = append(ids, strconv.FormatInt(id, 10))
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("v181 count dispatched orders naming no job: %w", err)
+	}
+	log.Printf("store: v181 dispatched orders naming no fleet job: %d, left as they are%s", len(ids), v181IDList(ids))
+	var present bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint
+		WHERE conname = 'orders_dispatched_names_its_job' AND conrelid = 'orders'::regclass)`).Scan(&present); err != nil {
+		return fmt.Errorf("v181 read the rule: %w", err)
+	}
+	if present {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE orders ADD CONSTRAINT orders_dispatched_names_its_job
+		CHECK (status <> 'dispatched' OR vendor_order_id <> '') NOT VALID`); err != nil {
+		return fmt.Errorf("v181 the rule: %w", err)
+	}
+	return nil
+}
+
+// v181IDList renders the ids v181 logs, the first 50.
+func v181IDList(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	if len(ids) > 50 {
+		return ": " + strings.Join(ids[:50], ", ") + ", ..."
+	}
+	return ": " + strings.Join(ids, ", ")
 }
 
 // v180OrderAskedVendorOrderID adds orders.asked_vendor_order_id: the vendor
