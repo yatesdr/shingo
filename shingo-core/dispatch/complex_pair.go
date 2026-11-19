@@ -197,13 +197,13 @@ func (d *Dispatcher) coordinatedPairLegs(order *orders.Order) ([]*orders.Order, 
 	// acquiring when the dig is done. Read as absent, it let this leg go to the
 	// fleet alone — an evac released while its supply digs lifts the line's bin
 	// with no replacement committed, which is ALN_003.
-	if !protocol.IsAcquiring(sib.Status) && !protocol.IsTerminal(sib.Status) && !pairLegCommitted(sib.Status) {
+	if !sib.Acquiring() && !protocol.IsTerminal(sib.Status) && !pairLegCommitted(sib) {
 		return nil, &pairWait{partner: sib}
 	}
 
 	legs := make([]*orders.Order, 0, 2)
 	for _, leg := range []*orders.Order{order, sib} {
-		if protocol.IsAcquiring(leg.Status) {
+		if leg.Acquiring() {
 			legs = append(legs, leg)
 		}
 	}
@@ -224,8 +224,12 @@ type pairWait struct {
 // vendor has it (dispatched, in transit, staged, or faulted inside its grace
 // period) or it has delivered. Its partner then goes on its own — the pass that
 // committed this leg already made the both-or-neither decision.
-func pairLegCommitted(s protocol.Status) bool {
-	return protocol.IsVendorTracked(s) || s == StatusDelivered
+//
+// A leg Core is asking the fleet for (an open ask) reads committed: its pass
+// made that decision and holds its hand, and the fleet's answer, not the
+// partner, settles it.
+func pairLegCommitted(o *orders.Order) bool {
+	return o.AskOpen() || protocol.IsVendorTracked(o.Status) || o.Status == StatusDelivered
 }
 
 // preparedLeg is one leg that has cleared every acquisition phase and is
@@ -346,7 +350,7 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 		if d.preHandHook != nil {
 			d.preHandHook(c.order.ID)
 		}
-		takes = append(takes, handTake{order: c.order, hand: c.hand, entering: c.entering, actor: c.actor,
+		takes = append(takes, handTake{order: c.order, hand: c.hand, entering: c.entering, ask: c.req.OrderID, actor: c.actor,
 			reason: fmt.Sprintf("vendor order %s created", c.req.OrderID)})
 	}
 	if i, err := d.acquireHands(takes); err != nil {
@@ -372,7 +376,10 @@ func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexC
 			if i == 0 && !concurrent {
 				// Nothing of the pair is with the fleet: the legs after this one
 				// were held with it and are let go with it, through the same door.
+				// Their asks were opened with the lifter's and never sent: they
+				// close first, so the demote finds rows it may move.
 				for _, rest := range commits[1:] {
+					d.closeAsk(rest.order, rest.req.OrderID, "its pair's lifter was not taken by the fleet")
 					d.ReleaseLaneOccupancy(rest.order.ID)
 					code, cause, params := FleetRefusalCause(err, rest.order.DeliveryNode)
 					d.DemoteAfterFleetRefusal(rest.order, code, cause, params)

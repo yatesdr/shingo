@@ -39,14 +39,14 @@ func ClearPullCandidates(db *sql.DB, homeID int64, homeName string, loaderPositi
 			UNION ALL
 			SELECT n.id, n.parent_id, n.name FROM nodes n JOIN up ON n.id = up.parent_id)
 		SELECT o.id FROM orders o
-		WHERE o.order_type = $2 AND o.parent_order_id IS NULL AND o.status IN (%s)
+		WHERE o.order_type = $2 AND o.parent_order_id IS NULL AND %s
 		  AND o.delivery_node <> $3
 		  AND (COALESCE(o.source_node, '') = ''
 		       OR o.source_node IN (SELECT name FROM up WHERE id <> $1)
 		       OR split_part(o.source_node, '.', 2) IN (SELECT name FROM up WHERE id <> $1)
 		       OR o.source_node = ANY($4::text[])
 		       OR o.delivery_node = ANY($4::text[]))
-		ORDER BY %s`, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL()),
+		ORDER BY %s`, AcquiringSQL("o"), DemandRankOrderBySQL()),
 		homeID, string(protocol.OrderTypeRetrieveEmpty), homeName, loaderPositions)
 	if err != nil {
 		return nil, fmt.Errorf("list clear pull candidates: %w", err)

@@ -145,6 +145,10 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
   status write, a robot write that changes the robot to a named one, and a change of wait the station is told
   (`orders.WaitTells`). It rides `order.update`, the reconcile snapshot and the projection, and the station applies
   only a newer one. Every row starts at 1 (v179), so a 0 on the wire is an older Core.
+- `asked_vendor_order_id` is the vendor order id Core is asking the fleet to create (v180). The order's hand writes
+  it in the transaction that takes its holds; the fleet's yes moves it to `vendor_order_id`, and a no clears it.
+  Blank is no ask. While it is set the order is spoken for whatever its status says, and no other status move
+  lands on it except an ending. Core-only: never on the wire.
 
 The bins an order carries are not a column of the order: they are its rows in
 `order_bins` ([Order carts](#order-carts-order_bins)).
@@ -484,7 +488,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`order_bins`](#core-order_bins) | 6 | `id` | [`bins`](#core-bins), [`orders`](#core-orders) |
 | [`order_history`](#core-order_history) | 8 | `id` | [`orders`](#core-orders) |
 | [`order_intake_refusals`](#core-order_intake_refusals) | 5 | `edge_uuid` |  |
-| [`orders`](#core-orders) | 46 | `id` | `orders` |
+| [`orders`](#core-orders) | 47 | `id` | `orders` |
 | [`outbox`](#core-outbox) | 8 | `id` |  |
 | [`parts`](#core-parts) | 6 | `id` |  |
 | [`payload_bin_types`](#core-payload_bin_types) | 2 | `payload_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`payloads`](#core-payloads) |
@@ -1423,6 +1427,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `want` | `text` | yes | `''` |  |
 | `steps_done` | `integer` | yes | `0` |  |
 | `version` | `bigint` | yes | `1` |  |
+| `asked_vendor_order_id` | `text` | yes | `''` |  |
 
 - Unique (edge_uuid) where `edge_uuid <> ''`
 

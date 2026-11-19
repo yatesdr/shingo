@@ -28,24 +28,26 @@ func TestStallPopulationsPartitionTheNonTerminalStatuses(t *testing.T) {
 		if protocol.IsTerminal(s) {
 			continue
 		}
-		var claimed []string
-		for _, p := range stallPopulations {
-			if p.match(s) {
-				claimed = append(claimed, p.label)
+		for _, asking := range []bool{false, true} {
+			var claimed []string
+			for _, p := range stallPopulations {
+				if p.match(s, asking) {
+					claimed = append(claimed, p.label)
+				}
 			}
-		}
-		switch len(claimed) {
-		case 1:
-			// exactly one kind owns it
-		case 0:
-			t.Errorf("status %q is non-terminal and belongs to NO stall population — an order "+
-				"sitting in it forever is invisible to the checker. This is how `pending` and "+
-				"`sourcing` went unwatched: every clause was written separately and none of them "+
-				"covered the gap between them", s)
-		default:
-			t.Errorf("status %q belongs to %d stall populations (%s) — it would be reported twice, "+
-				"under two different thresholds, and the shorter one would always win",
-				s, len(claimed), strings.Join(claimed, ", "))
+			switch len(claimed) {
+			case 1:
+				// exactly one kind owns it
+			case 0:
+				t.Errorf("status %q (asking %v) is non-terminal and belongs to NO stall population — an order "+
+					"sitting in it forever is invisible to the checker. This is how `pending` and "+
+					"`sourcing` went unwatched: every clause was written separately and none of them "+
+					"covered the gap between them", s, asking)
+			default:
+				t.Errorf("status %q (asking %v) belongs to %d stall populations (%s) — it would be reported twice, "+
+					"under two different thresholds, and the shorter one would always win",
+					s, asking, len(claimed), strings.Join(claimed, ", "))
+			}
 		}
 	}
 }
@@ -60,9 +62,11 @@ func TestStallPopulationsExcludeTerminalStatuses(t *testing.T) {
 			continue
 		}
 		for _, p := range stallPopulations {
-			if p.match(s) {
-				t.Errorf("terminal status %q is claimed by the %q stall population — every "+
-					"confirmed order in the run would be reported as stalled", s, p.label)
+			for _, asking := range []bool{false, true} {
+				if p.match(s, asking) {
+					t.Errorf("terminal status %q (asking %v) is claimed by the %q stall population — every "+
+						"confirmed order in the run would be reported as stalled", s, asking, p.label)
+				}
 			}
 		}
 	}

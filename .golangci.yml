@@ -233,6 +233,18 @@ linters:
         # flip), both in exclusions.rules under the "style-flip verb" message.
         - pattern: 'db\.SetActiveStyle'
           msg: "Direct db.SetActiveStyle bypasses the style-flip verb. Route through Engine.SetProcessActiveStyle (strands piles, publishes plant.claims)."
+        # The ask guard (2026-11-18). An order Core is asking the fleet for
+        # (orders.asked_vendor_order_id) has taken its holds and waits on the
+        # fleet's answer whatever its status reads, so a bare status test for
+        # "not yet sent" or "may still be tried" answers wrong for it. Each
+        # question has one spelling that reads both columns: the Go forms in
+        # shingo-core/domain/order_ask.go and the SQL forms in
+        # shingo-core/store/internal/helpers/order_ask.go (re-exported by
+        # store/orders). Those two files are the sanctioned callers. Scoped to
+        # shingo-core by path-except below: the Edge has no ask. The method
+        # forms (status.IsPreDispatch()) match too.
+        - pattern: '\.(IsPreDispatch|IsAcquiring|PreDispatchStatusSQLList|AcquiringStatusSQLList)\b'
+          msg: "Raw pre-dispatch/acquiring status test: an order with an ask open is spoken for whatever its status says. Ask through domain.Order (Acquiring, PreDispatch, AwaitingFleet) or orders.AcquiringSQL / PreDispatchSQL / PastPreDispatchSQL / AwaitingFleetSQL."
 
         # Note on swap-mode constants: forbidigo can only match identifier
         # expressions (selector exprs like `db.UpdateOrderStatus`), not
@@ -810,6 +822,24 @@ linters:
         text: "style-flip verb"
         linters:
           - forbidigo
+
+      # ---- The ask guard (forbidigo) ---------------------------------------
+      # Scope: shingo-core only (the Edge and protocol have no ask). The two
+      # files that define the questions are the sanctioned callers. soakstat's
+      # stranded report reads order_history.status, the status a history row
+      # recorded, which carries no ask.
+      - linters:
+          - forbidigo
+        text: "Raw pre-dispatch/acquiring status test"
+        path-except: "shingo-core/"
+      - linters:
+          - forbidigo
+        text: "Raw pre-dispatch/acquiring status test"
+        path: "shingo-core/(domain|store/internal/helpers)/order_ask\\.go"
+      - linters:
+          - forbidigo
+        text: "Raw pre-dispatch/acquiring status test"
+        path: "shingo-core/cmd/soakstat/stranded\\.go"
 
       # Test files build fixtures by direct DB writes. Permanent.
       - path: ".*_test\\.go"

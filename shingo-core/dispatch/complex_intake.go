@@ -271,7 +271,7 @@ func (d *Dispatcher) refuseComplexIntake(env *protocol.Envelope, p *protocol.Com
 		log.Printf("dispatch: record intake refusal of %s (pair with %s): %v", p.OrderUUID, p.SiblingOrderUUID, err)
 	}
 	partner, err := d.db.GetOrderByUUID(p.SiblingOrderUUID)
-	if err != nil || partner == nil || partner.SiblingOrderUUID != p.OrderUUID || !protocol.IsAcquiring(partner.Status) {
+	if err != nil || partner == nil || partner.SiblingOrderUUID != p.OrderUUID || !partner.Acquiring() {
 		return
 	}
 	_ = d.failForRefusedPartner(partner, &orders.IntakeRefusal{

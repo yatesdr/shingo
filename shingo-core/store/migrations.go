@@ -4580,7 +4580,25 @@ func migrationList() []migration {
 		{179, "orders.version - one counter per order, bumped with every write the station is told (status, robot, wait); 1 on every existing order",
 			v179OrderVersion,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "version") }},
+		{180, "orders.asked_vendor_order_id - the fleet order Core is asking the fleet to create for this order, for as long as it asks; blank on every existing order",
+			v180OrderAskedVendorOrderID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "asked_vendor_order_id") }},
 	}
+}
+
+// v180OrderAskedVendorOrderID adds orders.asked_vendor_order_id: the vendor
+// order id Core is asking the fleet to create, written by the order's hand in
+// the transaction that takes its holds, and cleared when the fleet answers (the
+// yes names the job in vendor_order_id; a no leaves it unnamed). Core-only: it
+// is never on the wire. An open ask means the order is spoken for, whatever its
+// status says (orders.PreDispatchSQL and its twins). Blank, the default and
+// what every existing order reads, is no ask. ROLLBACK is the previous binary
+// plus DROP COLUMN. Pin: TestOrderMigration_V180_NoOrderIsAsking.
+func v180OrderAskedVendorOrderID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS asked_vendor_order_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v180 orders.asked_vendor_order_id: %w", err)
+	}
+	return nil
 }
 
 // v179OrderVersion adds orders.version: one counter per order, bumped in the

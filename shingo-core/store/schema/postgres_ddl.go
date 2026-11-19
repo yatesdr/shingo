@@ -284,7 +284,12 @@ CREATE TABLE IF NOT EXISTS orders (
     -- reconcile snapshot and the projection, and the station applies only a
     -- newer one. Born 1, so a 0 on the wire is an older Core. Added by
     -- migration 179.
-    version BIGINT NOT NULL DEFAULT 1
+    version BIGINT NOT NULL DEFAULT 1,
+    -- The vendor order id Core is asking the fleet to create, from the hand
+    -- that takes the order's holds until the fleet answers; blank when Core is
+    -- not asking. Core-only, never on the wire. An open ask is spoken for
+    -- whatever the status says. Added by migration 180.
+    asked_vendor_order_id TEXT NOT NULL DEFAULT ''
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

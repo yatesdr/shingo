@@ -1286,7 +1286,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	// invalid_state for the same reason the coordinated arm below uses it: Edge
 	// treats that code as recoverable, so the operator sees a refusal and the Edge
 	// mirror survives. Any other code terminalizes the Edge row.
-	if !protocol.IsPreDispatch(order.Status) {
+	if !order.PreDispatch() {
 		d.dbg("redirect refused: order %d is %s — past the point where a redirect is an edit",
 			order.ID, order.Status)
 		d.replies.SendError(env, p.OrderUUID, "invalid_state",

@@ -225,7 +225,7 @@ func (s *Scanner) AcquireLocked(orderID int64, pick *dispatch.SourceResult) bool
 
 func (s *Scanner) acquireLocked(orderID int64, pick *dispatch.SourceResult) bool {
 	order, err := s.db.GetOrder(orderID)
-	if err != nil || !protocol.IsAcquiring(order.Status) {
+	if err != nil || !order.Acquiring() {
 		return false
 	}
 	if s.fulfill(order, pick) {
@@ -257,21 +257,21 @@ func (s *Scanner) pairLeaderToAsk(order *orders.Order) *orders.Order {
 	}
 	sib, err := s.db.GetOrderByUUID(order.SiblingOrderUUID)
 	if err != nil || sib == nil || sib.ParentOrderID != nil || sib.ID >= order.ID ||
-		!protocol.IsAcquiring(sib.Status) {
+		!sib.Acquiring() {
 		return nil
 	}
 	return sib
 }
 
 func (s *Scanner) tryFulfill(order *orders.Order) bool {
-	// Re-check status. The scan set is {pending, queued} (the acquiring set),
-	// so re-verify the order is still acquiring (not cancelled/failed/dispatched
-	// between listing and processing).
+	// Re-check. The scan set is the acquiring set (pending or queued, no ask
+	// open), so re-verify the order is still acquiring: not cancelled, failed,
+	// dispatched or asked for by another caller between listing and processing.
 	if s.askedThisPass[order.ID] {
 		return false // asked and parked earlier in this pass (RunOnce)
 	}
 	current, err := s.db.GetOrder(order.ID)
-	if err != nil || !protocol.IsAcquiring(current.Status) {
+	if err != nil || !current.Acquiring() {
 		return false
 	}
 	// Use the fresh copy for all subsequent operations.

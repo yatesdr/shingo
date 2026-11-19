@@ -49,7 +49,7 @@ type History = domain.OrderHistory
 // the same statement over idx_order_bins_order: every reader of an order has
 // its carts for no further statement. It names the outer row as orders.id, so
 // a statement using SelectCols reads FROM orders unaliased (all of them do).
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, version, ` + CartsColSQL
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, version, asked_vendor_order_id, ` + CartsColSQL
 
 // CartsColSQL is the order's carts as one JSON text column: an array of
 // [bin_id, pick_step, drop_step], in plan order (a carried-over row, with no
@@ -116,7 +116,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &o.Version, &carts)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &o.Version, &o.AskedVendorOrderID, &carts)
 	if err != nil {
 		return nil, err
 	}
@@ -348,12 +348,14 @@ func ListChildren(db *sql.DB, parentOrderID int64) ([]*Order, error) {
 // on a robot-system blip); parking it is the new one, and parking only works if
 // the re-drives can still see it.
 //
-// The status half stays, narrowed to its honest meaning: IsPreDispatch is
-// "still in Core's planning space and has not yet been sent to the fleet
-// vendor", which is this question exactly. A compound child is never `queued`,
-// so on this population the set is {pending, sourcing} — but it is DERIVED from
-// the predicate rather than hand-listed, so a status added to the pre-dispatch
-// family cannot leave one of these queries behind.
+// The status half stays, narrowed to its honest meaning: PreDispatchSQL is
+// "at rest in Core's planning space, not sent to the fleet and not being asked
+// for", which is this question exactly. A compound child rests `pending`, and a
+// leg the fleet refused rests `queued` under its cause (parkLegOnFleetRefusal),
+// so on this population the set is {pending, queued} with no ask open — DERIVED
+// from the predicate rather than hand-listed, so a status added to the
+// pre-dispatch family cannot leave one of these queries behind. A leg Core is
+// asking the fleet for is not awaiting: its create is in flight.
 //
 // Rendered rather than written out, on the DigExclusionSQL precedent: there is
 // no second place where the comparison is spelled.
@@ -552,6 +554,10 @@ func ScanTold(row interface{ Scan(...any) error }, extra ...any) (Told, error) {
 // rides the transition it was reported with (a move to in_transit names it),
 // so the vendor write that follows finds it unchanged and tells nothing more.
 // An empty robotID leaves the stored one.
+//
+// A ROW WITH AN OPEN ASK DOES NOT MOVE (ask.go): Core is waiting on the fleet's
+// answer for it, and only that answer, or an ending, may change it. The write
+// finds no row and the caller yields as on any lost compare-and-swap.
 func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, actor string, refJSON any, robotID string) (Told, bool, error) {
 	if protocol.IsTerminal(protocol.Status(to)) {
 		return Told{}, false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
@@ -561,7 +567,7 @@ func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, 
 	// and refused above.
 	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET status=$1, error_detail='', updated_at=$3, version=version+1,
 		robot_id=COALESCE(NULLIF($5, ''), robot_id)`+waitEndsSQL(to)+`
-		WHERE id=$2 AND status=$4`+ToldReturning,
+		WHERE id=$2 AND status=$4 AND asked_vendor_order_id=''`+ToldReturning,
 		to, id, clock.Now().UTC(), from, robotID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Told{}, false, nil
@@ -940,8 +946,11 @@ func SiblingUUID(db *sql.DB, id int64) (string, error) {
 // robot (the robot is written blank, as a redirect clears it) or the robot the
 // row already holds. It reports whether it wrote; false means the write would
 // change the robot, and the caller takes the telling path (UpdateVendorTx).
+//
+// A write naming the job the row is asking for is the fleet's yes, and closes
+// the ask in the same statement (closesAskSQL).
 func UpdateVendorKeepingRobot(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string) (bool, error) {
-	res, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5
+	res, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5, `+closesAskSQL+`
 		WHERE id=$4 AND ($3 = '' OR robot_id = $3)`, vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
 	if err != nil {
 		return false, err
@@ -988,7 +997,7 @@ func UpdateVendorTx(tx *sql.Tx, id int64, vendorOrderID, vendorState, robotID st
 	}
 	changed := robotID != "" && robotID != was
 	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5,
-		version=version+CASE WHEN $6 THEN 1 ELSE 0 END
+		version=version+CASE WHEN $6 THEN 1 ELSE 0 END, `+closesAskSQL+`
 		WHERE id=$4`+ToldReturning,
 		vendorOrderID, vendorState, robotID, id, clock.Now().UTC(), changed))
 	return told, changed, err
@@ -1929,8 +1938,10 @@ func ListTrackedVendorOrderIDs(db *sql.DB) ([]string, error) {
 	return ids, rows.Err()
 }
 
-// ListActiveBySourceRef returns orders in pre-dispatch states (pending,
-// queued) whose source_node matches any of the provided names.
+// ListActiveBySourceRef returns orders at rest before the fleet (PreDispatchSQL:
+// pending or queued, no ask open) whose source_node matches any of the provided
+// names. An order Core is asking the fleet for is out of it, as one the fleet
+// has is.
 // Used by reparent/delete guards to detect orders that would break.
 func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 	if len(names) == 0 {
@@ -1942,8 +1953,8 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = n
 	}
-	q := fmt.Sprintf(`SELECT %s FROM orders WHERE source_node IN (%s) AND status IN (%s) ORDER BY created_at ASC`,
-		SelectCols, strings.Join(placeholders, ","), protocol.PreDispatchStatusSQLList())
+	q := fmt.Sprintf(`SELECT %s FROM orders WHERE source_node IN (%s) AND %s ORDER BY created_at ASC`,
+		SelectCols, strings.Join(placeholders, ","), PreDispatchSQL(""))
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -1967,10 +1978,12 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 //
 // `pending` is in it because every order is born there (v4 §2.6, C1). A
 // compound child is NOT: a dig leg rests `pending` for its whole pre-dispatch
-// life and is dispatched by the compound machinery, never the scanner (S7).
+// life and is dispatched by the compound machinery, never the scanner (S7). An
+// order Core is already asking the fleet for is not in it (AcquiringSQL): the
+// pass that asked owns it until the fleet answers.
 func ListAcquiring(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) AND parent_order_id IS NULL ORDER BY %s`,
-		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL()))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE %s AND parent_order_id IS NULL ORDER BY %s`,
+		SelectCols, AcquiringSQL(""), DemandRankOrderBySQL()))
 	if err != nil {
 		return nil, err
 	}

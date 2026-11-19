@@ -212,18 +212,20 @@ func HandHeld(d heldHand, order *orders.Order, binID int64, sourceNode *nodes.No
 //     or the one bin it names has left its source; nothing is held; not a wait;
 //   - ConcurrentTransition: the order moved under us; nothing is held; yield;
 //   - any other error: a database fault; nothing is held.
-func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.Node, actor, reason string) error {
-	_, err := d.acquireHands([]handTake{{order: order, hand: h, entering: entering, actor: actor, reason: reason}})
+func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.Node, ask, actor, reason string) error {
+	_, err := d.acquireHands([]handTake{{order: order, hand: h, entering: entering, ask: ask, actor: actor, reason: reason}})
 	return err
 }
 
 // handTake is one order's part of a hand transaction: its hand, the nodes its
-// first segment enters (their lanes' occupancy), and the `dispatched` write's
+// first segment enters (their lanes' occupancy), the vendor order id it is about
+// to ask the fleet for (its ask, orders.SetAskTx), and the `dispatched` write's
 // actor and reason.
 type handTake struct {
 	order    *orders.Order
 	hand     Hand
 	entering []*nodes.Node
+	ask      string
 	actor    string
 	reason   string
 }
@@ -290,10 +292,13 @@ func (d *Dispatcher) acquireHands(takes []handTake) (int, error) {
 }
 
 // takeHandTx is one take on the hand's transaction, after its lanes' advisory
-// locks: the status CAS, slots, bins, lane mouths, occupancy. It returns the
-// CAS's finish, to run after the commit.
+// locks: the status CAS, the ask, slots, bins, lane mouths, occupancy. It
+// returns the CAS's finish, to run after the commit.
 func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 	order := t.order
+	if t.ask == "" {
+		return nil, &StatusWriteFailed{OrderID: order.ID, Err: errors.New("the hand names no vendor order id to ask for")}
+	}
 	// THE STATUS CAS IS THE FIRST ROW LOCK: the detector (SYNTH §2.4). Two
 	// dispatchers can reach one order: a hand door queues it, and a scanner pass
 	// takes it through the held-bin arm before the door's own hand. When the CAS
@@ -310,6 +315,20 @@ func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
 			return nil, err
 		}
 		return nil, &StatusWriteFailed{OrderID: order.ID, Err: err}
+	}
+	// THE ASK, on the row the CAS just locked: the vendor order id Core is about
+	// to ask the fleet for, held until the fleet answers (orders.SetAskTx). The
+	// CAS refuses a row that already carries one, so it finds none here.
+	if asked, err := d.db.SetOrderAskTx(tx, order.ID, t.ask); err != nil || !asked {
+		if err == nil {
+			err = fmt.Errorf("the row already carries an ask")
+		}
+		return nil, &StatusWriteFailed{OrderID: order.ID, Err: fmt.Errorf("open the ask %s: %w", t.ask, err)}
+	}
+	moved := finish
+	finish = func() {
+		moved()
+		order.AskedVendorOrderID = t.ask
 	}
 
 	for _, s := range t.hand.Slots {

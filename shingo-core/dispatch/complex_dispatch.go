@@ -58,15 +58,16 @@ type dispatchStep struct {
 // fleet rejection, a partner Core refused at intake — fails it through
 // lifecycle.Fail.
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
-	// Defense-in-depth: the fulfillment scanner already gates on IsAcquiring
-	// ({pending, queued}) before calling here, so a parent in Reshuffling (with a
+	// Defense-in-depth: the fulfillment scanner already gates on Acquiring
+	// (pending or queued, no ask open) before calling here, so a parent in Reshuffling (with a
 	// compound in flight), or one already dispatched or terminal, won't reach us
 	// through the scanner. Anything calling this directly must still respect the
 	// invariant — proceeding on a non-acquiring order would re-dispatch a parent
 	// mid-reshuffle or race a post-resume. Return nil so the caller treats a
 	// non-acquiring order as a no-op, not an error.
-	if !protocol.IsAcquiring(order.Status) {
-		d.dbg("complex: DispatchPreparedComplex called with status=%s (want pending/queued); skipping", order.Status)
+	if !order.Acquiring() {
+		d.dbg("complex: DispatchPreparedComplex called with status=%s, ask %q (want pending/queued, no ask); skipping",
+			order.Status, order.AskedVendorOrderID)
 		return nil
 	}
 
@@ -94,7 +95,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		// A claim exchange gave this order the mouth bin: acquire it once more
 		// now, on the plan and hold the exchange wrote, rather than at the next
 		// pass.
-		if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && protocol.IsAcquiring(fresh.Status) {
+		if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.Acquiring() {
 			*order = *fresh
 			resolvedSteps, hand, _, st = d.prepareComplexHand(order, nil)
 		}

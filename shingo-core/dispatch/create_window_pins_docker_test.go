@@ -183,7 +183,7 @@ func TestCreateWindow_ClaimedReadersSayClaimed(t *testing.T) {
 		if !swapLegCommittedToFleet(row) {
 			t.Errorf("%s: swapLegCommittedToFleet = false (gate 3 would read an undecided holder)", where)
 		}
-		if !pairLegCommitted(row.Status) {
+		if !pairLegCommitted(row) {
 			t.Errorf("%s: pairLegCommitted = false (a pair partner would wait on a committed leg)", where)
 		}
 		swept, err := reconciliation.ReleaseAcquiringOrphanClaims(c.db.DB)

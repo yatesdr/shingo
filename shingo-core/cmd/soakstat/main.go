@@ -667,14 +667,14 @@ func orderCounts(db *store.DB, u *unrun) counts {
 	c.completed = u.read(db, measureOrders+" completed", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusConfirmed))
 	c.failed = u.read(db, measureOrders+" failed", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusFailed))
 	c.cancelled = u.read(db, measureOrders+" cancelled", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusCancelled))
-	// Pre-dispatch, from the predicate rather than typed out: {pending, queued} is
-	// IsPreDispatch, and a status joining that family must join this count with
-	// it.
+	// Pre-dispatch, from the predicate rather than typed out (orders.PreDispatchSQL:
+	// pending or queued, no ask open), so a status joining that family joins this
+	// count with it, and an order Core is asking the fleet for counts in flight.
 	c.queued = u.read(db, measureOrders+" queued", fmt.Sprintf(
-		`SELECT COUNT(*) FROM orders WHERE status IN (%s)`, protocol.PreDispatchStatusSQLList()))
+		`SELECT COUNT(*) FROM orders WHERE %s`, orders.PreDispatchSQL("")))
 	c.inFlight = u.read(db, measureOrders+" in-flight", fmt.Sprintf(
-		`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND status NOT IN (%s)`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList()))
+		`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND %s`,
+		protocol.TerminalStatusSQLList(), orders.PastPreDispatchSQL("")))
 	return c
 }
 
@@ -686,56 +686,85 @@ func orderCounts(db *store.DB, u *unrun) counts {
 // the query returns and the set the drift test reasons about cannot come apart.
 // Writing the clause out by hand is what let `pending` and `sourcing` fall
 // through every kind — the bug the derivation exists to make impossible.
+//
+// It reads two columns: the status, and whether Core is asking the fleet for
+// the order (asked_vendor_order_id). An order with an ask open is spoken for
+// whatever its status says (domain.PreDispatch), so the kind it falls in turns
+// on both.
 type stallPopulation struct {
 	label string
 	after string // a Postgres interval literal
-	match func(protocol.Status) bool
+	match func(s protocol.Status, asking bool) bool
 }
 
-// clause renders the population as a SQL predicate over `status`.
+// askedIf is an ask for the domain predicates: any non-empty id reads as open.
+func askedIf(asking bool) string {
+	if asking {
+		return "asking"
+	}
+	return ""
+}
+
+// clause renders the population as a SQL predicate over `status` and
+// `asked_vendor_order_id`: one arm per side of the ask the kind holds a status
+// on.
 //
-// A kind whose predicate matches no status renders `FALSE` rather than an empty
+// A kind whose predicate matches nothing renders `FALSE` rather than an empty
 // `IN ()`, which is a syntax error. That case is a definition mistake, not a
 // runtime one — the partition test catches it — so this only has to fail
 // harmlessly rather than diagnose.
 func (p stallPopulation) clause() string {
-	list := protocol.StatusSQLList(p.match)
-	if list == "" {
+	var arms []string
+	for _, asking := range []bool{false, true} {
+		list := protocol.StatusSQLList(func(s protocol.Status) bool { return p.match(s, asking) })
+		if list == "" {
+			continue
+		}
+		op := "="
+		if asking {
+			op = "<>"
+		}
+		arms = append(arms, fmt.Sprintf("(status IN (%s) AND asked_vendor_order_id %s '')", list, op))
+	}
+	if len(arms) == 0 {
 		return "FALSE"
 	}
-	return fmt.Sprintf("status IN (%s)", list)
+	return "(" + strings.Join(arms, " OR ") + ")"
 }
 
-// stallPopulations PARTITIONS the non-terminal statuses. Every one of them is in
-// exactly one kind, which is what makes "nothing is stalled" a statement about
-// the whole plant rather than about the statuses somebody remembered.
+// stallPopulations PARTITIONS the non-terminal orders, by status and ask. Every
+// one of them is in exactly one kind, which is what makes "nothing is stalled" a
+// statement about the whole plant rather than about the statuses somebody
+// remembered.
 //
 // The three kinds are progress shapes, not lifecycle stages:
 //
 //   - DWELLING AT A MARK is a robot committed and standing still. Core owes it a
 //     decision, so the threshold is the length of somebody else's lane transit.
-//   - PARKED is pre-dispatch: no robot is committed, the order is waiting for
-//     material, a slot, a lane or the fleet. Long waits here are legitimate.
-//     IsPreDispatch is exactly this set — {pending, queued} — and using the
-//     predicate rather than naming `queued` is the fix.
-//   - IN FLIGHT is everything else non-terminal: handed over, moving, or waiting
-//     on a human (delivered), plus the compound parent's own `reshuffling`.
+//   - PARKED is pre-dispatch: no robot is committed or asked for, the order is
+//     waiting for material, a slot, a lane or the fleet. Long waits here are
+//     legitimate. domain.PreDispatch is exactly this set — pending or queued,
+//     no ask open — and using the predicate rather than naming `queued` is the
+//     fix.
+//   - IN FLIGHT is everything else non-terminal: asked for, handed over, moving,
+//     or waiting on a human (delivered), plus the compound parent's own
+//     `reshuffling`.
 var stallPopulations = []stallPopulation{
 	{
 		label: "dwelling at a mark",
 		after: "90 seconds",
-		match: func(s protocol.Status) bool { return s == protocol.StatusStaged },
+		match: func(s protocol.Status, _ bool) bool { return s == protocol.StatusStaged },
 	},
 	{
 		label: "parked",
 		after: "15 minutes",
-		match: protocol.IsPreDispatch,
+		match: func(s protocol.Status, asking bool) bool { return domain.PreDispatch(s, askedIf(asking)) },
 	},
 	{
 		label: "in flight",
 		after: "20 minutes",
-		match: func(s protocol.Status) bool {
-			return !protocol.IsTerminal(s) && !protocol.IsPreDispatch(s) && s != protocol.StatusStaged
+		match: func(s protocol.Status, asking bool) bool {
+			return !protocol.IsTerminal(s) && !domain.PreDispatch(s, askedIf(asking)) && s != protocol.StatusStaged
 		},
 	},
 }
@@ -1671,12 +1700,12 @@ func checkPhantomEntrants(db *store.DB) []string {
 		LEFT JOIN nodes bn ON bn.id = b.node_id
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
+		  AND %s
 		  AND o.status <> '%s'
 		  AND r.id IS NULL
 		  AND bn.parent_id IS NOT DISTINCT FROM l.id
 		ORDER BY o.id LIMIT 12`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.TerminalStatusSQLList(), orders.PastPreDispatchSQL("o"),
 		protocol.StatusStaged)
 	rows, err := db.DB.Query(phantomQ)
 	if err != nil {
@@ -1723,10 +1752,10 @@ func checkNotJudgedAtDestEnd(db *store.DB) []string {
 		      AND r.node_id = l.id AND r.state <> 'released'
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
+		  AND %s
 		  AND o.status <> '%s'
 		  AND r.id IS NULL`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.TerminalStatusSQLList(), orders.PastPreDispatchSQL("o"),
 		protocol.StatusStaged))
 	if err != nil {
 		return append(out, failedToRun("not judged (dest end)", err))
@@ -1755,11 +1784,11 @@ func checkNotJudgedNoBin(db *store.DB) []string {
 		      AND r.node_id = l.id AND r.state <> 'released'
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
+		  AND %s
 		  AND o.status <> '%s'
 		  AND r.id IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM order_bins ob WHERE ob.order_id = o.id)`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.TerminalStatusSQLList(), orders.PastPreDispatchSQL("o"),
 		protocol.StatusStaged))
 	if err != nil {
 		return append(out, failedToRun("not judged (no bin)", err))
@@ -1807,7 +1836,7 @@ func checkTraversalOverlap(db *store.DB) []string {
 		LEFT JOIN nodes bn ON bn.id = b.node_id
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
+		  AND %s
 		  AND o.status <> '%s'
 		  AND r.id IS NULL
 		  AND bn.parent_id IS DISTINCT FROM l.id
@@ -1817,7 +1846,7 @@ func checkTraversalOverlap(db *store.DB) []string {
 		      AND h.node_id = l.id AND h.order_id <> o.id
 		  )
 		GROUP BY l.name ORDER BY l.name LIMIT 12`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.TerminalStatusSQLList(), orders.PastPreDispatchSQL("o"),
 		protocol.StatusStaged))
 	if err != nil {
 		return append(out, failedToRun("traversal overlap", err))

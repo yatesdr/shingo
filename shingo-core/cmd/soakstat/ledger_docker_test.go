@@ -164,8 +164,9 @@ func TestLedger_BooksAndClasses(t *testing.T) {
 // SQL they restate, on one database: holds-at-rest against ListHoldsAtRest,
 // dig-lock-at-rest against ListDigLocksAtRest, and the entombing flag against
 // store.SlotsThatWouldEntombASpokenForSlot. The seeds cover every kind of hard
-// hold, the four exceptions (dispatched, compound leg, terminal, pending only)
-// and the three spoken-for spellings (claim, reservation, bare destination).
+// hold, the five exceptions (dispatched, an order Core is asking the fleet for,
+// compound leg, terminal, pending only) and the three spoken-for spellings
+// (claim, reservation, bare destination).
 func TestLedger_ReadingsEqualTheSQL(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "seeds orders holding at rest on purpose")
@@ -193,6 +194,14 @@ func TestLedger_ReadingsEqualTheSQL(t *testing.T) {
 	seedRes(t, db, order(protocol.StatusPending, nil), "occupancy", "confirmed", "", laneA)
 	seedRes(t, db, order(protocol.StatusQueued, nil), "mouth", "confirmed", orders.DigLockTags[1], laneA)
 	holdBin(order(protocol.StatusDispatched, nil), "LP-DISPATCHED")
+	asking := func() int64 {
+		id := order(protocol.StatusQueued, nil)
+		_, err := db.Exec(`UPDATE orders SET asked_vendor_order_id = 'sg-lp-ask' WHERE id = $1`, id)
+		testutil.MustNoErr(t, err, "open an ask")
+		return id
+	}
+	holdBin(asking(), "LP-ASKING")
+	seedRes(t, db, asking(), "mouth", "confirmed", orders.DigLockTags[1], laneA)
 	parent := order(protocol.StatusReshuffling, nil)
 	holdBin(order(protocol.StatusPending, &parent), "LP-LEG")
 	holdBin(order(protocol.StatusConfirmed, nil), "LP-TERMINAL")

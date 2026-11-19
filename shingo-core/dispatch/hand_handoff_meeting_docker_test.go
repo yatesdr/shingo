@@ -60,7 +60,7 @@ func TestHandMeetsHandOff_NeitherSideAborts(t *testing.T) {
 		handDone <- d.acquireHand(picker, Hand{
 			Bins:  []HandBin{{BinID: bin.ID}},
 			Lanes: []laneHold{{laneID: laneID, mode: reservations.ModeOutbound}},
-		}, nil, "test", "meeting")
+		}, nil, "sg-meeting", "test", "meeting")
 	}()
 	waitForAdvisoryWaiter(t, db.DB, laneID)
 

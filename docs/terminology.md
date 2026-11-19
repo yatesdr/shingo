@@ -155,9 +155,18 @@ the destination-side mirror of a bin reservation: a soft hold on a node, confirm
 
 The act between `pending` and `dispatched`: asking for an order's whole hand (source bins, destination slot, lanes)
 and taking it in one transaction, or parking the order in `queued` with the cause on its row. It is never a stored
-status. The **acquiring set** — the orders the fulfillment scanner may ask — is `pending` and `queued`
-(`protocol.IsAcquiring`); a `queued` order holds its sources as reservations and is asked again each scanner tick,
-and is not "stuck" — demand is operator-driven.
+status. The **acquiring set** — the orders the fulfillment scanner may ask — is `pending` and `queued` with no
+[ask](#ask) open (`Order.Acquiring`, `orders.AcquiringSQL`); a `queued` order holds its sources as reservations and
+is asked again each scanner tick, and is not "stuck" — demand is operator-driven.
+
+### Ask
+
+The vendor order id Core is asking the fleet to create for an order, from the hand that takes the order's holds
+until the fleet answers: `orders.asked_vendor_order_id`, Core-only and never on the wire. The fleet's yes names the
+job in `vendor_order_id` and closes the ask; a no closes it with no job named. While an ask is open the order is
+spoken for whatever its status says: it is not acquiring, not at rest, and no status move lands on it except an
+ending. Each question has one spelling that reads the ask beside the status (`domain/order_ask.go`,
+`store/internal/helpers/order_ask.go`); the raw status lists are banned elsewhere in Core by lint.
 
 ### Sourcing
 

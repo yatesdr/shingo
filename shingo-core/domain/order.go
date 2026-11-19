@@ -53,8 +53,13 @@ type Order struct {
 	// Version is orders.version: bumped in the same statement as every write
 	// the order's station is told about (status, robot, wait), and carried on
 	// what it is told, so the station keeps only the newest. 1 at birth.
-	Version     int64  `json:"version"`
-	QueueReason string `json:"queue_reason,omitempty"`
+	Version int64 `json:"version"`
+	// AskedVendorOrderID is orders.asked_vendor_order_id: the vendor order id
+	// Core is asking the fleet to create, from the hand until the fleet answers;
+	// "" when Core is not asking. Core-only, never on the wire. Read it through
+	// the questions in order_ask.go, never beside a raw status test.
+	AskedVendorOrderID string `json:"-"`
+	QueueReason        string `json:"queue_reason,omitempty"`
 	// QueueCode is the structured category behind QueueReason — one of the
 	// protocol.QueueCode values (waiting_for_material, waiting_for_slot, …).
 	// The sentence is generated FROM this code by the dispatch formatter, so the

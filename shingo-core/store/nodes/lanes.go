@@ -534,12 +534,12 @@ func slotTakeable(alias, ownerExpr, pendingHolderExpr string) string {
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders tk_ord
 			WHERE tk_ord.delivery_node = %[1]s.name
-			  AND tk_ord.status NOT IN (%[4]s, %[7]s)
+			  AND tk_ord.status NOT IN (%[4]s) AND %[7]s
 			  AND tk_ord.id <> %[2]s%[6]s
 		  )`, alias, ownerExpr,
 		reservations.SlotSpokenForByStrangerExceptSQL("tk_res", alias+".id", ownerExpr, pendingHolderExpr),
 		protocol.TerminalStatusSQLList(),
-		slotNotHardClaimedSQL(alias, ownerExpr), exceptHolder, protocol.PreDispatchStatusSQLList())
+		slotNotHardClaimedSQL(alias, ownerExpr), exceptHolder, helpers.PastPreDispatchSQL("tk_ord"))
 }
 
 // slotNotHardClaimedSQL is SlotTakeableSQL's hard-claim clause: nobody holds the

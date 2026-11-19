@@ -1297,6 +1297,24 @@ func (db *DB) UpdateOrderStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, 
 	return told, true, db.queueTellTx(tx, told, tell, detail)
 }
 
+// SetOrderAskTx opens the order's ask on the hand's transaction: see
+// orders.SetAskTx.
+func (db *DB) SetOrderAskTx(tx *sql.Tx, id int64, askedVendorOrderID string) (bool, error) {
+	return orders.SetAskTx(tx, id, askedVendorOrderID)
+}
+
+// ClearOrderAsk closes an ask the fleet answered without a job: see
+// orders.ClearAsk.
+func (db *DB) ClearOrderAsk(id int64, askedVendorOrderID string) (bool, error) {
+	return orders.ClearAsk(db.DB, id, askedVendorOrderID)
+}
+
+// ChaseEndedOrderAsk names an ended order's asked job for the terminate chase:
+// see orders.ChaseEndedAsk.
+func (db *DB) ChaseEndedOrderAsk(id int64, askedVendorOrderID string) (bool, error) {
+	return orders.ChaseEndedAsk(db.DB, id, askedVendorOrderID)
+}
+
 // AdvanceOrderStepsDone raises the order's steps_done to n — see
 // orders.AdvanceStepsDone.
 func (db *DB) AdvanceOrderStepsDone(id int64, n int) error {

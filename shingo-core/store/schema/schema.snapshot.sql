@@ -988,7 +988,8 @@ CREATE TABLE public.orders (
     named_bin_id bigint,
     want text DEFAULT ''::text NOT NULL,
     steps_done integer DEFAULT 0 NOT NULL,
-    version bigint DEFAULT 1 NOT NULL
+    version bigint DEFAULT 1 NOT NULL,
+    asked_vendor_order_id text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.orders_id_seq

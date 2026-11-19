@@ -149,7 +149,7 @@ func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderReq
 	if d.preHandHook != nil {
 		d.preHandHook(order.ID)
 	}
-	if err := d.acquireHand(order, hand, entering, actor, fmt.Sprintf("vendor order %s created", req.OrderID)); err != nil {
+	if err := d.acquireHand(order, hand, entering, req.OrderID, actor, fmt.Sprintf("vendor order %s created", req.OrderID)); err != nil {
 		return err // nothing held, nothing sent; the caller parks a refusal and yields a lost CAS
 	}
 	if err := d.handoverToFleet(order, req, actor); err != nil {
@@ -302,12 +302,14 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 
 	// 2. COMMIT. The order is claimed; this is where a robot is actually spent.
 	if _, err := d.backend.CreateOrder(req); err != nil {
-		// The status is NOT rolled back. The order is `dispatched` with no fleet
-		// job, which the caller turns into a failure. If the caller's own write
-		// fails, nothing ends it on a timer: Diagnostics flags it stuck after 30
-		// minutes (active_order_stuck) for a person.
+		// The fleet answered no: the ask closes here, before the caller disposes
+		// of the refusal, so the caller's own status write (a park, a fail) finds
+		// a row it may move. The status is NOT rolled back by this function. If
+		// the caller's own write fails, nothing ends it on a timer: Diagnostics
+		// flags it stuck after 30 minutes (active_order_stuck) for a person.
 		log.Printf("dispatch: order %d claimed but the fleet refused the create: %v (nothing is moving; "+
 			"the order is left claimed for its caller to fail)", order.ID, err)
+		d.closeAsk(order, vendorOrderID, "the fleet refused the create")
 		return err
 	}
 
@@ -337,16 +339,13 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 	} else if fresh != nil && protocol.IsTerminal(fresh.Status) {
 		log.Printf("dispatch: order %d went %s while the fleet order was being created — cancelling vendor order %s",
 			order.ID, fresh.Status, vendorOrderID)
-		if cerr := d.backend.CancelOrder(vendorOrderID); cerr != nil {
-			log.Printf("ERROR dispatch: ORPHAN MISSION — order %d is %s but vendor order %s could not be "+
-				"cancelled: %v (robot may still be moving; cancel it in the fleet manager)",
-				order.ID, fresh.Status, vendorOrderID, cerr)
-		}
+		d.cancelEndedAsk(order, fresh.Status, vendorOrderID)
 		return fmt.Errorf("order %d went %s during fleet create; vendor order %s cancelled",
 			order.ID, fresh.Status, vendorOrderID)
 	}
 
-	// 3. NAME IT. The fleet has the job; the row must say which one.
+	// 3. NAME IT. The fleet has the job; the row must say which one. The write
+	// that names it closes the ask in the same statement (orders.closesAskSQL).
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
 		// THE SURVIVING ORPHAN-GUARD CAUSE. Core cannot name this job, so nothing
 		// will track it, nothing will re-track it after a restart
@@ -356,16 +355,58 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 			"Core cannot name", order.ID, vendorOrderID, err)
 		if cerr := d.backend.CancelOrder(vendorOrderID); cerr != nil {
 			// Both ids on one line: the operator's breadcrumb for a robot moving
-			// with nothing to account for it.
+			// with nothing to account for it. The ask stays on the row, the one
+			// record of the job.
 			log.Printf("ERROR dispatch: ORPHAN MISSION — order %d has no vendor id recorded and vendor "+
 				"order %s could not be cancelled: %v (robot may still be moving; cancel it in the fleet manager)",
 				order.ID, vendorOrderID, cerr)
+			return err
 		}
+		d.closeAsk(order, vendorOrderID, "the fleet took the cancel of a job Core could not name")
 		return err
 	}
 
 	// The in-memory row matches the database, so a caller that keeps using this
 	// struct (the gated valves append a tail from it) sees the id.
 	order.VendorOrderID = vendorOrderID
+	order.AskedVendorOrderID = ""
 	return nil
+}
+
+// closeAsk closes the order's ask when the fleet answered without a job Core
+// keeps (orders.ClearAsk), in the database and on the order in hand. A failed
+// write leaves the ask on the row, and the order with it: no status move lands
+// on a row with an ask open, so the caller's own write is refused and the order
+// waits for a person, as a crash inside the create leaves it.
+func (d *Dispatcher) closeAsk(order *orders.Order, askedVendorOrderID, why string) {
+	if _, err := d.db.ClearOrderAsk(order.ID, askedVendorOrderID); err != nil {
+		log.Printf("ERROR dispatch: order %d: %s, but its ask %s could not be closed: %v (the order is "+
+			"held until a person releases it)", order.ID, why, askedVendorOrderID, err)
+		return
+	}
+	order.AskedVendorOrderID = ""
+}
+
+// cancelEndedAsk answers an order that ended while the fleet was creating its
+// job: cancel the job. The ask closes only once the fleet has taken the cancel;
+// a cancel the fleet did not take moves the job from the ask to the ended row's
+// vendor_order_id (orders.ChaseEndedAsk), where the terminate chase finds it and
+// re-sends the terminate. Either way the job stays named until the fleet has
+// let it go.
+func (d *Dispatcher) cancelEndedAsk(order *orders.Order, status protocol.Status, askedVendorOrderID string) {
+	cerr := d.backend.CancelOrder(askedVendorOrderID)
+	if cerr == nil {
+		d.closeAsk(order, askedVendorOrderID, "the fleet took the cancel of a job created for an ended order")
+		return
+	}
+	log.Printf("ERROR dispatch: ORPHAN MISSION — order %d is %s but vendor order %s could not be "+
+		"cancelled: %v (robot may still be moving; the terminate chase will re-send it)",
+		order.ID, status, askedVendorOrderID, cerr)
+	if _, err := d.db.ChaseEndedOrderAsk(order.ID, askedVendorOrderID); err != nil {
+		log.Printf("ERROR dispatch: order %d: vendor order %s could not be named for the terminate chase: %v "+
+			"(it stays named by the order's ask; cancel it in the fleet manager)", order.ID, askedVendorOrderID, err)
+		return
+	}
+	order.VendorOrderID = askedVendorOrderID
+	order.AskedVendorOrderID = ""
 }

@@ -397,11 +397,13 @@ func (e *Engine) issueAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, car
 	return order, nil
 }
 
-// isParkedOnDeckOrder: waiting (`queued`) and never handed to the fleet, so no
-// robot is acting on it. A `pending` one is mid-door, about to be asked, and is
-// not parked (census delta §2).
+// isParkedOnDeckOrder: waiting (`queued`) and never handed to the fleet, and
+// Core is not asking the fleet for it (AwaitingFleet), so no robot is acting on
+// it and none is being asked for. A `pending` one is mid-door, about to be
+// asked, and is not parked (census delta §2); one with an ask open is a create
+// in flight, and cancelling it as parked would cancel that create.
 func isParkedOnDeckOrder(o *orders.Order) bool {
-	return protocol.IsWaiting(o.Status) && o.VendorOrderID == ""
+	return protocol.IsWaiting(o.Status) && o.AwaitingFleet()
 }
 
 // cancelParkedOnDeckOrder cancels a parked on-deck order on the caller's behalf
