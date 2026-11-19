@@ -13,6 +13,7 @@
     <button type="button" class="tab active" data-tab="robots" data-action="switchTab:robots">Robots</button>
     <button type="button" class="tab" data-tab="fleet" data-action="switchTab:fleet">Fleet</button>
     <button type="button" class="tab" data-tab="cleaning" data-action="switchTab:cleaning">Cleaning</button>
+    <button type="button" class="tab" data-tab="deviceconfig" data-action="switchTab:deviceconfig">Device Config</button>
   </div>
 
   <div class="tab-panel active" id="tab-robots">
@@ -221,6 +222,14 @@
       </div>
     </div>
   </div>
+</div>
+
+{{/* The Device Config tab: every robot's device configuration side by side,
+     pulled on demand from RoboShop's own #1500 model file. All sections
+     collapsed on open (the scan); click a section to dig. The component
+     (robot-deviceconfig-tab.js) renders the whole panel into this mount. */}}
+<div class="tab-panel" id="tab-deviceconfig">
+  <div id="deviceconfig-root"{{if .Authenticated}} data-can-edit="1"{{end}}></div>
 </div>
 
 <!-- Robot Detail Modal -->

@@ -315,6 +315,8 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			// and each robot's Clean refusal for the pop-up).
 			r.Get("/robots/hours", h.apiRobotHours)
 			r.Get("/robots/cleaning", h.apiRobotCleaning)
+			// The Device Config tab: the fleet matrix over stored pulls.
+			r.Get("/robots/device-config", h.apiRobotDeviceConfig)
 
 			// Operations Overview (plant footprint)
 			r.Get("/footprint", h.apiFootprint)
@@ -544,6 +546,9 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 				r.Post("/robots/cleaning/setup", h.apiRobotCleaningSetup)
 				r.Post("/robots/cleaning/clean-now", h.apiRobotCleanNow)
 				r.Post("/robots/cleaning/opt-out", h.apiRobotCleaningOptOut)
+				// One robot's Device Config pull end-to-end: it drives real
+				// relay traffic, so it sits with the robot controls.
+				r.Post("/robots/device-config/pull", h.apiRobotDeviceConfigPull)
 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)
