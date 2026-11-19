@@ -60,7 +60,9 @@ var fixtures = map[string]string{
 // Keyed by the JSON path of the containing object.
 var notCarried = map[string]map[string]string{
 	"": {
-		"model_md5":            "hashes the robot MODEL definition, not the map — byte-identical at both plants, which is the proof. Carrying it as a map gate would be wrong in a way that looks right",
+		// model_md5 LEFT this list on 2026-11-19: carried now on
+		// RobotsStatusResponse -> fleet.SceneState.ModelMD5, for the record
+		// only — measured live it is fleet-grain and tracks no robot's file.
 		"upload_scene_status":  "RDS's own scene-upload progress; transient UI state with no consumer here",
 		"dynamic_obstacle":     "empty at both plants",
 		"hk_area_state":        "empty at both plants",

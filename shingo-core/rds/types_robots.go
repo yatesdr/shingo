@@ -27,6 +27,13 @@ type RobotsStatusResponse struct {
 	// LM40-LM11); Hopkinsville has none.
 	DisablePaths  []DisabledID `json:"disable_paths"`
 	DisablePoints []DisabledID `json:"disable_points"`
+	// ModelMD5 is carried for the record, and for nothing else. Measured
+	// live 2026-11-19 (read-only, both plants): it is fleet-grain — one
+	// value per RDS, byte-identical across plants and robot families, and
+	// equal to the md5 of NO robot's #1500 model file. It is not a map
+	// gate, not a per-robot staleness signal, not a fleet-consistency
+	// signal. fleet.SceneState carries it the same way.
+	ModelMD5 string `json:"model_md5"`
 }
 
 // DisabledID is the vendor's one-key wrapper around a disabled lane or point

@@ -283,6 +283,19 @@ func (a *Adapter) DownloadRobotMap(vehicleID, mapName string) ([]byte, error) {
 	return a.client.DownloadMap(vehicleID, mapName, mapDownloadTimeout)
 }
 
+// modelFetchTimeout is what one #1500 model fetch is allowed. Measured
+// live at Springfield 2026-11-19: ~1 s for 330-350 KB through the relay, so
+// 30 s is roughly thirty-fold margin while staying bounded. Same per-call
+// client rule as the map: the shared timeout is tuned for a 2-second poll
+// and must not cap a payload fetch.
+const modelFetchTimeout = 30 * time.Second
+
+// ReadDeviceConfig implements fleet.DeviceConfigReader: raw #1500 bytes,
+// unaltered — the pull handler sanitizes credentials before storing.
+func (a *Adapter) ReadDeviceConfig(vehicleID string) ([]byte, error) {
+	return a.client.GetRobotModel(vehicleID, modelFetchTimeout)
+}
+
 func (a *Adapter) SetAvailability(vehicleID string, available bool) error {
 	dispatchType := "undispatchable_unignore"
 	if available {

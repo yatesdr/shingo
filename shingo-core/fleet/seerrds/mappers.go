@@ -161,7 +161,11 @@ func lockHolder(l rds.LockInfo) string {
 // they did: every consumer of this endpoint reaches past the envelope for
 // .Report and nothing ever looked at the object holding it.
 func mapSceneState(resp *rds.RobotsStatusResponse, observedAt time.Time) fleet.SceneState {
-	s := fleet.SceneState{SceneMD5: resp.SceneMD5, ObservedAt: observedAt}
+	s := fleet.SceneState{
+		SceneMD5:   resp.SceneMD5,
+		ModelMD5:   resp.ModelMD5, // carried for the record; measured not to track any robot's file
+		ObservedAt: observedAt,
+	}
 	for _, p := range resp.DisablePaths {
 		if p.ID != "" {
 			s.DisabledPaths = append(s.DisabledPaths, p.ID)

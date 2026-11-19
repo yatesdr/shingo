@@ -43,6 +43,7 @@ const (
 const (
 	RobokitCodeMapList     = 1300 // robot_status_runningstatus_map_req
 	RobokitCodeDownloadMap = 4011 // robot_config_downloadmap
+	RobokitCodeModelFile   = 1500 // robot_status_model_req — the Device Config model file
 )
 
 // GeneralRobokitRequest is the proxy envelope.
@@ -278,5 +279,27 @@ func (c *Client) DownloadMap(vehicle, mapName string, timeout time.Duration) ([]
 		Port:    RobokitPortConfig,
 		Code:    RobokitCodeDownloadMap,
 		Cmd:     map[string]string{"map_name": mapName},
+	}, timeout)
+}
+
+// GetRobotModel fetches a robot's model file — the document RoboShop's
+// Device Config tab renders — verbatim, for the Robots page's Device Config
+// matrix.
+//
+// #1500 (robot_status_model_req) on the STATUS port: no payload, the
+// response #11500 IS the model document. Measured live, read-only,
+// Springfield 2026-11-19 (work/deviceconfig-tab-2026-11-19/evidence): the
+// response is a BARE model — top-level keys exactly {model, deviceTypes},
+// no wrapper envelope — 330-350 KB, ~1 s through the relay. Same shape on
+// both robot families (SJV-SW600, W1500SL).
+//
+// Read-only, on demand, never on the poll — the RobotMapDownloader charter.
+// The caller (the pull handler) sanitizes credentials before anything is
+// stored; this returns the bytes the robot sent, unaltered.
+func (c *Client) GetRobotModel(vehicle string, timeout time.Duration) ([]byte, error) {
+	return c.GeneralRobokitAPI(GeneralRobokitRequest{
+		Vehicle: vehicle,
+		Port:    RobokitPortStatus,
+		Code:    RobokitCodeModelFile,
 	}, timeout)
 }

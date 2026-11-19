@@ -286,6 +286,13 @@ type Undispatchable struct {
 type SceneState struct {
 	// SceneMD5 hashes the RDS scene.
 	SceneMD5 string
+	// ModelMD5 is the envelope's robot-model hash, carried for the record.
+	// Measured live 2026-11-19: fleet-grain (one value per RDS, identical
+	// across plants and robot families) and equal to no robot's #1500 file
+	// — so nothing may gate, badge or compare on it. It rides here because
+	// here is where envelope-level facts live; the day its meaning is
+	// understood, the carry is already done.
+	ModelMD5 string
 	// DisabledPaths are lane ids an operator switched off. A disabled lane
 	// accumulates no samples, so a map drawn from telemetry alone shows it
 	// as never-driven — true of the data, false of the plant, and false in
@@ -337,6 +344,24 @@ type SceneStateProvider interface {
 // makes "this map is unchanged" answerable.
 type RobotMapDownloader interface {
 	DownloadRobotMap(vehicleID, mapName string) ([]byte, error)
+}
+
+// DeviceConfigReader fetches one robot's Device Config model file verbatim
+// (RoboKit #1500 through the RDS relay) — the document the Robots page's
+// Device Config tab flattens into comparison rows.
+//
+// Optional, with RobotMapDownloader's charter exactly: one named robot, on
+// demand, never a poll. A backend without it (the simulator) has no Device
+// Config pull, and the tab's Pull button gates on the type assertion rather
+// than the page guessing.
+//
+// Returns the bytes the robot sent, unaltered. THE CALLER SANITIZES BEFORE
+// STORING: the live payload carries the ESP32 mesh wifi password in the
+// clear (measured 2026-11-19, evidence/README.md), so raw fidelity matters
+// for the parse and the hash, and the fingerprint policy belongs to the
+// pull path, not to the wire adapter.
+type DeviceConfigReader interface {
+	ReadDeviceConfig(vehicleID string) ([]byte, error)
 }
 
 // TableTurner is the OPTIONAL backend capability for turning a robot's jack
