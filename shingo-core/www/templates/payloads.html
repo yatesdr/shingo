@@ -266,21 +266,9 @@
     </div>
     <form id="pl-edit-form" method="POST" action="/payloads/update" data-action-submit="submitPLEdit">
       <input type="hidden" name="id" id="pl-edit-id">
-      <!-- Same order as Create, for the same reason. -->
-      <div class="form-group mb-1">
-        <div class="flex flex-between">
-          <!-- OWNER-WORDS -->
-          <label class="font-semibold text-sm" style="margin:0">Parts in the bin <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many of it one assembly cycle uses</span></label>
-          <button type="button" class="btn btn-sm" data-action="addBlankManifestRow:ple-manifest-rows">+ Part</button>
-        </div>
-        <div class="plpart-grid plpart-head text-muted">
-          <span>Part number</span>
-          <span>CATID</span>
-          <!-- OWNER-WORDS -->
-          <span>Pieces per assembly cycle <span class="tooltip-trigger" title="Read only where an assembly consumes this part: each of its cycles draws this many from the bin. A press never reads it. Leave 1 unless an assembly uses more than one a cycle.">?</span></span>
-        </div>
-        <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
-      </div>
+      <!-- EDIT OPENS ON THE PAYLOAD'S CODE AND ITS PACK, the fields an edit most
+           often changes, with the part number offered as the code; the parts
+           follow. Create keeps the parts first, for the reason above. -->
       <div class="grid grid-2">
         <div class="form-group">
           <label>Payload Code</label>
@@ -295,6 +283,20 @@
           <label>UoP Capacity <span class="tooltip-trigger" title="The standard pack: how many pieces of the part a full bin holds. A bin of several parts counts cycles instead: how many a full bin feeds.">?</span></label>
           <input type="number" name="uop_capacity" id="pl-edit-uop" min="1" required data-action-input="refreshFullBinCells:ple-manifest-rows">
         </div>
+      </div>
+      <div class="form-group mb-1">
+        <div class="flex flex-between">
+          <!-- OWNER-WORDS -->
+          <label class="font-semibold text-sm" style="margin:0">Parts in the bin <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many of it one assembly cycle uses</span></label>
+          <button type="button" class="btn btn-sm" data-action="addBlankManifestRow:ple-manifest-rows">+ Part</button>
+        </div>
+        <div class="plpart-grid plpart-head text-muted">
+          <span>Part number</span>
+          <span>CATID</span>
+          <!-- OWNER-WORDS -->
+          <span>Pieces per assembly cycle <span class="tooltip-trigger" title="Read only where an assembly consumes this part: each of its cycles draws this many from the bin. A press never reads it. Leave 1 unless an assembly uses more than one a cycle.">?</span></span>
+        </div>
+        <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
       </div>
       <div class="grid grid-2">
         <div class="form-group">
