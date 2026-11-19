@@ -71,6 +71,10 @@ func TestFleetCreate_HasExactlyThreeDoors(t *testing.T) {
 			if strings.Contains(rel, string(filepath.Separator)+"fleet"+string(filepath.Separator)) {
 				return nil
 			}
+			// The test doubles in testdb answer a create through a mock; no robot moves.
+			if strings.Contains(rel, filepath.Join("internal", "testdb")+string(filepath.Separator)) {
+				return nil
+			}
 			body, rerr := os.ReadFile(path)
 			if rerr != nil {
 				return rerr
