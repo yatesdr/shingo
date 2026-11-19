@@ -36,7 +36,7 @@ POS_A2 two_robot_press_index/produce  setCount=7  control "Advanced · 7 set"
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
     · Finished goods
-      Strict pack = Off On Pack tolerance % %
+      Strict pack = Off On Pack tolerance % % · Most held off the cart blank: one pack
       Partials go to = DST_1
     · Press hardware
       Next carrier = Robot 1 Robot 2 Robot 3 see what its robots do
@@ -64,7 +64,7 @@ POS_A4 two_robot/produce  setCount=7  control "Advanced · 7 set"
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
     · Finished goods
-      Strict pack = Off On Pack tolerance % %
+      Strict pack = Off On Pack tolerance % % · Most held off the cart blank: one pack
       Partials go to = DST_1
     · Light curtain
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
@@ -90,7 +90,7 @@ POS_A6 single_robot/produce  setCount=7  control "Advanced · 7 set"
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
     · Finished goods
-      Strict pack = Off On Pack tolerance % %
+      Strict pack = Off On Pack tolerance % % · Most held off the cart blank: one pack
       Partials go to = DST_1
     · Light curtain
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
@@ -128,7 +128,7 @@ POS_A9 sequential/produce  setCount=7  control "Advanced · 7 set"
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
     · Finished goods
-      Strict pack = Off On Pack tolerance % %
+      Strict pack = Off On Pack tolerance % % · Most held off the cart blank: one pack
       Partials go to = DST_1
     · Light curtain
       Curtain required = Off On no curtain is switched on here: nothing waits until one is
@@ -142,7 +142,7 @@ POS_A10 sequential/produce  setCount=7  control "Advanced · 7 set"
     · Tool change
       Tool change = POS_A11 × + add if the part stays Fresh bin Keep it Out and back If the part stays: Fresh bin clears it, Keep it leaves it, Out and back parks it at outbound staging until Tooling done. A part that changes is always cleared.
     · Finished goods
-      Strict pack = Off On Pack tolerance % %
+      Strict pack = Off On Pack tolerance % % · Most held off the cart blank: one pack
       Partials go to = DST_1
     · Light curtain
       Curtain required = Off On no curtain is switched on here: nothing waits until one is

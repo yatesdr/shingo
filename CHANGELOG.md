@@ -16,8 +16,9 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration. Core only.
+Deploy: Edge v58 (style_node_claims.hold_limit). Each Edge, then Core.
 
+- A strict-pack position has a new setting, Most held off the cart: the most parts its packer, conveyor or accumulator holds while the cart is full or swapping. Past it the held parts are thrown away and logged, and the next cart counts only its own. Blank is one pack, as before
 - Core's Bins page keeps its table current while it is open: a bin a robot lifts or sets down, a station's count, LOAD or CLEAR, and an order taking or letting go of a bin show on its row without a reload, and a search or filter follows them
 - A bin moved, made or recovered onto a node that already holds one is refused with the bin that is there: "SMN_007 already has CARRIER-0012; move or retire it first"
 

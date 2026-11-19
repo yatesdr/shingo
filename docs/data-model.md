@@ -1998,8 +1998,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 48 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 52 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2678,6 +2678,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_required` | `INTEGER` | yes | `0` |  | The light-curtain release interlock's style tie (v19): whether THIS style's releases at THIS node wait for the node's curtain. The claim is the (style, node) pair, and the rule the plant chose is THE BIN DICTATES: a full bin leaving carries the claim that filled it, and that claim's flag - not the node's blanket enable, not the style the line is becoming during a changeover - decides whether the release gates on the tag. An empty carrier carries no claim, so empty placements never gate (they never pass the curtain; an empty that does is the operator's fault, not the robot's). |
 | `strict_pack` | `INTEGER` | yes | `0` |  | strict_pack (v26): a produce claim's bound bin is charged only up to its pack (the catalog's uop_capacity for the claim's part); the ticks past it are held on the seat for the next bin of the part. 0 = uncapped, today's count. |
 | `pack_tolerance_pct` | `INTEGER` | yes | `0` |  | pack_tolerance_pct (v34): a strict claim's miscount tolerance, a percent of the pack (0-20). A station's RELEASE of a bin within it of the pack declares the bin full; further short ships the real count. 0 = no tolerance: the real count always ships. |
+| `hold_limit` | `INTEGER` | yes | `0` |  | hold_limit (v58): the most a strict seat sets aside off the cart, what the line's packer, conveyor or accumulator holds while the cart is full or swapping. Past it the pile is thrown away and logged. 0 = one pack. |
 | `allowed_payload_codes` | `TEXT` | yes | `''` |  |  |
 | `keep_staged_node` | `TEXT` | yes | `''` |  | The keep-staged node: one more node this line's full or empty comes from instead of inbound_source, with a spare kept standing on it. Blank is off. Replaced the keep_staged flag, which armed a spot on inbound_staging and so gave that column a second meaning. |
 | `paired_core_node` | `TEXT` | yes | `''` |  |  |
@@ -2733,6 +2734,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_required` | `INT` |  |  |  |
 | `strict_pack` | `INT` |  |  |  |
 | `pack_tolerance_pct` | `INT` |  |  |  |
+| `hold_limit` | `INT` |  |  |  |
 | `allowed_payload_codes` | `TEXT` |  |  |  |
 | `keep_staged_node` | `TEXT` |  |  |  |
 | `paired_core_node` | `TEXT` |  |  |  |

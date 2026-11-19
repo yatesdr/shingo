@@ -432,7 +432,18 @@ type NodeClaim struct {
 	// a plan (store/processes fingerprintExclusions). omitempty: the claim
 	// rides every tile of the station's poll (active_claim, target_claim), and
 	// a claim with no tolerance, every claim today, spends no bytes on it.
-	PackTolerancePct    int      `json:"pack_tolerance_pct,omitempty"`
+	PackTolerancePct int `json:"pack_tolerance_pct,omitempty"`
+	// HoldLimit is the most parts a strict seat sets aside off the cart: what
+	// the line's packer, conveyor or accumulator holds while the cart is full
+	// or swapping, set by an engineer who has looked at it. Past it the whole
+	// pile is thrown away with a hold_dropped (hold_cap) row and the seat
+	// holds nothing more until another cart binds or a person counts. 0 is one
+	// pack, the limit before the setting; a number at or above the pack is one
+	// pack too (HoldCap). Read only where StrictPackApplies. Edge-only: no Core
+	// column, no wire field, not in the flow fingerprint. SPR ALN_011
+	// 2026-11-19: each cart's wait made a pile of 117 to 119 that the next
+	// cart took at once, so its count read 132 a few minutes after the swap.
+	HoldLimit           int      `json:"hold_limit,omitempty"`
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
 	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
 	// the full or the empty for this line comes from, instead of the inbound
@@ -995,6 +1006,17 @@ func PackToleranceRefusal(pct int) string {
 	return fmt.Sprintf("Pack tolerance is a percent of the pack from 0 to %d; %d is out of range", MaxPackTolerancePct, pct)
 }
 
+// HoldLimitRefusal is the save's sentence for a hold limit below 0, or ""
+// when it is 0 or more. A number past the pack is not refused: it holds one
+// pack, which is the most a seat ever holds (HoldCap). One sentence for both
+// doors that take one, as PackToleranceRefusal.
+func HoldLimitRefusal(n int) string {
+	if n >= 0 {
+		return ""
+	}
+	return fmt.Sprintf("Most held off the cart is a number of parts, 0 or more; %d is out of range", n)
+}
+
 // StrictPackApplies is the gate for the strict arm: the claim carries
 // strict_pack, is a produce claim, and has a pack (UOPCapacity, resolved from
 // the catalog on every read; the claim's uop_capacity column is dead and a
@@ -1027,6 +1049,20 @@ func (c *NodeClaim) ConsumeDraw(step int) int {
 func (c *NodeClaim) CappedPack() int {
 	if !c.StrictPackApplies() {
 		return 0
+	}
+	return c.UOPCapacity
+}
+
+// HoldCap is the most the claim's seat may set aside: one pack (UOPCapacity,
+// 0 with no pack), or less where the claim is strict and names a HoldLimit
+// below the pack. Nil-safe: no claim, 0. The engine's holdCap reads it, so the
+// strict split, the hold between bins and the flip carry stop at one number.
+func (c *NodeClaim) HoldCap() int {
+	if c == nil {
+		return 0
+	}
+	if c.StrictPackApplies() && c.HoldLimit > 0 && c.HoldLimit < c.UOPCapacity {
+		return c.HoldLimit
 	}
 	return c.UOPCapacity
 }
@@ -1353,7 +1389,11 @@ type NodeClaimInput struct {
 	// tolerance, a percent of the pack. Unconditional, carried and echoed as
 	// StrictPack is; ValidateNodeClaim refuses one outside 0 to
 	// MaxPackTolerancePct.
-	PackTolerancePct     int      `json:"pack_tolerance_pct"`
+	PackTolerancePct int `json:"pack_tolerance_pct"`
+	// HoldLimit mirrors NodeClaim's field: the most a strict seat sets aside
+	// off the cart, 0 for one pack. Unconditional, carried and echoed as
+	// StrictPack is; ValidateNodeClaim refuses one below 0.
+	HoldLimit            int      `json:"hold_limit"`
 	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
 	PairedCoreNode       string   `json:"paired_core_node"`
 	SecondPairedCoreNode string   `json:"second_paired_core_node"`

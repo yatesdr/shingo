@@ -2793,6 +2793,52 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return true
 			},
 		},
+		{
+			// style_node_claims.hold_limit: the most a strict seat sets aside
+			// off the cart, what the line's packer, conveyor or accumulator
+			// holds while the cart is full or swapping. Past it the pile is
+			// thrown away and logged (domain.NodeClaim.HoldCap). DEFAULT 0 is
+			// one pack on every existing claim, the limit before the column.
+			// The baseline CREATE carries it for a fresh install; guarded, and
+			// the claim quarantine's mirror gets its column in the same step,
+			// as v34.
+			Version: 58,
+			Name:    "style_node_claims_hold_limit",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'hold_limit'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					if _, err := tx.Exec(`ALTER TABLE style_node_claims ADD COLUMN hold_limit INTEGER NOT NULL DEFAULT 0`); err != nil {
+						return err
+					}
+				}
+				var q, qn int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '` + ClaimQuarantineTable + `'`).Scan(&q); err != nil {
+					return err
+				}
+				if q == 0 {
+					return nil
+				}
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + ClaimQuarantineTable + `')
+					WHERE name = 'hold_limit'`).Scan(&qn); err != nil {
+					return err
+				}
+				if qn > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE ` + ClaimQuarantineTable + ` ADD COLUMN hold_limit INT`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'hold_limit'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

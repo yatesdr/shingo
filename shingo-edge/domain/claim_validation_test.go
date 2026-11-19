@@ -735,6 +735,27 @@ func TestValidateNodeClaim_PackToleranceIsZeroToTwenty(t *testing.T) {
 	}
 }
 
+// TestValidateNodeClaim_HoldLimitIsZeroOrMore: the save refuses a hold limit
+// below 0 by name, and takes one past the pack (it holds one pack) and one on a
+// claim with strict pack off (it has no reader there).
+func TestValidateNodeClaim_HoldLimitIsZeroOrMore(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		limit   int
+		strict  bool
+		refused bool
+	}{
+		{0, true, false}, {20, true, false}, {500, true, false},
+		{-1, true, true}, {20, false, false}, {-1, false, true},
+	} {
+		in := validClaim()
+		in.StrictPack, in.HoldLimit = c.strict, c.limit
+		if got := hasField(ValidateNodeClaim(in, ClaimNodeContext{}), "hold_limit"); got != c.refused {
+			t.Errorf("limit %d (strict %v): refused = %v, want %v", c.limit, c.strict, got, c.refused)
+		}
+	}
+}
+
 // TestValidateNodeClaim_EveryLineModeMarksItsPositions: a tool change marks a
 // line's positions on every mode a robot serves, and the save takes it; a
 // loader card has no positions to clear and is refused.

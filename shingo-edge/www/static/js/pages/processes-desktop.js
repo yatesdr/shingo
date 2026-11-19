@@ -2513,7 +2513,7 @@ const DECK_FIELDS = ['paired_core_node', 'second_paired_core_node'];
 // Robot 1. The carry-over is OUT: it is a Tool change position's, and a group
 // marks none.
 const GROUP_ADV_KEYS = ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_push',
-    'keep_staged_node', 'refill_by', 'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct'];
+    'keep_staged_node', 'refill_by', 'auto_confirm', 'curtain_required', 'strict_pack', 'pack_tolerance_pct', 'hold_limit'];
 
 // listWords is a list's column heading, its add chip and the noun "On the
 // floor" and the running-style line say it with, per mode.
@@ -5025,7 +5025,7 @@ const SET_COPY = {
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
     keep_staged_node: ['keep_staged_node', 'a spare waits here, and the full or empty comes from it instead of the market'],
     evac_nodes: ['changeover_evac_nodes', 'cleared for a setup; the changeover waits for Tooling done'],
-    strict_pack: ['strict_pack', 'counted only up to its pack; parts made past it wait for the next bin'],
+    strict_pack: ['strict_pack', 'counted only up to its pack; parts made past it wait for the next bin, up to what the line holds off the cart'],
     partial_dest: ['partial_destination', 'where a bin released short goes; a node group holds it to be finished, an unloader unloads it'],
     // WHICH ROBOT, FOR THIS PART. It said "the same for every part on this
     // press", and it is stored per style and differs by part (owner,
@@ -5082,10 +5082,10 @@ function setCtx(p) {
 
 // advShows is whether a setting is offered at a place (ctx, setCtx's).
 function advShows(key, d) {
-    // The tolerance is read only through strict pack, so it is drawn only
-    // while strict pack is on, in either scope. A stored value stays when the
-    // cap is switched off; nothing reads it then.
-    if (key === 'pack_tolerance_pct' && !d.a.strict_pack) return false;
+    // The tolerance and the hold limit are read only through strict pack, so
+    // they are drawn only while strict pack is on, in either scope. A stored
+    // value stays when the cap is switched off; nothing reads it then.
+    if ((key === 'pack_tolerance_pct' || key === 'hold_limit') && !d.a.strict_pack) return false;
     // THE CARRY-OVER IS A TOOL CHANGE'S SECOND VALUE: read only for a marked
     // position (domain.ClearanceTreatmentAtNode), and refused on a claim that
     // marks none, so it is drawn only beside marks. A group marks none.
@@ -5308,7 +5308,12 @@ function setCells(key, p, d) {
         case 'lineside_soft_threshold':
             return [setNumber(key, p, d)];
         case 'strict_pack':
-            return ['on', '<span class="k">' + esc(W('pack_tolerance_pct')) + '</span> ' + setNumber('pack_tolerance_pct', p, d, 'strict_pack') + ' %'];
+            // The hold limit is what the line's packer, conveyor or
+            // accumulator holds while the cart is full or swapping: blank is
+            // one pack. Past it the pile is thrown away and logged.
+            return ['on', '<span class="k">' + esc(W('pack_tolerance_pct')) + '</span> ' + setNumber('pack_tolerance_pct', p, d, 'strict_pack') + ' %' +
+                ' · <span class="k">' + esc(W('hold_limit')) + '</span> ' + setNumber('hold_limit', p, d, 'strict_pack') +
+                ' <span class="pd-dim">blank: one pack</span>'];
         case 'refill_by': {
             const v = d.a.refill_by || 'clearing_robot';
             // WHAT EACH ANSWER DOES IS THE POSITION'S WORK LIST, from the

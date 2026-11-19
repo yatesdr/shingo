@@ -92,17 +92,16 @@ func (e *Engine) carrierComing(node *processes.Node) bool {
 
 // holdCap is the most a produce seat may set aside: one pack, the claim's
 // UOPCapacity, in every seat state (bound or not, strict or not; 0 when the
-// claim names no pack). It is the one number every "past one pack" decision
-// reads: the strict split (splitStrict), the hold between bins (betweenBins,
-// the tick's and the sweep's), and the flip carry (splitFlipCarry). How much
-// the BIN may take is a different question, the strict arm's
-// (NodeClaim.CappedPack). Pinned by TestHoldCap_EverySiteStopsAtTheSameNumber.
-// Pure.
+// claim names no pack), or a strict claim's HoldLimit when it is below the
+// pack (NodeClaim.HoldCap). It is the one number every "past one pack"
+// decision reads: the strict split (splitStrict), the hold between bins
+// (betweenBins, the tick's and the sweep's), and the flip carry
+// (splitFlipCarry). How much the BIN may take is a different question, the
+// strict arm's (NodeClaim.CappedPack). Pinned by
+// TestHoldCap_EverySiteStopsAtTheSameNumber and
+// TestHoldLimit_PastItThePileIsThrownAwayAndTheNextCartStartsClean. Pure.
 func holdCap(claim *processes.NodeClaim) int {
-	if claim == nil {
-		return 0
-	}
-	return claim.UOPCapacity
+	return claim.HoldCap()
 }
 
 // betweenBins answers, for an unbound produce seat with no carrier coming,

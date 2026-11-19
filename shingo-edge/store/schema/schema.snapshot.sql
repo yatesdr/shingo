@@ -939,6 +939,10 @@ CREATE TABLE style_node_claims (
     -- declares the bin full; further short ships the real count. 0 = no
     -- tolerance: the real count always ships.
     pack_tolerance_pct      INTEGER NOT NULL DEFAULT 0,
+    -- hold_limit (v58): the most a strict seat sets aside off the cart, what
+    -- the line's packer, conveyor or accumulator holds while the cart is full
+    -- or swapping. Past it the pile is thrown away and logged. 0 = one pack.
+    hold_limit              INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     -- The keep-staged node: one more node this line's full or empty comes
     -- from instead of inbound_source, with a spare kept standing on it.
@@ -1053,6 +1057,7 @@ CREATE TABLE style_node_claims_quarantine(
   curtain_required INT,
   strict_pack INT,
   pack_tolerance_pct INT,
+  hold_limit INT,
   allowed_payload_codes TEXT,
   keep_staged_node TEXT,
   paired_core_node TEXT,

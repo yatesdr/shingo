@@ -39,9 +39,12 @@ var cloneOnlyExclusions = map[string]string{}
 //	pack_tolerance_pct  changes what a station's RELEASE books (whether a
 //	          short strict bin is declared full), not a tick or a plan. A clone
 //	          carries it: it is the claim's setting.
+//	hold_limit  how much a strict seat sets aside off the cart: a tick's
+//	          hold, not a plan. A clone carries it.
 var fingerprintExclusions = map[string]string{
 	"key_task":           "no runtime reader on this tree; hashing it invalidated previews for a column that drives nothing",
 	"pack_tolerance_pct": "changes a release's booking, not a tick or a plan; hashing it would invalidate previews for a booking setting",
+	"hold_limit":         "changes how much a strict seat sets aside off the cart, not a plan; hashing it would invalidate previews for a hold setting",
 }
 
 // TestFlowFingerprintColumnsAreCloneClaimColumnsPlusID holds the two lists

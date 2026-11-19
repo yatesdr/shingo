@@ -3536,7 +3536,7 @@ async function recipeGroupPins(h) {
         for (const want of ['strict_pack', 'partial_dest', 'refill_by', 'evac_nodes']) {
             if (keys.indexOf(want) < 0) throw new Error('the sheet lacks ' + want + ': ' + keys.join(', '));
         }
-        if (keys.some(k => /^(reorder|reorder_point|auto_reorder|sequence|changeover_carryover_disposition|pack_tolerance_pct|curtain_required|auto_push)$/.test(k))) {
+        if (keys.some(k => /^(reorder|reorder_point|auto_reorder|sequence|changeover_carryover_disposition|pack_tolerance_pct|hold_limit|curtain_required|auto_push)$/.test(k))) {
             throw new Error('the sheet offers a field that is no setting of its own here: ' + keys.join(', '));
         }
         if (/find a position|set-addpos/.test(sheet.html())) throw new Error('the sheet asks for the position: ' + plain(sheet.html()));
@@ -3544,9 +3544,11 @@ async function recipeGroupPins(h) {
         await settle();
         if (sheet.html().indexOf('data-setnum="pack_tolerance_pct"') < 0) throw new Error('the tolerance is not strict pack\'s second value: ' + sheet.html());
         typeNumber(ctx, { setnum: 'pack_tolerance_pct', key: 'pack_tolerance_pct', node: 'PLN_010' }, '5');
+        if (sheet.html().indexOf('data-setnum="hold_limit"') < 0) throw new Error('the hold limit is not beside strict pack: ' + sheet.html());
+        typeNumber(ctx, { setnum: 'hold_limit', key: 'hold_limit', node: 'PLN_010' }, '20');
         const body = await savedBody(ctx);
         const a = cellOf(body, 'PLN_010').advanced || {};
-        if (a.strict_pack !== true || a.pack_tolerance_pct !== 5) throw new Error('PLN_010 saved ' + JSON.stringify(a));
+        if (a.strict_pack !== true || a.pack_tolerance_pct !== 5 || a.hold_limit !== 20) throw new Error('PLN_010 saved ' + JSON.stringify(a));
         if ((cellOf(body, 'PLN_012').advanced || {}).strict_pack) throw new Error('PLN_012 saved a strict pack nobody set');
     });
 

@@ -101,6 +101,7 @@ var unspokenColumns = []struct {
 	{"auto_push", func(c processes.NodeClaim) any { return c.AutoPush }},
 	{"strict_pack", func(c processes.NodeClaim) any { return c.StrictPack }},
 	{"pack_tolerance_pct", func(c processes.NodeClaim) any { return c.PackTolerancePct }},
+	{"hold_limit", func(c processes.NodeClaim) any { return c.HoldLimit }},
 	{"refill_by", func(c processes.NodeClaim) any { return c.RefillBy }},
 	{"key_task", func(c processes.NodeClaim) any { return c.KeyTask }},
 	{"changeover_carryover_disposition", func(c processes.NodeClaim) any { return c.ChangeoverCarryoverDisposition }},

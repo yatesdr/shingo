@@ -158,6 +158,10 @@ type FlowAdvanced struct {
 	// the pack (NodeClaim.PackTolerancePct). Forbidden where StrictPack is; the
 	// sheet draws it only while strict pack is on.
 	PackTolerancePct int `json:"pack_tolerance_pct,omitempty"`
+	// HoldLimit is the most a strict seat sets aside off the cart, 0 for one
+	// pack (NodeClaim.HoldLimit). Forbidden where StrictPack is; the sheet
+	// draws it only while strict pack is on.
+	HoldLimit int `json:"hold_limit,omitempty"`
 }
 
 // AdvancedOf is the claim's advanced columns as the modal shows them. Nil in,
@@ -182,6 +186,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		CurtainRequired:       c.CurtainRequired,
 		StrictPack:            c.StrictPack,
 		PackTolerancePct:      c.PackTolerancePct,
+		HoldLimit:             c.HoldLimit,
 	}
 	return a
 }
@@ -284,10 +289,10 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		// (SetContainment's route) and switched off a node's curtain tie.
 		in.ContainmentDestination = prior.ContainmentDestination
 		in.CurtainRequired = prior.CurtainRequired
-		// The pack cap and its tolerance are the same kind of column: no
-		// FlowCell field names them, so a save that never opened the modal
-		// keeps them from the prior.
-		in.StrictPack, in.PackTolerancePct = prior.StrictPack, prior.PackTolerancePct
+		// The pack cap, its tolerance and its hold limit are the same kind of
+		// column: no FlowCell field names them, so a save that never opened
+		// the modal keeps them from the prior.
+		in.StrictPack, in.PackTolerancePct, in.HoldLimit = prior.StrictPack, prior.PackTolerancePct, prior.HoldLimit
 	}
 	// The Advanced modal, LAST, so an engineer's opinion beats both the
 	// carry-through above and the degenerate-list guess inside it. Nil is the
@@ -310,7 +315,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)
 		in.CurtainRequired = a.CurtainRequired
-		in.StrictPack, in.PackTolerancePct = a.StrictPack, a.PackTolerancePct
+		in.StrictPack, in.PackTolerancePct, in.HoldLimit = a.StrictPack, a.PackTolerancePct, a.HoldLimit
 	}
 	return in
 }
@@ -344,6 +349,7 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		CurtainRequired:                c.CurtainRequired,
 		StrictPack:                     c.StrictPack,
 		PackTolerancePct:               c.PackTolerancePct,
+		HoldLimit:                      c.HoldLimit,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
 		PairedCoreNode:                 c.PairedCoreNode,
 		SecondPairedCoreNode:           c.SecondPairedCoreNode,
@@ -418,7 +424,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.AutoConfirm = in.AutoConfirm || in.IsLoaderNode()
 	c.LinesideSoftThreshold = in.LinesideSoftThreshold
 	c.ReuseCompatibleBins, c.AutoPush, c.StrictPack = in.ReuseCompatibleBins, in.AutoPush, in.StrictPack
-	c.PackTolerancePct = in.PackTolerancePct
+	c.PackTolerancePct, c.HoldLimit = in.PackTolerancePct, in.HoldLimit
 	// The pointer-gated columns: spoken or left alone.
 	if in.AutoReorder != nil {
 		c.AutoReorder = *in.AutoReorder
