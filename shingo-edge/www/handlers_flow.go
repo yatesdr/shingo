@@ -376,14 +376,17 @@ type partCreator interface {
 // be the process's, and a process whose HMI setup is off is refused (403,
 // engine.ErrFlowComposerDisabled's sentence).
 //
+// The request is held until Core's word, for the ask's whole life
+// (engine.CreatePart's wait), so a late yes or no still answers it:
+//
 //   - 200: Core made it, or this cell had made it before (repeat true). The
 //     body is Core's answer (protocol.PartCreateResponse), already applied:
 //     the part is in the catalog and on this process's part set.
-//   - 202: sent, and Core had not answered within the wait (writeAskPending).
-//     The answer is applied when it comes.
 //   - 400: refused before anything was sent (engine.PartCreateInvalid, a Core
 //     that does not answer the kind yet), or a bad body.
 //   - 409: Core refused it, with Core's sentence; nothing applied.
+//   - 504: no answer from Core in the ask's life
+//     (engine.ErrPartCreateNoAnswer's sentence); the form can send it again.
 func (h *Handlers) apiCreatePart(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
@@ -413,8 +416,8 @@ func (h *Handlers) apiCreatePart(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, engine.ErrFlowComposerDisabled):
 			writeError(w, http.StatusForbidden, err.Error())
-		case writeAskPending(w, r, err):
-			// Sent; the answer is applied when it comes.
+		case errors.Is(err, engine.ErrPartCreateNoAnswer):
+			writeError(w, http.StatusGatewayTimeout, err.Error())
 		case errors.As(err, &refusal):
 			// Core's sentence, whatever status Core answered with: a 408
 			// passed through would read to a browser as its own timeout.

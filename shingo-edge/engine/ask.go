@@ -275,10 +275,16 @@ func askInto[T any](a *protocol.EdgeAnswer) (*T, error) {
 // answers that kind; refused before sending otherwise (doesNotAnswer).
 // ErrAskPending means the ask is out and unanswered after AskWait.
 func askOrRefuse[T any](e *Engine, kind string, req any) (*T, error) {
+	return askOrRefuseWithin[T](e, kind, req, AskWait)
+}
+
+// askOrRefuseWithin is askOrRefuse with the tap's wait named: AskWait for
+// every kind but Add part's (partCreateWait).
+func askOrRefuseWithin[T any](e *Engine, kind string, req any, wait time.Duration) (*T, error) {
 	if !e.CoreAnswers(kind) {
 		return nil, doesNotAnswer(kind)
 	}
-	a, err := e.Ask(kind, req, AskWait)
+	a, err := e.Ask(kind, req, wait)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -22,6 +23,33 @@ import (
 // by its kind (applyPartCreate), waiter or none, so a tap that stopped
 // waiting, or an Edge that restarted, still gets the part on its picker.
 
+// partCreateWait is how long Add part waits for Core's answer: the ask's whole
+// life (protocol.AskTTL) and the slack its pending entry is kept past it
+// (askForgetSlack). A yes or a no Core gives at any point in that life reaches
+// the tap that is still waiting for it, so the form ends on Core's word, early
+// or late; only an ask Core never answered ends ErrPartCreateNoAnswer.
+//
+// THIS KIND ALONE WAITS LONGER THAN AskWait. Every other ask is a tap whose
+// screen goes on whether or not its answer is in (a count, a LOAD, a CLEAR:
+// the board shows the result when it lands). Add part is not: the form's next
+// screen is the new part, and the answer is the only thing that can open it.
+// A memo of late outcomes that the open form polls for was the alternative.
+// It needs a store with its own expiry, a read endpoint and a poll loop, and a
+// late no still has to be caught by a callback to reach it; the waiter that
+// already receives every answer inside the ask's life does all of that with no
+// new state and no statement. The cost is one held request per open form, for
+// at most this long; the Edge's HTTP server sets no write timeout.
+// Pinned by TestCreatePart_AYesAfterAskWaitCarriesOn.
+const partCreateWait = protocol.AskTTL + askForgetSlack
+
+// ErrPartCreateNoAnswer is Add part with no answer from Core in the ask's
+// whole life and its slack (partCreateWait): Core never took the ask, or its
+// answer is lost. Core acts on an ask only inside its life, and a resend of a
+// part Core did make is answered as a repeat, so the form can be sent again.
+//
+// OWNER-WORDS
+var ErrPartCreateNoAnswer = errors.New("Core did not answer, and nothing was done. Add part sends it again.")
+
 // PartCreateInvalid is a new part the Edge refused before anything was sent:
 // the sentence says what the form must change. Nothing was asked of Core.
 type PartCreateInvalid struct{ Sentence string }
@@ -32,14 +60,15 @@ func (e *PartCreateInvalid) Error() string { return e.Sentence }
 // its stations' changeover pickers. Refused before anything is sent: a process
 // whose HMI setup is off (ErrFlowComposerDisabled, the mint's gate), a request
 // checkNewPart refuses (*PartCreateInvalid), and a Core whose last heartbeat
-// ack does not name the kind (doesNotAnswer). Otherwise the ask goes out and:
+// ack does not name the kind (doesNotAnswer). Otherwise the ask goes out and
+// the tap waits for Core's word for the ask's whole life (partCreateWait):
 //
 //   - Core made it, or this cell had already made it (Repeat): the answer, its
 //     part already in the catalog and on the process's part set
 //     (applyPartCreate runs before the waiter wakes);
 //   - Core refused: a *CoreRefusal with Core's sentence; nothing applied;
-//   - no answer within AskWait: ErrAskPending. The answer is applied when it
-//     comes.
+//   - no answer in that life: ErrPartCreateNoAnswer. An answer that still
+//     comes is applied by its kind, as one after a restart is.
 func (e *Engine) CreatePart(processID int64, req protocol.PartCreateRequest) (*protocol.PartCreateResponse, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
@@ -52,7 +81,11 @@ func (e *Engine) CreatePart(processID int64, req protocol.PartCreateRequest) (*p
 	if err := checkNewPart(&req, e.BinTypeFamilies()); err != nil {
 		return nil, err
 	}
-	return askOrRefuse[protocol.PartCreateResponse](e, protocol.AskPartCreate, req)
+	made, err := askOrRefuseWithin[protocol.PartCreateResponse](e, protocol.AskPartCreate, req, partCreateWait)
+	if errors.Is(err, ErrAskPending) {
+		return nil, ErrPartCreateNoAnswer
+	}
+	return made, err
 }
 
 // checkNewPart trims the request's words and refuses what the form cannot have

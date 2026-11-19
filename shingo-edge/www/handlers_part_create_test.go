@@ -1,10 +1,12 @@
 package www
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -20,13 +22,13 @@ import (
 
 // handlers_part_create_test.go — POST /api/processes/{id}/parts, the station's
 // new part (apiCreatePart): the Edge's refusals before anything is sent, and
-// Core's three outcomes as the page reads them (done, sent and waiting,
-// refused).
+// Core's three outcomes as the page reads them (done, refused, no answer).
 
 // partDoor is one process with a station and HMI setup on, behind the real
 // router and engine, whose Core names part.create and has sent one carrier
 // type, SYN-CART. other is a station of another process.
 type partDoor struct {
+	h         *Handlers
 	db        *store.DB
 	eng       *engine.Engine
 	router    *chi.Mux
@@ -47,10 +49,10 @@ func newPartDoor(t *testing.T) partDoor {
 	other, err := db.CreateOperatorStation(stations.Input{ProcessID: otherPID, Code: "syn-other", Name: "SYN Other Screen", Enabled: true})
 	must(t, err, "other station")
 	must(t, db.SetFlowComposerEnabled(pid, true), "HMI setup on")
-	_, router, eng := realFlowRouterEngine(t, db)
+	h, router, eng := realFlowRouterEngine(t, db)
 	eng.ApplyNodeList(&protocol.NodeListResponse{Family: map[string]string{"SYN-CART": "SYN-CART"}})
 	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Asks: []string{protocol.AskPartCreate}})
-	return partDoor{db: db, eng: eng, router: router, processID: pid, station: station, other: other}
+	return partDoor{h: h, db: db, eng: eng, router: router, processID: pid, station: station, other: other}
 }
 
 // body is a part the form could send: every field good.
@@ -208,17 +210,85 @@ func TestCreatePart_DoneIsOnThePicker(t *testing.T) {
 	}
 }
 
-// TestCreatePart_PendingIs202: an ask Core has not answered within the wait
-// is sent, not failed: 202 with the pending notice, and the ask is out.
-func TestCreatePart_PendingIs202(t *testing.T) {
+// noAnswerCreator is an engine whose Add part never heard from Core in the
+// ask's life: CreatePart ends engine.ErrPartCreateNoAnswer.
+type noAnswerCreator struct{ EngineOrchestration }
+
+func (noAnswerCreator) CreatePart(int64, protocol.PartCreateRequest) (*protocol.PartCreateResponse, error) {
+	return nil, engine.ErrPartCreateNoAnswer
+}
+
+// TestCreatePart_NoAnswerIs504: no word from Core in the ask's whole life is
+// 504 with the engine's sentence (nothing was done, Add part sends it again),
+// never the old 202 "sent, look again later". The wait itself is the engine's
+// (TestCreatePart_NoAnswerEndsTheTapAndAResendMakesOnePart).
+func TestCreatePart_NoAnswerIs504(t *testing.T) {
 	t.Parallel()
 	f := newPartDoor(t)
+	f.h.orchestration = noAnswerCreator{f.h.orchestration}
 	status, raw := f.post(t, f.body())
-	if status != http.StatusAccepted || !strings.Contains(raw, `"pending":true`) {
-		t.Errorf("POST = %d %s, want 202 pending", status, raw)
+	if status != http.StatusGatewayTimeout || !strings.Contains(raw, engine.ErrPartCreateNoAnswer.Error()) {
+		t.Errorf("POST = %d %s, want 504 with %q", status, raw, engine.ErrPartCreateNoAnswer.Error())
 	}
-	if n := f.asksOut(t); n != 1 {
-		t.Errorf("%d asks out, want the one sent", n)
+}
+
+// TestCreatePart_ASheetClosedWhileWaitingStillLandsThePart: the operator
+// closes the sheet (or the page) while Add part waits; the request is gone
+// from the browser's side. Core's yes still lands the part, and the station's
+// composer read, which the picker fetches when next opened, lists it.
+func TestCreatePart_ASheetClosedWhileWaitingStillLandsThePart(t *testing.T) {
+	t.Parallel()
+	f := newPartDoor(t)
+	srv := httptest.NewServer(f.router)
+	t.Cleanup(srv.Close)
+	raw, err := json.Marshal(f.body())
+	must(t, err, "the body")
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/api/processes/%d/parts", srv.URL, f.processID), strings.NewReader(string(raw)))
+	must(t, err, "the request")
+	req.Header.Set("Content-Type", "application/json")
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); f.asksOut(t) == 0; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the ask never went out")
+		}
+	}
+	cancel() // the sheet is closed while the tap waits
+	<-gone
+	f.answerParts(t, func(req protocol.PartCreateRequest) *protocol.EdgeAnswer {
+		body, err := json.Marshal(protocol.PartCreateResponse{ProcessID: req.ProcessID,
+			Payload:  protocol.CatalogPayloadInfo{ID: 602, Name: req.PartNumber, Code: req.PartNumber, UOPCapacity: req.StandardPack},
+			BinTypes: []protocol.PayloadBinTypeInfo{{PayloadCode: req.PartNumber, BinTypeCode: req.BinTypeCode}}})
+		if err != nil {
+			t.Errorf("encode the answer: %v", err)
+		}
+		return &protocol.EdgeAnswer{Kind: protocol.AskPartCreate, Status: protocol.AnswerOK, Body: body}
+	})
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		resp := doRequest(t, f.router, "GET", fmt.Sprintf("/api/operator-stations/%d/composer", f.station), nil, nil)
+		var read struct {
+			PartRows []struct {
+				Code string `json:"code"`
+			} `json:"part_rows"`
+		}
+		err := json.NewDecoder(resp.Body).Decode(&read)
+		resp.Body.Close()
+		must(t, err, "the composer read")
+		for _, r := range read.PartRows {
+			if r.Code == "SYN-NEW-1" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the composer read's part rows %v do not list SYN-NEW-1 after Core's yes", read.PartRows)
+		}
 	}
 }
 

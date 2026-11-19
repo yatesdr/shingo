@@ -467,28 +467,26 @@ function npWire(s) {
 }
 
 // sendNewPart is Add part. The button disables itself on the first tap and
-// stays so while the ask is out; the three outcomes:
+// the form says it waits for Core while the request is out: the door holds
+// the request until Core's word, early or late, for the ask's whole life
+// (engine CreatePart). The outcomes:
 //   - 200, done: Core made the part (or had, from this cell) and it is
 //     applied here; the picker opens again on it (npDone);
-//   - 202, sent and waiting: Core has not answered; the answer is applied
-//     when it comes, so the form says to look again, and offers no second tap;
-//   - anything else, refused: the server's sentence, and the form can be
-//     changed and sent again.
+//   - anything else: the server's sentence, and the form can be changed and
+//     sent again: Core's no (409), no answer in the ask's life (504), or the
+//     Edge's own refusal.
+// A sheet closed while it waits takes nothing back: Core's yes is applied on
+// the Edge all the same, and the read the picker fetches next lists the part.
 async function sendNewPart() {
     if (!np || np.sending) return;
     npRead();
     np.sending = true;
-    np.say = null;
+    // OWNER-WORDS
+    np.say = { cls: 'os-comp-pending', text: 'Waiting for Core…' };
     drawNewPart();
     const res = await postJSON('/api/processes/' + processID() + '/parts', npWire(np));
     if (screen !== 'newpart' || !np) return;   // closed while it was out
     if (res.status === 200) { npDone(res.body); return; }
-    if (res.status === 202) {
-        // OWNER-WORDS
-        np.say = { cls: 'os-comp-pending', text: 'Sent. Core has not answered yet. Close, and open the list again in a minute: if the part is not there, add it again.' };
-        drawNewPart();
-        return;
-    }
     np.sending = false;
     // OWNER-WORDS
     np.say = { cls: 'os-comp-refusal', text: (res.body && res.body.error) || ('Core did not add the part (' + res.status + ').') };

@@ -93,7 +93,8 @@ let FLOW = {};
 let PREVIEW = null;
 let MINT = null;       // flow/mint's answer, when a test sets it
 let START = null;      // changeover/start's answer, when a test sets it
-let PARTS = null;      // the new-part door's answer ({status, body}, then FLOW after it), when a test sets it
+let PARTS = null;      // the new-part door's answer ({status, body}, then FLOW after it), when a test sets it;
+                       // held: the answer waits until the test calls PARTS.release(), as a late answer does
 let PIC = {};          // the options the last picture was drawn with
 const PICS = [];       // every picture's options, in order
 let PICW = 0;          // the width the stub reports, when set
@@ -120,8 +121,12 @@ Object.assign(global, {
         }
         if (PARTS && /\/processes\/\d+\/parts$/.test(String(url))) {
             const p = PARTS;
-            if (p.flowAfter) FLOW = p.flowAfter;
-            return Promise.resolve({ ok: p.status >= 200 && p.status < 300, status: p.status, json: async () => p.body || {} });
+            const answer = () => {
+                if (p.flowAfter) FLOW = p.flowAfter;
+                return { ok: p.status >= 200 && p.status < 300, status: p.status, json: async () => p.body || {} };
+            };
+            if (p.held) return new Promise(res => { p.release = () => res(answer()); });
+            return Promise.resolve(answer());
         }
         if (START && String(url).indexOf('/changeover/start') >= 0) {
             return Promise.resolve({ ok: START.ok !== false, status: START.status || 200, json: async () => START.body || {} });
@@ -1012,17 +1017,80 @@ test('Add part, done: the picker opens again on the new part and asks how the pr
     expectIn('done', 'how does the press run it?');
     expectIn('done', '<h2>' + ComposerModel.shortPart('SYN-NEW-1') + '</h2>');
 });
-test('Add part, sent and waiting: the form says so and takes no second tap', async () => {
+// A yes: the door's 200 with Core's answer, the part listed in the read after it.
+const YES = {
+    status: 200,
+    body: { process_id: 1, payload: { id: 9, name: 'SYN-NEW-1', code: 'SYN-NEW-1', uop_capacity: 800 },
+        bin_types: [{ payload_code: 'SYN-NEW-1', bin_type_code: 'SYN-CART' }] },
+    flowAfter: Object.assign({}, DOOR, { part_rows: ROWS.concat([{ code: 'SYN-NEW-1', name: 'SYN-NEW-1' }]) }),
+};
+const NO_SAY = ['Close, and open the list again', 'add it again', 'Sent. Core has not answered yet'];
+test('Add part, waiting: the form says it waits for Core, takes no second tap, and never says to come back', async () => {
     await fillNewPart();
-    PARTS = { status: 202, body: { status: 'pending', pending: true, notice: 'sent — waiting for Core' } };
+    PARTS = Object.assign({ held: true }, YES);
     tap('npsend');
     await settle(); await settle();
-    expectIn('waiting', 'class="os-comp-pending">Sent. Core has not answered yet.');
+    expectIn('waiting', 'class="os-comp-pending">Waiting for Core');
     expectIn('waiting', 'data-act="npsend" disabled');
+    for (const say of NO_SAY) expectOut('waiting', say);
     tap('npsend');
     await settle();
     if (partPosts() !== 1) throw new Error(partPosts() + ' posts; want the one');
-    if (urls().indexOf('/api/operator-stations/5/composer') >= 0) throw new Error('waiting re-read the composer');
+});
+test('Add part, a yes after the wait: the form carries on to the new part, with no second post', async () => {
+    await fillNewPart();
+    PARTS = Object.assign({ held: true }, YES);
+    tap('npsend');
+    await settle(); await settle();
+    expectOut('still waiting', 'how does the press run it?');
+    PARTS.release();
+    await settle(); await settle(); await settle();
+    if (urls().join() !== '/api/processes/1/parts,/api/operator-stations/5/composer') {
+        throw new Error('a late yes: ' + urls().join() + '; want the one post, then the composer read again');
+    }
+    expectIn('carried on', 'how does the press run it?');
+    expectIn('carried on', '<h2>' + ComposerModel.shortPart('SYN-NEW-1') + '</h2>');
+});
+test("Add part, a no after the wait: Core's sentence, and the form can be changed and sent", async () => {
+    await fillNewPart();
+    PARTS = { held: true, status: 409, body: { error: 'This part already exists on Core as SYN-NEW-1.' } };
+    tap('npsend');
+    await settle(); await settle();
+    PARTS.release();
+    await settle(); await settle();
+    expectIn('a late no', 'class="os-comp-refusal">This part already exists on Core as SYN-NEW-1.');
+    expectIn('a late no', 'value="800"');
+    expectOut('a late no', 'data-act="npsend" disabled');
+    for (const say of NO_SAY) expectOut('a late no', say);
+});
+test("Add part, no answer in the ask's life: the sentence, and Add part sends it again", async () => {
+    await fillNewPart();
+    PARTS = { held: true, status: 504, body: { error: 'Core did not answer, and nothing was done. Add part sends it again.' } };
+    tap('npsend');
+    await settle(); await settle();
+    PARTS.release();
+    await settle(); await settle();
+    expectIn('no answer', 'class="os-comp-refusal">Core did not answer, and nothing was done. Add part sends it again.');
+    expectOut('no answer', 'data-act="npsend" disabled');
+    PARTS = YES;
+    tap('npsend');
+    await settle(); await settle(); await settle();
+    if (partPosts() !== 2) throw new Error(partPosts() + ' posts after the resend; want 2');
+    expectIn('the resend carried on', 'how does the press run it?');
+});
+test('Add part, the sheet closed while it waits, then a yes: nothing reopens, and the part is listed next time', async () => {
+    await fillNewPart();
+    PARTS = Object.assign({ held: true }, YES);
+    tap('npsend');
+    await settle(); await settle();
+    UI.close();
+    PARTS.release();
+    await settle(); await settle(); await settle();
+    expectOut('closed', 'how does the press run it?');
+    expectOut('closed', '<h2>New part</h2>');
+    UI.openPicker(viewWith(true));
+    await settle(); await settle();
+    expectIn('opened again', 'data-part="SYN-NEW-1"', box());
 });
 test('Add part, refused: the sentence the server gave, what was typed kept, and Add part again', async () => {
     for (const status of [400, 409]) {

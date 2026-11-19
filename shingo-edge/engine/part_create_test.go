@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
@@ -263,36 +264,178 @@ func TestApplyPartCreate_LeavesTheHeldDigests(t *testing.T) {
 	}
 }
 
-// TestCreatePart_ARepeatLandsThePartOnThePicker: Core made the part and its
-// first answer never applied here (lost, or an Edge that restarted before it
-// arrived). The operator submits again; Core answers the first part as a
-// repeat, and the station's part list has it, with its name.
-func TestCreatePart_ARepeatLandsThePartOnThePicker(t *testing.T) {
+// waitSignal is a manual ask clock that says each wait a tap starts on it, so
+// a test moves time only once the tap is waiting, and reads how long it waits.
+type waitSignal struct {
+	*clock.Manual
+	started chan time.Duration
+}
+
+func (w waitSignal) After(d time.Duration) <-chan time.Time {
+	ch := w.Manual.After(d)
+	w.started <- d
+	return ch
+}
+
+// partTap is what one Add part ended with.
+type partTap struct {
+	made *protocol.PartCreateResponse
+	err  error
+}
+
+// startPartTap submits req at f's process on a manual ask clock, and returns
+// once the tap is waiting for Core: the clock, the ask on the outbox, and the
+// tap's end.
+func startPartTap(t *testing.T, f mintFixture, req protocol.PartCreateRequest) (waitSignal, *protocol.Envelope, <-chan partTap) {
+	t.Helper()
+	f.eng.setAskKinds([]string{protocol.AskPartCreate})
+	f.eng.setBinTypeFamilies(map[string]string{"SYN-CART": "SYN-CART"})
+	clk := waitSignal{Manual: clock.NewManual(time.Now()), started: make(chan time.Duration, 4)}
+	setAskClock(f.eng, clk)
+	end := make(chan partTap, 1)
+	go func() {
+		made, err := f.eng.CreatePart(f.plant.ProcessID, req)
+		end <- partTap{made, err}
+	}()
+	select {
+	case d := <-clk.started:
+		if d != partCreateWait {
+			t.Errorf("the tap waits %v for Core, want the ask's life and its slack, %v", d, partCreateWait)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tap never started waiting")
+	}
+	env, _ := askSent(t, f.eng)
+	return clk, env, end
+}
+
+// stillWaiting fails the test when the tap has already ended.
+func stillWaiting(t *testing.T, end <-chan partTap, when string) {
+	t.Helper()
+	select {
+	case r := <-end:
+		t.Fatalf("%s the tap ended (%+v, %v); want it still waiting for Core", when, r.made, r.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// tapEnd is the tap's end, or a failure if it never ends.
+func tapEnd(t *testing.T, end <-chan partTap) partTap {
+	t.Helper()
+	select {
+	case r := <-end:
+		return r
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tap never ended")
+		return partTap{}
+	}
+}
+
+// partAsksOut is how many part.create asks went on the outbox.
+func partAsksOut(t *testing.T, e *Engine) int {
+	t.Helper()
+	msgs, err := e.db.ListPendingOutbox(100)
+	testutil.MustNoErr(t, err, "list the outbox")
+	n := 0
+	for _, m := range msgs {
+		if m.MsgType == protocol.SubjectEdgeAsk {
+			n++
+		}
+	}
+	return n
+}
+
+// TestCreatePart_AYesAfterAskWaitCarriesOn: Core's yes comes after AskWait,
+// inside the ask's life. The tap is still waiting and gets it, so the form
+// carries on with the part on the picker; one ask went out. Before, the tap
+// ended at AskWait and the form told the operator to close and look again.
+func TestCreatePart_AYesAfterAskWaitCarriesOn(t *testing.T) {
 	t.Parallel()
 	f := newMintFixture(t)
 	station := anyStationOf(t, f)
-	f.eng.setAskKinds([]string{protocol.AskPartCreate})
-	f.eng.setBinTypeFamilies(map[string]string{"SYN-CART": "SYN-CART"})
-	setAskClock(f.eng, waitRunOut{})
-	if _, err := f.eng.CreatePart(f.plant.ProcessID, synNewPart); !errors.Is(err, ErrAskPending) {
-		t.Fatalf("first submit = %v, want it sent and unanswered", err)
+	req := synNewPart
+	req.ProcessID = f.plant.ProcessID
+	clk, env, end := startPartTap(t, f, req)
+	clk.Advance(AskWait + time.Second)
+	stillWaiting(t, end, "past AskWait,")
+	f.eng.HandleEdgeAnswer(answerTo(env), newPartAnswer(t, req, 511, false))
+	r := tapEnd(t, end)
+	testutil.MustNoErr(t, r.err, "the late yes")
+	if r.made == nil || r.made.Payload.Code != synNewPart.PartNumber {
+		t.Fatalf("the tap = %+v, want Core's part", r.made)
+	}
+	if rows := partRowsOf(t, f.eng, station); !rows[synNewPart.PartNumber] {
+		t.Errorf("the station's part rows %v do not list %s", rows, synNewPart.PartNumber)
+	}
+	if n := partAsksOut(t, f.eng); n != 1 {
+		t.Errorf("%d part.create asks went out, want the one", n)
+	}
+}
+
+// TestCreatePart_ANoAfterAskWaitIsCoresSentence: Core's no comes after
+// AskWait, inside the ask's life. The tap is still waiting and gets Core's
+// sentence; nothing is applied. Before, the tap had ended at AskWait and the
+// sentence went nowhere: no applier keeps a refusal.
+func TestCreatePart_ANoAfterAskWaitIsCoresSentence(t *testing.T) {
+	t.Parallel()
+	f := newMintFixture(t)
+	station := anyStationOf(t, f)
+	req := synNewPart
+	req.ProcessID = f.plant.ProcessID
+	clk, env, end := startPartTap(t, f, req)
+	clk.Advance(AskWait + time.Second)
+	stillWaiting(t, end, "past AskWait,")
+	const sentence = "This part already exists on Core as SYN-NEW-1."
+	f.eng.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPartCreate,
+		Status: protocol.AnswerRefused, Sentence: sentence})
+	r := tapEnd(t, end)
+	var refusal *CoreRefusal
+	if !errors.As(r.err, &refusal) || refusal.Sentence != sentence {
+		t.Fatalf("the tap = %+v, %v; want Core's refusal %q", r.made, r.err, sentence)
+	}
+	if rows := partRowsOf(t, f.eng, station); rows[synNewPart.PartNumber] {
+		t.Error("a refused part is on the picker")
+	}
+}
+
+// TestCreatePart_NoAnswerEndsTheTapAndAResendMakesOnePart: Core never answers.
+// Past AskWait the tap still waits; at the end of the ask's life and its slack
+// it ends with ErrPartCreateNoAnswer, and nothing is on the picker. The
+// operator sends it again; Core answers the first part as a repeat (its first
+// answer was lost, or never sent), and the station has the part, once.
+func TestCreatePart_NoAnswerEndsTheTapAndAResendMakesOnePart(t *testing.T) {
+	t.Parallel()
+	f := newMintFixture(t)
+	station := anyStationOf(t, f)
+	req := synNewPart
+	req.ProcessID = f.plant.ProcessID
+	clk, _, end := startPartTap(t, f, req)
+	clk.Advance(AskWait + time.Second)
+	stillWaiting(t, end, "past AskWait,")
+	clk.Advance(partCreateWait)
+	if r := tapEnd(t, end); !errors.Is(r.err, ErrPartCreateNoAnswer) {
+		t.Fatalf("at the end of the ask's life the tap = %+v, %v; want ErrPartCreateNoAnswer", r.made, r.err)
 	}
 	if rows := partRowsOf(t, f.eng, station); rows[synNewPart.PartNumber] {
 		t.Fatal("the part is on the picker before any answer applied")
 	}
-	// The first ask is dropped: its answer never comes.
+
+	// The resend: the first ask is dropped, and Core answers its first part.
 	_, _ = askSent(t, f.eng)
 	setAskClock(f.eng, nil)
 	answerPartAsks(t, f.eng, func(req protocol.PartCreateRequest) *protocol.EdgeAnswer {
 		return newPartAnswer(t, req, 507, true)
 	})
 	res, err := f.eng.CreatePart(f.plant.ProcessID, synNewPart)
-	testutil.MustNoErr(t, err, "the repeat")
+	testutil.MustNoErr(t, err, "the resend")
 	if !res.Repeat || res.Payload.Code != synNewPart.PartNumber {
 		t.Fatalf("answer = %+v, want Core's first part as a repeat", res)
 	}
 	if rows := partRowsOf(t, f.eng, station); !rows[synNewPart.PartNumber] {
 		t.Errorf("the station's part rows %v do not list %s", rows, synNewPart.PartNumber)
+	}
+	if entry, n := partRowsOn(t, f.db, f.plant.ProcessID, synNewPart.PartNumber); entry == nil || n != 1 {
+		t.Errorf("after the resend: catalog row %v, %d part-set rows; want one of each", entry, n)
 	}
 }
 

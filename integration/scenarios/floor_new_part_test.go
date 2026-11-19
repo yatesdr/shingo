@@ -15,7 +15,6 @@ package scenarios
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -193,19 +192,11 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 			}
 		}
 	}
-	applied := func() bool {
-		entry, err := edge.DB.GetPayloadCatalogByCode(newPart)
-		return err == nil && entry != nil
-	}
 	settle()
 
-	// ── SUBMIT ──
+	// ── SUBMIT: the tap waits for Core's word (engine CreatePart) ──
 	made, err := submit()
 	switch {
-	case errors.Is(err, edgeengine.ErrAskPending):
-		// The wait ran out before the answer came: it is applied on arrival.
-		t.Logf("the first submit's answer came after the Edge's wait")
-		eventually("the answer applied", applied)
 	case err != nil:
 		t.Fatalf("the submit: %v", err)
 	case made.Repeat || made.ProcessID != processID || made.Payload.Code != newPart || made.Payload.UOPCapacity != 40 ||
@@ -343,18 +334,9 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 			evac.PayloadCode, coreCart(evac), running, lineBin.ID)
 	}
 
-	// ── REPEAT: the same submit again, until an answer beats the wait (a
-	// submit the wait outran is applied on arrival, and is a repeat too) ──
-	var again *protocol.PartCreateResponse
-	for try := 0; again == nil; try++ {
-		again, err = submit()
-		switch {
-		case errors.Is(err, edgeengine.ErrAskPending) && try < 2:
-			t.Logf("repeat %d: the answer came after the Edge's wait; submitting again", try+1)
-		case err != nil:
-			t.Fatalf("the repeat: %v", err)
-		}
-	}
+	// ── REPEAT: the same submit again ──
+	again, err := submit()
+	mustNil(t, err, "the repeat")
 	if !again.Repeat || again.Payload.ID != part.ID {
 		t.Errorf("the repeat's answer = %+v, want Core's part %d as a repeat", again, part.ID)
 	}
