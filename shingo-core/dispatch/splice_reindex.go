@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/store"
 	"shingocore/store/orders"
 )
 
@@ -75,7 +76,7 @@ func spliceStepShift(spliced []resolvedStep) map[int]int {
 // produced the 44-minute wedge, and it is invisible from every other vantage
 // point, so the error is returned rather than logged past.
 func (d *Dispatcher) reindexCartsForSplice(order *orders.Order, spliced []resolvedStep) error {
-	n, err := d.moveCarts(order, spliceStepShift(spliced))
+	n, err := moveCarts(d.db, order, spliceStepShift(spliced))
 	if err != nil {
 		return fmt.Errorf("reindex the carts of order %d: %w", order.ID, err)
 	}
@@ -116,7 +117,11 @@ func (d *Dispatcher) reindexCartsForSplice(order *orders.Order, spliced []resolv
 // read off the stored plan (spliceStepShift) and inverted. Nothing moves when
 // the stored plan carries no inserted wait, or when the plan being written
 // keeps its own (its positions are the stored ones).
-func (d *Dispatcher) unspliceCarts(order *orders.Order, unspliced []resolvedStep) error {
+//
+// Two writers store the plan a pass works, and both call it before they write:
+// persistWidenedPlan and the allocator's fungible slot revert
+// (reserveComplexSlots).
+func unspliceCarts(db *store.DB, dbg func(string, ...any), order *orders.Order, unspliced []resolvedStep) error {
 	if len(spliceStepShift(unspliced)) != 0 {
 		return nil
 	}
@@ -128,12 +133,12 @@ func (d *Dispatcher) unspliceCarts(order *orders.Order, unspliced []resolvedStep
 	for pre, post := range spliceStepShift(stored) {
 		back[post] = pre
 	}
-	n, err := d.moveCarts(order, back)
+	n, err := moveCarts(db, order, back)
 	if err != nil {
 		return fmt.Errorf("unsplice the carts of order %d: %w", order.ID, err)
 	}
 	if n > 0 {
-		d.dbg("splice: order %d's carts moved off the spliced plan (%d position(s) moved)", order.ID, n)
+		dbg("splice: order %d's carts moved off the spliced plan (%d position(s) moved)", order.ID, n)
 	}
 	return nil
 }
@@ -142,7 +147,7 @@ func (d *Dispatcher) unspliceCarts(order *orders.Order, unspliced []resolvedStep
 // positions: moved[old] = new. Only the positions a row names are written, in
 // one write (ShiftOrderBinSteps), none when no row moves; order.Carts follows.
 // Returns how many positions moved.
-func (d *Dispatcher) moveCarts(order *orders.Order, moved map[int]int) (int, error) {
+func moveCarts(db *store.DB, order *orders.Order, moved map[int]int) (int, error) {
 	applicable := map[int]int{}
 	for _, c := range order.Carts {
 		for _, at := range []*int{c.PickStep, c.DropStep} {
@@ -157,7 +162,7 @@ func (d *Dispatcher) moveCarts(order *orders.Order, moved map[int]int) (int, err
 	if len(applicable) == 0 {
 		return 0, nil
 	}
-	if err := d.db.ShiftOrderBinSteps(order.ID, applicable); err != nil {
+	if err := db.ShiftOrderBinSteps(order.ID, applicable); err != nil {
 		return 0, err
 	}
 	for i := range order.Carts {

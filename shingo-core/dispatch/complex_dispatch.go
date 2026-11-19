@@ -1284,7 +1284,7 @@ func (d *Dispatcher) SkipOrder(order *orders.Order, code, detail string) {
 // back first (unspliceCarts), and a plan whose rows could not be moved is not
 // written: the stored pair stays as it was and the next pass re-widens.
 func (d *Dispatcher) persistWidenedPlan(order *orders.Order, newSteps []resolvedStep) {
-	if err := d.unspliceCarts(order, newSteps); err != nil {
+	if err := unspliceCarts(d.db, d.dbg, order, newSteps); err != nil {
 		log.Printf("dispatch: complex order %d: its rows could not leave the spliced plan: %v "+
 			"(the plan is not rewritten this pass)", order.ID, err)
 		return

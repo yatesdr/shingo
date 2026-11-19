@@ -4,10 +4,14 @@ package dispatch
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -124,5 +128,104 @@ func TestBinTypeForOrder_ARowPastThePlanIsAnErrorNotACrash(t *testing.T) {
 	}()
 	if _, _, err := db.BinTypeForOrder(order.ID, "LSD"); err == nil {
 		t.Error("rows past the end of the plan read as an answer; they describe a plan that is not stored")
+	}
+}
+
+// refuseCreatesFor refuses every create for one external id: the fleet is down
+// for that order for the whole test, as it was for order 392 in the outage.
+type refuseCreatesFor struct {
+	*testdb.MockTrackingBackend
+	uuid string
+}
+
+func (f *refuseCreatesFor) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
+	if req.ExternalID == f.uuid {
+		return fleet.TransportOrderResult{}, fmt.Errorf("mock: the fleet refuses %s", f.uuid)
+	}
+	return f.MockTrackingBackend.CreateOrder(req)
+}
+
+// TestSlotRevert_TheRowsLeaveTheSpliceWithThePlan: the allocator's fungible
+// slot revert writes the pass's plan, which carries none of the waits a refused
+// create left spliced into the stored one, and the rows go back with it.
+//
+// Order 392 in the dispatch-claim outage sim (outage-tip3, 2026-11-19): a
+// two-cart swap into a marked group, refused by the fleet (its spliced plan and
+// rows kept, its paper kept); order 283 took its paper by rank; 392's next pass
+// ended at "incomplete slot reserve" after the slot revert stored the plan
+// without its waits, and the rows were left past the end of it ("its plan has 9
+// steps"). At 317e1785 that state is the cartIntoGroup panic; at 49467b40 the
+// bin type read answers it with an error. Here X is 392 and Y is 283, in a
+// group whose only free slot is the one X's paper is on.
+//
+// MUTATION (fires): drop the unspliceCarts call from reserveComplexSlots' revert
+// → X's last row sets down past the end of its stored plan, and the bin type
+// read refuses the rows.
+func TestSlotRevert_TheRowsLeaveTheSpliceWithThePlan(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	const xUUID = "slrevx-y" // c2cAskAtAcquiring's uuid for prefix SLREVX
+	backend := &refuseCreatesFor{MockTrackingBackend: testdb.NewTrackingBackend(), uuid: xUUID}
+	d := NewDispatcher(db, backend, &mockEmitter{}, "core", "shingo.dispatch", &DefaultResolver{DB: db})
+	g, s := c2cOneFreeSlotGroup(t, db, "SLREV", sd.Payload.Code)
+
+	// Refused: X asks G, is given S, and the fleet refuses its create.
+	x := c2cAskAtAcquiring(t, d, db, "SLREVX", sd.Payload.Code, sd.BinType.ID, 0, g)
+	spliced, ok := decodeSteps(x.StepsJSON)
+	if !ok || len(spliceStepShift(spliced)) == 0 || !protocol.IsAcquiring(x.Status) {
+		t.Fatalf("fixture: X is %s with plan %s; want it refused, acquiring, its spliced plan stored", x.Status, x.StepsJSON)
+	}
+	if cartsPlanMismatch(withoutInsertedWaits(spliced), x.Carts) == nil {
+		t.Fatalf("fixture: X's rows %v already describe the plan without its waits; the refusal left nothing to move",
+			cartAt(x))
+	}
+	if h := c2cSlotHolder(t, db, s); h != x.ID {
+		t.Fatalf("fixture: S's paper is held by order %d, want the refused X (%d)", h, x.ID)
+	}
+
+	// Paper taken by rank: Y outranks X, asks G, takes S and is sent.
+	y := c2cAskAtAcquiring(t, d, db, "SLREVY", sd.Payload.Code, sd.BinType.ID, 100, g)
+	if h := c2cSlotHolder(t, db, s); h != y.ID {
+		t.Fatalf("fixture: S is held by order %d, want Y (%d), which took it by rank", h, y.ID)
+	}
+
+	// X's next pass ends at its slot reserve.
+	var mu sync.Mutex
+	var lines []string
+	d.DebugLog = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	prScanPass(t, d, db, xUUID)
+	d.DebugLog = nil
+	held := fmt.Sprintf("order %d held — incomplete slot reserve", x.ID)
+	mu.Lock()
+	reached := false
+	for _, l := range lines {
+		reached = reached || strings.Contains(l, held)
+	}
+	mu.Unlock()
+	if !reached {
+		t.Fatalf("fixture: X's pass did not end at its slot reserve (%q not logged)", held)
+	}
+
+	after := reloadCarts(t, db, x.ID)
+	stored, ok := decodeSteps(after.StepsJSON)
+	reverted := false
+	for _, st := range stored {
+		reverted = reverted || (st.Action == protocol.ActionDropoff && st.Group == g.grp.Name && st.Node == g.grp.Name)
+	}
+	if !ok || !reverted || len(spliceStepShift(stored)) != 0 {
+		t.Fatalf("fixture: X's stored plan is not the slot revert's (its drop back on %s, no waits): %s",
+			g.grp.Name, after.StepsJSON)
+	}
+	if err := cartsPlanMismatch(stored, after.Carts); err != nil {
+		t.Errorf("the slot revert stored a plan of %d steps and left X's rows %v on the spliced positions: %v",
+			len(stored), cartAt(after), err)
+	}
+	if _, _, err := db.BinTypeForOrder(x.ID, g.grp.Name); err != nil {
+		t.Errorf("the bin type read refuses the rows the slot revert left: %v", err)
 	}
 }
