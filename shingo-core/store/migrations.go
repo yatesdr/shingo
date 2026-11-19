@@ -4589,6 +4589,9 @@ func migrationList() []migration {
 				return schema.ColumnExists(q, "carrier_families", "lift_bintask") &&
 					schema.ColumnExists(q, "carrier_families", "wait_bintask")
 			}},
+		{181, "robot_deviceconfig_pulls - one append-only row per robot per Device Config pull: params (the flattened matrix rows) and config (the sanitized whole model), plus the pull-time model_md5 for provenance",
+			v181DeviceConfigPulls,
+			func(q schema.Querier) bool { return schema.TableExists(q, "robot_deviceconfig_pulls") }},
 	}
 }
 
@@ -4605,6 +4608,38 @@ func v180CarrierFamilyKeys(tx *sql.Tx) error {
 	} {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v180 carrier family keys: %w", err)
+		}
+	}
+	return nil
+}
+
+// v181DeviceConfigPulls adds the Device Config tab's pull history: one
+// append-only row per robot per pull. params is the flattened leaf set the
+// matrix reads (a tab open never re-parses N × 330 KB models); config is the
+// SANITIZED whole model — credential values are SHA-256 fingerprints before
+// either column is written, because the live #11500 payload of every robot
+// measured carries the ESP32 mesh wifi password in the clear (measured
+// 2026-11-19, work/deviceconfig-tab-2026-11-19/evidence). model_md5 hashes
+// the RAW bytes at pull time, kept as provenance only: measured live, the
+// /robotsStatus envelope's model_md5 matches no robot's file, so it is not
+// a staleness signal and nothing reads this column for one.
+//
+// ROLLBACK is the previous binary: it reads no row of this table.
+func v181DeviceConfigPulls(tx *sql.Tx) error {
+	for _, s := range []string{
+		`CREATE TABLE IF NOT EXISTS robot_deviceconfig_pulls (
+			id         BIGSERIAL PRIMARY KEY,
+			vehicle_id TEXT NOT NULL,
+			pulled_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+			model_md5  TEXT NOT NULL,
+			params     JSONB NOT NULL,
+			config     JSONB NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_deviceconfig_pulls_vehicle_time
+			ON robot_deviceconfig_pulls (vehicle_id, pulled_at DESC)`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v181 deviceconfig pulls: %w", err)
 		}
 	}
 	return nil

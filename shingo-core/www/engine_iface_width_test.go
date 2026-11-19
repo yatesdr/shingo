@@ -54,7 +54,7 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Core's narrow surface at 46 methods. The
+// TestServiceAccessWidth pins Core's narrow surface at 47 methods. The
 // interface's own doc comment states the same number; keep them together.
 func TestServiceAccessWidth(t *testing.T) {
 	t.Parallel()
@@ -71,6 +71,7 @@ func TestServiceAccessWidth(t *testing.T) {
 		"DashboardService",
 		"DeltaIntegrityByPayload",
 		"DemandEpisodeService",
+		"DeviceConfigService",
 		"Dispatcher",
 		"EdgeFeedFlags",
 		"EventBus",
@@ -111,8 +112,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 62 methods —
-// ServiceAccess's 46 embedded, plus 16 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 63 methods —
+// ServiceAccess's 47 embedded, plus 16 orchestration verbs of its own.
 // (CleanNow and SaveCleaningSetup joined at v158: one sends a pinned vendor
 // order, the other checks the cleaning points against the scene and the lanes
 // before saving. The cleaning opt-out did not: it is a one-row write and went
@@ -173,6 +174,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"DashboardService",
 		"DeltaIntegrityByPayload",
 		"DemandEpisodeService",
+		"DeviceConfigService",
 		"Dispatcher",
 		"EdgeFeedFlags",
 		"EventBus",

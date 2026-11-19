@@ -76,12 +76,13 @@ func (e *Engine) HealthService() *service.HealthService       { return e.healthS
 func (e *Engine) InventoryDeltaService() *service.InventoryDeltaService {
 	return e.inventoryDeltaService
 }
-func (e *Engine) DashboardService() *service.DashboardService { return e.dashboardService }
-func (e *Engine) FootprintService() *service.FootprintService { return e.footprintService }
-func (e *Engine) HeartbeatService() *service.HeartbeatService { return e.heartbeatService }
-func (e *Engine) EventBus() *EventBus                         { return e.Events }
-func (e *Engine) EtaCache() *eta.Cache                        { return e.etaCache }
-func (e *Engine) Notifier() *notify.Notifier                  { return e.notifier }
+func (e *Engine) DashboardService() *service.DashboardService       { return e.dashboardService }
+func (e *Engine) FootprintService() *service.FootprintService       { return e.footprintService }
+func (e *Engine) DeviceConfigService() *service.DeviceConfigService { return e.deviceConfigService }
+func (e *Engine) HeartbeatService() *service.HeartbeatService       { return e.heartbeatService }
+func (e *Engine) EventBus() *EventBus                               { return e.Events }
+func (e *Engine) EtaCache() *eta.Cache                              { return e.etaCache }
+func (e *Engine) Notifier() *notify.Notifier                        { return e.notifier }
 
 // KanbanKeeper returns the level keeper, for a test to drive its tick.
 func (e *Engine) KanbanKeeper() *KanbanKeeper { return e.keeper }

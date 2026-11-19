@@ -1265,6 +1265,24 @@ CREATE SEQUENCE public.robot_confidence_samples_id_seq
 
 ALTER SEQUENCE public.robot_confidence_samples_id_seq OWNED BY public.robot_confidence_samples.id;
 
+CREATE TABLE public.robot_deviceconfig_pulls (
+    id bigint NOT NULL,
+    vehicle_id text NOT NULL,
+    pulled_at timestamp with time zone DEFAULT now() NOT NULL,
+    model_md5 text NOT NULL,
+    params jsonb NOT NULL,
+    config jsonb NOT NULL
+);
+
+CREATE SEQUENCE public.robot_deviceconfig_pulls_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.robot_deviceconfig_pulls_id_seq OWNED BY public.robot_deviceconfig_pulls.id;
+
 CREATE TABLE public.robot_hours (
     hour timestamp with time zone NOT NULL,
     vehicle_id text NOT NULL,
@@ -1655,6 +1673,8 @@ ALTER TABLE ONLY public.robot_confidence_low ALTER COLUMN id SET DEFAULT nextval
 
 ALTER TABLE ONLY public.robot_confidence_samples ALTER COLUMN id SET DEFAULT nextval('public.robot_confidence_samples_id_seq'::regclass);
 
+ALTER TABLE ONLY public.robot_deviceconfig_pulls ALTER COLUMN id SET DEFAULT nextval('public.robot_deviceconfig_pulls_id_seq'::regclass);
+
 ALTER TABLE ONLY public.scene_areas ALTER COLUMN id SET DEFAULT nextval('public.scene_areas_id_seq'::regclass);
 
 ALTER TABLE ONLY public.scene_diffs ALTER COLUMN id SET DEFAULT nextval('public.scene_diffs_id_seq'::regclass);
@@ -1920,6 +1940,9 @@ ALTER TABLE ONLY public.robot_alarm_onsets
 ALTER TABLE ONLY public.robot_confidence_daily
     ADD CONSTRAINT robot_confidence_daily_pkey PRIMARY KEY (day, vehicle_id);
 
+ALTER TABLE ONLY public.robot_deviceconfig_pulls
+    ADD CONSTRAINT robot_deviceconfig_pulls_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.robot_hours
     ADD CONSTRAINT robot_hours_pkey PRIMARY KEY (hour, vehicle_id);
 
@@ -2112,6 +2135,8 @@ CREATE INDEX idx_robot_confidence_low_vehicle_time ON ONLY public.robot_confiden
 CREATE INDEX idx_robot_confidence_samples_time ON ONLY public.robot_confidence_samples USING btree (sampled_at);
 
 CREATE INDEX idx_robot_confidence_samples_vehicle_time ON ONLY public.robot_confidence_samples USING btree (vehicle_id, sampled_at);
+
+CREATE INDEX idx_robot_deviceconfig_pulls_vehicle_time ON public.robot_deviceconfig_pulls USING btree (vehicle_id, pulled_at DESC);
 
 CREATE INDEX idx_robot_lidar_hours_hour ON public.robot_lidar_hours USING btree (hour);
 

@@ -79,6 +79,7 @@ var migrationOnlyTables = map[string]string{
 	"robot_alarm_onsets":          "added by v158 — alarm onsets per robot per hour per code, permanent; read by the Fleet tab and the cleaning trial (54901 per robot-day and per km), past RDS's five-week alarm retention",
 	"robot_lidar_hours":           "added by v158 — one laser frame per parked robot per hour reduced per lidar, 90-day retention; read per robot against itself by the cleaning trial's before/after time join",
 	"bin_uop_delta_daily":         "added by v94 — the permanent daily roll-up of the raw delta stream (owner decision D3: growth accepted). Migration-created for the same reason as v93: the backfill must run while the raw rows still exist",
+	"robot_deviceconfig_pulls":    "added by v181 — one append-only row per robot per Device Config pull (params = the flattened matrix rows, config = the sanitized whole model, model_md5 = raw-bytes provenance); read by the Robots page's Device Config tab (latest row per robot) and, later, the between-pull diff",
 }
 
 // TestBaselineDDL_DeclaresEveryTable pins which half of the schema each table

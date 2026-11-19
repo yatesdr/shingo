@@ -22,7 +22,7 @@ import (
 // Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
 // captures the architectural role distinction: most handlers do pure
 // CRUD through services and have no business reaching engine-level
-// orchestration. ServiceAccess gives those handlers a 46-method surface;
+// orchestration. ServiceAccess gives those handlers a 47-method surface;
 // orchestration handlers take EngineOrchestration explicitly via
 // h.orchestration.
 //
@@ -83,6 +83,9 @@ type ServiceAccess interface {
 	HealthService() *service.HealthService
 	DashboardService() *service.DashboardService
 	FootprintService() *service.FootprintService
+	// DeviceConfigService is the Device Config tab's persistence door
+	// (SYNTH-round1; owner-approved widening, 2026-11-19).
+	DeviceConfigService() *service.DeviceConfigService
 	HeartbeatService() *service.HeartbeatService
 
 	// ── Read-only state queries ────────────────────────────────────
