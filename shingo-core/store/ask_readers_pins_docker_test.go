@@ -119,6 +119,7 @@ func queryIDs(t *testing.T, db *sql.DB, q string, args ...any) []int64 {
 // TestAskReaders_SQLAnswersAsTheOldCreateWindow: the SQL readers, each asked of
 // all four rows. The orphan sweep writes, so it is read last.
 func TestAskReaders_SQLAnswersAsTheOldCreateWindow(t *testing.T) {
+	testdb.DisableWedgeSweep(t, "the rows pair states on purpose (a row at rest holding a claimed bin beside asked ones) to ask the readers about each, not a plant state")
 	db := testdb.Open(t)
 	fx := seedAskRows(t, db)
 	rows, src := fx.rows, fx.src
@@ -176,6 +177,7 @@ func TestAskReaders_SQLAnswersAsTheOldCreateWindow(t *testing.T) {
 // lands on it; the fleet's yes (FleetYes) lands only on a row asking for that
 // job, writing `dispatched` and the job and closing the ask in one statement.
 func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
+	testdb.DisableWedgeSweep(t, "the rows pair states on purpose (a row at rest holding a claimed bin beside asked ones) to ask the readers about each, not a plant state")
 	db := testdb.Open(t)
 	rows := seedAskRows(t, db).rows
 	asked := rows[2] // queued with an ask open

@@ -34,6 +34,7 @@ import (
 // and keeps it as its own: one row.
 func TestHandMeetsHandOff_NeitherSideAborts(t *testing.T) {
 	t.Parallel()
+	testdb.ExpectAskLeftOpen(t, "the test takes a hand and stops before the fleet is asked")
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	_, laneID, _ := gatedLane(t, db, "MEET", "")

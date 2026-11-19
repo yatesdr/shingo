@@ -106,6 +106,7 @@ func TestCrashInsideACreate_IsFoundOnlyByTheStuckFlag(t *testing.T) {
 	} {
 		death := tc.death
 		t.Run(tc.name, func(t *testing.T) {
+			testdb.ExpectAskLeftOpen(t, "Core dies inside the create: its ask is the one record of the job")
 			db := testdb.Open(t)
 			sd := testdb.SetupStandardData(t, db)
 			bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "CW-CRASH-BIN")

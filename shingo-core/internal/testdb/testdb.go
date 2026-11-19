@@ -808,9 +808,11 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		// vendor_order_id on purpose (to prove a writer fails closed) passed the
 		// probe and then died inside the sweep on "column does not exist", which
 		// is the exact shape the paragraph above says gets an invariant check
-		// deleted.
-		if _, err := db.DB.Exec(
-			`SELECT id, bin_id, status, vendor_order_id, updated_at FROM orders LIMIT 1`); err != nil {
+		// deleted. A column the probe names and the schema dropped turns every
+		// sweep off for every test, silently: orders.bin_id went at v174 and the
+		// probe kept it, and no sweep ran after any test until it was taken out
+		// (TestSweepProbe_RunsOnAMigratedDatabase holds it to the schema).
+		if _, err := db.DB.Exec(sweepProbeSQL); err != nil {
 			return
 		}
 		AssertNoPointerWedge(t, db)

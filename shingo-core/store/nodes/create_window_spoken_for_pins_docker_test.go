@@ -29,6 +29,7 @@ import (
 // A claimed pin: it never changed.
 func TestCreateWindow_SpokenForSlotReadersCountTheOrder(t *testing.T) {
 	t.Parallel()
+	testdb.ExpectAskLeftOpen(t, "the pin writes an ask onto a row to ask the slot readers about it")
 	db := testdb.Open(t)
 	for i, row := range []struct {
 		state     string

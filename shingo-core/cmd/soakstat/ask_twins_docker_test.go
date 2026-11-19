@@ -21,6 +21,7 @@ import (
 // is parked, queued, and not a bringer.
 func TestAskTwins_AnOrderBeingAskedForCountsInFlight(t *testing.T) {
 	t.Parallel()
+	testdb.ExpectAskLeftOpen(t, "the pin writes an ask onto a row to ask soakstat's readers about it")
 	db := testdb.Open(t)
 	seed := func(status protocol.Status, asked string) int64 {
 		id := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = status }).ID

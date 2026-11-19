@@ -18,6 +18,7 @@ import (
 // An order born after the column reads blank too, and reads back what a write
 // puts there.
 func TestOrderMigration_V180_NoOrderIsAsking(t *testing.T) {
+	testdb.ExpectAskLeftOpen(t, "the pin writes an ask to read it back")
 	db, cfg := testdb.OpenWithConfig(t)
 	live := testdb.CreateOrder(t, db)
 	ended := testdb.CreateOrder(t, db)
