@@ -43,12 +43,13 @@ import (
 const partCreateWait = protocol.AskTTL + askForgetSlack
 
 // ErrPartCreateNoAnswer is Add part with no answer from Core in the ask's
-// whole life and its slack (partCreateWait): Core never took the ask, or its
-// answer is lost. Core acts on an ask only inside its life, and a resend of a
-// part Core did make is answered as a repeat, so the form can be sent again.
+// whole life and its slack (partCreateWait): Core never took the ask, or took
+// it and its answer is lost. So it does not say nothing was done: Core may
+// have made the part. A resend of a part Core did make is answered as a
+// repeat and lands it, so the form can be sent again either way.
 //
 // OWNER-WORDS
-var ErrPartCreateNoAnswer = errors.New("Core did not answer, and nothing was done. Add part sends it again.")
+var ErrPartCreateNoAnswer = errors.New("Core did not answer. Send it again.")
 
 // PartCreateInvalid is a new part the Edge refused before anything was sent:
 // the sentence says what the form must change. Nothing was asked of Core.

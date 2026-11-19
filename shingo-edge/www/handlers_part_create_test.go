@@ -219,16 +219,22 @@ func (noAnswerCreator) CreatePart(int64, protocol.PartCreateRequest) (*protocol.
 }
 
 // TestCreatePart_NoAnswerIs504: no word from Core in the ask's whole life is
-// 504 with the engine's sentence (nothing was done, Add part sends it again),
-// never the old 202 "sent, look again later". The wait itself is the engine's
+// 504 with the engine's sentence, "Core did not answer. Send it again.", never
+// the old 202 "sent, look again later". It does not say nothing was done: Core
+// may have made the part and only its answer was lost, and the resend is then
+// answered as a repeat. The wait itself is the engine's
 // (TestCreatePart_NoAnswerEndsTheTapAndAResendMakesOnePart).
 func TestCreatePart_NoAnswerIs504(t *testing.T) {
 	t.Parallel()
 	f := newPartDoor(t)
 	f.h.orchestration = noAnswerCreator{f.h.orchestration}
 	status, raw := f.post(t, f.body())
-	if status != http.StatusGatewayTimeout || !strings.Contains(raw, engine.ErrPartCreateNoAnswer.Error()) {
-		t.Errorf("POST = %d %s, want 504 with %q", status, raw, engine.ErrPartCreateNoAnswer.Error())
+	const sentence = "Core did not answer. Send it again."
+	if status != http.StatusGatewayTimeout || !strings.Contains(raw, sentence) {
+		t.Errorf("POST = %d %s, want 504 with %q", status, raw, sentence)
+	}
+	if strings.Contains(raw, "nothing was done") {
+		t.Errorf("POST = %s: the no-answer sentence says nothing was done, which Core may not know", raw)
 	}
 }
 

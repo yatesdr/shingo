@@ -1065,12 +1065,12 @@ test("Add part, a no after the wait: Core's sentence, and the form can be change
 });
 test("Add part, no answer in the ask's life: the sentence, and Add part sends it again", async () => {
     await fillNewPart();
-    PARTS = { held: true, status: 504, body: { error: 'Core did not answer, and nothing was done. Add part sends it again.' } };
+    PARTS = { held: true, status: 504, body: { error: 'Core did not answer. Send it again.' } };
     tap('npsend');
     await settle(); await settle();
     PARTS.release();
     await settle(); await settle();
-    expectIn('no answer', 'class="os-comp-refusal">Core did not answer, and nothing was done. Add part sends it again.');
+    expectIn('no answer', 'class="os-comp-refusal">Core did not answer. Send it again.');
     expectOut('no answer', 'data-act="npsend" disabled');
     PARTS = YES;
     tap('npsend');
