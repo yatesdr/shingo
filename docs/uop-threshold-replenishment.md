@@ -1,6 +1,6 @@
 # UOP-Threshold Replenishment
 
-Verified against: 16138e57
+Verified against: 9103e844
 
 This document covers the continuous-review reorder levels: Core's loader L1 threshold and the Edge's cell
 autoreorder.

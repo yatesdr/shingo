@@ -1,6 +1,6 @@
 # UOP Architecture
 
-Verified against: 16138e57
+Verified against: 9103e844
 
 UOP (Unit of Production) is a physical bin's count and a lineside bench's count: for a bin of one part, the pieces of
 that part in it (a kit counts cycles; [Process semantics](#process-semantics) has the rule). This document describes

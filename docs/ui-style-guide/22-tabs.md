@@ -1,6 +1,6 @@
 ## Tabs
 
-Verified against: 16138e57
+Verified against: 9103e844
 
 One implementation. Every tab bar in Core and the Edge is `.tabs` / `.tab`,
 with `.tab-panel` siblings, defined once in `shared/components.css`; no page

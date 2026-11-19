@@ -1,6 +1,6 @@
 # Node Naming Standards
 
-Verified against: 16138e57
+Verified against: 9103e844
 
 Reference document for physical and synthetic node naming conventions used across the Shingo system.
 
