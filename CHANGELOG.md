@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.14.0 — 2026-11-19
+
 Deploy: no migration. Core first, then each Edge. When this lands, an engineer restates in pieces, on Core, the standard pack of every part whose pieces per cycle is above 1 (a full bin's pieces, not its cycles).
 
 - At a cell's changeover picker with HMI setup on, New part adds a part Core does not have: part number, standard pack, one carrier type, and an optional CATID and tote numbers; Core adds it and the picker carries on setting it up
