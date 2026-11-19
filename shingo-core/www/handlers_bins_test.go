@@ -642,17 +642,17 @@ func TestExecuteBinAction_Move_RefusesOccupiedDestination(t *testing.T) {
 	h, db, sd, bin := setupBinForAction(t)
 
 	// Place a second bin at the line node so the move destination is occupied.
-	occupyingBin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-OCC-1")
-	_ = occupyingBin
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-OCC-1")
 
 	params := mustJSON(t, map[string]any{"node_id": sd.LineNode.ID})
 	err := h.executeBinAction(bin, "move", params)
 	if err == nil {
 		t.Fatal("move to occupied destination should error")
 	}
-	// Error message includes the node ID and existing-bin count
-	if err.Error() == "" {
-		t.Error("expected non-empty error message")
+	// The refusal names the node and the bin on it (SPR 2026-11-19: "node 27
+	// already has 1 bin(s)" could not be matched to the cart on the floor).
+	if want := sd.LineNode.Name + " already has BIN-OCC-1; move or retire it first"; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 
 	// Verify the moved bin stayed at its original node

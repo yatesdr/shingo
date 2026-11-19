@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,21 @@ func (h *Handlers) parseIDParam(w http.ResponseWriter, r *http.Request, key stri
 		return 0, false
 	}
 	return id, true
+}
+
+// queryIDs reads a comma-separated list of ids from one query value (?ids=1,2),
+// skipping any entry that is not a positive integer, and keeps the first limit.
+func queryIDs(q url.Values, key string, limit int) []int64 {
+	var ids []int64
+	for part := range strings.SplitSeq(q.Get(key), ",") {
+		if len(ids) == limit {
+			break
+		}
+		if id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // parseJSON decodes the request body as JSON into dst.

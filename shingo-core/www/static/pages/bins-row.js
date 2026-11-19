@@ -1,6 +1,7 @@
 // bins-row.js — how one Bins table row draws a bin, as pure functions over the
-// bin's detail answer (GET /api/bins/detail?history=0, or the answer of a bin
-// action). The twin of the row in templates/bins.html: refreshBinRow in
+// bin's detail answer (GET /api/bins/detail?history=0, the answer of a bin
+// action, or a GET /api/bins/rows row). The twin of the row in
+// templates/bins.html: refreshBinRow in
 // bins.js used to write the raw _TRANSIT / _ROBOT:<id> node name into
 // Location, rebuild Flags without the Return button, and leave the sort and
 // search values as the page loaded them. Every value the template renders for
@@ -21,14 +22,15 @@ export function uopText(b) {
 }
 
 // flagsHTML is the row's labelled flag chips. Twin of the bins.html flags cell
-// (the notes chip and the Return button are added by binRowView's caller and
-// binRowView respectively; the detail answer carries no notes flag).
-export function flagsHTML(b) {
+// (the Return button is added by binRowView). hasNotes is the answer's
+// has_notes: the bin record does not carry it.
+export function flagsHTML(b, hasNotes) {
   var flags = '';
   if (b.locked) flags += '<span class="chip chip-muted" title="Locked by ' + escapeHtml(b.locked_by || '') + '">locked</span>';
   if (b.claimed_by) flags += '<span class="chip chip-muted" title="Claimed by order #' + b.claimed_by + '">order #' + b.claimed_by + '</span>';
   if (!b.manifest_confirmed && b.payload_code) flags += '<span class="chip chip-warn" title="Manifest unconfirmed">unconfirmed</span>';
   if (b.anomaly_at) flags += '<span class="chip chip-err" title="Counts refused — payload mismatch (anomaly); reconcile this bin">counts refused</span>';
+  if (hasNotes) flags += '<span class="chip chip-muted" title="Has notes">notes</span>';
   return flags;
 }
 
@@ -68,9 +70,11 @@ export function binTransit(detail) {
 }
 
 // binRowView is everything bins.html renders for one row, from a detail
-// answer: the row's data-* values (filter, search, cycle count), each cell's
-// HTML and each sortable cell's data-sort-value. `auth` is PAGE_AUTH: the
-// Return button is drawn only for a signed-in viewer, as the template does.
+// answer or a GET /api/bins/rows row: the row's data-* values (filter, search,
+// cycle count), each cell's HTML and each sortable cell's data-sort-value.
+// Process and the notes chip come from the answer's process and has_notes,
+// which handleBins reads the same way. `auth` is PAGE_AUTH: the Return button
+// is drawn only for a signed-in viewer, as the template does.
 export function binRowView(detail, auth) {
   var b = detail.bin;
   var t = binTransit(detail);
@@ -131,9 +135,10 @@ export function binRowView(detail, auth) {
     label: { html: '<span class="bin-dot bin-dot-' + contents + '"></span><strong><code>' + esc(b.label) + '</code></strong>', sort: b.label || '' },
     type: { text: b.bin_type_code || '' },
     location: { html: loc, sort: node },
+    process: { text: detail.process || '' },
     payload: { html: payloadHTML, sort: payload },
     uop: { html: uopText(b), sort: String(b.uop_remaining) },
     status: { html: '<span class="badge badge-' + esc(b.status) + '">' + esc(b.status) + '</span>', sort: b.status || '' },
-    flags: { html: flagsHTML(b), returnHTML: returnHTML }
+    flags: { html: flagsHTML(b, detail.has_notes), returnHTML: returnHTML }
   };
 }

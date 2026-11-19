@@ -8,6 +8,7 @@ import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { mountKeyStrip } from '/static/pages/bins-keystrip.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
+import { newRowsFeed } from '/static/pages/bins-live.js';
 
 // ===== STATE =====
 var currentBinId = null;
@@ -43,8 +44,8 @@ function errText(e) {
 // bin (ids only, www/sse.go). The action's answer already carries the bin, so
 // those echoes are not a reason to read it again. They are counted, not timed
 // (bins-echo.js): each own action expects exactly the number of events its
-// verb emits, for 5 s after its answer; every other event for the open bin is
-// a real update and costs the one read.
+// verb emits, for 5 s after its answer; every other event is a real update and
+// goes to the live feed (see SSE below).
 var ECHO_EXPIRY_MS = 5000;
 var echoes = newEchoLedger(ECHO_EXPIRY_MS);
 
@@ -861,23 +862,22 @@ async function bulkAction(action) {
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
-// refreshBinRow reads one bin without history and repaints its row. Only the
-// callers whose answer does not carry the bin use it (Return, Request
-// Move); an action's answer is painted directly.
+// refreshBinRow asks the live feed for one bin's row. Only the callers whose
+// answer does not carry the bin use it (Return, Request Move, an action whose
+// re-read failed); an action's answer is painted directly.
 function refreshBinRow(id) {
-  readBin(id, false)
-    .then(paintBinRow)
-    .catch(function(err) { console.error('refreshBinRow', id, err); });
+  rowsFeed.bin(id);
 }
 
 // paintBinRow draws one table row from a detail answer as bins.html draws it
 // (bins-row.js binRowView): Location's display name, the Return button, and
-// the sort and search values with the cells.
+// the sort and search values with the cells. False when the table has no row
+// for the bin.
 function paintBinRow(detail) {
   var b = detail && detail.bin;
-  if (!b) return;
+  if (!b) return false;
   var row = document.querySelector('#bin-table tbody tr[data-id="' + b.id + '"]');
-  if (!row) return;
+  if (!row) return false;
   var v = binRowView(detail, PAGE_AUTH);
   row.dataset.label = v.data.label;
   row.dataset.type = v.data.type;
@@ -899,19 +899,64 @@ function paintBinRow(detail) {
     td.innerHTML = html;
     if (sort !== undefined) td.setAttribute('data-sort-value', sort);
   }
-  // Label, Type, Location, Process, Payload, UoP, Status, Flags. Process (3)
-  // is the server's (the mirror's node -> process lookup); the detail API does
-  // not carry it, so the refresh leaves the painted value.
+  // Label, Type, Location, Process, Payload, UoP, Status, Flags.
   cell(0, v.label.html, v.label.sort);
   if (tds[off + 1]) tds[off + 1].textContent = v.type.text;
   cell(2, v.location.html, v.location.sort);
+  if (tds[off + 3]) tds[off + 3].textContent = v.process.text;
   cell(4, v.payload.html, v.payload.sort);
   cell(5, v.uop.html, v.uop.sort);
   cell(6, v.status.html, v.status.sort);
-  // The detail API does not carry the notes flag; keep the one the server
-  // painted rather than dropping it on every refresh.
-  var notes = tds[off + 7] && tds[off + 7].querySelector('[title="Has notes"]');
-  cell(7, v.flags.html + (notes ? notes.outerHTML : '') + v.flags.returnHTML);
+  cell(7, v.flags.html + v.flags.returnHTML);
+  return true;
+}
+
+// insertBinRow adds a row for a bin the table does not have (made since the
+// page was drawn) at the top, where the server's newest-first order puts it,
+// built as bins.html builds one and painted by paintBinRow.
+function insertBinRow(tbody, detail) {
+  var id = detail.bin.id;
+  var tr = document.createElement('tr');
+  tr.dataset.id = id;
+  tr.dataset.action = 'openBinDetailRow';
+  tr.dataset.binId = id;
+  tr.dataset.skipOnCheckbox = '1';
+  tr.innerHTML = (PAGE_AUTH ? '<td data-action="stopPropagation"><input type="checkbox" class="bin-cb" value="' + id +
+    '" data-action-change="updateBulkBar"></td>' : '') +
+    '<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="bin-flags"></td>';
+  tbody.insertBefore(tr, tbody.firstChild);
+  paintBinRow(detail);
+}
+
+// applyRows paints a GET /api/bins/rows answer: each row repainted where the
+// table has it and added where it does not, each gone bin's row dropped, and,
+// for an answer of every row, any row it does not hold dropped too. Then the
+// filters run again, so a row that now matches the search shows and one that
+// no longer does hides. A repainted row keeps its place: sorting again orders
+// by the new values. The open pop-up is read again when its bin was in the
+// answer.
+//
+// A page drawn with no bins has no table to add to; a reload draws one.
+function applyRows(answer, every) {
+  var tbody = document.querySelector('#bin-table tbody');
+  if (!tbody || !answer) return;
+  var held = {};
+  (answer.rows || []).forEach(function(detail) {
+    held[detail.bin.id] = true;
+    if (!paintBinRow(detail)) insertBinRow(tbody, detail);
+  });
+  var drop = (answer.gone || []).slice();
+  if (every) {
+    tbody.querySelectorAll('tr[data-id]').forEach(function(tr) {
+      if (!held[tr.dataset.id]) drop.push(tr.dataset.id);
+    });
+  }
+  drop.forEach(function(id) {
+    var tr = tbody.querySelector('tr[data-id="' + id + '"]');
+    if (tr) tr.remove();
+  });
+  filterBins();
+  if (currentBinId && held[currentBinId]) refreshOpenBin();
 }
 
 function clearSelection() {
@@ -1120,10 +1165,15 @@ function ccSummary() {
 // the parsed payload. Replaces the retired app.js IIFE window.onBinUpdate
 // dispatch (Q-002).
 //
-// The event carries ids only. The counted echoes of this page's own actions
-// are dropped (the action's answer already drew the bin); any other update to
-// the open bin costs one read: history-free, or with history when the Journal
-// is the open tab. The redraw keeps the open tab and anything typed.
+// The events carry ids only. Each names a bin, or an order whose carts' rows
+// changed, to the live feed (bins-live.js), which reads those rows in one
+// request and repaints them (applyRows); the open pop-up is read again when
+// its bin was among them: history-free, or with history when the Journal is
+// the open tab. The redraw keeps the open tab and anything typed.
+//
+// The counted echoes of this page's own actions are dropped: the action's
+// answer already drew the bin. A bin-row that follows an own action is not
+// counted, so it costs one row read: the price of never missing a count tick.
 var refreshOpenBin = debounce(function() {
   if (!binDetailOpen()) return;
   var id = currentBinId;
@@ -1132,13 +1182,55 @@ var refreshOpenBin = debounce(function() {
     .catch(function(e) { console.error('bin-update refresh', id, e); });
 }, 500);
 
+var rowsFeed = newRowsFeed({
+  read: function(query) { return apiGet('/api/bins/rows' + (query ? '?' + query : '')); },
+  apply: applyRows,
+  hidden: function() { return document.hidden; },
+  later: function(fn, ms) { return setTimeout(fn, ms); },
+  cancel: function(handle) { clearTimeout(handle); },
+  quietMs: 400,
+  maxWaitMs: 2000
+});
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) rowsFeed.shown();
+});
+
 onSSE('bin-update', function(data) {
-  if (!data || !data.bin_id) return;
+  if (!data) return;
+  // A bin made elsewhere names only its node, so every row is read.
+  if (!data.bin_id) { rowsFeed.every(); return; }
   // Taken for every bin, open or not, so a counted echo is consumed where it
   // lands and cannot be mistaken for a later real update.
   if (echoes.take(data.bin_id, Date.now())) return;
-  if (!currentBinId || currentBinId !== data.bin_id) return;
-  refreshOpenBin();
+  rowsFeed.bin(data.bin_id);
+});
+
+// A count tick, or a station door's write: no bin-update says so.
+onSSE('bin-row', function(data) {
+  if (data) rowsFeed.bin(data.bin_id);
+});
+
+// An order's dispatch claims its carts and its end releases them, which
+// changes their rows (the order chip, the route) with no bin event.
+var CLAIM_MOVES = { dispatched: true, completed: true, failed: true, cancelled: true, skipped: true };
+onSSE('order-update', function(data) {
+  if (data && CLAIM_MOVES[data.type]) rowsFeed.order(data.order_id);
+});
+
+// RECONNECT ONLY, never on the first connect: the first connect of a fresh
+// page has missed nothing, the server just drew it (sourcing.js has the same
+// rule, and why). After a drop, events were missed and nothing says which.
+var everConnected = false;
+var droppedSinceConnect = false;
+onSSE('disconnected', function() {
+  if (everConnected) droppedSinceConnect = true;
+});
+onSSE('connected', function() {
+  if (everConnected && droppedSinceConnect) {
+    droppedSinceConnect = false;
+    rowsFeed.every();
+  }
+  everConnected = true;
 });
 
 // ===== HELPERS =====

@@ -16,6 +16,11 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core only.
+
+- Core's Bins page keeps its table current while it is open: a bin a robot lifts or sets down, a station's count, LOAD or CLEAR, and an order taking or letting go of a bin show on its row without a reload, and a search or filter follows them
+- A bin moved, made or recovered onto a node that already holds one is refused with the bin that is there: "SMN_007 already has CARRIER-0012; move or retire it first"
+
 ## v0.14.0 — 2026-11-19
 
 Deploy: no migration. Core first, then each Edge. When this lands, an engineer restates in pieces, on Core, the standard pack of every part whose pieces per cycle is above 1 (a full bin's pieces, not its cycles).

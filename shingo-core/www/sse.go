@@ -353,6 +353,22 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("bin-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "bin_id": ev.BinID, "actor": ev.Actor, "detail": ev.Detail}))
 	}, engine.EventBinUpdated)
 
+	// The lift is a bin-update too: the carrier left its node, which is now
+	// empty, and the bin is on its way. No EventBinUpdated marks it, so without
+	// this a page saw a carried bin at its source until the drop.
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.BinEnteredTransitEvent]) {
+		ev := evt.Payload
+		h.Broadcast("bin-update", sseJSON(map[string]any{"node_id": ev.FromNodeID, "action": "lifted", "bin_id": ev.BinID}))
+	}, engine.EventBinEnteredTransit)
+
+	// bin-row is a bin's shown facts changing with nothing else to say: a count
+	// tick, or a write behind the bin-changed hook. Its own name, not a
+	// bin-update, because the pages that rebuild on bin-update (the sourcing
+	// page, the node report) would then rebuild on every count tick.
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.BinRowChangedEvent]) {
+		h.Broadcast("bin-row", sseJSON(map[string]any{"bin_id": evt.Payload.BinID}))
+	}, engine.EventBinRowChanged)
+
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.NodeUpdatedEvent]) {
 		ev := evt.Payload
 		h.Broadcast("node-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action}))

@@ -11,11 +11,12 @@ import (
 // target), so the file would be silently excluded from every normal build.
 //
 // TestBinsRowViewJS runs the Node-based unit tests for bins-row.js, the Bins
-// table row drawn from a bin's detail answer, and bins-echo.js, the counting of
+// table row drawn from a bin's detail answer, bins-echo.js, the counting of
 // the page's own-action echoes (a counted echo is dropped, anything beyond the
 // count is a real update; TestPinBins_ActionEveryVerb checks the per-verb
-// counts against the handlers). Skipped if `node` is not on PATH, matching the
-// other JS test wrappers.
+// counts against the handlers), and bins-live.js, the feed that reads the rows
+// Core's events name in one request. Skipped if `node` is not on PATH, matching
+// the other JS test wrappers.
 //
 // The regression it guards: the row repaint after an action wrote the raw
 // _TRANSIT / _ROBOT:<id> node name into Location, dropped the Return button

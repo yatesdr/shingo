@@ -380,12 +380,14 @@ function binsPage() {
     // adapters, and the key strip (bins-keystrip.js) over it.
     const echo = D.loadPage('static/pages/bins-echo.js', { console: g.console }, () => undefined);
     const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, () => undefined);
+    const live = D.loadPage('static/pages/bins-live.js', { console: g.console }, () => undefined);
     const keys = D.loadPage('static/pages/bins-rdskeys.js', { console: g.console }, () => undefined);
     const strip = D.loadPage('static/pages/bins-keystrip.js', { console: g.console, MutationObserver: function () {} },
         (n) => (n === 'rdsKeyPicker' ? keys.ctx.rdsKeyPicker : undefined));
     const p = D.loadPage('static/pages/bins.js', g, lender(rec, doc, {
         echoesFor: echo.ctx.echoesFor, newEchoLedger: echo.ctx.newEchoLedger,
         binRowView: row.ctx.binRowView, uopText: row.ctx.uopText,
+        newRowsFeed: live.ctx.newRowsFeed,
         mountKeyStrip: strip.ctx.mountKeyStrip,
         switchTab(key) { return key; },
     }));

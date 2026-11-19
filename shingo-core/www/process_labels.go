@@ -42,6 +42,16 @@ func (p processLabels) order(o *domain.Order) string {
 	return ""
 }
 
+// bin is a Bins-table row's process: the one that names the bin's node, or,
+// for a bin in flight, the one the order carrying it serves. transit is that
+// order (transitOrderFor), nil for a bin at a node.
+func (p processLabels) bin(b *domain.Bin, transit *domain.Order) string {
+	if transit != nil {
+		return p.order(transit)
+	}
+	return p.node(b.NodeName)
+}
+
 // orders labels a page's orders by id, for a template's {{index $.OrderProcess .ID}}.
 func (p processLabels) orders(list []*domain.Order) map[int64]string {
 	out := make(map[int64]string, len(list))
