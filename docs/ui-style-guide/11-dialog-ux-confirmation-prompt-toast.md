@@ -1,6 +1,6 @@
 ## Dialog UX — confirmation, prompt, toast
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 ### Never use native dialogs
 

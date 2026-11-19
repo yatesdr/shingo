@@ -1,6 +1,6 @@
 ## Templates and composition
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 The three surfaces use three different Go template composition models, and
 that's fine. Don't migrate.

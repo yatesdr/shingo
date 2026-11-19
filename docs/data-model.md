@@ -1,6 +1,6 @@
 # Data Model
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 This document describes the core data entities in Shingo, their relationships, and the key concepts that drive dispatch and storage logic.
 
