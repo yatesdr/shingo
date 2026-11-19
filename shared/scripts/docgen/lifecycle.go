@@ -9,7 +9,8 @@ package main
 //     `sourcing` is a key nothing enters, so it is not drawn.
 //   - Core's planning machine (`shingo-core/dispatch/lifecycle.go actionMap`):
 //     the same edges, restricted to the statuses Core writes — `pending`, and
-//     every status a LifecycleService method hands to transition() — each edge
+//     every status a LifecycleService method hands to transition() or, for
+//     the fleet's yes, afterTransition() — each edge
 //     labelled with the actions actionMap fires on it. An unlabelled edge is a
 //     pure transition: status write and audit only.
 //
@@ -168,7 +169,9 @@ func (m *lifecycleMachine) readActions(dispatch *gosrcPkg) error {
 }
 
 // readCoreWrites collects Core's statuses: every status constant a
-// LifecycleService method hands to transition or transitionTx.
+// LifecycleService method hands to transition or transitionTx, or to
+// afterTransition for a write made outside them (the fleet's yes, Dispatch,
+// writes `dispatched` with its vendor id in one statement of its own).
 func (m *lifecycleMachine) readCoreWrites(dispatch *gosrcPkg) error {
 	for _, fn := range dispatch.funcs {
 		if fn.recv != "LifecycleService" || fn.decl.Body == nil {
@@ -180,7 +183,7 @@ func (m *lifecycleMachine) readCoreWrites(dispatch *gosrcPkg) error {
 				return true
 			}
 			sel, ok := c.Fun.(*ast.SelectorExpr)
-			if !ok || (sel.Sel.Name != "transition" && sel.Sel.Name != "transitionTx") {
+			if !ok || (sel.Sel.Name != "transition" && sel.Sel.Name != "transitionTx" && sel.Sel.Name != "afterTransition") {
 				return true
 			}
 			for _, a := range c.Args {

@@ -106,10 +106,15 @@ func TestLifecycle_TheRealMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range []string{"in_transit --> delivered: fireCompleted", "reshuffling --> pending: fireResumed", "dispatched --> staged", "dispatched --> queued"} {
+	for _, w := range []string{"in_transit --> delivered: fireCompleted", "reshuffling --> pending: fireResumed",
+		"pending --> dispatched", "dispatched --> staged", "pending --> queued"} {
 		if !strings.Contains(core, "    "+w+"\n") {
 			t.Errorf("core: no edge %q", w)
 		}
+	}
+	// `dispatched` is the fleet's yes: a refusal leaves the order where it rests.
+	if strings.Contains(core, "    dispatched --> queued") {
+		t.Error("core: draws dispatched --> queued, which is not an edge")
 	}
 	for _, n := range []string{"submitted", "sourcing"} {
 		if strings.Contains(core, n) {

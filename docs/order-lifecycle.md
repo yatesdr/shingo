@@ -145,23 +145,33 @@ stateDiagram-v2
     [*] --> pending
 
     pending --> queued
+    pending --> dispatched
     pending --> reshuffling
     pending --> cancelled: fireCancelled
     pending --> failed: fireFailed
     pending --> skipped: fireSkipped
 
     queued --> acknowledged
+    queued --> dispatched
     queued --> in_transit
     queued --> reshuffling
     queued --> cancelled: fireCancelled
     queued --> failed: fireFailed
     queued --> skipped: fireSkipped
 
+    acknowledged --> dispatched
     acknowledged --> in_transit
     acknowledged --> staged
     acknowledged --> cancelled: fireCancelled
     acknowledged --> faulted: fireFaulted
     acknowledged --> failed: fireFailed
+
+    dispatched --> in_transit
+    dispatched --> staged
+    dispatched --> delivered: fireCompleted
+    dispatched --> cancelled: fireCancelled
+    dispatched --> faulted: fireFaulted
+    dispatched --> failed: fireFailed
 
     in_transit --> delivered: fireCompleted
     in_transit --> staged
