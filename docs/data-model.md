@@ -1280,6 +1280,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `requested_by` | `text` | yes | `''` |  | The order's requested_by, as orders carries it. |
 
 - What the robots did, one row per mission: what the fleet actually carried out, not what happened to the orders. Written only when an order reaches a vendor terminal (finalizeMissionTelemetry, gated on fleet.IsTerminalState), so most terminal orders have no row here. That survivorship is correct for the question this table answers, since every skip and most cancels never reached a robot, and wrong for any question about order outcomes, which belong to orders and order_history. Reading failure counts from here was a real bug (see GetFailures).
+- Check `((station_uid = '') OR (requested_by = ''))`
 - Check `(requested_by = ANY (ARRAY['', 'core-operator', 'core-direct', 'core-test']))`
 - Check `(station_uid <> ALL (ARRAY['core-operator', 'core-direct', 'core-test']))`
 
@@ -1450,6 +1451,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `asked_vendor_order_id` | `text` | yes | `''` |  | The vendor order id Core is asking the fleet to create, from the hand that takes the order's holds until the fleet answers; blank when Core is not asking (v182). Core-only, never on the wire. An open ask is spoken for whatever the status says. |
 | `requested_by` | `text` | yes | `''` |  | Which Core door made an order no station asked for: core-operator (the manual and spot doors), core-direct (the direct doors), core-test (the test doors), or blank (a station's order, or one Core made itself, such as a recovery or a cancel-return). Until v185 the three were written into the station column. |
 
+- Check `((station_uid = '') OR (requested_by = ''))`
 - Check `(requested_by = ANY (ARRAY['', 'core-operator', 'core-direct', 'core-test']))`
 - Check `(station_uid <> ALL (ARRAY['core-operator', 'core-direct', 'core-test']))`
 - Check `((status <> 'dispatched') OR (vendor_order_id <> ''))`

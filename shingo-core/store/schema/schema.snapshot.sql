@@ -870,6 +870,7 @@ CREATE TABLE public.mission_telemetry (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     robot_alarms_json jsonb,
     requested_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT mission_telemetry_one_requester CHECK (((station_uid = ''::text) OR (requested_by = ''::text))),
     CONSTRAINT mission_telemetry_requested_by_known CHECK ((requested_by = ANY (ARRAY[''::text, 'core-operator'::text, 'core-direct'::text, 'core-test'::text]))),
     CONSTRAINT mission_telemetry_station_uid_not_actor CHECK ((station_uid <> ALL (ARRAY['core-operator'::text, 'core-direct'::text, 'core-test'::text])))
 );
@@ -1080,6 +1081,7 @@ CREATE TABLE public.orders (
     version bigint DEFAULT 1 NOT NULL,
     asked_vendor_order_id text DEFAULT ''::text NOT NULL,
     requested_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT orders_one_requester CHECK (((station_uid = ''::text) OR (requested_by = ''::text))),
     CONSTRAINT orders_requested_by_known CHECK ((requested_by = ANY (ARRAY[''::text, 'core-operator'::text, 'core-direct'::text, 'core-test'::text]))),
     CONSTRAINT orders_station_uid_not_actor CHECK ((station_uid <> ALL (ARRAY['core-operator'::text, 'core-direct'::text, 'core-test'::text])))
 );

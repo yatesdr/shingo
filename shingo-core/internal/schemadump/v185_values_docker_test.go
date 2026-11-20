@@ -139,6 +139,8 @@ func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 		{`INSERT INTO orders (edge_uuid, requested_by) VALUES ('bad-2', 'core')`, "orders_requested_by_known"},
 		{`INSERT INTO mission_telemetry (order_id, station_uid) VALUES (99, 'core-direct')`, "mission_telemetry_station_uid_not_actor"},
 		{`INSERT INTO mission_telemetry (order_id, requested_by) VALUES (98, 'core')`, "mission_telemetry_requested_by_known"},
+		{`INSERT INTO orders (edge_uuid, station_uid, requested_by) VALUES ('bad-3', 'uid-a', 'core-test')`, "orders_one_requester"},
+		{`INSERT INTO mission_telemetry (order_id, station_uid, requested_by) VALUES (97, 'uid-a', 'core-direct')`, "mission_telemetry_one_requester"},
 		{`INSERT INTO edge_registry (station_uid) VALUES ('')`, "edge_registry_station_uid_nonblank"},
 		{`INSERT INTO edge_registry (station_uid) VALUES ('uid-r1')`, "edge_registry_station_uid_key"},
 	} {

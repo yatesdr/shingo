@@ -210,6 +210,12 @@ var v185Ops = struct {
 		{"orders", "orders_station_uid_not_actor", "CHECK (station_uid NOT IN (" + v185ActorList("") + "))"},
 		{"mission_telemetry", "mission_telemetry_requested_by_known", "CHECK (requested_by IN (" + v185ActorList("''") + "))"},
 		{"mission_telemetry", "mission_telemetry_station_uid_not_actor", "CHECK (station_uid NOT IN (" + v185ActorList("") + "))"},
+		// One requester: a station or a Core actor, never both. No writer sets
+		// both (intake splits a sender into one or the other, and a child order
+		// inherits its parent's one), and down, which maps a requested_by back
+		// into the station column, is exact only for rows that hold one.
+		{"orders", "orders_one_requester", "CHECK (station_uid = '' OR requested_by = '')"},
+		{"mission_telemetry", "mission_telemetry_one_requester", "CHECK (station_uid = '' OR requested_by = '')"},
 		{"edge_registry", "edge_registry_station_uid_key", "UNIQUE (station_uid)"},
 		{"edge_registry", "edge_registry_station_uid_nonblank", "CHECK (station_uid <> '')"},
 	},
