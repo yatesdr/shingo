@@ -1,6 +1,13 @@
 package migrate
 
-import "testing"
+import (
+	"database/sql"
+	"database/sql/driver"
+	"io"
+	"strings"
+	"sync"
+	"testing"
+)
 
 // TestLatestVersion covers the pure list arithmetic: empty list reads 0
 // (nothing to apply), an ordered list reads its last element, and a list
@@ -92,4 +99,109 @@ func hasSubstring(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// recordingDriver is a database/sql driver that answers every statement Run
+// sends to a brand-new database and records the text of each one. The module
+// is stdlib-only, so a real Postgres or SQLite is out of reach here; the text
+// a dialect sends is what this package owns, and that is what it checks.
+type recordingDriver struct {
+	mu   sync.Mutex
+	sent []string
+}
+
+func (d *recordingDriver) Open(string) (driver.Conn, error) { return &recordingConn{d: d}, nil }
+
+func (d *recordingDriver) record(q string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.sent = append(d.sent, q)
+}
+
+type recordingConn struct{ d *recordingDriver }
+
+func (c *recordingConn) Prepare(q string) (driver.Stmt, error) {
+	return &recordingStmt{c: c, q: q}, nil
+}
+func (c *recordingConn) Close() error              { return nil }
+func (c *recordingConn) Begin() (driver.Tx, error) { return recordingTx{}, nil }
+
+type recordingTx struct{}
+
+func (recordingTx) Commit() error   { return nil }
+func (recordingTx) Rollback() error { return nil }
+
+type recordingStmt struct {
+	c *recordingConn
+	q string
+}
+
+func (s *recordingStmt) Close() error  { return nil }
+func (s *recordingStmt) NumInput() int { return -1 }
+func (s *recordingStmt) Exec([]driver.Value) (driver.Result, error) {
+	s.c.d.record(s.q)
+	return driver.RowsAffected(1), nil
+}
+
+// Query answers the COUNT(*) of an empty schema_migrations with 0 and every
+// EXISTS probe with false: a database that has never been migrated.
+func (s *recordingStmt) Query([]driver.Value) (driver.Rows, error) {
+	s.c.d.record(s.q)
+	var v driver.Value = int64(0)
+	if strings.Contains(s.q, "EXISTS") {
+		v = false
+	}
+	return &oneRow{v: v}, nil
+}
+
+type oneRow struct {
+	v    driver.Value
+	done bool
+}
+
+func (r *oneRow) Columns() []string { return []string{"v"} }
+func (r *oneRow) Close() error      { return nil }
+func (r *oneRow) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	dest[0] = r.v
+	return nil
+}
+
+// TestRun_SeedsTheBaselineWithTheDialectsPlaceholder: a chain adopted
+// mid-life (baseline > 0) seeds its baseline row on an empty table, and that
+// insert is the dialect's own text. It used to be a literal `?` for every
+// dialect, which Postgres rejects as a syntax error, so a Postgres chain with
+// a baseline could never boot. Red if seedBaseline sends anything but
+// insertSQL[dialect].
+func TestRun_SeedsTheBaselineWithTheDialectsPlaceholder(t *testing.T) {
+	for _, tc := range []struct {
+		d    Dialect
+		name string
+	}{{Postgres, "postgres"}, {SQLite, "sqlite"}} {
+		rec := &recordingDriver{}
+		drv := "migrate-recording-" + tc.name
+		sql.Register(drv, rec)
+		db, err := sql.Open(drv, "")
+		if err != nil {
+			t.Fatalf("%s: open: %v", tc.name, err)
+		}
+		if err := Run(db, tc.d, 7, nil); err != nil {
+			t.Fatalf("%s: Run: %v", tc.name, err)
+		}
+		db.Close()
+
+		var seeded []string
+		for _, q := range rec.sent {
+			if strings.HasPrefix(q, "INSERT INTO schema_migrations") {
+				seeded = append(seeded, q)
+			}
+		}
+		if len(seeded) != 1 || seeded[0] != insertSQL[tc.d] {
+			t.Errorf("%s: the baseline seed sent %q, want exactly [%q] (the dialect's insertSQL)",
+				tc.name, seeded, insertSQL[tc.d])
+		}
+	}
 }

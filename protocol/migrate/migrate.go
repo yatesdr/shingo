@@ -150,7 +150,7 @@ func Run(db *sql.DB, dialect Dialect, baseline int, migrations []Migration) erro
 	}
 
 	if baseline > 0 {
-		if err := seedBaseline(db, baseline); err != nil {
+		if err := seedBaseline(db, dialect, baseline); err != nil {
 			return err
 		}
 	}
@@ -188,8 +188,10 @@ func Run(db *sql.DB, dialect Dialect, baseline int, migrations []Migration) erro
 
 // seedBaseline records the adoption baseline as applied when the table is
 // empty. Empty is the once-only trigger: every later call finds the seeded
-// row (or applied migrations) and leaves the table alone.
-func seedBaseline(db *sql.DB, baseline int) error {
+// row (or applied migrations) and leaves the table alone. The insert is the
+// dialect's own text (TestRun_SeedsTheBaselineWithTheDialectsPlaceholder): a
+// literal `?` is a syntax error on Postgres.
+func seedBaseline(db *sql.DB, dialect Dialect, baseline int) error {
 	var rows int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&rows); err != nil {
 		return fmt.Errorf("count schema_migrations: %w", err)
@@ -197,7 +199,7 @@ func seedBaseline(db *sql.DB, baseline int) error {
 	if rows > 0 {
 		return nil
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, baseline); err != nil {
+	if _, err := db.Exec(insertSQL[dialect], baseline); err != nil {
 		return fmt.Errorf("seed baseline v%d: %w", baseline, err)
 	}
 	log.Printf("migrations: seeded baseline v%d (chain adopted mid-life; earlier steps are self-probing)", baseline)

@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core only; the Edges are unchanged and need no install.
+
+- The shared migration runner records an adopted chain's first version on Postgres too (it sent SQLite's placeholder)
+
 ## v0.17.3 — 2026-11-21
 
 Deploy: no migration. Core and Edge both carry it (a shared stylesheet), in either order; only Core's pages change.
