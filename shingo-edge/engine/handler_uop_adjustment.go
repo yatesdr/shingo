@@ -196,8 +196,9 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		//
 		// The carrier left: the one verb clears the pointer, zeroes the count
 		// (the blanked tile) and records the departure through the lineside
-		// doorway, so its identity leaves with it (carrier_left.go).
-		if err := e.carrierLeft(node.ID, adj.CoreNodeName); err != nil {
+		// doorway, so its identity leaves with it (carrier_left.go). Under the
+		// count lock.
+		if err := e.carrierLeftLocked(node.ID, adj.CoreNodeName); err != nil {
 			log.Printf("uop_adjustment: release active bin %d from node %s: %v", adj.BinID, adj.CoreNodeName, err)
 			return
 		}

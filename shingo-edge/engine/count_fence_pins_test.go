@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -337,4 +338,48 @@ func TestFence_AdjustmentsRacingTicksAndFlushesKeepTheInvariant(t *testing.T) {
 			adjustments, ticks, got, want, counted, net)
 	}
 	t.Logf("%d fenced counts raced %d ticks; net %d", adjustments, ticks, net)
+}
+
+// TestSeatWriters_TakeTheCountLock: the seat writers that ran beside countMu
+// (census E.1, re-read at 55aa18a5) wait for it. Each is started while the test
+// holds the lock; it must not have written the seat until the lock is let go,
+// and must have written it after.
+func TestSeatWriters_TakeTheCountLock(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		write func(eng *Engine, nodeID, binID int64)
+	}{
+		{"carrierLeftLocked", func(eng *Engine, nodeID, _ int64) { _ = eng.carrierLeftLocked(nodeID, "LOCK-SEAT") }},
+		{"setSeatCountLocked", func(eng *Engine, nodeID, binID int64) { _ = eng.setSeatCountLocked(nodeID, nil, 7, binID, 4) }},
+		{"the release count's unfenced arm", func(eng *Engine, nodeID, binID int64) {
+			node, err := eng.db.GetProcessNode(nodeID)
+			if err != nil {
+				return
+			}
+			eng.writeReleaseCount(node, nil, binID, 7, false)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			eng, nodeID, _, binID := fenceFixture(t, "LOCK-SEAT")
+			eng.countMu.Lock()
+			done := make(chan struct{})
+			go func() { c.write(eng, nodeID, binID); close(done) }()
+			select {
+			case <-done:
+				eng.countMu.Unlock()
+				t.Fatalf("%s wrote the seat while countMu was held", c.name)
+			case <-time.After(200 * time.Millisecond):
+			}
+			if got := runtimeCount(t, eng, nodeID); got != 25 {
+				t.Errorf("%s: the seat reads %d while the lock is held, want the fixture's 25", c.name, got)
+			}
+			eng.countMu.Unlock()
+			<-done
+			if got := runtimeCount(t, eng, nodeID); got == 25 {
+				t.Errorf("%s: the seat still reads 25 after the lock was let go: nothing was written", c.name)
+			}
+		})
+	}
 }

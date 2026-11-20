@@ -200,7 +200,13 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 	}
 	unfenced := func(why string, write bool) (*protocol.ReleaseFence, int) {
 		if write {
-			if err := e.db.SetProcessNodeReleaseCount(node.ID, count, clock.Now()); err != nil {
+			// Under the count lock, as every seat write. It is never held
+			// here: the fenced arm below takes it and drops it before this
+			// runs. Pinned by TestSeatWriters_TakeTheCountLock.
+			e.countMu.Lock()
+			err := e.db.SetProcessNodeReleaseCount(node.ID, count, clock.Now())
+			e.countMu.Unlock()
+			if err != nil {
 				log.Printf("release: finalize old-bin count for node %s: %v", node.CoreNodeName, err)
 			}
 		}

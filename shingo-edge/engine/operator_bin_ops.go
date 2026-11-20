@@ -651,13 +651,12 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 		_, notSent = e.sendCartOut(node, claim, cleared.BinID)
 	}
 	claimIDPtr := persistedClaimID(claim)
-	if e.inventoryDelta != nil {
-		// Take the new generation stamp with the zeroed count. The clear ended
-		// this carrier's life on Core and started the next one; keeping the old
-		// stamp means every count reported for it from here on is discarded.
-		if err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
-			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
-		}
+	// Take the new generation stamp with the zeroed count, under the count
+	// lock. The clear ended this carrier's life on Core and started the next
+	// one; keeping the old stamp means every count reported for it from here
+	// on is discarded.
+	if err := e.setSeatCountLocked(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
+		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 	}
 	// THE CLEAR IS AN IDENTITY EVENT, and it was not going through the doorway.
 	// The three writers were delivery, hand-load and departure; CLEAR left the

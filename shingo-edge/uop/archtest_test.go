@@ -289,6 +289,12 @@ func TestArch_ResidentPayloadHasOneDoorway(t *testing.T) {
 // record a departure on its own. A second caller is a door that nulls
 // active_bin_id and can forget the identity — the defect the verb exists to
 // end. (Tests are exempt: they drive the Mutator directly.)
+//
+// The same file is the one door for a count Core made for a bound carrier
+// (Engine.setSeatCountLocked: a CLEAR's zero, a home clear's, the market
+// pull-back's, an unfenced Record Count), which writes it under countMu. A
+// second caller of the sink's SetClaimCountAndEpoch is a seat write beside the
+// count lock, the census E.1 gap (2026-11-19).
 func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 	t.Parallel()
 	root := edgeRepoRoot(t)
@@ -297,6 +303,7 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 		".ClearActiveBin(",
 		"inventoryDelta.LeaveAtPickup(", // the pickup's form of the same statement (Lane H, D11)
 		"domain.CarrierDeparted",
+		"inventoryDelta.SetClaimCountAndEpoch(", // a Core-made count, under countMu
 	}
 	var bad []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -334,9 +341,10 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 		t.Fatalf("walk: %v", err)
 	}
 	if len(bad) > 0 {
-		t.Errorf("a carrier departure outside the one verb:\n  %s\n\n"+
-			"Call Engine.carrierLeft — it clears the pointer and the count and records the "+
-			"departure through the lineside doorway, so the identity cannot be left behind.",
+		t.Errorf("a carrier departure, or a Core-made seat count, outside carrier_left.go:\n  %s\n\n"+
+			"Call Engine.carrierLeft (carrierLeftLocked when countMu is not held) — it clears the "+
+			"pointer and the count and records the departure through the lineside doorway, so the "+
+			"identity cannot be left behind; write a count Core made through Engine.setSeatCountLocked.",
 			strings.Join(bad, "\n  "))
 	}
 }
