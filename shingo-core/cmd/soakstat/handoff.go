@@ -289,6 +289,9 @@ func labelledAtZero(db *sql.DB) ([]nodeCount, error) {
 // after it (ledger id order) and before the bin's next generation starts. One
 // statement; rows are (release, counting station, ticks, units), plus one row
 // per release with no tick (station NULL) so the releases are all counted.
+// The counting station is the tick row's actor: the delta writer
+// (uop/applier.go, op bin_uop_delta) puts the station there and leaves the
+// ledger's station column blank.
 func ticksAfterReleases(db *sql.DB) (ticksAfterRelease, error) {
 	next := sqlStrings(append(append([]string{}, audit.EpochBumpOps...), audit.OpManifestConfirmed))
 	rows, err := db.Query(`
@@ -297,11 +300,11 @@ func ticksAfterReleases(db *sql.DB) (ticksAfterRelease, error) {
 			       (SELECT MIN(x.id) FROM bin_uop_ledger x
 			         WHERE x.bin_id = l.bin_id AND x.id > l.id AND x.op IN (` + next + `)) AS next_id
 			FROM bin_uop_ledger l WHERE l.op IN (` + sqlStrings(handoffReleaseOps) + `))
-		SELECT r.id, r.bin_id, t.station, COUNT(t.id), COALESCE(SUM(ABS(t.after_uop - COALESCE(t.before_uop, t.after_uop))), 0)
+		SELECT r.id, r.bin_id, t.actor, COUNT(t.id), COALESCE(SUM(ABS(t.after_uop - COALESCE(t.before_uop, t.after_uop))), 0)
 		FROM rel r LEFT JOIN bin_uop_ledger t
 		  ON t.bin_id = r.bin_id AND t.id > r.id AND (r.next_id IS NULL OR t.id < r.next_id)
 		 AND t.reason = 'consume_tick'
-		GROUP BY r.id, r.bin_id, t.station`)
+		GROUP BY r.id, r.bin_id, t.actor`)
 	if err != nil {
 		return ticksAfterRelease{}, err
 	}

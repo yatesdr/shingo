@@ -51,10 +51,12 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, actor, occurred_at, op, detail)
 		VALUES ($1, $2, 'line-1', NOW(), $3, '{"delta": -3}')`, audit.ExcStaleEpoch, bin.ID, audit.OpStaleEpochDropped)
 	testutil.MustNoErr(t, err, "seed a stale drop")
-	ledger := func(op, reason, station string, before, after int) {
+	// A tick names its counting station in actor, as the delta writer does
+	// (uop/applier.go); the ledger's station column stays blank on it.
+	ledger := func(op, reason, actor string, before, after int) {
 		t.Helper()
-		_, err := db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, reason, station)
-			VALUES ($1, $2, $3, $4, $5, $6)`, bin.ID, before, after, op, reason, station)
+		_, err := db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, reason, actor)
+			VALUES ($1, $2, $3, $4, $5, $6)`, bin.ID, before, after, op, reason, actor)
 		testutil.MustNoErr(t, err, "seed a ledger row")
 	}
 	ledger(audit.OpReleasedPartial, "", "", 40, 40)

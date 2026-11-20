@@ -23,6 +23,7 @@ Deploy: no migration. Core only; the Edges are unchanged and need no install. A 
 - Core starts only on a database v0.17.1 has brought all the way up; on an older one it stops at start, names the versions missing and says to start v0.17.1 first. It changes nothing in that database
 - Core stops at start on tables restored without their schema_migrations rows and says to restore the whole dump
 - A new Core database is created in one step from a generated baseline; it lands whole or not at all, never half, and the next start boots it or creates it again
+- soakstat's handoff report names the station that counted each tick after a release; it put every tick under a blank station
 
 ## v0.17.3 — 2026-11-21
 
