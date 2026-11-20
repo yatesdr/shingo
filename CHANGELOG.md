@@ -26,6 +26,13 @@ Deploy: Edge v58 first, at every Edge of the plant; then Core v179–v181. No Co
 - A robot the fleet swaps under an order shows on its tile at once, and a reshuffling order reads reshuffling
 - A cancel the station sent that Core never had is sent again while Core still holds the order
 - Core's order messages and a station's cancel are no longer dropped after ten failed sends
+- An order the robot system refuses keeps its waiting look and reason; it never reads dispatched
+- A refused order's wait clock runs from its first park, and a retry adds no history rows
+- Changeover START, ABANDON and SEND BACK work on an order the robot system is refusing
+- Core flags an order the robot system has refused for half an hour as stuck
+- Core no longer stops when a two-cart swap through a lane is refused and then re-planned
+- After Core restarts partway through sending an order, Diagnostics names the order and its job
+- Core's database tests run their end-of-test order checks again; they had gone silent at Core v174
 - A plain install run installs the newest release; `--tag vX.Y.Z` picks one, `--main` builds main
 - A box an earlier tag install left on a release takes a plain run instead of stopping
 - Before it asks to go on, an installer prints the Deploy line of every release it brings or takes off
