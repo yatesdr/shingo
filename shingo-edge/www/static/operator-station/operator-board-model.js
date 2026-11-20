@@ -1119,7 +1119,11 @@ function windowCards(consumers, ctx) {
         const count = typeof bin.display_uop === 'number' ? bin.display_uop
             : (bin.held_since && typeof bin.held_uop === 'number' ? bin.held_uop : null);
         let headline = 'no bin';
-        if (full) headline = bin.payload_code + (count !== null ? ' · ' + fmtCount(count) : '');
+        // The count at its part's ratio: "PART-A · 50 UoP (404 parts)" above 1.
+        if (full) {
+            headline = bin.payload_code + (count !== null ? ' · ' +
+                countBracketed(count, ratioFor(ctx.view && ctx.view.load_templates, null, bin.payload_code), fmtCount(count), '') : '');
+        }
         else if (!bin.bare) {
             const height = heightLabel(bin);
             headline = (own || bin.bin_label || 'Unknown bin') + ' · empty' + (height ? ' · ' + height : '');

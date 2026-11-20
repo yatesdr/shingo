@@ -768,7 +768,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq(headerButtons(), [], 'a shared unloader: no CHANGEOVER (changed: the header kept it)');
     eq(zoneTitles(), ['At the windows'], 'a shared unloader: one list');
     eq(pcCards().map(c => cardText(c)), [
-        ['ULN_A1', 'ARRIVED', 'PART-A · 7', 'Send back TOTE-1'],
+        ['ULN_A1', 'ARRIVED', 'PART-A · 3 UoP (7 parts)', 'Send back TOTE-1'],
         ['ULN_A2', 'TOTE-1 · empty', 'Send it'],
     ], 'At the windows: one card a cart in three lines, the spot and its state, what is on the cart (a full: its part and ' +
         'the count of its row), the instruction; a station of two bin types says what to send back (changed 2026-11-10)');
@@ -779,7 +779,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     await tap(winCard('ULN_A1'));
     eq(overlayTexts()[0], 'Full pulled, empty filled?', 'cart full: the CLEAR panel');
     eq(overlayButtons(), ['TOTE-1', 'TOTE-2', 'CANCEL'], 'cart full: a type per part');
-    eq(overlayTexts().indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true, 'cart full: the discard count');
+    // PART-A runs 2 a cycle here: the count reads its UoP, its parts in brackets.
+    eq(overlayTexts().indexOf('This slot still counts 3 UoP (7 parts). Confirming writes it to zero.') >= 0, true, 'cart full: the discard count');
     await tapOverlay('TOTE-2');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-2' } }],
         'cart full: a type\'s tap posts clear-bin with it');

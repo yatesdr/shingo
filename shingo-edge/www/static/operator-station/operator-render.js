@@ -1,6 +1,6 @@
 import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
 import { formatClock } from '/static/shared/clock.js';
-import { typedNote } from '/static/shared/count-words.js';
+import { countBracketed, typedNote } from '/static/shared/count-words.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
@@ -447,6 +447,19 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo, pack, part) {
 //
 // Exported for the node modal's CLEAR BIN on an unloader, which goes through
 // this panel (operator-modal.js).
+// discardWords is the clear's discard line: the slot's count at its bin's
+// part's ratio (the view's load templates; count-words.js countBracketed),
+// "This slot still counts 50 UoP (404 parts)." above a ratio of 1, the count
+// alone at 1, as it always read.
+function discardWords(nodeID, discarding) {
+    const view = getView() || {};
+    const tile = (view.nodes || []).find(n => n.node && n.node.id === nodeID);
+    const part = tile && tile.bin_state ? tile.bin_state.payload_code || '' : '';
+    const said = countBracketed(discarding, ratioFor(view.load_templates, null, part), String(discarding), '');
+    // OWNER-WORDS
+    return 'This slot still counts ' + said + '. Confirming writes it to zero.';
+}
+
 export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit, cartType) {
     if (leavesBare) {
         confirmFullOff(nodeID, discarding);
@@ -461,7 +474,7 @@ export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit,
         textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
     if (discarding > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
-            textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
+            textContent: discardWords(nodeID, discarding) }));
     }
 
     // Single-type stations with no heights auto-fill: skip the picker and send
@@ -574,7 +587,7 @@ function confirmFullOff(nodeID, discarding) {
     const subs = [];
     if (discarding > 0) {
         subs.push(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
-            textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
+            textContent: discardWords(nodeID, discarding) }));
     }
     oneTapPanel(nodeID, 'Bin on the cart', subs, 'BIN OFF', 'The cart goes on to Stage 2.');
 }
