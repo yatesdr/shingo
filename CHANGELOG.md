@@ -16,6 +16,15 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core and each Edge, in either order.
+
+- An order ingest of 0 books the bin empty, not full; the Edge's manual ingest now needs a quantity
+- A count typed below zero is refused: LOAD, Load Payload, a release's count and lineside parts, a reorder point, a lineside soft threshold, a refill threshold
+- A count typed above the pack is saved as typed, and the box or its answer says so
+- Core's Record Count refuses a blank box instead of recording 0
+- The Bins page's Cycle Count wizard is gone; a bin's Record Count stays
+- An Edge's admin-Move release, changeover-cancel reseat, Order B clear, CLEAR and unfenced count take the count lock
+
 ## v0.15.0 — 2026-11-19
 
 Deploy: Edge v58 (style_node_claims.hold_limit). Each Edge, then Core.
