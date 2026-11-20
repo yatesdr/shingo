@@ -1089,7 +1089,8 @@ func listClaimsInsideForeignDugLanes(db *sql.DB) ([]*Anomaly, error) {
 			RecommendedAction: "release_the_dig_lane",
 			OrderID:           &holder,
 			BinID:             binID,
-			StationUID:        nodeName,
+			// No StationUID: the node is not a station. The detail names it
+			// (TestClaimInsideForeignDugLane_NamesTheNodeInItsDetailNotAsAStation).
 			Detail: fmt.Sprintf("order %d holds a %s at %s, inside lane %s which order %d's dig holds. "+
 				"Neither can proceed: the dig waits for this %s to move, and the dig's own lock is "+
 				"what refuses order %d entry. Release order %d's lane. NOTE: reservations.acquire "+

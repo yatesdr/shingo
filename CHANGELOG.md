@@ -24,6 +24,7 @@ Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on 
 - Core stops at start on tables restored without their schema_migrations rows and says to restore the whole dump
 - A new Core database is created in one step from a generated baseline; it lands whole or not at all, never half, and the next start boots it or creates it again
 - soakstat's handoff report names the station that counted each tick after a release; it put every tick under a blank station
+- Diagnostics' reconciliation table shows no node name under Station for a claim inside another order's dug lane; the node is named in the row's detail
 - Core's database names a station one way everywhere, by its uid; Core's own manual, direct and test orders say which door asked in a column of their own instead of standing in for a station
 - The robot map points in Core's records are named as the fleet's, apart from stations; the outbox says whom a message is for
 - The tables and columns nothing read or wrote are gone: downtime events, cell targets, and a dozen unused columns
