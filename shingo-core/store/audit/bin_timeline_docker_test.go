@@ -35,3 +35,32 @@ func TestListBinUOPByBin_ReadsTheDetailItWasWrittenWith(t *testing.T) {
 		t.Errorf("timeline %d rows, blobs %v: want the declare's detail and the override's metadata", len(rows), got)
 	}
 }
+
+// TestAppendBinUOP_ABoundaryRowCarriesAStationOnlyOnAnEdgeRollback: the
+// boundary row a bump writes on the exceptions ledger names a station only on
+// an edge_rollback, the one bump whose v184 row held the uid (in actor; v185
+// moves it to station_uid). A lift's boundary row names none, as at v184:
+// v184 had no column for it, so a station written there would not survive
+// `migrate down 185` and back (the served round trip found 278 such rows),
+// and nothing reads one. Red if the boundary row takes the lift's station.
+func TestAppendBinUOP_ABoundaryRowCarriesAStationOnlyOnAnEdgeRollback(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	const lifted, rolledBack = 903, 904
+	ctx := audit.BinUOPContext{StationUID: "stn-aaaa1111"}
+	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, lifted, nil, 5, audit.OpLifted, "test", nil, "", "system", ctx), "a lift")
+	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, rolledBack, nil, 5, audit.OpEdgeRollback, "test", nil, "", "", ctx), "an edge rollback")
+	station := func(binID int64) string {
+		t.Helper()
+		var s string
+		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT station_uid FROM bin_uop_exception WHERE kind = 'boundary' AND bin_id = $1`,
+			binID).Scan(&s), "read the boundary row")
+		return s
+	}
+	if got := station(lifted); got != "" {
+		t.Errorf("the lift's boundary row names station %q, want none (v184 had no column for it)", got)
+	}
+	if got := station(rolledBack); got != "stn-aaaa1111" {
+		t.Errorf("the edge rollback's boundary row names station %q, want the rollback's uid", got)
+	}
+}

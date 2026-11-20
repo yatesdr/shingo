@@ -399,6 +399,17 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 	// hooking the append rather than each caller is what keeps a new bump
 	// site from silently missing its boundary row. Same tx, same before/
 	// after, detail verbatim.
+	//
+	// The row names a station only on an edge_rollback, the one bump whose
+	// v184 boundary row held the uid (in actor; v185 moves it to station_uid).
+	// Every other bump's v184 row had no station and its row keeps none: a
+	// station written here would not survive `migrate down 185` and back, and
+	// nothing reads one
+	// (TestAppendBinUOP_ABoundaryRowCarriesAStationOnlyOnAnEdgeRollback).
+	boundaryStation := ""
+	if op == OpEdgeRollback {
+		boundaryStation = ctx.StationUID
+	}
 	for _, bump := range EpochBumpOps {
 		if bump == op || ctx.Boundary {
 			seq, err := NextBinUOPEpochSeq(execer, binID)
@@ -409,7 +420,7 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 			if len(ctx.Detail) > 0 {
 				det = ctx.Detail
 			}
-			if err := AppendBinUOPException(execer, ExcBoundary, binID, payloadCode, actor, ctx.StationUID,
+			if err := AppendBinUOPException(execer, ExcBoundary, binID, payloadCode, actor, boundaryStation,
 				&seq, clock.Now().UTC(), beforeUOP, &afterUOP, nil, nil, op, det); err != nil {
 				return err
 			}

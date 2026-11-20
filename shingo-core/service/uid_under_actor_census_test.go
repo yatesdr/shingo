@@ -178,9 +178,10 @@ var uidUnderActorWriters = map[string]uaWriter{
 
 	// ── The boundary row: the ledger row's actor and station ────────────
 	"store/audit:AppendBinUOP AppendBinUOPException(ExcBoundary/op, actor)": {n: 1, table: uaException,
-		ops: []string{"boundary/*"}, actor: uaInherited, station: "ctx.StationUID",
-		reading: "written for every EpochBumpOps op and a BinUOPContext.Boundary row, with that call's op, actor and " +
-			"station_uid: a station uid only where the ledger call's is (edge_rollback)"},
+		ops: []string{"boundary/*"}, actor: uaInherited, station: "boundaryStation",
+		reading: "written for every EpochBumpOps op and a BinUOPContext.Boundary row, with that call's op and actor; " +
+			"its station_uid is the call's only on an edge_rollback (the one bump whose v184 row held the uid), " +
+			"blank on every other op, a lift's included, as at v184"},
 
 	// ── The lifting order's requester ───────────────────────────────────
 	"service:BinService.Lift AppendBinUOP(audit.OpLifted, liftActor)": {n: 1, table: uaLedger,
