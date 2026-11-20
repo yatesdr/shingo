@@ -198,8 +198,7 @@ func ActsAsUnloaderSQL(alias string) string {
 // unrepresentable-otherwise — the structural fix for the SLN_002 incident.
 //
 // The legacy bin-count floor (min_stock) is retired: a loader is operator-driven
-// or UOP-threshold-driven, never bin-count-driven. The DB column is left dormant
-// (defaults to 0) and is no longer read or written.
+// or UOP-threshold-driven, never bin-count-driven. v184 dropped its column.
 type Home struct {
 	LoaderID       int64  `json:"loader_id"`
 	PositionNodeID int64  `json:"position_node_id"`
@@ -415,8 +414,6 @@ func UpsertHome(db *sql.DB, h Home) error {
 	// ON CONFLICT SET — re-assigning a position's payload must preserve its place
 	// in the order; only SetHomeOrder rewrites it. home_kind IS in the SET so
 	// dragging a member between the Positions and Buffer zones re-kinds it.
-	// min_stock is dormant (bin-count floor retired); leave the column at its
-	// default rather than writing it.
 	_, err := db.Exec(`
 		INSERT INTO bin_loader_homes (loader_id, position_node_id, payload_code, home_kind, uop_threshold, sort_order)
 		VALUES ($1,$2,$3,$4,$5,$6)

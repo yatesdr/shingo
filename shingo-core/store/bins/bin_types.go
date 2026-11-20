@@ -276,10 +276,9 @@ func ListTypesForPayload(db *sql.DB, payloadID int64) ([]*BinType, error) {
 
 // CarrierFamily is one row of carrier_families, with the types that are of it.
 type CarrierFamily struct {
-	ID          int64    `json:"id"`
-	Code        string   `json:"code"`
-	Description string   `json:"description"`
-	Types       []string `json:"types"`
+	ID    int64    `json:"id"`
+	Code  string   `json:"code"`
+	Types []string `json:"types"`
 	// LiftBinTask is the RDS binTask key a lift of a cart of this family sends,
 	// and WaitBinTask the one a wait directly in front of such a lift at the
 	// same node sends (v180). Blank sends the default; dispatch's carrier keys
@@ -291,7 +290,7 @@ type CarrierFamily struct {
 // ListFamilies reads every family, its keys and its members' codes, markers
 // left out: one statement.
 func ListFamilies(db *sql.DB) ([]CarrierFamily, error) {
-	rows, err := db.Query(`SELECT f.id, f.code, f.description, f.lift_bintask, f.wait_bintask,
+	rows, err := db.Query(`SELECT f.id, f.code, f.lift_bintask, f.wait_bintask,
 			COALESCE(array_to_json(array_agg(bt.code ORDER BY bt.code) FILTER (WHERE bt.code IS NOT NULL)), '[]')
 		  FROM carrier_families f
 		  LEFT JOIN bin_types bt ON bt.family_id = f.id AND NOT bt.bare
@@ -306,7 +305,7 @@ func ListFamilies(db *sql.DB) ([]CarrierFamily, error) {
 			f   CarrierFamily
 			raw []byte
 		)
-		if err := rows.Scan(&f.ID, &f.Code, &f.Description, &f.LiftBinTask, &f.WaitBinTask, &raw); err != nil {
+		if err := rows.Scan(&f.ID, &f.Code, &f.LiftBinTask, &f.WaitBinTask, &raw); err != nil {
 			return nil, fmt.Errorf("scan family: %w", err)
 		}
 		if err := json.Unmarshal(raw, &f.Types); err != nil {

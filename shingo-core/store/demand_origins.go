@@ -80,20 +80,12 @@ const (
 // one episode; two different episodes for the same place have no ordering
 // relationship at all.
 //
-// ON UPDATE IT TOUCHES ONLY WHAT EDGE AUTHORS. signal_count and uop_delivered
-// are MEANT to be accumulated on Core from its own signals and its own audit
-// trail. Listing them in the SET clause would zero Core's own
-// facts on every Edge message — silently, and only for episodes that get more
-// than one.
-//
-// "MEANT TO BE" IS DOING WORK IN THAT SENTENCE, and it used to read as a
-// statement of fact. `uop_delivered` has no writer anywhere in this repository
-// and no reader either; the clause below protects a value nothing produces, and
-// TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields seeds it with raw SQL, which
-// makes the column look exercised when it is not. Keep the exclusion — the
-// protection has to exist before the writer does, not after — but do not read it
-// as evidence the column carries data. See domain.DemandOrigin, which carries
-// the full finding and what it means for Stage 5.3.
+// ON UPDATE IT TOUCHES ONLY WHAT EDGE AUTHORS. signal_count is MEANT to be
+// accumulated on Core from its own signals. Listing it in the SET clause would
+// zero Core's own fact on every Edge message — silently, and only for episodes
+// that get more than one. (uop_delivered, the other Core-owned column this
+// clause protected, never had a writer and v184 drops it; see
+// domain.DemandOrigin for what that means for Stage 5.3.)
 //
 // A BLANK PAYLOAD OR NODE SAYS NOTHING: it keeps what an earlier revision said. An
 // older Edge's changeover episode carries neither, and no Edge has a later
@@ -173,8 +165,8 @@ func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 // Edge's origin_id at revision 0, and the UpsertDemandOrigin that follows lands
 // on it through ON CONFLICT (origin_id): the Edge's first message carries
 // revision 1, so the guard lets every Edge-authored column through, and the
-// Core-owned columns the upsert never sets (signal_count, uop_delivered) stay
-// the forecast's. The Edge never learns the forecast's id and needs no reply.
+// Core-owned column the upsert never sets (signal_count) stays the
+// forecast's. The Edge never learns the forecast's id and needs no reply.
 // Only OPEN other rows are superseded. The index allows one unsettled row per
 // key, so at most one of the two arms finds a row. The re-key is skipped when
 // the Edge's origin_id already names a row (a redelivered open for an episode

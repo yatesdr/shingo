@@ -163,11 +163,11 @@ func TestSupersedeOpenEpisode_YieldsToTheRealClose(t *testing.T) {
 
 // CORE-OWNED FIELDS SURVIVE AN EDGE MESSAGE.
 //
-// signal_count and uop_delivered are accumulated on Core from its own signals
-// and its own audit trail; the Edge message does not carry them. Listing them
-// in the upsert's SET clause would zero Core's facts on every subsequent
-// message — silently, and only for episodes that get more than one, which is
-// every episode that ever closes.
+// signal_count is accumulated on Core from its own signals; the Edge message
+// does not carry it. Listing it in the upsert's SET clause would zero Core's
+// fact on every subsequent message — silently, and only for episodes that get
+// more than one, which is every episode that ever closes. (uop_delivered was
+// the other such column; it never had a writer and v184 drops it.)
 func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 	db := testdb.Open(t)
 	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
@@ -177,7 +177,7 @@ func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	if _, err := db.Exec(
-		`UPDATE demand_origins SET signal_count = 7, uop_delivered = 350
+		`UPDATE demand_origins SET signal_count = 7
 		  WHERE origin_id = $1`, o.OriginID); err != nil {
 		t.Fatalf("seed core-owned fields: %v", err)
 	}
@@ -189,15 +189,14 @@ func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 		t.Fatalf("apply rev 2: %v", err)
 	}
 
-	var signals, uop int
+	var signals int
 	if err := db.QueryRow(
-		`SELECT signal_count, uop_delivered FROM demand_origins WHERE origin_id = $1`,
-		o.OriginID).Scan(&signals, &uop); err != nil {
+		`SELECT signal_count FROM demand_origins WHERE origin_id = $1`,
+		o.OriginID).Scan(&signals); err != nil {
 		t.Fatalf("read core-owned fields: %v", err)
 	}
-	if signals != 7 || uop != 350 {
-		t.Errorf("an Edge message zeroed Core's own fields: signal_count=%d uop_delivered=%d",
-			signals, uop)
+	if signals != 7 {
+		t.Errorf("an Edge message zeroed Core's own field: signal_count=%d", signals)
 	}
 }
 

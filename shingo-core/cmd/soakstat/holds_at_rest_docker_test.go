@@ -45,8 +45,8 @@ func TestHoldsAtRest_TheInstrumentIsSelective(t *testing.T) {
 		testutil.MustNoErr(t, err, "seed a bin claim")
 	}
 	nodeRes := func(orderID int64, kind, state string, nodeID int64) {
-		_, err := db.Exec(`INSERT INTO reservations (order_id, resource_kind, state, node_id, expires_at)
-			VALUES ($1, $2, $3, $4, $5)`, orderID, kind, state, nodeID, time.Now().Add(time.Hour))
+		_, err := db.Exec(`INSERT INTO reservations (order_id, resource_kind, state, node_id)
+			VALUES ($1, $2, $3, $4)`, orderID, kind, state, nodeID)
 		testutil.MustNoErr(t, err, "seed a "+state+" "+kind+" reservation")
 	}
 

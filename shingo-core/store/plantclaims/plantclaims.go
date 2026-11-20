@@ -161,24 +161,21 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 		}
 	}
 
-	// swap_mode HAS NO CORE READER, AND THE WRITE STILL CANNOT STOP. No SELECT
-	// anywhere in shingo-core reads style_claims.swap_mode back — the mirror's own
-	// readers (sourceability, lane_queries, bins, inventory)
-	// all project other columns — so this is a write-only column.
+	// swap_mode HAS ONE CORE READER. sourceability's claims read
+	// (store/sourceability/read.go, loadStylesAndClaims) scans it into
+	// ClaimRow.SwapMode, and ClaimRow.IsLoader turns it into the forecaster's
+	// skip of loader claims (engine/forecaster.go). An earlier version of this
+	// comment called it write-only; it never was (the A9 census, 2026-11-20).
 	//
-	// It cannot simply be dropped from the INSERT: the column is
-	// `swap_mode TEXT NOT NULL` with NO DEFAULT (store/migrations.go v49, and the
-	// frozen schema.snapshot.sql), so omitting it fails every plant-claims replace
-	// with a not-null violation and the mirror stops ingesting at both plants.
-	// Retiring it therefore needs a migration to add a default or drop the column,
-	// which is an owner decision, not a cleanup. Left as-is deliberately.
+	// The INSERT must carry it in any case: the column is `swap_mode TEXT NOT
+	// NULL` with NO DEFAULT, so omitting it fails every plant-claims replace
+	// with a not-null violation and the mirror stops ingesting.
 	//
 	// Note the wire already excludes loaders: the Edge publisher skips
 	// IsLoaderNode() claims ("pool, not claims"), so manual_swap never reaches
 	// this column in the first place.
 	//
-	// THE FOUR LEG COLUMNS BELOW ARE THE OPPOSITE CASE, and it is worth saying
-	// so next to a write-only column. They have readers: the cancel-return
+	// THE FOUR LEG COLUMNS BELOW have readers too: the cancel-return
 	// policy (store/return_sources.go) reads inbound_source and
 	// outbound_destination to know where a line's bins come from and its
 	// empties go, and the containment divert (store/containment.go) reads

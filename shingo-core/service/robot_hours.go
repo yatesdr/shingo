@@ -13,9 +13,10 @@ import (
 //
 // The day is the PLANT's, computed here at read time in the zone the handler
 // passes (Q-004); the record itself is UTC hours. Nothing about laser frames is
-// in here on purpose: robot_lidar_hours is read per robot against itself, and a
-// fleet table would put single frames side by side across robots, which is the
-// comparison the record calls invalid (DATA-laser-frame-gauge.md §3).
+// in here on purpose: robot_lidar_hours is meant to be read per robot against
+// itself (no code reads it yet; the purge is its only reader), and a fleet table
+// would put single frames side by side across robots, which is the comparison
+// the record calls invalid (DATA-laser-frame-gauge.md §3).
 
 // Alarm codes the Fleet tab counts onsets of. The set is the lidar
 // contamination sweep's (FINDINGS-lidar-contamination-sweep-2026-10-06.md):

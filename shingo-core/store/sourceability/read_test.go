@@ -81,8 +81,8 @@ func TestBuildInputsAndCompute_PoolPredicate(t *testing.T) {
 		`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity)
 		 VALUES ('res-1','edge.line1','retrieve','pending',1) RETURNING id`).Scan(&orderID), "create order")
 	if _, err := db.Exec(
-		`INSERT INTO reservations (order_id, bin_id, state, expires_at)
-		 VALUES ($1, $2, 'pending', NOW() + INTERVAL '1 hour')`, orderID, bin.ID); err != nil {
+		`INSERT INTO reservations (order_id, bin_id, state)
+		 VALUES ($1, $2, 'pending')`, orderID, bin.ID); err != nil {
 		t.Fatalf("reserve bin: %v", err)
 	}
 	if got := stateFor(t, compute(), "SNF2", "A"); got.Status != sourceability.StatusRed {

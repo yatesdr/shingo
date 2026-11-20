@@ -20,9 +20,9 @@
 // holds its reservations for minutes-to-hours (or days) while it waits for a source to
 // appear — so age is no longer a proxy for orphaned. ReapOrphaned keys on the OWNING
 // ORDER's liveness instead: a hold is reclaimed only when its order is terminal or gone,
-// never on age (demand is operator-driven and never evaporates). The expires_at column is
-// still stamped at Acquire (it is NOT NULL) but is no longer read by any reaper — vestigial
-// pending a schema drop. Do NOT re-introduce an age-based reap.
+// never on age (demand is operator-driven and never evaporates). Acquire no longer stamps
+// expires_at and nothing reads it; v184 drops the column. Do NOT re-introduce an
+// age-based reap.
 package reservations
 
 import (

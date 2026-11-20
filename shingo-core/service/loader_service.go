@@ -462,8 +462,8 @@ func (s *LoaderService) Delete(id int64) error {
 }
 
 // SetPayload assigns (or updates) a shared_window payload binding + threshold.
-// (The bin-count floor / min_stock is retired — replenishment is operator or
-// UOP-threshold, never bin-count.) by says who set the threshold and how, for
+// (The bin-count floor is retired — replenishment is operator or UOP-threshold,
+// never bin-count.) by says who set the threshold and how, for
 // its audit row (recordThreshold); omitted, it is a manual change by "system".
 func (s *LoaderService) SetPayload(loaderID int64, payloadCode string, uopThreshold int, by ...ThresholdBy) error {
 	prior, err := s.db.ListLoaderPayloads(loaderID)

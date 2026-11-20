@@ -40,8 +40,8 @@ func ledgerLane(t *testing.T, db *store.DB, prefix string) (laneID int64, slot [
 
 func seedRes(t *testing.T, db *store.DB, orderID int64, kind, state, reservedBy string, nodeID int64) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO reservations (order_id, resource_kind, state, reserved_by, node_id, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`, orderID, kind, state, reservedBy, nodeID, time.Now().Add(time.Hour))
+	_, err := db.Exec(`INSERT INTO reservations (order_id, resource_kind, state, reserved_by, node_id)
+		VALUES ($1, $2, $3, $4, $5)`, orderID, kind, state, reservedBy, nodeID)
 	testutil.MustNoErr(t, err, "seed a "+state+" "+kind+" reservation")
 }
 

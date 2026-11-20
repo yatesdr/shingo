@@ -15,51 +15,19 @@ import (
 // DemandOrigin is one demand episode: a continuous period during which a
 // specific place needed material.
 //
-// It carries only what Edge authors. signal_count, uop_delivered and
-// parent_origin_id are CORE-OWNED columns and are
-// deliberately absent — see store.UpsertDemandOrigin, which must not zero them.
+// It carries only what Edge authors. signal_count is a CORE-OWNED column and is
+// deliberately absent — see store.UpsertDemandOrigin, which must not zero it.
 //
-// ── uop_delivered HAS NO WRITER. READ THIS BEFORE BUILDING 5.3. ──────────────
-//
-// "Core-owned" above describes the DESIGN. As of 2026-07-28 it is not the
-// state of the code: `uop_delivered` has a migration, a NOT NULL DEFAULT 0, a
-// protective clause in the upsert's SET list and a test asserting an Edge
-// message cannot zero it — and NOTHING IN THIS REPOSITORY EVER WRITES IT, and
-// nothing reads it back. A whole-repo grep returns eight hits: two comments,
-// four lines of one test, the migration, and the schema snapshot.
-//
-// It is the failure ListOrphanFindings' own doc comment names — "a new column
-// is not done until something reads it back and asserts on the value" — caught
-// one stage earlier than closed_by was. closed_by shipped with every writer and
-// no reader. This shipped with a PROTECTOR and no writer, which is worse in one
-// specific way: the protecting test seeds the column with raw SQL and asserts
-// it survives, so the column looks exercised. It is not.
-//
-// WHY THAT BLOCKS STAGE 5.3 RATHER THAN MERELY COMPLICATING IT. 5.3 wants
-// "uop_delivered vs expected UOP" as a partial-delivery signal. The numerator is
-// structurally 0 on every real row, so the surface would report every episode as
-// having delivered none of its expected UOP — maximally partial, on every row,
-// on every plant, forever, with a green test suite. And because the column is
-// NOT NULL DEFAULT 0, the type cannot carry the difference between "measured
-// zero" and "never accumulated": the absence was destroyed at the column
-// definition, one layer below anything the renderer can fix. That is the
-// COALESCE(x, 0) defect the number doctrine is built around, already committed
-// in the schema.
-//
-// The denominator is a separate problem and would still be one after the
-// numerator is fixed: there is no expected_uop column, so expected UOP must be
-// RECONSTRUCTED as expected_orders x payloads.uop_capacity — where
-// expected_orders is nullable by design (below), uop_capacity is catalog-side
-// and joined by payload_code, and uop_capacity is itself NOT NULL DEFAULT 0, so
-// a payload with no recorded capacity is indistinguishable from one with a
-// capacity of zero. That is three more absence cases on a surface whose whole
-// discipline is not collapsing them.
-//
-// So 5.3 is not a scan change. In order: give uop_delivered a writer, decide
-// whether "never accumulated" needs to be representable (it does, and that is a
-// migration), then reconstruct the denominator. Until the first of those, the
-// honest rendering of a partial-bin ratio is no-data for every row, which is a
-// column nobody needs.
+// NO PARTIAL-DELIVERY SIGNAL EXISTS. READ THIS BEFORE BUILDING 5.3. Stage 5.3
+// wanted "UOP delivered vs expected UOP" per episode. uop_delivered was planned
+// as its Core-owned numerator; like parent_origin_id it never had a writer or a
+// reader (2026-07-28, and the A9 census of 2026-11-20), and v184 drops both.
+// A 5.3 needs, in order: a numerator with a writer that can say "never
+// accumulated" apart from a measured zero (a NOT NULL DEFAULT 0 cannot), and a
+// denominator, which no column holds: expected_orders (nullable by design,
+// below) times payloads.uop_capacity, itself NOT NULL DEFAULT 0, so a payload
+// with no recorded capacity reads as one with a capacity of zero. Until then the
+// honest rendering of a partial-delivery ratio is no-data for every row.
 type DemandOrigin struct {
 	OriginID   string
 	Revision   int64
