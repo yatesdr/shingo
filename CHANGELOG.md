@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.17.0 — 2026-11-20
+
 Deploy: Core v184. Core only; the Edges are unchanged and need no install.
 
 - The Robots page has a fourth tab, Device Config: every robot's device configuration side by side, the same screens RoboShop's Device Config tab shows (CAN ports, triggers, charger, motors, the controller's numbers), pulled from each robot through the fleet and stored on Core
