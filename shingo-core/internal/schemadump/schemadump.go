@@ -166,6 +166,16 @@ func (i *Instance) BuildFresh(_ context.Context) (string, error) {
 	return name, nil
 }
 
+// Reboot runs this build's store.Open against an existing database and closes
+// it: the boot a restarted Core makes.
+func (i *Instance) Reboot(_ context.Context, dbName string) error {
+	db, err := store.Open(i.dbConfig(dbName))
+	if err != nil {
+		return err
+	}
+	return db.Close()
+}
+
 // BuildAged creates an empty database, applies an OLD baseline DDL to it, and
 // then runs the full production migrate path — which is exactly what happens
 // when a plant that was installed at that vintage takes an upgrade.
@@ -222,6 +232,17 @@ func dumpFile(dbName string) string { return "/tmp/shingo-schema-" + dbName + ".
 // copy gives clean bytes and the difference is visible the moment you open the
 // snapshot.
 func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
+	body, err := i.pgDump(ctx, dbName, "--schema-only --no-owner --no-privileges --no-comments")
+	if err != nil {
+		return "", err
+	}
+	return Normalize(body), nil
+}
+
+// pgDump runs pg_dump with flags inside the container and returns its output
+// as written, read back from a file in the container (see Dump for why). env
+// is prefixed to the command line (e.g. PGTZ=UTC); empty for none.
+func (i *Instance) pgDump(ctx context.Context, dbName, flags string, env ...string) (string, error) {
 	file := dumpFile(dbName)
 	// THE EXIT CODE IS NOT A COMPLETION SIGNAL, so the command prints its own.
 	//
@@ -244,8 +265,8 @@ func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
 	const doneSentinel = "__SHINGO_DUMP_OK__"
 	code, reader, err := i.container.Exec(ctx, []string{
 		"sh", "-c",
-		fmt.Sprintf("pg_dump --schema-only --no-owner --no-privileges --no-comments --username=%s %s > %s && test -s %s && echo %s",
-			pgUser, dbName, file, file, doneSentinel),
+		fmt.Sprintf("%s pg_dump %s --username=%s %s > %s && test -s %s && echo %s",
+			strings.Join(env, " "), flags, pgUser, dbName, file, file, doneSentinel),
 	}, tcexec.Multiplexed()) // demuxed: the raw stream frames every chunk with an
 	// 8-byte header, which can land inside the sentinel and fail the check for a
 	// dump that actually succeeded.
@@ -270,7 +291,7 @@ func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read dump: %w", err)
 	}
-	return Normalize(string(body)), nil
+	return string(body), nil
 }
 
 var (

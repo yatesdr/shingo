@@ -34,6 +34,10 @@ var sharedInst *schemadump.Instance
 // startErr is why sharedInst is nil: the tests that need Postgres skip on it.
 var startErr error
 
+// releaseWork holds the release builds (schemadump.BuildRelease) this binary makes,
+// once each, for every test that boots a release; removed when the binary exits.
+var releaseWork string
+
 // TestMain starts the one Postgres. When it cannot, the binary still runs: the
 // package's untagged tests (baseline_test.go) need no database, and in the
 // gate's docker step this binary is the only place they run, so exiting here
@@ -54,9 +58,15 @@ func TestMain(m *testing.M) {
 		os.Exit(m.Run())
 	}
 	sharedInst = inst
+	if releaseWork, err = os.MkdirTemp("", "schemadump-release-"); err != nil {
+		fmt.Fprintf(os.Stderr, "schemadump: release work dir: %v\n", err)
+		_ = inst.Close(context.Background())
+		os.Exit(1)
+	}
 	code := m.Run()
 	cancel()
 	_ = inst.Close(context.Background())
+	_ = os.RemoveAll(releaseWork)
 	os.Exit(code)
 }
 

@@ -14,7 +14,7 @@ COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 # Build flags
 LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT)"
 
-.PHONY: all clean linux windows macos build run test test-explain schema-snapshot defaults-snapshot
+.PHONY: all clean linux windows macos build run test test-explain schema-snapshot schema-baseline defaults-snapshot
 
 # Default target
 all: clean linux windows macos
@@ -87,6 +87,18 @@ test-all:
 # command's name when the file goes stale.
 schema-snapshot:
 	go run ./cmd/schemasnapshot ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
+
+# Regenerate the committed baseline, store/schema/baseline.sql: boot an empty
+# Postgres with the retired chain's release (store.RetiredChainRelease, built
+# from git), run this tree's migrations above it, apply
+# store/schema/comments.sql, pg_dump --inserts, write the cleaned dump. Run
+# schema-snapshot after it: the snapshot is a fresh boot of a build that embeds
+# the new baseline. Requires Docker and the release's tag in this clone.
+# TestBaselineIsCurrent fails with this command's name when the file goes stale.
+# No reap after it: the command terminates the container it started, and a
+# label reap would take other worktrees' containers with it.
+schema-baseline:
+	go run ./cmd/schemabaseline
 
 # Regenerate the committed rendering of the SHIPPED defaults,
 # config/defaults.snapshot.txt, the same machinery as shingo-edge's target of
