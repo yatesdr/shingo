@@ -590,13 +590,14 @@ func v185Verify(q schema.Querier) bool {
 	return ok && schema.ColumnAbsent(q, "edge_registry", "station_id")
 }
 
-// migrateDown185 puts the v184 shape back, generated from v185Ops and
-// comments.sql: the comments up applied removed, the constraints dropped,
-// every rename back, every move inverted, the added columns dropped, the dropped columns and tables restored as v184 declared
-// them (every default, NOT NULL, key and sequence; edge_registry.station_id
-// filled from station_uid), and schema_migrations' row for 185 deleted. One
-// transaction, under SET LOCAL statement_timeout = 0 and every table's lock
-// first, as up. It refuses unless 185 is the newest version recorded.
+// v185Down is v185's down step (MigrateDown runs it, and deletes row 185 in
+// the same transaction). It puts the v184 shape back, generated from v185Ops
+// and comments.sql: the comments up applied removed, the constraints dropped,
+// every rename back, every move inverted, the added columns dropped, the
+// dropped columns and tables restored as v184 declared them (every default,
+// NOT NULL, key and sequence; edge_registry.station_id filled from
+// station_uid). Under SET LOCAL statement_timeout = 0 and every table's lock
+// first, as up.
 //
 // What does not come back: the rows the registry fold deleted (logged by up),
 // the values of the dropped columns (they come back as their defaults; no
@@ -604,25 +605,6 @@ func v185Verify(q schema.Querier) bool {
 // re-serialises it), the uid the fold gave a blank row, a station_id that was
 // not its row's uid (it comes back as the uid), and a partition index name
 // set by hand.
-func (db *DB) migrateDown185() error {
-	var latest int
-	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&latest); err != nil {
-		return fmt.Errorf("migrate down 185: read schema_migrations: %w", err)
-	}
-	if latest != 185 {
-		return fmt.Errorf("migrate down 185: the newest version recorded is v%d; down 185 runs only on a database whose newest is v185", latest)
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := v185Down(tx); err != nil {
-		return fmt.Errorf("migrate down 185: %w", err)
-	}
-	return tx.Commit()
-}
-
 func v185Down(tx *sql.Tx) error {
 	if err := v185Exec(tx, "statement_timeout", `SET LOCAL statement_timeout = 0`); err != nil {
 		return err
@@ -717,7 +699,7 @@ func v185Down(tx *sql.Tx) error {
 			}
 		}
 	}
-	return v185Exec(tx, "unrecord", `DELETE FROM schema_migrations WHERE version = 185`)
+	return nil
 }
 
 // v185CommentsOff is comments.sql inverted: each COMMENT ON <object> IS '...'

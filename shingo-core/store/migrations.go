@@ -187,11 +187,19 @@ func formatVersions(vs []int) string {
 // never a negated Exists (TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers).
 // nil means trust schema_migrations. verify must be cheap: it runs on every
 // boot for every applied migration.
+//
+// down is the step `shingocore migrate down <version>` runs: it puts the shape
+// before the migration back, in one transaction with the delete of the
+// version's schema_migrations row (MigrateDown). Every entry has one: the
+// schema rule is a migration above the retired chain with its down step, and
+// the rollback recipe install-core.sh prints names one down per version a
+// release added (TestMigrationList_Shape).
 type migration struct {
 	version int
 	name    string
 	fn      func(tx *sql.Tx) error
 	verify  func(q schema.Querier) bool
+	down    func(tx *sql.Tx) error
 }
 
 // migrationList is every migration above RetiredChain, in version order
@@ -200,7 +208,7 @@ type migration struct {
 // new baseline records it too.
 func migrationList() []migration {
 	return []migration{
-		{185, "the clean column model: station_uid wherever a station's uid is held, requested_by for Core's actors, dst_station, rds_station; the columns and tables nothing reads dropped", v185Up, v185Verify},
+		{185, "the clean column model: station_uid wherever a station's uid is held, requested_by for Core's actors, dst_station, rds_station; the columns and tables nothing reads dropped", v185Up, v185Verify, v185Down},
 	}
 }
 
@@ -243,17 +251,48 @@ func CheckDatabase(cfg *config.DatabaseConfig) (cur, target int, err error) {
 	return cur, LatestMigrationVersion(), nil
 }
 
-// MigrateDown is `shingocore migrate down N`: the down step of version N,
-// which this build carries for its newest migration only, run on the database
-// cfg names without migrating it first.
+// MigrateDown is `shingocore migrate down N`: the down step of migration N,
+// run on the database cfg names without migrating it first. It refuses a
+// version this build carries no migration for, and a database whose newest
+// recorded version is not N: a down step undoes its own migration on the shape
+// that migration left, so the ones above it come down first. The step and the
+// delete of N's schema_migrations row are one transaction: a failure changes
+// nothing.
 func MigrateDown(cfg *config.DatabaseConfig, version int) error {
-	if version != 185 {
-		return fmt.Errorf("migrate down %d: this build carries the down step of v185 only", version)
+	var m *migration
+	ms := migrationList()
+	for i := range ms {
+		if ms[i].version == version {
+			m = &ms[i]
+		}
+	}
+	if m == nil || m.down == nil {
+		return fmt.Errorf("migrate down %d: this build carries no migration v%d above the retired chain (v%d), so no down step for it",
+			version, version, RetiredChain)
 	}
 	db, err := OpenWithoutMigrate(cfg)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	return db.migrateDown185()
+	var latest int
+	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&latest); err != nil {
+		return fmt.Errorf("migrate down %d: read schema_migrations: %w", version, err)
+	}
+	if latest != version {
+		return fmt.Errorf("migrate down %d: the newest version recorded is v%d; down %d runs only on a database whose newest is v%d",
+			version, latest, version, version)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := m.down(tx); err != nil {
+		return fmt.Errorf("migrate down %d: %w", version, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM schema_migrations WHERE version = $1`, version); err != nil {
+		return fmt.Errorf("migrate down %d: unrecord: %w", version, err)
+	}
+	return tx.Commit()
 }

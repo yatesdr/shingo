@@ -28,6 +28,11 @@ func TestMigrationList_Shape(t *testing.T) {
 				"applied, so it would run on an upgraded database and never on a new one. Number it above v%d.",
 				m.version, m.name, RetiredChain, RetiredChain)
 		}
+		if m.down == nil {
+			t.Errorf("migration v%d (%s) has no down step: give its entry the step that puts the shape before it "+
+				"back, so `shingocore migrate down %d` and the rollback install-core.sh prints can undo it.",
+				m.version, m.name, m.version)
+		}
 	}
 	if err := migrate.CheckOrder(list); err != nil {
 		t.Error(err)

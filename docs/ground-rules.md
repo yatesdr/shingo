@@ -63,8 +63,9 @@ These are the rules the codebase's comments cite.
   nothing must not read as a pass. Guard (for the repo-wide text rules): `TestEveryRuleHasACaseThatFires`.
 - **The schema has one home: the generated baseline, and a migration above it.** A new database is born on
   `shingo-core/store/schema/baseline.sql`, generated (`make schema-baseline`) and never edited; every change is a
-  numbered migration above the retired chain (v184), after which the baseline is regenerated. Guards:
-  `TestBaselineIsCurrent`, `TestBaseline_CreatesEveryShippedTable`, `TestSchemaConvergesAcrossVintages`.
+  numbered migration above the retired chain (v184) with its down entry (`shingocore migrate down N`), after which
+  the baseline is regenerated. Guards: `TestBaselineIsCurrent`, `TestBaseline_CreatesEveryShippedTable`,
+  `TestSchemaConvergesAcrossVintages`, `TestV185_EveryOpHasItsInverse`.
 
 ## The gate
 
