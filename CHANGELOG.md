@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.17.2 — 2026-11-20
+
 Deploy: no migration. Core only; the Edges are unchanged and need no install.
 
 - And the next round from the same sitting: the column headers now stay put scrolling down (border-collapse breaks the sticky header in Chromium); the robot columns are in the fleet's own order, AMR-02 before AMR-10, instead of the cache's; the legend is a boxed list, one state per row, each word shown in its own colour; and the robot headers no longer paint over the frozen Subsection/Parameter headers when scrolled under them (the corner cells sit one layer above the sticky rung the robot headers share)
