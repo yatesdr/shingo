@@ -268,6 +268,48 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	}
 }
 
+// TestWriter_BornByTheColumnDefaults: three columns Create does not name are
+// born by their DEFAULT, and the order reads them back so. version is 1, so no
+// order Core holds puts a 0 on the wire, which a station reads as an older
+// Core; asked_vendor_order_id is blank, so no reader counts a new order as
+// spoken for, and it reads back what the hand writes there; block_actions is
+// '{}', empty and not NULL, since NULL means an order sent before the record,
+// read by block names for life. It is the runtime half of store's
+// TestOrderMigration_V181_EveryOrderStartsAtOne,
+// TestOrderMigration_V182_NoOrderIsAsking and
+// TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad,
+// whose backfills of the orders written before each column went with the
+// chain.
+func TestWriter_BornByTheColumnDefaults(t *testing.T) {
+	testdb.ExpectAskLeftOpen(t, "the pin writes an ask to read it back")
+	db := testdb.Open(t)
+	born := testdb.CreateOrder(t, db)
+	got, err := db.GetOrder(born.ID)
+	if err != nil {
+		t.Fatalf("read the order: %v", err)
+	}
+	if got.Version != 1 {
+		t.Errorf("an order born now reads version %d, want 1", got.Version)
+	}
+	if got.AskedVendorOrderID != "" {
+		t.Errorf("an order born now reads ask %q, want blank", got.AskedVendorOrderID)
+	}
+	if got.BlockActions == nil || len(got.BlockActions) != 0 {
+		t.Errorf("an order born now reads BlockActions %v, want empty and not nil", got.BlockActions)
+	}
+
+	if _, err := db.Exec(`UPDATE orders SET asked_vendor_order_id='sg-pin-1' WHERE id=$1`, born.ID); err != nil {
+		t.Fatalf("write an ask: %v", err)
+	}
+	asked, err := db.GetOrder(born.ID)
+	if err != nil {
+		t.Fatalf("read the order after the ask: %v", err)
+	}
+	if asked.AskedVendorOrderID != "sg-pin-1" {
+		t.Errorf("the order reads ask %q after one was written, want sg-pin-1", asked.AskedVendorOrderID)
+	}
+}
+
 // equalMaybePointer compares probe values, following one level of pointer so a
 // *int64 probe compares by value rather than by address.
 func equalMaybePointer(want, have any) bool {

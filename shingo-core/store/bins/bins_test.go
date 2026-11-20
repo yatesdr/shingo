@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/reservations"
@@ -782,6 +783,143 @@ func TestBinType_CRUD(t *testing.T) {
 			t.Error("bins.GetType after bins.Delete: expected error, got nil")
 		}
 	})
+}
+
+// TestCreateType_ATypeWithNoFamilyTakesAFamilyOfOne: a bin type inserted with
+// no family stated takes one in the insert (the bin_types_family_of_one
+// trigger, which CreateType relies on by binding a 0 family as NULL): a family
+// of one coded by the type's code; a bare marker takes its carrier's family; a
+// code that already names a family makes a family of its own rather than
+// joining that one by its code alone. It is the runtime half of store's
+// TestMigrate_V172_TheFamilies and TestMigrate_V172_FamiliesAndThePool, whose
+// grouping of the types that predated the families went with the chain.
+func TestCreateType_ATypeWithNoFamilyTakesAFamilyOfOne(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	familyOf := func(typeID int64) (int64, string) {
+		t.Helper()
+		var id int64
+		var code string
+		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT f.id, f.code FROM bin_types bt
+			JOIN carrier_families f ON f.id = bt.family_id WHERE bt.id = $1`, typeID).Scan(&id, &code),
+			"the type's family")
+		return id, code
+	}
+	insert := func(code string) int64 {
+		t.Helper()
+		var id int64
+		testutil.MustNoErr(t, db.DB.QueryRow(`INSERT INTO bin_types (code) VALUES ($1) RETURNING id`, code).Scan(&id),
+			"insert type "+code)
+		return id
+	}
+
+	if _, code := familyOf(insert("FAM-PLAIN")); code != "FAM-PLAIN" {
+		t.Errorf("a type inserted with no family is of %q, want a family of one coded FAM-PLAIN", code)
+	}
+	made := &bins.BinType{Code: "FAM-CREATED", Description: "made by the door"}
+	testutil.MustNoErr(t, bins.CreateType(db.DB, made), "bins.CreateType")
+	carrierFamily, code := familyOf(made.ID)
+	if code != "FAM-CREATED" {
+		t.Errorf("a type CreateType made with no family is of %q, want a family of one coded FAM-CREATED", code)
+	}
+	var marker int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`INSERT INTO bin_types (code, bare_of) VALUES ('FAM-CREATED-BARE', $1) RETURNING id`,
+		made.ID).Scan(&marker), "insert the bare marker")
+	if got, code := familyOf(marker); got != carrierFamily {
+		t.Errorf("the bare marker is of family %d (%s), want its carrier's %d", got, code, carrierFamily)
+	}
+	taken, err := bins.EnsureFamily(db.DB, "FAM-TAKEN")
+	testutil.MustNoErr(t, err, "a family coded FAM-TAKEN")
+	collides := insert("FAM-TAKEN")
+	if got, code := familyOf(collides); got == taken || code != fmt.Sprintf("FAM-TAKEN-%d", collides) {
+		t.Errorf("a type coded as an existing family is of family %d (%s), want a family of its own coded FAM-TAKEN-%d, "+
+			"not family %d by its code alone", got, code, collides, taken)
+	}
+}
+
+// familyCoded is the family of this code as bins.ListFamilies reads it.
+func familyCoded(t *testing.T, db *sql.DB, code string) (bins.CarrierFamily, bool) {
+	t.Helper()
+	families, err := bins.ListFamilies(db)
+	testutil.MustNoErr(t, err, "list families")
+	for _, f := range families {
+		if f.Code == code {
+			return f, true
+		}
+	}
+	return bins.CarrierFamily{}, false
+}
+
+// TestCarrierFamilyKeys_SetReadsBackOnEveryTypeOfTheFamily: the one setter
+// writes both keys of the family, ListFamilies reads them back over the
+// family's types, and a family that is gone says so. Moved whole from store's
+// migration_v180_carrier_keys_test.go, where it pinned no migration, onto the
+// bins functions the store's wrappers call.
+func TestCarrierFamilyKeys_SetReadsBackOnEveryTypeOfTheFamily(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t).DB
+	testutil.MustNoErr(t, bins.CreateType(db, &bins.BinType{Code: "KEYS-A", Description: "a"}), "type A")
+	fam, ok := familyCoded(t, db, "KEYS-A")
+	if !ok {
+		t.Fatal("type A has no family")
+	}
+	testutil.MustNoErr(t, bins.CreateType(db, &bins.BinType{Code: "KEYS-B", Description: "b", FamilyID: fam.ID}), "type B, of A's family")
+	testutil.MustNoErr(t, bins.SetFamilyKeys(db, fam.ID, "jackload_4548", "wait_4548"), "set the keys")
+	got, _ := familyCoded(t, db, "KEYS-A")
+	if got.LiftBinTask != "jackload_4548" || got.WaitBinTask != "wait_4548" || len(got.Types) != 2 {
+		t.Errorf("the family reads %+v, want jackload_4548 / wait_4548 on its two types", got)
+	}
+	testutil.MustNoErr(t, bins.SetFamilyKeys(db, fam.ID, "", "wait_4548"), "blank the lift key")
+	if got, _ := familyCoded(t, db, "KEYS-A"); got.LiftBinTask != "" || got.WaitBinTask != "wait_4548" {
+		t.Errorf("after blanking the lift key the family reads %+v", got)
+	}
+	if err := bins.SetFamilyKeys(db, fam.ID+1000, "x", "y"); !errors.Is(err, bins.ErrNoSuchFamily) {
+		t.Errorf("setting a family that does not exist: %v, want ErrNoSuchFamily", err)
+	}
+}
+
+// TestCarrierFamilyKeys_GoWithTheFamily: a family is deleted with its last
+// type, by a delete and by a move out (bins.DeleteType, bins.SetTypeFamily),
+// and its keys go with it: no keyed family is kept hidden. A type made later
+// under the same code has a family of one with blank keys. Moved whole from
+// store's migration_v180_carrier_keys_test.go, where it pinned no migration.
+func TestCarrierFamilyKeys_GoWithTheFamily(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t).DB
+	keyed := func(code string) bins.CarrierFamily {
+		t.Helper()
+		testutil.MustNoErr(t, bins.CreateType(db, &bins.BinType{Code: code, Description: code}), "type "+code)
+		f, ok := familyCoded(t, db, code)
+		if !ok {
+			t.Fatalf("type %s has no family", code)
+		}
+		testutil.MustNoErr(t, bins.SetFamilyKeys(db, f.ID, "jackload_"+code, "wait_"+code), "key "+code)
+		return f
+	}
+
+	gone := keyed("GONE")
+	bt, err := bins.GetTypeByCode(db, "GONE")
+	bt = testutil.Must(t, bt, err, "read GONE")
+	testutil.MustNoErr(t, bins.DeleteType(db, bt.ID), "delete the family's last type")
+	if _, ok := familyCoded(t, db, "GONE"); ok {
+		t.Error("the family outlived its last type's delete")
+	}
+	testutil.MustNoErr(t, bins.CreateType(db, &bins.BinType{Code: "GONE", Description: "again"}), "a type under the same code")
+	if f, ok := familyCoded(t, db, "GONE"); !ok || f.ID == gone.ID || f.LiftBinTask != "" || f.WaitBinTask != "" {
+		t.Errorf("the type made again has family %+v (found %v), want a new family with blank keys", f, ok)
+	}
+
+	moved := keyed("MOVED")
+	other := keyed("OTHER")
+	mt, err := bins.GetTypeByCode(db, "MOVED")
+	mt = testutil.Must(t, mt, err, "read MOVED")
+	testutil.MustNoErr(t, bins.SetTypeFamily(db, mt.ID, other.ID), "move the family's last type out")
+	if _, ok := familyCoded(t, db, "MOVED"); ok {
+		t.Errorf("family MOVED (%d) outlived its last type's move", moved.ID)
+	}
+	if f, _ := familyCoded(t, db, "OTHER"); f.LiftBinTask != "jackload_OTHER" || len(f.Types) != 2 {
+		t.Errorf("the family moved into reads %+v, want its own keys over both types", f)
+	}
 }
 
 func TestListTypesForPayload(t *testing.T) {

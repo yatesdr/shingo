@@ -3,6 +3,7 @@
 package inventory_test
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -138,6 +139,34 @@ func TestListLinesideBuckets_StateIsTheStoredColumn(t *testing.T) {
 		if got[k] != q {
 			t.Errorf("%s = %d, want %d", k, got[k], q)
 		}
+	}
+}
+
+// TestLinesideBuckets_ThePileIsKeyedByItsSeatAndOneOfTwoStates: a pile row is
+// active or stranded and nothing else (lineside_buckets_state_check), and one
+// seat holds at most one row per state (lineside_buckets_node_payload_state_key,
+// the conflict target of the level wire's upsert in uop/applier.go). An active
+// and a stranded row at one seat both land, so each refusal is its own
+// constraint's. It is the runtime half of store's TestV131_PileMirrorShape;
+// the columns that test found gone are the committed snapshot's to show.
+func TestLinesideBuckets_ThePileIsKeyedByItsSeatAndOneOfTwoStates(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	insert := func(state string) error {
+		_, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+			VALUES ('ST', 'BKT-KEY-NODE', 'PAY-KEY', $1, 1)`, state)
+		return err
+	}
+	if err := insert("inactive"); err == nil || !strings.Contains(err.Error(), "lineside_buckets_state_check") {
+		t.Errorf("state inactive: %v, want the state CHECK's refusal", err)
+	}
+	for _, state := range []string{"active", "stranded"} {
+		if err := insert(state); err != nil {
+			t.Fatalf("state %s at a fresh seat: %v", state, err)
+		}
+	}
+	if err := insert("active"); err == nil || !strings.Contains(err.Error(), "lineside_buckets_node_payload_state_key") {
+		t.Errorf("a second active row at one seat: %v, want the seat key's refusal", err)
 	}
 }
 

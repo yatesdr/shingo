@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // TestTerminalizeOrder_AnomalyAndDetailByStatus pins two INDEPENDENT invariants
@@ -169,5 +170,60 @@ func TestTerminalizeOrder_ConcurrentTerminalizers(t *testing.T) {
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT claimed_by FROM bins WHERE id=$1`, bin.ID).Scan(&claimedBy), "read bin claim")
 	if claimedBy.Valid {
 		t.Errorf("bin still claimed by order %d — a refused terminalize stranded the hold", claimedBy.Int64)
+	}
+}
+
+// TestRetireReshuffleRestoreOrders_CancelsAStrayAndItsChild: the boot sweep
+// (engine_lifecycle.go) cancels a non-terminal reshuffle_restore parent and its
+// non-terminal child through the terminal chokepoint, and a second run finds
+// nothing. It replaces store's TestRetireReshuffleRestore_CancelsStray, which
+// sat in migrations_retire_test.go and ran no migration; the engine's tell pin
+// (TestStatusTellPin_RowsPerTypedWriter/RetireReshuffleRestoreOrders) asserts
+// the stations are told.
+func TestRetireReshuffleRestoreOrders_CancelsAStrayAndItsChild(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = protocol.OrderTypeReshuffleRestore
+		o.Status = protocol.StatusReshuffling
+	})
+	child := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.ParentOrderID = &parent.ID
+		o.Status = protocol.StatusQueued
+	})
+
+	n, err := db.RetireReshuffleRestoreOrders()
+	testutil.MustNoErr(t, err, "retire")
+	if n != 2 {
+		t.Fatalf("cancelled = %d, want 2 (parent + child)", n)
+	}
+	for _, id := range []int64{parent.ID, child.ID} {
+		got, err := db.GetOrder(id)
+		testutil.MustNoErr(t, err, "read order")
+		if got.Status != protocol.StatusCancelled {
+			t.Errorf("order %d status = %q, want cancelled", id, got.Status)
+		}
+	}
+	if n2, err := db.RetireReshuffleRestoreOrders(); err != nil || n2 != 0 {
+		t.Errorf("second run cancelled %d (err %v), want 0", n2, err)
+	}
+}
+
+// TestRetireReshuffleRestoreOrders_LeavesACleanDatabaseAlone: with no
+// reshuffle_restore order, the sweep cancels nothing and the live order beside
+// it stays live. It replaces store's TestRetireReshuffleRestore_NoOpClean.
+func TestRetireReshuffleRestoreOrders_LeavesACleanDatabaseAlone(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	live := testdb.CreateOrder(t, db) // a normal retrieve: must be left alone
+	n, err := db.RetireReshuffleRestoreOrders()
+	testutil.MustNoErr(t, err, "retire")
+	if n != 0 {
+		t.Fatalf("cancelled = %d on a clean DB, want 0", n)
+	}
+	got, err := db.GetOrder(live.ID)
+	testutil.MustNoErr(t, err, "read order")
+	if got.Status != live.Status {
+		t.Errorf("the live order reads %q after the sweep, want %q", got.Status, live.Status)
 	}
 }

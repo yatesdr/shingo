@@ -526,6 +526,47 @@ func TestPostingHealth_CountsUnpostedTransactions(t *testing.T) {
 	}
 }
 
+// TestPostingHealth_ARowThatPredatesTheFeedIsNotUnposted: posting_id 0 is the
+// sentinel the plants' history carries for a transaction recorded before the
+// CMS feed existed. It is not work the subscriber failed to enqueue, so the
+// health count leaves it out and the sender's queue never lists it; a fresh
+// row beside it still counts, so the count is not passing by counting nothing.
+// It is the runtime half of store's TestV102_BackfillsLegacyRowsWithZero,
+// whose backfill (NULL to 0 at the migration) went with the chain; the 0 rows
+// it wrote stay in every plant database.
+func TestPostingHealth_ARowThatPredatesTheFeedIsNotUnposted(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	n := &nodes.Node{Name: "LEGACY-NODE", Enabled: true}
+	if err := nodes.Create(db.DB, n); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	legacy := seedTxn(t, db, n.ID, "CAT-LEGACY", -5)
+	if _, err := db.Exec(`UPDATE cms_transactions SET posting_id = 0 WHERE id = $1`, legacy.ID); err != nil {
+		t.Fatalf("mark the row as predating the feed: %v", err)
+	}
+	fresh := seedTxn(t, db, n.ID, "CAT-FRESH", 7)
+
+	h, err := cms.PostingHealth(db.DB, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("PostingHealth: %v", err)
+	}
+	if h.Unposted != 1 {
+		t.Errorf("unposted = %d, want 1 (the fresh row): a row that predates the feed is not unposted work", h.Unposted)
+	}
+	queue, err := cms.ListUnpostedOlderThan(db.DB, 0, 100)
+	if err != nil {
+		t.Fatalf("ListUnpostedOlderThan: %v", err)
+	}
+	if len(queue) != 1 || queue[0].ID != fresh.ID {
+		ids := make([]int64, 0, len(queue))
+		for _, q := range queue {
+			ids = append(ids, q.ID)
+		}
+		t.Errorf("the sender's queue = %v, want only the fresh row %d (legacy %d predates the feed)", ids, fresh.ID, legacy.ID)
+	}
+}
+
 // TestPostingHealth_EmptyTableIsAllZeroes: the health read must not error or
 // produce nonsense ages on a plant that has never posted. A query that failed
 // here would make the diagnostics card unavailable at exactly the moment

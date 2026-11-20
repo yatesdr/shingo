@@ -4,6 +4,7 @@ package payloads_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -84,6 +85,38 @@ func TestLoadSequences_Seeded(t *testing.T) {
 	if !found {
 		t.Errorf("ListLoadSequenceNames = %v, want it to include the seeded sequence", names)
 	}
+}
+
+// TestLoadSequences_TheSeedLiftsAtItsLoadAndTheCheckHoldsTheIndex: the seeded
+// "Child cart interlock" lifts at index 2, its "load", as GetLoadSequence reads
+// it, and load_sequences_lift_at_in_task_names refuses an index outside
+// task_names (4 on a four-name sequence, and -1) while a legal one lands. No Go
+// code writes this table; an engineer edits it by hand, so the CHECK is the
+// guard. It is the runtime half of store's
+// TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad,
+// whose backfill of lift_at by the name rule went with the chain.
+func TestLoadSequences_TheSeedLiftsAtItsLoadAndTheCheckHoldsTheIndex(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t).DB
+
+	seq, err := payloads.GetLoadSequence(db, "Child cart interlock")
+	testutil.MustNoErr(t, err, "get seeded sequence")
+	if seq == nil {
+		t.Fatal("seeded sequence 'Child cart interlock' missing")
+	}
+	if seq.LiftAt != 2 || seq.TaskNames[seq.LiftAt] != "load" {
+		t.Errorf("the seed lifts at %d of %v, want 2, its load", seq.LiftAt, seq.TaskNames)
+	}
+
+	for _, bad := range []int{4, -1} {
+		_, err := db.Exec(`UPDATE load_sequences SET lift_at = $1 WHERE name = 'Child cart interlock'`, bad)
+		if err == nil || !strings.Contains(err.Error(), "load_sequences_lift_at_in_task_names") {
+			t.Errorf("lift_at %d on a four-name sequence: %v, want the CHECK's refusal", bad, err)
+		}
+	}
+	// A legal index lands, so the refusals above are the CHECK's and nothing else's.
+	_, err = db.Exec(`UPDATE load_sequences SET lift_at = 3 WHERE name = 'Child cart interlock'`)
+	testutil.MustNoErr(t, err, "lift_at 3, the last name")
 }
 
 // TestGetLoadSequence_Unknown pins that an unregistered name is (nil, nil) — a

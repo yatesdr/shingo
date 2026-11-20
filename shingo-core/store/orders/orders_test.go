@@ -11,6 +11,7 @@ package orders_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -257,6 +258,34 @@ func TestUpdateStatus_RefusesTerminal(t *testing.T) {
 		if got.Status != "pending" {
 			t.Errorf("after refused UpdateStatus(%q), status = %q, want pending (the write must not apply)", term, got.Status)
 		}
+	}
+}
+
+// TestOrders_ADispatchedRowNamesItsJob: orders_dispatched_names_its_job holds
+// every write of `dispatched` to naming the fleet's job. A vendorless
+// `dispatched` write is refused by the rule, whichever writer sends it, and one
+// naming its job lands. It is the runtime half of store's
+// TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows; the rows
+// already breaking the rule when v183 added it NOT VALID stay at the plants,
+// and TestListTrackedVendorOrderIDs below holds one by dropping the rule.
+func TestOrders_ADispatchedRowNamesItsJob(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	o := newPendingOrder("uuid-dispatched-names-its-job")
+	testutil.MustNoErr(t, orders.Create(db, o), "Create")
+
+	_, err := db.Exec(`UPDATE orders SET status='dispatched', vendor_order_id='' WHERE id=$1`, o.ID)
+	if err == nil || !strings.Contains(err.Error(), "orders_dispatched_names_its_job") {
+		t.Errorf("a vendorless `dispatched` write = %v, want the rule's refusal", err)
+	}
+	_, err = db.Exec(`UPDATE orders SET status='dispatched', vendor_order_id='sg-v183' WHERE id=$1`, o.ID)
+	testutil.MustNoErr(t, err, "a `dispatched` write naming its job")
+	got, err := orders.Get(db, o.ID)
+	testutil.MustNoErr(t, err, "read the order")
+	if got.Status != protocol.StatusDispatched || got.VendorOrderID != "sg-v183" {
+		t.Errorf("the order reads %s naming %q, want dispatched naming sg-v183", got.Status, got.VendorOrderID)
 	}
 }
 

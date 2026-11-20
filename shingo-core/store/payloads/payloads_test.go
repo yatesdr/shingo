@@ -337,6 +337,33 @@ func TestCreateItem_AssignsID(t *testing.T) {
 	}
 }
 
+// TestManifestLine_NoStatedRatioIsOnePerCycle: a template line inserted
+// without naming parts_per_cycle reads one part per cycle, the column's
+// DEFAULT. The old default was 0, which counts nothing while looking
+// configured. The one writer (insertManifestLine) names the column, so this
+// pins the default for any INSERT that does not, read back through
+// ListManifest. It replaces store's TestV99_DefaultBecomesOne, which reached
+// the same default by rewinding v99.
+func TestManifestLine_NoStatedRatioIsOnePerCycle(t *testing.T) {
+	t.Parallel()
+	sdb := testdb.Open(t)
+	db := sdb.DB
+
+	p := &payloads.Payload{Code: "V99-DEFAULT", UOPCapacity: 100}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
+	_, err := db.Exec(`INSERT INTO payload_manifest (payload_id, part_number) VALUES ($1, 'P')`, p.ID)
+	testutil.MustNoErr(t, err, "insert a line that states no ratio")
+
+	list, err := payloads.ListManifest(db, p.ID)
+	testutil.MustNoErr(t, err, "payloads.ListManifest")
+	if len(list) != 1 {
+		t.Fatalf("manifest has %d lines, want 1", len(list))
+	}
+	if list[0].PartsPerCycle != 1 {
+		t.Errorf("parts_per_cycle = %d, want 1: a line with no stated ratio is one per cycle", list[0].PartsPerCycle)
+	}
+}
+
 // TestListManifest_OrderedByID verifies payloads.ListManifest returns items in insertion order.
 func TestListManifest_OrderedByID(t *testing.T) {
 	t.Parallel()

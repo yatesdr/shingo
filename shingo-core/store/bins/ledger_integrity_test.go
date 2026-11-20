@@ -157,6 +157,49 @@ func TestOpenNegativeBins_EmptyWhenHealthy(t *testing.T) {
 	}
 }
 
+// TestOpenNegativeBins_DatesTheBinByItsExceptionRow: a crossing recorded in
+// bin_uop_exception dates the negative bin after the raw bin_uop_ledger row it
+// came from is gone, which is what the table is for (the raw row is what the
+// 90-day purge deletes). It replaces store's
+// TestV93_OpenNegativeBinsReadsTheExceptionTable, which sat in a migration
+// test file but asserted nothing about the migration.
+func TestOpenNegativeBins_DatesTheBinByItsExceptionRow(t *testing.T) {
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	b := &bins.Bin{BinTypeID: sd.BinType.ID, Label: "EXC-1"}
+	testutil.MustNoErr(t, bins.Create(db.DB, b), "create bin")
+	_, err := db.DB.Exec(`UPDATE bins SET uop_remaining=-13, payload_code='PART-E' WHERE id=$1`, b.ID)
+	testutil.MustNoErr(t, err, "drive negative")
+
+	crossed := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Microsecond)
+	// An old raw audit row that the purge will delete, and the exception row,
+	// which outlives it.
+	testdb.SeedAudit(t, db, b.ID, 4, -13, "bin_uop_delta", "PART-E", crossed)
+	before, after := 4, -13
+	testutil.MustNoErr(t, audit.AppendBinUOPException(db.DB, audit.ExcNegativeCrossing, b.ID,
+		"PART-E", "test", nil, crossed, &before, &after, &after, nil, "bin_uop_delta", nil), "seed exception")
+
+	// The purge happens: the raw row goes, the exception row stays.
+	_, err = db.DB.Exec(`DELETE FROM bin_uop_ledger WHERE bin_id = $1`, b.ID)
+	testutil.MustNoErr(t, err, "purge raw")
+
+	open, err := bins.OpenNegativeBins(db.DB)
+	testutil.MustNoErr(t, err, "OpenNegativeBins")
+	var found bool
+	for _, o := range open {
+		if o.BinID == b.ID {
+			found = true
+			if o.NegativeSince == nil || !o.NegativeSince.Equal(crossed) {
+				t.Errorf("NegativeSince = %v, want the exception row's occurred_at %v", o.NegativeSince, crossed)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the negative bin must still be listed after its raw audit rows are purged")
+	}
+}
+
 // ── CarrierBindings (5.11) ───────────────────────────────────────────────────
 //
 // The binding boundary is the one thing here that cannot be checked without a
