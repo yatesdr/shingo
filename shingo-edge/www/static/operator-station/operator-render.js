@@ -1073,7 +1073,7 @@ function createNodeButton(entry) {
         const noCarrier = claim && runtime.active_bin_id == null;
         // The count and the pack in UoP above a ratio of 1, the parts under
         // them; at 1 the tile as it always was (tileCount).
-        const shown = tileCount(claim, remaining, capacity, noCarrier);
+        const shown = tileCount(claim, remaining, capacity, noCarrier, entry.bin_ratio);
         btn.appendChild(el('span', {
             className: 'os-node-remaining',
             textContent: claim ? (noCarrier ? 'NO BIN' : String(shown.count)) : '--'

@@ -332,6 +332,21 @@ func (r *RuntimeState) PartRecorded() bool {
 	return r.LinesidePayloadKnown || r.LinesideSource == string(CarrierAssumed)
 }
 
+// SeatPart is the part of the bin bound at the seat: the part the seat records
+// for its cart (PartRecorded), else the claim's part (claimPart); "" when no
+// bin is bound. The one statement of the rule binAtNode and the station view's
+// bin ratio read (owner, 2026-11-19: a seat's draw and its displays take the
+// ratio of the bin's part, not the claim's).
+func (r *RuntimeState) SeatPart(claimPart string) string {
+	if r == nil || r.ActiveBinID == nil {
+		return ""
+	}
+	if !r.PartRecorded() {
+		return claimPart
+	}
+	return string(r.LinesidePayloadCode)
+}
+
 // NodeClaim is a per-Style binding to a process Node — declares the
 // payload, capacity, reorder behaviour, two-robot swap mode, and
 // staging conventions. The active NodeClaim drives material orders
@@ -1054,7 +1069,14 @@ func (c *NodeClaim) StrictPackApplies() bool {
 // A draw bigger than what is left takes the count below 0, as any stroke does.
 // Pinned by TestConsume_DrawsPiecesPerCycleAtEveryConsumePath.
 func (c *NodeClaim) ConsumeDraw(step int) int {
-	return step * max(c.PiecesPerCycle, 1)
+	return c.ConsumeDrawAt(step, c.PiecesPerCycle)
+}
+
+// ConsumeDrawAt is ConsumeDraw at the ratio of the bin bound at the seat
+// (Engine.seatRatio), which is the claim's own unless the bin is another part:
+// step × ratio, a ratio below 1 counting 1.
+func (c *NodeClaim) ConsumeDrawAt(step, ratio int) int {
+	return step * max(ratio, 1)
 }
 
 // CappedPack is the pack the strict arm caps the seat's bound bin at, or 0

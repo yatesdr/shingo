@@ -157,13 +157,34 @@ const (
 )
 
 // consumeDraw is the pieces this tick takes at a consume spot of claim: the
-// step times the part's pieces per cycle (NodeClaim.ConsumeDraw), or the
-// pieces a "no cart" row's release carries. A produce spot never reads it.
-func (t tickScope) consumeDraw(claim *processes.NodeClaim) int {
+// step times the ratio of the bin at the seat (ratio, Engine.seatRatio;
+// NodeClaim.ConsumeDrawAt), or the pieces a "no cart" row's release carries. A
+// produce spot never reads it.
+func (t tickScope) consumeDraw(claim *processes.NodeClaim, ratio int) int {
 	if t.unit == drawPieces {
 		return t.delta
 	}
-	return claim.ConsumeDraw(t.delta)
+	return claim.ConsumeDrawAt(t.delta, ratio)
+}
+
+// seatRatio is the UOP ratio a consume seat draws at: the ratio of the part of
+// the bin bound there (RuntimeState.SeatPart), read from this Edge's catalog
+// copy when that part is not the claim's (StationService.PartRatio, held
+// between catalog writes: no statement on a tick between them); the claim's
+// (NodeClaim.PiecesPerCycle) when it is, when nothing is bound, or when the
+// copy has no row for the bin's part. Brief step 6: a seat with an empty
+// payload code drew 1 per cycle from any bin, and a seat holding another
+// allowed part drew at the claim's part's ratio. Pinned by
+// TestConsume_DrawsAtTheBinsPart.
+func (e *Engine) seatRatio(runtime *processes.RuntimeState, claim *processes.NodeClaim) int {
+	part := runtime.SeatPart(claim.PayloadCode)
+	if part == "" || part == claim.PayloadCode || e.stationService == nil {
+		return claim.PiecesPerCycle
+	}
+	if r := e.stationService.PartRatio(part); r > 0 {
+		return r
+	}
+	return claim.PiecesPerCycle
 }
 
 // walkTick charges one tick to the process's nodes. Each node's claim is the
@@ -1009,7 +1030,7 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// pulled to lineside at the release, which physically leave the station
 	// before the new bin is tapped, until the cutover strands it. Remainder
 	// flows to the cart, or to the ledger.
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim))
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim, e.seatRatio(runtime, claim)))
 	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, binRemainder)
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
@@ -1362,7 +1383,7 @@ func (e *Engine) handleABFallthrough(tick tickScope, node *processes.Node, runti
 	// ActiveStyleID claim, which during a changeover can differ from the
 	// tick's style and mis-attribute the lineside drain and bin delta
 	// (R43-1). The draw is pieces, as at any consume spot (consumeDraw).
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim))
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim, e.seatRatio(runtime, claim)))
 	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, binRemainder)
 	e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
 }
@@ -1456,11 +1477,11 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, "", 0
 	}
-	payload := string(runtime.LinesidePayloadCode)
-	if !runtime.PartRecorded() {
-		payload = claim.PayloadCode
+	claimPart := ""
+	if claim != nil {
+		claimPart = claim.PayloadCode
 	}
-	return *runtime.ActiveBinID, payload, runtime.ActiveBinEpoch
+	return *runtime.ActiveBinID, runtime.SeatPart(claimPart), runtime.ActiveBinEpoch
 }
 
 // drainLinesideFirst decrements the node's active lineside pile(s) for the

@@ -66,7 +66,7 @@
                                 {{else}}--{{end}}
                             {{else}}
                                 {{if .Runtime}}
-                                    {{if uopParts .Runtime.RemainingUOPCached .ActiveClaim.PiecesPerCycle}}<strong>{{uopShown .Runtime.RemainingUOPCached .ActiveClaim.PiecesPerCycle}}</strong> / {{uopShown .ActiveClaim.UOPCapacity .ActiveClaim.PiecesPerCycle}} <span class="text-muted">{{uopParts .Runtime.RemainingUOPCached .ActiveClaim.PiecesPerCycle}}</span>{{else}}<strong>{{.Runtime.RemainingUOPCached}}</strong>
+                                    {{if uopParts .Runtime.RemainingUOPCached .UOPRatio}}<strong>{{uopShown .Runtime.RemainingUOPCached .UOPRatio}}</strong> / {{uopShown .ActiveClaim.UOPCapacity .ActiveClaim.PiecesPerCycle}} <span class="text-muted">{{uopParts .Runtime.RemainingUOPCached .UOPRatio}}</span>{{else}}<strong>{{.Runtime.RemainingUOPCached}}</strong>
                                     {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}{{end}}
                                 {{else}}--{{end}}
                             {{end}}
@@ -107,7 +107,7 @@
                             {{end}}
                             {{else}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
-                            <button class="btn btn-sm" data-action="releaseNodeWithPrompt:{{.Node.ID}}" data-uop-capacity="{{if .ActiveClaim}}{{.ActiveClaim.UOPCapacity}}{{end}}" data-uop-ratio="{{if .ActiveClaim}}{{.ActiveClaim.PiecesPerCycle}}{{end}}" title="Send current bin to outbound staging (prompts for remaining parts)">Release</button>
+                            <button class="btn btn-sm" data-action="releaseNodeWithPrompt:{{.Node.ID}}" data-uop-capacity="{{if .ActiveClaim}}{{.ActiveClaim.UOPCapacity}}{{end}}" data-uop-ratio="{{if .ActiveClaim}}{{.UOPRatio}}{{end}}" title="Send current bin to outbound staging (prompts for remaining parts)">Release</button>
                             {{end}}
                         {{end}}
                         {{if .Runtime}}{{if .Runtime.ActiveOrderID}}

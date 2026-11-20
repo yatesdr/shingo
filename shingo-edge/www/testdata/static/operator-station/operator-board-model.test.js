@@ -1115,6 +1115,16 @@ WIDTHS.forEach(function (w) {
         'tile: a part at 1 a cycle is as it was');
     eq(M.tileCount({ role: 'consume' }, 60, 60, false), { count: 60, capacity: 60, parts: '' }, 'tile: a claim with no number');
     eq(M.tileCount(null, 7, 0, false), { count: 7, capacity: 0, parts: '' }, 'tile: no claim');
+    // The bin bound is another part, at 2 a cycle (the view's bin_ratio): its
+    // count reads at 2, the claim's pack at the claim's 8.
+    eq(M.tileCount(at8, 404, 800, false, 2), { count: 202, capacity: 100, parts: '404 parts' }, 'tile: a bin of another part');
+    // ratioFor: the seat's bin, a part of the claim's, another part.
+    const tile = { active_claim: { payload_code: 'P-8', pieces_per_cycle: 8 } };
+    eq(M.ratioFor(null, tile, ''), 8, 'ratio: the seat at the claim\'s part');
+    eq(M.ratioFor(null, Object.assign({ bin_ratio: 2 }, tile), ''), 2, 'ratio: the seat at its bin\'s part');
+    eq(M.ratioFor(null, Object.assign({ bin_ratio: 2 }, tile), 'P-8'), 8, 'ratio: a pile of the claim\'s part');
+    eq(M.ratioFor({ 'P-4': { items: [{ parts_per_cycle: 4 }] } }, tile, 'P-4'), 4, 'ratio: another part from the templates');
+    eq(M.ratioFor(null, tile, 'P-X'), 1, 'ratio: a part the board does not know reads as it always did');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

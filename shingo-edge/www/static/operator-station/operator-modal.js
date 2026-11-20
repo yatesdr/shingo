@@ -172,7 +172,7 @@ export function renderModal(entry) {
         html += '<div class="modal-fill-row">';
         html += '<div class="modal-fill-bar"><div class="modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
         // UoP big, the parts small beside them, above a ratio of 1 (tileCount).
-        const shown = tileCount(claim, remaining, capacity, false);
+        const shown = tileCount(claim, remaining, capacity, false, entry.bin_ratio);
         html += '<div class="modal-fill-text">' + shown.count + ' / ' + shown.capacity +
             (shown.parts ? ' <span class="os-count-parts">' + esc(shown.parts) + '</span>' : '') + '</div>';
         html += '</div>';

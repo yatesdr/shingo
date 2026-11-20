@@ -24,15 +24,18 @@ import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatu
 import { countReading } from '/static/shared/count-words.js';
 import { uopRatio } from '/static/shared/count.js';
 
-// ratioFor is a part's UOP ratio as the board knows it: the tile's claim's for
-// its own part (NodeClaim.PiecesPerCycle; code '' means the claim's), else the
-// part's load template on a loader board (templates: the view's load_templates,
-// count.js uopRatio), else 1, which shows a count as it always was. A pile of a
-// part that is neither the tile's claim's nor on the board's templates reads
-// in parts only.
+// ratioFor is a part's UOP ratio as the board knows it. code '' is the seat's
+// bin: its own part's ratio when the view sends one (bin_ratio: the bin is
+// another part than the claim's), else the claim's. A code that is the claim's
+// part reads the claim's (NodeClaim.PiecesPerCycle); any other, the part's load
+// template on a loader board (templates: the view's load_templates, count.js
+// uopRatio); else 1, which shows a count as it always was. A pile of a part
+// that is neither the tile's claim's nor on the board's templates reads in
+// parts only.
 export function ratioFor(templates, entry, code) {
     const claim = entry && entry.active_claim;
-    if (claim && (!code || code === claim.payload_code)) return Number(claim.pieces_per_cycle) || 1;
+    if (claim && !code) return Number(entry.bin_ratio) || Number(claim.pieces_per_cycle) || 1;
+    if (claim && code === claim.payload_code) return Number(claim.pieces_per_cycle) || 1;
     const t = templates && templates[code];
     return t ? uopRatio(t.items) : 1;
 }
@@ -44,10 +47,12 @@ export function ratioFor(templates, entry, code) {
 // 404 of a pack of 800 at 8 a cycle reads 50 / 100 with "404 parts" under. At a
 // ratio of 1, or a claim with no number, the count and the pack as they are and
 // nothing under: the tile as it always was. A tile with no cart says nothing
-// under (count-words.js countReading).
-export function tileCount(claim, count, capacity, noCarrier) {
+// under (count-words.js countReading). binRatio is the view's bin_ratio: the
+// bin bound here is another part, read at its own ratio; the pack is the
+// claim's and reads at the claim's.
+export function tileCount(claim, count, capacity, noCarrier, binRatio) {
     const ratio = claim ? Number(claim.pieces_per_cycle) || 1 : 1;
-    const c = countReading(count, ratio);
+    const c = countReading(count, Number(binRatio) || ratio);
     return { count: c.big, capacity: countReading(capacity, ratio).big, parts: noCarrier ? '' : c.small };
 }
 
