@@ -178,7 +178,8 @@ fraction, never a lost part (`protocol.SplitUOP`; the browser's twin is `shared/
 `protocol/testdata/count-examples.json` by `TestCountExamples` and `TestCountJS`). At 8 a cycle a pack of 800 parts
 reads 100 UOP, a bin pulled at 404 reads 50 UOP with its 404 parts beside it, and a typed 803 reads 100 UOP and 3
 parts. At a ratio of 1 the count is the UOP and nothing extra is shown. Changing a ratio rewrites no stored number:
-800 parts read 200 UOP at 4.
+800 parts read 200 UOP at 4. The example runs through a real Edge and Core, each hop checked in both books and at
+CMS, in `TestUOP_OwnersExample_StoresPartsReadsUOP` (integration).
 
 **The ratio is an assembly consume setting.** `payload_manifest.parts_per_cycle` (the catalog line's
 `PartsPerCycle`) is how many of the part one cycle of an assembly that consumes it uses, set by an engineer on the
