@@ -61,6 +61,17 @@ const (
 	// event, not an EventOrderStatusChanged, because that handler reads every
 	// event as a possible transition.
 	EventOrderRobotChanged
+	// EventBinRowChanged — what a bin shows changed through a write that emits
+	// no EventBinUpdated: a station's count tick (the UOP-delta applier) or a
+	// write behind the bin-changed hook (the station doors, a home clear, a CMS
+	// booking). SetupEngineListeners rebroadcasts it as the SSE `bin-row`, which
+	// the Bins page repaints that bin's row on.
+	//
+	// FOR SCREENS ONLY: nothing in the engine subscribes to it. A count tick
+	// comes every few seconds per running line (SPR 2026-11-19: ~0.2 a second
+	// across nine bins), and EventBinUpdated's subscribers — the fulfillment
+	// scanner, the bins feed, the threshold monitor — would wake on each one.
+	EventBinRowChanged
 )
 
 // --- Event payloads ---
@@ -108,6 +119,12 @@ type OrderRobotChangedEvent struct {
 	VendorState   string
 	FromRobotID   string
 	RobotID       string
+}
+
+// BinRowChangedEvent is EventBinRowChanged's payload: the bin whose row changed.
+type BinRowChangedEvent struct {
+	eventbus.PayloadBase
+	BinID int64
 }
 
 type OrderCompletedEvent struct {
@@ -329,15 +346,17 @@ type CMSTransactionEvent struct {
 }
 
 // BlockCompletedEvent fires when a single block within a vendor order
-// transitions to FINISHED while the order is still mid-flight. Phase 2
-// of the bin-transit-state project: pickup blocks (BinTask=Load /
-// retrieve / "pickup") drive the bin onto the synthetic _TRANSIT node
-// so the source slot is freed immediately. Other block types (waits,
-// drops) are observable but not currently acted on at this layer.
+// transitions to FINISHED while the order is still mid-flight. Its subscriber
+// (handleBlockCompleted) reads what the block was from the order's record of
+// the blocks Core sent (orders.block_actions), by BlockID: a pickup drives the
+// bin onto the synthetic _TRANSIT node so the source slot is freed immediately,
+// an intermediate dropoff records the bin at its slot.
 //
 // Location is the vendor's physical location string (e.g., the dot-name
-// of the pickup node). BinTask carries the vendor's binTask field
-// ("Load", "Unload", "Wait", or empty for navigation-only blocks).
+// of the pickup node). BinTask is the key the vendor reports the block ran
+// (JackLoad, JackUnload, Wait, a load sequence's names, or empty for a
+// navigation-only block); it is written to the block's leg row and read for
+// meaning only on an order sent before the record (legacyBlockAction).
 type BlockCompletedEvent struct {
 	eventbus.PayloadBase
 	OrderID       int64

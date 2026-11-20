@@ -70,6 +70,11 @@ type ReleaseDisposition struct {
 	PartialCount             *int           // operator-entered count for SEND PARTIAL BACK (Phase 0b); supersedes runtime when set
 	PartialCountSuggested    *int           // system-suggested count at modal-open for SEND PARTIAL BACK (Phase 0b)
 	CalledBy                 string         // operator identity for audit
+	// DeclareFull is a produce station's RELEASE FULL: the person says the
+	// departing bin is full whatever its count, and the finalize declares its
+	// claim's pack (NodeClaim.ReleaseFullAt). A station's door reads it; a
+	// changeover's evac never declares.
+	DeclareFull bool
 }
 
 // typedEmpty reports a SEND PARTIAL BACK whose operator-typed count is 0.

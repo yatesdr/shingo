@@ -145,5 +145,48 @@ vm.runInContext(extractFn(src, 'calledByFromView') + '\nthis.calledByFromView = 
 eq(noStationCtx.calledByFromView(), 'operator', 'no view falls back');
 eq(calledByFromView(), 'P400', 'a real station name is used verbatim');
 
+// ── RELEASE SHORT asks: partial or full ──────────────────────────────────
+//
+// The one produce release with a choice in it. The tile reads RELEASE SHORT
+// (release_short: a strict claim, the count short of the pack and outside its
+// tolerance), and the person at the line may see a full cart the count calls
+// short. RELEASE PARTIAL posts the plain produce body; RELEASE FULL adds
+// declare_full and nothing else — no disposition, so it can never be the
+// RELEASE EMPTY wire shape that wiped full bins at Hopkinsville. A changeover's
+// release never offers it: a changeover ships the real count.
+const fullCtx = vm.createContext({ console: console, esc: (v) => String(v), getView: () => ({ station: { name: 'P400' } }) });
+vm.runInContext(
+    extractFn(src, 'isChangeoverRelease') + '\n' +
+    extractFn(src, 'offersReleaseFull') + '\n' +
+    extractFn(src, 'releaseFullBody') + '\n' +
+    extractFn(src, 'releaseFullPromptHTML') + '\n' +
+    'this.offersReleaseFull = offersReleaseFull; this.releaseFullBody = releaseFullBody;' +
+    'this.releaseFullPromptHTML = releaseFullPromptHTML;', fullCtx);
+const short = { active_claim: { role: 'produce', uop_capacity: 2400 }, runtime: { remaining_uop_cached: 1990 }, release_short: true };
+const pairURL = '/api/process-nodes/7/release-staged';
+truthy(fullCtx.offersReleaseFull(short, pairURL), 'RELEASE SHORT on the pair door asks');
+truthy(fullCtx.offersReleaseFull(short, '/api/orders/9/release'), 'RELEASE SHORT on the per-order door asks');
+eq(fullCtx.offersReleaseFull(Object.assign({}, short, { release_short: false }), pairURL), false,
+    'a produce RELEASE that is not short does not ask');
+eq(fullCtx.offersReleaseFull(short, '/api/processes/3/changeover/release?node_id=7'), false,
+    'a changeover release never offers RELEASE FULL');
+eq(fullCtx.offersReleaseFull({ active_claim: { role: 'consume' }, release_short: true }, pairURL), false,
+    'consume never offers RELEASE FULL');
+eq(fullCtx.offersReleaseFull(null, pairURL), false, 'no entry does not ask');
+
+const fb = fullCtx.releaseFullBody('P400');
+eq(fb.declare_full, true, 'RELEASE FULL declares');
+eq(fb.called_by, 'P400', 'RELEASE FULL names who declared it');
+eq(fb.disposition, undefined, 'RELEASE FULL carries no disposition — it cannot clear the bin');
+eq(fb.qty_by_part, undefined, 'RELEASE FULL answers no lineside question');
+const pb = singleOutcomeReleaseBody(short, ['767A5']);
+eq(pb && pb.declare_full, undefined, 'the plain produce body (RELEASE PARTIAL) does not declare');
+
+const html = fullCtx.releaseFullPromptHTML(short);
+truthy(html.indexOf('Counted 1990 of 2400') >= 0, 'the prompt shows the count against the pack');
+truthy(html.indexOf('data-action="release-short-partial"') >= 0 && html.indexOf('>RELEASE PARTIAL<') >= 0, 'RELEASE PARTIAL is offered');
+truthy(html.indexOf('data-action="release-short-full"') >= 0 && html.indexOf('>RELEASE FULL<') >= 0, 'RELEASE FULL is offered');
+truthy(html.indexOf('data-action="release-cancel"') >= 0, 'CANCEL is offered');
+
 console.log('release single-outcome: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

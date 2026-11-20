@@ -63,16 +63,24 @@ func TakeAskTx(tx *sql.Tx, id int64, from protocol.Status, askedVendorOrderID st
 // FleetYesTx is the fleet's yes, on the caller's transaction: in one statement
 // guarded on the status the hand found and on the ask, the order goes
 // `dispatched` naming the job (vendor_order_id, CREATED), with the robot the
-// create pinned or none, the ask and the wait cleared and the version bumped;
-// then its history row. It returns the row as written (Told), for the station's
-// tell. False, with nothing written, means the row no longer holds that ask in
-// that status: the order ended while the fleet was creating its job.
-func FleetYesTx(tx *sql.Tx, id int64, from protocol.Status, askedVendorOrderID, robotID, detail, code, actor string, refJSON any) (Told, bool, error) {
+// create pinned or none and the record of the blocks the create sent (actions,
+// block id -> action, into block_actions: replaced, not merged, since every
+// block of the job named here was sent now), the ask and the wait cleared and
+// the version bumped; then its history row. It returns the row as written
+// (Told), for the station's tell. False, with nothing written, means the row no
+// longer holds that ask in that status: the order ended while the fleet was
+// creating its job. One of the writers of block_actions, with ClaimAppend.
+func FleetYesTx(tx *sql.Tx, id int64, from protocol.Status, askedVendorOrderID, robotID string, actions map[string]string, detail, code, actor string, refJSON any) (Told, bool, error) {
 	to := protocol.StatusDispatched
+	raw, err := blockActionsJSON(actions)
+	if err != nil {
+		return Told{}, false, err
+	}
 	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET status=$1, vendor_order_id=$2, vendor_state='CREATED',
-		robot_id=$3, asked_vendor_order_id='', error_detail='', updated_at=$4, version=version+1`+waitEndsSQL(string(to))+`
+		robot_id=$3, block_actions=$7::jsonb, asked_vendor_order_id='', error_detail='', updated_at=$4,
+		version=version+1`+waitEndsSQL(string(to))+`
 		WHERE id=$5 AND status=$6 AND asked_vendor_order_id=$2`+ToldReturning,
-		string(to), askedVendorOrderID, robotID, clock.Now().UTC(), id, string(from)))
+		string(to), askedVendorOrderID, robotID, clock.Now().UTC(), id, string(from), raw))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Told{}, false, nil
 	}

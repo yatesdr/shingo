@@ -137,6 +137,7 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"CompletedAt":   "completed_at",
 		"WaitIndex":     "wait_index",
 		"StepsDone":     "steps_done",
+		"BlockActions":  "block_actions",
 		"QueueReason":   "queue_reason",
 		"QueueCode":     "queue_code",
 		"QueueCause":    "queue_cause",

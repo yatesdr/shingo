@@ -59,7 +59,15 @@ type Order struct {
 	// "" when Core is not asking. Core-only, never on the wire. Read it through
 	// the questions in order_ask.go, never beside a raw status test.
 	AskedVendorOrderID string `json:"-"`
-	QueueReason        string `json:"queue_reason,omitempty"`
+	// BlockActions is what each block Core sent the fleet for this order is,
+	// by block id: protocol.ActionPickup, ActionDropoff, ActionWait, or "" for
+	// a block of no step's kind (the turns of an advanced load sequence around
+	// its lift). Core's own record, written as the blocks are sent (the
+	// fleet's yes and orders.ClaimAppend) and read when one finishes; never on
+	// the wire. nil is an order sent before the record existed (the column is
+	// NULL): its blocks are read by their binTask names for its whole life.
+	BlockActions map[string]string `json:"-"`
+	QueueReason  string            `json:"queue_reason,omitempty"`
 	// QueueCode is the structured category behind QueueReason — one of the
 	// protocol.QueueCode values (waiting_for_material, waiting_for_slot, …).
 	// The sentence is generated FROM this code by the dispatch formatter, so the

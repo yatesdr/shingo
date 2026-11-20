@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -454,5 +455,44 @@ func TestHandlePayloadsPage_PerRowColumns(t *testing.T) {
 		if !strings.Contains(pb, want) {
 			t.Errorf("PIN-PB row missing %q", want)
 		}
+	}
+}
+
+// TestHandlePayloadsPage_ShowsWhoMadeAFloorPart: a part made at the floor
+// shows, on its row, the station and the process that made it and when, read
+// from the audit row its create wrote (PayloadService.FloorMade); a part made
+// on the desktop shows no such line.
+func TestHandlePayloadsPage_ShowsWhoMadeAFloorPart(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForPages(t)
+	mintBinType(t, db, "SYN-PG-BT")
+	_, _, err := h.engine.PayloadService().CreateFromFloor("edge.pg", protocol.PartCreateRequest{
+		ProcessID: 17, PartNumber: "SYN-PG-FLOOR", StandardPack: 40, BinTypeCode: "SYN-PG-BT"})
+	testutil.MustNoErr(t, err, "the floor part")
+	if _, err := db.DB.Exec(`INSERT INTO payloads (code, uop_capacity) VALUES ('SYN-PG-DESK', 5)`); err != nil {
+		t.Fatalf("the desktop part: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/payloads", nil)
+	req.AddCookie(loggedInSession(t, h))
+	rec := httptest.NewRecorder()
+	h.handlePayloadsPage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	row := func(code string) string {
+		i := strings.Index(body, ">"+code+"<")
+		if i < 0 {
+			t.Fatalf("no row for %s", code)
+		}
+		end := strings.Index(body[i:], "</tr>")
+		return body[i : i+end]
+	}
+	if floor := row("SYN-PG-FLOOR"); !strings.Contains(floor, "Made at the floor: edge.pg · process 17 · ") {
+		t.Errorf("the floor part's row does not say who made it:\n%s", floor)
+	}
+	if desk := row("SYN-PG-DESK"); strings.Contains(desk, "Made at the floor") {
+		t.Errorf("the desktop part's row says it was made at the floor:\n%s", desk)
 	}
 }

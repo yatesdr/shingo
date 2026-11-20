@@ -1,7 +1,9 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -56,6 +58,12 @@ type binRow struct {
 // definition and carries the reasoning.
 const carrierNodePrefix = "_ROBOT:"
 
+// inFlight reports whether a bin is between nodes, at _TRANSIT or on a robot's
+// deck: a row handleBins draws InTransit.
+func inFlight(b *domain.Bin) bool {
+	return b.NodeName == domain.TransitNodeName || strings.HasPrefix(b.NodeName, carrierNodePrefix)
+}
+
 // transitOrderFor finds the order behind an in-flight bin: its live claim if it
 // has one, otherwise the most recent order that carried it.
 func (h *Handlers) transitOrderFor(b *domain.Bin) *domain.Order {
@@ -108,7 +116,7 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	labels := h.processLabelsFor()
 	rows := make([]binRow, len(bins))
 	for i, b := range bins {
-		row := binRow{Bin: b, Process: labels.node(b.NodeName)}
+		row := binRow{Bin: b}
 		switch {
 		case b.NodeName == domain.TransitNodeName:
 			row.InTransit = true
@@ -117,19 +125,20 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 			row.InTransit = true
 			row.CarriedBy = strings.TrimPrefix(b.NodeName, carrierNodePrefix)
 		}
+		var transit *domain.Order
 		if row.InTransit {
 			// The claim first, then the bin's last order. A stranded bin has no
 			// claim left — that release is what stranded it — so its history is
 			// the only way back to what it was carrying and where it was going.
-			if o := h.transitOrderFor(b); o != nil {
-				row.Process = labels.order(o)
-				row.TransitPayload = o.PayloadCode
-				row.TransitSource = o.SourceNode
-				row.TransitDest = o.DeliveryNode
-				row.TransitOrderID = o.ID
-				row.TransitOrderStatus = string(o.Status)
+			if transit = h.transitOrderFor(b); transit != nil {
+				row.TransitPayload = transit.PayloadCode
+				row.TransitSource = transit.SourceNode
+				row.TransitDest = transit.DeliveryNode
+				row.TransitOrderID = transit.ID
+				row.TransitOrderStatus = string(transit.Status)
 			}
 		}
+		row.Process = labels.bin(b, transit)
 		rows[i] = row
 	}
 
@@ -162,11 +171,21 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	binTypesJSON, _ := json.Marshal(binTypes)
 	payloadBinTypesJSON, _ := json.Marshal(payloadBinTypeIDs)
 
+	// The Bin Types section: a tab per family, its keys from the one families
+	// read, the pickers' options from the one scene_points read
+	// (bins_family_keys.go).
+	familyCodes, familyKeys := h.carrierFamilies()
+	sceneKeys := h.readSceneKeys()
+	btFamilies := binTypeFamilies(binTypes, familyKeys, sceneKeys)
+
 	data := map[string]any{
 		"Page":                "bins",
 		"Bins":                rows,
 		"BinTypes":            binTypes,
-		"CarrierFamilies":     h.carrierFamilyCodes(),
+		"BinTypeFamilies":     btFamilies,
+		"BinTypeCount":        binTypeCount(btFamilies),
+		"KeyScene":            sceneKeys,
+		"CarrierFamilies":     familyCodes,
 		"Payloads":            payloads,
 		"BinHasNotes":         binHasNotes,
 		"NodesJSON":           template.JS(nodesJSON),
@@ -315,7 +334,7 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 		h.jsonSuccess(w)
 		return
 	}
-	answer := binActionAnswer{Status: "ok", binView: h.binDetailView(fresh)}
+	answer := binActionAnswer{Status: "ok", binView: h.binDetailView(fresh, h.binRowFactsFor(fresh.ID))}
 	if req.Action == "move" {
 		answer.Warning = h.binMoveWarning(fresh)
 	}
@@ -341,16 +360,25 @@ func derefInt64(p *int64) int64 {
 
 // --- Bin detail API ---
 
+// binDetailResponse is GET /api/bins/detail's whole answer: the bin's view and
+// its history. It embeds binView, flattened, so the two answers cannot drift.
 type binDetailResponse struct {
+	binView
+	Audit []*domain.AuditEntry `json:"audit"`
+}
+
+// binView is what the bin pop-up and the table row draw (LC12): the detail
+// answer without the history. The bin's audit has no limit, so it is read only
+// when someone opens the Journal.
+type binView struct {
 	Bin      *domain.Bin      `json:"bin"`
 	Manifest *domain.Manifest `json:"manifest"`
 	Template *domain.Payload  `json:"template,omitempty"`
-	// TemplateManifest carries the payload template's per-cycle ratios so the
-	// page can show a count per manifest line: bin.uop_remaining x the
-	// matching line's parts_per_cycle. The bin manifest stores no count of
+	// TemplateManifest carries the payload template's lines so the page can
+	// show a count per manifest line, derived from bin.uop_remaining by
+	// protocol.ManifestItem's count rule. The bin manifest stores no count of
 	// its own, so without this the page has a part list and no numbers.
 	TemplateManifest []*domain.PayloadManifestItem `json:"template_manifest,omitempty"`
-	Audit            []*domain.AuditEntry          `json:"audit"`
 	CurrentOrder     *domain.Order                 `json:"current_order,omitempty"`
 	RecentOrders     []*domain.Order               `json:"recent_orders"`
 	// LoadRefusal is the sentence a LOAD of this bin would be refused with
@@ -358,23 +386,74 @@ type binDetailResponse struct {
 	// disables Load Payload and shows it. Read from the bin row and
 	// CurrentOrder, both read already.
 	LoadRefusal string `json:"load_refusal,omitempty"`
+	// Process and HasNotes are the two things a table row shows that the bin
+	// record does not carry (binRowFacts). The page paints its Process cell
+	// and notes chip from them, as handleBins' row does. Absent is no process
+	// and no notes.
+	Process  string `json:"process,omitempty"`
+	HasNotes bool   `json:"has_notes,omitempty"`
 }
 
-// binView is binDetailResponse without the history: what the bin pop-up and
-// the table row draw (LC12). The bin's audit has no limit, so it is read only
-// when someone opens the Journal. Same fields, same order, same tags.
-type binView struct {
-	Bin              *domain.Bin                   `json:"bin"`
-	Manifest         *domain.Manifest              `json:"manifest"`
-	Template         *domain.Payload               `json:"template,omitempty"`
-	TemplateManifest []*domain.PayloadManifestItem `json:"template_manifest,omitempty"`
-	CurrentOrder     *domain.Order                 `json:"current_order,omitempty"`
-	RecentOrders     []*domain.Order               `json:"recent_orders"`
-	LoadRefusal      string                        `json:"load_refusal,omitempty"`
+// transitOrder is the order behind an in-flight bin, from what the view
+// already read: transitOrderFor's answer, without reading it again.
+func (v binView) transitOrder() *domain.Order {
+	switch {
+	case !inFlight(v.Bin):
+		return nil
+	case v.Bin.ClaimedBy != nil:
+		return v.CurrentOrder
+	case len(v.RecentOrders) > 0:
+		return v.RecentOrders[0]
+	}
+	return nil
+}
+
+// binRowFacts are a row's facts the bin record does not carry, read once for
+// however many bins an answer draws: the process each bin belongs to and
+// which bins have notes.
+type binRowFacts struct {
+	labels processLabels
+	notes  map[int64]bool
+}
+
+// binRowFactsFor reads the row facts for these bins. A failed read draws an
+// empty Process and no notes chip, never a guess (processLabelsFor).
+func (h *Handlers) binRowFactsFor(binIDs ...int64) binRowFacts {
+	notes, err := h.engine.BinService().HasNotes(binIDs)
+	if err != nil {
+		log.Printf("bin rows: read notes: %v", err)
+	}
+	return binRowFacts{labels: h.processLabelsFor(), notes: notes}
+}
+
+// withRowFacts sets the view's row facts from what it already read.
+func (v binView) withRowFacts(facts binRowFacts) binView {
+	v.Process = facts.labels.bin(v.Bin, v.transitOrder())
+	v.HasNotes = facts.notes[v.Bin.ID]
+	return v
+}
+
+// binRowDetail is binView cut to what a table row draws (bins-row.js): the
+// bin, the order behind it when it is in flight, and the row facts. It reads
+// what handleBins reads for a row, so the page can re-read every row at once
+// for the price of drawing the page. Not an answer for the pop-up, which
+// draws the rest.
+func (h *Handlers) binRowDetail(b *domain.Bin, facts binRowFacts) binView {
+	v := binView{Bin: b, RecentOrders: []*domain.Order{}}
+	if inFlight(b) {
+		if o := h.transitOrderFor(b); o != nil {
+			if b.ClaimedBy != nil {
+				v.CurrentOrder = o
+			} else {
+				v.RecentOrders = []*domain.Order{o}
+			}
+		}
+	}
+	return v.withRowFacts(facts)
 }
 
 // binDetailView reads everything the detail answer carries except the audit.
-func (h *Handlers) binDetailView(b *domain.Bin) binView {
+func (h *Handlers) binDetailView(b *domain.Bin, facts binRowFacts) binView {
 	v := binView{Bin: b}
 
 	// Parse manifest
@@ -383,8 +462,8 @@ func (h *Handlers) binDetailView(b *domain.Bin) binView {
 	}
 
 	// Payload template, and its manifest lines — the page derives each part's
-	// count from uop_remaining x parts_per_cycle, so the ratios travel with
-	// the bin rather than costing the page a second round trip.
+	// count from uop_remaining and these lines, so they travel with the bin
+	// rather than costing the page a second round trip.
 	if b.PayloadCode != "" {
 		if p, err := h.engine.PayloadService().GetByCode(b.PayloadCode); err == nil {
 			v.Template = p
@@ -406,7 +485,7 @@ func (h *Handlers) binDetailView(b *domain.Bin) binView {
 	if v.RecentOrders == nil {
 		v.RecentOrders = []*domain.Order{}
 	}
-	return v
+	return v.withRowFacts(facts)
 }
 
 // apiBinDetail answers GET /api/bins/detail?id=N. The default answer is
@@ -426,27 +505,90 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := h.binDetailView(b)
+	v := h.binDetailView(b, h.binRowFactsFor(b.ID))
 	if r.URL.Query().Get("history") == "0" {
 		h.jsonOK(w, v)
 		return
 	}
 
-	resp := binDetailResponse{
-		Bin:              v.Bin,
-		Manifest:         v.Manifest,
-		Template:         v.Template,
-		TemplateManifest: v.TemplateManifest,
-		CurrentOrder:     v.CurrentOrder,
-		RecentOrders:     v.RecentOrders,
-		LoadRefusal:      v.LoadRefusal,
-	}
-
-	// Audit log
+	resp := binDetailResponse{binView: v}
 	resp.Audit, _ = h.engine.AuditService().ListForEntity("bin", id)
-
 	h.jsonOK(w, resp)
 }
+
+// apiBinRows answers GET /api/bins/rows: Bins-table rows, as binRowDetail
+// reads them, for the page to repaint without a reload.
+//
+//   - ids=1,2 names bins. One that no longer exists is listed in gone, for the
+//     page to drop its row.
+//   - orders=7,8 adds the carts those orders carry. An order's claim and its
+//     release change its carts' rows (the order chip, the route) and no bin
+//     event says so.
+//   - neither is every bin: the page's re-read after its live link dropped,
+//     when it cannot know what it missed.
+func (h *Handlers) apiBinRows(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ids := queryIDs(q, "ids", maxBinRowsAsked)
+	orderIDs := queryIDs(q, "orders", maxBinRowsAsked)
+	svc := h.engine.BinService()
+
+	var list []*domain.Bin
+	gone := []int64{}
+	if len(ids) == 0 && len(orderIDs) == 0 {
+		all, err := svc.ListBins()
+		if err != nil {
+			h.jsonError(w, "could not read the bins: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		list = all
+	} else {
+		seen := make(map[int64]bool, len(ids))
+		for _, id := range ids {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			b, err := svc.GetBin(id)
+			if errors.Is(err, sql.ErrNoRows) {
+				gone = append(gone, id)
+				continue
+			}
+			if err != nil {
+				h.jsonError(w, fmt.Sprintf("could not read bin %d: %v", id, err), http.StatusInternalServerError)
+				return
+			}
+			list = append(list, b)
+		}
+		for _, oid := range orderIDs {
+			carts, err := svc.CartsOfOrder(oid)
+			if err != nil {
+				h.jsonError(w, fmt.Sprintf("could not read the carts of order %d: %v", oid, err), http.StatusInternalServerError)
+				return
+			}
+			for _, b := range carts {
+				if !seen[b.ID] {
+					seen[b.ID] = true
+					list = append(list, b)
+				}
+			}
+		}
+	}
+
+	binIDs := make([]int64, len(list))
+	for i, b := range list {
+		binIDs[i] = b.ID
+	}
+	facts := h.binRowFactsFor(binIDs...)
+	rows := make([]binView, len(list))
+	for i, b := range list {
+		rows[i] = h.binRowDetail(b, facts)
+	}
+	h.jsonOK(w, map[string]any{"rows": rows, "gone": gone})
+}
+
+// maxBinRowsAsked bounds each list GET /api/bins/rows takes. The page asks for
+// the bins and orders one burst of events named, which is a handful.
+const maxBinRowsAsked = 200
 
 // --- Bulk bin action API ---
 
@@ -476,34 +618,48 @@ func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := h.engine.BinService()
-	// current re-reads a bin an action may have changed; on a failed re-read
-	// the row read before the action is what the answer carries.
-	current := func(b *domain.Bin) *binView {
-		if fresh, err := svc.GetBin(b.ID); err == nil {
-			b = fresh
-		}
-		v := h.binDetailView(b)
-		return &v
-	}
 	results := make([]bulkResult, 0, len(req.IDs))
+	// drawn is the bin each result draws, nil for an id with no bin: the bin
+	// as an action left it, re-read, or as read before when that re-read fails
+	// or no action ran (a locked bin).
+	drawn := make([]*domain.Bin, 0, len(req.IDs))
 	for _, id := range req.IDs {
 		b, err := svc.GetBin(id)
 		if err != nil {
 			results = append(results, bulkResult{ID: id, Error: "not found"})
+			drawn = append(drawn, nil)
 			continue
 		}
+		res := bulkResult{ID: id, OK: true}
 		if b.Locked && req.Action != "unlock" {
-			v := h.binDetailView(b)
-			results = append(results, bulkResult{ID: id, Error: fmt.Sprintf("locked by %s", b.LockedBy), binView: &v})
-			continue
+			res = bulkResult{ID: id, Error: fmt.Sprintf("locked by %s", b.LockedBy)}
+		} else {
+			if err := h.executeBinAction(b, req.Action, req.Params); err != nil {
+				res = bulkResult{ID: id, Error: err.Error()}
+			}
+			if fresh, err := svc.GetBin(b.ID); err == nil {
+				b = fresh
+			}
 		}
-		if err := h.executeBinAction(b, req.Action, req.Params); err != nil {
-			results = append(results, bulkResult{ID: id, Error: err.Error(), binView: current(b)})
-			continue
-		}
-		results = append(results, bulkResult{ID: id, OK: true, binView: current(b)})
+		results = append(results, res)
+		drawn = append(drawn, b)
 	}
 
+	// The row facts are read once, after every action ran, so a note an action
+	// added is on its row.
+	binIDs := make([]int64, 0, len(drawn))
+	for _, b := range drawn {
+		if b != nil {
+			binIDs = append(binIDs, b.ID)
+		}
+	}
+	facts := h.binRowFactsFor(binIDs...)
+	for i, b := range drawn {
+		if b != nil {
+			v := h.binDetailView(b, facts)
+			results[i].binView = &v
+		}
+	}
 	h.jsonOK(w, map[string]any{"results": results})
 }
 
@@ -554,17 +710,21 @@ func (h *Handlers) apiBinsByNode(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, bins)
 }
 
-// carrierFamilyCodes is the Bin Types form's picker. A failed read leaves it empty, and the box
-// still takes a typed code.
-func (h *Handlers) carrierFamilyCodes() []string {
+// carrierFamilies is the page's one read of the carrier families: their codes
+// for the Bin Types form's Family list, and each family's keys by id for the
+// family tabs' key pickers. A failed read leaves both empty: the box still
+// takes a typed code, and no tab offers a key to save (binTypeFamilies).
+func (h *Handlers) carrierFamilies() ([]string, map[int64]pageFamilyKeys) {
 	families, err := h.engine.BinService().ListCarrierFamilies()
 	if err != nil {
 		log.Printf("bins: list carrier families: %v", err)
-		return nil
+		return nil, nil
 	}
-	out := make([]string, 0, len(families))
+	codes := make([]string, 0, len(families))
+	keys := make(map[int64]pageFamilyKeys, len(families))
 	for _, f := range families {
-		out = append(out, f.Code)
+		codes = append(codes, f.Code)
+		keys[f.ID] = pageFamilyKeys{lift: f.LiftBinTask, wait: f.WaitBinTask}
 	}
-	return out
+	return codes, keys
 }

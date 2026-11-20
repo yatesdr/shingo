@@ -58,8 +58,9 @@ CREATE TABLE IF NOT EXISTS payloads (
     near_empty_threshold_pct INTEGER NOT NULL DEFAULT 0,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- v161: the layers of totes a full cart stands, and the cycles (UOP) that
-    -- fill one tote. NULL is unknown.
+    -- v161: the layers of totes a full cart stands, and the UOP (in the
+    -- capacity's unit: pieces, for a payload of one part) that fill one tote.
+    -- NULL is unknown.
     tote_layers             INTEGER CHECK (tote_layers > 0),
     uop_per_tote            INTEGER CHECK (uop_per_tote > 0)
 );
@@ -86,7 +87,9 @@ CREATE TABLE IF NOT EXISTS payload_containment (
 -- name; task_names is a JSON array of binTask names in execution order. Editable
 -- data (a plant names its RDS-side binTask keys differently); seeded by v50 with
 -- "Child cart interlock". A payload selects a sequence by name via
--- payloads.advanced_load_sequence.
+-- payloads.advanced_load_sequence. lift_at, the index of the name that lifts,
+-- is added by migration 179 and not declared here: v50's seed inserts the row
+-- without it, after this DDL, on a fresh database.
 CREATE TABLE IF NOT EXISTS load_sequences (
     name        TEXT PRIMARY KEY,
     task_names  TEXT NOT NULL DEFAULT '[]',
@@ -278,17 +281,23 @@ CREATE TABLE IF NOT EXISTS orders (
     -- open step (an order with no stored plan counts its two implied steps).
     -- The route strip reads where the robot is from it. Added by migration 167.
     steps_done INTEGER NOT NULL DEFAULT 0,
+    -- What each block Core sent the fleet for this order is, by block id: a
+    -- plan action (pickup, dropoff, wait) or '' for a block of no step's kind.
+    -- Written by the create and by each append; the block subscriber reads a
+    -- finished block's meaning from it. NULL on an order sent before migration
+    -- 179, which added it, and read by the old name rule for its whole life.
+    block_actions JSONB DEFAULT '{}'::jsonb,
     -- One counter for everything the order's station is told: bumped in the
     -- same statement as a status write, a robot write that names a new robot,
     -- and a change of wait the station is told. It rides the order.update, the
     -- reconcile snapshot and the projection, and the station applies only a
     -- newer one. Born 1, so a 0 on the wire is an older Core. Added by
-    -- migration 179.
+    -- migration 181.
     version BIGINT NOT NULL DEFAULT 1,
     -- The vendor order id Core is asking the fleet to create, from the hand
     -- that takes the order's holds until the fleet answers; blank when Core is
     -- not asking. Core-only, never on the wire. An open ask is spoken for
-    -- whatever the status says. Added by migration 180.
+    -- whatever the status says. Added by migration 182.
     asked_vendor_order_id TEXT NOT NULL DEFAULT ''
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
@@ -425,12 +434,12 @@ CREATE TABLE IF NOT EXISTS payload_bin_types (
 );
 
 -- parts_per_cycle is a RATIO, not a count: how many of this part one
--- production cycle consumes. The physical count in a bin is
--- bins.uop_remaining x parts_per_cycle, derived at read time and stored
--- nowhere. It was called quantity until v99 renamed it; the value did not
--- change, because it was always the ratio. Default 1: a line with no stated
--- ratio is one per cycle, and the old default of 0 contributed nothing to any
--- count while looking configured.
+-- assembly cycle consumes, an assembly consume setting. A bin's count of its
+-- parts is derived at read time from bins.uop_remaining and stored nowhere;
+-- the rule is protocol.ManifestItem's. It was called quantity until v99
+-- renamed it; the value did not change, because it was always the ratio.
+-- Default 1: a line with no stated ratio is one per cycle, and the old default
+-- of 0 contributed nothing to any count while looking configured.
 CREATE TABLE IF NOT EXISTS payload_manifest (
     id              BIGSERIAL PRIMARY KEY,
     payload_id      BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,

@@ -10,6 +10,16 @@ import (
 	"shingoedge/domain"
 )
 
+// usePlantLocation sets the plant zone for one test and puts the old one back
+// when it ends. The zone is the package's, so a test that calls it is not
+// parallel: a parallel render would read Chicago or UTC by timing.
+func usePlantLocation(t *testing.T, loc *time.Location) {
+	t.Helper()
+	orig := plantZone.Load()
+	plantZone.Store(loc)
+	t.Cleanup(func() { plantZone.Store(orig) })
+}
+
 // The plant-local display convention, pinned in rendered MARKUP on the edge
 // side — the twin of core/www's TestRenderedPagesArePlantLocal. Storage is
 // UTC, the wire is RFC3339-UTC, and the server's first paint is plant-local
@@ -26,9 +36,7 @@ func TestRenderedPageIsPlantLocal(t *testing.T) {
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
-	orig := plantLocation
-	plantLocation = chicago
-	defer func() { plantLocation = orig }()
+	usePlantLocation(t, chicago)
 
 	tmpl := template.Must(template.New("").
 		Funcs(templateFuncs()).
@@ -67,9 +75,7 @@ func TestHeaderCarriesPlantTZ(t *testing.T) {
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
-	orig := plantLocation
-	plantLocation = chicago
-	defer func() { plantLocation = orig }()
+	usePlantLocation(t, chicago)
 
 	// The whole set, like the sibling test above: the PLANT_TZ / SHINGO_CLOCK
 	// inlines live in partials/clock-globals.html now, so header.html alone no

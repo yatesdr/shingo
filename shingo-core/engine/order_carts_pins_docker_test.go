@@ -90,7 +90,7 @@ func (c *cartsSwap) block(t *testing.T, node string, lift bool) {
 		if strings.TrimSpace(b.Location) != node {
 			continue
 		}
-		if lift && IsPickupBlock(b.BinTask) || !lift && IsDropoffBlock(b.BinTask) {
+		if lift && b.Action == protocol.ActionPickup || !lift && b.Action == protocol.ActionDropoff {
 			if !c.sim.CompleteBlock(c.order.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0) {
 				t.Fatalf("block %s @ %s was not emitted", b.BlockID, b.Location)
 			}
@@ -255,9 +255,20 @@ func TestOrderCartsPin_APickupAfterTheEndLiftsItsRowsCart(t *testing.T) {
 	c.block(t, c.p.Name, true)
 	c.block(t, c.w.Name, false)
 	c.cancel(t)
+	// The swap's own pickup at S, the block the fleet was sent, finishing on
+	// the floor after the cancel.
+	late := ""
+	for _, b := range c.sim.BlocksForOrder(c.order.VendorOrderID) {
+		if b.Location == c.s.Name && b.Action == protocol.ActionPickup {
+			late = b.BlockID
+		}
+	}
+	if late == "" {
+		t.Fatalf("fixture: the swap was sent no pickup at %s", c.s.Name)
+	}
 	c.eng.handleBlockCompleted(BlockCompletedEvent{
 		OrderID: c.order.ID, VendorOrderID: c.order.VendorOrderID,
-		BlockID: c.uuid + "-late", Location: c.s.Name, BinTask: "JackLoad",
+		BlockID: late, Location: c.s.Name, BinTask: "JackLoad",
 	})
 
 	b, err := c.db.GetBin(c.b.ID)

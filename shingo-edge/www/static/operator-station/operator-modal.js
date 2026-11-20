@@ -14,8 +14,8 @@ import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { emptyCarrierHeld, isOwnEmptyOut } from './operator-window-state.js';
-import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight } from './operator-board-model.js';
-import { confirmUnloadSwap } from './operator-render.js';
+import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight, replacePartialPart, bringHomeOf } from './operator-board-model.js';
+import { confirmUnloadSwap, confirmClearLoaderHome } from './operator-render.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
@@ -553,6 +553,18 @@ export function renderModal(entry) {
                 }
             }
 
+            // REPLACE PARTIAL: the board's card, the same rule
+            // (replacePartialPart); the LOAD screen as a replace.
+            const replacing = binsKnown(getView()) ? replacePartialPart(entry) : '';
+            if (replacing) {
+                html += actionBtn('REPLACE PARTIAL', 'request', true, 'replace-partial:' + replacing);
+            }
+            // BRING PARTIAL HOME: the board's Bring partials home card, the
+            // same rule (bringHomeOf) and the same confirm. Show all's tile of
+            // a partial home opens this modal, so it offers both.
+            if (binsKnown(getView()) && bringHomeOf(entry)) {
+                html += actionBtn('BRING PARTIAL HOME', 'request', true, 'bring-home');
+            }
             // CLEAR BIN. An unloader's goes through the CLEAR panel the board's
             // tap opens, which names the carrier type (a bug fixed: it posted
             // clear-bin with no type, around the panel); a loader's posts as it
@@ -864,8 +876,8 @@ function cellCardAction(entry, claim, remaining) {
         // carries at all. Deleted rather than annotated — git remembers, and
         // ten lines of prose explaining unreachable code is a thing every
         // future reader has to disprove. If the label is wanted, the count is
-        // uop_remaining x the template's parts_per_cycle and Core is where it
-        // would come from.
+        // derived from uop_remaining by protocol.ManifestItem's count rule and
+        // Core is where it would come from.
         const confirmLabel = 'CONFIRM';
         if (Number.isInteger(delivered.id) && delivered.id > 0) {
             return { label: confirmLabel, cls: 'request', enabled: true,
@@ -1271,6 +1283,26 @@ const ACTION_HANDLERS = {
         closeModal();
         // A loader tile carries no capacity: the load modal takes the part's.
         openLoadBin(entry.node.id, [code], 0);
+    },
+
+    // REPLACE PARTIAL: the load modal as a replace, the part filled in.
+    'replace-partial': (code) => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        if (!entry) return;
+        closeModal();
+        openLoadBin(entry.node.id, [code], 0, { replace: true });
+    },
+
+    // BRING PARTIAL HOME: the board card's confirm (operator-render.js
+    // confirmClearLoaderHome), naming the home and the buffer spot.
+    'bring-home': () => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        const bring = entry ? bringHomeOf(entry) : null;
+        if (!bring) return;
+        closeModal();
+        confirmClearLoaderHome(entry.node.id, bring.home, bring.spot, bring.partial);
     },
 
     // An unloader's CLEAR BIN: the CLEAR panel the board's tap opens, with the

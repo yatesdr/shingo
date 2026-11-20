@@ -53,8 +53,11 @@ func TestComplexIntake_TheRowAsWritten(t *testing.T) {
 		SourceNode: storage.Name, DeliveryNode: line.Name, ProcessNode: line.Name, Coordinated: true,
 		SiblingOrderUUID: "cir-sibling", KeyRoute: []string{"R1", "R2"}, KeyTask: "T1",
 		OriginID: origin, OriginClass: protocol.OriginClassAttached,
-		Version:   1, // born at 1 (v179); intake's park or dispatch has not written yet
+		Version:   1, // born at 1 (v181); intake's park or dispatch has not written yet
 		CreatedAt: got.CreatedAt, UpdatedAt: got.UpdatedAt,
+		// Born with an empty record of the blocks sent (block_actions DEFAULT
+		// '{}'): nothing has gone to the fleet yet.
+		BlockActions: map[string]string{},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the complex row\n got %+v\nwant %+v", got, want)

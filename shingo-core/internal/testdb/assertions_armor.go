@@ -24,8 +24,8 @@ import (
 // The window was one handover attempt: the hand used to CAS the order to
 // `dispatched` and THEN ask the fleet to create. It no longer does: the hand opens
 // an ask and `dispatched` is the fleet's yes, written with the vendor id, and since
-// v181 orders_dispatched_names_its_job refuses a vendorless `dispatched` write. So
-// the clause finds only a row from before v181 (the rule is NOT VALID). Five
+// v183 orders_dispatched_names_its_job refuses a vendorless `dispatched` write. So
+// the clause finds only a row from before v183 (the rule is NOT VALID). Five
 // minutes is many multiples of one RDS request, so nothing healthy reached it,
 // and it is short enough to catch the wedge inside a shift.
 const crashSliverAge = 5 * time.Minute

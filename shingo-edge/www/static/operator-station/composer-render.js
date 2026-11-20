@@ -12,7 +12,10 @@
 // to how the press runs it — One Part, One Spot / Two Parts, Two Spots / One
 // Part, Two Spots — then, when the parts already run in a style, Use
 // style or Set up new; setting up picks the engineer's recipe (asked
-// only when several fit), then the spots screen, then the same check.
+// only when several fit), then the spots screen, then the same check. A
+// part the list does not have is asked of Core from the New part row, where
+// the composer read draws it (new_part); Core's yes opens the picker again on
+// that part, as a tap on its row would.
 //
 // THE WORDS ARE THE DESKTOP'S: a Recipe is spots and robot moves with no part,
 // a style is a recipe with its parts on it.
@@ -22,6 +25,9 @@
 //   saved     setup off: the styles, searchable by name, part or CATID
 //   confirm   setup off, a style tapped: its name, Back and Start
 //   part      setup on: the styles, then the part list
+//   newpart   setup on, a part Core does not have: its number, standard pack,
+//             carrier, CATID and tote numbers, sent to Core (POST
+//             /api/processes/{id}/parts); done goes on to count with it
 //   count     One Part, One Spot / Two Parts, Two Spots / One Part, Two Spots —
 //             only the ones a recipe here can run, skipped when that is one
 //   second    the second part, the codes one character off the first leading;
@@ -42,16 +48,21 @@
 // spots, and the deck pairing held still while the operator moves things —
 // all of it composer-model's spotsPicture, looked up on the card.
 //
-// NOTHING IS WRITTEN UNTIL START. Every screen before it is local state; Go's
-// words come from flow/preview's mint form (read-only), and Start is flow/mint
-// (open, resolve or mint) then changeover/start on the fingerprint it returns.
+// NOTHING IS WRITTEN UNTIL START, BUT A NEW PART. Every screen before Start is
+// local state; Go's words come from flow/preview's mint form (read-only), and
+// Start is flow/mint (open, resolve or mint) then changeover/start on the
+// fingerprint it returns. The one write before it is the New part form's
+// Add part, which asks Core to make the part and is its own act: backing out
+// of the changeover afterwards leaves the part made.
 // The confirm's Start is changeover/start alone, with no fingerprint: no card
 // was read, so there is nothing for one to hold the start to.
 //
 // THE HASH ENTRY. #compose=<screen>[;parts=A,B][;recipe=ID][;moves=X:Y,…]
 // [;sel=NODE][;style=ID][;split=1][;hold=1] sets LOCAL UI STATE ONLY and never
 // writes — how scripts/composer-shots.sh reaches each screen without driving
-// the DOM. sel selects a recipe place on the Spots step.
+// the DOM. sel selects a recipe place on the Spots step. #compose=newpart
+// opens the New part form (its part number from parts=) where the read draws
+// the door; only its Add part writes.
 
 import { renderFlowPicture } from './operator-flow.js';
 import { esc } from '/static/shared/esc.js';
@@ -77,6 +88,7 @@ let preview = null;     // the last mint preview's answer
 let previewStatus = 0;
 let previewAbort = null;
 let countdown = null;
+let np = null;          // the New part form's state while it is open (npBlank)
 
 const $ = id => document.getElementById(id);
 
@@ -178,6 +190,7 @@ function root() {
 function reset() {
     picks = []; split = false; fresh = false; chosen = 0;
     recipe = null; moves = {}; opened = {}; selected = ''; preview = null;
+    np = null;
 }
 
 export function close() {
@@ -331,13 +344,164 @@ function drawRows(q) {
         shown += near.length;
         rows = rows.filter(r => near.indexOf(r) < 0);
     }
-    h += grp(screen === 'second' ? 'All parts' : 'Set up a part', count(rows.length, 'part')) + rows.map(partRow).join('');
+    // THE NEW PART DOOR leads the part list where the composer read draws it
+    // (setup on, Core answering, a carrier to offer); it stands in for the
+    // engineer's sentence, since the floor can now add the part itself.
+    const door = screen === 'part' && newPartDoor();
+    h += grp(screen === 'second' ? 'All parts' : 'Set up a part', count(rows.length, 'part')) +
+        (door ? newPartRow() : '') + rows.map(partRow).join('');
     shown += rows.length;
     if (!shown) {
         h += grp('', (needle ? 'Nothing in this cell’s parts matches that.' : 'This cell has no parts yet.') +
-            ' An engineer adds parts on the desktop: Processes › Settings › Parts this process runs.');
+            (door ? '' : ' An engineer adds parts on the desktop: Processes › Settings › Parts this process runs.'));
     }
     box.innerHTML = h;
+}
+
+// ── a new part: asked of Core ────────────────────────────────────────────────
+// Core makes it (its checks and the desktop's), and its yes is applied here
+// before the answer reaches the page: the part is in the catalog and on this
+// process's part list. The form sends what was typed; every refusal's
+// sentence is the server's, the Edge's or Core's, never a second copy here.
+
+// newPartDoor: the composer read says the door is drawn.
+function newPartDoor() { return !!flow().new_part; }
+
+function newPartRow() {
+    return '<button class="os-comp-row" data-act="newpart">' +
+        // OWNER-WORDS
+        '<span class="id">New part</span>' +
+        // OWNER-WORDS
+        '<span class="meta">Not in the list? Core adds it, then you set it up.</span>' +
+        // OWNER-WORDS
+        '<span class="vd build">Add</span></button>';
+}
+
+// npBlank is the form's state: what each field holds, the carrier picked, an
+// Add part in flight, and the outcome line ({cls, text}) or null.
+function npBlank(part) {
+    return { part: part || '', pack: '', carrier: '', catid: '', layers: '', perTote: '', sending: false, say: null };
+}
+
+// The typed fields by input id; the carrier is a chip, held in the state.
+const NP_FIELDS = [['os-np-part', 'part'], ['os-np-pack', 'pack'], ['os-np-catid', 'catid'],
+    ['os-np-layers', 'layers'], ['os-np-tote', 'perTote']];
+
+// npRead snapshots the inputs into the state before any redraw replaces them.
+function npRead() {
+    for (const [id, key] of NP_FIELDS) {
+        const el = $(id);
+        if (el) np[key] = el.value;
+    }
+}
+
+// openNewPart opens the form, the part number taken from the list's search
+// when one was typed: it is usually the part the operator could not find.
+function openNewPart(part) {
+    np = npBlank(String(part || '').trim());
+    screen = 'newpart';
+    drawNewPart();
+}
+
+function npField(id, key, label, numeric) {
+    return '<label class="os-comp-fld"><span class="os-lbl">' + esc(label) + '</span>' +
+        '<input id="' + id + '" type="text" autocomplete="off"' + (numeric ? ' inputmode="numeric"' : '') +
+        ' value="' + esc(np[key]) + '"></label>';
+}
+
+function drawNewPart() {
+    const carriers = flow().carrier_types || [];
+    const chip = c => '<button type="button" class="os-chip btn' + (np.carrier === c ? ' on' : '') +
+        '" data-act="npcarrier" data-carrier="' + esc(c) + '" aria-pressed="' + (np.carrier === c) + '">' +
+        esc(c) + '</button>';
+    show().innerHTML =
+        '<div class="os-comp-scrim on"></div>' +
+        '<div class="os-comp-setup on"><div class="os-comp-card os-comp-newpart" role="dialog" aria-label="New part">' +
+        '<div class="top"><div><span class="os-lbl">Change over to</span>' +
+        // OWNER-WORDS
+        '<h2>New part</h2>' +
+        // OWNER-WORDS
+        '<div class="desc">Core adds the part, then you set it up here.</div></div>' +
+        '<button class="x" data-act="topart" aria-label="Back to the part list">&#10005;</button></div>' +
+        '<div class="os-comp-form">' +
+        // OWNER-WORDS
+        npField('os-np-part', 'part', 'Part number') +
+        // OWNER-WORDS
+        npField('os-np-pack', 'pack', 'Standard pack · parts in a full bin', true) +
+        // OWNER-WORDS
+        '<div class="os-comp-fld wide"><span class="os-lbl">Carrier</span>' +
+        '<div class="os-chips">' + carriers.map(chip).join('') + '</div></div>' +
+        // OWNER-WORDS
+        npField('os-np-catid', 'catid', 'CATID · optional') +
+        // OWNER-WORDS
+        '<div class="os-comp-fld wide"><span class="os-lbl">Totes · optional</span></div>' +
+        // OWNER-WORDS
+        npField('os-np-layers', 'layers', 'Tote layers', true) +
+        // OWNER-WORDS
+        npField('os-np-tote', 'perTote', 'Parts per tote', true) +
+        '</div>' +
+        '<div class="os-comp-say">' +
+        (np.say ? '<div class="' + np.say.cls + '">' + esc(np.say.text) + '</div>' : '') + '</div>' +
+        '<div class="os-comp-acts"><button class="os-btn os-btn-quiet os-btn-lg" data-act="topart">Back</button>' +
+        // OWNER-WORDS
+        '<button class="os-btn os-btn-primary os-btn-lg" data-act="npsend"' + (np.sending ? ' disabled' : '') +
+        '>Add part</button></div>' +
+        '</div></div>';
+}
+
+// npWhole is a typed number for the wire: blank is null (not given); a whole
+// number is itself; anything else is 0, which the server refuses with the
+// field's own sentence.
+function npWhole(v) {
+    const s = String(v == null ? '' : v).trim();
+    if (s === '') return null;
+    return /^\d+$/.test(s) ? Number(s) : 0;
+}
+
+// npWire is the door's body (www partCreateBody).
+function npWire(s) {
+    return {
+        station_id: stationID(), part_number: s.part.trim(), standard_pack: npWhole(s.pack) || 0,
+        bin_type_code: s.carrier, catid: s.catid.trim(), tote_layers: npWhole(s.layers), uop_per_tote: npWhole(s.perTote),
+    };
+}
+
+// sendNewPart is Add part. The button disables itself on the first tap and
+// the form says it waits for Core while the request is out: the door holds
+// the request until Core's word, early or late, for the ask's whole life
+// (engine CreatePart). The outcomes:
+//   - 200, done: Core made the part (or had, from this cell) and it is
+//     applied here; the picker opens again on it (npDone);
+//   - anything else: the server's sentence, and the form can be changed and
+//     sent again: Core's no (409), no answer in the ask's life (504), or the
+//     Edge's own refusal.
+// A sheet closed while it waits takes nothing back: Core's yes is applied on
+// the Edge all the same, and the read the picker fetches next lists the part.
+async function sendNewPart() {
+    if (!np || np.sending) return;
+    npRead();
+    np.sending = true;
+    // OWNER-WORDS
+    np.say = { cls: 'os-comp-pending', text: 'Waiting for Core…' };
+    drawNewPart();
+    const res = await postJSON('/api/processes/' + processID() + '/parts', npWire(np));
+    if (screen !== 'newpart' || !np) return;   // closed while it was out
+    if (res.status === 200) { npDone(res.body); return; }
+    np.sending = false;
+    // OWNER-WORDS
+    np.say = { cls: 'os-comp-refusal', text: (res.body && res.body.error) || ('Core did not add the part (' + res.status + ').') };
+    drawNewPart();
+}
+
+// npDone opens the picker again on the new part. The held composer read goes
+// with close(); the read openPicker fetches lists the part, and the recipe
+// cards that read carries are what the next screen asks with.
+function npDone(answer) {
+    const code = answer && answer.payload && answer.payload.code;
+    close();
+    openPicker();
+    if (!code) return;
+    ensureFlow().then(() => { if (screen === 'part') onPart(code); });
 }
 
 // ── a style, tapped ───────────────────────────────────────────────────
@@ -1006,6 +1170,9 @@ function onClick(e) {
     switch (btn.dataset.act) {
         case 'close': close(); break;
         case 'part': onPart(btn.dataset.part); break;
+        case 'newpart': openNewPart(($('os-comp-q') || {}).value); break;
+        case 'npcarrier': npRead(); np.carrier = btn.dataset.carrier; drawNewPart(); break;
+        case 'npsend': sendNewPart(); break;
         case 'saved': onSaved(+btn.dataset.style); break;
         case 'topart': openPicker(); break;
         case 'back': back(); break;
@@ -1048,6 +1215,7 @@ export function openFromHash() {
     const hold = /;hold=1/.test(h);
     switch (m[1]) {
         case 'part': case 'saved': openPicker(); break;
+        case 'newpart': if (newPartDoor()) openNewPart(picks[0]); break;
         case 'count': screen = 'count'; drawCount(countOffers()); break;
         case 'second': screen = 'second'; drawPartSheet(secondTitle()); break;
         case 'reuse': screen = 'reuse'; drawReuse(savedMatches()); break;
@@ -1089,7 +1257,7 @@ window.addEventListener('error', e => {
 // here would CREATE the modal on a page that never opened it.
 export function onEscape() {
     if (!screen || screen === 'started') return;
-    if (['positions', 'which', 'count', 'reuse', 'none', 'confirm'].indexOf(screen) >= 0) { openPicker(); return; }
+    if (['positions', 'which', 'count', 'reuse', 'none', 'confirm', 'newpart'].indexOf(screen) >= 0) { openPicker(); return; }
     close();
 }
 

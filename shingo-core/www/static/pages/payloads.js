@@ -1,12 +1,11 @@
 import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
-import { removeParentElement } from '/static/app.js';
 
 /* --- Manifest builder ---
  *
  * A LINE IS THREE TYPED FIELDS: part number, that part's CATID, and how many of
- * it one production cycle uses. All three are typed, and none of them is a
+ * it one assembly cycle uses. All three are typed, and none of them is a
  * dropdown — this page is where a NEW PART ENTERS SHINGO, so most of what is
  * typed here has never been seen before and a list to choose from would offer
  * the wrong neighbour of the right code, one keystroke away.
@@ -17,10 +16,9 @@ import { removeParentElement } from '/static/app.js';
  * expected set from what went in. The two identifiers have a box each now, and
  * typing a cat id into the CATID box is simply correct.
  *
- * The editable count is PER CYCLE, asked for directly, as the schema means it.
- * The full-bin figure beside it is a read-only readout, not a second field: the
- * ratio is nearly always 1 against capacities in the thousands, which reads
- * like an unfilled box until you see what it multiplies out to.
+ * The editable count is PER ASSEMBLY CYCLE, asked for directly, as the schema
+ * means it: an assembly consume setting, which a press never reads. The figure
+ * beside it is a read-only readout, not a second field (renderFullBin).
  */
 function uopCapacityFor(containerId) {
   var input = document.getElementById(
@@ -28,12 +26,28 @@ function uopCapacityFor(containerId) {
   return (input && parseInt(input.value)) || 0;
 }
 
+// renderFullBin is a line's readout beside its pieces per assembly cycle, by
+// protocol.ManifestItem's count rule. A part alone on the form counts pieces:
+// its capacity is already the pieces a full bin holds, so the readout says how
+// many cycles a full bin feeds an assembly that uses more than one per cycle
+// (a pack of 800 at 8 per cycle feeds 100), and nothing at 1. A kit's line is
+// the pieces a full bin holds, its ratio times the capacity. The rows decide
+// which, so adding or removing one redraws them all (refreshFullBinCells).
 function renderFullBin(row, containerId) {
   var cell = row.querySelector('.mr-fullbin');
   if (!cell) return;
   var per = parseInt(row.querySelector('.mr-per-cycle').value) || 0;
   var cap = uopCapacityFor(containerId);
+  if (cap > 0 && manifestRows(containerId).length === 1) {
+    // OWNER-WORDS
+    cell.textContent = per > 1 ? '= ' + Math.floor(cap / per) + ' cycles / bin' : '';
+    return;
+  }
   cell.textContent = cap > 0 ? '= ' + (per * cap) + ' / bin' : '';
+}
+
+function manifestRows(containerId) {
+  return document.querySelectorAll('#' + containerId + ' .plpart-row');
 }
 
 // renderCATIDNote is the drift-catcher, and it is the reason the CATID box is
@@ -116,11 +130,11 @@ function addManifestRow(containerId, partNumber, catid, perCycle) {
     '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" class="mr-catid">' +
     '<input type="number" placeholder="Per cycle *" value="' + (perCycle === undefined || perCycle === null ? '' : perCycle) + '" step="1" min="1" required class="mr-per-cycle">' +
     '<span class="text-muted mr-fullbin"></span>' +
-    '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>' +
+    '<button type="button" class="btn btn-danger btn-sm" data-action="removeManifestRow" style="padding:0.15rem 0.4rem">&times;</button>' +
     '<span class="mr-catid-note"></span>';
   container.appendChild(row);
   row.dataset.knownCatid = '';
-  renderFullBin(row, containerId);
+  refreshFullBinCells(containerId);
   row.querySelector('.mr-per-cycle').addEventListener('input', function() {
     renderFullBin(row, containerId);
   });
@@ -137,11 +151,22 @@ function addManifestRow(containerId, partNumber, catid, perCycle) {
 
 // refreshFullBinCells re-derives every row's full-bin figure. Bound to the two
 // UoP capacity inputs: the capacity is the other half of the product, so
-// editing it silently staled every row before this existed.
+// editing it silently staled every row before this existed. A row added or
+// removed calls it too: one line and several read differently (renderFullBin).
 function refreshFullBinCells(containerId) {
-  document.querySelectorAll('#' + containerId + ' .plpart-row').forEach(function(row) {
+  manifestRows(containerId).forEach(function(row) {
     renderFullBin(row, containerId);
   });
+}
+
+// removeManifestRow is a line's ×: the row goes and the rows left redraw
+// their readouts.
+function removeManifestRow(btn) {
+  var row = btn && btn.parentElement;
+  var container = row && row.parentElement;
+  if (!row) return;
+  row.remove();
+  if (container && container.id) refreshFullBinCells(container.id);
 }
 
 /* --- Tote numbers ---
@@ -218,9 +243,9 @@ function syncCodeFromPart(containerId) {
 // nothing downstream could tell that value from a deliberate one, which is how
 // rows reached a plant at zero. Blank now refuses at the door.
 //
-// ZERO IS REFUSED TOO, and that is the same decision one step further: the
-// count a bin ships to the inventory ledger is uop_remaining x this number, so
-// a zero line contributes nothing to any count while looking configured. A
+// ZERO IS REFUSED TOO, and that is the same decision one step further: a kit's
+// line counts uop_remaining x this number, and an assembly draws this many a
+// cycle, so a zero line counts and draws nothing while looking configured. A
 // part that genuinely is not in the carrier is a line that should not be on the
 // manifest at all.
 //
@@ -253,8 +278,9 @@ function collectManifestRows(containerId) {
       'names a part; fill it in or remove the row.'};
   }
   if (bad.length > 0) {
-    return {items: items, error: 'Per cycle is required and must be 1 or more. Fix: ' +
-      bad.join(', ') + '. It is how many of the part ONE production cycle uses — usually 1, ' +
+    // OWNER-WORDS
+    return {items: items, error: 'Pieces per assembly cycle is required and must be 1 or more. Fix: ' +
+      bad.join(', ') + '. It is how many of the part one assembly cycle uses — usually 1, ' +
       'not the number in a full bin.'};
   }
   return {items: items, error: ''};
@@ -751,7 +777,7 @@ delegateActions(document.body, {
     refreshFullBinCells,
     refreshNearEmptyHint,
     refreshToteHint,
-    removeParentElement,
+    removeManifestRow,
     syncCodeFromPart,
     submitPLCreate,
     submitPLEdit

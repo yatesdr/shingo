@@ -1,6 +1,6 @@
 # UI Guide
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 ShinGo Core provides a web-based management interface at `http://<host>:8083`. All pages support light and dark mode via the theme toggle in the navigation bar.
 
@@ -222,10 +222,21 @@ no UI trigger — no template or page script references it.
 **Route:** `/bins` (login)
 
 Physical containers: every bin with its type, status, location, payload and
-count, filtered by text, type and status. The **Bin Types** accordion creates,
-edits and deletes bin types; **+ Bin** creates 1 to 100 carriers from a label
-prefix; **Cycle Count** walks the filtered bins for a count. The **Lineside
-Buckets** section is Core's mirror of the Edges' piles.
+count, filtered by text, type and status. The **Bin Types** accordion is a tab
+per carrier family, each counting its types. At the top of a tab is the
+family's key strip, one line: Lift and its key, Wait and its key, each with a
+small **Change**, and the scene's sync time. Change opens that field's picker in
+place, from the keys Core's copy of the RDS scene lists, the default first (a
+saved key the scene no longer lists says "not in RDS"); it opens on its own keys,
+**Lift keys** or **Wait keys** (the keys RDS runs as its default lift or wait),
+and **All** offers every key. A picked key reads "not saved" until **Save keys**;
+**Cancel** puts both back. Every type of the family sends them. Under them are
+the family's types, with Edit (the type's id in its heading) and Delete; a bare
+marker is a quiet line under its type with no buttons (the type's Edit sets its
+robot group, and its Delete removes it too), and a tote carrier's line says its top is
+totes, so many per layer, with its marker's line its bottom. **+ Bin Type** opens
+with the open tab's family filled in. **+ Bin** creates 1 to 100 carriers from a
+label prefix; **Cycle Count** walks the filtered bins for a count. The **Lineside Buckets** section is Core's mirror of the Edges' piles.
 
 A row opens the bin's detail, in four tabs:
 
@@ -251,11 +262,12 @@ bin delete** — retire is the terminal action.
 **Route:** `/payloads` (login)
 
 Payload definitions (container content templates): create, edit and delete
-payloads with their UOP capacity, template manifest (the parts and how many of
-each one production cycle uses) and compatible bin types; **Import** reads
-payloads from a file. The **Containment** column activates and releases quality
-containment for a payload: while active, every finished-goods delivery of it
-diverts to its claims' containment destination.
+payloads with their UOP capacity (a part alone's standard pack, in pieces),
+template manifest (the parts, and how many of each one assembly cycle uses: an
+assembly consume setting a press never reads) and compatible bin types;
+**Import** reads payloads from a file. The **Containment** column activates and
+releases quality containment for a payload: while active, every finished-goods
+delivery of it diverts to its claims' containment destination.
 
 ## Preview
 

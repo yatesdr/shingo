@@ -87,13 +87,13 @@ func templateFuncs() template.FuncMap {
 		// Nil/zero now renders "-" — core's spelling — replacing this
 		// binary's historical "" and changeover.html's hand-written "--".
 		"formatTime": func(t time.Time) template.HTML {
-			return planttime.Format(t, plantLocation)
+			return planttime.Format(t, plantLocation())
 		},
 		"formatTimePtr": func(t *time.Time) template.HTML {
-			return planttime.FormatPtr(t, plantLocation)
+			return planttime.FormatPtr(t, plantLocation())
 		},
 		// plantTZ feeds header.html's inline `window.PLANT_TZ = "{{ plantTZ }}"`.
-		"plantTZ": func() string { return plantLocation.String() },
+		"plantTZ": func() string { return plantLocation().String() },
 		// serverClock feeds the head's inline `window.SHINGO_CLOCK = {{serverClock}}`.
 		// THE SERVER OWNS NOW, the same way it owns the zone: every elapsed
 		// reading in the UI used to difference a server stamp against the
@@ -103,12 +103,12 @@ func templateFuncs() template.FuncMap {
 		// simBadge renders "SIM 2x - 14:07" on a sim stack and NOTHING on a
 		// plant. Simulated time labels itself, or a screenshot of the rig reads
 		// as a screenshot of a plant.
-		"simBadge": func() template.HTML { return planttime.SimBadge(plantLocation) },
+		"simBadge": func() template.HTML { return planttime.SimBadge(plantLocation()) },
 		// formatClock/formatClockSeconds: time-of-day shapes for columns whose
 		// deliberately-narrow format is not a full datetime (diagnostics log
 		// rows). shared/planttime owns the twins.
-		"formatClock":        func(t time.Time) string { return planttime.Clock(t, plantLocation) },
-		"formatClockSeconds": func(t time.Time) string { return planttime.ClockSeconds(t, plantLocation) },
+		"formatClock":        func(t time.Time) string { return planttime.Clock(t, plantLocation()) },
+		"formatClockSeconds": func(t time.Time) string { return planttime.ClockSeconds(t, plantLocation()) },
 		"json": func(v any) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)

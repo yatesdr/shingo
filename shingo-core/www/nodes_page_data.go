@@ -149,10 +149,8 @@ func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 				if v, ok := findSceneProperty(props, "bindRobotMap"); ok {
 					info.BoundMap = v
 				}
-				if v, ok := findSceneProperty(props, "binTask"); ok {
-					info.Tasks = parseNodeTasks(v)
-				}
 			}
+			info.Tasks = joinBinTaskNames(sp.BinTasks())
 			nodeInfo[sp.InstanceName] = info
 		} else {
 			mapGroups[sp.ClassName] = append(mapGroups[sp.ClassName], sp)
@@ -302,18 +300,12 @@ func findSceneProperty(props []sceneProperty, key string) (string, bool) {
 	return "", false
 }
 
-// parseNodeTasks extracts task names from a binTask JSON property value.
-// Input is like: [{"Load":{}},{"Unload":{}}]  →  "Load, Unload"
-func parseNodeTasks(jsonStr string) string {
-	var tasks []map[string]any
-	if err := json.Unmarshal([]byte(jsonStr), &tasks); err != nil {
-		return ""
-	}
-	var names []string
-	for _, t := range tasks {
-		for k := range t {
-			names = append(names, k)
-		}
+// joinBinTaskNames is a location's binTask keys as the Nodes page shows them:
+// [JackLoad, JackUnload, Wait] → "JackLoad, JackUnload, Wait".
+func joinBinTaskNames(tasks []domain.SceneBinTask) string {
+	names := make([]string, len(tasks))
+	for i, t := range tasks {
+		names[i] = t.Name
 	}
 	return strings.Join(names, ", ")
 }

@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -32,8 +33,8 @@ func digLegReq(id, from, to string) fleet.CreateOrderRequest {
 	return fleet.CreateOrderRequest{
 		OrderID: id,
 		Blocks: []fleet.OrderBlock{
-			{BlockID: id + "-p", Location: from, BinTask: "JackLoad"},
-			{BlockID: id + "-d", Location: to, BinTask: "JackUnload"},
+			{BlockID: id + "-p", Location: from, BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: id + "-d", Location: to, BinTask: "JackUnload", Action: protocol.ActionDropoff},
 		},
 		Complete: true,
 	}
@@ -366,8 +367,8 @@ func TestDigGroup_GatedRetrieveDwellsForWholeGroup(t *testing.T) {
 			// re-established. Now the retrieve is armed for ~30 ticks of gap.
 			if !tailAppended && legOneDone >= 0 && tickNow >= legOneDone+1 {
 				if err := sim.AppendBlocks("retr-1", []fleet.OrderBlock{
-					{BlockID: "retr-1-p", Location: "S1", BinTask: "JackLoad"},
-					{BlockID: "retr-1-d", Location: "LINE", BinTask: "JackUnload"},
+					{BlockID: "retr-1-p", Location: "S1", BinTask: "JackLoad", Action: protocol.ActionPickup},
+					{BlockID: "retr-1-d", Location: "LINE", BinTask: "JackUnload", Action: protocol.ActionDropoff},
 				}); err != nil {
 					t.Fatalf("append retrieve tail: %v", err)
 				}

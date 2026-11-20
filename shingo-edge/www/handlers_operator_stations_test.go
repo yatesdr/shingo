@@ -1175,6 +1175,24 @@ func TestOperatorStations_ReleaseStagedOrders_AcceptsQtyByPart(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 }
 
+// The pair door carries RELEASE FULL's declare_full to the engine, with no
+// manifest action.
+func TestOperatorStations_ReleaseStagedOrders_DeclareFullFlows(t *testing.T) {
+	t.Parallel()
+	h, router := newOperatorStationsRouter(t)
+	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged",
+		map[string]any{"called_by": "SNF3", "declare_full": true}, nil)
+	assertStatus(t, resp, http.StatusOK)
+	got := h.engine.(*stubEngine).lastReleaseStagedOrdersDisposition
+	if got == nil {
+		t.Fatal("expected ReleaseStagedOrders to have been called")
+	}
+	if !got.DeclareFull || got.Mode != "" || got.CalledBy != "SNF3" {
+		t.Errorf("disposition = {Mode:%q DeclareFull:%v CalledBy:%q}, want {Mode:\"\" DeclareFull:true CalledBy:\"SNF3\"}",
+			got.Mode, got.DeclareFull, got.CalledBy)
+	}
+}
+
 // A malformed body is rejected with a 400 — the handler defends against bad
 // JSON rather than silently falling through to a no-op release.
 func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {

@@ -174,6 +174,11 @@ type EngineOrchestration interface {
 	// height the CLEAR declared, nil when none: written after the clear and the
 	// stamp, in the same transaction.
 	ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp domain.BareStamp, layers *int) (int64, error)
+	// ReplaceAndBookDeparture is the LOAD that replaces a tote (expect
+	// replace): the clear, the departure the old tote owes CMS, and the load of
+	// the new count with a fresh FIFO date, in one transaction. Returns the
+	// final epoch and the count written.
+	ReplaceAndBookDeparture(binID, nodeID int64, manifestJSON, payloadCode string, declared *int64) (int64, int, error)
 	// ClearLoaderHome is a dedicated loader home's clear, the Edge's one request
 	// (engine/clear_home.go). Orchestration because it spans the scanner's lock,
 	// the orders it authors and the carrier's zero in one transaction.

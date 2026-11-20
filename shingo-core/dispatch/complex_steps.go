@@ -11,6 +11,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 	"shingocore/store/reservations"
 )
 
@@ -269,9 +270,11 @@ func mintVendorOrderID(orderID int64) string {
 }
 
 // mintBlockID hand-authors a block ID unique within a vendor order. Uniqueness
-// is SEER's only contract on it (a duplicate is rejected 50001); every consumer
-// — poller, telemetry, block-completion, the differential harness — treats it as
-// opaque (D80e / F4c V0 finding 3). The default order-side shape is
+// is SEER's only contract on it (a duplicate is rejected 50001). No consumer
+// parses it — poller, telemetry, block-completion, the differential harness —
+// but Core's record of what each block was (orders.block_actions) is keyed on
+// it, and a finished block is looked up there by it, so the id the fleet reports
+// must be the id Core sent (blockActions). The default order-side shape is
 // "<vendorOrderID>-b<n>"; the advanced-load-sequence expansion suffixes "-<k>" on
 // the same base so the N same-location blocks stay distinct without renumbering
 // the rest of the order.
@@ -300,16 +303,31 @@ func mintBlockID(vendorOrderID string, n int) string {
 // the block numbering so that post-wait blocks don't collide with pre-wait block
 // IDs already submitted to RDS.
 //
-// loadSeq is the advanced load sequence (F4c): when non-empty, the LOAD leg —
-// the first pickup step — is emitted as one same-location block per named binTask
-// in the sequence (in order), replacing the single default JackLoad block. This
-// is the only place the wire order gains extra blocks. Every other step (the
+// names is the binTask each step's block sends, by step: names[i] is steps[i]'s,
+// and "" (or a nil names) sends the default for the step's action
+// (seerrds.BinTaskForAction). A nil names is today's blocks, byte for byte
+// (TestStepsToBlocks_NamesNilIsToday).
+//
+// loadSeq is the advanced load sequence (F4c): when non-nil, the LOAD leg — the
+// first pickup step (loadLegAt) — is emitted as one same-location block per
+// named binTask in the sequence (in order), replacing the single lift block, and
+// that step's names entry is ignored: the sequence names its own blocks. This is
+// the only place the wire order gains extra blocks. Every other step (the
 // delivery, waits) and every non-configured order (loadSeq nil) is byte-identical
 // to before: the non-expanded path keeps the exact "<vendorOrderID>-b<offset+i+1>"
 // id it always had, so unchanged orders serialize identically.
-func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int, loadSeq []string) []fleet.OrderBlock {
+//
+// EACH BLOCK CARRIES ITS ACTION, Core's own label for what it does (OrderBlock.
+// Action): the step's action, or for an expanded load leg pickup on the block at
+// the sequence's LiftAt and blank on the others. It is what the create and the
+// append record in orders.block_actions, and what the block subscriber reads
+// when the block finishes; the adapter never sends it. A name never changes it.
+func stepsToBlocks(vendorOrderID string, steps []resolvedStep, names []string, blockOffset int, loadSeq *payloads.LoadSequence) []fleet.OrderBlock {
 	var blocks []fleet.OrderBlock
-	loadExpanded := false
+	expand := -1
+	if loadSeq != nil {
+		expand = loadLegAt(steps)
+	}
 	for i, s := range steps {
 		if s.Action == protocol.ActionWait && s.Node == "" {
 			// Bare wait (no node) is a split point only — not an RDS block.
@@ -319,28 +337,69 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int, 
 		// Expand the load leg (first pickup) for a configured payload. All four
 		// blocks carry the SAME location (the source); only the binTask differs,
 		// matching the vendor's working same-location Postman order.
-		if len(loadSeq) > 0 && !loadExpanded && s.Action == protocol.ActionPickup {
-			loadExpanded = true
-			for k, task := range loadSeq {
+		if i == expand {
+			for k, task := range loadSeq.TaskNames {
 				id := mintBlockID(vendorOrderID, base)
 				if k > 0 {
 					id = fmt.Sprintf("%s-%d", id, k)
+				}
+				action := ""
+				if k == loadSeq.LiftAt {
+					action = protocol.ActionPickup
 				}
 				blocks = append(blocks, fleet.OrderBlock{
 					BlockID:  id,
 					Location: s.Node,
 					BinTask:  task,
+					Action:   action,
 				})
 			}
 			continue
 		}
+		task := seerrds.BinTaskForAction(s.Action)
+		if i < len(names) && names[i] != "" {
+			task = names[i]
+		}
 		blocks = append(blocks, fleet.OrderBlock{
 			BlockID:  mintBlockID(vendorOrderID, base),
 			Location: s.Node,
-			BinTask:  seerrds.BinTaskForAction(s.Action),
+			BinTask:  task,
+			Action:   blockAction(s.Action),
 		})
 	}
 	return blocks
+}
+
+// loadLegAt is the step a load sequence expands: the first pickup in steps, -1
+// for none.
+func loadLegAt(steps []resolvedStep) int {
+	for i, s := range steps {
+		if s.Action == protocol.ActionPickup {
+			return i
+		}
+	}
+	return -1
+}
+
+// blockAction is the action a block of a step with this action records: the
+// step's own, when it is one of the three a block can do, else blank (a block
+// that names no binTask either: seerrds.BinTaskForAction).
+func blockAction(stepAction string) string {
+	switch stepAction {
+	case protocol.ActionPickup, protocol.ActionDropoff, protocol.ActionWait:
+		return stepAction
+	}
+	return ""
+}
+
+// blockActions is the record of blocks as orders.block_actions holds it: each
+// block's action by its id.
+func blockActions(blocks []fleet.OrderBlock) map[string]string {
+	out := make(map[string]string, len(blocks))
+	for _, b := range blocks {
+		out[b.BlockID] = b.Action
+	}
+	return out
 }
 
 // widenSupplyPickups is C(ii)'s behavior change: complex SUPPLY pickups see the

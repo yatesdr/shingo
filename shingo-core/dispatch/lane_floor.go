@@ -125,6 +125,9 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 	// So does PopTurnHeld's (table_turn_hold.go), and it is the table turn's
 	// restart hook: the population is read from the plans.
 	d.sweepTurnWaiters()
+	// And the carrier keys' floor: a family key written around the Bins page's
+	// save is picked up within a tick (carrier_keys.go).
+	d.reloadCarrierKeysOnFloor()
 
 	before, err := d.laneWaiters()
 	if err != nil {

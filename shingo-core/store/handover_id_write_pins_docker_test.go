@@ -41,7 +41,7 @@ func TestHandoverIDWrite_TheYesRefusesAnEndedRow(t *testing.T) {
 	}
 
 	// The fleet said yes.
-	_, moved, err := db.FleetYes(o.ID, protocol.StatusPending, "sg-hiw-1", "", "vendor order sg-hiw-1 created",
+	_, moved, err := db.FleetYes(o.ID, protocol.StatusPending, "sg-hiw-1", "", nil, "vendor order sg-hiw-1 created",
 		store.HistoryReason{}, protocol.OrderUpdate{})
 	if err != nil {
 		t.Fatalf("the yes write: %v", err)

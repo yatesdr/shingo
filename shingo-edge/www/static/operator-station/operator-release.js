@@ -108,8 +108,9 @@ function releaseBody(calledBy) {
 //                          RELEASE posts releaseBody and the prompt never
 //                          opens; its consume framing — "anything pulled to
 //                          lineside?", "bin returning to supermarket" — is
-//                          backwards for a node pushing a bin OUT. This is the
-//                          only produce path: no produce screen exists.
+//                          backwards for a node pushing a bin OUT. The one
+//                          produce screen is RELEASE SHORT's own
+//                          (offersReleaseFull), checked before this.
 //   consume, no payloads,  no chip grid to pick from, and the PARTIAL and
 //   remaining_uop == 0     UNDER COUNT arms are both remaining_uop > 0 only,
 //                          leaving RELEASE EMPTY + CANCEL.
@@ -141,6 +142,59 @@ function singleOutcomeReleaseBody(entry, payloads) {
     return releasedNothingBody(calledByFromView());
 }
 
+// ── RELEASE SHORT asks: partial or full ─────────────────────────────────
+//
+// A produce RELEASE that would ship its bin short (the tile reads RELEASE
+// SHORT: a strict claim, a count short of the pack and outside its tolerance)
+// is the one produce release with a choice in it. The count is the PLC's, and
+// a cart the person at the line can see is full can count short of its pack.
+// RELEASE PARTIAL posts releaseBody: the count ships and Core sends the cart
+// to its partial home. RELEASE FULL posts releaseFullBody: the finalize
+// declares the claim's pack (NodeClaim.ReleaseFullAt), and Core stamps it and
+// keeps the counted number on the stamp's row. Neither carries a disposition,
+// so neither can clear the bin. A changeover's release never offers it: a
+// changeover ships the real count.
+function offersReleaseFull(entry, url) {
+    const claim = entry && entry.active_claim;
+    return !!(claim && claim.role === 'produce' && entry.release_short && !isChangeoverRelease(url));
+}
+
+function releaseFullBody(calledBy) {
+    return { called_by: calledBy, declare_full: true };
+}
+
+// releaseFullPromptHTML is RELEASE SHORT's screen: the count against the pack,
+// and the two answers.
+function releaseFullPromptHTML(entry) {
+    const rt = entry && entry.runtime;
+    const counted = rt && rt.remaining_uop_cached != null ? rt.remaining_uop_cached : 0;
+    const claim = entry && entry.active_claim;
+    const pack = claim && claim.uop_capacity ? claim.uop_capacity : 0;
+    let html = '';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">Release</div>';
+    html += '<div class="modal-payload">Counted ' + esc(String(counted)) + ' of ' + esc(String(pack)) + '</div>';
+    html += '<div class="modal-payload">RELEASE FULL books it as ' + esc(String(pack)) + ' and logs the count.</div>';
+    html += '</div>';
+    html += '<div class="modal-actions">';
+    html += '<button type="button" class="os-action-btn release-empty" data-action="release-short-partial">RELEASE PARTIAL</button>';
+    html += '<button type="button" class="os-action-btn request" data-action="release-short-full">RELEASE FULL</button>';
+    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+    html += '</div>';
+    return html;
+}
+
+function renderReleaseFullPrompt() {
+    const state = releasePromptState;
+    if (!state) return;
+    state.screen = renderReleaseFullPrompt;
+    nodeModalContent.innerHTML = releaseFullPromptHTML(state.entry);
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', handleReleasePromptAction);
+    });
+    nodeModal.classList.add('active');
+}
+
 // Pulled-to-lineside qty is a property of the running style, so read the
 // active claim first; fall back to target claim on cold-start.
 function linesideSoftThresholdForEntry(entry) {
@@ -152,6 +206,11 @@ function linesideSoftThresholdForEntry(entry) {
 }
 
 export async function openReleasePrompt(url, entry) {
+    if (offersReleaseFull(entry, url)) {
+        releasePromptState = { url, entry, posting: false, screen: renderReleaseFullPrompt };
+        renderReleaseFullPrompt();
+        return;
+    }
     const payloads = allowedPayloadsForEntry(entry);
 
     // Nothing to ask → don't ask. Posts the body the modal's single button
@@ -187,9 +246,9 @@ export async function openReleasePrompt(url, entry) {
         // The per-part split is NOT IMPLEMENTED here, and the attempt at it has
         // been deleted: it gated on Array.isArray of a manifest Core ships as
         // an object, and read a `quantity` the manifest line no longer carries.
-        // Doing it properly means uop_remaining x each part's parts_per_cycle
-        // from the payload template, which is a Core-side derivation this page
-        // does not have. A multi-payload bin therefore gets no per-part
+        // Doing it properly means each part's count from uop_remaining and the
+        // payload template (protocol.ManifestItem's count rule), which is a
+        // Core-side derivation this page does not have. A multi-payload bin therefore gets no per-part
         // prefill, which is the honest state.
     }
     // Phase 0b override audit: snapshot the auto-suggested values at
@@ -229,9 +288,9 @@ function isChangeoverRelease(url) {
 // renderReleasePromptStep1 draws the consume release's first screen. The
 // prompt is consume framing throughout — "anything pulled to lineside?",
 // RELEASE PARTIAL / RELEASE EMPTY, "bin returning to supermarket" — and a
-// produce release never reaches it: singleOutcomeReleaseBody posts releaseBody
-// for every produce claim before the prompt opens. The produce screen this
-// once branched to (RELEASE FULL) was reachable from nowhere and is gone.
+// produce release never reaches it: RELEASE SHORT opens its own screen
+// (renderReleaseFullPrompt), and singleOutcomeReleaseBody posts releaseBody for
+// every other produce release before the prompt opens.
 function renderReleasePromptStep1() {
     const state = releasePromptState;
     if (!state) return;
@@ -484,8 +543,16 @@ async function handleReleasePromptAction(evt) {
     //                              shape as RELEASE EMPTY (manifest clear);
     //                              distinct audit op so forensics can trend
     //                              missing-inventory patterns separately.
-    // A produce release has no arm here: it never opens the prompt
-    // (singleOutcomeReleaseBody posts releaseBody first).
+    // A produce release's only arm is RELEASE SHORT's two answers
+    // (renderReleaseFullPrompt); every other produce release posts releaseBody
+    // without opening the prompt (singleOutcomeReleaseBody).
+    if (action === 'release-short-partial' || action === 'release-short-full') {
+        const calledBy = calledByFromView();
+        const body = action === 'release-short-full' ? releaseFullBody(calledBy) : releaseBody(calledBy);
+        await submitRelease(state, state.url, body);
+        return;
+    }
+
     if (action === 'release-submit' || action === 'release-submit-parts' || action === 'release-submit-underpack') {
         const url = state.url;
         const calledBy = calledByFromView();

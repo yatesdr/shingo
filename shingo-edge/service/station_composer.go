@@ -225,7 +225,31 @@ func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerDa
 	// replace. The cells per style went in buildComposerData.
 	out.PartRows = s.partRows(out.Palette, styles, byStyle)
 	out.Palette, out.Routing, out.RoutingOff = nil, nil, nil
+	out.CarrierTypes = s.newPartCarriers(process)
+	out.NewPart = len(out.CarrierTypes) > 0
 	return out, nil
+}
+
+// newPartCarriers is the carrier types the station's New part form offers,
+// sorted, or nil where the door is not drawn: HMI setup off (the door is gated
+// as the mint is), a Core whose last ack does not name the part.create ask
+// (the door would refuse before sending), or no carrier type heard from Core
+// (the door takes only one Core sent). In memory: no query.
+func (s *StationService) newPartCarriers(process *processes.Process) []string {
+	if !process.FlowComposerEnabled || s.coreAnswers == nil || !s.coreAnswers(protocol.AskPartCreate) ||
+		s.binTypeFamilies == nil {
+		return nil
+	}
+	families := s.binTypeFamilies()
+	if len(families) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(families))
+	for code := range families {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // partRows is the station's part list: each code of the palette with the

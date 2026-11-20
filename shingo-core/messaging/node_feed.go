@@ -30,7 +30,20 @@ import (
 // HandleNodeListRequest answers an Edge's node-list sync. req carries the
 // scene revision the Edge already holds (empty from an older binary); see
 // sceneSlices for what that decides.
+//
+// A RE-ASK FORGETS THE STATION'S NODE-LIST MEMO first. The Edge holds this
+// answer's digest from now on, and the heartbeat compares against the memo:
+// one built before a write that drops no memo (a group deleted or
+// reparented, which Core announces with NodeStructureChanged, the very
+// notice that makes the Edge re-ask) would differ from it, and a converged
+// Edge quoting a new digest reads as one that lost its copy, so the old list
+// went back at once and the Edge applied it until the memo aged out. With the
+// memo gone the next heartbeat builds afresh. The window left is a heartbeat
+// whose build began before this drop and is stored after it
+// (feedState.store), healed when that memo ages out. Pinned by
+// TestNodeFeed_AReAskedListIsNotSentBack.
 func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *protocol.NodeListRequest) {
+	s.feeds.dropStation(env.Src.Station, protocol.FeedNodes)
 	resp, err := s.buildNodeList(env.Src.Station, false)
 	if err != nil {
 		log.Printf("core_handler: node list for %s: %v — not sent", env.Src.Station, err)
@@ -132,10 +145,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list payload bin types for %s: %v", stationID, pbtErr)
 	}
-	var payloadBinTypes []protocol.PayloadBinTypeInfo
-	for _, p := range pbtPairs {
-		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
-	}
+	payloadBinTypes := payloadBinTypeRows(pbtPairs)
 
 	// Each bin type's family, for the Edge's CLEAR panels. Memory-only on the Edge
 	// like the slice above, and degrades the same way: a reply with none leaves
@@ -161,6 +171,16 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		PlantWide:       !stationScoped,
 		Digest:          digest,
 	}, nil
+}
+
+// payloadBinTypeRows is NodeListResponse.PayloadBinTypes: one row per (payload
+// code, bin type code) pair, in the order read. Nil with no pairs.
+func payloadBinTypeRows(pairs [][2]string) []protocol.PayloadBinTypeInfo {
+	var out []protocol.PayloadBinTypeInfo
+	for _, p := range pairs {
+		out = append(out, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
+	}
+	return out
 }
 
 // loadersNameAnEdge reports whether any loader names the Edge that works it.
@@ -302,6 +322,26 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: sent payload catalog (%d payloads, digest=%s) to %s", len(resp.Payloads), resp.Digest, env.Src.Station)
 }
 
+// PayloadsChanged is called after a known payload write (a create, an update,
+// a delete, a carrier-type set, a manifest or a part's cat id written: every
+// write PayloadService makes, from the desktop or the floor). It drops the
+// catalog memo and every station's node-list memo, which carries each part's
+// carrier rows, so the next heartbeat from any Edge compares against a build
+// made after the write. Nothing is broadcast: an Edge learns the write on its
+// next heartbeat.
+//
+// Without it a heartbeat inside the memo's life compared against the build
+// from before the write: an Edge whose digest differed from that build was
+// sent the catalog from before the write, and its sync deleted any row the
+// write had added there (a floor part its answer had landed). The window left
+// is a heartbeat whose build began before the write and is stored after this
+// drop (feedState.store); it is healed by the next heartbeat after that memo
+// ages out. Pinned by TestPayloadsChanged_DropsTheMemos.
+func (s *CoreDataService) PayloadsChanged() {
+	s.feeds.drop(protocol.FeedCatalog)
+	s.feeds.dropEveryStation(protocol.FeedNodes)
+}
+
 // buildCatalog builds the payload catalog — the FeedCatalog value — and its
 // digest. strict is the feed path.
 func (s *CoreDataService) buildCatalog(strict bool) (*protocol.CatalogPayloadsResponse, error) {
@@ -335,6 +375,41 @@ func (s *CoreDataService) buildCatalog(strict bool) (*protocol.CatalogPayloadsRe
 		return nil, fmt.Errorf("digest catalog: %w", err)
 	}
 	return &protocol.CatalogPayloadsResponse{Payloads: infos, Digest: digest}, nil
+}
+
+// CatalogRow is one payload's catalog row and its carrier rows, built by the
+// builders the feeds use (catalogRows, payloadBinTypeRows), so an answer that
+// carries them holds exactly what the next catalog feed and node list carry for
+// it, and the Edge's conditional upsert of the next feed writes nothing new.
+// Strict, as the feed path is: any failed read fails it. It reads the
+// plant-wide sets the feeds read (the cat ids, the manifest lines, the carrier
+// pairs) and keeps this payload's: it runs once per part made at the floor
+// (wired to service.PayloadService.CatalogRow at the composition root).
+// Pinned by TestCatalogRow_IsTheFeedsRow.
+func (s *CoreDataService) CatalogRow(code string) (protocol.CatalogPayloadInfo, []protocol.PayloadBinTypeInfo, error) {
+	p, err := s.db.GetPayloadByCode(code)
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("read payload %s: %w", code, err)
+	}
+	catids, err := s.db.PayloadCATIDs()
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("payload catids: %w", err)
+	}
+	lines, err := s.db.PayloadManifestLines()
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("payload manifest lines: %w", err)
+	}
+	pairs, err := s.db.ListPayloadBinTypeMappings()
+	if err != nil {
+		return protocol.CatalogPayloadInfo{}, nil, fmt.Errorf("list payload bin types: %w", err)
+	}
+	var own [][2]string
+	for _, pair := range pairs {
+		if pair[0] == p.Code {
+			own = append(own, pair)
+		}
+	}
+	return catalogRows([]*payloads.Payload{p}, catids, lines)[0], payloadBinTypeRows(own), nil
 }
 
 // catalogRows is the catalog's rows: one per payload, in the order read, with

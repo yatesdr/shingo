@@ -22,6 +22,20 @@
 
 import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand, windowRole } from './operator-window-state.js';
 
+// cyclesLeftWords is what a consume tile says of a part an assembly uses more
+// than one of a cycle: the tile's count is pieces, so it says the cycles they
+// make too, the count divided by the claim's pieces per cycle (the Edge's
+// NodeClaim.PiecesPerCycle), rounded down and never below 0. '' everywhere
+// else: a produce tile (a press never reads the number), a part at 1 a cycle,
+// a tile with no cart.
+export function cyclesLeftWords(claim, count, noCarrier) {
+    const ratio = claim ? Number(claim.pieces_per_cycle) || 1 : 1;
+    if (!claim || claim.role !== 'consume' || noCarrier || ratio <= 1) return '';
+    const cycles = Math.max(0, Math.floor((Number(count) || 0) / ratio));
+    // OWNER-WORDS
+    return cycles === 1 ? '1 cycle left' : cycles + ' cycles left';
+}
+
 // loaderOf is a tile's loader, or null on every tile that is not a Core
 // loader's window or position.
 export function loaderOf(tile) {
@@ -103,7 +117,7 @@ export function isDedicated(tile) {
 // clearsPartials: this dedicated loader's board asks for Clear partials (a
 // home's full pulled so a buffer partial goes home). Off where Core's
 // bin_loaders.no_clear_partials says so: the buffer section, its words and the
-// header's PULL FULL FROM HOME are not drawn. Absent is on.
+// header's FULL BIN OFF HOME are not drawn. Absent is on.
 function clearsPartials(tile) {
     const loader = loaderOf(tile);
     return isDedicated(tile) && !loader.no_clear_partials;
@@ -493,6 +507,7 @@ function shortNode(name) {
 }
 
 // spotWords is what a spot holds, from a closed set: "holds a full bin",
+// "holds a partial" (Core's row flag: parts, fewer than the part's capacity),
 // "holds an empty <bin>" (words "holds an empty", code the bin), "holds an
 // empty bin", "no bin" (a cart with no bin on it too), "count unknown" (a bin
 // with a part and a count of 0 or below) and "could not look" (no bin read).
@@ -500,6 +515,7 @@ export function spotWords(tile) {
     const bin = tile.bin_state;
     if (!bin) return { words: 'could not look', code: '' };
     if (!bin.occupied || bin.bare) return { words: 'no bin', code: '' };
+    if (bin.payload_code && bin.stocked && bin.partial) return { words: 'holds a partial', code: '' };
     if (bin.payload_code) return { words: bin.stocked ? 'holds a full bin' : 'count unknown', code: '' };
     if (bin.bin_type_code) return { words: 'holds an empty', code: bin.bin_type_code };
     return { words: 'holds an empty bin', code: '' };
@@ -770,18 +786,21 @@ export function bufferOf(tiles) {
 // holds a partial and no spot is empty or open ("NOW · Buffer full · clear
 // one"); amber when it holds a partial and no empty ("SOON · No empty");
 // plain, and folded, otherwise. An unknown spot is neither open nor empty; a
-// coming one counts as an empty.
+// coming one counts as an empty. A full (at or over its part's capacity) is
+// not a partial: counted on its own, it grades nothing.
 export function partialsState(spots) {
-    const n = { partial: 0, empty: 0, open: 0, unknown: 0 };
+    const n = { partial: 0, empty: 0, open: 0, full: 0, unknown: 0 };
     spots.forEach(function (s) {
         if (s.state === 'partial') n.partial++;
         else if (s.state === 'empty' || s.state === 'coming') n.empty++;
         else if (s.state === 'open') n.open++;
+        else if (s.state === 'full') n.full++;
         else n.unknown++;
     });
     let tone = 'plain';
     if (n.partial > 0 && n.empty === 0) tone = n.open === 0 ? 'red' : 'amber';
     const words = [n.partial + (n.partial === 1 ? ' partial' : ' partials'), n.empty + ' empty', n.open + ' open'];
+    if (n.full > 0) words.push(n.full + ' full');
     if (n.unknown > 0) words.push(n.unknown + ' ?');
     return { tone: tone, counts: n, words: words.join(' · ') };
 }
@@ -842,6 +861,20 @@ function bufferPartialOf(tile) {
     return tile.buffer_partial || null;
 }
 
+// bringHomeOf is a home's Bring partials home, or null: a home with a bin of a
+// part on it, full or partial, a partial of that part on a buffer spot
+// (bufferPartialOf), and no clear of its own running (clearMoves). {home, spot,
+// partial}: the home and the buffer spot as the confirm names them, and
+// whether the bin on the home is a partial (Core's row flag). The board's card
+// and the node modal's button both read it, so they offer it on the same
+// homes. The caller checks binsKnown.
+export function bringHomeOf(tile) {
+    const bp = bufferPartialOf(tile);
+    const bin = tile.bin_state || {};
+    if (!bp || !bp.node || clearMoves(tile).length > 0 || !bin.occupied || !bin.payload_code) return null;
+    return { home: spotOf(tile), spot: shortNode(bp.node), partial: !!bin.partial };
+}
+
 // alarmOf is a tile's alarm sentence: a contained payload, or an unloader's
 // full asked of Core and not answered (the server's ask_pending, verbatim).
 function alarmOf(tile) {
@@ -874,6 +907,28 @@ function refusalReason(c, when) {
     else if (c.state === 'waiting') words = cell + ' waiting';
     else if (c.left !== null) words = cell + ' ' + fmtCount(c.left) + ' left';
     return { tone: 'red', reason: words + at };
+}
+
+// replacePartialPart is the part a home's REPLACE PARTIAL takes off as a
+// partial and puts on again full, or '' where it offers none: the node modal's
+// button, with no card on the board (a card per partial would crowd out the
+// loads; Show all's tile opens the modal). A loader's home (produce; never a
+// stage 2, which tileRole reads as an unloader) holding a stocked bin of one of
+// its own parts at fewer than its capacity (the row's partial). Not while the
+// home's clear runs (a move leaving it, clearMoves, or one delivering to it,
+// clearRow), and not once a robot has an order leaving the home: the carrier
+// is promised, and Core refuses a LOAD of a held carrier anyway. The tap is
+// the LOAD; the Edge sends it to Core as a replace (engine LoadBin).
+export function replacePartialPart(tile) {
+    const bin = tile.bin_state;
+    if (!bin || !bin.occupied || !bin.payload_code || !bin.stocked || !bin.partial) return '';
+    if (tileRole(tile) !== 'produce' || partCodes(tile).indexOf(bin.payload_code) === -1) return '';
+    if (clearMoves(tile).length > 0 || clearRow(tile)) return '';
+    const home = (tile.node && tile.node.core_node_name) || '';
+    const taken = liveOrders(tile).some(function (o) {
+        return ROBOT_ON_IT.indexOf(o.status) !== -1 && shortNode(o.source_node) === shortNode(home);
+    });
+    return taken ? '' : bin.payload_code;
 }
 
 // loaderCards sorts a loader tile's work into its zones: Load (one card per
@@ -922,15 +977,16 @@ function loaderCards(t, ctx) {
         if (first.fixes) card.fixes = first.fixes;
         ctx.load.push(card);
     }
-    const bp = bufferPartialOf(t);
     const bin = t.bin_state || {};
     if (!ctx.known) return;
-    if (bp && bp.node && !inFlight && bin.occupied && bin.payload_code) {
-        const from = shortNode(bp.node);
+    const bring = bringHomeOf(t);
+    if (bring) {
+        // What is on the home, Core's row flag: a full bin or a partial.
+        const held = bring.partial ? 'partial' : 'full';
         ctx.partials.push(ctx.card(t, 'partial', [0], {
-            spotWords: 'holds a full bin', headline: bin.payload_code,
-            reason: 'Pull the full · partial from ' + from, partialSpot: from,
-            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from },
+            spotWords: held, headline: bin.payload_code,
+            reason: 'Take the ' + held + ' bin off · partial on ' + bring.spot + ' comes here', partialSpot: bring.spot,
+            act: { kind: 'clear-home', node: t.node.id, home: bring.home, spot: bring.spot, partial: bring.partial },
         }));
     } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
         ctx.other('Check bin', ctx.card(t, 'check', [0], {
@@ -1086,9 +1142,10 @@ function lightStoppedPresses(presses, windows) {
 //   zones          [{key, title, count, tone, word, reason, cards, empty,
 //                  folded, openedByBoard, strip, stripWords}] in order: Load,
 //                  No parts available, At the windows, the catch-all zones
-//                  (each titled by its act), Clear partials
+//                  (each titled by its act), Bring partials home
 //   all            every tile's cards in the plant's order (Show all); a tile
-//                  with no card gets a plain one opening the node modal
+//                  with no card gets a plain one opening the node modal; a
+//                  Bring partials home card carries its section's tone
 //
 // ui: {partialsOpen: the partials opened by a tap, when(iso): the time a
 // refusal was said, sign: the station's stale sign}.
@@ -1096,7 +1153,7 @@ function lightStoppedPresses(presses, windows) {
 // WHILE THE BINS ARE NOT KNOWN (binsKnown) the board claims nothing about what
 // stands at a spot: no Load card, no cart at a window, no partial or Check bin
 // card (each card and its act read bin_state); Load, At the windows and an
-// opened Clear partials say "Could not look" in place of their empty
+// opened Bring partials home say "Could not look" in place of their empty
 // sentence, and neither their titles nor the top line give a count. No parts available, the
 // cells row and the strip ("?") stay. Pinned by operator-board-model.test.js.
 export function boardModel(view, ui) {
@@ -1167,7 +1224,7 @@ export function boardModel(view, ui) {
         ctx.partials.sort(function (a, b) { return (a.number || 99) - (b.number || 99) || a.order - b.order; });
         const opened = st.tone !== 'plain' || !!ui.partialsOpen;
         partials = {
-            key: 'partials', title: 'Clear partials', count: ctx.partials.length, tone: st.tone,
+            key: 'partials', title: 'Bring partials home', count: ctx.partials.length, tone: st.tone,
             word: st.tone === 'red' ? 'NOW' : (st.tone === 'amber' ? 'SOON' : ''),
             reason: st.tone === 'red' ? 'Buffer full · clear one' : (st.tone === 'amber' ? 'No empty' : ''),
             cards: opened ? ctx.partials : [], folded: !opened, openedByBoard: st.tone !== 'plain',
@@ -1229,11 +1286,27 @@ export function boardModel(view, ui) {
         counts.push(p + (p === 1 ? ' partial' : ' partials'));
     }
 
+    // Show all has no Bring partials home section to colour its cards, so each
+    // carries the section's tone itself (SPR 2026-11-18: Show all lost the
+    // amber, while the red refusal cards kept theirs).
+    const bufferTone = partials ? partials.tone : 'plain';
     const byTile = tiles.map(function () { return []; });
-    cards.forEach(function (c) { byTile[c.tile].push(c); });
+    cards.forEach(function (c) {
+        byTile[c.tile].push(c.partialSpot ? Object.assign({}, c, { tone: bufferTone }) : c);
+    });
     const all = [];
     tiles.forEach(function (t, i) {
-        if (byTile[i].length > 0) { all.push.apply(all, byTile[i]); return; }
+        // A home holding a partial of its part opens its node modal from Show
+        // all, whatever cards it has on the board: REPLACE PARTIAL is there,
+        // and so is Bring partials home (bringHomeOf). Its Bring partials home
+        // card keeps its words and its tone on that tile.
+        const replacing = ctx.known && replacePartialPart(t);
+        if (byTile[i].length > 0 && !replacing) { all.push.apply(all, byTile[i]); return; }
+        const bring = byTile[i].find(function (c) { return !!c.partialSpot; });
+        if (bring) {
+            all.push(Object.assign({}, bring, { key: 'tile:' + t.node.id, act: { kind: 'modal', node: t.node.id } }));
+            return;
+        }
         const spot = spotWords(t);
         all.push(ctx.card(t, 'tile', [0], {
             spotWords: spot.words, spotCode: spot.code, headline: headlineOf(t),
@@ -1595,7 +1668,7 @@ function boardHeight(zones, shown, step, cols, fixedTop, width) {
 //     zones give way from the last: cards are cut from the end of a zone, plain
 //     ones only (a red or amber card is never cut; they sort first), and a
 //     "+N more" card takes one slot, in a zone cut to no card too;
-//   - a folded Clear partials is one row and never cut; opened by the board
+//   - a folded Bring partials home is one row and never cut; opened by the board
 //     (amber or red) it keeps its first card and gives way only after every
 //     other zone has;
 //   - where the zones can give no more, a cell tile shows fewer rows (the rest

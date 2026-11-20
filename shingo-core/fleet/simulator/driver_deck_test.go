@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/fleet"
@@ -74,7 +75,7 @@ func pinnedUnload(t *testing.T, s *SimulatorBackend, ext, vehicle, at string) st
 	res, err := s.CreateOrder(fleet.CreateOrderRequest{
 		ExternalID: ext,
 		Vehicle:    vehicle,
-		Blocks:     []fleet.OrderBlock{{BlockID: ext + "_unload", Location: at, BinTask: "JackUnload"}},
+		Blocks:     []fleet.OrderBlock{{BlockID: ext + "_unload", Location: at, BinTask: "JackUnload", Action: protocol.ActionDropoff}},
 		Complete:   true,
 	})
 	if err != nil {

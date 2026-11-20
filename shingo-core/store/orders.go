@@ -1281,9 +1281,9 @@ func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string,
 }
 
 // ClaimAppend is orders.ClaimAppend: the compare-and-set a fleet append is made
-// under.
-func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string) (bool, error) {
-	return orders.ClaimAppend(db.DB, id, waitIndex, stepsJSON)
+// under, recording the segment's blocks.
+func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string, actions map[string]string) (bool, error) {
+	return orders.ClaimAppend(db.DB, id, waitIndex, stepsJSON, actions)
 }
 
 // UpdateOrderStatusFromWithReasonTx is UpdateOrderStatusFromWithReason on the
@@ -1307,13 +1307,13 @@ func (db *DB) TakeOrderAskTx(tx *sql.Tx, id int64, from protocol.Status, askedVe
 // with the station's tell queued on it: `dispatched`, the job, the robot the
 // create pinned and the version in one statement, its history row and its tell
 // commit together or not at all. False means the order ended during the create.
-func (db *DB) FleetYes(id int64, from protocol.Status, askedVendorOrderID, robotID, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
+func (db *DB) FleetYes(id int64, from protocol.Status, askedVendorOrderID, robotID string, actions map[string]string, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return orders.Told{}, false, err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
-	told, moved, err := orders.FleetYesTx(tx, id, from, askedVendorOrderID, robotID, detail, reason.Code, reason.Actor, reason.refJSON())
+	told, moved, err := orders.FleetYesTx(tx, id, from, askedVendorOrderID, robotID, actions, detail, reason.Code, reason.Actor, reason.refJSON())
 	if err != nil || !moved {
 		return orders.Told{}, moved, err
 	}
@@ -1448,6 +1448,12 @@ func (db *DB) robotWrite(write func(*sql.Tx) (orders.Told, bool, error)) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// NameFleetOrder is orders.NameFleetOrder: the create's write of the vendor
+// order and the record of the blocks it was sent.
+func (db *DB) NameFleetOrder(id int64, vendorOrderID, vendorState, robotID string, actions map[string]string) error {
+	return orders.NameFleetOrder(db.DB, id, vendorOrderID, vendorState, robotID, actions)
 }
 
 // OrderRobotsByUUID is orders.RobotsByUUID: the station and robot of each

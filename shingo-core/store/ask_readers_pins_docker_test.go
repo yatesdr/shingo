@@ -22,7 +22,7 @@ import (
 // and answers a `queued` row at rest the other way, so each assertion is about
 // the ask and not about the status. The rows are written directly. (As built
 // before, the reference was the hand's in-create row, `dispatched` with no
-// vendor id; orders_dispatched_names_its_job, v181, refuses that row now.)
+// vendor id; orders_dispatched_names_its_job, v183, refuses that row now.)
 
 // askRow is one order in one of the four states, holding its bin by claim (the
 // hand's hard hold).
@@ -206,7 +206,7 @@ func TestAskClause_OnlyTheAnswerOrAnEndingMovesAnAskedRow(t *testing.T) {
 	}
 
 	yes := func(id int64, from protocol.Status, job string) bool {
-		_, moved, err := db.FleetYes(id, from, job, "", "vendor order "+job+" created", store.HistoryReason{}, protocol.OrderUpdate{})
+		_, moved, err := db.FleetYes(id, from, job, "", nil, "vendor order "+job+" created", store.HistoryReason{}, protocol.OrderUpdate{})
 		testutil.MustNoErr(t, err, "the yes write")
 		return moved
 	}

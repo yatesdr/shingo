@@ -1,6 +1,6 @@
 # API Reference
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 The `/api` endpoints return JSON; the routes outside `/api` are pages and form posts. Protected endpoints require authentication via session cookie (log in through the web UI).
 
@@ -10,7 +10,7 @@ Base URL: `http://<host>:8083`
 
 <!-- generated: shingo-core/www/router.go routes -->
 
-247 routes (124 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
+249 routes (125 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
 
 ### Pages and forms
 
@@ -20,6 +20,7 @@ Base URL: `http://<host>:8083`
 | `GET` | `/admin/cells` | `handleCellsAdmin` | login |
 | `POST` | `/bin-types/create` | `handleBinTypeCreate` | login |
 | `POST` | `/bin-types/delete` | `handleBinTypeDelete` | login |
+| `POST` | `/bin-types/family-keys` | `handleBinTypeFamilyKeys` | login |
 | `POST` | `/bin-types/update` | `handleBinTypeUpdate` | login |
 | `GET` | `/bins` | `handleBins` | login |
 | `POST` | `/bins/create` | `handleBinCreate` | login |
@@ -97,6 +98,7 @@ Base URL: `http://<host>:8083`
 | `GET` | `/api/bins/by-node` | `apiBinsByNode` | public |
 | `GET` | `/api/bins/detail` | `apiBinDetail` | public |
 | `POST` | `/api/bins/request-move` | `apiRequestBinMove` | login |
+| `GET` | `/api/bins/rows` | `apiBinRows` | public |
 
 ### `/api/board`
 
@@ -479,7 +481,8 @@ older one — and every other event is queued in order
 | `heartbeat` | `{build, ts}`, every 30 s. |
 | `order-update` | `{type, order_id, …}`. One event name, several shapes, discriminated by `type`: `received`; `dispatched` (+`vendor_order_id`); `status_changed` (+`new_status`); `eta_update` (+`eta`); `completed`; `failed` (+`detail`); `cancelled` (+`reason`); `faulted` (+`detail`); `recovered` (+`robot_id`); `skipped` (+`detail`). The order key is `order_id`, not `id`. |
 | `mission-event` | `{order_id, vendor_order_id, old_state, new_state, robot_id}`, plus `blocks` / `errors` from the fleet snapshot and `robot_x`, `robot_y`, `robot_station`, `robot_battery` when the robot is known. |
-| `bin-update` | `{node_id, action, bin_id, actor, detail}`. There is no `payload-update`. |
+| `bin-update` | `{node_id, action, bin_id, actor, detail}`. A robot lifting a bin sends `{node_id, action: "lifted", bin_id}`, with the node it left. There is no `payload-update`. |
+| `bin-row` | `{bin_id}`, when what the Bins page shows for a bin changed and no `bin-update` says so: a station's count tick, or a station door's write. The Bins page repaints that bin's row. |
 | `node-update` | `{node_id, action}`. |
 | `robot-update` | An array, one object per robot: `vehicle_id`, `state`, position (`x`, `y`, `angle`), battery and the flags the Robots page draws, plus the order line the robot is on. |
 | `cell-heartbeat` | `{station, process_id, style_id, recorded_at, ts}` per projected production tick. |

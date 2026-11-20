@@ -315,7 +315,7 @@ func TestABStrand_TheExchangeRefusesAStaleHolderOrAThirdReservation(t *testing.T
 			}
 			switch tc {
 			case "holder written since":
-				_, err := r.db.ClaimAppend(r.holder.ID, r.holder.WaitIndex, r.holder.StepsJSON)
+				_, err := r.db.ClaimAppend(r.holder.ID, r.holder.WaitIndex, r.holder.StepsJSON, nil)
 				testutil.MustNoErr(t, err, "a release's CAS lands")
 			default:
 				third := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.Status = StatusQueued })

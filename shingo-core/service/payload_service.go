@@ -27,6 +27,15 @@ type PayloadService struct {
 	// while HTTP handlers may already be writing. Nil: nothing is pushed and
 	// the heartbeat carries the change.
 	containmentChanged atomic.Pointer[func()]
+	// payloadsChanged is called after every successful payload write this
+	// service makes (a create, an update, a delete, a carrier-type set, a
+	// manifest or a part's cat id), so the Edges' feeds compare against a build
+	// made after it. Atomic, and nil, as containmentChanged.
+	payloadsChanged atomic.Pointer[func()]
+	// catalogRow reads one part's catalog row and carrier rows as the feeds
+	// build them, for the floor create's answer (CatalogRow). Atomic, as the
+	// hooks above.
+	catalogRow atomic.Pointer[catalogRowFunc]
 }
 
 // SetContainmentChangedFunc installs the hook called after a successful
@@ -41,15 +50,35 @@ func (s *PayloadService) notifyContainmentChanged() {
 	}
 }
 
+// SetPayloadsChangedFunc installs the hook called after a successful payload
+// write. Set once, through Engine.SetPayloadsChangedFunc.
+func (s *PayloadService) SetPayloadsChangedFunc(fn func()) {
+	s.payloadsChanged.Store(&fn)
+}
+
+// payloadsWritten calls the payload hook after a write that succeeded, and
+// returns err untouched: a failed write calls nothing.
+func (s *PayloadService) payloadsWritten(err error) error {
+	if err != nil {
+		return err
+	}
+	if fn := s.payloadsChanged.Load(); fn != nil && *fn != nil {
+		(*fn)()
+	}
+	return nil
+}
+
 func NewPayloadService(db *store.DB) *PayloadService {
 	return &PayloadService{db: db}
 }
 
 // --- Payload CRUD ---------------------------------------------------------
 
-// Create inserts a new payload template.
+// Create inserts a new payload template as given, with no checks: the bulk
+// importer's path (importPayloadGroups), which checks its rows its own way.
+// Every other create goes through CreateWithSets (checkPayload).
 func (s *PayloadService) Create(p *payloads.Payload) error {
-	return s.db.CreatePayload(p)
+	return s.payloadsWritten(s.db.CreatePayload(p))
 }
 
 // Get loads a payload template by ID.
@@ -62,43 +91,83 @@ func (s *PayloadService) GetByCode(code string) (*payloads.Payload, error) {
 	return s.db.GetPayloadByCode(code)
 }
 
-// ErrPayloadCapacity marks a payload write refused for a UoP capacity below 1,
-// so a handler can answer 400 rather than 500 without matching on text.
-var ErrPayloadCapacity = errors.New("payload capacity")
+// The refusals of a payload's own fields (checkPayload), each its own sentinel
+// so a handler can answer 400 rather than 500, and the floor's door can say
+// which field in its own words, without matching on text.
+var (
+	ErrPayloadCode       = errors.New("payload code")
+	ErrPayloadCapacity   = errors.New("payload capacity")
+	ErrPayloadToteNumber = errors.New("payload tote number")
+)
 
-// ValidatePayloadCapacity refuses a UoP capacity below 1.
+// checkPayload is every check a payload's own fields are held to, in one place
+// for every door that writes them: the desktop's form and template API, on a
+// create and on an update, and the floor's part create. The importer alone
+// creates through Create without it (below).
 //
-// uop_capacity is the standard pack — how many production cycles a full bin of
-// this payload holds — and 0 is not "unknown": the standard-pack fallback
-// hands the line a carrier with nothing in it, and the near-empty and
-// over-capacity arithmetic divide by it. Rows already stored at 0 are left
-// alone until somebody edits them, as parts_per_cycle was.
+// THE CODE IS TRIMMED, IN PLACE, AND MUST NOT BE BLANK. payloads.code is
+// unique but case-sensitive and untrimmed, so " SYN-A" would sit beside
+// "SYN-A" as a second part, and "" would be a part nobody can name; only the
+// browser's required box stood in the way. Trimming p.Code here means what is
+// stored is what was checked.
+//
+// THE CAPACITY IS 1 OR MORE. uop_capacity is the standard pack — how many
+// pieces of its part a full bin holds, or for a kit (several manifest lines)
+// how many cycles it feeds (protocol.ManifestItem) — and 0 is not "unknown":
+// the standard-pack fallback hands the line a carrier with nothing in it, and
+// the near-empty and over-capacity arithmetic divide by it. Rows already
+// stored at 0 are left alone until somebody edits them, as parts_per_cycle
+// was.
+//
+// EACH TOTE NUMBER IS UNKNOWN (nil) OR 1 OR MORE. The doors read nil from a
+// blank box or a null; a door that does not carry the field leaves the stored
+// value on p, which is checked again here.
 //
 // Create does NOT call this: the bulk importer creates through Create and
-// still admits 0 with a warning. The handler doors that create a payload call
-// it before Create instead.
-func ValidatePayloadCapacity(p *payloads.Payload) error {
+// still admits a capacity of 0 with a warning, and its code is a spreadsheet
+// cell it has already trimmed and refused blank (groupImportRows).
+func checkPayload(p *payloads.Payload) error {
+	p.Code = strings.TrimSpace(p.Code)
+	if p.Code == "" {
+		// OWNER-WORDS
+		return fmt.Errorf("%w: a part needs a part number", ErrPayloadCode)
+	}
 	if p.UOPCapacity < 1 {
-		return fmt.Errorf("%w: payload %q needs a UoP capacity of 1 or more — how many production "+
-			"cycles a full bin of it holds (got %d)", ErrPayloadCapacity, p.Code, p.UOPCapacity)
+		// OWNER-WORDS
+		return fmt.Errorf("%w: %q needs a UoP capacity of 1 or more — how many pieces of the part "+
+			"a full bin holds (got %d)", ErrPayloadCapacity, p.Code, p.UOPCapacity)
+	}
+	for _, f := range []struct {
+		name string
+		v    *int
+	}{{"tote_layers", p.ToteLayers}, {"uop_per_tote", p.UOPPerTote}} {
+		if f.v != nil && *f.v < 1 {
+			// OWNER-WORDS
+			return fmt.Errorf("%w: %s must be 1 or more, or blank for unknown (got %d)",
+				ErrPayloadToteNumber, f.name, *f.v)
+		}
 	}
 	return nil
 }
 
-// Update persists field changes on a payload template, refusing a capacity
-// below 1 (ValidatePayloadCapacity) and a CODE change while bins still carry
-// the old one. Every other field is freely editable.
+// Update persists field changes on a payload template, refusing what
+// checkPayload refuses and a CODE change while bins still carry the old one.
+// Every other field is freely editable.
 func (s *PayloadService) Update(p *payloads.Payload) error {
 	if err := s.checkUpdate(p); err != nil {
 		return err
 	}
-	return s.db.UpdatePayload(p)
+	return s.payloadsWritten(s.db.UpdatePayload(p))
 }
 
-// checkUpdate is Update's refusals: a capacity below 1, and a code change
-// while bins still carry the old code.
+// checkUpdate is Update's refusals: checkPayload's, and a code change while
+// bins still carry the old code. An update runs checkPayload as a create does
+// because it writes the same columns: an edit that blanked the code renamed
+// the part to nothing, and the tote numbers' check left the template API's
+// handler for here. The trim can rename a part stored with padding; the
+// in-use guard below refuses that as it refuses any rename.
 func (s *PayloadService) checkUpdate(p *payloads.Payload) error {
-	if err := ValidatePayloadCapacity(p); err != nil {
+	if err := checkPayload(p); err != nil {
 		return err
 	}
 	if before, err := s.db.GetPayload(p.ID); err == nil && before != nil && before.Code != p.Code {
@@ -116,14 +185,18 @@ type PayloadSets = payloads.Sets
 
 // CreateWithSets inserts a payload template with the carrier types and the
 // manifest the save states, in one transaction, so a refused manifest (a
-// cat-id conflict) leaves no payload behind. The sets are checked first, as
-// SetBinTypes and ReplaceManifest check them. Like Create, it does not check
-// the capacity: the door that creates calls ValidatePayloadCapacity.
+// cat-id conflict) leaves no payload behind. The payload's fields are checked
+// first (checkPayload), then the sets, as SetBinTypes and ReplaceManifest
+// check them. Every desktop create comes through here; the importer alone
+// creates through Create.
 func (s *PayloadService) CreateWithSets(p *payloads.Payload, sets PayloadSets) error {
+	if err := checkPayload(p); err != nil {
+		return err
+	}
 	if err := s.checkSets(sets); err != nil {
 		return err
 	}
-	return s.db.CreatePayloadWithSets(p, sets)
+	return s.payloadsWritten(s.db.CreatePayloadWithSets(p, sets))
 }
 
 // UpdateWithSets is Update with the carrier types and the manifest the save
@@ -135,7 +208,7 @@ func (s *PayloadService) UpdateWithSets(p *payloads.Payload, sets PayloadSets) e
 	if err := s.checkSets(sets); err != nil {
 		return err
 	}
-	return s.db.UpdatePayloadWithSets(p, sets)
+	return s.payloadsWritten(s.db.UpdatePayloadWithSets(p, sets))
 }
 
 // checkSets refuses a stated set SetBinTypes or ReplaceManifest would refuse:
@@ -165,7 +238,7 @@ func (s *PayloadService) Delete(id int64) error {
 			return err
 		}
 	}
-	return s.db.DeletePayload(id)
+	return s.payloadsWritten(s.db.DeletePayload(id))
 }
 
 // refuseIfBinsCarry blocks a rename or delete that would orphan live bins.
@@ -325,9 +398,10 @@ func (s *PayloadService) ListManifest(payloadID int64) ([]*payloads.ManifestItem
 // that way (payload_manifest ids 117/123/137/150) and were corrected by hand at
 // the plant once the owner declared them entry oversights.
 //
-// Non-positive is refused rather than only missing, because the count a bin
-// ships to the inventory ledger is uop_remaining x this number: a zero line
-// contributes nothing to any count while looking configured. A part that
+// Non-positive is refused rather than only missing, because a zero line
+// looks configured and is not: a kit's line counts uop_remaining x this number
+// (zero, whatever is in the bin), and a one-part payload's is an assembly's
+// draw per cycle, which the Edge would read as 1 (protocol.ManifestItem). A part that
 // genuinely is not in the carrier is a line that does not belong on the
 // manifest.
 //
@@ -363,8 +437,9 @@ func ValidateManifestLines(lines []payloads.Line) error {
 	if len(bad) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: every manifest line needs a part number and a parts_per_cycle of 1 "+
-		"or more — how many of the part ONE production cycle uses, usually 1. Fix: %s",
+	// OWNER-WORDS
+	return fmt.Errorf("%w: every manifest line needs a part number and pieces per assembly cycle of 1 "+
+		"or more — how many of the part one assembly cycle uses, usually 1. Fix: %s",
 		ErrManifestLine, strings.Join(bad, ", "))
 }
 
@@ -377,7 +452,7 @@ func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem, catid s
 	}}); err != nil {
 		return err
 	}
-	return s.db.CreatePayloadManifestItem(item, catid)
+	return s.payloadsWritten(s.db.CreatePayloadManifestItem(item, catid))
 }
 
 // UpdateManifestItem adjusts a manifest item's part, that part's cat id, and
@@ -388,12 +463,12 @@ func (s *PayloadService) UpdateManifestItem(id int64, partNumber, catid string, 
 	}}); err != nil {
 		return err
 	}
-	return s.db.UpdatePayloadManifestItem(id, partNumber, catid, partsPerCycle)
+	return s.payloadsWritten(s.db.UpdatePayloadManifestItem(id, partNumber, catid, partsPerCycle))
 }
 
 // DeleteManifestItem removes a manifest item from a payload template.
 func (s *PayloadService) DeleteManifestItem(id int64) error {
-	return s.db.DeletePayloadManifestItem(id)
+	return s.payloadsWritten(s.db.DeletePayloadManifestItem(id))
 }
 
 // ReplaceManifest swaps out a payload template's whole manifest in one pass,
@@ -402,7 +477,7 @@ func (s *PayloadService) ReplaceManifest(payloadID int64, lines []payloads.Line)
 	if err := ValidateManifestLines(lines); err != nil {
 		return err
 	}
-	return s.db.ReplacePayloadManifest(payloadID, lines)
+	return s.payloadsWritten(s.db.ReplacePayloadManifest(payloadID, lines))
 }
 
 // --- parts ----------------------------------------------------------------
@@ -421,7 +496,7 @@ func (s *PayloadService) GetPart(partNumber string) (*payloads.Part, error) {
 // conflict prompt — it is deliberately a separate, explicit call rather than
 // something an ordinary manifest save can do by accident.
 func (s *PayloadService) SetPartCATID(partNumber, catid string) error {
-	return s.db.SetPartCATID(partNumber, catid)
+	return s.payloadsWritten(s.db.SetPartCATID(partNumber, catid))
 }
 
 // --- Bin-type associations ------------------------------------------------
@@ -434,7 +509,7 @@ func (s *PayloadService) SetBinTypes(payloadID int64, binTypeIDs []int64) error 
 	if err := CheckNoBareInPayloadRule(s.db, binTypeIDs); err != nil {
 		return err
 	}
-	return s.db.SetPayloadBinTypes(payloadID, binTypeIDs)
+	return s.payloadsWritten(s.db.SetPayloadBinTypes(payloadID, binTypeIDs))
 }
 
 // CheckNoBareInPayloadRule refuses a payload rule naming a bare type. Exported

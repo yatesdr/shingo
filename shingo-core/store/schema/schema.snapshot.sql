@@ -306,7 +306,9 @@ CREATE TABLE public.carrier_families (
     code text NOT NULL,
     description text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lift_bintask text DEFAULT ''::text NOT NULL,
+    wait_bintask text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.carrier_families_id_seq
@@ -753,7 +755,9 @@ ALTER SEQUENCE public.lineside_drain_ledger_id_seq OWNED BY public.lineside_drai
 CREATE TABLE public.load_sequences (
     name text NOT NULL,
     task_names text DEFAULT '[]'::text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lift_at integer NOT NULL,
+    CONSTRAINT load_sequences_lift_at_in_task_names CHECK (((lift_at >= 0) AND (lift_at < GREATEST(json_array_length((task_names)::json), 1))))
 );
 
 CREATE TABLE public.mission_events (
@@ -988,6 +992,7 @@ CREATE TABLE public.orders (
     named_bin_id bigint,
     want text DEFAULT ''::text NOT NULL,
     steps_done integer DEFAULT 0 NOT NULL,
+    block_actions jsonb DEFAULT '{}'::jsonb,
     version bigint DEFAULT 1 NOT NULL,
     asked_vendor_order_id text DEFAULT ''::text NOT NULL
 );

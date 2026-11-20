@@ -104,7 +104,7 @@ func TestPair_HistoryWedgesAgeFromTheLastHistoryRow(t *testing.T) {
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.Status = status
 			if status == protocol.StatusDispatched {
-				o.VendorOrderID = "sg-hist-dispatched" // a `dispatched` row names its job (v181)
+				o.VendorOrderID = "sg-hist-dispatched" // a `dispatched` row names its job (v183)
 			}
 		})
 		_, err := db.Exec(`DELETE FROM order_history WHERE order_id = $1`, o.ID)

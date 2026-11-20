@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +11,8 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
+	"shingoedge/plc"
+	"shingoedge/store"
 	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
@@ -640,5 +644,232 @@ func TestRegression_BinAttributionRequiresActiveBinID(t *testing.T) {
 	if len(sink.binCalls) != 0 {
 		t.Errorf("bin calls = %d, want 0 (no active_bin_id, must skip): %+v",
 			len(sink.binCalls), sink.binCalls)
+	}
+}
+
+// piecesPerCycle gives part's catalog row one manifest line at ratio.
+func piecesPerCycle(t *testing.T, db *store.DB, part string, ratio int64) {
+	t.Helper()
+	b, err := json.Marshal([]protocol.ManifestItem{{PartNumber: part, PartsPerCycle: ratio}})
+	testutil.MustNoErr(t, err, "manifest")
+	res, err := db.DB.Exec(`UPDATE payload_catalog SET manifest=? WHERE code=?`, string(b), part)
+	testutil.MustNoErr(t, err, "manifest "+part)
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("manifest %s: %d catalog rows (%v), want 1", part, n, err)
+	}
+}
+
+// TestConsume_DrawsPiecesPerCycleAtEveryConsumePath is the owner's example on
+// every consume path: a part used 8 per cycle, an 800-piece cart, 100 cycles
+// to empty — at a consume spot the cell counter counts, at an A/B pair's
+// fall-through side and at a spot a station counter counts. A produce spot of
+// the same part never reads the number: it adds what its counter counted. A
+// draw bigger than what is left takes the count below 0 (8 against 5 is -3),
+// and nothing carries anywhere. Before, every cart ended at 700.
+func TestConsume_DrawsPiecesPerCycleAtEveryConsumePath(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	b1, b2, b3, b4, b5 := int64(61), int64(62), int64(63), int64(64), int64(65)
+	f := seedWalkerProcess(t, db, "PPC", []walkerNode{
+		{Suffix: "CELL", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-R8", Capacity: 800, Remaining: 800, BoundBin: &b1, ActivePull: true},
+		{Suffix: "AB_A", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSequential,
+			PayloadCode: "SYN-R8", Capacity: 800, Remaining: 800, BoundBin: &b2, Paired: "PPC_AB_B"},
+		{Suffix: "AB_B", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSequential,
+			PayloadCode: "SYN-R8", Capacity: 800, Remaining: 800, BoundBin: &b3, Paired: "PPC_AB_A"},
+		{Suffix: "STATION", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-R8", Capacity: 800, Remaining: 800, BoundBin: &b4, ActivePull: true},
+		{Suffix: "PRESS", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-R8", Capacity: 800, Remaining: 0, BoundBin: &b5, ActivePull: true},
+	})
+	piecesPerCycle(t, db, "SYN-R8", 8)
+	lc := stationCounter(t, db, f.ProcessID, f.node(t, "STATION"))
+	eng := testEngine(t, db)
+
+	for range 100 {
+		eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 1})
+		eng.handleLineCounterDelta(LineCounterDeltaEvent{ProcessID: f.ProcessID, CounterID: lc, StyleID: f.StyleID,
+			Kind: plc.TickToday, Delta: 1})
+	}
+	got := tickOutcomes(t, db, f)
+	for suffix, want := range map[string]int{"CELL": 0, "AB_A": 0, "AB_B": 800, "STATION": 0, "PRESS": 100} {
+		if got[suffix].Remaining != want {
+			t.Errorf("%s after 100 cycles = %d, want %d", suffix, got[suffix].Remaining, want)
+		}
+	}
+
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(f.node(t, "CELL"), binPtr(f.ClaimIDs["CELL"]), &b1, 5), "5 left")
+	eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 1})
+	if got := runtimeOf(t, eng, f.node(t, "CELL")).RemainingUOPCached; got != -3 {
+		t.Errorf("8 against 5 = %d, want -3: the draw takes the count below 0", got)
+	}
+}
+
+// TestConsume_ALedgerRowReleasesInItsOwnUnit: a held share counts strokes,
+// whose part was not known when they were held, so its release draws them
+// times the pieces per cycle of the cart it lands on; a "no cart" row already
+// counts the pieces the cart did not give, so its release draws them as they
+// are, and a Charge's preview says the same numbers.
+func TestConsume_ALedgerRowReleasesInItsOwnUnit(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	b1 := int64(71)
+	f := seedWalkerProcess(t, db, "LDG", []walkerNode{
+		{Suffix: "CELL", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-L8", Capacity: 800, Remaining: 800, BoundBin: &b1, ActivePull: true},
+		{Suffix: "NOCART", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-L8", Capacity: 800, Remaining: 0, ActivePull: true},
+	})
+	piecesPerCycle(t, db, "SYN-L8", 8)
+	eng := testEngine(t, db)
+
+	eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 2, CATID: "9201", Kind: plc.TickHeld})
+	eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 1, CATID: "9202"})
+	if got := runtimeOf(t, eng, f.node(t, "CELL")).RemainingUOPCached; got != 792 {
+		t.Fatalf("CELL after today's stroke = %d, want 792", got)
+	}
+	var held, noCart *store.CatidHold
+	hs, err := db.ListOpenCatidHolds(f.ProcessID)
+	testutil.MustNoErr(t, err, "ledger")
+	for i := range hs {
+		switch hs[i].Reason {
+		case holdReasonHeld:
+			held = &hs[i]
+		case holdReasonNoCart:
+			noCart = &hs[i]
+		}
+	}
+	if held == nil || held.Qty != 2 || noCart == nil || noCart.Qty != 8 || noCart.Strokes != 1 {
+		t.Fatalf("ledger = %+v, want a held draw of 2 strokes and a no-cart row of 8 pieces over 1 stroke", hs)
+	}
+	if it := noCartItem(*noCart, "NOCART", time.UTC); !strings.HasPrefix(it.Headline, "8 pieces of SYN-L8 at NOCART") {
+		t.Errorf("no-cart headline = %q, want it to count the 8 pieces", it.Headline)
+	}
+
+	// A cart of the part lands at NOCART; both rows are released onto carts.
+	nc := f.node(t, "NOCART")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nc, binPtr(f.ClaimIDs["NOCART"]), binPtr(72), 800), "a cart")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nc, "SYN-L8", true, "test"), "its part")
+
+	rows, refusal, err := eng.holdRows(noCart, f.StyleID, "LDG-STYLE")
+	testutil.MustNoErr(t, err, "preview no-cart")
+	if refusal != "" || len(rows) != 1 || rows[0].Qty != 8 {
+		t.Errorf("no-cart preview = %+v (%q), want one row drawing 8", rows, refusal)
+	}
+	rows, _, err = eng.holdRows(held, f.StyleID, "LDG-STYLE")
+	testutil.MustNoErr(t, err, "preview held")
+	for _, r := range rows {
+		if r.Qty != 16 {
+			t.Errorf("held preview row %+v: qty %d, want 16 (2 strokes at 8)", r, r.Qty)
+		}
+	}
+
+	eng.chargeHold(noCart, f.StyleID)
+	if got := runtimeOf(t, eng, nc).RemainingUOPCached; got != 792 {
+		t.Errorf("NOCART after the no-cart row's release = %d, want 792: its 8 pieces drawn once", got)
+	}
+	eng.chargeHold(held, f.StyleID)
+	if got := runtimeOf(t, eng, f.node(t, "CELL")).RemainingUOPCached; got != 776 {
+		t.Errorf("CELL after the held draw's release = %d, want 776: 2 strokes at 8", got)
+	}
+}
+
+// TestShareStep_SumsToTheStepFloorFirst: over every step 0-60 and 1-6 spots,
+// the shares sum to the step, each is the floor share or one more, and the
+// odd pieces go to the first spots in node order.
+func TestShareStep_SumsToTheStepFloorFirst(t *testing.T) {
+	t.Parallel()
+	for n := 1; n <= 6; n++ {
+		for step := 0; step <= 60; step++ {
+			got := shareStep(step, n)
+			if len(got) != n {
+				t.Fatalf("shareStep(%d, %d) = %v: %d shares, want %d", step, n, got, len(got), n)
+			}
+			sum := 0
+			for i, s := range got {
+				sum += s
+				want := step / n
+				if i < step%n {
+					want++
+				}
+				if s != want {
+					t.Errorf("shareStep(%d, %d)[%d] = %d, want %d (floor %d, the first %d spots one more)",
+						step, n, i, s, want, step/n, step%n)
+				}
+			}
+			if sum != step {
+				t.Errorf("shareStep(%d, %d) = %v sums to %d, want the step", step, n, got, sum)
+			}
+		}
+	}
+}
+
+// TestProduce_TwoSpotsOfOnePartShareTheStep: two produce spots of one style
+// running one part on one counter split each step, the odd piece to the first
+// in node order: steps 2, 4 and 1 give A 1+2+1 and B 1+2+0. An LH/RH die's
+// two parts are untouched: each takes the whole step. Before, A and B each
+// took the whole step (7 and 7).
+func TestProduce_TwoSpotsOfOnePartShareTheStep(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	b1, b2, b3, b4 := int64(81), int64(82), int64(83), int64(84)
+	f := seedWalkerProcess(t, db, "SHR", []walkerNode{
+		{Suffix: "A", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-TWO", Capacity: 100, BoundBin: &b1, ActivePull: true},
+		{Suffix: "B", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-TWO", Capacity: 100, BoundBin: &b2, ActivePull: true},
+		{Suffix: "LH", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-LH2", Capacity: 100, BoundBin: &b3, ActivePull: true},
+		{Suffix: "RH", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-RH2", Capacity: 100, BoundBin: &b4, ActivePull: true},
+	})
+	eng := testEngine(t, db)
+	for _, step := range []int64{2, 4, 1} {
+		eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: step})
+	}
+	got := tickOutcomes(t, db, f)
+	for suffix, want := range map[string]int{"A": 4, "B": 3, "LH": 7, "RH": 7} {
+		if got[suffix].Remaining != want {
+			t.Errorf("%s after steps 2, 4, 1 = %d, want %d", suffix, got[suffix].Remaining, want)
+		}
+	}
+}
+
+// TestProduce_AnABPairIsOneSpot: a produce A/B pair of one part takes the
+// whole step at its lit side; beside a lone spot of the same part it is one
+// of two spots, so each takes half.
+func TestProduce_AnABPairIsOneSpot(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name               string
+		lone               bool
+		wantLit, wantAlone int
+	}{
+		{name: "the pair alone", wantLit: 4},
+		{name: "the pair beside a lone spot of its part", lone: true, wantLit: 2, wantAlone: 2},
+	} {
+		db := testEngineDB(t)
+		b1, b2, b3 := int64(91), int64(92), int64(93)
+		spots := []walkerNode{
+			{Suffix: "PA", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSequential,
+				PayloadCode: "SYN-AB2", Capacity: 100, BoundBin: &b1, Paired: "ABP_PB", ActivePull: true},
+			{Suffix: "PB", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSequential,
+				PayloadCode: "SYN-AB2", Capacity: 100, BoundBin: &b2, Paired: "ABP_PA", ActivePull: true},
+		}
+		if c.lone {
+			spots = append(spots, walkerNode{Suffix: "ALONE", Role: protocol.ClaimRoleProduce,
+				SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "SYN-AB2", Capacity: 100, BoundBin: &b3, ActivePull: true})
+		}
+		f := seedWalkerProcess(t, db, "ABP", spots)
+		eng := testEngine(t, db)
+		eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 4})
+		got := tickOutcomes(t, db, f)
+		if got["PA"].Remaining != c.wantLit || got["PB"].Remaining != 0 {
+			t.Errorf("%s: the pair = %d / %d, want %d at its first lit side and 0 at its second", c.name,
+				got["PA"].Remaining, got["PB"].Remaining, c.wantLit)
+		}
+		if c.lone && got["ALONE"].Remaining != c.wantAlone {
+			t.Errorf("%s: the lone spot = %d, want %d", c.name, got["ALONE"].Remaining, c.wantAlone)
+		}
 	}
 }

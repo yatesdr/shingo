@@ -28,7 +28,7 @@ func (s *stubEngine) CoreSpeaksFeeds() bool { return s.speaksFeeds }
 func TestContainmentPage_FeedStates(t *testing.T) {
 	t.Parallel()
 	old := time.Now().Add(-engine.FeedAsOfAfter - time.Minute)
-	oldText := old.In(plantLocation).Format("15:04")
+	oldText := old.In(plantLocation()).Format("15:04")
 	cases := []struct {
 		name     string
 		held     func() *engine.ContainmentState

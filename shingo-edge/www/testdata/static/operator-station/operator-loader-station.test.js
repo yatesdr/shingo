@@ -622,12 +622,12 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq(headerButtons(), [], 'homes: no PULL FULL FROM HOME (the Clear partials cards replace it)');
     eq(pcCards().map(c => cardText(c)), [['SMN_H2', ' · holds an empty', ' TOTE-1', 'PART-B', 'CELL-H has 4 left']],
         'homes: the empty home\'s Load card; stocked homes are hidden');
-    eq(zoneTitles(), ['Load', 'Clear partials'], 'homes: the zones, Clear partials folded at the bottom');
-    eq(part(zoneEl('Clear partials'), 'os-pc-strip-words'), '1 partial · 1 empty · 1 open',
+    eq(zoneTitles(), ['Load', 'Bring partials home'], 'homes: the zones, Bring partials home folded at the bottom');
+    eq(part(zoneEl('Bring partials home'), 'os-pc-strip-words'), '1 partial · 1 empty · 1 open',
         'Clear partials, a normal day: folded to its strip and words');
-    await tap(zoneButton('Clear partials', 'Show'));
+    await tap(zoneButton('Bring partials home', 'Show'));
     const h1 = pcCard('PART-A', 'SMN_H1');
-    eq([cardText(h1), part(h1, 'os-pc-num')], [['SMN_H1', ' · holds a full bin', 'PART-A', 'Pull the full · partial from SMN_F1'], '1'],
+    eq([cardText(h1), part(h1, 'os-pc-num')], [['SMN_H1', ' · full', 'PART-A', 'Take the full bin off · partial on SMN_F1 comes here'], '1'],
         'Clear partials opened by a tap: the numbered card, the home act, where the partial comes from');
 
     // The card's tap: the confirm, naming the home and the spot, then
@@ -638,13 +638,13 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // success toast, the view refreshed.
     const toasts = () => document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
     await tap(h1);
-    eq(overlayTexts()[0], 'Clear SMN_H1?', 'the clear\'s confirm names the home (changed: it named no node)');
-    eq(overlayTexts()[1], 'Pull the full from SMN_H1 first. CONFIRM records it; Shingo brings the partial on SMN_F1 home when it can.',
+    eq(overlayTexts()[0], 'Full bin off SMN_H1?', 'the clear\'s confirm names the home and the tote');
+    eq(overlayTexts()[1], 'Take the full bin off the cart first. CONFIRM marks the cart empty: a robot takes it away and brings the partial from SMN_F1 here.',
         'the clear\'s confirm says the full is pulled first and Shingo brings the partial when it can');
-    eq(overlayButtons(), ['CONFIRM CLEAR', 'CANCEL'], 'the clear\'s confirm offers CONFIRM CLEAR');
+    eq(overlayButtons(), ['BIN IS OFF · CONFIRM', 'CANCEL'], 'the clear\'s confirm offers BIN IS OFF · CONFIRM');
     let confirmBox = overlay();
     const loadsBefore = viewLoads;
-    await tapOverlay('CONFIRM CLEAR');
+    await tapOverlay('BIN IS OFF · CONFIRM');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
         'CLEAR: posts clear-loader-home for the card\'s home');
     eq([confirmBox.removed, toasts().slice(-1), viewLoads - loadsBefore], [true, [CLEAR_DONE], 1],
@@ -655,13 +655,13 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // with the refusal in place of its buttons, one request per tap.
     clearRefusal = 'SMN_H1 is already being cleared';
     await tap(h1);
-    await tapOverlay('CONFIRM CLEAR');
+    await tapOverlay('BIN IS OFF · CONFIRM');
     eq(posts().length, 1, 'CLEAR refused: one request');
     eq([overlayButtons(), overlayTexts().slice(-1)], [[], ['SMN_H1 is already being cleared']],
         'CLEAR refused: the confirm stays and shows the refusal in place of its buttons');
     requests = [];
     overlay().remove();
-    await tap(zoneButton('Clear partials', 'Hide'));
+    await tap(zoneButton('Bring partials home', 'Hide'));
 
     // LOAD from an empty home.
     render();
@@ -675,14 +675,14 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
         active_claim: { id: 4, core_node_name: 'PLN_X1', role: 'produce', swap_mode: 'single_robot', payload_code: 'PART-A', uop_capacity: 20 } };
     setView([pressTile].concat(homes), homeServes);
     render();
-    eq(headerButtons(), ['PULL FULL FROM HOME', 'REFRESH'], 'a home beside a press: the node grid keeps PULL FULL FROM HOME');
-    await tap(headerButton('PULL FULL FROM HOME'));
+    eq(headerButtons(), ['FULL BIN OFF HOME', 'REFRESH'], 'a home beside a press: the node grid keeps PULL FULL FROM HOME');
+    await tap(headerButton('FULL BIN OFF HOME'));
     eq(overlayButtons(), ['SMN_H1PART-A', 'CANCEL'], 'PULL FULL FROM HOME: only the home with a buffer partial is listed');
     await tapOverlay('SMN_H1PART-A');
-    eq(overlayTexts()[1], 'Pull the full from this home first. CONFIRM records it.',
+    eq(overlayTexts()[1], 'Take the full bin off the cart first. CONFIRM marks the cart empty.',
         'PULL FULL FROM HOME: the confirm names no spot');
     confirmBox = overlay();
-    await tapOverlay('CONFIRM CLEAR');
+    await tapOverlay('BIN IS OFF · CONFIRM');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
         'PULL FULL FROM HOME: posts clear-loader-home for the picked home');
     eq([confirmBox.removed, toasts().slice(-1)], [true, [CLEAR_DONE]],
@@ -708,7 +708,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     render();
     // Changed: a home whose own move is pending draws no Load card.
     eq(pcCards().length, 0, 'clear in flight: the home draws no Load card (changed: it drew LOAD)');
-    eq([...zoneEl('Clear partials').descendants().filter(n => n.classList.contains('os-pc-spot-box'))].map(n => n.className),
+    eq([...zoneEl('Bring partials home').descendants().filter(n => n.classList.contains('os-pc-spot-box'))].map(n => n.className),
         ['os-pc-spot-box os-pc-spot-box--coming'], 'clear in flight: its spot is drawn as coming');
     // Changed: the node modal no longer offers TAP TO LOAD on the empty Order A
     // holds (Core refuses that LOAD, owner 2026-10-18); once Order A has
@@ -1110,7 +1110,9 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // 40 homes to load, four refusals of parts no cell runs (plain, so they may
     // be cut), at 1280 x 768: the zones give way from the last. A cut zone draws the cards that fit and a "+N more"
     // for exactly the rest (a bug fixed: a zone cut to no card drew its title
-    // and nothing to tap), and "+N more" opens Show all.
+    // and nothing to tap). "+N more" opens that zone in place, every card at
+    // the fit's size, and the board scrolls; "Show less" folds it back
+    // (changed: it opened Show all, SPR 2026-11-18).
     const homes = [], serves = [];
     for (let i = 0; i < 40; i++) {
         const p = 'PART-' + (100 + i);
@@ -1125,13 +1127,24 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     setView(homes, { serves: serves });
     render();
     const more = z => zoneEl(z).descendants().filter(n => n.classList.contains('os-pc-more')).map(n => n.textContent);
-    const drawn = zoneEl('No parts available').descendants().filter(n => n.classList.contains('os-pc-card')
+    const drawnIn = z => zoneEl(z).descendants().filter(n => n.classList.contains('os-pc-card')
         && !n.classList.contains('os-pc-more')).length;
+    const drawn = drawnIn('No parts available');
+    const loads = drawnIn('Load');
     eq([drawn < 4, more('No parts available')], [true, ['+' + (4 - drawn) + ' more']],
         'overflow: a cut zone draws what fits and "+N more" for the rest');
+    const step = grid.className.split(/\s+/).find(c => /^os-pc-step-/.test(c));
     await tap(zoneEl('No parts available').descendants().find(n => n.classList.contains('os-pc-more')));
-    eq(topLine()[2], 'Show work', '"+N more" opens Show all');
-    await tap(showAllButton());
+    eq([topLine()[2], drawnIn('No parts available'), more('No parts available'), drawnIn('Load')],
+        ['Show all 44', 4, ['Show less'], loads],
+        '"+N more" opens its zone in place: every card, then Show less; Show all stays shut, the other zones as fitted');
+    eq([grid.classList.contains('os-pc-zoneopen'), grid.className.split(/\s+/).find(c => /^os-pc-step-/.test(c))], [true, step],
+        'an opened zone: the board scrolls, the cards at the fit\'s size');
+    render();
+    eq(drawnIn('No parts available'), 4, 'an opened zone stays open across a poll');
+    await tap(zoneButton('No parts available', 'Show less'));
+    eq([drawnIn('No parts available'), more('No parts available'), grid.classList.contains('os-pc-zoneopen')],
+        [drawn, ['+' + (4 - drawn) + ' more'], false], 'Show less folds the zone back to the fit');
 }
 
 // ── 12. A band is replaced only when what it draws changed ────────────────
@@ -1188,7 +1201,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     setView([loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: FULL('PART-B'), dedicated: true, buffer: red })],
         { serves: [row('CELL-H', 'PART-A', 40)] });
     render();
-    const z = zoneEl('Clear partials');
+    const z = zoneEl('Bring partials home');
     const head = z.children.find(n => n.classList.contains('os-pc-zone-head'));
     eq([part(head, 'os-pc-word'), head.textContent.indexOf('No partial can come home'),
         z.children.filter(n => n !== head).map(n => n.textContent)],
@@ -1227,6 +1240,14 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq([reads(), shown().indexOf('PN-V1') >= 0, shown().indexOf('PN-V2') >= 0, shown().indexOf('>200<') >= 0],
         [[], true, true, true],
         'load modal, the part in the view: no request, its two lines, the count at its capacity (PN-V1 2 x 100)');
+    // lineCount is the count a manifest line shows (the row's last cell).
+    const lineCount = (part) => {
+        const row = rowsEl.children.find(n => n.innerHTML.indexOf(part) >= 0);
+        const m = row && />(-?\d+)<\/div>$/.exec(row.innerHTML);
+        return m ? Number(m[1]) : null;
+    };
+    eq([lineCount('PN-V1'), lineCount('PN-V2')], [200, 100],
+        'load modal, a kit of two lines: each line is the count times its ratio, as it always was');
     await confirmLoad();
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: { payload_code: 'PART-A', uop_count: 100 } }],
         'load modal, from the view: LOAD posts the part and the capacity, no manifest');
@@ -1248,6 +1269,11 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq([reads(), shown().indexOf('PN-A1') >= 0, shown().indexOf('No manifest template') >= 0],
         [['/api/payload/PART-A/manifest'], true, false],
         'load modal, the part not in the view: the manifest read, and the row\'s template line');
+    // PART-A's template is ONE line at 2 pieces per assembly cycle: its bin
+    // counts pieces, so the line shows the count, not the count x 2 (it showed
+    // 48) — protocol.ManifestItem's count rule.
+    eq(lineCount('PN-A1'), 24,
+        'load modal, a part of one line at ratio 2: its line shows the count (24), not 24 x 2');
     await confirmLoad();
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: loadBody }],
         'load modal, from the read: LOAD posts the part and the read\'s capacity, no manifest');
@@ -1791,6 +1817,83 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
         'a 10-inch screen: three columns, rows for the tiles (changed: two rows whatever the count)');
     eq([shape(4, 1920), shape(9, 1920)], ['4x2', '4x3'], 'a large screen: four columns, rows for the tiles');
     ctx.window.innerWidth = 1280; delete ctx.window.innerHeight;
+}
+
+// ── 23. REPLACE PARTIAL: a home holding a partial of its own part ──────────
+{
+    // No card on the board. Show all's tile for the spot opens the node modal,
+    // whose REPLACE PARTIAL opens the LOAD screen titled for the replace, the
+    // count at the pack; CONFIRM LOAD posts the LOAD as any LOAD (the Edge
+    // sends it to Core as a replace).
+    const PARTIAL = Object.assign(FULL('PART-A', 12), { partial: true });
+    setView([loaderTile(1, 'GRP.SMN_029', { dedicated: true, outbound: '', parts: ['PART-A'], bin: PARTIAL })],
+        { serves: [row('CELL-1', 'PART-A', 30)] });
+    render();
+    const noReplaceCard = () => pcCards().every(k => !/replace/i.test(cardText(k).join(' ')));
+    eq(noReplaceCard(), true, 'REPLACE PARTIAL: no card on the work view');
+    await tap(showAllButton());
+    eq(noReplaceCard(), true, 'REPLACE PARTIAL: no card under Show all');
+    await tap(pcCards()[0]);
+    eq(modalButtons().indexOf('REPLACE PARTIAL') >= 0, true, 'Show all: the modal of the spot offers REPLACE PARTIAL');
+    await tapModal('replace-partial:PART-A');
+    eq(loadOpens, [{ node: 1, codes: ['PART-A'], cap: 0, opts: { replace: true } }],
+        'REPLACE PARTIAL opens the load modal as a replace');
+    await flush();
+    eq([document.getElementById('load-bin-title').textContent, document.getElementById('load-bin-note').textContent,
+        document.getElementById('load-bin-note').style.display],
+    ['Replace partial · SMN_029', 'Partial off, full on, then CONFIRM LOAD', ''],
+    'REPLACE PARTIAL: the title names the spot (its group dropped), one line says what to do');
+    await confirmLoad();
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: loadBody }],
+        'REPLACE PARTIAL: CONFIRM LOAD posts load-bin with the part and the count at the pack (24), as a LOAD');
+    const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
+    eq(toasts.slice(-1), ['Partial replaced'], 'REPLACE PARTIAL: the toast says the partial was replaced');
+    await tap(showAllButton());
+
+    // A plain LOAD afterwards: the screen is the LOAD's again.
+    resetDOM();
+    ctx.openLoadBin(1, ['PART-A'], 0);
+    await flush();
+    eq([document.getElementById('load-bin-title').textContent, document.getElementById('load-bin-note').style.display],
+        ['Load Bin', 'none'], 'a LOAD after a replace: titled Load Bin, no line');
+
+    // A full of its part: no button.
+    setView([loaderTile(1, 'GRP.SMN_029', { dedicated: true, outbound: '', parts: ['PART-A'], bin: FULL('PART-A', 12) })],
+        { serves: [row('CELL-1', 'PART-A', 30)] });
+    render();
+    ctx.openModal(1);
+    eq(modalButtons().indexOf('REPLACE PARTIAL'), -1, 'a full: no REPLACE PARTIAL in the node modal');
+}
+
+// ── 24. Show all: a partial home that can bring a buffer partial home ──────
+{
+    // Show all draws the home in its Bring partials home card's words and the
+    // section's colour, and its tap opens the node modal, which offers REPLACE
+    // PARTIAL and BRING PARTIAL HOME. BRING PARTIAL HOME is the board card's
+    // confirm, and it posts clear-loader-home (SPR 2026-11-18: Show all drew
+    // the home as a plain spot, and its modal had no way to bring the partial
+    // home).
+    const PARTIAL = Object.assign(FULL('PART-A', 12), { partial: true });
+    setView([loaderTile(1, 'SMN_029', { dedicated: true, outbound: '', parts: ['PART-A'], bin: PARTIAL,
+        buffer: [{ node: 'SMN_B1', state: 'partial' }, { node: 'SMN_B2', state: 'open' }],
+        buffer_partial: { node: 'LDR.SMN_B1' } })], { serves: [row('CELL-1', 'PART-A', 30)] });
+    render();
+    await tap(showAllButton());
+    const tile = pcCards()[0];
+    eq([tile.className, cardText(tile)],
+        ['os-pc-card os-pc-card--amber os-pc-card--numbered', ['SMN_029', ' · partial', 'PART-A', 'Take the partial bin off · partial on SMN_B1 comes here']],
+        'Show all: the partial home in its Bring partials home words, amber as its section');
+    await tap(tile);
+    eq(['REPLACE PARTIAL', 'BRING PARTIAL HOME'].map(b => modalButtons().indexOf(b) >= 0), [true, true],
+        'its node modal offers REPLACE PARTIAL and BRING PARTIAL HOME');
+    await tapModal('bring-home');
+    eq([overlayTexts()[0], overlayButtons()], ['Partial bin off SMN_029?', ['BIN IS OFF · CONFIRM', 'CANCEL']],
+        'BRING PARTIAL HOME: the board card\'s confirm, naming the home');
+    await tapOverlay('BIN IS OFF · CONFIRM');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
+        'BRING PARTIAL HOME: posts clear-loader-home for the home');
+    requests = [];
+    await tap(showAllButton());
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -38,10 +39,10 @@ func digReq(id, blockerSlot, targetSlot, dest string) fleet.CreateOrderRequest {
 	return fleet.CreateOrderRequest{
 		OrderID: id,
 		Blocks: []fleet.OrderBlock{
-			{BlockID: id + "-u1", Location: blockerSlot, BinTask: "JackLoad"},
-			{BlockID: id + "-u2", Location: dest, BinTask: "JackUnload"},
-			{BlockID: id + "-r1", Location: targetSlot, BinTask: "JackLoad"},
-			{BlockID: id + "-r2", Location: dest, BinTask: "JackUnload"},
+			{BlockID: id + "-u1", Location: blockerSlot, BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: id + "-u2", Location: dest, BinTask: "JackUnload", Action: protocol.ActionDropoff},
+			{BlockID: id + "-r1", Location: targetSlot, BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: id + "-r2", Location: dest, BinTask: "JackUnload", Action: protocol.ActionDropoff},
 		},
 		Complete: true,
 	}
@@ -302,12 +303,12 @@ func TestDig_Soak_HoldIsRobust(t *testing.T) {
 		bid := 0
 		for _, bi := range sortedBlockers {
 			blocks = append(blocks,
-				fleet.OrderBlock{BlockID: digBlockID(&bid), Location: slotName(bi), BinTask: "JackLoad"},
-				fleet.OrderBlock{BlockID: digBlockID(&bid), Location: "LINE", BinTask: "JackUnload"})
+				fleet.OrderBlock{BlockID: digBlockID(&bid), Location: slotName(bi), BinTask: "JackLoad", Action: protocol.ActionPickup},
+				fleet.OrderBlock{BlockID: digBlockID(&bid), Location: "LINE", BinTask: "JackUnload", Action: protocol.ActionDropoff})
 		}
 		blocks = append(blocks,
-			fleet.OrderBlock{BlockID: digBlockID(&bid), Location: slotName(targetIdx), BinTask: "JackLoad"},
-			fleet.OrderBlock{BlockID: digBlockID(&bid), Location: "LINE", BinTask: "JackUnload"})
+			fleet.OrderBlock{BlockID: digBlockID(&bid), Location: slotName(targetIdx), BinTask: "JackLoad", Action: protocol.ActionPickup},
+			fleet.OrderBlock{BlockID: digBlockID(&bid), Location: "LINE", BinTask: "JackUnload", Action: protocol.ActionDropoff})
 		if err := sim.Submit("DIGGER", fleet.CreateOrderRequest{OrderID: digOrderID(seed), Blocks: blocks, Complete: true}, true); err != nil {
 			t.Fatalf("seed %d Submit dig: %v", seed, err)
 		}

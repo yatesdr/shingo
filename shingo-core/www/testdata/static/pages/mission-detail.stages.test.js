@@ -127,13 +127,19 @@ function ev(at, oldState, newState, oldStatus, newStatus) {
     return Object.assign({ created_at: at, robot_id: 'AMR-01', old_state: oldState, new_state: newState,
         old_status: oldStatus, new_status: newStatus, is_leg: false, blocks_json: '[]' }, Z);
 }
+// A leg row as the server sends it: its blocks, and what each did as the event's
+// actions (the handler reads them off the leg, engine.LegBlocks), which is all
+// the page labels a leg by.
 function legRow(at, blocks) {
     return Object.assign({ created_at: at, robot_id: 'AMR-01', old_state: '', new_state: 'BLOCK_FINISHED',
-        old_status: '', new_status: '', is_leg: true, blocks_json: JSON.stringify(blocks) }, Z);
+        old_status: '', new_status: '', is_leg: true, blocks_json: JSON.stringify(blocks),
+        actions: blocks.map(function(b) { return b.action; }) }, Z);
 }
+// The action the engine records with each fixture block: what Core sent it to do.
+const ACTION_SENT = { JackLoad: 'pickup', Load: 'pickup', JackUnload: 'dropoff', Unload: 'dropoff', Wait: 'wait' };
 function blk(location, binTask, start, end) {
-    return { blockId: 'b', location: location, binTask: binTask, startTime: start, terminateTime: end,
-        durationSeconds: end >= start && start > 0 ? end - start : 0 };
+    return { blockId: 'b', location: location, binTask: binTask, action: ACTION_SENT[binTask] || '',
+        startTime: start, terminateTime: end, durationSeconds: end >= start && start > 0 ? end - start : 0 };
 }
 function leg(at, location, binTask, start, end) { return legRow(at, [blk(location, binTask, start, end)]); }
 function hist(at, status, detail) { return { status: status, detail: detail || '', created_at: at }; }
@@ -401,6 +407,20 @@ async function main() {
         ])));
         check('a non-trailing zero on a stopped mission stays a measurement',
             t.join('|').indexOf('load @ SMN_014 · 0 s') !== -1 && t.join('|').indexOf('not run') === -1, JSON.stringify(t));
+    }
+
+    console.log('legs: labelled by what the block did, never by its name');
+    {
+        const keyed = blk('SMN_014', 'jacklift_4548', 1000, 1030);
+        keyed.action = 'pickup';
+        const turn = blk('SMN_014', 'preload_turn', 1030, 1040);
+        const t = legTexts(await render(legsOnly([
+            legRow('1970-01-01T00:20:00Z', [keyed, turn]),
+            ev('1970-01-01T00:20:01Z', 'RUNNING', 'FINISHED', 'in_transit', 'delivered'),
+        ])));
+        check('a lift under any key reads load; a turn whose name holds "load" reads handle',
+            t.join('|').indexOf('load @ SMN_014 · 30 s') !== -1 && t.join('|').indexOf('handle @ SMN_014 · 10 s') !== -1,
+            JSON.stringify(t));
     }
 
     console.log('legs: unknown keeps its own form');

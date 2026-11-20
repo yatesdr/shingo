@@ -1342,7 +1342,7 @@ func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *order
 		opt(o)
 	}
 	// `dispatched` MEANS THE FLEET HAS THE JOB, and the row names it
-	// (orders_dispatched_names_its_job, v181). The INSERT does not bind a vendor
+	// (orders_dispatched_names_its_job, v183). The INSERT does not bind a vendor
 	// id, so a `dispatched` fixture is born `pending` and moved to `dispatched`
 	// with its job in one statement, as the fleet's yes writes it. An order Core
 	// is still asking for is not `dispatched`: it rests pending or queued with an

@@ -472,10 +472,20 @@ func main() {
 	// A known containment write (a flag, a bin hold, a diverted bin stamped on
 	// arrival) pushes the containment snapshot to every Edge at once.
 	eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)
+	// A payload write, from the desktop or the floor, drops the catalog and
+	// node-list memos so the next heartbeats compare against it. No broadcast.
+	eng.SetPayloadsChangedFunc(coreDataService.PayloadsChanged)
+	// A part made at the floor is answered with its catalog row and carrier
+	// rows, built by the builders the catalog feed and the node list use.
+	eng.SetCatalogRowFunc(coreDataService.CatalogRow)
 	// A change at a node an Edge watches pushes that Edge its bins snapshot:
 	// the station doors (LOAD, count, CLEAR) through the engine's hook, bin
-	// and order events from the bus.
-	eng.SetBinChangedFunc(func(binID int64) { coreDataService.BinsChanged(binID) })
+	// and order events from the bus. The hook's writes emit no EventBinUpdated,
+	// so it also tells the screens that bin's row changed (EventBinRowChanged).
+	eng.SetBinChangedFunc(func(binID int64) {
+		coreDataService.BinsChanged(binID)
+		eng.Events.Emit(engine.Event{Type: engine.EventBinRowChanged, Payload: engine.BinRowChangedEvent{BinID: binID}})
+	})
 	// A write door's refusal carries Core's current rows for the nodes it
 	// touched, read by the snapshot's own row code.
 	eng.SetBinsRowsFunc(coreDataService.NodeBinsRows)
@@ -517,6 +527,11 @@ func main() {
 		eng.Events.Emit(engine.Event{Type: engine.EventCellTick, Payload: engine.CellTickEvent{
 			Station: station, ProcessID: processID, StyleID: styleID, RecordedAt: recordedAt,
 		}})
+	})
+	// A station's count tick moves a bin's count with no EventBinUpdated, so the
+	// screens hear it as EventBinRowChanged (the Bins page's live UoP).
+	coreDataService.SetBinCountEmitter(func(binID int64) {
+		eng.Events.Emit(engine.Event{Type: engine.EventBinRowChanged, Payload: engine.BinRowChangedEvent{BinID: binID}})
 	})
 	// cell_part_events partitions now and daily, plus the daily retention
 	// passes (plan §12). The tick handlers project synchronously and need this

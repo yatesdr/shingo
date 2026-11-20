@@ -237,8 +237,10 @@ func (e *Engine) resolveClearJob(home *nodes.Node, station string, req protocol.
 	return refuse(http.StatusBadRequest, "no buffer spot holds a partial of %s", h.PayloadCode)
 }
 
-// clearPartialOn is the bin of the payload with stock left on spot (Stocked)
-// that no order holds: no claim, and no soft hold either (bins.StandsUnheld). A
+// clearPartialOn is the partial of the payload on spot (Bin.Partial: below its
+// capacity) that no order holds: no claim, and no soft hold either
+// (bins.StandsUnheld). A bin at or over its capacity is a full, not a partial
+// to bring home: it stays on the buffer and goes out oldest first. A
 // partial another order has been promised is not the clear's to bring home;
 // skipping it here makes that case the pick's own 400 before anything is
 // written, where the partial's leg, issued as the station's act, would take
@@ -249,7 +251,7 @@ func clearPartialOn(e *Engine, spot *nodes.Node, payload string) *bins.Bin {
 		return nil
 	}
 	for _, b := range on {
-		if b.PayloadCode != payload || !b.Stocked() || b.ClaimedBy != nil {
+		if b.PayloadCode != payload || !b.Partial() || b.ClaimedBy != nil {
 			continue
 		}
 		if free, err := e.db.BinStandsUnheld(b.ID, spot.Name); err == nil && free {

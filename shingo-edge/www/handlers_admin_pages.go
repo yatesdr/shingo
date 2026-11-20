@@ -92,7 +92,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"Page":               "config",
 		"Config":             cfg,
 		"StationID":          cfg.StationID(),
-		"DisplayZone":        plantLocation.String(),
+		"DisplayZone":        plantLocation().String(),
 		"PLCNames":           plcNames,
 		"PLCStatus":          plcStatus,
 		"PLCConnected":       connectedPLCs,

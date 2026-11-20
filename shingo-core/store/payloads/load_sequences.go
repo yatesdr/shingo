@@ -15,6 +15,10 @@ import (
 type LoadSequence struct {
 	Name      string
 	TaskNames []string
+	// LiftAt is the index in TaskNames of the name that lifts the cart: the
+	// one block of the expansion the block subscriber records as the pickup.
+	// Kept inside TaskNames by a CHECK (migration 179, which filled it).
+	LiftAt    int
 	UpdatedAt time.Time
 }
 
@@ -28,8 +32,8 @@ func GetLoadSequence(db *sql.DB, name string) (*LoadSequence, error) {
 		rawJSON string
 	)
 	err := db.QueryRow(
-		`SELECT name, task_names, updated_at FROM load_sequences WHERE name=$1`, name,
-	).Scan(&seq.Name, &rawJSON, &seq.UpdatedAt)
+		`SELECT name, task_names, lift_at, updated_at FROM load_sequences WHERE name=$1`, name,
+	).Scan(&seq.Name, &rawJSON, &seq.LiftAt, &seq.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

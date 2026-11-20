@@ -14,7 +14,7 @@ import (
 // shipped Edge waits, and the option a test passes to wait less.
 
 // windowsRouter is the real router over an unstarted engine, stopped when the
-// test ends. Not parallel: NewRouter writes the package's plantLocation.
+// test ends.
 func windowsRouter(t *testing.T, opts ...RouterOption) *Handlers {
 	t.Helper()
 	eng := engine.New(engine.Config{AppConfig: config.Defaults(), DB: testdb.Open(t), LogFunc: func(string, ...any) {}})

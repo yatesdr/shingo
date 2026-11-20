@@ -370,6 +370,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Get("/bins/by-node", h.apiBinsByNode)
 			r.Get("/bins/available", h.apiListAvailableBins)
 			r.Get("/bins/detail", h.apiBinDetail)
+			r.Get("/bins/rows", h.apiBinRows)
 
 			// Telemetry
 			// What releasing an order would let its robot do next, per act
@@ -607,6 +608,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 			r.Post("/bin-types/create", h.handleBinTypeCreate)
 			r.Post("/bin-types/update", h.handleBinTypeUpdate)
 			r.Post("/bin-types/delete", h.handleBinTypeDelete)
+			r.Post("/bin-types/family-keys", h.handleBinTypeFamilyKeys)
 			r.Post("/bins/create", h.handleBinCreate)
 			r.Post("/bins/retire", h.handleBinRetire)
 		})

@@ -58,12 +58,13 @@ func makeCMSBoundary(t *testing.T, db *store.DB, name string) (*nodes.Node, *nod
 // that says how to count it, so movement transactions have something to count.
 //
 // Both halves are needed and neither is optional. The bin manifest names the
-// part; the template's parts_per_cycle is the only place the ratio lives, and a
-// bin whose payload has no template line for its part contributes no CMS rows
-// at all. Seeding one without the other produced a fixture that silently
-// emitted nothing.
+// part; the template line is what lets a movement count it, and a bin whose
+// payload has no template line for its part contributes no CMS rows at all.
+// Seeding one without the other produced a fixture that silently emitted
+// nothing.
 //
-// The count the movement will carry is uop x perCycle.
+// The template has one line, so the count the movement will carry is uop, the
+// bin's pieces, whatever perCycle is.
 func putManifest(t *testing.T, db *store.DB, binID int64, payloadCode, catID string, uop int, perCycle int64) {
 	t.Helper()
 	m := bins.Manifest{Items: []bins.ManifestEntry{{PartNumber: catID}}}

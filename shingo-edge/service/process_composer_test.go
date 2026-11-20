@@ -215,7 +215,7 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 	if station.Composer.Map != nil {
 		t.Errorf("the station view carries the whole plant map; the robot panel takes it from /scene, never the view")
 	}
-	stn, err := svc.ComposerForStation(seeded.ProcessID)
+	stn, err := svc.ComposerForStation(seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestComposerReads_FirstRunHasNoRoutingSetAndNoPresets(t *testing.T) {
 		t.Error("a fresh press ships an empty plant map; with no geometry it should ship none")
 	}
 
-	station, err := svc.ComposerForStation(seeded.ProcessID)
+	station, err := svc.ComposerForStation(seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("ComposerForStation on a fresh press: %v", err)
 	}

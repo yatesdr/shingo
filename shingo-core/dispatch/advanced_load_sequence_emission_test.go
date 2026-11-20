@@ -1,6 +1,11 @@
 package dispatch
 
-import "testing"
+import (
+	"testing"
+
+	"shingo/protocol"
+	"shingocore/store/payloads"
+)
 
 // TestStepsToBlocks_UnconfiguredByteIdentical pins the default path: a nil load
 // sequence yields exactly today's blocks — same ids, locations, and binTasks —
@@ -11,18 +16,19 @@ func TestStepsToBlocks_UnconfiguredByteIdentical(t *testing.T) {
 	t.Parallel()
 
 	plan := buildTransportPlan("SRC", "DST", false)
-	blocks := stepsToBlocks("v-1", plan, 0, nil)
+	blocks := stepsToBlocks("v-1", plan, nil, 0, nil)
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
-	want := []struct{ id, loc, task string }{
-		{"v-1-b1", "SRC", "JackLoad"},
-		{"v-1-b2", "DST", "JackUnload"},
+	want := []struct{ id, loc, task, action string }{
+		{"v-1-b1", "SRC", "JackLoad", protocol.ActionPickup},
+		{"v-1-b2", "DST", "JackUnload", protocol.ActionDropoff},
 	}
 	for i, w := range want {
-		if blocks[i].BlockID != w.id || blocks[i].Location != w.loc || blocks[i].BinTask != w.task {
-			t.Errorf("block[%d] = {%s %s %s}, want {%s %s %s}", i,
-				blocks[i].BlockID, blocks[i].Location, blocks[i].BinTask, w.id, w.loc, w.task)
+		if blocks[i].BlockID != w.id || blocks[i].Location != w.loc || blocks[i].BinTask != w.task ||
+			blocks[i].Action != w.action {
+			t.Errorf("block[%d] = {%s %s %s %s}, want {%s %s %s %s}", i, blocks[i].BlockID, blocks[i].Location,
+				blocks[i].BinTask, blocks[i].Action, w.id, w.loc, w.task, w.action)
 		}
 	}
 }
@@ -36,13 +42,13 @@ func TestStepsToBlocks_ConfiguredExpandsLoadLeg(t *testing.T) {
 	t.Parallel()
 
 	plan := buildTransportPlan("A", "DST", false)
-	seq := []string{"Go_AP1", "Spin_90", "load", "Spin_inverse_90"}
-	blocks := stepsToBlocks("v-2", plan, 0, seq)
+	seq := &payloads.LoadSequence{TaskNames: []string{"Go_AP1", "Spin_90", "load", "Spin_inverse_90"}, LiftAt: 2}
+	blocks := stepsToBlocks("v-2", plan, nil, 0, seq)
 	if len(blocks) != 5 {
 		t.Fatalf("want 5 blocks (4 load + 1 deliver), got %d: %+v", len(blocks), blocks)
 	}
 	// Four same-location named load blocks, in registry order.
-	for i, name := range seq {
+	for i, name := range seq.TaskNames {
 		if blocks[i].BinTask != name {
 			t.Errorf("load block[%d] binTask = %q, want %q", i, blocks[i].BinTask, name)
 		}
@@ -71,7 +77,7 @@ func TestStepsToBlocks_ConfiguredSingleName(t *testing.T) {
 	t.Parallel()
 
 	plan := buildTransportPlan("A", "DST", false)
-	blocks := stepsToBlocks("v-3", plan, 0, []string{"load"})
+	blocks := stepsToBlocks("v-3", plan, nil, 0, &payloads.LoadSequence{TaskNames: []string{"load"}})
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -80,5 +86,44 @@ func TestStepsToBlocks_ConfiguredSingleName(t *testing.T) {
 	}
 	if blocks[1].BinTask != "JackUnload" {
 		t.Errorf("deliver binTask = %q, want JackUnload", blocks[1].BinTask)
+	}
+}
+
+// TestStepsToBlocks_TheSequenceRecordsItsPickupAtLiftAt: an expanded load leg
+// records pickup on the block at the sequence's LiftAt and on no other, whatever
+// the names say: here the lift is a key holding neither "load" nor "pick", and a
+// later name that does hold "load" records nothing. The waits and the set-down
+// record their steps' actions.
+func TestStepsToBlocks_TheSequenceRecordsItsPickupAtLiftAt(t *testing.T) {
+	t.Parallel()
+
+	plan := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: "A"},
+		{Action: protocol.ActionWait, Node: "B"},
+		{Action: protocol.ActionWait},
+		{Action: protocol.ActionDropoff, Node: "B"},
+	}
+	seq := &payloads.LoadSequence{TaskNames: []string{"Go_AP1", "jacklift_4548", "load_after"}, LiftAt: 1}
+	got := map[string]string{}
+	for _, b := range stepsToBlocks("v-4", plan, nil, 0, seq) {
+		got[b.BlockID+" "+b.BinTask] = b.Action
+	}
+	want := map[string]string{
+		"v-4-b1 Go_AP1":          "",
+		"v-4-b1-1 jacklift_4548": protocol.ActionPickup,
+		"v-4-b1-2 load_after":    "",
+		"v-4-b2 Wait":            protocol.ActionWait,
+		"v-4-b4 JackUnload":      protocol.ActionDropoff,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("blocks %v, want %v", got, want)
+	}
+	for k, a := range want {
+		if action, ok := got[k]; !ok || action != a {
+			t.Errorf("block %s records %q (sent: %v), want %q", k, action, ok, a)
+		}
+	}
+	if acts := blockActions(stepsToBlocks("v-4", plan, nil, 0, seq)); len(acts) != 5 || acts["v-4-b1-1"] != protocol.ActionPickup {
+		t.Errorf("the record of the blocks is %v, want each block's action by its id", acts)
 	}
 }

@@ -1449,3 +1449,39 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile); the rewritten test drives the same `dispatchToFleetCore` call
 - citations rewritten: none (nothing outside its own file named it)
 - verified at: the commit that adds this row
+
+### DEAD — `TestDeckClassifierMatchesEngine`
+- test: `TestDeckClassifierMatchesEngine` · pkg `shingocore/fleet/simulator` · run `-run '^TestDeckClassifierMatchesEngine$'` · `shingo-core/fleet/simulator/deck_classifier_parity_test.go:17` @ `82c487ff` · tags `sim`
+- code: DEAD
+- assertion map: the test held the simulator's copy of the engine's binTask classifier (`deckLoadsOn` / `deckEmptiesOn` against `engine.IsPickupBlock` / `engine.IsDropoffBlock`) to the original over 23 names. Both copies are gone: the deck reads the block's `fleet.OrderBlock.Action`, the label Core sent the block with, and no name is classified on either side, so there is no second copy to drift. What the deck does with the action is held by `TestDeck_LoadsOnPickupAndEmptiesOnFinalUnload` (`shingo-core/fleet/simulator/driver_deck_test.go:90`).
+- mutation: the deck loading on a wait instead of a pickup (`shingo-core/fleet/simulator/deck_sim.go`, `case protocol.ActionPickup` → `case protocol.ActionWait` in `blockCompleted`) · survivor red: `go test -tags sim -count=1 -run '^TestDeck_LoadsOnPickupAndEmptiesOnFinalUnload$' ./fleet/simulator/` in `shingo-core` → `driver_deck_test.go:100: after the pickup AMR-01 should be busy, loaded, at A; got {ID:AMR-01 Busy:true At:A Loaded:false Fault:false}`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/fleet/simulator/deck_sim.go` (the comment that named the parity test is deleted with the copy)
+- verified at: the commit that adds this row
+
+### FOLD — `TestIsPickupBlock`
+- test: `TestIsPickupBlock` · pkg `shingocore/engine` · run `-run '^TestIsPickupBlock$'` · `shingo-core/engine/wiring_block_completed_test.go:13` @ `82c487ff` · tags `none`
+- code: FOLD
+- assertion map: `IsPickupBlock` and `IsDropoffBlock` are folded into `legacyBlockAction`, the name rule kept for the orders sent before `orders.block_actions` and the leg rows written before legs carried their action. Its 21 cases are rows of `TestLegacyBlockAction` (`shingo-core/engine/wiring_block_completed_test.go:20`), each name with the action it reads as: the 10 pickups as `pickup`, the 8 non-pickups as the action the dual table gave them (`dropoff` for the unload, drop and release names, `wait` for Wait, `""` for Script and Navigate), the 3 substring cases as before.
+- mutation: the substring precedence swapped, so "load" is tested before "unload" (`shingo-core/engine/wiring_block_completed.go`, `legacyBlockAction`) · survivor red: `go test -count=1 -run '^TestLegacyBlockAction$' ./engine/` in `shingo-core` → `legacyBlockAction("unloadCustomA") = "pickup", want "dropoff" — unload substring beats load`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/cmd/soakstat/bin_residence_overlap_docker_test.go` (`mustBlock`'s comment), `shingo-core/engine/stranded_transit.go` (`pickupAt`'s comment)
+- verified at: the commit that adds this row
+
+### FOLD — `TestIsDropoffBlock`
+- test: `TestIsDropoffBlock` · pkg `shingocore/engine` · run `-run '^TestIsDropoffBlock$'` · `shingo-core/engine/wiring_block_completed_test.go:57` @ `82c487ff` · tags `none`
+- code: FOLD
+- assertion map: folded with `TestIsPickupBlock` into `TestLegacyBlockAction` (`shingo-core/engine/wiring_block_completed_test.go:20`): its 19 cases are rows there, each name with its one action, so the disjointness it checked (no name read as both) holds by construction: a name has one action.
+- mutation: as `TestIsPickupBlock`'s row · survivor red: `legacyBlockAction("customUnloadSpecial") = "pickup", want "dropoff" — substring match on 'unload'`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as `TestIsPickupBlock`'s row
+- verified at: the commit that adds this row
+
+### STALE — `TestBuildMovement_DerivesFromUOPTimesPartsPerCycle`
+- test: `TestBuildMovement_DerivesFromUOPTimesPartsPerCycle` · pkg `shingocore/material` · run `-run '^TestBuildMovement_DerivesFromUOPTimesPartsPerCycle$'` · `shingo-core/material/material_test.go:317` @ `68105255` · tags `none`
+- code: STALE
+- assertion map: the test pinned a CMS posting of a one-line template's bin as `uop_remaining × parts_per_cycle` (8 left at a ratio of 2 posted 16). The owner ruled (2026-11-18) that a bin of one part counts pieces and the line's ratio is an assembly's consume setting no reader multiplies, so the rule it pinned is retired, not lost. Its fixture moves whole to `TestBuildMovement_OnePartPostsTheBinsCount` (`shingo-core/material/material_test.go:321`), asserting the bin's count (−8/+8); a kit keeps the product and its pin, `TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart`, is unchanged.
+- mutation: a one-line template given its ratio again (`shingo-core/material/material.go` `postablePerUnit`, `len(template) == 1` → never) · survivor red at tip: `go test -count=1 -run '^TestBuildMovement_OnePartPostsTheBinsCount$' ./material/` in `shingo-core` → `material_test.go:340: deltas = -16, 16; want -8, +8 (the bin's 8 pieces, not 8 x the ratio 2)`
+- coverage Δ: not measured (no before/after profile was taken); the replacement runs the same fixture through the same function
+- citations rewritten: `docs/uop-architecture.md` names the replacement; the replacement's own comment names the retired test
+- verified at: the commit that adds this row

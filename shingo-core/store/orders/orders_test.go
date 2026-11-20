@@ -67,7 +67,7 @@ func fleetYes(t *testing.T, db *sql.DB, id int64, from protocol.Status, job, det
 	if !took {
 		t.Fatalf("order %d: the ask found it moved from %s or already asking", id, from)
 	}
-	_, yes, err := orders.FleetYesTx(tx, id, from, job, "", detail, "", "", nil)
+	_, yes, err := orders.FleetYesTx(tx, id, from, job, "", nil, detail, "", "", nil)
 	testutil.MustNoErr(t, err, "the fleet's yes")
 	if !yes {
 		t.Fatalf("order %d: the fleet's yes found no ask %s in %s", id, job, from)
@@ -885,10 +885,10 @@ func TestListTrackedVendorOrderIDs(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
-	// The no-vendor row stands for a `dispatched` row written before v181, which
+	// The no-vendor row stands for a `dispatched` row written before v183, which
 	// the rule (NOT VALID) leaves at a plant; this database drops it to hold one.
 	_, err := db.Exec(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_dispatched_names_its_job`)
-	testutil.MustNoErr(t, err, "drop the rule to hold a row from before v181")
+	testutil.MustNoErr(t, err, "drop the rule to hold a row from before v183")
 
 	mk := func(uuid, status, vendorID string) int64 {
 		o := newPendingOrder(uuid)

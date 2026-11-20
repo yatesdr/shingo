@@ -65,10 +65,12 @@ type (
 // claimSelect names the claim columns in scan order. uop_capacity is NOT among
 // them: the column is dead and the value is resolved from the payload catalog
 // on every read — see capacity.SQL for why it is resolved here rather
-// than by each of the readers.
+// than by each of the readers. The part's pieces per cycle is resolved beside
+// it the same way (capacity.PiecesPerCycleSQL); no column holds it.
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
-	` + capacity.SQL("style_node_claims") + `, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
+	` + capacity.SQL("style_node_claims") + `, ` + capacity.PiecesPerCycleSQL("style_node_claims") + `,
+	reorder_point, auto_reorder, inbound_staging, outbound_staging,
+	inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, hold_limit, allowed_payload_codes,
 	keep_staged_node, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
@@ -85,13 +87,13 @@ const liveClaims = ` retired_at IS NULL`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var resolvedCapacity int
+	var resolvedCapacity, resolvedPiecesPerCycle int
 	var createdAt, allowedJSON, evacNodesJSON, keyRouteJSON string
 	var belowSince, updatedAt, retiredAt sql.NullString
 	var presetID, presetVersion sql.NullInt64
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
-		&resolvedCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
-		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &allowedJSON,
+		&resolvedCapacity, &resolvedPiecesPerCycle, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
+		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &c.PartialDestination, &c.CurtainRequired, &c.StrictPack, &c.PackTolerancePct, &c.HoldLimit, &allowedJSON,
 		&c.KeepStagedNode, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
@@ -101,6 +103,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		return c, err
 	}
 	c.UOPCapacity = capacity.Resolved(resolvedCapacity, c.PayloadCode)
+	c.PiecesPerCycle = capacity.PiecesPerCycle(resolvedPiecesPerCycle)
 	c.UpdatedAt = helpers.ScanTimePtr(updatedAt)
 	c.RetiredAt = helpers.ScanTimePtr(retiredAt)
 	if presetID.Valid {
@@ -659,16 +662,16 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	// UNIQUE constraint on the same race.
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, auto_reorder, inbound_staging, outbound_staging,
-		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, allowed_payload_codes,
+		inbound_source, outbound_destination, containment_destination, partial_destination, curtain_required, strict_pack, pack_tolerance_pct, hold_limit, allowed_payload_codes,
 		keep_staged_node, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes,
 		refill_by, key_route, key_task, changeover_carryover_disposition,
 		source, called_by, updated_at, source_preset_id, source_preset_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, autoReorder, in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, allowedJSON,
+		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, in.HoldLimit, allowedJSON,
 		keepStagedNode, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
@@ -790,7 +793,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	sets := []string{
 		`role=?`, `swap_mode=?`, `payload_code=?`, `reorder_point=?`,
 		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
-		`containment_destination=?`, `partial_destination=?`, `curtain_required=?`, `strict_pack=?`, `pack_tolerance_pct=?`,
+		`containment_destination=?`, `partial_destination=?`, `curtain_required=?`, `strict_pack=?`, `pack_tolerance_pct=?`, `hold_limit=?`,
 		`allowed_payload_codes=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
@@ -799,7 +802,7 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	args := []any{
 		in.Role, in.SwapMode, in.PayloadCode, in.ReorderPoint,
 		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
-		in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct,
+		in.ContainmentDestination, in.PartialDestination, in.CurtainRequired, in.StrictPack, in.PackTolerancePct, in.HoldLimit,
 		allowedJSON,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,

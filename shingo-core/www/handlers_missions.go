@@ -121,6 +121,11 @@ type missionEventView struct {
 	// of the marker string; asking here removes that spelling and keeps the
 	// value in one place (engine.BlockLegState).
 	IsLeg bool `json:"is_leg"`
+	// Actions is, for a leg row, what each of its blocks did, in blocks_json's
+	// order: the action Core recorded, or the name rule's for a leg written
+	// before legs carried one (engine.LegBlocks). The page labels a leg by it
+	// and keeps no binTask vocabulary of its own.
+	Actions []string `json:"actions,omitempty"`
 }
 
 // missionEventViews stamps each event with the Core status its vendor state
@@ -162,6 +167,10 @@ func (h *Handlers) missionEventViews(events []*domain.TelemetryEvent) []missionE
 		if !view.IsLeg {
 			view.OldStatus = h.coreStatusFor(ev.OldState)
 			view.NewStatus = h.coreStatusFor(ev.NewState)
+		} else if legs, err := engine.LegBlocks(ev.BlocksJSON); err == nil {
+			for _, l := range legs {
+				view.Actions = append(view.Actions, l.Action)
+			}
 		}
 		out = append(out, view)
 	}

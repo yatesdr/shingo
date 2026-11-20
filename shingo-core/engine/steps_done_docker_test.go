@@ -188,23 +188,24 @@ func TestBlockCompleted_OneWriteForTheStepItFinishes(t *testing.T) {
 		StepsJSON: `[{"action":"pickup","node":"S"},{"action":"dropoff","node":"L"},{"action":"wait","node":"L"},` +
 			`{"action":"pickup","node":"L"},{"action":"dropoff","node":"S"}]`}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
-	mustExec(t, db, `UPDATE orders SET steps_done = 2 WHERE id = $1`, o.ID)
+	// The record the create writes: the wait at the line, and a turn beside it.
+	mustExec(t, db, `UPDATE orders SET steps_done = 2, block_actions = '{"v-count-b3": "wait", "v-count-b3-1": ""}' WHERE id = $1`, o.ID)
 	cdb, counter, err := store.OpenCounting(cfg)
 	testutil.MustNoErr(t, err, "open counting db")
 	t.Cleanup(func() { cdb.Close() })
 	eng := newUnstartedEngine(t, cdb, simulator.New())
 
 	cases := []struct {
-		task          string
+		block, task   string
 		writes, total int
 		done          int
 	}{
-		{"Wait", 1, 3, 3},    // the wait at the line: step 3 done
-		{"Spin_90", 0, 2, 3}, // a turn finishes no step
+		{"v-count-b3", "Wait", 1, 3, 3},      // the wait at the line: step 3 done
+		{"v-count-b3-1", "Spin_90", 0, 2, 3}, // a turn finishes no step
 	}
 	for _, c := range cases {
 		counter.Reset()
-		eng.handleBlockCompleted(BlockCompletedEvent{OrderID: o.ID, VendorOrderID: "v-count", BlockID: "v-count-b3", Location: "L", BinTask: c.task})
+		eng.handleBlockCompleted(BlockCompletedEvent{OrderID: o.ID, VendorOrderID: "v-count", BlockID: c.block, Location: "L", BinTask: c.task})
 		stmts := counter.Statements()
 		writes := 0
 		for _, s := range stmts {
@@ -267,7 +268,9 @@ func TestStepsDone_ARestartThatReplaysFinishedBlocksCountsNothing(t *testing.T) 
 	o := &orders.Order{EdgeUUID: "replay-1", StationID: "line-1", OrderType: "complex", Status: protocol.StatusInTransit,
 		Quantity: 1, SourceNode: "SMN_A", DeliveryNode: "ALN_C", StepsJSON: replayPlan}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "v-replay-1", "RUNNING", "AMR-01"), "vendor order")
+	// Named as the create names it: the vendor order and the record of its blocks.
+	testutil.MustNoErr(t, db.NameFleetOrder(o.ID, "v-replay-1", "RUNNING", "AMR-01",
+		map[string]string{"v-replay-1-b1": protocol.ActionPickup, "v-replay-1-b2": protocol.ActionDropoff}), "vendor order")
 	vendor.hold("v-replay-1", rds.StateRunning, 0,
 		rds.Block{BlockID: "v-replay-1-b1", Location: "SMN_A", BinTask: "JackLoad"},
 		rds.Block{BlockID: "v-replay-1-b2", Location: "SLN_B", BinTask: "JackUnload"})
@@ -317,6 +320,7 @@ func TestBlockCompleted_AReplayedBlockWritesNothing(t *testing.T) {
 		Quantity: 1, StepsJSON: `[{"action":"wait","node":"AP7"},{"action":"pickup","node":"SMN_A"},{"action":"wait"},` +
 			`{"action":"wait","node":"AP7"},{"action":"dropoff","node":"ALN_C"}]`}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	mustExec(t, db, `UPDATE orders SET block_actions = '{"v-rc-b1": "wait"}' WHERE id = $1`, o.ID) // the create's record
 	cdb, counter, err := store.OpenCounting(cfg)
 	testutil.MustNoErr(t, err, "open counting db")
 	t.Cleanup(func() { cdb.Close() })

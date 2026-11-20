@@ -493,16 +493,21 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, departing *store
 	var declared ordermgr.IngestDeclaration
 	if pack := e.declaredFull(node, runtime, by); pack > 0 {
 		declared = ordermgr.IngestDeclaration{Qty: int64(pack), CalledBy: by.calledBy, OrderID: departing.UUID}
-		e.logRelease("order=%d node=%s — counted %d of a strict pack of %d; declared full by %q",
-			departing.ID, node.Name, qty, pack, by.calledBy)
+		how := "within the pack tolerance"
+		if by.declareFull {
+			how = "RELEASE FULL"
+		}
+		e.logRelease("order=%d node=%s — counted %d of a strict pack of %d; declared full by %q (%s)",
+			departing.ID, node.Name, qty, pack, by.calledBy, how)
 	}
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
 	}
-	// Quantity is the CYCLE count, not a part count: Core writes it to
-	// uop_remaining, and the part count is uop_remaining x the template's
-	// parts_per_cycle. The outbox row and its ledger row commit together:
-	// a crash between them leaves neither, and the release is retried.
+	// Quantity is the bin's count: Core writes it to uop_remaining, and what
+	// that is in pieces is protocol.ManifestItem's count rule (a bin of one
+	// part counts its pieces). The outbox row and its ledger row commit
+	// together: a crash between them leaves neither, and the release is
+	// retried.
 	envelope, msgType, err := e.orderMgr.IngestEnvelope(payload, "", binID, runtime.ActiveBinEpoch, node.CoreNodeName, qty,
 		time.Now().UTC().Format(time.RFC3339), declared)
 	if err != nil {
@@ -540,12 +545,15 @@ type finalizeBy struct {
 	// claim is the node's claim as a tick resolves it (store.ActiveStyleFirst),
 	// when the door read it (the pair door's). nil: declaredFull reads it.
 	claim *processes.NodeClaim
+	// declareFull: the press was RELEASE FULL, the person declaring the bin
+	// full however short its count (NodeClaim.ReleaseFullAt).
+	declareFull bool
 }
 
 // byLeg is the finalize's account of a leg's act.
 func byLeg(act *releaseAct, ll *legLoad) finalizeBy {
 	return finalizeBy{origin: act.Origin, calledBy: act.CalledBy,
-		changeover: ll.nodeTask != nil || ll.snap.Drop}
+		changeover: ll.nodeTask != nil || ll.snap.Drop, declareFull: act.declareFull}
 }
 
 // declaredFull is the pack a release declares the departing bin full at, or
@@ -559,6 +567,9 @@ func byLeg(act *releaseAct, ll *legLoad) finalizeBy {
 // the pack, a claim with no tolerance (pack_tolerance_pct 0), and a bin further
 // short than the tolerance are not declared: they ship as counted, and the
 // tile read RELEASE SHORT for the last two (the same claim's ReleaseShort).
+// RELEASE FULL, the other answer to RELEASE SHORT, declares the pack for a
+// strict bin however short (NodeClaim.ReleaseFullAt), at the same doors and
+// never on a changeover's evac.
 func (e *Engine) declaredFull(node *processes.Node, rt *processes.RuntimeState, by finalizeBy) int {
 	if (by.origin != release.OriginStationPair && by.origin != release.OriginStationOrder) || by.changeover {
 		return 0
@@ -569,6 +580,9 @@ func (e *Engine) declaredFull(node *processes.Node, rt *processes.RuntimeState, 
 		// pointer's) is not the tick's: a tick matches the active style's
 		// claim whatever the seat names, so that is the one read.
 		claim = requestedClaimAtNode(e.db, node)
+	}
+	if by.declareFull {
+		return claim.ReleaseFullAt(rt.RemainingUOPCached)
 	}
 	return claim.DeclaresFullAt(rt.RemainingUOPCached)
 }
@@ -591,7 +605,7 @@ func runtimeRemaining(runtime *processes.RuntimeState) int {
 func (e *Engine) commitPairPaperwork(act *releaseAct, p release.PairPlan, pl *pairLoad) error {
 	if p.Finalize {
 		return e.finalizeDepartingProduce(pl.node, pl.evac, finalizeBy{origin: act.Origin, calledBy: act.CalledBy,
-			changeover: pl.task != nil, claim: pl.claim})
+			changeover: pl.task != nil, claim: pl.claim, declareFull: act.declareFull})
 	}
 	return nil
 }

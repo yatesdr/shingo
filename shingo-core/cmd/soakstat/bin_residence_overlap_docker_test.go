@@ -69,9 +69,8 @@ func mustDelivered(t *testing.T, db *store.DB, o *domain.Order, at time.Time) {
 	}
 }
 
-// mustBlock writes one executed-block row: what the engine records when the
-// fleet reports a block finished. binTask is the vendor's vocabulary, matched
-// by engine.IsPickupBlock / engine.IsDropoffBlock.
+// mustBlock writes one executed-block row as a leg written before legs carried
+// their action: binTask only, which engine.LegBlocks reads by the name rule.
 func mustBlock(t *testing.T, db *store.DB, o *domain.Order, node, binTask string, at time.Time) {
 	t.Helper()
 	blocks := fmt.Sprintf(

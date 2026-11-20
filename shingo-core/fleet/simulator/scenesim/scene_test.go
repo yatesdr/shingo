@@ -3,6 +3,7 @@ package scenesim
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/fleet"
 )
@@ -59,8 +60,8 @@ func storeReq(id, source, slot string) fleet.CreateOrderRequest {
 	return fleet.CreateOrderRequest{
 		OrderID: id,
 		Blocks: []fleet.OrderBlock{
-			{BlockID: id + "-b1", Location: source, BinTask: "JackLoad"},
-			{BlockID: id + "-b2", Location: slot, BinTask: "JackUnload"},
+			{BlockID: id + "-b1", Location: source, BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: id + "-b2", Location: slot, BinTask: "JackUnload", Action: protocol.ActionDropoff},
 		},
 		Complete: true,
 	}

@@ -1,95 +1,68 @@
 package engine
 
-import "testing"
+import (
+	"testing"
 
-// IsPickupBlock is the BinTask classifier used by handleBlockCompleted.
-// Pure function, no DB — table-driven test verifies every classification.
+	"shingo/protocol"
+)
+
+// legacyBlockAction is the name rule the block subscriber read every finished
+// block by before Core recorded what it sent (orders.block_actions). It now
+// reads only an order sent before the record and a leg row written before legs
+// carried their action, so it must read those exactly as the handler did: the
+// exact names, then the substring fallbacks (a name holding "unload", "drop" or
+// "release" is a dropoff; one holding "load" or "pick" and none of those is a
+// pickup), Wait, and nothing else. Pure function, no DB.
 //
-// The vendor's BinTask vocabulary is roboshop-configurable, so the
-// classifier mixes exact-match (the common shapes) with substring
-// fallback (containing "load" or "pick" but not "unload"/"drop"/
-// "release"). Locking down both branches here means a future
-// classification change has to change the test, not just slip through.
-func TestIsPickupBlock(t *testing.T) {
+// The cases are the two tables the rule's halves were pinned by, folded: each
+// name has one action, so a block is never read as both.
+func TestLegacyBlockAction(t *testing.T) {
 	t.Parallel()
+	const (
+		pickup  = protocol.ActionPickup
+		dropoff = protocol.ActionDropoff
+		wait    = protocol.ActionWait
+	)
 	cases := []struct {
 		binTask string
-		want    bool
+		want    string
 		reason  string
 	}{
-		{"", false, "empty binTask is navigation/wait, not a pickup"},
-		{"Load", true, "common JackLoad short form"},
-		{"load", true, "lowercase variant"},
-		{"pickup", true, "explicit pickup"},
-		{"pick", true, "shorthand"},
-		{"JackLoad", true, "vendor jacking-style"},
-		{"jack_load", true, "snake-case variant"},
-		{"fork_load", true, "forklift variant"},
-		{"RollerLoad", true, "roller-conveyor variant"},
-		{"unload", false, "unload is dropoff, not pickup"},
-		{"JackUnload", false, "even with 'load' substring, unload wins"},
-		{"drop", false, "drop is dropoff"},
-		{"release", false, "release is end-of-cycle, not pickup"},
-		{"Wait", false, "wait blocks aren't pickups"},
-		{"Script", false, "script blocks aren't pickups"},
-		{"Navigate", false, "pure navigation isn't a pickup"},
-		// Substring fallback cases. These exist because vendor configs
-		// can introduce new BinTask values; we want a sane default
-		// rather than silent no-ops.
-		{"customLoadSpecial", true, "substring match on 'load'"},
-		{"specialPickStation", true, "substring match on 'pick'"},
-		{"unloadCustomA", false, "unload substring beats load"},
+		{"", "", "empty binTask is navigation, no step's kind"},
+		{"Load", pickup, "common JackLoad short form"},
+		{"load", pickup, "lowercase variant"},
+		{"pickup", pickup, "explicit pickup"},
+		{"pick", pickup, "shorthand"},
+		{"JackLoad", pickup, "vendor jacking-style"},
+		{"jack_load", pickup, "snake-case variant"},
+		{"fork_load", pickup, "forklift variant"},
+		{"RollerLoad", pickup, "roller-conveyor variant"},
+		{"Unload", dropoff, "common JackUnload short form"},
+		{"unload", dropoff, "lowercase variant"},
+		{"dropoff", dropoff, "explicit dropoff"},
+		{"drop", dropoff, "shorthand"},
+		{"JackUnload", dropoff, "even with 'load' substring, unload wins"},
+		{"jack_unload", dropoff, "snake-case variant"},
+		{"fork_unload", dropoff, "forklift variant"},
+		{"RollerUnload", dropoff, "roller-conveyor variant"},
+		{"release", dropoff, "release is an end-of-cycle drop"},
+		{"Wait", wait, "the wait a node's wait step is sent as"},
+		{"wait", wait, "case is ignored"},
+		{"Script", "", "script blocks are no step's kind"},
+		{"Navigate", "", "pure navigation is no step's kind"},
+		{"Go_AP1", "", "the seeded load sequence's turns are no step's kind"},
+		{"Spin_inverse_90", "", "the seeded load sequence's turns are no step's kind"},
+		{"customLoadSpecial", pickup, "substring match on 'load'"},
+		{"specialPickStation", pickup, "substring match on 'pick'"},
+		{"unloadCustomA", dropoff, "unload substring beats load"},
+		{"customUnloadSpecial", dropoff, "substring match on 'unload'"},
+		{"specialDropStation", dropoff, "substring match on 'drop'"},
+		{"jackLoadCustomA", pickup, "load substring is a pickup, not a dropoff"},
+		{"wait_4548", "", "a sized wait was never Wait to the name rule"},
 	}
-
 	for _, tc := range cases {
-		got := IsPickupBlock(tc.binTask)
-		if got != tc.want {
-			t.Errorf("IsPickupBlock(%q) = %v, want %v — %s", tc.binTask, got, tc.want, tc.reason)
-		}
-	}
-}
-
-// IsDropoffBlock is the store/deliver dual classifier used by
-// handleBlockCompleted to route intermediate storage dropoffs through
-// handleStoreBlockCompleted. Pickup and dropoff classifiers must be
-// disjoint — a block routed to both paths would double-move a bin — so the
-// cases below mirror TestIsPickupBlock and assert the boundary.
-func TestIsDropoffBlock(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		binTask string
-		want    bool
-		reason  string
-	}{
-		{"", false, "empty binTask is navigation/wait, not a dropoff"},
-		{"Unload", true, "common JackUnload short form"},
-		{"unload", true, "lowercase variant"},
-		{"dropoff", true, "explicit dropoff"},
-		{"drop", true, "shorthand"},
-		{"JackUnload", true, "vendor jacking-style"},
-		{"jack_unload", true, "snake-case variant"},
-		{"fork_unload", true, "forklift variant"},
-		{"RollerUnload", true, "roller-conveyor variant"},
-		{"release", true, "release is an end-of-cycle drop"},
-		{"Load", false, "load is a pickup, not a dropoff"},
-		{"JackLoad", false, "pickup-shaped, even though substring fallback never sees 'unload'"},
-		{"pick", false, "pickup shorthand"},
-		{"Wait", false, "wait blocks aren't dropoffs"},
-		{"Script", false, "script blocks aren't dropoffs"},
-		{"Navigate", false, "pure navigation isn't a dropoff"},
-		{"customUnloadSpecial", true, "substring match on 'unload'"},
-		{"specialDropStation", true, "substring match on 'drop'"},
-		{"jackLoadCustomA", false, "load substring is not a dropoff"},
-	}
-
-	for _, tc := range cases {
-		got := IsDropoffBlock(tc.binTask)
-		if got != tc.want {
-			t.Errorf("IsDropoffBlock(%q) = %v, want %v — %s", tc.binTask, got, tc.want, tc.reason)
-		}
-		// Disjointness: no BinTask may classify as both pickup and dropoff.
-		if got && IsPickupBlock(tc.binTask) {
-			t.Errorf("binTask %q classified as BOTH pickup and dropoff — routing would double-move the bin", tc.binTask)
+		if got := legacyBlockAction(tc.binTask); got != tc.want {
+			t.Errorf("legacyBlockAction(%q) = %q, want %q — %s", tc.binTask, got, tc.want, tc.reason)
 		}
 	}
 }

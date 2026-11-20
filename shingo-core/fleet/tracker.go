@@ -16,8 +16,10 @@ type OrderTracker interface {
 // EmitBlockCompleted fires when an individual block within an order
 // transitions to FINISHED while the parent order is still mid-flight.
 // This is the per-pickup signal the bin-transit-state design needs.
-// `binTask` carries the vendor's `binTask` field (e.g., "Load",
-// "Unload", "Wait") so the engine handler can route by block kind.
+// `binTask` carries the vendor's `binTask` field as reported (the key the
+// block ran: JackLoad, JackUnload, Wait, a load sequence's names), for the
+// block's leg row. The engine handler routes by its own record of what the
+// block was sent to do, found by blockID, not by this name.
 type TrackerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *OrderSnapshot)
 	EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string, startTime, terminateTime int64)

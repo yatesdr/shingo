@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"sort"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
-// Action is what a block does at its location — the physics-relevant subset of a
-// binTask. Pickups are outbound at a lane, dropoffs inbound; a plain move is a
-// no-action waypoint.
+// Action is what a block does at its location — the physics-relevant subset of
+// what Core sent it to do. Pickups are outbound at a lane, dropoffs inbound; a
+// plain move is a no-action waypoint.
 type Action int
 
 const (
@@ -19,13 +20,15 @@ const (
 	ActionWait
 )
 
-func actionFor(binTask string) Action {
-	switch binTask {
-	case "JackLoad":
+// blockAction is the bench's Action for a fleet block: its OrderBlock.Action,
+// Core's own label, never its binTask. A block of no step's kind is a move.
+func blockAction(b fleet.OrderBlock) Action {
+	switch b.Action {
+	case protocol.ActionPickup:
 		return ActionPickup
-	case "JackUnload":
+	case protocol.ActionDropoff:
 		return ActionDropoff
-	case "Wait":
+	case protocol.ActionWait:
 		return ActionWait
 	default:
 		return ActionMove
@@ -312,7 +315,7 @@ func (s *Sim) AppendBlocks(orderID string, blocks []fleet.OrderBlock) error {
 			if s.scene.Node(b.Location) == nil {
 				return fmt.Errorf("scenesim: appended block location %q not in scene", b.Location)
 			}
-			r.order.Blocks = append(r.order.Blocks, Block{Location: b.Location, Action: actionFor(b.BinTask)})
+			r.order.Blocks = append(r.order.Blocks, Block{Location: b.Location, Action: blockAction(b)})
 		}
 		if r.waiting && r.block+1 < len(r.order.Blocks) {
 			r.waiting = false
@@ -378,7 +381,7 @@ func (s *Sim) Submit(robotID string, req fleet.CreateOrderRequest, dig bool) err
 		if s.scene.Node(b.Location) == nil {
 			return fmt.Errorf("scenesim: order %s block location %q not in scene", req.OrderID, b.Location)
 		}
-		ord.Blocks = append(ord.Blocks, Block{Location: b.Location, Action: actionFor(b.BinTask)})
+		ord.Blocks = append(ord.Blocks, Block{Location: b.Location, Action: blockAction(b)})
 	}
 	if dig {
 		s.claimLanesFor(ord, true)

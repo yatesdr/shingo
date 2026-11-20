@@ -81,7 +81,7 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 		t.Fatal("simple no-wait dispatch must create Complete=true, got false")
 	}
 
-	blocks := stepsToBlocks("v-diff", shadowPlan(result, order), 0, nil)
+	blocks := stepsToBlocks("v-diff", shadowPlan(result, order), nil, 0, nil)
 	if len(blocks) != 2 {
 		t.Fatalf("plan produced %d blocks, want 2", len(blocks))
 	}

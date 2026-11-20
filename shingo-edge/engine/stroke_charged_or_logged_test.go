@@ -56,7 +56,7 @@ func TestPinNoCart_AStrokeAtAnEmptySeatIsLoggedTheNextCartLandsFull(t *testing.T
 		}
 	}
 	if found == nil || found.Severity != CatidHealthInfo ||
-		found.Headline != "2 strokes of PART-NA at NC-A Node with no PART-NA cart — no cart released there yet" {
+		found.Headline != "2 pieces of PART-NA at NC-A Node with no PART-NA cart — no cart released there yet" {
 		t.Errorf("the strip's item = %+v, want the info count naming the position, the part and no cart off", found)
 	}
 	eng.HandleBinLanded(landing("NC-A-NODE", 8701, 1, 50, "PART-NA", 7))
@@ -172,7 +172,7 @@ func TestPinNoCart_ACartReleasedAtZeroThenStrokedIsLoggedTheCartStaysZero(t *tes
 	testutil.MustNoErr(t, err, "the strip")
 	saidIt := false
 	for _, it := range items {
-		if it.Kind == catidKindHeld && strings.HasPrefix(it.Headline, "2 strokes of PART-NZ at NC-Z Node with no PART-NZ cart — last cart off: bin 8711 at 0, ") {
+		if it.Kind == catidKindHeld && strings.HasPrefix(it.Headline, "2 pieces of PART-NZ at NC-Z Node with no PART-NZ cart — last cart off: bin 8711 at 0, ") {
 			saidIt = true
 		}
 	}

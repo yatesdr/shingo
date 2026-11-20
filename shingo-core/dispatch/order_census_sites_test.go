@@ -4,18 +4,20 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 )
 
 // order_census_sites_test.go — the census widened past "who writes an order row"
-// to the three other questions the unification brief needs answered by the tree
-// rather than by memory: who reaches a door because a PERSON pressed something,
-// who asks the dropoff-capacity gate, and who calls the fleet's CreateOrder
-// without writing an order row at all.
+// to the other questions that need answering by the tree rather than by memory:
+// who reaches a door because a PERSON pressed something, who asks the
+// dropoff-capacity gate, who calls the fleet's CreateOrder without writing an
+// order row at all, who writes the block record and appends to the fleet, and
+// who builds an order's blocks.
 //
-// Each is pinned as a set of (file, enclosing function) call sites, found by
+// Each is pinned as a set of (file, enclosing function) sites, found by
 // parsing, not by grep — a grep counts a comment that names the call, and a
 // line number moves with every edit above it.
 
@@ -238,4 +240,160 @@ func TestCensus_FleetTransportCreateIsNotADoor(t *testing.T) {
 		"www/handlers_robots.go:apiRobotMoveTo":              "a person drives a robot to a point: a vendor transport with NO order row — not a door, and invisible to every order reader by design",
 	}, "A new caller of a fleet's CreateOrder either hands over an order row (route it through "+
 		"handoverToFleet) or moves a robot with no order, which has to be said here.")
+}
+
+// TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent names every statement
+// that writes orders.block_actions, and every caller of the ones that do: the
+// record is written by the fleet's yes to the create and by the append's claim,
+// from the blocks those two hand the fleet, and nowhere else. NameFleetOrder,
+// the create's vendor write before the yes wrote the job, is kept for fixtures
+// that name a running order; nothing in Core calls it. A new writer could record
+// a block the fleet was never sent, or forget one it was.
+func TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent(t *testing.T) {
+	t.Parallel()
+	sources := scanCoreSources(t)
+	write := regexp.MustCompile(`block_actions\s*=|INSERT\s+INTO\s+orders\b[^;]*block_actions`)
+	var writers []string
+	fset := token.NewFileSet()
+	for path, src := range sources {
+		locs := write.FindAllStringIndex(src, -1)
+		if len(locs) == 0 {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, loc := range locs {
+			owner := "<package>"
+			for _, d := range f.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok &&
+					fset.Position(fd.Pos()).Offset <= loc[0] && loc[0] < fset.Position(fd.End()).Offset {
+					owner = fd.Name.Name
+				}
+			}
+			writers = append(writers, path+":"+owner)
+		}
+	}
+	slices.Sort(writers)
+	sameSites(t, "the statements that write orders.block_actions", writers, map[string]string{
+		"store/orders/ask.go:FleetYesTx":        "the fleet's yes to the create, the blocks the create sent",
+		"store/orders/orders.go:ClaimAppend":    "the append's compare-and-set, merging the segment's blocks",
+		"store/orders/orders.go:NameFleetOrder": "a vendor write naming a running order, for fixtures; nothing in Core calls it",
+	}, "A new writer of block_actions records blocks somewhere other than where they are sent. "+
+		"Record them in the fleet's yes (FleetYesTx) or the append (ClaimAppend).")
+
+	callers := only(sources, "dispatch/", "engine/", "store/", "fleet/", "www/", "service/", "fulfillment/")
+	sameSites(t, "the callers of the block record's writers",
+		callSites(t, callers, "FleetYesTx", "FleetYes", "NameFleetOrder", "ClaimAppend"),
+		map[string]string{
+			"dispatch/complex_release.go:appendSegment": "the one fleet append, with the segment it sends",
+			"dispatch/lifecycle.go:Dispatch":            "the fleet's yes, with the blocks the create sent (handoverToFleet's)",
+			"store/orders.go:ClaimAppend":               "the store delegate",
+			"store/orders.go:FleetYes":                  "the yes on a transaction of its own",
+			"store/orders.go:NameFleetOrder":            "the store delegate",
+		}, "The block record is written from the blocks the fleet is handed, at the create and the append.")
+}
+
+// TestCensus_EveryFleetAppendIsTheClaimedAppend names every call to a fleet
+// backend's ReleaseOrder. The block record is written only by the create and the
+// claimed append, so an order-backed block reaching the fleet any other way
+// would finish unrecorded.
+func TestCensus_EveryFleetAppendIsTheClaimedAppend(t *testing.T) {
+	t.Parallel()
+	sources := scanCoreSources(t)
+	appenders := map[string]string{}
+	for p, src := range sources {
+		if strings.Contains(src, ".ReleaseOrder(") {
+			appenders[p] = src
+		}
+	}
+	sameSites(t, "the fleet ReleaseOrder callers", callSites(t, appenders, "ReleaseOrder"), map[string]string{
+		"dispatch/complex_release.go:appendSegment":       "the claimed append: its blocks are recorded by ClaimAppend",
+		"dispatch/complex_dispatch.go:afterComplexCreate": "the no-wait complex create's mark-complete: no blocks",
+	}, "A new caller of a fleet's ReleaseOrder hands the fleet blocks no record names. "+
+		"Route it through appendSegmentAndAdvance.")
+}
+
+// TestCensus_OneBlockBuilder names the one builder of an order's blocks, the
+// four sites that call it, and every block literal in Core. The builder
+// (orderBlocks) is where a cart's family names its lift and wait keys; a site
+// that built an order's blocks any other way would send the default key where
+// a family names one, silently, the way a load sequence was once dropped by a
+// path that did not know it. A block literal outside the builder is an
+// orderless door, each named with why it carries no carrier key, or the RDS
+// adapter copying a block already built.
+func TestCensus_OneBlockBuilder(t *testing.T) {
+	t.Parallel()
+	sources := scanCoreSources(t)
+	sameSites(t, "the callers of stepsToBlocks", callSites(t, sources, "stepsToBlocks"), map[string]string{
+		"dispatch/carrier_keys_blocks.go:orderBlocks": "the one builder: each step's carrier key named, then the blocks built",
+	}, "stepsToBlocks is called by the one builder only. Build an order's blocks with d.orderBlocks.")
+	sameSites(t, "the callers of the block builder", callSites(t, sources, "orderBlocks"), map[string]string{
+		"dispatch/dispatcher.go:dispatchToFleetCore":         "the sealed create: a plain order's whole plan, one fleet call",
+		"dispatch/lane_gate_dispatch.go:buildUnsealedCreate": "the unsealed create: the pre-wait run of a gated, a turned or a home clear trade's plan",
+		"dispatch/complex_dispatch.go:buildComplexCommit":    "the ungated complex create: the plan up to its first wait",
+		"dispatch/complex_release.go:appendSegment":          "the append: every release's segment, through the claimed append",
+	}, "A new site that sends an order's blocks calls d.orderBlocks with its run (createRun at a create, "+
+		"d.appendRun at an append), so a family's keys reach it. Name it here with what it sends.")
+	sameSites(t, "the fleet block literals", blockLiterals(t, sources), map[string]string{
+		"dispatch/complex_steps.go:stepsToBlocks":      "the builder's blocks, each with the name its step was given",
+		"engine/cleaning.go:dispatchCleaning":          "an orderless door: the air-knife cleaning mission drives points with no order row and no cart, so no binTask at all",
+		"www/handlers_robots.go:apiRobotMoveTo":        "an orderless door: a person sends a robot to a point, no order row and no cart, so no binTask at all",
+		"fleet/seerrds/adapter.go:executeOrderCommand": "an orderless door: the adapter's own command order (move, jack, unjack, charge) for one robot, no order row and no cart, no binTask",
+		"fleet/seerrds/adapter.go:CreateOrder":         "the adapter copying a create's blocks onto the wire as the builder named them",
+		"fleet/seerrds/adapter.go:ReleaseOrder":        "the adapter copying an append's blocks onto the wire as the builder named them",
+	}, "A block built outside stepsToBlocks sends no carrier key. An order's blocks come from d.orderBlocks; "+
+		"an orderless door (no order row, no cart) is named here with why it carries no key.")
+}
+
+// blockLiterals is "file:Func" for every composite literal of a fleet block
+// (fleet.OrderBlock) or a wire block (rds.Block) in sources, a slice or array
+// of them included (its elements may elide the type).
+func blockLiterals(t *testing.T, sources map[string]string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	seen := map[string]bool{}
+	for path, src := range sources {
+		f, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		isBlock := func(x ast.Expr) bool {
+			switch ty := x.(type) {
+			case *ast.SelectorExpr:
+				pkg := lastName(ty.X)
+				return (pkg == "fleet" && ty.Sel.Name == "OrderBlock") || (pkg == "rds" && ty.Sel.Name == "Block")
+			case *ast.Ident:
+				return (f.Name.Name == "fleet" && ty.Name == "OrderBlock") || (f.Name.Name == "rds" && ty.Name == "Block")
+			}
+			return false
+		}
+		for _, d := range f.Decls {
+			owner := "<package>"
+			if fd, ok := d.(*ast.FuncDecl); ok {
+				owner = fd.Name.Name
+			}
+			ast.Inspect(d, func(x ast.Node) bool {
+				lit, ok := x.(*ast.CompositeLit)
+				if !ok || lit.Type == nil {
+					return true
+				}
+				ty := lit.Type
+				if arr, ok := ty.(*ast.ArrayType); ok {
+					ty = arr.Elt
+				}
+				if isBlock(ty) {
+					seen[path+":"+owner] = true
+				}
+				return true
+			})
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	slices.Sort(out)
+	return out
 }

@@ -5,8 +5,9 @@ package simulator
 // emits when a per-block transition reaches FINISHED while the parent order is
 // still mid-flight (see fleet/tracker.go): pickup blocks free the source slot
 // to _TRANSIT, intermediate dropoffs record the bin at its slot immediately.
-// The binTask is carried through verbatim so the engine's pickup/dropoff
-// classifier (engine/wiring_block_completed.go) routes correctly.
+// The binTask is carried through verbatim, as a real fleet reports it; the
+// engine routes the block by the order's record of what it was sent to do,
+// found by blockID (engine/wiring_block_completed.go).
 //
 // The driver (T2.3) calls this for each block whose simulated transit has
 // elapsed, the last block of a complete order too, just ahead of the order's

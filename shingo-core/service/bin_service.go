@@ -58,7 +58,7 @@ func (s *BinService) Manifest() *BinManifestService { return s.manifest }
 // per-node rule.
 func (s *BinService) Create(b *bins.Bin) error {
 	if b.NodeID != nil {
-		if err := s.ensurePhysicalNodeEmpty(*b.NodeID, 1); err != nil {
+		if err := s.ensurePhysicalNodeEmpty(*b.NodeID); err != nil {
 			return err
 		}
 	}
@@ -85,10 +85,8 @@ func (s *BinService) CreateBatch(template bins.Bin, label string, count int) err
 			if !node.IsSynthetic {
 				return fmt.Errorf("cannot create multiple bins at a single physical node")
 			}
-		} else {
-			if err := s.ensurePhysicalNodeEmpty(*template.NodeID, 1); err != nil {
-				return err
-			}
+		} else if err := s.ensurePhysicalNodeEmpty(*template.NodeID); err != nil {
+			return err
 		}
 	}
 
@@ -181,29 +179,46 @@ func (s *BinService) existingLabels(labels []string) ([]string, error) {
 	return found, rows.Err()
 }
 
-// ensurePhysicalNodeEmpty guards the one-bin-per-physical-node invariant.
-// The dispatch path has equivalent guards (fulfillment_scanner.go
-// destination-occupancy check); this mirrors that at the admin UI entry
-// point.
-func (s *BinService) ensurePhysicalNodeEmpty(nodeID int64, addCount int) error {
+// ensurePhysicalNodeEmpty is refuseOccupied for a node known only by id.
+func (s *BinService) ensurePhysicalNodeEmpty(nodeID int64) error {
 	node, err := s.db.GetNode(nodeID)
 	if err != nil {
 		return fmt.Errorf("node %d not found", nodeID)
 	}
+	return s.refuseOccupied(node)
+}
+
+// refuseOccupied guards the one-bin-per-physical-node invariant at the doors
+// a person uses to put a bin somewhere: create, the hand move and recovery.
+// The dispatch path has its own guards (fulfillment_scanner.go
+// destination-occupancy check). A synthetic node (LANE, NGRP) holds its bins
+// through its children and is never refused.
+//
+// THE SENTENCE NAMES THE NODE AND THE BIN ON IT. It said "destination node 27
+// already has 1 bin(s)", and SPR (2026-11-19) could not match that to the
+// floor: the cart standing at SMN_007 was CARRIER-0012, recorded there by a
+// robot 30 minutes before, and nothing on the screen said so. "already has"
+// stays in the wording: httpStatusForCreate reads it as a conflict.
+func (s *BinService) refuseOccupied(node *nodes.Node) error {
 	if node.IsSynthetic {
 		return nil
 	}
-	if addCount > 1 {
-		return fmt.Errorf("cannot create multiple bins at a single physical node")
-	}
-	existing, err := s.db.CountBinsByNode(nodeID)
+	held, err := s.db.ListBinsByNode(node.ID)
 	if err != nil {
-		return fmt.Errorf("check node occupancy: %w", err)
+		return fmt.Errorf("check what is at %s: %w", node.Name, err)
 	}
-	if existing > 0 {
-		return fmt.Errorf("node %d already has %d bin(s); move or delete existing bin first", nodeID, existing)
+	if len(held) == 0 {
+		return nil
 	}
-	return nil
+	labels := make([]string, len(held))
+	for i, b := range held {
+		labels[i] = b.Label
+	}
+	pronoun := "it"
+	if len(held) > 1 {
+		pronoun = "them"
+	}
+	return fmt.Errorf("%s already has %s; move or retire %s first", node.Name, strings.Join(labels, ", "), pronoun)
 }
 
 // --- Status transitions ---------------------------------------------------
@@ -361,7 +376,7 @@ func (s *BinService) CarrierTypeWarning(b *bins.Bin) (string, error) {
 // Move relocates a bin to a new node. Validates:
 //   - bin is not already at the destination
 //   - destination node exists
-//   - destination is either synthetic or empty
+//   - destination is either synthetic or empty (refuseOccupied)
 func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	if toNodeID == 0 {
 		return nil, fmt.Errorf("node_id is required")
@@ -376,14 +391,8 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("node not found")
 	}
-	if !destNode.IsSynthetic {
-		existing, err := s.db.CountBinsByNode(toNodeID)
-		if err != nil {
-			return nil, fmt.Errorf("check destination occupancy: %w", err)
-		}
-		if existing > 0 {
-			return nil, fmt.Errorf("destination node %d already has %d bin(s); move or delete existing bin first", toNodeID, existing)
-		}
+	if err := s.refuseOccupied(destNode); err != nil {
+		return nil, err
 	}
 	// A manual Move bypasses the arrival paths (ApplyArrival / recovery) that
 	// re-derive staging, so a bin staged at a lineside node would stay staged
@@ -1265,7 +1274,7 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 	if dest.IsSynthetic {
 		return fmt.Errorf("recovery destination must be a physical node, got synthetic %q", dest.Name)
 	}
-	if err := s.ensurePhysicalNodeEmpty(toNodeID, 1); err != nil {
+	if err := s.refuseOccupied(dest); err != nil {
 		return err
 	}
 

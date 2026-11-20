@@ -79,7 +79,8 @@ func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 
 	// The manifest stores WHICH parts. The per-line counts Edge sends are not
 	// stored: a stored count goes stale as the bin is drawn down and nothing
-	// rewrites it. The count is uop_remaining x parts_per_cycle at read time.
+	// rewrites it. The count is derived from uop_remaining at read time, by
+	// protocol.ManifestItem's count rule.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(req.Manifest))}
 	for i, item := range req.Manifest {
 		manifest.Items[i] = domain.ManifestEntry{PartNumber: item.PartNumber}
@@ -91,7 +92,19 @@ func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 	// payload is refused rather than loaded at 0 — a 0 there is a ledger entry
 	// that reads as a measured empty bin. Both rules, and the one transaction
 	// the set and the confirm now share, are BinManifestService.LoadAtLine's.
-	newEpoch, written, err := d.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
+	//
+	// A REPLACE is the same LOAD onto a carrier whose old tote left: its clear,
+	// the departure that tote owes CMS, and this load, in one transaction
+	// (Engine.ReplaceAndBookDeparture). Same rules, same refusals.
+	var (
+		newEpoch int64
+		written  int
+	)
+	if req.Expect == protocol.LoadExpectReplace {
+		newEpoch, written, err = d.orchestration.ReplaceAndBookDeparture(bin.ID, node.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
+	} else {
+		newEpoch, written, err = d.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
+	}
 	if err != nil {
 		var carrier *service.CarrierRefusedError
 		var held *service.HeldCarrierError
@@ -115,7 +128,7 @@ func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 	}
 	uop := int64(written)
 
-	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d epoch=%d", bin.ID, req.NodeName, req.PayloadCode, uop, newEpoch)
+	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d epoch=%d expect=%s", bin.ID, req.NodeName, req.PayloadCode, uop, newEpoch, req.Expect)
 	d.hub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "loaded", "bin_id": bin.ID,
 	}))
@@ -132,9 +145,11 @@ func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 // loadAssertionRefusal is the LOAD's refusal of a carrier that is no longer
 // what the sender read: 409 when its generation moved (req.Epoch) or it is not
 // the carrier asserted (req.Expect: bare, no part on it; partial, more than
-// none and fewer than capacity of the part being loaded), 400 for an expect the
-// door has no term for. "" when every asserted fact holds; nothing asserted
-// passes. Pinned by TestBinLoadDoor_Arms.
+// none and fewer than capacity of the part being loaded; replace, more than
+// none of the part being loaded), 400 for an expect the door has no term for,
+// and for a replace that names no generation: a replace clears what stands
+// there, so it says which carrier it read. "" when every asserted fact holds;
+// nothing asserted passes. Pinned by TestBinLoadDoor_Arms.
 func loadAssertionRefusal(req protocol.BinLoadRequest, b *domain.Bin) (int, string) {
 	changed := req.Epoch != 0 && b.DeltaEpoch != req.Epoch
 	switch req.Expect {
@@ -143,10 +158,15 @@ func loadAssertionRefusal(req protocol.BinLoadRequest, b *domain.Bin) (int, stri
 		changed = changed || b.PayloadCode != ""
 	case protocol.LoadExpectPartial:
 		changed = changed || b.PayloadCode != req.PayloadCode || !b.Stocked() || b.UOPRemaining >= b.UOPCapacity
+	case protocol.LoadExpectReplace:
+		if req.Epoch == 0 {
+			return http.StatusBadRequest, "a replace names the carrier's epoch"
+		}
+		changed = changed || b.PayloadCode != req.PayloadCode || !b.Stocked()
 	default:
 		// OWNER-WORDS
-		return http.StatusBadRequest, fmt.Sprintf("expect %q is not a carrier the door knows: say %s or %s",
-			req.Expect, protocol.LoadExpectBare, protocol.LoadExpectPartial)
+		return http.StatusBadRequest, fmt.Sprintf("expect %q is not a carrier the door knows: say %s, %s or %s",
+			req.Expect, protocol.LoadExpectBare, protocol.LoadExpectPartial, protocol.LoadExpectReplace)
 	}
 	if !changed {
 		return 0, ""

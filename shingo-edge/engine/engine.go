@@ -157,6 +157,10 @@ type Engine struct {
 	// bothLitLogged marks the A/B pairs whose both-lit tick has been logged
 	// (process|pair → struct{}), so the walk says it once.
 	bothLitLogged sync.Map
+	// unevenShareLogged marks the (process, part) pairs whose produce spots
+	// have been given a step that does not divide (process|part → struct{}),
+	// so the walk says it once (walkTick, produceShares).
+	unevenShareLogged sync.Map
 
 	// stationHealth is the station counters' health account (station_health.go),
 	// fed by the counting events.
@@ -415,6 +419,8 @@ func New(c Config) *Engine {
 	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
 	e.stationService.SetCarrierCatalog(e.PayloadBinTypes)
 	e.stationService.SetBinTypeFamilies(e.BinTypeFamilies)
+	// The composer read draws the new-part door only where Core answers it.
+	e.stationService.SetCoreAnswersResolver(e.CoreAnswers)
 	// A station's node list is matched by core_node_name everywhere, so a name
 	// Core does not have configures a row that resolves to nothing. Give the
 	// service the live name set to check against.
@@ -931,13 +937,7 @@ func (e *Engine) RequestCatalogSync() {
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) error {
 	rows := make([]*catalog.CatalogEntry, 0, len(entries))
 	for _, b := range entries {
-		rows = append(rows, &catalog.CatalogEntry{
-			ID: b.ID, Name: b.Name, Code: b.Code,
-			Description: b.Description,
-			UOPCapacity: b.UOPCapacity,
-			CATID:       b.CATID,
-			Manifest:    b.Manifest,
-		})
+		rows = append(rows, catalogEntryOf(b))
 	}
 	if err := e.db.SyncPayloadCatalog(rows); err != nil {
 		log.Printf("engine: sync payload catalog: %v", err)
@@ -955,6 +955,19 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) err
 	// cmd/shingoedge door_walk_test.go).
 	e.nudgeBoards()
 	return nil
+}
+
+// catalogEntryOf is one catalog row as the Edge stores it, from the row Core
+// sends: the catalog feed's and a new part's answer (applyPartCreate) map it
+// the same way, so the feed after a new part rewrites nothing.
+func catalogEntryOf(b protocol.CatalogPayloadInfo) *catalog.CatalogEntry {
+	return &catalog.CatalogEntry{
+		ID: b.ID, Name: b.Name, Code: b.Code,
+		Description: b.Description,
+		UOPCapacity: b.UOPCapacity,
+		CATID:       b.CATID,
+		Manifest:    b.Manifest,
+	}
 }
 
 // ── Outbound messaging ──────────────────────────────────────────────

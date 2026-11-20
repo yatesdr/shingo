@@ -234,7 +234,7 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 	testdb.SetupTestData(t, db)
 
 	// Seed an order the fleet has, carrying a known vendor_order_id: a
-	// `dispatched` row names its job in the same write (v181).
+	// `dispatched` row names its job in the same write (v183).
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "resolver-uuid"
 		o.StationID = "line-1"

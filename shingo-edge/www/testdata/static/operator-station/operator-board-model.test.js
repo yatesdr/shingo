@@ -225,12 +225,14 @@ eq(M.isBoard([bt(1, 'ULN_1', { role: 'consume' }), bt(2, 'ULN_2', { role: 'consu
 eq(M.isBoard([press, bt(1, 'SMN_A1')]), false, 'isBoard: a loader beside a press keeps the node grid');
 
 // ── spot words, a closed set ──
-eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, payload_code: 'PART-A', stocked: false },
+eq([NOBIN, FULLBIN('PART-A'), Object.assign(FULLBIN('PART-A'), { partial: true }), EMPTYBIN('KD-1'), EMPTYBIN(''),
+    { occupied: true, payload_code: 'PART-A', stocked: false },
     { occupied: true, bare: true }, undefined].map(b => M.spotWords(bt(1, 'S', { bin: b }))),
-[{ words: 'no bin', code: '' }, { words: 'holds a full bin', code: '' }, { words: 'holds an empty', code: 'KD-1' },
+[{ words: 'no bin', code: '' }, { words: 'holds a full bin', code: '' }, { words: 'holds a partial', code: '' },
+    { words: 'holds an empty', code: 'KD-1' },
     { words: 'holds an empty bin', code: '' }, { words: 'count unknown', code: '' }, { words: 'no bin', code: '' },
     { words: 'could not look', code: '' }],
-'spot words: full, empty of a type, empty, no bin, count unknown, a bare cart, could not look');
+'spot words: full, partial, empty of a type, empty, no bin, count unknown, a bare cart, could not look');
 
 // ── Load: the colour follows the cell's state ──
 {
@@ -346,6 +348,51 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(zone(out, 'load').cards, [], 'a loaded carrier leaving: no card, as before');
 }
 
+// ── REPLACE PARTIAL: a home holding a partial of its own part ──
+// No card: the board is unchanged, and Show all's tile opens the node modal,
+// whose REPLACE PARTIAL button follows replacePartialPart.
+{
+    const PARTIALBIN = part => Object.assign(FULLBIN(part), { partial: true });
+    const home = (bin, o) => bt(1, 'SMN_029', Object.assign({ dedicated: true, bin: bin }, o || {}));
+    const P = (bin, o) => M.replacePartialPart(home(bin, o));
+    const b = B({ station: {}, nodes: [home(PARTIALBIN('PART-A'))], serves: [row('PART-A', 3)] });
+    eq([zone(b, 'load').cards, b.words[0]], [[], '0 to load'], 'a partial of its part: no card in Load');
+    eq(b.all.map(c => c.act), [{ kind: 'modal', node: 1 }], 'Show all: the tile of the spot, opening the node modal');
+    eq(P(PARTIALBIN('PART-A')), 'PART-A', 'replacePartialPart: a partial of its part');
+    eq(P(FULLBIN('PART-A')), '', 'a full of its part: none');
+    eq(P(PARTIALBIN('PART-Z')), '', 'a partial of another part: none');
+    eq(P(Object.assign(PARTIALBIN('PART-A'), { stocked: false })), '', 'a partial at 0: none');
+    eq(P(PARTIALBIN('PART-A'), { role: 'consume' }), '', 'a window of an unloader: none');
+    // The home's clear runs: a move leaving it with its emptied carrier, or the
+    // partial's move coming home.
+    const leaving = ord(401, 'queued', { order_type: 'move', source_node: 'SMN_029', delivery_node: 'LDR.SMN_B2' });
+    eq(P(PARTIALBIN('PART-A'), { orders: [leaving] }), '', 'its clear running: none');
+    const coming = ord(402, 'queued', { order_type: 'move', source_node: 'LDR.SMN_B1', delivery_node: 'SMN_029', payload_code: 'PART-A' });
+    eq(P(PARTIALBIN('PART-A'), { orders: [coming] }), '', 'a partial on its way home: none');
+    // The line's demand on the home: offered while it waits, not once a robot has it.
+    const demand = st => ord(403, st, { order_type: 'move', source_node: 'SMN_029', delivery_node: 'ALN_L1', payload_code: 'PART-A' });
+    eq(P(PARTIALBIN('PART-A'), { orders: [demand('queued')] }), 'PART-A',
+        'a queued move to the line: offered (Core refuses a held carrier)');
+    eq(P(PARTIALBIN('PART-A'), { orders: [demand('dispatched')] }), '', 'a dispatched move leaving the home: none');
+    // A partial home with a partial of its part in the buffer: Bring partials
+    // home offers it, saying a partial is on the home, and Show all lists the
+    // home as its tile, opening the node modal where REPLACE PARTIAL and Bring
+    // partials home are. The tile keeps the card's words and the section's
+    // tone (changed: a plain tile, so Show all drew it as one more spot, SPR
+    // 2026-11-18).
+    const withBuffer = B({ station: {}, nodes: [home(PARTIALBIN('PART-A'), {
+        buffer: [{ node: 'LDR.SMN_B1', state: 'partial' }], partialFrom: 'LDR.SMN_B1' })], serves: [row('PART-A', 3)] },
+    { partialsOpen: true });
+    eq(zone(withBuffer, 'partials').cards.map(c => [c.spotWords, c.reason, c.act.partial]),
+        [['partial', 'Take the partial bin off · partial on SMN_B1 comes here', true]],
+        'a partial home: Bring partials home offers it, saying the bin on the home is a partial');
+    eq(withBuffer.all.map(c => [c.act, c.tone, c.spotWords, c.reason]),
+        [[{ kind: 'modal', node: 1 }, 'red', 'partial', 'Take the partial bin off · partial on SMN_B1 comes here']],
+        'Show all: a partial home opens its node modal (REPLACE PARTIAL), in its Bring partials home card\'s words and tone');
+    eq(M.bringHomeOf(home(PARTIALBIN('PART-A'), { partialFrom: 'LDR.SMN_B1' })),
+        { home: 'SMN_029', spot: 'SMN_B1', partial: true }, 'bringHomeOf: the home, the buffer spot, a partial on the home');
+}
+
 // ── No parts available ──
 {
     const nodes = [
@@ -392,14 +439,18 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
         'partials, a normal day: folded to its strip and words, quiet');
     z = P(spots(['partial', 'empty', 'open', 'open']), 'LDR.SMN_B1', { partialsOpen: true });
     eq([z.folded, z.cards.map(cardSay), z.cards[0].number, z.cards[0].spotWords],
-        [false, [['SMN_H1', 'PART-A', 'plain', '', 'Pull the full · partial from SMN_B1']], 1, 'holds a full bin'],
+        [false, [['SMN_H1', 'PART-A', 'plain', '', 'Take the full bin off · partial on SMN_B1 comes here']], 1, 'full'],
         'partials opened by a tap: the numbered card, the home\'s spot line, the part, where the partial comes from');
-    eq(z.cards[0].act, { kind: 'clear-home', node: 1, home: 'SMN_H1', spot: 'SMN_B1' },
+    eq(z.cards[0].act, { kind: 'clear-home', node: 1, home: 'SMN_H1', spot: 'SMN_B1', partial: false },
         'a partial\'s tap is the home\'s clear, naming the home and the spot, and the spot by its Core name for the post');
     z = P(spots(['open', 'partial', 'open']), 'SMN_B2');
     eq([z.tone, z.word, z.reason, z.folded, z.openedByBoard, z.cards.map(c => c.tone)],
         ['amber', 'SOON', 'No empty', false, true, ['plain']],
         'partials with no empty and an open spot: amber, opened by the board, the cards plain (one problem, one colour)');
+    const amberAll = B({ station: {}, nodes: homesWith(spots(['open', 'partial', 'open']), 'SMN_B2'), serves: [] });
+    eq([amberAll.all.map(c => [c.spot, c.tone, c.act.kind]), zone(amberAll, 'partials').cards[0].tone],
+        [[['SMN_H1', 'amber', 'clear-home'], ['SMN_H2', 'plain', 'modal']], 'plain'],
+        'Show all: a Bring partials home card carries its section\'s amber (no section there to colour it), its tap the clear');
     z = P(spots(['partial', 'partial', 'partial']), 'SMN_B3');
     eq([z.tone, z.word, z.reason, z.cards.map(c => [c.tone, c.number])], ['red', 'NOW', 'Buffer full · clear one', [['plain', 3]]],
         'a buffer of partials with no empty and no open spot: red, any card clears it');
@@ -410,6 +461,10 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     z = P(spots(['partial', 'unknown', 'partial']), 'SMN_B1');
     eq([z.tone, z.stripWords, z.strip.map(s => s.number)], ['red', '2 partials · 0 empty · 0 open · 1 ?', [1, 0, 2]],
         'an unknown spot is neither open nor empty: "?" in the words; partials numbered in the plant\'s order');
+    z = P(spots(['full', 'partial', 'open']), 'SMN_B2');
+    eq([z.tone, z.stripWords, z.strip.map(s => [s.state, s.number])],
+        ['amber', '1 partial · 0 empty · 1 open · 1 full', [['full', 0], ['partial', 1], ['open', 0]]],
+        'a full on a buffer spot (at or over the capacity of its part) is not a partial: unnumbered, counted on its own');
     z = P(spots(['unknown', 'unknown', 'unknown']), '');
     eq([z.tone, z.folded, z.stripWords], ['plain', true, '0 partials · 0 empty · 0 open · 3 ?'],
         'a failed bins read: every spot "?", the section keeps its title (it never vanishes)');
@@ -1041,6 +1096,22 @@ WIDTHS.forEach(function (w) {
     };
     eq(M.STEPS.map((s, st) => reasonAt(st)), M.STEPS.map(s => ({ reason: s.reason, word: s.word, why: s.why, mark: s.mark })),
         'scale: the reason line in operator.css (its line, word, words and mark) is the one STEPS measures');
+}
+
+// ── A consume tile's cycles left (cyclesLeftWords) ──
+// The owner's example: 800 pieces at 8 a cycle is 100 cycles; rounded down;
+// never below 0; nothing for a press, a part at 1, a kit or a tile with no cart.
+{
+    const at8 = { role: 'consume', pieces_per_cycle: 8 };
+    eq(M.cyclesLeftWords(at8, 800, false), '100 cycles left', 'cycles: 800 pieces at 8 a cycle');
+    eq(M.cyclesLeftWords(at8, 799, false), '99 cycles left', 'cycles: rounded down');
+    eq(M.cyclesLeftWords(at8, 8, false), '1 cycle left', 'cycles: one cycle');
+    eq(M.cyclesLeftWords(at8, -3, false), '0 cycles left', 'cycles: a count below 0 is 0 cycles');
+    eq(M.cyclesLeftWords(at8, 800, true), '', 'cycles: no cart, no cycles');
+    eq(M.cyclesLeftWords({ role: 'produce', pieces_per_cycle: 8 }, 800, false), '', 'cycles: a press never says them');
+    eq(M.cyclesLeftWords({ role: 'consume', pieces_per_cycle: 1 }, 800, false), '', 'cycles: a part at 1 a cycle');
+    eq(M.cyclesLeftWords({ role: 'consume' }, 800, false), '', 'cycles: a claim with no number');
+    eq(M.cyclesLeftWords(null, 800, false), '', 'cycles: no claim');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

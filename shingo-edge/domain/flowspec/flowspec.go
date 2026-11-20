@@ -146,6 +146,12 @@ const (
 	// where StrictPack is; it has no reader with strict pack off, and the save
 	// does not refuse one there.
 	PackTolerancePct Field = "pack_tolerance_pct"
+	// HoldLimit is the most parts a strict seat sets aside off the cart, the
+	// pile its line's packer, conveyor or accumulator can hold while the cart
+	// is full or swapping (domain.NodeClaim.HoldCap). Past it the whole pile is
+	// thrown away and logged. Blank (0) is one pack. Used and Forbidden exactly
+	// where StrictPack is; it has no reader with strict pack off.
+	HoldLimit Field = "hold_limit"
 
 	// SwapMode and Role are NOT columns the per-mode matrices consult — they
 	// are the two discriminants the matrices are keyed BY, so they are not in
@@ -188,6 +194,7 @@ var fieldLabels = map[Field]string{
 	CurtainRequired:                "Curtain required",
 	StrictPack:                     "Strict pack",
 	PackTolerancePct:               "Pack tolerance %",
+	HoldLimit:                      "Most held off the cart",
 	SwapMode:                       "Swap mode",
 	Role:                           "Role",
 }
@@ -202,7 +209,7 @@ var fieldOrder = []Field{
 	ChangeoverEvacNodes, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, RefillBy, AutoConfirm, AutoPush,
 	KeyRoute, KeyTask, PartialDestination, CurtainRequired,
-	StrictPack, PackTolerancePct,
+	StrictPack, PackTolerancePct, HoldLimit,
 }
 
 // Fields returns every field, in canonical order. A fresh slice each call.
@@ -422,7 +429,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	ms[AutoPush] = Used // consume only; produce is overridden in Steady
 	// A loader card's count is a person's (the PLC tick skips manual_swap
 	// claims), so there is no tick for a pack to stop.
-	ms[StrictPack], ms[PackTolerancePct] = Forbidden, Forbidden
+	ms[StrictPack], ms[PackTolerancePct], ms[HoldLimit] = Forbidden, Forbidden, Forbidden
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
@@ -498,7 +505,7 @@ func Steady(role protocol.ClaimRole, mode protocol.SwapMode) map[Field]Need {
 		out[PartialDestination] = Unused
 		// A consume tick draws its bin down: there is no pack for it to stop
 		// at, so the cap is a produce setting.
-		out[StrictPack], out[PackTolerancePct] = Forbidden, Forbidden
+		out[StrictPack], out[PackTolerancePct], out[HoldLimit] = Forbidden, Forbidden, Forbidden
 	}
 	return out
 }

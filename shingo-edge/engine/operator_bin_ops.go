@@ -199,10 +199,10 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// its own query returns first.
 	//
 	// AND IT SAYS WHAT IT READ: the carrier's generation and that it carries no
-	// part (protocol.LoadExpectBare: a labelled carrier is answered above
-	// without a load). Core refuses the LOAD when either has changed since,
-	// rather than loading over what stands there now, and its refusal's rows
-	// redraw the table before its sentence shows.
+	// part (protocol.LoadExpectBare; a labelled carrier is loadOntoLabelledCarrier's:
+	// a replace, or a refusal). Core refuses the LOAD when either has changed
+	// since, rather than loading over what stands there now, and its refusal's
+	// rows redraw the table before its sentence shows.
 	row, err := e.binsRowAt(node.CoreNodeName)
 	if err != nil {
 		return err
@@ -211,9 +211,8 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
 	}
 	if row.PayloadCode != "" {
-		return e.loadOntoLabelledCarrier(node, claim, row)
+		return e.loadOntoLabelledCarrier(nodeID, node, claim, row, payloadCode, uopCount, manifest)
 	}
-	checkedBinID, checkedEpoch, expect := row.BinID, row.Epoch, protocol.LoadExpectBare
 
 	// Validate payload code against the loader-wide loadable set (see
 	// loadablePayloads) — the loader fills what the system/operator calls for
@@ -228,39 +227,56 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	if !slices.Contains(allowed, payloadCode) {
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
-	if manifest, err = e.loadManifest(payloadCode, uopCount, manifest); err != nil {
+	req, err := e.loadRequest(node, row, protocol.LoadExpectBare, payloadCode, uopCount, manifest)
+	if err != nil {
 		return err
 	}
+	return e.askLoad(nodeID, node, claim, req)
+}
 
-	// NO LOCAL FALLBACK. An undeclared count travels as absence and Core
-	// resolves it from the payload's standard pack — the same template this
-	// used to fetch, read by the side that owns the ledger. Resolving it here
-	// as well meant two answers to one question, and the Edge's was the one
-	// with no way to say "I could not reach the template": the fetch reports
-	// every failure as a nil result, so the fallback quietly produced 0 and
-	// then wrote that 0 onto the node as if somebody had counted it.
+// loadRequest is a LOAD's request (the bin.load ask's body): the carrier the
+// tap read (row: its id and generation) and what it is in the door's terms
+// (expect), the part, the count declared and the manifest (loadManifest).
+// The bare LOAD and the replace (loadOntoLabelledCarrier) both build it here.
+//
+// NO LOCAL FALLBACK. An undeclared count travels as absence and Core
+// resolves it from the payload's standard pack — the same template this
+// used to fetch, read by the side that owns the ledger. Resolving it here
+// as well meant two answers to one question, and the Edge's was the one
+// with no way to say "I could not reach the template": the fetch reports
+// every failure as a nil result, so the fallback quietly produced 0 and
+// then wrote that 0 onto the node as if somebody had counted it.
+func (e *Engine) loadRequest(node *processes.Node, row protocol.NodeBinsRow, expect, payloadCode string, uopCount *int64, sent []protocol.IngestManifestItem) (*BinLoadRequest, error) {
+	manifest, err := e.loadManifest(payloadCode, uopCount, sent)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]BinLoadItem, len(manifest))
 	for i, m := range manifest {
 		items[i] = BinLoadItem(m)
 	}
-	req := &BinLoadRequest{
+	return &BinLoadRequest{
 		NodeName:    node.CoreNodeName,
-		BinID:       checkedBinID,
-		Epoch:       checkedEpoch,
+		BinID:       row.BinID,
+		Epoch:       row.Epoch,
 		Expect:      expect,
 		PayloadCode: payloadCode,
 		UOPCount:    uopCount,
 		Manifest:    items,
-	}
-	// The LOAD is an ask (bin.load). An answer that comes after the tap's wait
-	// runs the same follow-up then (afterLoad), in this process.
+	}, nil
+}
+
+// askLoad sends a LOAD to Core and runs its follow-up (afterLoad) on Core's
+// answer. The LOAD is an ask (bin.load). An answer that comes after the tap's
+// wait runs the same follow-up then, in this process.
+func (e *Engine) askLoad(nodeID int64, node *processes.Node, claim *processes.NodeClaim, req *BinLoadRequest) error {
 	loadResp, err := askLateOrRefuse(e, protocol.AskBinLoad, req,
 		func(late *BinLoadResponse, lerr error) {
 			if lerr != nil {
 				log.Printf("bin_ops: LOAD at node %s, answered late: %v", node.CoreNodeName, e.refused(lerr))
 				return
 			}
-			e.afterLoad(nodeID, node, claim, payloadCode, late)
+			e.afterLoad(nodeID, node, claim, req.PayloadCode, late)
 		})
 	if errors.Is(err, ErrAskPending) {
 		return fmt.Errorf("load bin: %w", err)
@@ -269,14 +285,16 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		// A refusal redraws the window from Core's rows before its sentence.
 		return fmt.Errorf("load bin: %w", e.refused(err))
 	}
-	e.afterLoad(nodeID, node, claim, payloadCode, loadResp)
+	e.afterLoad(nodeID, node, claim, req.PayloadCode, loadResp)
 	return nil
 }
 
 // loadManifest is the manifest a LOAD writes: the one the request carried,
 // unchanged, else the payload's template from this Edge's copy of Core's
 // catalog (CatalogEntry.TemplateLines, the lines the load modal shows), each
-// line's per-cycle ratio times the declared count, with its description.
+// line's count derived from the declared count by protocol.ManifestItem's
+// count rule (a template of one line is the declared count itself), with its
+// description.
 //
 // THE EDGE BUILDS IT SO THE MODAL NEED NOT FETCH IT. The operator station used
 // to build this in the browser from a per-tap manifest read, and on the
@@ -308,8 +326,12 @@ func (e *Engine) loadManifest(payloadCode string, uopCount *int64, sent []protoc
 	lines := entry.TemplateLines()
 	out := make([]protocol.IngestManifestItem, len(lines))
 	for i, l := range lines {
+		perUnit := l.PartsPerCycle
+		if len(lines) == 1 {
+			perUnit = 1
+		}
 		out[i] = protocol.IngestManifestItem{
-			PartNumber: l.PartNumber, Quantity: l.PartsPerCycle * *uopCount, Description: l.Description,
+			PartNumber: l.PartNumber, Quantity: perUnit * *uopCount, Description: l.Description,
 		}
 	}
 	return out, nil
@@ -1124,15 +1146,33 @@ func errStageTwoAsksNothing(node string) error {
 }
 
 // loadOntoLabelledCarrier answers a LOAD at a window whose carrier already
-// carries a label: nil when the load is in fact done, else the refusal that
-// names what frees the window.
-func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.NodeClaim, b protocol.NodeBinsRow) error {
+// carries a label: a replace when it is a partial of the part (Core's answer
+// is the LOAD's), nil when the load is in fact done, else the refusal that
+// names what frees the window or says what stands there.
+func (e *Engine) loadOntoLabelledCarrier(nodeID int64, node *processes.Node, claim *processes.NodeClaim, b protocol.NodeBinsRow,
+	payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error {
 	// A LABELLED CARRIER AT 0 has no outbound move coming: Core will not send a
 	// carrier with no units, and LOAD will not fill one with a label. The
 	// operator clears it, then loads (row L item 5). (Not stocked: at or below
 	// 0, as a ledger can go negative.) With units it is stock, and waits.
 	if !b.Stocked {
 		return fmt.Errorf("bin at node %s is labelled %s but holds 0 — confirm it is empty, CLEAR it, then load", node.Name, b.PayloadCode)
+	}
+	loadable := slices.Contains(e.loadablePayloads(node, claim), b.PayloadCode)
+	// A PARTIAL OF ITS PART IS REPLACED. The floor takes the partial tote off
+	// and sets a full one on, then taps LOAD (REPLACE PARTIAL on the board).
+	// Core clears the carrier and loads the new count in one transaction
+	// (protocol.LoadExpectReplace), so the record says the partial's count left
+	// the spot and a new tote arrived. Below its capacity only (Core's Partial;
+	// false with no capacity), so a full carrier, and a LOAD whose reply was
+	// lost at a full count, keep the arms below. Not at a stage 2, whose
+	// partials are PARTIAL ON's. Pinned by TestPin_ALoadOnAPartialOfItsPartReplacesIt.
+	if b.Partial && loadable && !claim.TakesBare && (payloadCode == "" || payloadCode == b.PayloadCode) {
+		req, err := e.loadRequest(node, b, protocol.LoadExpectReplace, b.PayloadCode, uopCount, manifest)
+		if err != nil {
+			return err
+		}
+		return e.askLoad(nodeID, node, claim, req)
 	}
 	// A LOAD WHOSE REPLY WAS LOST. Core loaded the carrier and the reply timed
 	// out, so the Edge never filed the loader's outbound move; the retry lands
@@ -1143,11 +1183,23 @@ func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.
 	// the owed-move guard, and at a stage 2 sendCartOut's guard on the cart
 	// does, so a window whose outbound is already filed still refuses; a stage
 	// 2 pulled directly files none and refuses too.
-	if slices.Contains(e.loadablePayloads(node, claim), b.PayloadCode) &&
-		e.loadedSendOut(node, claim, b.PayloadCode, b.BinID, b.BinID) {
+	if loadable && e.loadedSendOut(node, claim, b.PayloadCode, b.BinID, b.BinID) {
 		log.Printf("bin_ops: LOAD at %s found %s already loaded with no outbound owed (a lost reply); outbound filed",
 			node.Name, b.PayloadCode)
 		return nil
+	}
+	// A HOME HAS NO OUTBOUND MOVE TO WAIT FOR, so it is not told to wait for
+	// one (SPR SMN_029, 2026-11-17: nine taps, each "wait for outbound move").
+	// It says what stands there.
+	if !claim.TakesBare && !e.hasOutbound(node, claim) {
+		switch {
+		case payloadCode != "" && payloadCode != b.PayloadCode:
+			return fmt.Errorf("%s holds %s, not %s", node.Name, b.PayloadCode, payloadCode)
+		case b.UOPCapacity > 0 && !b.Partial:
+			return fmt.Errorf("%s already holds a full bin of %s", node.Name, b.PayloadCode)
+		default:
+			return fmt.Errorf("%s already holds a bin of %s", node.Name, b.PayloadCode)
+		}
 	}
 	return fmt.Errorf("bin at node %s already loaded with %s — wait for outbound move", node.Name, b.PayloadCode)
 }

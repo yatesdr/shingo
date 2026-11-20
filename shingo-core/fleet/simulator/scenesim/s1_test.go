@@ -3,6 +3,7 @@ package scenesim
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -36,9 +37,9 @@ func carryStoreWait(id, source, slot string) fleet.CreateOrderRequest {
 	return fleet.CreateOrderRequest{
 		OrderID: id,
 		Blocks: []fleet.OrderBlock{
-			{BlockID: id + "-b1", Location: source, BinTask: "JackLoad"},
-			{BlockID: id + "-b2", Location: slot, BinTask: "JackUnload"},
-			{BlockID: id + "-b3", Location: slot, BinTask: "Wait"},
+			{BlockID: id + "-b1", Location: source, BinTask: "JackLoad", Action: protocol.ActionPickup},
+			{BlockID: id + "-b2", Location: slot, BinTask: "JackUnload", Action: protocol.ActionDropoff},
+			{BlockID: id + "-b3", Location: slot, BinTask: "Wait", Action: protocol.ActionWait},
 		},
 	}
 }

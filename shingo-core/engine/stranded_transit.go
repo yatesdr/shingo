@@ -23,7 +23,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -230,10 +229,10 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 // THE PICKUP LEG, NOT THE `in_transit` ROW. `in_transit` is RDS reporting the
 // order RUNNING — a robot assigned and driving toward the source — and it was
 // read as the lift for a month. The lift is the pickup block completing:
-// handleBlockCompleted records that leg in mission_events and then, for a
-// pickup-shaped binTask, moves the cart to _TRANSIT. Same predicate
-// (IsPickupBlock), same event, recorded first — so a cart a robot put at
-// _TRANSIT has this row, and a cart that got there any other way does not.
+// handleBlockCompleted records that leg in mission_events, with the action it
+// read the block as, and then, for a pickup, moves the cart to _TRANSIT. Same
+// action (the leg's, LegBlocks), same event, recorded first — so a cart a robot
+// put at _TRANSIT has this row, and a cart that got there any other way does not.
 // Checked against every inferred placement at SPR and HK up to 2026-09-24:
 // all 50 had one; the three bins that reached _TRANSIT without a robot had none.
 //
@@ -271,12 +270,12 @@ func (e *Engine) pickupAt(ord *orders.Order, binID int64) (time.Time, bool) {
 		if ev.NewState != BlockLegState {
 			continue
 		}
-		var legs []blockLeg
-		if json.Unmarshal([]byte(ev.BlocksJSON), &legs) != nil {
+		legs, err := LegBlocks(ev.BlocksJSON)
+		if err != nil {
 			continue
 		}
 		for _, leg := range legs {
-			if IsPickupBlock(leg.BinTask) && picks[strings.TrimSpace(leg.Location)] {
+			if leg.Action == protocol.ActionPickup && picks[strings.TrimSpace(leg.Location)] {
 				return ev.CreatedAt, true
 			}
 		}

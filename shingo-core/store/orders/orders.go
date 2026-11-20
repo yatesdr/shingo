@@ -49,7 +49,7 @@ type History = domain.OrderHistory
 // the same statement over idx_order_bins_order: every reader of an order has
 // its carts for no further statement. It names the outer row as orders.id, so
 // a statement using SelectCols reads FROM orders unaliased (all of them do).
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, version, asked_vendor_order_id, ` + CartsColSQL
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, version, asked_vendor_order_id, block_actions, ` + CartsColSQL
 
 // CartsColSQL is the order's carts as one JSON text column: an array of
 // [bin_id, pick_step, drop_step], in plan order (a carried-over row, with no
@@ -107,6 +107,8 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var planJSON string
 	// want is the stated height in its one spelling (protocol.Height, v166).
 	var want string
+	// block_actions is JSONB (v179); NULL is an order sent before the record.
+	var blockActions sql.NullString
 	// carts is CartsColSQL's text, the order's order_bins rows.
 	var carts string
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
@@ -116,7 +118,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &o.Version, &o.AskedVendorOrderID, &carts)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &o.Version, &o.AskedVendorOrderID, &blockActions, &carts)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +126,16 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	// know which carts the order carries must not go on as if it carried none.
 	if err := scanCarts(&o, carts); err != nil {
 		return nil, err
+	}
+	if blockActions.Valid {
+		// Only Core writes the column, from the blocks it sent, so an
+		// unreadable value is a hand edit. It reads as NULL: the block
+		// subscriber then reads this order's blocks by their names, as it
+		// read every block before the record.
+		if err := json.Unmarshal([]byte(blockActions.String), &o.BlockActions); err != nil || o.BlockActions == nil {
+			log.Printf("orders: order %d has unreadable block_actions %q: %v — read by block names", o.ID, blockActions.String, err)
+			o.BlockActions = nil
+		}
 	}
 	if err := o.Want.UnmarshalText([]byte(want)); err != nil {
 		// Only Core writes the column, from a want the wire decoded, so this is
@@ -263,7 +275,7 @@ func Create(db helpers.QueryRower, o *Order) error {
 		return fmt.Errorf("create order: %w", err)
 	}
 	o.ID = id
-	// Born at version 1, the column's default (v179): the projection that
+	// Born at version 1, the column's default (v181): the projection that
 	// announces the order carries it.
 	o.Version = 1
 	o.Carts = nil
@@ -618,15 +630,58 @@ func AdvanceStepsDone(db *sql.DB, id int64, n int) error {
 // claim exchange re-pointing a later pickup, dispatch/claim_exchange.go): the
 // segment would carry the old step. The bump of updated_at is what refuses an
 // exchange that read the row before this claim. Same statement.
-func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string) (bool, error) {
-	res, err := db.Exec(fmt.Sprintf(`UPDATE orders SET updated_at=$3
+//
+// THE SEGMENT'S BLOCKS ARE RECORDED IN THE SAME STATEMENT: actions (block id
+// -> action) is merged into block_actions, which stays NULL on an order sent
+// before the record (read by block names for its whole life, so a partial
+// record would read its earlier blocks as unknown). An append the fleet then
+// refuses leaves its entries behind; a retry re-cuts the same ids
+// (dispatch.mintBlockID) and writes them again, and a block never sent never
+// finishes. One of the two writers of block_actions, with NameFleetOrder
+// (TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent).
+func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string, actions map[string]string) (bool, error) {
+	raw, err := blockActionsJSON(actions)
+	if err != nil {
+		return false, err
+	}
+	res, err := db.Exec(fmt.Sprintf(`UPDATE orders SET updated_at=$3,
+		block_actions = CASE WHEN block_actions IS NULL THEN NULL ELSE block_actions || $5::jsonb END
 		WHERE id=$1 AND wait_index=$2 AND steps_json=$4 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
-		id, waitIndex, clock.Now().UTC(), stepsJSON)
+		id, waitIndex, clock.Now().UTC(), stepsJSON, raw)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// NameFleetOrder is the create's write once the fleet has taken the order: the
+// vendor order's identifiers, as UpdateVendor writes them, and the record of the
+// blocks it was sent, block id -> action, in block_actions. The record is
+// replaced, not merged: every block of the vendor order named here was sent now.
+// One of the two writers of block_actions, with ClaimAppend.
+func NameFleetOrder(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string, actions map[string]string) error {
+	raw, err := blockActionsJSON(actions)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, block_actions=$6::jsonb,
+		updated_at=$5 WHERE id=$4`,
+		vendorOrderID, vendorState, robotID, id, clock.Now().UTC(), raw)
+	return err
+}
+
+// blockActionsJSON is a block record as block_actions stores it: a JSON object,
+// '{}' for none (never JSON null, which would read back as unreadable).
+func blockActionsJSON(actions map[string]string) (string, error) {
+	if len(actions) == 0 {
+		return "{}", nil
+	}
+	raw, err := json.Marshal(actions)
+	if err != nil {
+		return "", fmt.Errorf("encode block actions: %w", err)
+	}
+	return string(raw), nil
 }
 
 // Wait is what an order is waiting on, as its row carries it: the code and the

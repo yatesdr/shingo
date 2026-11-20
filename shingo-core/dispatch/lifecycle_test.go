@@ -94,7 +94,7 @@ func TestLifecycle_LegalTransitions_AllPersist(t *testing.T) {
 				// writes the status with the job (transition refuses it).
 				job := fmt.Sprintf("sg-legal-%d", i)
 				openAsk(t, db, ord.ID, job)
-				err = lc.Dispatch(ord, job, "", "test")
+				err = lc.Dispatch(ord, job, "", "test", nil)
 			} else {
 				err = lc.transition(ord, to, Event{Actor: "test", Reason: "matrix"})
 			}
@@ -287,7 +287,7 @@ func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 
 	// The stale caller now tries the transition that was legal when it loaded.
 	stale.QueueCode = string(protocol.QueueWaitingForMaterial)
-	err = lc.Dispatch(&stale, "vendor-stale", "", "fulfillment")
+	err = lc.Dispatch(&stale, "vendor-stale", "", "fulfillment", nil)
 	if err == nil {
 		t.Fatal("stale queued→dispatched was accepted; a cancelled order must not be resurrectable")
 	}
@@ -468,13 +468,13 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 		{"Dispatch_PendingToDispatched", StatusPending,
 			func(o *orders.Order) error {
 				openAsk(t, db, o.ID, "vendor-id-0")
-				return lc.Dispatch(o, "vendor-id-0", "", "hand")
+				return lc.Dispatch(o, "vendor-id-0", "", "hand", nil)
 			},
 			StatusDispatched},
 		{"Dispatch_QueuedToDispatched", StatusQueued,
 			func(o *orders.Order) error {
 				openAsk(t, db, o.ID, "vendor-id-1")
-				return lc.Dispatch(o, "vendor-id-1", "", "dispatcher")
+				return lc.Dispatch(o, "vendor-id-1", "", "dispatcher", nil)
 			},
 			StatusDispatched},
 		{"Acknowledge_QueuedToAcknowledged", StatusQueued,

@@ -42,7 +42,12 @@ function fakeEl(tag) {
         dataset: {}, style: {}, children: [], listeners: {},
         classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
         addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
-        appendChild(c) { this.children.push(c); return c; },
+        appendChild(c) { c.parentElement = this; this.children.push(c); return c; },
+        remove() {
+            const p = this.parentElement;
+            if (p) p.children = p.children.filter((c) => c !== this);
+            this.parentElement = null;
+        },
         querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
         querySelectorAll(sel) {
             if (sel === 'input[type=checkbox]') return this.children.filter((c) => c.type === 'checkbox');
@@ -64,6 +69,7 @@ function fakeEl(tag) {
                 const c = fakeEl(m[1]);
                 c.className = attr('class');
                 c.value = attr('value');
+                c.parentElement = e;
                 e.children.push(c);
             }
         },
@@ -235,6 +241,35 @@ async function main() {
         const body = (posts[0] || {}).body || {};
         check('payload 8 sends no manifest', !('manifest' in body), JSON.stringify(body.manifest));
         check('payload 8 sends no bin_type_ids', !('bin_type_ids' in body), JSON.stringify(body.bin_type_ids));
+    }
+
+    console.log("the per-bin readout: a part alone counts pieces; a kit's line is its ratio x the capacity");
+    {
+        // protocol.ManifestItem's count rule. The pack here is 40 (editButton).
+        const rowsOf = (doc) => doc.getElementById('ple-manifest-rows').querySelectorAll('.plpart-row');
+        const readouts = (doc) => rowsOf(doc).map((r) => r.querySelector('.mr-fullbin').textContent);
+        const open = async (lines) => {
+            const { ctx, doc } = load({
+                [MANIFEST]: () => Promise.resolve(okJSON(lines)),
+                [BIN_TYPES]: () => Promise.resolve(okJSON([])),
+            });
+            ctx.openEditPayloadModal(editButton(7));
+            await settle(); await settle();
+            return { ctx, doc };
+        };
+        const one = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 2 }]);
+        same('one line at 2 per assembly cycle: the cycles a full bin feeds, not 40 x 2 per bin',
+            readouts(one.doc), ['= 20 cycles / bin']);
+        const unit = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 1 }]);
+        same('one line at 1: the pack says it all', readouts(unit.doc), ['']);
+        const kit = await open([
+            { part_number: 'SYN-PL-L', catid: '', parts_per_cycle: 2 },
+            { part_number: 'SYN-PL-R', catid: '', parts_per_cycle: 1 }]);
+        same('a kit: each line is its ratio x the capacity, as it always was',
+            readouts(kit.doc), ['= 80 / bin', '= 40 / bin']);
+        kit.ctx.removeManifestRow(rowsOf(kit.doc)[1].querySelector('.btn'));
+        same("the kit's second line removed: the line left is a part alone, and redraws",
+            readouts(kit.doc), ['= 20 cycles / bin']);
     }
 
     if (failures) {

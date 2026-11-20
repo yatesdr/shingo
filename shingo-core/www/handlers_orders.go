@@ -139,14 +139,7 @@ func parseOrdersView(r *http.Request) ordersView {
 		v.page = n
 	}
 
-	for _, part := range strings.Split(q.Get("ids"), ",") {
-		if id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && id > 0 {
-			v.filter.IDs = append(v.filter.IDs, id)
-		}
-		if len(v.filter.IDs) == maxPickedIDs {
-			break
-		}
-	}
+	v.filter.IDs = queryIDs(q, "ids", maxPickedIDs)
 
 	switch {
 	case len(v.filter.IDs) > 0:

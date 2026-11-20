@@ -30,9 +30,9 @@ type NodeBinState struct {
 	HeldSince   string `json:"held_since,omitempty"`
 	HeldFor     string `json:"held_for,omitempty"`
 	// Stocked and Partial are the row's (protocol.NodeBinsRow): the bin holds
-	// parts, and fewer than its part's capacity. Set on the Production page,
-	// whose bin modal shows them in place of a count; nil and false on the
-	// station view, whose JSON carries its own stocked (stationBinState).
+	// parts, and fewer than its part's capacity. The Production page sets both,
+	// and its bin modal shows them in place of a count. The station view sets
+	// Partial only: its JSON carries its own stocked (stationBinState).
 	Stocked *bool `json:"stocked,omitempty"`
 	Partial bool  `json:"partial,omitempty"`
 }
@@ -213,8 +213,8 @@ type StationNodeView struct {
 	ContainmentFlagged bool `json:"containment_flagged,omitempty"`
 	// BufferPartial names the buffer spot a clear of this home would bring
 	// home: set on a dedicated home holding a stocked bin of its part when a
-	// spot of its loader's buffer holds a stocked bin of the same part, the
-	// first such spot in the plant's order. The board draws its Clear partials
+	// spot of its loader's buffer holds a partial of the same part (below its
+	// capacity), the first such spot in the plant's order. The board draws its Clear partials
 	// card from it, naming that spot. Stamped by
 	// StationService.StampBins; pinned by
 	// TestStationView_BinsStampedFromTheCopy (www).
@@ -443,8 +443,13 @@ type BufferPartial struct {
 // The states of a buffer spot, as a loader's buffer strip draws them
 // (StationService.StampBins decides them).
 const (
-	// SpotPartial: a bin holding parts of a part stands there.
+	// SpotPartial: a partial stands there, a bin holding parts of a part
+	// below the part's capacity (Core's Partial).
 	SpotPartial = "partial"
+	// SpotFull: a bin holding parts of a part at or over the part's capacity
+	// stands there, or of a part with no capacity. Not a partial: no home's
+	// clear brings it home.
+	SpotFull = "full"
 	// SpotEmpty: an emptied bin stands there (occupied, no part, not
 	// stocked), or a home's clear is in flight to the spot: its emptied
 	// carrier is on the way, and the glass draws the spot as coming from the
@@ -593,18 +598,21 @@ type ServedRow struct {
 
 // stationBinState is a tile's bin as the station's JSON carries it:
 // NodeBinState with Stocked in place of the count, and the cart's tote
-// numbers. The board asks only whether a bin holds parts, never how many (it
-// shows the row's count, DisplayUOP, and decides nothing on it); the
-// Production page marshals NodeBinState itself, with its Stocked and Partial.
-// Pinned by
-// TestStationNodeView_JSONShape.
+// numbers. The board asks only whether a bin holds parts and whether fewer
+// than its capacity, never how many (it shows the row's count, DisplayUOP, and
+// decides nothing on it); the Production page marshals NodeBinState itself,
+// with its Stocked and Partial. Pinned by TestStationNodeView_JSONShape.
 type stationBinState struct {
-	BinID             int64   `json:"bin_id,omitempty"`
-	BinLabel          string  `json:"bin_label,omitempty"`
-	BinTypeCode       string  `json:"bin_type_code,omitempty"`
-	Bare              bool    `json:"bare,omitempty"`
-	PayloadCode       string  `json:"payload_code,omitempty"`
-	Stocked           bool    `json:"stocked"`
+	BinID       int64  `json:"bin_id,omitempty"`
+	BinLabel    string `json:"bin_label,omitempty"`
+	BinTypeCode string `json:"bin_type_code,omitempty"`
+	Bare        bool   `json:"bare,omitempty"`
+	PayloadCode string `json:"payload_code,omitempty"`
+	Stocked     bool   `json:"stocked"`
+	// Partial is the row's (protocol.NodeBinsRow.Partial): parts, and fewer
+	// than the part's capacity. A home holding a partial of its part offers
+	// REPLACE PARTIAL (operator-board-model.js replacePartialPart).
+	Partial           bool    `json:"partial,omitempty"`
 	Manifest          *string `json:"manifest,omitempty"`
 	ManifestConfirmed bool    `json:"manifest_confirmed"`
 	Occupied          bool    `json:"occupied"`
@@ -725,7 +733,7 @@ func (v StationNodeView) MarshalJSON() ([]byte, error) {
 		stocked := p.BinStocked != nil && *p.BinStocked
 		bin = &stationBinState{
 			BinID: b.BinID, BinLabel: b.BinLabel, BinTypeCode: b.BinTypeCode, Bare: b.Bare,
-			PayloadCode: b.PayloadCode, Stocked: stocked, Manifest: b.Manifest,
+			PayloadCode: b.PayloadCode, Stocked: stocked, Partial: b.Partial, Manifest: b.Manifest,
 			ManifestConfirmed: b.ManifestConfirmed, Occupied: b.Occupied,
 			UOPCapacity: b.UOPCapacity, HeldSince: b.HeldSince, HeldFor: b.HeldFor,
 		}

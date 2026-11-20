@@ -1,6 +1,6 @@
 # Seer RDS HTTP API Reference
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 Reference for the Seer RDS Core HTTP API endpoints used by Shingo. Extracted from the RDS Core HTTP API PDF and the shingo-core/rds client implementation.
 
@@ -114,7 +114,7 @@ Creates a multi-block order with explicit location, operation, and bin task per 
       "location": "STATION-A",
       "operation": "",              // optional
       "operation_args": {},         // optional
-      "binTask": "JackLoad",       // optional: JackLoad, JackUnload
+      "binTask": "JackLoad",       // optional: a key the location carries in the scene, e.g. JackLoad, JackUnload, Wait
       "goodsId": "goods-001",      // optional
       "scriptName": "",            // optional
       "scriptArgs": {},             // optional
@@ -151,6 +151,15 @@ and a plain waypoint is a key route's primary use.
 **No-action waypoint block:** To force a stop at a location with no action, send
 a block with only `blockId` and `location` (leave `binTask` and `operation`
 blank). The robot stops there but runs no action or script.
+
+**`binTask` is a free string:** the key an engineer gives the location's action
+in the scene. Shingo sends `JackLoad`, `JackUnload`, `Wait`, a payload's
+advanced load sequence names, and a carrier family's own lift and wait keys
+where an engineer has picked them on the Bins page and Core's copy of the scene
+lists them at the block's location
+([order-builder-dispatch.md](order-builder-dispatch.md#the-blocks-an-order-sends)).
+It never reads a key back for what the block did: it keeps its own record of
+each block it sends ([bin-transit-state.md](bin-transit-state.md#what-a-block-was)).
 
 **Response:** Standard envelope.
 

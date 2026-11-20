@@ -159,8 +159,8 @@ func pinRetrieve(t *testing.T, uuid string) (*store.DB, *Engine, *simulator.Simu
 	return db, eng, sim, order, before
 }
 
-// pinOrder is a hand-made order on pinStation, for writers that need no robot.
-func pinOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status, opts ...func(*orders.Order)) *orders.Order {
+// tellPinOrder is a hand-made order on pinStation, for writers that need no robot.
+func tellPinOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status, opts ...func(*orders.Order)) *orders.Order {
 	t.Helper()
 	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = uuid
@@ -329,7 +329,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
 		eng := newTestEngine(t, db, simulator.New())
-		o := pinOrder(t, db, "tell-skip", protocol.StatusQueued)
+		o := tellPinOrder(t, db, "tell-skip", protocol.StatusQueued)
 		mark := outboxMark(t, db)
 		testutil.MustNoErr(t, eng.Dispatcher().Lifecycle().Skip(o, pinStation, "pin_skipped", "pin: never needed"), "skip")
 		eng.after.settle()
@@ -437,7 +437,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
 		eng := newTestEngine(t, db, simulator.New())
-		o := pinOrder(t, db, "tell-reshuffle", protocol.StatusQueued)
+		o := tellPinOrder(t, db, "tell-reshuffle", protocol.StatusQueued)
 		mark := outboxMark(t, db)
 		testutil.MustNoErr(t, eng.Dispatcher().Lifecycle().BeginReshuffle(o, "pin: the dig begins"), "begin reshuffle")
 		eng.after.settle()
@@ -549,10 +549,10 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
 		newTestEngine(t, db, simulator.New())
-		parent := pinOrder(t, db, "tell-atomic-parent", protocol.StatusReshuffling, func(o *orders.Order) {
+		parent := tellPinOrder(t, db, "tell-atomic-parent", protocol.StatusReshuffling, func(o *orders.Order) {
 			o.OrderType = protocol.OrderTypeComplex
 		})
-		child := pinOrder(t, db, "tell-atomic-child", protocol.StatusPending, func(o *orders.Order) {
+		child := tellPinOrder(t, db, "tell-atomic-child", protocol.StatusPending, func(o *orders.Order) {
 			o.ParentOrderID = &parent.ID
 			o.OrderType = protocol.OrderTypeMove
 		})
@@ -572,10 +572,10 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
 		newTestEngine(t, db, simulator.New())
-		parent := pinOrder(t, db, "tell-retire-parent", protocol.StatusReshuffling, func(o *orders.Order) {
+		parent := tellPinOrder(t, db, "tell-retire-parent", protocol.StatusReshuffling, func(o *orders.Order) {
 			o.OrderType = protocol.OrderTypeReshuffleRestore
 		})
-		child := pinOrder(t, db, "tell-retire-child", protocol.StatusQueued, func(o *orders.Order) {
+		child := tellPinOrder(t, db, "tell-retire-child", protocol.StatusQueued, func(o *orders.Order) {
 			o.ParentOrderID = &parent.ID
 		})
 		mark := outboxMark(t, db)
@@ -602,7 +602,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db := testDB(t)
 		eng := newTestEngine(t, db, simulator.New())
-		o := pinOrder(t, db, "tell-park", protocol.StatusPending)
+		o := tellPinOrder(t, db, "tell-park", protocol.StatusPending)
 		eng.Dispatcher().SetQueueReason(o, protocol.QueueWaitingForMaterial, dispatch.CauseReserveHolding,
 			dispatch.QueueParams{Payload: "TELL-P"})
 		mark := outboxMark(t, db)
@@ -719,8 +719,8 @@ func TestStatusTellPin_BootETABackfillCarriesTheETAOnly(t *testing.T) {
 	// Each is born in_transit, so each has its in_transit history row; the
 	// staged one is then moved on by MarkStaged, whose own tell lands before the
 	// mark below.
-	moving := pinOrder(t, db, "tell-eta-moving", protocol.StatusInTransit, route)
-	staged := pinOrder(t, db, "tell-eta-staged", protocol.StatusInTransit, route)
+	moving := tellPinOrder(t, db, "tell-eta-moving", protocol.StatusInTransit, route)
+	staged := tellPinOrder(t, db, "tell-eta-staged", protocol.StatusInTransit, route)
 	testutil.MustNoErr(t, lc.MarkStaged(staged, "fleet", protocol.OrderUpdate{}), "stage the second order")
 	testdb.RequireOrderStatus(t, db, staged.EdgeUUID, dispatch.StatusStaged)
 

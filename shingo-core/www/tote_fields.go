@@ -53,6 +53,20 @@ func countAtLeast(name string, v *int, min int) error {
 // did not carry the field at all; a blank box is nil (unknown); anything else
 // must be a whole number of at least min.
 func formCount(r *http.Request, name string, min int) (value *int, set bool, err error) {
+	value, set, err = formWholeNumber(r, name)
+	if err != nil {
+		return nil, set, err
+	}
+	if err := countAtLeast(name, value, min); err != nil {
+		return nil, true, err
+	}
+	return value, set, nil
+}
+
+// formWholeNumber is formCount without the range: absent (set false), blank
+// (nil), or a whole number. A payload's tote numbers are read with it, their
+// range being the payload service's (checkPayload) at every door.
+func formWholeNumber(r *http.Request, name string) (value *int, set bool, err error) {
 	raw, ok := r.Form[name]
 	if !ok {
 		return nil, false, nil
@@ -67,9 +81,6 @@ func formCount(r *http.Request, name string, min int) (value *int, set bool, err
 	v, err := strconv.Atoi(s)
 	if err != nil {
 		return nil, true, fmt.Errorf("%s %q is not a whole number", name, s)
-	}
-	if err := countAtLeast(name, &v, min); err != nil {
-		return nil, true, err
 	}
 	return &v, true, nil
 }

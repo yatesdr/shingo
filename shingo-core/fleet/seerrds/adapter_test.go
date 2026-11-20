@@ -123,3 +123,27 @@ func TestReleaseOrder_UnknownOrderRefuses(t *testing.T) {
 		t.Error("addBlocks was called after a refusal; the append must not go out")
 	}
 }
+
+// TestWireBytes_ActionIsNotOnTheWire: the blocks dispatch sends carry Core's own
+// label of what each does (fleet.OrderBlock.Action), and the bodies the adapter
+// posts are the bytes it posted before the label existed (wantSetOrderBody,
+// wantAddBlocksBody, pinned before it), block for block.
+func TestWireBytes_ActionIsNotOnTheWire(t *testing.T) {
+	t.Parallel()
+	label := func(blocks []fleet.OrderBlock, actions ...string) []fleet.OrderBlock {
+		out := append([]fleet.OrderBlock(nil), blocks...)
+		for i := range out {
+			out[i].Action = actions[i]
+		}
+		return out
+	}
+	create := label(wireCreateBlocks, "", "", "pickup", "", "dropoff", "wait")
+	appended := label(wireAppendBlocks, "pickup", "dropoff")
+	setOrder, addBlocks := sendWireOrder(t, create, appended)
+	if setOrder != wantSetOrderBody {
+		t.Errorf("a block's Action reached /setOrder.\n got: %s\nwant: %s", setOrder, wantSetOrderBody)
+	}
+	if addBlocks != wantAddBlocksBody {
+		t.Errorf("a block's Action reached /addBlocks.\n got: %s\nwant: %s", addBlocks, wantAddBlocksBody)
+	}
+}

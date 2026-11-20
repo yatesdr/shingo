@@ -30,6 +30,7 @@ var deliberatelyNotWritten = map[string]string{
 	"completed_at":    "written at the terminal transition",
 	"wait_index":      "queue-position bookkeeping, maintained after create",
 	"steps_done":      "born 0 by DEFAULT; only the block subscriber advances it (AdvanceStepsDone)",
+	"block_actions":   "born '{}' by DEFAULT; written as blocks are sent, by the create's vendor write and ClaimAppend",
 	"queue_reason":    "owned by the transition that queues, via SetOrderQueueDetail",
 	"queue_code":      "same; read back at lifecycle.go:291 to build the history reason",
 	"queue_cause":     "same",
@@ -51,8 +52,8 @@ var deliberatelyNotWritten = map[string]string{
 	// SetCompoundOpen. Openness is written on purpose, by one place, or not at
 	// all.
 	"open_for_children":     "born sealed by DEFAULT false; only SetCompoundOpen ever changes it (store/orders.go)",
-	"version":               "born 1 by DEFAULT (v179); bumped only by the writes its station is told about (the status, robot and wait writes), in their own statements",
-	"asked_vendor_order_id": "born blank by DEFAULT (v180); only the hand sets it, and the fleet's answer clears it (store/orders/ask.go)",
+	"version":               "born 1 by DEFAULT (v181); bumped only by the writes its station is told about (the status, robot and wait writes), in their own statements",
+	"asked_vendor_order_id": "born blank by DEFAULT (v182); only the hand sets it, and the fleet's answer clears it (store/orders/ask.go)",
 }
 
 // TestWriter_CoversEveryOrdersColumn pins that every column on the orders table

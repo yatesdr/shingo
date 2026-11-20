@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v58 first, at every Edge of the plant; then Core v179–v181. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit. A box an earlier tag install left on a release needs `--tag` this once.
+Deploy: Edge v59 first, at every Edge of the plant; then Core v181–v183. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit.
 
 - The station hears every status Core writes, from the write itself: a Core-side release reads in transit
 - An order Core has dispatched reads dispatched on its tile, with its robot once the fleet names one
@@ -33,6 +33,91 @@ Deploy: Edge v58 first, at every Edge of the plant; then Core v179–v181. No Co
 - Core no longer stops when a two-cart swap through a lane is refused and then re-planned
 - After Core restarts partway through sending an order, Diagnostics names the order and its job
 - Core's database tests run their end-of-test order checks again; they had gone silent at Core v174
+
+## v0.15.0 — 2026-11-19
+
+Deploy: Edge v58 (style_node_claims.hold_limit). Each Edge, then Core.
+
+- A strict-pack position has a new setting, Most held off the cart: the most parts its packer, conveyor or accumulator holds while the cart is full or swapping. Past it the held parts are thrown away and logged, and the next cart counts only its own. Blank is one pack, as before
+- Core's Bins page keeps its table current while it is open: a bin a robot lifts or sets down, a station's count, LOAD or CLEAR, and an order taking or letting go of a bin show on its row without a reload, and a search or filter follows them
+- A bin moved, made or recovered onto a node that already holds one is refused with the bin that is there: "SMN_007 already has CARRIER-0012; move or retire it first"
+
+## v0.14.0 — 2026-11-19
+
+Deploy: no migration. Core first, then each Edge. When this lands, an engineer restates in pieces, on Core, the standard pack of every part whose pieces per cycle is above 1 (a full bin's pieces, not its cycles).
+
+- At a cell's changeover picker with HMI setup on, New part adds a part Core does not have: part number, standard pack, one carrier type, and an optional CATID and tote numbers; Core adds it and the picker carries on setting it up
+- Core refuses a part from the floor that its desktop form would refuse, and also a blank part number, one that differs from a part it has only by case, spaces, hyphens or underscores, a CATID another part carries, and a carrier type it does not have; the same station sending the same part again gets its first answer
+- Core's payload page says which station made a part at the floor, and when
+- Core's desktop create and edit refuse a blank part code and trim spaces from it
+- A payload saved on Core reaches every Edge on its next heartbeat instead of up to two minutes later
+- A group deleted or moved on Core no longer comes back on an Edge for up to two minutes after the Edge has fetched the new layout
+- A bin of one part counts pieces: an assembly spot whose part is used more than one a cycle draws that many each cycle, and its tile shows the cycles left; a press never reads the number
+- Produce spots of one style running the same part on one counter share each count between them; an LH/RH die's two parts count as before
+- Inventory and its export, the Bins page, CMS postings, the payload form, LOAD and the Production page show a one-part bin's count as it is, no longer multiplied by pieces per cycle; a bin of several parts is unchanged
+- The payload form labels pieces per cycle as an assembly consume setting and the standard pack as pieces in a full bin
+- A "no cart" line on the strip counts pieces
+
+## v0.13.2 — 2026-11-18
+
+Deploy: no migration. Edge and Core, in either order.
+
+- A produce node's RELEASE SHORT now asks RELEASE PARTIAL or RELEASE FULL; RELEASE PARTIAL sends the cart at its count, as before
+- RELEASE FULL sends the cart as full: Core books it at the pack and keeps the counted number beside it in the cart's count history
+- A changeover's release never offers RELEASE FULL; it always sends the real count
+- Core no longer runs one last sourcing check after it has stopped
+- A bin at or over its part's capacity on a buffer spot is a full: Bring partials home no longer offers it
+- The buffer strip draws a full as "F" and counts it apart from the partials
+
+## v0.13.1 — 2026-11-18
+
+Deploy: no migration. Core only; the Edges are unchanged and need no install.
+
+- On the Bins page a bare cart's line under its type has no Edit or Delete of its own: the type's Edit sets the robot group for both, and its Delete removes both
+
+## v0.13.0 — 2026-11-18
+
+Deploy: Core v179–v180. Core only; the Edges are unchanged and need no install.
+
+- Core keeps its own record of what each block it sends a robot does, and reads that record when the block finishes instead of the action's name in RDS; every block finishes as it did before
+- Orders already on the floor when Core is updated finish exactly as they always did
+- The mission page labels each robot action from Core's record
+- After a rollback, update Core again only with no orders on the floor; an order the older Core sent and still moving then finishes without moving its carts in Shingo, and they need correcting by hand
+- Each carrier family can send its own RDS lift key and wait key: pick them on the family's tab of the Bins page's Bin Types section, and every type of the family sends them
+- The keys are picked from the keys Core's copy of the RDS scene lists, the default first; a saved key RDS no longer lists says "not in RDS"
+- A family's lift key goes on the lift of its carts, and its wait key only on a wait in front of that lift at the same spot; set-downs and waits made while carrying send what they always did
+- A spot whose RDS scene does not list the family's key gets the default key, so keys can be added spot by spot
+- A table-turn spot is refused unless it lists Wait, and every wait key it lists recognizes the cart (lift side) or does not (set-down side); a family wait key that would break a table-turn spot is not saved
+
+## v0.12.2 — 2026-11-18
+
+Deploy: no migration; Core and Edges in either order.
+
+- On the loader board, "+N more" opens its section in place and the board scrolls; Show less folds it
+- Show all keeps the amber or red on Bring partials home cards, and lists every one of them
+- A home's menu offers BRING PARTIAL HOME wherever the board offers its card
+
+## v0.12.1 — 2026-11-18
+
+Deploy: no migration; Core and Edges in either order.
+
+- Bring partials home offers a home holding a partial again, saying "Take the partial bin off"
+- Under Show all, a home holding a partial opens its menu, where REPLACE PARTIAL is
+
+## v0.12.0 — 2026-11-18
+
+Deploy: no migration. Core first, then the Edges: an Edge on this release asking an older Core to replace a partial is told "not a carrier the door knows", and nothing is written.
+
+- REPLACE PARTIAL in a home's menu when it holds a partial of its part: partial off, full on, CONFIRM LOAD
+- A replaced partial is recorded as leaving the spot, as a CLEAR records it, and the new full gets a fresh FIFO date
+- A home holding a full bin says so instead of "wait for outbound move"
+- Clear partials is now Bring partials home: take the full bin off, then BIN IS OFF · CONFIRM
+- A home holding a partial no longer offers Bring partials home, and says "holds a partial"
+
+## v0.11.1 — 2026-11-17
+
+Deploy: no migration; Core and Edges in either order. A box an earlier tag install left on a release needs `--tag` this once.
+
 - A plain install run installs the newest release; `--tag vX.Y.Z` picks one, `--main` builds main
 - A box an earlier tag install left on a release takes a plain run instead of stopping
 - Before it asks to go on, an installer prints the Deploy line of every release it brings or takes off

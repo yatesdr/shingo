@@ -1,6 +1,6 @@
 # Data Model
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 This document describes the core data entities in Shingo, their relationships, and the key concepts that drive dispatch and storage logic.
 
@@ -31,8 +31,11 @@ A **Payload** defines what a container should hold. A **Bin** is the physical co
 
 A template defining a container's expected contents and capacity. Analogous to a product SKU for containers.
 
-Columns: [`payloads`](#core-payloads). `uop_capacity` is the production cycles a full load supports; the template
-manifest (parts and quantities for a full load) is its rows in [`payload_manifest`](#core-payload_manifest).
+Columns: [`payloads`](#core-payloads). `uop_capacity` is the standard pack, in the bin's count: the pieces a full
+bin of a part alone holds, or the cycles a full bin of a kit feeds. The template manifest is its rows in
+[`payload_manifest`](#core-payload_manifest): one per part, each with `parts_per_cycle`, the pieces of the part one
+cycle of an assembly that consumes it uses (an assembly consume setting; a press never reads it). How a count turns
+into pieces is [uop-architecture.md](uop-architecture.md#process-semantics)'s.
 
 **Relationships:**
 - Has many compatible **bin_types** (via `payload_bin_types` junction)
@@ -51,7 +54,8 @@ Columns: [`bins`](#core-bins). Notes the schema does not say:
 - `claimed_by` is the order that has claimed the bin for transport, set with a `confirmed` **reservation** (see
   [Reservations](#reservations)). They can drift briefly: `ReleaseOrphanedClaims` clears the claim and leaves the
   reservation row for `ReapOrphanedReservations`.
-- `manifest` is the actual contents; `uop_remaining` the production cycles of material left.
+- `manifest` is the actual contents (which parts, no counts); `uop_remaining` the count left, in the unit of the
+  payload's `uop_capacity` (pieces, for a part alone).
 - `loaded_at` is when the manifest was confirmed, and drives FIFO ordering.
 - `staged_expires_at` is written NULL by every staging writer (`helpers.StagedSetSQL`): staging does not expire
   (`resolveNodeStaging` stamps no expiry). A non-NULL value is an old stamp, which reconciliation reports and
@@ -86,7 +90,11 @@ Columns: [`bin_types`](#core-bin_types). Notes the schema does not say:
 
 - `width_in`, `length_in`, `height_in` are inches; width and length are the footprint.
 - `family_id` is the carrier family ([`carrier_families`](#core-carrier_families)): the physical cart this type is
-  one setting of. Every type has one, by default its own.
+  one setting of. Every type has one, by default its own. A family goes with its last type, deleted or moved out.
+- A family's `lift_bintask` and `wait_bintask` are the RDS binTask keys a lift of a cart of the family sends, and a
+  wait directly in front of that lift at the same node; blank sends the default (`JackLoad`, `Wait`). Every type of
+  the family sends them; the family's tab of the Bins page's Bin Types section picks them
+  ([order-builder-dispatch.md](order-builder-dispatch.md#the-blocks-an-order-sends)).
 - `required_robot_group` is the robot group an empty of this type needs; empty is any.
 - `bare_of`, on a bare marker, is the carrier it stands for.
 - `totes_per_layer` is how many totes one layer holds; null is not a tote carrier, or not said.
@@ -138,17 +146,21 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 - `delivery_node` — see the caveat below. `source_node` and `delivery_node` are node names, not keys: the table
   has no reference to `nodes`.
 - `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string. A `dispatched`
-  order names its job (`orders_dispatched_names_its_job`, v181): `dispatched` is written once, by the fleet's
-  yes, with the vendor id. The rule is NOT VALID, so rows written before v181 that break it are kept (v181 counts
+  order names its job (`orders_dispatched_names_its_job`, v183): `dispatched` is written once, by the fleet's
+  yes, with the vendor id. The rule is NOT VALID, so rows written before v183 that break it are kept (v183 counts
   and logs them) and every new write is held to it.
+- `block_actions` is what each block sent to the fleet for the order is, by block id: `pickup`, `dropoff`, `wait`,
+  or `''` for a block of no step's kind. Written by the fleet's yes, with the vendor id, and by each append's
+  compare-and-set; read when a block finishes; never on the wire. `NULL` on an order sent before the column existed, which is read by
+  its block names for its whole life ([What a block was](bin-transit-state.md#what-a-block-was)).
 - `named_bin_id` is the one bin the asker named the order for, if any — a constraint, not a record.
 - `parent_order_id` is the parent compound order (for reshuffle child orders); `sequence` the step sequence within
   it.
 - `version` is one counter for everything the order's station is told: it is bumped in the same statement as a
   status write, a robot write that changes the robot to a named one, and a change of wait the station is told
   (`orders.WaitTells`). It rides `order.update`, the reconcile snapshot and the projection, and the station applies
-  only a newer one. Every row starts at 1 (v179), so a 0 on the wire is an older Core.
-- `asked_vendor_order_id` is the vendor order id Core is asking the fleet to create (v180). The order's hand writes
+  only a newer one. Every row starts at 1 (v181), so a 0 on the wire is an older Core.
+- `asked_vendor_order_id` is the vendor order id Core is asking the fleet to create (v182). The order's hand writes
   it in the transaction that takes its holds; the fleet's yes moves it to `vendor_order_id`, and a no clears it.
   Blank is no ask. While it is set the order is spoken for whatever its status says, and no other status move
   lands on it except an ending. Core-only: never on the wire.
@@ -450,7 +462,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`bin_uop_exception`](#core-bin_uop_exception) | 13 | `id` |  |
 | [`bin_uop_ledger`](#core-bin_uop_ledger) | 16 | `id` |  |
 | [`bins`](#core-bins) | 33 | `id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
-| [`carrier_families`](#core-carrier_families) | 5 | `id` |  |
+| [`carrier_families`](#core-carrier_families) | 7 | `id` |  |
 | [`cell_config`](#core-cell_config) | 6 | `cell_id` |  |
 | [`cell_part_events`](#core-cell_part_events) | 9 |  |  |
 | [`cell_targets`](#core-cell_targets) | 5 | `cell_id`, `payload_code` |  |
@@ -479,7 +491,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`lane_robot_confidence_daily`](#core-lane_robot_confidence_daily) | 16 | `day`, `area_name`, `lane`, `version_id`, `vehicle_id` | [`scene_lane_versions`](#core-scene_lane_versions) |
 | [`lineside_buckets`](#core-lineside_buckets) | 8 | `id` |  |
 | [`lineside_drain_ledger`](#core-lineside_drain_ledger) | 6 | `id` |  |
-| [`load_sequences`](#core-load_sequences) | 3 | `name` |  |
+| [`load_sequences`](#core-load_sequences) | 4 | `name` |  |
 | [`mission_events`](#core-mission_events) | 15 | `id` |  |
 | [`mission_telemetry`](#core-mission_telemetry) | 21 | `id` |  |
 | [`node_bin_types`](#core-node_bin_types) | 3 | `node_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
@@ -491,7 +503,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`order_bins`](#core-order_bins) | 6 | `id` | [`bins`](#core-bins), [`orders`](#core-orders) |
 | [`order_history`](#core-order_history) | 8 | `id` | [`orders`](#core-orders) |
 | [`order_intake_refusals`](#core-order_intake_refusals) | 5 | `edge_uuid` |  |
-| [`orders`](#core-orders) | 47 | `id` | `orders` |
+| [`orders`](#core-orders) | 48 | `id` | `orders` |
 | [`outbox`](#core-outbox) | 8 | `id` |  |
 | [`parts`](#core-parts) | 6 | `id` |  |
 | [`payload_bin_types`](#core-payload_bin_types) | 2 | `payload_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`payloads`](#core-payloads) |
@@ -779,6 +791,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `description` | `text` | yes | `''` |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+| `lift_bintask` | `text` | yes | `''` |  |
+| `wait_bintask` | `text` | yes | `''` |  |
 
 #### Core: `cell_config`
 
@@ -1223,6 +1237,9 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `name` | `text` | yes |  | PK |
 | `task_names` | `text` | yes | `'[]'` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+| `lift_at` | `integer` | yes |  |  |
+
+- Check `((lift_at >= 0) AND (lift_at < GREATEST(json_array_length((task_names)::json), 1)))`
 
 #### Core: `mission_events`
 
@@ -1429,6 +1446,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `named_bin_id` | `bigint` |  |  |  |
 | `want` | `text` | yes | `''` |  |
 | `steps_done` | `integer` | yes | `0` |  |
+| `block_actions` | `jsonb` |  | `'{}'::jsonb` |  |
 | `version` | `bigint` | yes | `1` |  |
 | `asked_vendor_order_id` | `text` | yes | `''` |  |
 
@@ -1994,8 +2012,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 48 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 52 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2357,7 +2375,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `release_intent` | `TEXT` | yes | `''` |  | release_intent / release_held (Edge v9): the act's promise to this leg for one station wait (release.Intent, JSON; '' = none), and the last hold or rejection sentence the board's chip shows. |
 | `release_held` | `TEXT` | yes | `''` |  |  |
 | `staged_at` | `TEXT` |  |  |  | staged_at (Edge v54): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
-| `core_version` | `INTEGER` | yes | `0` |  | core_version (Edge v58): the version of the last Core word applied to the order (protocol.OrderUpdate.Version). 0 = none yet. |
+| `core_version` | `INTEGER` | yes | `0` |  | core_version (Edge v59): the version of the last Core word applied to the order (protocol.OrderUpdate.Version). 0 = none yet. |
 | `want` | `TEXT` | yes | `''` |  | want (Edge v30): the height an empty is wanted at, as this Edge stated it on the order's request (protocol.Height's spelling; '' is none). SEND BACK knows its pull by it; a projection never writes it. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 | `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
@@ -2675,6 +2693,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_required` | `INTEGER` | yes | `0` |  | The light-curtain release interlock's style tie (v19): whether THIS style's releases at THIS node wait for the node's curtain. The claim is the (style, node) pair, and the rule the plant chose is THE BIN DICTATES: a full bin leaving carries the claim that filled it, and that claim's flag - not the node's blanket enable, not the style the line is becoming during a changeover - decides whether the release gates on the tag. An empty carrier carries no claim, so empty placements never gate (they never pass the curtain; an empty that does is the operator's fault, not the robot's). |
 | `strict_pack` | `INTEGER` | yes | `0` |  | strict_pack (v26): a produce claim's bound bin is charged only up to its pack (the catalog's uop_capacity for the claim's part); the ticks past it are held on the seat for the next bin of the part. 0 = uncapped, today's count. |
 | `pack_tolerance_pct` | `INTEGER` | yes | `0` |  | pack_tolerance_pct (v34): a strict claim's miscount tolerance, a percent of the pack (0-20). A station's RELEASE of a bin within it of the pack declares the bin full; further short ships the real count. 0 = no tolerance: the real count always ships. |
+| `hold_limit` | `INTEGER` | yes | `0` |  | hold_limit (v58): the most a strict seat sets aside off the cart, what the line's packer, conveyor or accumulator holds while the cart is full or swapping. Past it the pile is thrown away and logged. 0 = one pack. |
 | `allowed_payload_codes` | `TEXT` | yes | `''` |  |  |
 | `keep_staged_node` | `TEXT` | yes | `''` |  | The keep-staged node: one more node this line's full or empty comes from instead of inbound_source, with a spare kept standing on it. Blank is off. Replaced the keep_staged flag, which armed a spot on inbound_staging and so gave that column a second meaning. |
 | `paired_core_node` | `TEXT` | yes | `''` |  |  |
@@ -2730,6 +2749,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_required` | `INT` |  |  |  |
 | `strict_pack` | `INT` |  |  |  |
 | `pack_tolerance_pct` | `INT` |  |  |  |
+| `hold_limit` | `INT` |  |  |  |
 | `allowed_payload_codes` | `TEXT` |  |  |  |
 | `keep_staged_node` | `TEXT` |  |  |  |
 | `paired_core_node` | `TEXT` |  |  |  |

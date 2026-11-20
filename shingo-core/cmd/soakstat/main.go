@@ -1963,7 +1963,7 @@ func checkQueuedWithoutCause(db *store.DB) []string {
 // It was reachable, and on a plant's old rows it still is. Core used to write
 // `dispatched` and then create the vendor order, so a crash inside that window left
 // an order armored, claimed, holding its lane, and invisible to the one loop that
-// would have noticed it stopped moving. Since v181 a `dispatched` row names its
+// would have noticed it stopped moving. Since v183 a `dispatched` row names its
 // job (`dispatched` is the fleet's yes, written with the vendor id, and
 // orders_dispatched_names_its_job holds every new write), so a new one cannot
 // arise; the rule is NOT VALID, and a row from before it can still be here. Core
@@ -2449,23 +2449,20 @@ func checkBinResidenceOverlap(db *store.DB) []string {
 		if err := rows.Scan(&orderID, &at, &blocksJSON, &cartsJSON); err != nil {
 			return []string{failedToRun("bin residence overlap (block ledger)", err)}
 		}
-		var legs []struct {
-			Location string `json:"location"`
-			BinTask  string `json:"binTask"`
-		}
-		if err := json.Unmarshal([]byte(blocksJSON), &legs); err != nil {
+		legs, err := engine.LegBlocks(blocksJSON)
+		if err != nil {
 			continue
 		}
 		for _, leg := range legs {
 			if leg.Location == "" || leg.Location == "_TRANSIT" {
 				continue
 			}
-			switch {
-			case engine.IsDropoffBlock(leg.BinTask):
+			switch leg.Action {
+			case protocol.ActionDropoff:
 				events[leg.Location] = append(events[leg.Location],
 					ev{at: at, arrival: true, orderID: orderID, binID: cartAt(cartsJSON, leg.Location, 2)})
 				ledgerDropoff[orderNode{orderID, leg.Location}] = true
-			case engine.IsPickupBlock(leg.BinTask):
+			case protocol.ActionPickup:
 				events[leg.Location] = append(events[leg.Location],
 					ev{at: at, arrival: false, orderID: orderID, binID: cartAt(cartsJSON, leg.Location, 1)})
 			}

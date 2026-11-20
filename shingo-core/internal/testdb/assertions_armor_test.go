@@ -63,11 +63,11 @@ func armorFixture(t *testing.T, db *store.DB, label string, status protocol.Stat
 
 // holdRowFromBeforeV181 drops the rule from this test's own database so it can
 // hold a `dispatched` row with no job: the rule is NOT VALID, so a row written
-// before v181 stays at a plant, and the crash-sliver clause is about those.
+// before v183 stays at a plant, and the crash-sliver clause is about those.
 func holdRowFromBeforeV181(t *testing.T, db *store.DB) {
 	t.Helper()
 	_, err := db.DB.Exec(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_dispatched_names_its_job`)
-	testutil.MustNoErr(t, err, "drop the rule to hold a row from before v181")
+	testutil.MustNoErr(t, err, "drop the rule to hold a row from before v183")
 }
 
 // TestArmorAssertion_CatchesAnUnarmoredDispatch is clause 1's proof: an order
@@ -156,7 +156,7 @@ func TestArmorAssertion_CatchesTheOldCrashSliver(t *testing.T) {
 
 // TestArmorAssertion_AFreshSliverIsARaceNotAFinding is clause 2's selectivity:
 // the age bound. A fresh vendorless `dispatched` row is not reported. New writes
-// cannot make one since v181; the row stands for one from before it, and the
+// cannot make one since v183; the row stands for one from before it, and the
 // bound is what kept the old handover window, where the state was expected, from
 // reading as a wedge.
 func TestArmorAssertion_AFreshSliverIsARaceNotAFinding(t *testing.T) {

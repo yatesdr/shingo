@@ -25,7 +25,7 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 	if c == nil {
 		return false
 	}
-	if has, ok := strictPackHas(f, c.StrictPack, c.PackTolerancePct); ok {
+	if has, ok := strictPackHas(f, c.StrictPack, c.PackTolerancePct, c.HoldLimit); ok {
 		return has
 	}
 	switch f {
@@ -82,7 +82,7 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 // ClaimInputHas is ClaimHas for the write shape. The pointer-typed fields
 // follow their contract: nil is "no opinion", which is not a value.
 func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
-	if has, ok := strictPackHas(f, in.StrictPack, in.PackTolerancePct); ok {
+	if has, ok := strictPackHas(f, in.StrictPack, in.PackTolerancePct, in.HoldLimit); ok {
 		return has
 	}
 	switch f {
@@ -137,17 +137,19 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 	return false
 }
 
-// strictPackHas is ClaimHas and ClaimInputHas for strict pack and its
-// tolerance, which read alike off a claim and its write shape (a true flag, a
-// non-zero percent): ok is false for every other field. One reader for the
-// pair, ahead of each switch, which also keeps both switches inside the
+// strictPackHas is ClaimHas and ClaimInputHas for strict pack, its tolerance
+// and its hold limit, which read alike off a claim and its write shape (a true
+// flag, a non-zero number): ok is false for every other field. One reader for
+// the three, ahead of each switch, which also keeps both switches inside the
 // funlen ceiling.
-func strictPackHas(f flowspec.Field, strict bool, pct int) (has, ok bool) {
+func strictPackHas(f flowspec.Field, strict bool, pct, holdLimit int) (has, ok bool) {
 	switch f {
 	case flowspec.StrictPack:
 		return strict, true
 	case flowspec.PackTolerancePct:
 		return pct != 0, true
+	case flowspec.HoldLimit:
+		return holdLimit != 0, true
 	}
 	return false, false
 }

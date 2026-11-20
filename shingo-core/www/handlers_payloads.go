@@ -63,6 +63,14 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 	for code, names := range h.engine.PayloadService().UnroutedProducersByPayload() {
 		unroutedProducers[code] = strings.Join(names, ", ")
 	}
+	// Who made each part made at the floor, and when: one read of the audit
+	// rows the floor creates wrote. Pointers, for the reason the containment
+	// map's are.
+	floorMade, err := h.engine.PayloadService().FloorMade()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	data := map[string]any{
 		"Page":              "payloads",
@@ -73,6 +81,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		"FullCartTotes":     fullCartTotes(payloads, binTypes, payloadBinTypes),
 		"ContainmentState":  containmentState,
 		"UnroutedProducers": unroutedProducers,
+		"FloorMade":         floorMade,
 	}
 	h.render(w, r, "payloads.html", data)
 }

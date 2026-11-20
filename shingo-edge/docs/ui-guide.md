@@ -1,6 +1,6 @@
 # UI Guide
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 Shingo Edge serves its browser interface at `http://<host>:8081` (`web.port`). The navigation bar carries
 **Production**, an **Operations** menu (Orders, Changeover, Processes, Quality Containment) and,
@@ -140,11 +140,13 @@ it whole.
 - **Header**: the station name, the process and its state ("Running `<style>`", "Changing over `<from>` →
   `<to>`", "No part running"), a staleness sign for the station's data, and the **STYLE** chip, which opens a
   read-only picture of the running style's flow. The header's buttons are **CHANGEOVER** (pick a style to change
-  to), or **CUTOVER** and **CANCEL** while a changeover is active, or **PULL FULL FROM HOME** at a station beside
+  to), or **CUTOVER** and **CANCEL** while a changeover is active, or **FULL BIN OFF HOME** at a station beside
   a dedicated home loader; **REFRESH** is always there.
 - **Tiles**: one per node the station claims, showing its payload, how full it is, and the orders coming to it.
   A tap opens the node's panel with the verbs its role and state allow: requesting material, a swap or an
-  empty; **RELEASE** (with a keypad for the parts that remain, releasing empty or partial); **SEND BACK**;
+  empty; **RELEASE** (with a keypad for the parts that remain, releasing empty or partial; at a produce node
+  whose cart counts short of its pack it reads **RELEASE SHORT** and asks **RELEASE PARTIAL**, which sends the
+  count, or **RELEASE FULL**, which books the pack and keeps the count beside it); **SEND BACK**;
   **SEND TO QUALITY HOLD** at a produce node whose claim has a containment route; loading or clearing a bin at a
   loader or unloader; and, during a changeover, the node's changeover steps.
 - **Loader board**: a station whose every node is a loader's window draws a board of loader cards in place of

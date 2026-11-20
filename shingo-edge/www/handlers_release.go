@@ -47,6 +47,9 @@ type releaseRequest struct {
 	// "tooling_done". Absent: the earliest decision each leg owes, which cannot
 	// tell ready-again from tooling-done for an evac staged at its tooling wait.
 	Purpose string `json:"purpose,omitempty"`
+	// DeclareFull is a produce station's RELEASE FULL: the person says the
+	// departing bin is full however short its count (ReleaseDisposition's).
+	DeclareFull bool `json:"declare_full,omitempty"`
 }
 
 // parseReleaseRequest reads and validates the JSON body for any release

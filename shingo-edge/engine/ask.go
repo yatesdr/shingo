@@ -183,10 +183,16 @@ func (e *Engine) ask(kind string, body any, wait time.Duration, late func(*proto
 	}
 }
 
-// forgetExpiredLocked drops the pending entries past their forget time.
+// forgetExpiredLocked drops the pending entries past their forget time, but
+// never one whose tap still waits (done set): that tap ends its own wait, and
+// an answer that comes before it does must reach it. The wait runs on the wait
+// clock and the forget time on the message clock, and they differ (in the sim
+// the forget slack is not scaled with the message clock); a long wait (Add
+// part's partCreateWait) would otherwise lose a late answer it was waiting
+// for. Pinned by TestCreatePart_AWaitingTapKeepsItsAskPastTheForgetTime.
 func (e *Engine) forgetExpiredLocked(now time.Time) {
 	for id, p := range e.asks.pending {
-		if now.After(p.expires) {
+		if now.After(p.expires) && p.done == nil {
 			delete(e.asks.pending, id)
 		}
 	}
@@ -275,10 +281,16 @@ func askInto[T any](a *protocol.EdgeAnswer) (*T, error) {
 // answers that kind; refused before sending otherwise (doesNotAnswer).
 // ErrAskPending means the ask is out and unanswered after AskWait.
 func askOrRefuse[T any](e *Engine, kind string, req any) (*T, error) {
+	return askOrRefuseWithin[T](e, kind, req, AskWait)
+}
+
+// askOrRefuseWithin is askOrRefuse with the tap's wait named: AskWait for
+// every kind but Add part's (partCreateWait).
+func askOrRefuseWithin[T any](e *Engine, kind string, req any, wait time.Duration) (*T, error) {
 	if !e.CoreAnswers(kind) {
 		return nil, doesNotAnswer(kind)
 	}
-	a, err := e.Ask(kind, req, AskWait)
+	a, err := e.Ask(kind, req, wait)
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +316,10 @@ func askAppliersByKind() map[string]askApplier {
 		// The reseat: with no carrier at the node, the seat's carrier left; a
 		// carrier there was bound by its landing (applyReseat).
 		protocol.AskReseat: applyReseat,
+		// A new part: Core's yes puts it in the catalog, on the asking
+		// process's part set and in the carrier rule (applyPartCreate); a
+		// refusal applies nothing.
+		protocol.AskPartCreate: applyPartCreate,
 		// A count refused for an ended generation carries the carrier's current
 		// stamp: the seat adopts it, as from a bin epoch refresh. A waiting tap
 		// re-sends its count under it (declareCount); a late one leaves the

@@ -173,7 +173,7 @@ sim:
 # Points at an address that does not resolve, ON PURPOSE. The subsystem needs a
 # base_url and both keys or it refuses to boot, and what S4 asserts is the half
 # that happens BEFORE the wire: which payload a cms_transaction is minted
-# against, and whether uop_remaining x parts_per_cycle adds up. Those rows are
+# against, and whether the count it carries adds up. Those rows are
 # written locally and queue as unposted, which is exactly the state to inspect.
 # The posting/reconcile half needs a middleware to answer and is not covered here.
 cms:

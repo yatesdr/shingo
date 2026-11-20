@@ -74,11 +74,21 @@ type NodeBinInfo struct {
 
 // ManifestItem describes a single line in a payload manifest TEMPLATE.
 //
-// PartsPerCycle is a ratio — how many of the part one production cycle
-// consumes, usually 1. The number physically in a bin is that times the bin's
-// UoP count. The JSON key was `quantity` until Core's rename — same value, a
-// name that says what it is. Core and Edge ship that rename together, so there
-// is no version in which one key is read and the other written.
+// THE COUNT RULE, the one place it is written. A bin of a payload with ONE line
+// counts pieces of that part: its count (uop_remaining, a release's declared
+// count, a LOAD's count) is how many are in it, and no reader multiplies it.
+// PartsPerCycle is an assembly consume setting: how many pieces of the part one
+// cycle of an assembly that consumes it uses, usually 1. An assembly's consume
+// spot draws its counter step times it (the Edge's handleConsumeTick and
+// handleABFallthrough); a press never reads it. A payload of SEVERAL lines (a
+// kit) keeps counting cycles: a line's pieces are the bin's count times its
+// PartsPerCycle, the arithmetic it always had. The readers that turn a count
+// into pieces (CMS postings, the inventory list, the Bins page, the LOAD
+// screens) each follow this; docs/uop-architecture.md says it for people.
+//
+// The JSON key was `quantity` until Core's rename — same value, a name that
+// says what it is. Core and Edge ship that rename together, so there is no
+// version in which one key is read and the other written.
 //
 // This is NOT the shape a bin-load request carries — see BinLoadItem. The two
 // were one struct, which is how a template ratio and a physical count came to
@@ -110,7 +120,8 @@ type BinLoadRequest struct {
 	// carrier's generation has moved since.
 	Epoch int64 `json:"epoch,omitempty"`
 	// Expect is what the sender read the carrier to be, in the door's own
-	// terms: LoadExpectBare or LoadExpectPartial; "" asserts nothing. Never
+	// terms: LoadExpectBare, LoadExpectPartial or LoadExpectReplace; ""
+	// asserts nothing. Never
 	// "empty": a node with no carrier has nothing to load. Core refuses the
 	// LOAD when the carrier is no longer what the sender read.
 	Expect      string `json:"expect,omitempty"`
@@ -133,6 +144,12 @@ const (
 	// LoadExpectPartial: the carrier holds the part being loaded, more than
 	// none and fewer than its capacity.
 	LoadExpectPartial = "partial"
+	// LoadExpectReplace: the carrier holds the part being loaded, more than
+	// none, and the person took that tote off and set a new one on. Core
+	// clears the carrier (the old count leaves the spot, booked as a CLEAR
+	// books it) and loads the new count with a fresh FIFO date, in one
+	// transaction. Needs Epoch.
+	LoadExpectReplace = "replace"
 )
 
 // BinLoadResponse is Core's response after loading a bin.
@@ -365,4 +382,31 @@ type HeldPartial struct {
 	UOPRemaining int    `json:"uop_remaining"`
 	// HeldSince is when it entered its home, RFC 3339.
 	HeldSince string `json:"held_since"`
+}
+
+// PartCreateRequest is the part.create ask's body (AskPartCreate): a part Core
+// does not have, submitted at a station's changeover picker. ProcessID is the
+// asking Edge's own process id, which Core records and echoes in the answer so
+// the Edge applies it with no memory of the ask. BinTypeCode names one of
+// Core's carrier types by code; Core resolves it. CATID, ToteLayers and
+// UOPPerTote are optional: blank and nil are not given.
+type PartCreateRequest struct {
+	ProcessID    int64  `json:"process_id"`
+	PartNumber   string `json:"part_number"`
+	StandardPack int    `json:"standard_pack"`
+	BinTypeCode  string `json:"bin_type_code"`
+	CATID        string `json:"catid,omitempty"`
+	ToteLayers   *int   `json:"tote_layers,omitempty"`
+	UOPPerTote   *int   `json:"uop_per_tote,omitempty"`
+}
+
+// PartCreateResponse is what applying a yes needs: the asking process, the
+// part's catalog row as the catalog feed builds it, and its carrier rows as the
+// node list carries them. Repeat is true when this station and process had
+// already made the part with the same fields, and nothing was written.
+type PartCreateResponse struct {
+	ProcessID int64                `json:"process_id"`
+	Payload   CatalogPayloadInfo   `json:"payload"`
+	BinTypes  []PayloadBinTypeInfo `json:"bin_types"`
+	Repeat    bool                 `json:"repeat,omitempty"`
 }

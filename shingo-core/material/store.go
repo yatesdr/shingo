@@ -35,10 +35,9 @@ type Store interface {
 	// boundary", which emits nothing for a real physical move.
 	GetNodePropertyOrError(nodeID int64, key string) (string, error)
 	GetBin(id int64) (*bins.Bin, error)
-	// The payload template, for the per-cycle ratios. A bin's manifest says
-	// which parts it holds; how many of each is uop_remaining x the
-	// template's parts_per_cycle, and the template is the only place that
-	// ratio lives.
+	// The payload template. A bin's manifest says which parts it holds; how
+	// many of each is decided by the template's lines (postablePerUnit), and
+	// the template is the only place they live.
 	GetPayloadByCode(code string) (*payloads.Payload, error)
 	ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, error)
 }

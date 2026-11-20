@@ -10,6 +10,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 	"shingocore/store/reservations"
 )
 
@@ -747,7 +748,7 @@ func IsGateStaged(order *orders.Order) bool {
 // than propagated. Retrying an append that may have landed would risk duplicate
 // block ids (SEER's one contract on them is uniqueness), so the retry belongs in
 // the evaluator, which re-derives the segment from durable state.
-func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string, hand Hand) (string, error) {
+func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq *payloads.LoadSequence, hand Hand) (string, error) {
 	req, preWait, err := d.buildGatedCreate(order, target, plan, loadSeq)
 	if err != nil {
 		return "", err
@@ -794,7 +795,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 // the unsealed create of its pre-wait segment built. Nothing is held and
 // nothing is sent. It returns the create and the pre-wait segment, whose nodes
 // the create declares.
-func (d *Dispatcher) buildGatedCreate(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
+func (d *Dispatcher) buildGatedCreate(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq *payloads.LoadSequence) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
 	req, preWait, err = d.buildUnsealedCreate(order, plan, loadSeq, "gated")
 	if err != nil {
 		return req, nil, err
@@ -809,7 +810,7 @@ func (d *Dispatcher) buildGatedCreate(order *orders.Order, target laneGateTarget
 // (buildGatedCreate) and a home clear's trade leg's (dispatchToFleetCore,
 // heldTradePlan). Nothing is held and nothing is sent. what names the plan in
 // an error ("gated", "held").
-func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedStep, loadSeq []string, what string) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
+func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedStep, loadSeq *payloads.LoadSequence, what string) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
 	vendorOrderID := mintVendorOrderID(order.ID)
 
 	stepsJSON, err := json.Marshal(plan)
@@ -831,7 +832,11 @@ func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedSte
 	// ("F4c is scoped to the simple transport path"). Resolving it in here would
 	// have silently started expanding complex orders the moment they began using
 	// this valve.
-	blocks := stepsToBlocks(vendorOrderID, preWait, 0, loadSeq)
+	//
+	// The carts are read once, for the robot group and the carrier keys both;
+	// the keys read the order's rows against the plan just persisted.
+	carts := d.capabilityBins(order)
+	blocks := d.orderBlocks(order, vendorOrderID, createRun(plan, preWait, carts), loadSeq)
 
 	// The order's own priority - the depth-derived lane boost was deleted.
 	req = fleet.CreateOrderRequest{
@@ -839,7 +844,7 @@ func (d *Dispatcher) buildUnsealedCreate(order *orders.Order, plan []resolvedSte
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForOrder(order),
+		RobotGroup: d.robotGroupForOrder(order, carts),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.

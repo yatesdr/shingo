@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -4578,65 +4579,76 @@ func migrationList() []migration {
 		{178, "bin_loaders.edge_station_uid - the station uid of the Edge that works the loader; blank on every existing loader, and blank means no Edge picked",
 			v178LoaderEdgeStationUID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "edge_station_uid") }},
-		{179, "orders.version - one counter per order, bumped with every write the station is told (status, robot, wait); 1 on every existing order",
-			v179OrderVersion,
+		{179, "orders.block_actions - what each block Core sent was, by block id, NULL on every order sent before it; load_sequences.lift_at - which of a sequence's names lifts",
+			v179BlockRecord,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "block_actions") && schema.ColumnExists(q, "load_sequences", "lift_at")
+			}},
+		{180, "carrier_families.lift_bintask, wait_bintask - the RDS binTask key a family's lift sends, and its wait in front of a lift; blank on every family, and blank sends the default",
+			v180CarrierFamilyKeys,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "carrier_families", "lift_bintask") &&
+					schema.ColumnExists(q, "carrier_families", "wait_bintask")
+			}},
+		{181, "orders.version - one counter per order, bumped with every write the station is told (status, robot, wait); 1 on every existing order",
+			v181OrderVersion,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "version") }},
-		{180, "orders.asked_vendor_order_id - the fleet order Core is asking the fleet to create for this order, for as long as it asks; blank on every existing order",
-			v180OrderAskedVendorOrderID,
+		{182, "orders.asked_vendor_order_id - the fleet order Core is asking the fleet to create for this order, for as long as it asks; blank on every existing order",
+			v182OrderAskedVendorOrderID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "asked_vendor_order_id") }},
-		{181, "orders_dispatched_names_its_job - a `dispatched` order names its fleet job (vendor_order_id); NOT VALID: the rows already breaking it are counted and logged, not rewritten",
-			v181DispatchedNamesItsJob,
+		{183, "orders_dispatched_names_its_job - a `dispatched` order names its fleet job (vendor_order_id); NOT VALID: the rows already breaking it are counted and logged, not rewritten",
+			v183DispatchedNamesItsJob,
 			func(q schema.Querier) bool {
 				return schema.ConstraintExists(q, "orders", "orders_dispatched_names_its_job")
 			}},
 	}
 }
 
-// v181DispatchedNamesItsJob adds the rule that `dispatched` means the fleet has
+// v183DispatchedNamesItsJob adds the rule that `dispatched` means the fleet has
 // the job: a `dispatched` row names it in vendor_order_id. `dispatched` is
 // written once, by the fleet's yes, with the vendor id (orders.FleetYesTx), so
-// no write since v180 breaks it. Rows written before, by a hand that wrote
+// no write since v182 breaks it. Rows written before, by a hand that wrote
 // `dispatched` before asking and died or was refused before the id, may: they
 // are counted and logged by id, and left as they are, because nothing says
 // which side of the fleet's answer each is on. The rule is added NOT VALID, so
 // it holds every new write and does not reject the rows it found. ROLLBACK is
 // the previous binary plus DROP CONSTRAINT. Pin:
-// TestOrderMigration_V181_TheRuleRefusesANewBreakAndKeepsTheOldRows.
-func v181DispatchedNamesItsJob(tx *sql.Tx) error {
+// TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows.
+func v183DispatchedNamesItsJob(tx *sql.Tx) error {
 	rows, err := tx.Query(`SELECT id FROM orders WHERE status = 'dispatched' AND vendor_order_id = '' ORDER BY id`)
 	if err != nil {
-		return fmt.Errorf("v181 count dispatched orders naming no job: %w", err)
+		return fmt.Errorf("v183 count dispatched orders naming no job: %w", err)
 	}
 	var ids []string
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return fmt.Errorf("v181 count dispatched orders naming no job: %w", err)
+			return fmt.Errorf("v183 count dispatched orders naming no job: %w", err)
 		}
 		ids = append(ids, strconv.FormatInt(id, 10))
 	}
 	if err := rows.Close(); err != nil {
-		return fmt.Errorf("v181 count dispatched orders naming no job: %w", err)
+		return fmt.Errorf("v183 count dispatched orders naming no job: %w", err)
 	}
-	log.Printf("store: v181 dispatched orders naming no fleet job: %d, left as they are%s", len(ids), v181IDList(ids))
+	log.Printf("store: v183 dispatched orders naming no fleet job: %d, left as they are%s", len(ids), v183IDList(ids))
 	var present bool
 	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint
 		WHERE conname = 'orders_dispatched_names_its_job' AND conrelid = 'orders'::regclass)`).Scan(&present); err != nil {
-		return fmt.Errorf("v181 read the rule: %w", err)
+		return fmt.Errorf("v183 read the rule: %w", err)
 	}
 	if present {
 		return nil
 	}
 	if _, err := tx.Exec(`ALTER TABLE orders ADD CONSTRAINT orders_dispatched_names_its_job
 		CHECK (status <> 'dispatched' OR vendor_order_id <> '') NOT VALID`); err != nil {
-		return fmt.Errorf("v181 the rule: %w", err)
+		return fmt.Errorf("v183 the rule: %w", err)
 	}
 	return nil
 }
 
-// v181IDList renders the ids v181 logs, the first 50.
-func v181IDList(ids []string) string {
+// v183IDList renders the ids v183 logs, the first 50.
+func v183IDList(ids []string) string {
 	if len(ids) == 0 {
 		return ""
 	}
@@ -4646,34 +4658,147 @@ func v181IDList(ids []string) string {
 	return ": " + strings.Join(ids, ", ")
 }
 
-// v180OrderAskedVendorOrderID adds orders.asked_vendor_order_id: the vendor
+// v182OrderAskedVendorOrderID adds orders.asked_vendor_order_id: the vendor
 // order id Core is asking the fleet to create, written by the order's hand in
 // the transaction that takes its holds, and cleared when the fleet answers (the
 // yes names the job in vendor_order_id; a no leaves it unnamed). Core-only: it
 // is never on the wire. An open ask means the order is spoken for, whatever its
 // status says (orders.PreDispatchSQL and its twins). Blank, the default and
 // what every existing order reads, is no ask. ROLLBACK is the previous binary
-// plus DROP COLUMN. Pin: TestOrderMigration_V180_NoOrderIsAsking.
-func v180OrderAskedVendorOrderID(tx *sql.Tx) error {
+// plus DROP COLUMN. Pin: TestOrderMigration_V182_NoOrderIsAsking.
+func v182OrderAskedVendorOrderID(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS asked_vendor_order_id TEXT NOT NULL DEFAULT ''`); err != nil {
-		return fmt.Errorf("v180 orders.asked_vendor_order_id: %w", err)
+		return fmt.Errorf("v182 orders.asked_vendor_order_id: %w", err)
 	}
 	return nil
 }
 
-// v179OrderVersion adds orders.version: one counter per order, bumped in the
+// v181OrderVersion adds orders.version: one counter per order, bumped in the
 // same statement as every write Core tells the order's station about (its
 // status, its robot, its wait). It rides the status tell, the reconcile
 // snapshot and the projection, so the station applies a message only when it
 // is newer than the one it last applied, and a late copy cannot move the row
 // back. The default is 1, on every existing order and every new one, so a
 // version of 0 on the wire can only mean an older Core. ROLLBACK is the
-// previous binary plus DROP COLUMN. Pin: TestOrderMigration_V179_EveryOrderStartsAtOne.
-func v179OrderVersion(tx *sql.Tx) error {
+// previous binary plus DROP COLUMN. Pin: TestOrderMigration_V181_EveryOrderStartsAtOne.
+func v181OrderVersion(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1`); err != nil {
-		return fmt.Errorf("v179 orders.version: %w", err)
+		return fmt.Errorf("v181 orders.version: %w", err)
 	}
 	return nil
+}
+
+// v180CarrierFamilyKeys adds a carrier family's two RDS binTask keys: the one a
+// lift of a cart of the family sends, and the one a wait directly in front of
+// that lift at the same node sends (dispatch's carrier keys). Blank on every
+// existing family, and blank sends the default (seerrds.BinTaskForAction), so a
+// plant sends what it sent until an engineer picks a key on the Bins page.
+// ROLLBACK is the previous binary: it reads neither column.
+func v180CarrierFamilyKeys(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE carrier_families ADD COLUMN IF NOT EXISTS lift_bintask TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE carrier_families ADD COLUMN IF NOT EXISTS wait_bintask TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v180 carrier family keys: %w", err)
+		}
+	}
+	return nil
+}
+
+// v179BlockRecord is where Core keeps what each block it sends is, so a block
+// that finishes is read from Core's own record and never from its binTask name.
+//
+//   - orders.block_actions: block id -> protocol action (pickup, dropoff, wait,
+//     or "" for a block of no step's kind), written by the create and by each
+//     append (dispatch's handover and orders.ClaimAppend). Added NULL, then
+//     defaulted to '{}', so every order that exists at the deploy stays NULL: its
+//     blocks were sent before the record, and the block subscriber reads them by
+//     the old name rule for the order's whole life (engine.legacyBlockAction).
+//   - load_sequences.lift_at: the 0-based index of the name in task_names that
+//     lifts the cart. Filled here by v179LiftAt, a frozen copy of the rule the
+//     block subscriber read a name by; this is the last time a name is read for
+//     what it does. The CHECK keeps it inside task_names.
+//
+// ROLLBACK is the previous binary: it reads neither column. Pin:
+// TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad.
+// After a rollback, update again only with no orders on the floor: an order the
+// previous binary creates takes the default '{}', so its blocks go out
+// unrecorded, and if this binary returns while it is still moving, each of its
+// finished blocks lifts, sets down and counts nothing (pinned by
+// TestBlockRecord_ABlockTheRecordDoesNotNameOnlyLeavesItsLeg); its carts then
+// need a hand correction.
+func v179BlockRecord(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS block_actions JSONB`,
+		`ALTER TABLE orders ALTER COLUMN block_actions SET DEFAULT '{}'::jsonb`,
+		`ALTER TABLE load_sequences ADD COLUMN IF NOT EXISTS lift_at INTEGER`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v179 block record: %w", err)
+		}
+	}
+	rows, err := tx.Query(`SELECT name, task_names FROM load_sequences WHERE lift_at IS NULL ORDER BY name`)
+	if err != nil {
+		return fmt.Errorf("v179 read load sequences: %w", err)
+	}
+	type seq struct {
+		name   string
+		liftAt int
+	}
+	var fill []seq
+	for rows.Next() {
+		var name, raw string
+		if err := rows.Scan(&name, &raw); err != nil {
+			rows.Close()
+			return fmt.Errorf("v179 scan load sequence: %w", err)
+		}
+		var names []string
+		if err := json.Unmarshal([]byte(raw), &names); err != nil {
+			rows.Close()
+			return fmt.Errorf("v179: load sequence %q has task_names %q, which is not a JSON list of names: "+
+				"correct or delete the row (UPDATE load_sequences SET task_names = '[...]' WHERE name = '%s'); "+
+				"no payload naming it loads by it today: %w", name, raw, name, err)
+		}
+		fill = append(fill, seq{name: name, liftAt: v179LiftAt(names)})
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("v179 read load sequences: %w", err)
+	}
+	for _, s := range fill {
+		if _, err := tx.Exec(`UPDATE load_sequences SET lift_at = $2 WHERE name = $1`, s.name, s.liftAt); err != nil {
+			return fmt.Errorf("v179 fill lift_at of %q: %w", s.name, err)
+		}
+	}
+	for _, s := range []string{
+		`ALTER TABLE load_sequences ALTER COLUMN lift_at SET NOT NULL`,
+		`ALTER TABLE load_sequences DROP CONSTRAINT IF EXISTS load_sequences_lift_at_in_task_names`,
+		`ALTER TABLE load_sequences ADD CONSTRAINT load_sequences_lift_at_in_task_names
+			CHECK (lift_at >= 0 AND lift_at < GREATEST(json_array_length(task_names::json), 1))`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v179 load_sequences.lift_at: %w", err)
+		}
+	}
+	return nil
+}
+
+// v179LiftAt is the index of the name that lifts in a load sequence, by the
+// rule the block subscriber read every finished block's binTask by before
+// orders.block_actions existed, copied here and frozen: the first name holding
+// "load" or "pick" and none of "unload", "drop" or "release", ignoring case;
+// else the last name. An empty sequence expands to no block, and reads 0.
+func v179LiftAt(names []string) int {
+	for i, n := range names {
+		t := strings.ToLower(n)
+		if strings.Contains(t, "unload") || strings.Contains(t, "drop") || strings.Contains(t, "release") {
+			continue
+		}
+		if strings.Contains(t, "load") || strings.Contains(t, "pick") {
+			return i
+		}
+	}
+	return max(len(names)-1, 0)
 }
 
 // v178LoaderEdgeStationUID adds bin_loaders.edge_station_uid: the Edge that

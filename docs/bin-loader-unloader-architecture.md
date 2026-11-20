@@ -1,6 +1,6 @@
 # Bin Loader / Unloader
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 This document covers the bin loader and unloader: the forklift-worked staging points where material enters and
 leaves the AMR system. Loaders bring material in (an operator fills empties); unloaders take it out (an operator
@@ -86,10 +86,11 @@ Core's count on the node, and files the L2.
 can open on (a loader tile's parts, a stage 2's partial and full parts), the part's load template from the Edge's
 copy of Core's catalog: its UOP capacity, which the count starts at, and its template lines, which the modal shows
 (`load_templates`, `StationService.loadTemplatesForBoard`, held in memory between catalog writes). The modal posts
-the part and the count and no manifest; the Edge builds the bin's manifest from the same copy, each template line's
-per-cycle ratio times the count (`Engine.loadManifest`), and refuses a payload the copy has no row for. A request
-that carries a manifest (the Production page, whose counts a person may edit) is sent as it came. The modal falls
-back to `GET /api/payload/{code}/manifest` only for a part the view did not carry.
+the part and the count and no manifest; the Edge builds the bin's manifest from the same copy, each line's count
+derived from the declared one by the count rule in [uop-architecture.md](uop-architecture.md#process-semantics) (a
+template of one line carries the count itself; `Engine.loadManifest`), and refuses a payload the copy has no row
+for. A request that carries a manifest (the Production page, whose counts a person may edit) is sent as it came. The
+modal falls back to `GET /api/payload/{code}/manifest` only for a part the view did not carry.
 
 **Unloader.** A robot delivers a full to a window (a U1, sent with `SkipAutoConfirm` so Core does not confirm it on
 arrival). The operator CLEARs it — the `bin.clear` ask (`Engine.ClearBin`) — and Core clears the manifest; the U2
@@ -106,15 +107,21 @@ the manifest, the count and the location.
 
 ### Clear partials
 
-A dedicated loader keeps partly used bins in its buffer spots (`home_kind` `buffer`). When a home holds a stocked
-bin of its part and a buffer spot of the same loader holds a stocked bin of that part, the board's Clear partials
-section has a card for the home, "Pull the full · partial from" and the spot's name (the Edge stamps the spot on
-the home's tile, `bufferPartialFor`). The driver pulls the full and taps; the tap is Core's home clear (the `clear_home` ask,
-`Engine.ClearLoaderHome`), which records the full gone and brings the partial home.
+A dedicated loader keeps partly used bins in its buffer spots (`home_kind` `buffer`). A partial is a bin of a part
+with a count above 0 and below the part's capacity (`Bin.Partial`, the bins feed's `partial`); at or over the capacity
+it is a full, which the buffer strip draws as "F" and no clear brings home. When a home holds a stocked bin of its
+part that is not a partial and a buffer spot of the same loader holds a partial of that part, the board's Bring
+partials home section has a card for the home, "Take the full bin off · partial on <spot> comes here"
+(the Edge stamps the spot on the home's tile, `bufferPartialFor`). The driver takes the full bin off and taps BIN IS
+OFF · CONFIRM; the tap is Core's home clear (the `clear_home` ask, `Engine.ClearLoaderHome`), which marks the cart
+empty, sends it away and brings the partial home. A home holding a partial gets the card too ("Take the partial bin
+off"); under Show all it keeps the card's words and opens its node modal instead, whose REPLACE PARTIAL is a LOAD
+Core records as the partial leaving and a full arriving (`expect` `replace`), beside BRING PARTIAL HOME, the card's
+confirm. Under Show all every Bring partials home card carries the section's amber or red.
 
 `bin_loaders.no_clear_partials` turns this off for one loader: the Clear partials switch on Core's loader settings,
 drawn for a dedicated loader with a pinned home and a buffer spot, on by default. Off, no home names a buffer
-partial, the board draws no buffer section (strip, words and cards) and no PULL FULL FROM HOME, and Core refuses
+partial, the board draws no buffer section (strip, words and cards) and no FULL BIN OFF HOME, and Core refuses
 the home clear. The buffer's partials stay in the loader's source pool (`Home.InSourcePool`). It rides the wire as
 `LoaderInfo.NoClearPartials`; a Core that predates the field sends nothing, which reads as on, so deploy Core
 first.

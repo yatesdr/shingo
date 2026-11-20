@@ -177,7 +177,7 @@ func (r *clearRig) liftAt(t *testing.T, id int64, location string) {
 	}
 	r.sim.DriveState(o.VendorOrderID, "RUNNING")
 	for _, b := range r.sim.BlocksForOrder(o.VendorOrderID) {
-		if IsPickupBlock(b.BinTask) {
+		if b.Action == protocol.ActionPickup {
 			at := b.Location
 			if location != "" {
 				at = location
@@ -293,6 +293,33 @@ func TestClearHome_SpotArm(t *testing.T) {
 	r.finish(t, partial.ID)
 	if got := r.reload(t, parent.ID); got.Status != protocol.StatusConfirmed {
 		t.Errorf("parent after both landed: %s, want confirmed", got.Status)
+	}
+}
+
+// TestClearHome_AFullOnTheBufferIsNotBroughtHome: a bin on a buffer spot at
+// or over its part's capacity is a full, not a partial. The home's clear finds
+// no partial to bring home and refuses before anything is written: no parent,
+// and the carrier on the home keeps its count. SPR 2026-11-18: 480 of a
+// 300-capacity part on SMN_0013 was offered as the partial to bring home.
+func TestClearHome_AFullOnTheBufferIsNotBroughtHome(t *testing.T) {
+	for _, uop := range []int{10, 12} {
+		t.Run(fmt.Sprintf("uop %d of 10", uop), func(t *testing.T) {
+			r := newClearRig(t, fmt.Sprintf("cfb%d", uop), true)
+			_, err := r.db.DB.Exec(`UPDATE bins SET uop_remaining=$1 WHERE id=$2`, uop, r.p.ID)
+			testutil.MustNoErr(t, err, "P to a full")
+			ans := r.tap(t)
+			if ans.Status != http.StatusBadRequest || !strings.Contains(ans.Body.Error, "no buffer spot holds a partial") {
+				t.Fatalf("tap: %d %+v, want 400 no buffer spot holds a partial", ans.Status, ans.Body)
+			}
+			if p := r.parent(t); p != nil {
+				t.Errorf("a refused clear wrote parent %d", p.ID)
+			}
+			e, err := r.db.GetBin(r.e.ID)
+			testutil.MustNoErr(t, err, "reload E")
+			if e.PayloadCode != r.part || e.UOPRemaining != 10 {
+				t.Errorf("E after a refused clear: payload=%q uop=%d, want %s 10", e.PayloadCode, e.UOPRemaining, r.part)
+			}
+		})
 	}
 }
 
@@ -455,7 +482,7 @@ func TestClearHome_FullBufferNoPull_BirthsTheTrade(t *testing.T) {
 				c.o.ID, c.o.StepsJSON, c.from, c.to, c.stampBin)
 		}
 		sent := r.sim.GetOrder(c.o.VendorOrderID)
-		if sent == nil || sent.Complete || len(sent.Blocks) != 1 || sent.Blocks[0].Location != c.from || !IsPickupBlock(sent.Blocks[0].BinTask) {
+		if sent == nil || sent.Complete || len(sent.Blocks) != 1 || sent.Blocks[0].Location != c.from || sent.Blocks[0].Action != protocol.ActionPickup {
 			t.Errorf("order %d's create = %+v, want its lift at %s alone, unsealed", c.o.ID, sent, c.from)
 		}
 	}

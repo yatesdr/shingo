@@ -172,7 +172,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 	// Resolve the plant timezone before templates parse — formatTime and
 	// header.html's PLANT_TZ inline both read plantLocation.
-	plantLocation = resolvePlantLocation(eng.AppConfig())
+	plantZone.Store(resolvePlantLocation(eng.AppConfig()))
 
 	funcMap := templateFuncs()
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
@@ -364,6 +364,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// The mint: a style from (recipe, parts), resolved or minted — the
 			// floor's one write (pick-a-part U3).
 			r.Post("/processes/{id}/flow/mint", h.apiMintFlow)
+			// A part Core does not have, asked of Core from the station's
+			// part list and gated as the mint is (apiCreatePart): the
+			// picker then mints with it.
+			r.Post("/processes/{id}/parts", h.apiCreatePart)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 			r.Get("/processes/{id}/post-cutover-flag", h.apiGetPostCutoverFlag)

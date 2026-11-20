@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -86,7 +87,7 @@ func requireOutboundPhysics(t *testing.T) {
 func gatedRetrieveReq(id, gate string) fleet.CreateOrderRequest {
 	return fleet.CreateOrderRequest{
 		OrderID:  id,
-		Blocks:   []fleet.OrderBlock{{BlockID: id + "-w", Location: gate, BinTask: "Wait"}},
+		Blocks:   []fleet.OrderBlock{{BlockID: id + "-w", Location: gate, BinTask: "Wait", Action: protocol.ActionWait}},
 		Complete: false,
 	}
 }
@@ -101,8 +102,8 @@ func gatedRetrieveReq(id, gate string) fleet.CreateOrderRequest {
 // time would be the same defect pointed the other way.
 func retrieveTail(id, slot, dest string) []fleet.OrderBlock {
 	return []fleet.OrderBlock{
-		{BlockID: id + "-t1", Location: slot, BinTask: "JackLoad"},
-		{BlockID: id + "-t2", Location: dest, BinTask: "JackUnload"},
+		{BlockID: id + "-t1", Location: slot, BinTask: "JackLoad", Action: protocol.ActionPickup},
+		{BlockID: id + "-t2", Location: dest, BinTask: "JackUnload", Action: protocol.ActionDropoff},
 	}
 }
 

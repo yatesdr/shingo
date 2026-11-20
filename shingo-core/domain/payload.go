@@ -48,10 +48,10 @@ type Payload struct {
 	// table already decides before the threshold is consulted.
 	NearEmptyThresholdPct int `json:"near_empty_threshold_pct"`
 	// ToteLayers is how many layers of totes a full cart of this payload
-	// stands; UOPPerTote is the production cycles that fill one tote, in the
-	// unit UOPCapacity and the count speak. nil is unknown (NULL): a payload
-	// that does not travel in totes, or one nobody has described. Each is 1
-	// or more when set (the column's CHECK).
+	// stands; UOPPerTote is how much of the count fills one tote, in the unit
+	// UOPCapacity and the count speak (pieces, for a payload of one part). nil
+	// is unknown (NULL): a payload that does not travel in totes, or one
+	// nobody has described. Each is 1 or more when set (the column's CHECK).
 	ToteLayers *int      `json:"tote_layers,omitempty"`
 	UOPPerTote *int      `json:"uop_per_tote,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`

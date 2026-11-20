@@ -282,18 +282,17 @@ func BuildClearTransactions(s Store, ev ClearEvent) ([]*cms.Transaction, *Uncoun
 }
 
 // binContents is what a bin comes to at emission time: the carrier itself, the
-// manifest lines it names, the template ratio each line is counted by, and the
-// lines no ratio could count.
+// manifest lines it names, how many of each line's part one unit of the bin's
+// count is (postablePerUnit), and the lines the template could not count.
 //
 // ONE DERIVATION, TWO CALLERS. A movement and a clear ask the same question of
 // a bin — what is in it, and how much of each — and differ only in which
 // boundaries the answer is booked against and with what sign. A second copy of
-// the quantity maths is a second place for it to drift from
-// payload_manifest.parts_per_cycle.
+// the quantity maths is a second place for it to drift from the template.
 type binContents struct {
 	bin       *bins.Bin
 	items     []bins.ManifestEntry
-	perCycle  map[string]int64
+	perUnit   map[string]int64
 	uncounted []string
 }
 
@@ -322,16 +321,16 @@ func readBinContents(s Store, binID int64) (*binContents, error) {
 	}
 
 	// THE COUNT IS DERIVED, NOT READ. The manifest lists which parts are in
-	// the carrier; how many of each is uop_remaining x the template's
-	// parts_per_cycle, computed here at emission. The bin manifest used to
-	// carry a stored qty that no writer agreed on and nothing rewrote as
-	// production drew the bin down, so whatever it held went stale on the
+	// the carrier; how many of each is uop_remaining times the line's share of
+	// a unit (postablePerUnit), computed here at emission. The bin manifest
+	// used to carry a stored qty that no writer agreed on and nothing rewrote
+	// as production drew the bin down, so whatever it held went stale on the
 	// first consumed part.
-	perCycle, err := postablePartsPerCycle(s, bin.PayloadCode)
+	perUnit, err := postablePerUnit(s, bin.PayloadCode)
 	if err != nil {
 		return nil, err
 	}
-	if perCycle == nil {
+	if perUnit == nil {
 		// No template to count by. Skipping is deliberate: a movement row
 		// with a guessed quantity is worse than no row, because it is
 		// indistinguishable from a measured one once it reaches CMS.
@@ -346,17 +345,18 @@ func readBinContents(s Store, binID int64) (*binContents, error) {
 	// A DRAINED BIN IS NOT AN UNCOUNTABLE ONE. uop_remaining of zero (or the
 	// negative an overpacked bin carries) makes every count non-positive for a
 	// reason the template answered perfectly well, so it yields no rows and no
-	// finding. Only a MISSING RATIO means the question went unanswered.
+	// finding. Only a part the template cannot count (no line for it, or a kit
+	// line with no ratio) means the question went unanswered.
 	var uncounted []string
 	if bin.Stocked() {
 		for _, m := range parsed.Items {
-			if perCycle[m.PartNumber] <= 0 {
+			if perUnit[m.PartNumber] <= 0 {
 				uncounted = append(uncounted, m.PartNumber)
 			}
 		}
 	}
 
-	return &binContents{bin: bin, items: parsed.Items, perCycle: perCycle, uncounted: uncounted}, nil
+	return &binContents{bin: bin, items: parsed.Items, perUnit: perUnit, uncounted: uncounted}, nil
 }
 
 // report names the uncounted lines for the caller's counter, or nil when every
@@ -394,7 +394,7 @@ func rowsAtBoundary(c *binContents, boundary *nodes.Node, location *nodes.Node,
 		// signed value instead would pass an overpacked bin's negative
 		// remainder through the source side's -1 and book a positive
 		// arrival where a part left.
-		count := int64(c.bin.UOPRemaining) * c.perCycle[m.PartNumber]
+		count := int64(c.bin.UOPRemaining) * c.perUnit[m.PartNumber]
 		if count <= 0 {
 			continue
 		}
@@ -436,8 +436,15 @@ type UncountedLines struct {
 	CatIDs      []string
 }
 
-// postablePartsPerCycle returns the payload template's per-cycle ratios, keyed
-// by part number — and refuses when a line names no part.
+// postablePerUnit returns how many of each part one unit of a bin's count is,
+// keyed by part number, from the payload template — and refuses when a line
+// names no part.
+//
+// A TEMPLATE OF ONE LINE IS 1: its bin counts pieces of that part, so the bin's
+// count posts as it stands and the line's parts_per_cycle (an assembly's consume
+// setting) is not read. Every line of a kit is its parts_per_cycle. The rule is
+// protocol.ManifestItem's. PIN: TestBuildMovement_OnePartPostsTheBinsCount,
+// TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart.
 //
 // THE IDENTITY GATE, AND IT IS WHY A KIT CANNOT DOUBLE-BOOK. Every row a
 // movement builds names a part on the wire, so every line it counts has to name
@@ -456,7 +463,7 @@ type UncountedLines struct {
 //
 // nil, nil means "no template" — see templateLines for why that is not the same
 // answer as an empty one.
-func postablePartsPerCycle(s Store, payloadCode string) (map[string]int64, error) {
+func postablePerUnit(s Store, payloadCode string) (map[string]int64, error) {
 	template, err := templateLines(s, payloadCode)
 	if err != nil || template == nil {
 		return nil, err
@@ -467,11 +474,15 @@ func postablePartsPerCycle(s Store, payloadCode string) (map[string]int64, error
 			"part number CMS books against. Enter the part on the payloads page",
 			payloadCode, len(unresolved), strings.Join(unresolved, ", "))
 	}
-	perCycle := make(map[string]int64, len(template))
-	for _, it := range template {
-		perCycle[it.PartNumber] = it.PartsPerCycle
+	perUnit := make(map[string]int64, len(template))
+	if len(template) == 1 {
+		perUnit[template[0].PartNumber] = 1
+		return perUnit, nil
 	}
-	return perCycle, nil
+	for _, it := range template {
+		perUnit[it.PartNumber] = it.PartsPerCycle
+	}
+	return perUnit, nil
 }
 
 // unresolvedLines names the template lines that point at no part. A line names

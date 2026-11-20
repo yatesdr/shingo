@@ -35,7 +35,7 @@ var corePageBudgets = map[string]struct {
 }{
 	// measured 2026-11-11 at 810a435e (requests, bytes); the skeleton counts sim-speed-strip.js,
 	// which only a sim build loads
-	"bins.html":                  {25, 110 << 10}, // 23, 102252 at s3-adapters: the shared picker and its adapters
+	"bins.html":                  {28, 125 << 10}, // 26, 115627 at the live table: bins-live.js, the feed that keeps the rows current; 23, 102252 at s3-adapters: the shared picker and its adapters
 	"config.html":                {20, 83 << 10},  // 18, 76960
 	"count-history.html":         {20, 83 << 10},  // 18, 76713
 	"cycle-time.html":            {18, 72 << 10},  // 16, 66151

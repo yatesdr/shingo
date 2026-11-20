@@ -1,6 +1,6 @@
 # Terminology Reference
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 The canonical glossary: one statement per term, in Shingo's vendor-neutral words, mapped to the equivalent in common
 fleet management systems where one exists. Other docs link here for a definition; where a term has a mechanism,
@@ -66,9 +66,10 @@ operations for good and clears its node, and the record is kept.
 
 ### Payload
 
-A template defining what a bin should contain: its parts and quantities and its UOP capacity, the production cycles
-a full load supports. Assigning a payload to a bin gives the bin the payload code, populates its manifest from the
-template, and sets UOP remaining to capacity.
+A template defining what a bin should contain: its parts, each with its [pieces per cycle](#pieces-per-cycle), and
+its UOP capacity, the standard pack: the pieces of the part a full bin holds, or, for a kit, the cycles a full bin
+feeds. Assigning a payload to a bin gives the bin the payload code, populates its manifest from the template, and
+sets UOP remaining to capacity.
 
 | System | Term |
 |---|---|
@@ -381,11 +382,19 @@ Control whether a robot accepts new dispatch orders (`SetAvailability`).
 
 ### UOP (Unit of Production)
 
-One cycle of the manufacturing process supported by a bin's parts: a bin with UOP capacity 24 holds enough parts
-for 24 production cycles. UOP is the atomic quantity a bin, a payload or a lineside pile carries and a cell
-consumes; reorder levels and Core's loader thresholds are counted in it. How it is counted is
-[uop-architecture.md](uop-architecture.md)'s. UI text writes it **UoP** (see [Units and casing](#units-and-casing));
-code identifiers keep `UOP`.
+The count a bin, a payload or a lineside pile carries and a cell consumes. A bin of a payload with one manifest line
+counts pieces of that part: UOP capacity 800 is a full bin of 800 pieces, and UOP remaining is how many are left. A
+kit (a payload of several lines) counts cycles: each line's pieces are the count times the line's
+[pieces per cycle](#pieces-per-cycle). Reorder levels and Core's loader thresholds are counted in it. How it is
+counted is [uop-architecture.md](uop-architecture.md#process-semantics)'s. UI text writes it **UoP** (see
+[Units and casing](#units-and-casing)); code identifiers keep `UOP`.
+
+### Pieces per Cycle
+
+How many pieces of a part one cycle of an assembly that consumes it uses: `payload_manifest.parts_per_cycle`, set by
+an engineer on the part's manifest line in Core, usually 1. It is an assembly consume setting: an assembly's
+consume spot draws its counter step times it, and a press never reads it. It never scales a bin's count of a part
+alone. UI text calls it **Pieces per assembly cycle**.
 
 ### Totes on Cart
 
@@ -432,8 +441,9 @@ say "bare position" for a vacant one, and the two must not be confused.
 
 ### UOP per Tote
 
-The cycles (UOP) that fill one tote of a payload: `payloads.uop_per_tote`, NULL when the part states none. With it,
-Core turns a press's count into the totes it filled. Without it, no tote count is derived.
+The UOP that fills one tote of a payload, in its capacity's unit (pieces, for a part alone):
+`payloads.uop_per_tote`, NULL when the part states none. With it, Core turns a press's count into the totes it
+filled. Without it, no tote count is derived.
 
 ### Supermarket
 

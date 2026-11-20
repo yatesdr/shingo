@@ -91,6 +91,20 @@ func ListByClass(db *sql.DB, className string) ([]*Point, error) {
 	return scanPoints(rows)
 }
 
+// LocationsNamed returns the bin locations (GeneralLocation rows) with these
+// instance names, one row per area that has the name: one statement. Dispatch
+// reads it to learn which binTask keys a block's location lists.
+func LocationsNamed(db *sql.DB, names []string) ([]*Point, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM scene_points
+		WHERE class_name = 'GeneralLocation' AND instance_name = ANY($1::text[])
+		ORDER BY area_name, instance_name`, selectCols), names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPoints(rows)
+}
+
 // ── The station alias: what a robot calls a place, and what Core calls it ──
 //
 // A robot reports the point it is standing at (`rbk_report.current_station`),

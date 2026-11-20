@@ -3,6 +3,8 @@
 package engine
 
 import (
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +54,7 @@ func testEnvelope() *protocol.Envelope {
 // re-asked by a pass it never ran.
 func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 	t.Helper()
+	runEngineBootHooks(t, db)
 	eng := newUnstartedEngine(t, db, flt)
 	eng.Start()
 	t.Cleanup(func() { eng.Stop() })
@@ -61,6 +64,26 @@ func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 		t.Fatal("the engine's boot scan did not finish in 30 s")
 	}
 	return eng
+}
+
+// engineBootHooks lets a test adjust the database of every engine its
+// subtests start through newTestEngine, before Start reads it, without
+// touching the helpers those subtests call: the carrier keys' keyed pin runs
+// brief A's pin cases with every family keyed this way
+// (TestCarrierKeysPin_EveryPinShapeKeyed). Keyed by a test-name prefix, so a
+// parallel test never meets another's hook; the hook decides which of the
+// subtests under the prefix it acts on.
+var engineBootHooks sync.Map // test-name prefix -> func(*testing.T, *store.DB)
+
+// runEngineBootHooks runs the hooks whose prefix the test's name carries.
+func runEngineBootHooks(t *testing.T, db *store.DB) {
+	t.Helper()
+	engineBootHooks.Range(func(k, v any) bool {
+		if strings.HasPrefix(t.Name(), k.(string)) {
+			v.(func(*testing.T, *store.DB))(t, db)
+		}
+		return true
+	})
 }
 
 // newUnstartedEngine is newTestEngine WITHOUT Start() — no boot census, no

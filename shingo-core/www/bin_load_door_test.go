@@ -712,7 +712,7 @@ func TestBinLoadDoor_Arms(t *testing.T) {
 				b := onStorage(t, f, "LD-A-EMPTY")
 				return loadBody(f, map[string]any{"uop_count": 5, "expect": "empty"}), []int64{b.ID}
 			},
-			answer: refusedAt(storage, http.StatusBadRequest, `expect "empty" is not a carrier the door knows: say bare or partial`)},
+			answer: refusedAt(storage, http.StatusBadRequest, `expect "empty" is not a carrier the door knows: say bare, partial or replace`)},
 		{name: "the generation and a bare carrier as read load",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "LD-A-ASREAD")
@@ -732,6 +732,96 @@ func TestBinLoadDoor_Arms(t *testing.T) {
 			wrote: func(f *doorFix) (map[int64][]string, map[string]int) {
 				return map[int64][]string{binIDOf(f, "LD-A-PARTIAL"): {"delta_epoch", "loaded_at", "manifest",
 					"manifest_confirmed", "uop_remaining", "updated_at"}}, map[string]int{"bin_uop_ledger": 2}
+			}},
+		// A REPLACE (expect replace): the person took the stocked carrier's tote
+		// off and set a new one of the part on. A carrier that is not that, or a
+		// carrier a live order holds, is refused, and the clear is not written
+		// either.
+		{name: "a replace that names no generation is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-R-NOEPOCH")
+				return loadBody(f, map[string]any{"uop_count": 800, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusBadRequest, "a replace names the carrier's epoch")},
+		{name: "a replace of a bare carrier is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-R-BARE")
+				return loadBody(f, map[string]any{"uop_count": 800, "epoch": b.DeltaEpoch, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-R-BARE (bare)")},
+		{name: "a replace of another part is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				testutil.MustNoErr(t, f.db.CreatePayload(&payloads.Payload{Code: "LD-OTHER", UOPCapacity: 50}), "another part")
+				b := testdb.CreateBinAtNode(t, f.db, "LD-OTHER", f.sd.StorageNode.ID, "LD-R-OTHER")
+				return loadBody(f, map[string]any{"uop_count": 800, "epoch": b.DeltaEpoch, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-R-OTHER (LD-OTHER)")},
+		{name: "a replace of a carrier at 0 is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-R-ZERO")
+				testutil.MustNoErr(t, f.db.SetBinManifest(b.ID, `{"items":[]}`, f.sd.Payload.Code, 0), "at 0")
+				b = binByLabel(t, f.db, "LD-R-ZERO")
+				return loadBody(f, map[string]any{"uop_count": 800, "epoch": b.DeltaEpoch, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-R-ZERO (PART-A)")},
+		{name: "a replace whose generation moved is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-R-EPOCH")
+				return loadBody(f, map[string]any{"uop_count": 800, "epoch": b.DeltaEpoch + 1, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-R-EPOCH (PART-A)")},
+		{name: "a replace of a carrier a live order holds is refused, its clear with it",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-R-HELD")
+				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				f.holder = o.ID
+				b = binByLabel(t, f.db, "LD-R-HELD")
+				return loadBody(f, map[string]any{"uop_count": 800, "epoch": b.DeltaEpoch, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict, heldRefusalSentence(f.holder))
+			}},
+		{name: "a replace clears the old tote and loads the new with a fresh date",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				// 100 of PART-A, confirmed with an old date through the service,
+				// so a clear and a re-set within 20 minutes would keep that date
+				// (keepFIFODate case 2) if the replace did not stamp its own.
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-R-OK")
+				testutil.MustNoErr(t, f.h.engine.BinManifest().Confirm(b.ID, "2026-01-02T03:04:05Z"), "an old date")
+				b = binByLabel(t, f.db, "LD-R-OK")
+				return loadBody(f, map[string]any{"uop_count": 800, "epoch": b.DeltaEpoch, "expect": "replace"}), []int64{b.ID}
+			},
+			answer: loaded("LD-R-OK", "PART-A", 800),
+			// The part and the confirm end where they began; the clear, the set
+			// and the confirm are three ledger rows of one commit.
+			wrote: func(f *doorFix) (map[int64][]string, map[string]int) {
+				return map[int64][]string{binIDOf(f, "LD-R-OK"): {"delta_epoch", "loaded_at", "manifest",
+					"uop_remaining", "updated_at"}}, map[string]int{"bin_uop_ledger": 3}
+			},
+			after: func(t *testing.T, f *doorFix) {
+				id := binIDOf(f, "LD-R-OK")
+				rows, err := audit.ListBinUOPByBin(f.db.DB, id, 100, 0)
+				testutil.MustNoErr(t, err, "ledger")
+				sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+				var got []string
+				for _, r := range rows[len(rows)-3:] {
+					before := "nil"
+					if r.BeforeUOP != nil {
+						before = fmt.Sprint(*r.BeforeUOP)
+					}
+					got = append(got, fmt.Sprintf("%s %s->%d", r.Op, before, r.AfterUOP))
+				}
+				want := []string{audit.OpClearForReuse + " 100->0", audit.OpSetForProduction + " 0->800",
+					audit.OpManifestConfirmed + " 800->800"}
+				if strings.Join(got, "; ") != strings.Join(want, "; ") {
+					t.Errorf("ledger = %v, want %v", got, want)
+				}
+				var fresh bool
+				testutil.MustNoErr(t, f.db.QueryRow(`SELECT loaded_at > NOW() - interval '1 hour' FROM bins WHERE id=$1`, id).Scan(&fresh), "loaded_at")
+				if !fresh {
+					t.Error("the replaced carrier kept its old FIFO date; a new tote is new stock")
+				}
 			}},
 	})
 }

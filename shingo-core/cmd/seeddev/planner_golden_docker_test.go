@@ -246,7 +246,7 @@ func (g *goldenPlant) exec(q string, args ...any) {
 
 // holder makes an order that exists only to hold something, so a case can take
 // a bin or a slot away from the need under test. It is `dispatched` naming its
-// job, in one write (v181): an order that is on its way, which is the only
+// job, in one write (v183): an order that is on its way, which is the only
 // legal holder of a hard claim. The record names no vendor id and leaves
 // holders out by uuid, so the job never reaches a golden.
 func (g *goldenPlant) holder(uuid string) *orders.Order {

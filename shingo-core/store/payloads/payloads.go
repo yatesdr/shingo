@@ -9,7 +9,10 @@ package payloads
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
@@ -110,6 +113,16 @@ func Create(db *sql.DB, p *Payload) error {
 	return createRow(db, p)
 }
 
+// ErrCodeTaken marks a create refused by payloads.code's unique constraint:
+// another payload holds the code, perhaps committed by a concurrent create
+// after the caller looked. Matched by the constraint's name, so no other
+// failure is mistaken for it.
+var ErrCodeTaken = errors.New("payload code taken")
+
+// codeKey is payloads.code's unique constraint, as Postgres names the
+// baseline's inline UNIQUE.
+const codeKey = "payloads_code_key"
+
 // createRow is Create's INSERT, on a database or inside a transaction.
 func createRow(db helpers.QueryRower, p *Payload) error {
 	id, err := helpers.InsertID(db, `INSERT INTO payloads (code, description, uop_capacity, robot_group, advanced_load_sequence,
@@ -117,6 +130,10 @@ func createRow(db helpers.QueryRower, p *Payload) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.AdvancedLoadSequence,
 		p.NearEmptyEnabled, p.NearEmptyRobotGroup, p.NearEmptyThresholdPct, p.ToteLayers, p.UOPPerTote)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == codeKey {
+		return fmt.Errorf("create payload %q: %w: %w", p.Code, ErrCodeTaken, err)
+	}
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)
 	}
@@ -162,6 +179,16 @@ type Sets struct {
 // p.ID is set only when the whole save committed. Pin:
 // TestPayloadSave_CreateCommitsTogetherOrNotAtAll.
 func CreateWithSets(db *sql.DB, p *Payload, sets Sets) error {
+	return CreateWithSetsAlso(db, p, sets, func(*sql.Tx, int64) error { return nil })
+}
+
+// CreateWithSetsAlso is CreateWithSets with one more write about the new
+// payload's id (also) in the same transaction: the row, its sets and that
+// write commit together or not at all. The outer store composes it with
+// another aggregate's write, which this package does not import
+// (store.DB.CreatePayloadWithSetsAudited). A code another payload holds is
+// ErrCodeTaken.
+func CreateWithSetsAlso(db *sql.DB, p *Payload, sets Sets, also func(tx *sql.Tx, id int64) error) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -172,6 +199,9 @@ func CreateWithSets(db *sql.DB, p *Payload, sets Sets) error {
 		return err
 	}
 	if err := writeSetsTx(tx, row.ID, sets); err != nil {
+		return err
+	}
+	if err := also(tx, row.ID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

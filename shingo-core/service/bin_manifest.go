@@ -522,11 +522,12 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	if err != nil {
 		return "", 0, fmt.Errorf("payload manifest: %w", err)
 	}
-	// The manifest records WHICH parts, not how many. The count is
-	// uop_remaining x parts_per_cycle wherever it is asked for, so a bin
-	// loaded at 5 of 24 answers 5. This loop used to copy the template's
-	// per-cycle ratio into the manifest as if it were a count, regardless of
-	// uopOverride — a number that meant nothing about this bin.
+	// The manifest records WHICH parts, not how many. The count is derived
+	// from uop_remaining wherever it is asked for (protocol.ManifestItem's
+	// count rule), so a bin loaded at 5 of 24 answers 5. This loop used to
+	// copy the template's per-cycle ratio into the manifest as if it were a
+	// count, regardless of uopOverride — a number that meant nothing about
+	// this bin.
 	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
 	for i, item := range items {
 		manifest.Items[i] = domain.ManifestEntry{PartNumber: item.PartNumber}
@@ -950,9 +951,9 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 // a row; nothing is stamped when Pack does not exceed the count, so a count is
 // never written down.
 type DeclaredFull struct {
-	// Pack is the catalog pack (uop_capacity, cycles) of the part the bin is
-	// booked under: the count a stamp writes. <= 0 is no pack: the count
-	// stands and the row says DeclaredFullNoPack.
+	// Pack is the catalog pack (uop_capacity, in the bin's count) of the
+	// part the bin is booked under: the count a stamp writes. <= 0 is no
+	// pack: the count stands and the row says DeclaredFullNoPack.
 	Pack int
 	// DeclaredQty is what the station declared (the departing order's pack),
 	// kept in the row's detail; it is not the count stamped.
@@ -1121,30 +1122,9 @@ var ErrCountRequired = errors.New("a load here must say how many it holds")
 // threshold replenishment — reported to the Edge as ok. Returns the new epoch and the count
 // written.
 func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode string, declared *int64) (int64, int, error) {
-	p, err := s.db.GetPayloadByCode(payloadCode)
-	if err != nil || p == nil {
-		return 0, 0, fmt.Errorf("%w: payload template %q not found", ErrUnknownPayload, payloadCode)
-	}
-	// A partial home holds carriers of any count, so the default cannot stand
-	// for one there: the person declares it, and the declaration is the moment
-	// the carrier is held from (StampHeldSince, below).
-	bin, err := s.db.GetBin(binID)
+	uop, atHome, err := s.lineLoad(binID, payloadCode, declared)
 	if err != nil {
 		return 0, 0, err
-	}
-	atHome := false
-	if bin.NodeID != nil {
-		if atHome, err = s.db.InPartialHomeOf(*bin.NodeID, payloadCode); err != nil {
-			return 0, 0, err
-		}
-	}
-	if atHome && declared == nil {
-		return 0, 0, fmt.Errorf("%w: %s is a partial home for %s", ErrCountRequired, bin.NodeName, payloadCode)
-	}
-	var d *int
-	if declared != nil {
-		v := int(*declared)
-		d = &v
 	}
 	// A bare cart a person loads parts onto now carries a carrier: the rule
 	// judges that, and a refused load puts the marker back.
@@ -1152,7 +1132,6 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 	if err != nil {
 		return 0, 0, err
 	}
-	uop := standardPackUOP(p.UOPCapacity, d)
 	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared, refuseHeld, nil)
 	if err != nil {
 		if marker != nil {
@@ -1165,6 +1144,98 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 	if atHome {
 		if err := s.db.StampHeldSince(binID); err != nil {
 			log.Printf("bin manifest: held-since for bin %d after its load: %v", binID, err)
+		}
+	}
+	s.notifyBinChanged(binID)
+	return epoch, uop, nil
+}
+
+// lineLoad is what a LOAD at a loader window will write, decided before
+// anything is: the count, and whether the carrier stands in a partial home of
+// the part. The payload must be known. A partial home holds carriers of any
+// count, so the standard pack cannot stand for one there: the person declares
+// it, and the declaration is the moment the carrier is held from
+// (StampHeldSince). Elsewhere an undeclared count is the standard pack. Shared
+// by LoadAtLine and ReplaceAtLine.
+func (s *BinManifestService) lineLoad(binID int64, payloadCode string, declared *int64) (int, bool, error) {
+	p, err := s.db.GetPayloadByCode(payloadCode)
+	if err != nil || p == nil {
+		return 0, false, fmt.Errorf("%w: payload template %q not found", ErrUnknownPayload, payloadCode)
+	}
+	bin, err := s.db.GetBin(binID)
+	if err != nil {
+		return 0, false, err
+	}
+	atHome := false
+	if bin.NodeID != nil {
+		if atHome, err = s.db.InPartialHomeOf(*bin.NodeID, payloadCode); err != nil {
+			return 0, false, err
+		}
+	}
+	if atHome && declared == nil {
+		return 0, false, fmt.Errorf("%w: %s is a partial home for %s", ErrCountRequired, bin.NodeName, payloadCode)
+	}
+	var d *int
+	if declared != nil {
+		v := int(*declared)
+		d = &v
+	}
+	return standardPackUOP(p.UOPCapacity, d), atHome, nil
+}
+
+// ReplaceAtLine is the LOAD that replaces a tote (protocol.LoadExpectReplace):
+// the person took the stocked carrier's tote off and set a new one of the same
+// part on. The record says what happened: the old count left the spot
+// (clear_for_reuse to 0), a new count arrived (set_for_production) and is
+// confirmed with a fresh FIFO date. LoadAtLine's rules hold: the count, the
+// carrier rule, and a carrier a live order holds is refused.
+//
+// ONE TRANSACTION. A clear committed without its load records a full tote as
+// empty, and a robot then carries it off as one (SPR CARRIER-0014,
+// 2026-11-17). bookDeparture, when not nil, writes the clear's CMS departure on
+// the same transaction, first, as the CLEAR door books it
+// (engine.ReplaceAndBookDeparture).
+//
+// A FRESH DATE. The confirm is given the time explicitly: keepFIFODate's case 2
+// reads a clear and a same-part set at the same spot within 20 minutes as a
+// count correction and keeps the old date, and a replaced tote is new stock.
+// keptLoadedAt never replaces an explicit time.
+//
+// Returns the final epoch (the set's) and the count written. Pinned by the
+// replace arms of www.TestBinLoadDoor_Arms.
+func (s *BinManifestService) ReplaceAtLine(binID int64, manifestJSON, payloadCode string, declared *int64, bookDeparture func(*sql.Tx) error) (int64, int, error) {
+	uop, atHome, err := s.lineLoad(binID, payloadCode, declared)
+	if err != nil {
+		return 0, 0, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if bookDeparture != nil {
+		if err := bookDeparture(tx); err != nil {
+			return 0, 0, err
+		}
+	}
+	if _, err := s.ClearForReuseTx(tx, binID, nil, audit.OpClearForReuse,
+		"service/bin_manifest.go:ReplaceAtLine", protocol.DeclaredByLifecycle); err != nil {
+		return 0, 0, err
+	}
+	epoch, err := s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop,
+		protocol.DeclaredByLifecycle, refuseUndeclared, refuseHeld)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := s.confirmTx(tx, binID, clock.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	if atHome {
+		if err := s.db.StampHeldSince(binID); err != nil {
+			log.Printf("bin manifest: held-since for bin %d after its replace: %v", binID, err)
 		}
 	}
 	s.notifyBinChanged(binID)
@@ -1259,8 +1330,9 @@ func LoadRefusalFor(b *domain.Bin, claimant *domain.Order) string {
 
 // standardPackUOP is the one statement of the standard-pack rule: absence of a
 // declared count means a full bin, and a full bin is the payload's
-// uop_capacity CYCLES. A declared count is honoured as given, including zero —
-// "I counted none" is an answer, not a missing one.
+// uop_capacity, in the bin's own count (pieces, for a bin of one part:
+// protocol.ManifestItem). A declared count is honoured as given, including
+// zero — "I counted none" is an answer, not a missing one.
 func standardPackUOP(capacity int, declared *int) int {
 	if declared != nil {
 		return *declared
@@ -1941,10 +2013,10 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	// no read-then-update race.
 	//
 	// The line no longer carries a qty at all, which retires that bug class
-	// rather than re-fixing it: the count is uop_remaining (the $1 this same
-	// statement writes) times the template's parts_per_cycle, so there is no
-	// second copy to fall out of step. The rewrite still has to happen —
-	// the manifest's PART LIST must match the released payload.
+	// rather than re-fixing it: the count is derived from uop_remaining (the
+	// $1 this same statement writes) by protocol.ManifestItem's count rule, so
+	// there is no second copy to fall out of step. The rewrite still has to
+	// happen — the manifest's PART LIST must match the released payload.
 	//
 	// THE LINES, NOT THE PAYLOAD CODE, and writing the code here was a silent
 	// loss. Everything downstream keys a manifest line against

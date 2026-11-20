@@ -229,7 +229,7 @@ func containmentAsOf(st *engine.ContainmentState, now time.Time) string {
 	if current.IsZero() {
 		return containmentAsOfZero
 	}
-	return current.In(plantLocation).Format("15:04")
+	return current.In(plantLocation()).Format("15:04")
 }
 
 func containmentFlagRows(rows []protocol.PayloadContainmentRow) []containmentFlagRow {

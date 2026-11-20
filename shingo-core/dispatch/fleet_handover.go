@@ -313,9 +313,11 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 
 	// 3. THE YES. One statement guarded on the status and the ask: `dispatched`,
 	// the job, the robot the create pinned (an on-deck recovery's; any other is
-	// not this job's), the ask and the wait cleared; its history row and the
-	// station's tell with it (LifecycleService.Dispatch).
-	err := d.lifecycle.Dispatch(order, vendorOrderID, req.Vehicle, actor)
+	// not this job's), what each block it was sent is (orders.block_actions: the
+	// block subscriber reads a finished block's meaning from that record), the
+	// ask and the wait cleared; its history row and the station's tell with it
+	// (LifecycleService.Dispatch).
+	err := d.lifecycle.Dispatch(order, vendorOrderID, req.Vehicle, actor, blockActions(req.Blocks))
 	if err == nil {
 		return nil
 	}

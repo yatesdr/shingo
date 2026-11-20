@@ -311,15 +311,19 @@ func TestBuildMovementTransactions_ParseErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestBuildMovement_DerivesFromUOPTimesPartsPerCycle is the correctness fix
-// this project exists for. The bin manifest carries no count; the quantity on
-// the wire is what is physically in the carrier RIGHT NOW.
-func TestBuildMovement_DerivesFromUOPTimesPartsPerCycle(t *testing.T) {
+// TestBuildMovement_OnePartPostsTheBinsCount: a bin of one part counts pieces,
+// so the quantity on the wire is the bin's count as it stands, and the line's
+// pieces per assembly cycle is not read. The bin manifest carries no count; the
+// quantity is what is physically in the carrier RIGHT NOW. It replaces
+// TestBuildMovement_DerivesFromUOPTimesPartsPerCycle, which posted 16 here
+// (8 x the ratio 2): a count multiplied by a ratio only an assembly's consume
+// reads. A kit keeps the product (TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart).
+func TestBuildMovement_OnePartPostsTheBinsCount(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	addBoundary(f, 1, "src", "SM01")
 	addBoundary(f, 2, "dst", "MAN")
-	// Two parts per cycle, eight cycles left: sixteen parts move.
+	// Two pieces per assembly cycle, eight pieces left: eight pieces move.
 	f.setTemplate(100, "P1", 24, map[string]int64{"A": 2})
 	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1", UOPRemaining: 8}
 	setManifest(bin, []bins.ManifestEntry{{PartNumber: "A"}})
@@ -332,8 +336,8 @@ func TestBuildMovement_DerivesFromUOPTimesPartsPerCycle(t *testing.T) {
 	if len(txns) != 2 {
 		t.Fatalf("txns = %d, want 2", len(txns))
 	}
-	if txns[0].Delta != -16 || txns[1].Delta != 16 {
-		t.Errorf("deltas = %d, %d; want -16, +16 (8 cycles x 2 per cycle)", txns[0].Delta, txns[1].Delta)
+	if txns[0].Delta != -8 || txns[1].Delta != 8 {
+		t.Errorf("deltas = %d, %d; want -8, +8 (the bin's 8 pieces, not 8 x the ratio 2)", txns[0].Delta, txns[1].Delta)
 	}
 }
 
@@ -365,7 +369,8 @@ func TestBuildMovement_PartialFillReflectsActualCount(t *testing.T) {
 }
 
 // TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart: N parts in the
-// template, N x 2 rows per move, each at its own ratio.
+// template, N x 2 rows per move, each at its own ratio. A kit's count is
+// cycles, so each line posts the count times its ratio.
 func TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()

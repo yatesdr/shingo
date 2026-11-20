@@ -626,14 +626,14 @@ func (s *LifecycleService) Park(ord *orders.Order, actor string) error {
 // (store.DB.FleetYes). ConcurrentTransition means the row no longer holds the
 // ask: nothing moves a row with an ask open but an ending, so the order ended
 // while the fleet was creating its job, and the caller cancels that job.
-func (s *LifecycleService) Dispatch(ord *orders.Order, vendorOrderID, robotID, actor string) error {
+func (s *LifecycleService) Dispatch(ord *orders.Order, vendorOrderID, robotID, actor string, actions map[string]string) error {
 	from := ord.Status
 	if !protocol.IsValidTransition(from, StatusDispatched) {
 		return IllegalTransition{From: from, To: StatusDispatched}
 	}
 	ev := Event{Actor: actor, Reason: fmt.Sprintf("vendor order %s created", vendorOrderID),
 		RobotID: robotID, PreviousStatus: from}
-	told, moved, err := s.db.FleetYes(ord.ID, from, vendorOrderID, robotID, ev.Reason,
+	told, moved, err := s.db.FleetYes(ord.ID, from, vendorOrderID, robotID, actions, ev.Reason,
 		s.historyReason(ord, StatusDispatched, ev), s.tellOf(ev))
 	if err != nil {
 		return fmt.Errorf("persist %s→%s: %w", from, StatusDispatched, err)
@@ -643,6 +643,7 @@ func (s *LifecycleService) Dispatch(ord *orders.Order, vendorOrderID, robotID, a
 	}
 	ord.VendorOrderID, ord.VendorState, ord.AskedVendorOrderID = vendorOrderID, "CREATED", ""
 	ord.RobotID = told.RobotID
+	ord.BlockActions = actions
 	s.afterTransition(ord, from, StatusDispatched, told, ev)
 	return nil
 }

@@ -298,7 +298,7 @@ func TestOrderService_ListOrderHistory_ReturnsTransitions(t *testing.T) {
 	// its history row. A status write alone is refused
 	// (orders_dispatched_names_its_job), so the order asks and the fleet answers.
 	testdb.SeedAsk(t, db, o.ID, protocol.StatusQueued, "sg-history")
-	_, moved, err = db.FleetYes(o.ID, protocol.StatusQueued, "sg-history", "", "assigned",
+	_, moved, err = db.FleetYes(o.ID, protocol.StatusQueued, "sg-history", "", nil, "assigned",
 		store.HistoryReason{}, protocol.OrderUpdate{})
 	testutil.MustNoErr(t, err, "the fleet's yes")
 	if !moved {

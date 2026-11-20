@@ -313,7 +313,7 @@ async function pinTable() {
 // board order is offered nowhere a stored claim can reach.
 const ADV_FIELDS = ['allowed_payload_codes', 'reorder_point', 'auto_reorder', 'lineside_soft_threshold',
     'auto_push', 'keep_staged_node', 'evac_nodes', 'changeover_carryover_disposition',
-    'strict_pack', 'pack_tolerance_pct', 'partial_dest', 'refill_by', 'curtain_required', 'auto_confirm', 'sequence'];
+    'strict_pack', 'pack_tolerance_pct', 'hold_limit', 'partial_dest', 'refill_by', 'curtain_required', 'auto_confirm', 'sequence'];
 
 async function pinAdvanced() {
     const page = await openPage();

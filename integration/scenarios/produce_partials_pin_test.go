@@ -250,18 +250,20 @@ func ppRun(t *testing.T, r ppRow) string {
 // The answers, by door. A full or partial carrier off a staged produce leg
 // lands at the claim's outbound whatever it holds, its count written by the
 // release-time ingest (set_for_production, manifest_confirmed) and booked
-// into the storeroom at two parts a cycle. A line with nothing made refuses
+// into the storeroom at its count: a one-part payload's bin counts pieces, so
+// the template's ratio of 2 (an assembly's consume setting) is not read and
+// cms is the uop (protocol.ManifestItem). A line with nothing made refuses
 // the REQUEST. The Material page's move carries no count to Core at all (see
 // its rows).
 const (
-	ppAt40   = "at=KSR-DEST uop=40 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=80"
-	ppAt17   = "at=KSR-DEST uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=34"
+	ppAt40   = "at=KSR-DEST uop=40 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=40"
+	ppAt17   = "at=KSR-DEST uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=17"
 	ppAt0    = "at=KSR-DEST uop=0 part=KSR-PA ledger=- cms=0"
 	ppAtBare = "at=KSR-DEST uop=0 part=- ledger=- cms=0"
 	// Departed with no release-time ingest: the count is the streamed one,
 	// unconfirmed, and still booked.
-	ppNoIngest40 = "at=KSR-DEST uop=40 part=KSR-PA ledger=- cms=80"
-	ppNoIngest17 = "at=KSR-DEST uop=17 part=KSR-PA ledger=- cms=34"
+	ppNoIngest40 = "at=KSR-DEST uop=40 part=KSR-PA ledger=- cms=40"
+	ppNoIngest17 = "at=KSR-DEST uop=17 part=KSR-PA ledger=- cms=17"
 )
 
 func ppRows() []ppRow {
@@ -312,9 +314,9 @@ func ppRows() []ppRow {
 		// sync and no clear (FLAT BUG). After: the count lands, synced onto the
 		// carrier at its claim, and a count of 0 clears it.
 		ppRow{door: "material", mode: tr, class: ppFull, today: ppNoIngest40,
-			after: "at=KSR-DEST uop=40 part=KSR-PA ledger=sync_uop_and_claim cms=80"},
+			after: "at=KSR-DEST uop=40 part=KSR-PA ledger=sync_uop_and_claim cms=40"},
 		ppRow{door: "material", mode: tr, class: ppPartial, today: ppNoIngest17,
-			after: "at=KSR-DEST uop=17 part=KSR-PA ledger=sync_uop_and_claim cms=34"},
+			after: "at=KSR-DEST uop=17 part=KSR-PA ledger=sync_uop_and_claim cms=17"},
 		ppRow{door: "material", mode: tr, class: ppEmpty, today: ppAt0,
 			after: "at=KSR-DEST uop=0 part=- ledger=clear_and_claim cms=0"},
 		ppRow{door: "material", mode: tr, class: ppBare, today: ppAtBare,
@@ -322,7 +324,7 @@ func ppRows() []ppRow {
 		// The operator types 9 at the Material page: today Core kept the
 		// stream's 17; after, the operator's count lands.
 		ppRow{door: "material-count9", mode: tr, class: ppPartial, today: ppNoIngest17,
-			after: "at=KSR-DEST uop=9 part=KSR-PA ledger=sync_uop_and_claim cms=18"},
+			after: "at=KSR-DEST uop=9 part=KSR-PA ledger=sync_uop_and_claim cms=9"},
 	)
 	rows = append(rows, ppFinishLaterRows()...)
 	return rows

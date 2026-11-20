@@ -183,18 +183,19 @@ func tagBoundary(t *testing.T, db *store.DB, name, storeroom string) (*nodes.Nod
 // TestCMSEndToEnd_APartialBinShipsItsACTUALCount is the project's headline
 // correctness claim, checked on the wire.
 //
-// A bin loaded from a 24-cycle template holding 8 cycles of a part consumed 2
-// per cycle holds SIXTEEN parts. Before this work the manifest carried the
-// template's full-bin nominal, nothing rewrote it as production drew the bin
-// down, and CMS would have been told 48 (the nominal) — or, had the rename
-// landed without its backfill, 24 x 48.
+// A bin of one part loaded from a standard pack of 24 and holding 8 holds
+// EIGHT pieces, whatever its line's pieces per assembly cycle (2 here). Before
+// the count was derived the manifest carried the template's full-bin nominal,
+// nothing rewrote it as production drew the bin down, and CMS would have been
+// told 48 (the nominal); until a bin of one part counted pieces, it was told 16
+// (8 x the ratio 2).
 func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	stub := newMiddlewareStub(t, http.StatusOK, `{"TransactionId":"MW-E2E-1"}`)
 	eng := cmsEngine(t, db, stub.srv.URL)
 
-	// A payload whose bin holds 24 cycles, at 2 parts per cycle.
+	// A payload whose full bin holds 24 pieces, consumed 2 per assembly cycle.
 	//
 	// THE LINE NAMES THE PAYLOAD CODE, which is what a single-part payload looks
 	// like after the identity correction: a bin of one part is a bin of that
@@ -256,10 +257,10 @@ func TestCMSEndToEnd_APartialBinShipsItsACTUALCount(t *testing.T) {
 		t.Fatalf("no arrival row for MAN: %s", got[0])
 	}
 
-	// THE NUMBER. 8 cycles x 2 parts per cycle.
-	if departure["Quantity"] != float64(16) || arrival["Quantity"] != float64(16) {
-		t.Errorf("quantities = %v / %v, want 16 and 16 — a bin holding 8 of a 24-cycle "+
-			"template at 2 per cycle holds 16 parts, not the template's nominal: %s",
+	// THE NUMBER. The bin's 8 pieces.
+	if departure["Quantity"] != float64(8) || arrival["Quantity"] != float64(8) {
+		t.Errorf("quantities = %v / %v, want 8 and 8 — a bin of one part holding 8 of a "+
+			"standard pack of 24 holds 8 pieces, not the nominal and not 8 x its ratio: %s",
 			departure["Quantity"], arrival["Quantity"], got[0])
 	}
 	// Direction is in the type; the quantity is unsigned.
@@ -501,8 +502,9 @@ func TestCMSEndToEnd_AnIntermediateDropoffBooksItsArrival(t *testing.T) {
 	if got := rows[0]["StockLocation"]; got != "ASTEST" {
 		t.Errorf("StockLocation = %v, want ASTEST", got)
 	}
-	if got := rows[0]["Quantity"]; got != float64(30) {
-		t.Errorf("Quantity = %v, want 30 (10 cycles x 3 per cycle)", got)
+	if got := rows[0]["Quantity"]; got != float64(10) {
+		t.Errorf("Quantity = %v, want 10 (the bin's pieces; a bin of one part is not "+
+			"multiplied by its ratio 3)", got)
 	}
 	if got := rows[0]["TransactionType"]; got != "I" {
 		t.Errorf("TransactionType = %v, want I — an arrival is an increase", got)

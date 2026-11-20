@@ -275,3 +275,28 @@ func TestNodesPage_TileShowsTheRobotStandingOnIt(t *testing.T) {
 		t.Errorf("want exactly one robot marker, on UTN_013: %s", want)
 	}
 }
+
+// The Nodes page lists a location's binTask keys through the one reading of the
+// scene property (domain.ScenePoint.BinTasks) that dispatch and the Bins page
+// share: in the scene's order, nothing for a property with no value.
+func TestGetNodesPageData_ListsALocationsBinTaskKeys(t *testing.T) {
+	t.Parallel()
+	stub := &stubNodesPageDataStore{scenePoints: []*scene.Point{
+		{InstanceName: "LOC-1", ClassName: "GeneralLocation", PointName: "AP1", PropertiesJSON: `[` +
+			`{"key":"bindRobotMap","type":"string","stringValue":"map-a"},` +
+			`{"key":"binTask","type":"json","stringValue":"[{\"JackLoad\":{\"operation\":\"JackLoad\"}},` +
+			`{\"JackUnload\":{\"operation\":\"JackUnload\"}},{\"wait_4548\":{\"operation\":\"Wait\"}},{\"Wait\":{}}]"}]`},
+		{InstanceName: "LOC-2", ClassName: "GeneralLocation", PointName: "AP2",
+			PropertiesJSON: `[{"key":"binTask","type":"json"}]`},
+	}}
+	pd, err := getNodesPageData(stub)
+	if err != nil {
+		t.Fatalf("getNodesPageData: %v", err)
+	}
+	if got := pd.NodeInfo["LOC-1"]; got == nil || got.Tasks != "JackLoad, JackUnload, wait_4548, Wait" || got.BoundMap != "map-a" {
+		t.Errorf("LOC-1 = %+v, want tasks \"JackLoad, JackUnload, wait_4548, Wait\" and bound map map-a", got)
+	}
+	if got := pd.NodeInfo["LOC-2"]; got == nil || got.Tasks != "" || got.PointName != "AP2" {
+		t.Errorf("LOC-2 = %+v, want point AP2 and no tasks", got)
+	}
+}

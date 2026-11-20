@@ -1,6 +1,6 @@
 # Shingo Wire Protocol Specification
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 **Protocol version:** 1
 
@@ -1167,7 +1167,7 @@ Core returns the payload catalog. Used by edge to populate payload code dropdown
 | `name` | string |  | the payload template's name |
 | `code` | string |  | the unique payload code |
 | `description` | string |  | a human-readable description |
-| `uop_capacity` | integer |  | production cycles a full load supports |
+| `uop_capacity` | integer |  | the standard pack: the pieces a full bin of a part alone holds (a kit: cycles) |
 | `catid` | string | omitempty | CATID is the payload's part identity from its Core manifest: the DISTINCT part numbers, comma-joined (a single-part payload sends one value; a multi-part kit sends the full list). The edge splits it back into the style's part-identity SET — membership semantics, so a multi-part payload contributes every part it carries rather than nothing. Empty when the payload's manifest carries no part numbers. |
 | `manifest` | [`ManifestItem`](#manifestitem)[] | omitempty | Manifest is the payload's manifest TEMPLATE: its lines in Core's order (payload_manifest by id), each a part and its per-cycle ratio. Absent when the payload has no lines, so a row without a template encodes, and digests, exactly as it did before the lines rode the catalog (TestCatalogDigest_ManifestLines). The Edge's load modal reads it from its catalog copy instead of asking Core per tap. CATID is derivable from the same rows and is still sent as its own field. |
 
@@ -1481,6 +1481,9 @@ from Core's. The Edge merges it per field and re-sends what it owns that Core is
 
 Sent on `edge.ask`: a question that wants an answer — a kind (`AskKinds`, `protocol/ask.go`) and that kind's
 request body (`protocol/door_bodies.go`; `loader.retrieve`'s `LoaderRetrieveRequest` is in `protocol/ask.go`).
+`part.create` carries `PartCreateRequest`, a part made new at a station's changeover picker, and is answered with
+`PartCreateResponse`: the asking process's id, the part's catalog row (`CatalogPayloadInfo`) and its carrier rows
+(`PayloadBinTypeInfo`), which the edge writes with no memory of the ask.
 An edge sends a kind only while Core's last heartbeat ack named it (`asks`). The ask rides the edge outbox and
 expires after `AskTTL` (25 s); Core answers it with `edge.answer` (a reply carrying the ask's envelope ID as
 `cor`), and answers one that arrives expired with status 408 (`AnswerExpired`) and does nothing.

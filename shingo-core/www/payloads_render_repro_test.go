@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"html/template"
 	"testing"
+	"time"
 
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/payloads"
 )
@@ -34,6 +36,10 @@ func TestPayloadsTemplateRenderRepro(t *testing.T) {
 		},
 		"UnroutedProducers": map[string]string{
 			"BRKT": "LOADER-CLIP, Test - FG",
+		},
+		// handlePayloadsPage always passes the floor-made map, empty or not.
+		"FloorMade": map[int64]*service.FloorMade{
+			3: {Station: "edge.repro", ProcessID: 7, At: time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)},
 		},
 		"Authenticated": true,
 	}

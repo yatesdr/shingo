@@ -436,7 +436,7 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 		// placement, so it takes the same occupancy hold.
 		if ov.Complete && p.blockIndex == len(blocks)-1 {
 			b := blocks[p.blockIndex]
-			if d.holdForPosition(now, vid, b.Location, b.BinTask, p) {
+			if d.holdForPosition(now, vid, b.Location, b.Action, p) {
 				return
 			}
 			if !p.lastSent {
@@ -455,19 +455,19 @@ func (d *Driver) advance(now time.Time, vid string, ov *OrderView, p *orderProgr
 			}
 			// The deck follows the final block too: its unload empties it.
 			// Applied before markDone, which forgets which robot ran it.
-			d.robots.blockCompleted(p.robotID, b.Location, b.BinTask)
+			d.robots.blockCompleted(p.robotID, b.Location, b.Action)
 			d.markDone(p)
 			return
 		}
 
 		b := blocks[p.blockIndex]
-		if d.holdForPosition(now, vid, b.Location, b.BinTask, p) {
+		if d.holdForPosition(now, vid, b.Location, b.Action, p) {
 			return
 		}
 		d.sim.CompleteBlock(vid, b.BlockID, b.Location, b.BinTask, p.blockStart.Unix(), now.Unix())
 		// The deck follows the block whether or not an emitter heard it: the
 		// lift happened on the robot, not in Core.
-		d.robots.blockCompleted(p.robotID, b.Location, b.BinTask)
+		d.robots.blockCompleted(p.robotID, b.Location, b.Action)
 		p.blockIndex++
 		p.blockStart = now
 		p.deadline = d.nextDeadline(now)
@@ -821,12 +821,12 @@ func (d *Driver) gcProgress() {
 // still names a deadlock long before a human would think to look.
 const unresolvableHoldAfter = 5 * time.Minute
 
-func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p *orderProgress) bool {
+func (d *Driver) holdForPosition(now time.Time, vid, location, action string, p *orderProgress) bool {
 	g := d.sim.PositionGate()
 	if g == nil || location == "" {
 		return false
 	}
-	hold := g.CanEnterPosition(vid, location, binTask)
+	hold := g.CanEnterPosition(vid, location, action)
 	if !hold.Held {
 		if p.heldAt != "" {
 			log.Printf("[sim] order %s resumed at %s (position cleared)", vid, p.heldAt)

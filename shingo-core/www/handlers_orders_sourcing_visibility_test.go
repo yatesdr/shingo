@@ -141,7 +141,7 @@ func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 	// The fleet's yes is the one write of `dispatched`: Core asks for the job
 	// from queued, and the yes names it and ends the wait in one statement.
 	testdb.SeedAsk(t, db, o.ID, protocol.StatusQueued, "sg-sv-moving")
-	_, moved, err := db.FleetYes(o.ID, protocol.StatusQueued, "sg-sv-moving", "", "on its way",
+	_, moved, err := db.FleetYes(o.ID, protocol.StatusQueued, "sg-sv-moving", "", nil, "on its way",
 		store.HistoryReason{}, protocol.OrderUpdate{})
 	testutil.MustNoErr(t, err, "queued→dispatched")
 	if !moved {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/fleet"
 )
@@ -16,8 +17,8 @@ type stubGate struct {
 	blocker *int64 // the owner the gate reports for the blocking bin
 }
 
-func (g stubGate) CanEnterPosition(vendorOrderID, location, binTask string) fleet.PositionHold {
-	if binTask != "JackUnload" {
+func (g stubGate) CanEnterPosition(vendorOrderID, location, action string) fleet.PositionHold {
+	if action != protocol.ActionDropoff {
 		return fleet.PositionHold{}
 	}
 	return fleet.PositionHold{

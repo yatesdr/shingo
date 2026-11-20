@@ -8,14 +8,17 @@
 // matching half — and the bodies Go previews, and what Go says. On a recipe
 // with groups: what each recipe screen asks the picture to draw full, tag and
 // hold still, the on-deck spot following its spot, and the part list asking
-// by the groups' names.
+// by the groups' names. The New part door: drawn where the composer read says,
+// the body its form posts, and the page's three outcomes (done goes on with
+// the part, sent and waiting takes no second tap, refused says why).
 //
 // WHAT IS REAL: composer-render.js and composer-model.js. WHAT IS STUBBED: the
 // DOM (screens are asserted as the markup the module wrote), the picture
 // renderer (it records the options each picture was asked for, and reports
 // PICW as the picture's width when a test sets it), and fetch (the composer
 // read answers from FLOW; a preview answers PREVIEW when a test sets it and
-// nothing otherwise, so Go stays on "Checking…").
+// nothing otherwise, so Go stays on "Checking…"; the new-part door answers
+// PARTS when a test sets it, and never otherwise).
 //
 // Run by www/composer_modal_test.go.
 
@@ -90,6 +93,8 @@ let FLOW = {};
 let PREVIEW = null;
 let MINT = null;       // flow/mint's answer, when a test sets it
 let START = null;      // changeover/start's answer, when a test sets it
+let PARTS = null;      // the new-part door's answer ({status, body}, then FLOW after it), when a test sets it;
+                       // held: the answer waits until the test calls PARTS.release(), as a late answer does
 let PIC = {};          // the options the last picture was drawn with
 const PICS = [];       // every picture's options, in order
 let PICW = 0;          // the width the stub reports, when set
@@ -113,6 +118,15 @@ Object.assign(global, {
         }
         if (MINT && String(url).indexOf('/flow/mint') >= 0) {
             return Promise.resolve({ ok: true, status: 200, json: async () => MINT });
+        }
+        if (PARTS && /\/processes\/\d+\/parts$/.test(String(url))) {
+            const p = PARTS;
+            const answer = () => {
+                if (p.flowAfter) FLOW = p.flowAfter;
+                return { ok: p.status >= 200 && p.status < 300, status: p.status, json: async () => p.body || {} };
+            };
+            if (p.held) return new Promise(res => { p.release = () => res(answer()); });
+            return Promise.resolve(answer());
         }
         if (START && String(url).indexOf('/changeover/start') >= 0) {
             return Promise.resolve({ ok: START.ok !== false, status: START.status || 200, json: async () => START.body || {} });
@@ -186,6 +200,7 @@ async function open(flow, setup, view) {
     PREVIEW = null;
     MINT = null;
     START = null;
+    PARTS = null;
     PICW = 0;
     UI.openPicker(view || viewWith(setup !== false));
     await settle(); await settle();
@@ -918,6 +933,190 @@ test('Go says what comes off, what comes on, and Core\'s word, and draws the pre
     }
     expectOut('go', '<details');
     expectOut('go', 'trips and wait');
+});
+
+// ── the New part door: a part Core does not have ───────────────────────────
+// The composer read draws it (new_part, carrier_types) where HMI setup is on,
+// Core answers part.create and has sent a carrier; the form posts the part to
+// /api/processes/{id}/parts, and the page reads three outcomes off the status.
+const DOOR = { part_rows: ROWS, presets: [ONE, TWO], new_part: true, carrier_types: ['SYN-CART', 'SYN-TOTE-CART'] };
+const NEW_ROW = 'data-act="newpart"';
+function typeIn(id, v) { els[id] = els[id] || makeEl(id); els[id].value = v; }
+function partPosts() { return CALLS.filter(c => /\/processes\/\d+\/parts$/.test(c.url)).length; }
+// fillNewPart opens the form from the part list and fills it as an operator
+// would: a part number, a pack, a carrier, no CATID, tote layers blank and
+// parts per tote given.
+async function fillNewPart() {
+    await open(DOOR, true);
+    els['os-comp-q'].value = '';
+    tap('newpart');
+    typeIn('os-np-part', ' SYN-NEW-1 ');
+    typeIn('os-np-pack', '800');
+    typeIn('os-np-catid', '');
+    typeIn('os-np-layers', '');
+    typeIn('os-np-tote', '12');
+    tap('npcarrier', { carrier: 'SYN-CART' });
+    CALLS.length = 0;
+}
+test('the New part door is drawn only where the composer read draws it, and only on the part list', async () => {
+    await open(DOOR, true);
+    expectIn('door drawn', NEW_ROW, box());
+    typeQ('zzz');
+    expectIn('door drawn, nothing matches', NEW_ROW, box());
+    expectIn('door drawn, nothing matches', 'Nothing in this cell’s parts matches that.', box());
+    expectOut('door drawn, nothing matches', 'An engineer adds parts on the desktop', box());
+    typeQ('');
+
+    await open({ part_rows: ROWS, presets: [ONE, TWO] }, true);
+    expectOut('door not drawn', NEW_ROW, box());
+    typeQ('zzz');
+    expectIn('door not drawn, nothing matches', 'An engineer adds parts on the desktop', box());
+    typeQ('');
+
+    await open(DOOR, false);
+    expectOut('setup off', NEW_ROW, box());
+
+    await open(DOOR, true);
+    tap('part', { part: 'PART-A' });
+    tap('two');
+    await settle();
+    expectOut('the second part', NEW_ROW, box());
+});
+test('New part opens the form on the number searched for, with every field and the carriers Core sent', async () => {
+    await open(DOOR, true);
+    els['os-comp-q'].value = 'SYN-NEW-9';
+    tap('newpart');
+    els['os-comp-q'].value = '';
+    for (const want of ['<h2>New part</h2>', 'id="os-np-part" type="text" autocomplete="off" value="SYN-NEW-9"',
+        'Standard pack', 'Carrier', 'CATID · optional', 'Totes · optional', 'Tote layers', 'Parts per tote',
+        'data-carrier="SYN-CART"', 'data-carrier="SYN-TOTE-CART"', 'data-act="npsend">Add part<']) {
+        expectIn('the form', want);
+    }
+    expectOut('the form, nothing picked', 'btn on"');
+    typeIn('os-np-pack', '640');
+    tap('npcarrier', { carrier: 'SYN-TOTE-CART' });
+    expectIn('a carrier picked', 'class="os-chip btn on" data-act="npcarrier" data-carrier="SYN-TOTE-CART"');
+    expectIn('a carrier picked keeps what was typed', 'value="640"');
+});
+test('Add part, done: the picker opens again on the new part and asks how the press runs it', async () => {
+    await fillNewPart();
+    PARTS = {
+        status: 200,
+        body: { process_id: 1, payload: { id: 9, name: 'SYN-NEW-1', code: 'SYN-NEW-1', uop_capacity: 800 },
+            bin_types: [{ payload_code: 'SYN-NEW-1', bin_type_code: 'SYN-CART' }] },
+        flowAfter: Object.assign({}, DOOR, { part_rows: ROWS.concat([{ code: 'SYN-NEW-1', name: 'SYN-NEW-1' }]) }),
+    };
+    tap('npsend');
+    await settle(); await settle(); await settle();
+    const want = '{"station_id":5,"part_number":"SYN-NEW-1","standard_pack":800,"bin_type_code":"SYN-CART",' +
+        '"catid":"","tote_layers":null,"uop_per_tote":12}';
+    if (bodyOf('/parts') !== want) throw new Error('the body ' + bodyOf('/parts') + ', want ' + want);
+    if (urls().join() !== '/api/processes/1/parts,/api/operator-stations/5/composer') {
+        throw new Error('done: ' + urls().join() + '; want the post, then the composer read again');
+    }
+    expectIn('done', 'how does the press run it?');
+    expectIn('done', '<h2>' + ComposerModel.shortPart('SYN-NEW-1') + '</h2>');
+});
+// A yes: the door's 200 with Core's answer, the part listed in the read after it.
+const YES = {
+    status: 200,
+    body: { process_id: 1, payload: { id: 9, name: 'SYN-NEW-1', code: 'SYN-NEW-1', uop_capacity: 800 },
+        bin_types: [{ payload_code: 'SYN-NEW-1', bin_type_code: 'SYN-CART' }] },
+    flowAfter: Object.assign({}, DOOR, { part_rows: ROWS.concat([{ code: 'SYN-NEW-1', name: 'SYN-NEW-1' }]) }),
+};
+const NO_SAY = ['Close, and open the list again', 'add it again', 'Sent. Core has not answered yet'];
+test('Add part, waiting: the form says it waits for Core, takes no second tap, and never says to come back', async () => {
+    await fillNewPart();
+    PARTS = Object.assign({ held: true }, YES);
+    tap('npsend');
+    await settle(); await settle();
+    expectIn('waiting', 'class="os-comp-pending">Waiting for Core');
+    expectIn('waiting', 'data-act="npsend" disabled');
+    for (const say of NO_SAY) expectOut('waiting', say);
+    tap('npsend');
+    await settle();
+    if (partPosts() !== 1) throw new Error(partPosts() + ' posts; want the one');
+});
+test('Add part, a yes after the wait: the form carries on to the new part, with no second post', async () => {
+    await fillNewPart();
+    PARTS = Object.assign({ held: true }, YES);
+    tap('npsend');
+    await settle(); await settle();
+    expectOut('still waiting', 'how does the press run it?');
+    PARTS.release();
+    await settle(); await settle(); await settle();
+    if (urls().join() !== '/api/processes/1/parts,/api/operator-stations/5/composer') {
+        throw new Error('a late yes: ' + urls().join() + '; want the one post, then the composer read again');
+    }
+    expectIn('carried on', 'how does the press run it?');
+    expectIn('carried on', '<h2>' + ComposerModel.shortPart('SYN-NEW-1') + '</h2>');
+});
+test("Add part, a no after the wait: Core's sentence, and the form can be changed and sent", async () => {
+    await fillNewPart();
+    PARTS = { held: true, status: 409, body: { error: 'This part already exists on Core as SYN-NEW-1.' } };
+    tap('npsend');
+    await settle(); await settle();
+    PARTS.release();
+    await settle(); await settle();
+    expectIn('a late no', 'class="os-comp-refusal">This part already exists on Core as SYN-NEW-1.');
+    expectIn('a late no', 'value="800"');
+    expectOut('a late no', 'data-act="npsend" disabled');
+    for (const say of NO_SAY) expectOut('a late no', say);
+});
+test("Add part, no answer in the ask's life: the sentence, and Add part sends it again", async () => {
+    await fillNewPart();
+    PARTS = { held: true, status: 504, body: { error: 'Core did not answer. Send it again.' } };
+    tap('npsend');
+    await settle(); await settle();
+    PARTS.release();
+    await settle(); await settle();
+    expectIn('no answer', 'class="os-comp-refusal">Core did not answer. Send it again.');
+    expectOut('no answer', 'data-act="npsend" disabled');
+    PARTS = YES;
+    tap('npsend');
+    await settle(); await settle(); await settle();
+    if (partPosts() !== 2) throw new Error(partPosts() + ' posts after the resend; want 2');
+    expectIn('the resend carried on', 'how does the press run it?');
+});
+test('Add part, the sheet closed while it waits, then a yes: nothing reopens, and the part is listed next time', async () => {
+    await fillNewPart();
+    PARTS = Object.assign({ held: true }, YES);
+    tap('npsend');
+    await settle(); await settle();
+    UI.close();
+    PARTS.release();
+    await settle(); await settle(); await settle();
+    expectOut('closed', 'how does the press run it?');
+    expectOut('closed', '<h2>New part</h2>');
+    UI.openPicker(viewWith(true));
+    await settle(); await settle();
+    expectIn('opened again', 'data-part="SYN-NEW-1"', box());
+});
+test('Add part, refused: the sentence the server gave, what was typed kept, and Add part again', async () => {
+    for (const status of [400, 409]) {
+        await fillNewPart();
+        PARTS = { status: status, body: { error: 'Core already has SYN NEW 1.' } };
+        tap('npsend');
+        await settle(); await settle();
+        expectIn('refused ' + status, 'class="os-comp-refusal">Core already has SYN NEW 1.');
+        expectIn('refused ' + status, 'value="800"');
+        expectIn('refused ' + status, 'class="os-chip btn on" data-act="npcarrier" data-carrier="SYN-CART"');
+        expectOut('refused ' + status, 'data-act="npsend" disabled');
+        tap('npsend');
+        if (partPosts() !== 2) throw new Error('refused ' + status + ': ' + partPosts() + ' posts after a second tap; want 2');
+    }
+});
+test('Add part disables itself on the first tap; a number field that is not a number goes as 0, not blank', async () => {
+    await fillNewPart();
+    typeIn('os-np-pack', '8a');
+    typeIn('os-np-layers', '2x');
+    tap('npsend');
+    tap('npsend');
+    await settle();
+    if (partPosts() !== 1) throw new Error(partPosts() + ' posts for two taps; want 1');
+    expectIn('in flight', 'data-act="npsend" disabled');
+    const sent = bodyOf('/parts');
+    if (sent.indexOf('"standard_pack":0') < 0 || sent.indexOf('"tote_layers":0') < 0) throw new Error('the body ' + sent);
 });
 
 (async () => {

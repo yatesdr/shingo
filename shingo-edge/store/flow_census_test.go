@@ -51,10 +51,11 @@ func itoa(n int) string { return strconv.Itoa(n) }
 // with the ones a write always moves normalised out.
 func storedColumnsEqual(t *testing.T, label string, got, want processes.NodeClaim) {
 	t.Helper()
-	// Capacity is not a stored column and the model does not predict it — it
-	// is resolved from the payload catalog on read. It is checked on its own
-	// terms in claim_capacity_test.go.
+	// Capacity and pieces per cycle are not stored columns and the model does
+	// not predict them — they are resolved from the payload catalog on read.
+	// They are checked on their own terms in claim_capacity_test.go.
 	got.UOPCapacity, want.UOPCapacity = 0, 0
+	got.PiecesPerCycle, want.PiecesPerCycle = 0, 0
 	got.CreatedAt = want.CreatedAt
 	got.UpdatedAt, want.UpdatedAt = nil, nil
 	got.RetiredAt, want.RetiredAt = nil, nil

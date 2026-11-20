@@ -273,7 +273,7 @@ CREATE TABLE IF NOT EXISTS orders (
     -- order to staged (a robot parked). NULL until then. The idle rule's hour
     -- does not start before it (engine/idle_cancel.go).
     staged_at       TEXT,
-    -- core_version (Edge v58): the version of the last Core word applied to
+    -- core_version (Edge v59): the version of the last Core word applied to
     -- the order (protocol.OrderUpdate.Version). 0 = none yet.
     core_version    INTEGER NOT NULL DEFAULT 0,
     -- want (Edge v30): the height an empty is wanted at, as this Edge stated
@@ -791,6 +791,10 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- declares the bin full; further short ships the real count. 0 = no
     -- tolerance: the real count always ships.
     pack_tolerance_pct      INTEGER NOT NULL DEFAULT 0,
+    -- hold_limit (v58): the most a strict seat sets aside off the cart, what
+    -- the line's packer, conveyor or accumulator holds while the cart is full
+    -- or swapping. Past it the pile is thrown away and logged. 0 = one pack.
+    hold_limit              INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     -- The keep-staged node: one more node this line's full or empty comes
     -- from instead of inbound_source, with a spare kept standing on it.

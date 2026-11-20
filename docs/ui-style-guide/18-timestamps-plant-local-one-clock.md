@@ -1,6 +1,6 @@
 ## Timestamps — plant-local, one clock
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 **Storage is UTC, the wire is RFC3339-UTC, and every rendered timestamp is
 plant-local and labeled. The server's first paint is correct and final — no

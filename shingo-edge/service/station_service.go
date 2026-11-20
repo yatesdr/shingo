@@ -166,8 +166,13 @@ type StationService struct {
 	// tile's carriers. Optional: unset leaves carriers empty.
 	carrierCatalog func() []protocol.PayloadBinTypeInfo
 	// binTypeFamilies is Core's carrier family per bin type, for a board that offers
-	// carriers. Optional: unset sends none, and its panels do not filter.
+	// carriers and the new-part form's carrier list. Optional: unset sends none,
+	// its panels do not filter, and the new-part door is not drawn.
 	binTypeFamilies func() map[string]string
+	// coreAnswers reports whether Core's last heartbeat ack named an ask kind
+	// (the engine's CoreAnswers). Optional: unset is a Core that answers none,
+	// and the new-part door is not drawn.
+	coreAnswers func(kind string) bool
 	// coreNodes reports the Core node names this edge currently knows, as a set.
 	// Optional, and the nil-safety is load-bearing rather than incidental — see
 	// unknownCoreNodes for why an unwired or empty resolver must accept
@@ -271,6 +276,10 @@ func (s *StationService) SetCarrierCatalog(r func() []protocol.PayloadBinTypeInf
 
 // SetBinTypeFamilies injects Core's carrier family per bin type. Optional.
 func (s *StationService) SetBinTypeFamilies(r func() map[string]string) { s.binTypeFamilies = r }
+
+// SetCoreAnswersResolver injects which ask kinds Core answers, for the doors a
+// read draws only where Core will answer them. Optional.
+func (s *StationService) SetCoreAnswersResolver(r func(kind string) bool) { s.coreAnswers = r }
 
 // SetCoreNodeResolver injects the set of Core node names this edge knows, used
 // to refuse a station node list that names something Core does not have.

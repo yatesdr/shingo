@@ -5,7 +5,6 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
-	"shingocore/fleet/seerrds"
 	"shingocore/store/bins"
 )
 
@@ -33,11 +32,12 @@ import (
 // that the bin at a pickup is always the order's own. It is not. ApplyArrival CLEARS
 // a bin's claim when it lands, so a compound restock leg arrives to collect a bin
 // that is claimed by nobody — and the gate held two robots at their own shuffle
-// slots for six minutes until the sim surfaced it. Key off the block's task.
+// slots for six minutes until the sim surfaced it. Key off what the block does:
+// its action as Core sent it (fleet.OrderBlock.Action), never its binTask name.
 //
-//   - JackLoad (pickup) / Wait → never held.
-//   - JackUnload (placement) onto a free node → pass.
-//   - JackUnload onto another bin → HOLD. That is the press swap: the empty-in waits
+//   - a pickup or a wait → never held.
+//   - a dropoff (placement) onto a free node → pass.
+//   - a dropoff onto another bin → HOLD. That is the press swap: the empty-in waits
 //     for the full-out to lift its bin clear, which is the real choreography.
 //
 // Synthetic nodes (LANE / NGRP / _TRANSIT) hold many bins by design and are exempt.
@@ -67,10 +67,10 @@ import (
 // nobody. The distinction used to live only in the sentence — "(claimed by
 // nobody)" — and the driver needs it in code, because a hold behind a bin
 // nobody owns can never clear while a queue behind an owned one always does.
-func (e *Engine) CanEnterPosition(vendorOrderID, location, binTask string) fleet.PositionHold {
-	// Only a placement can be obstructed. Anything else — pickup, wait, or a task
-	// we do not recognise — passes untouched.
-	if binTask != seerrds.BinTaskForAction(protocol.ActionDropoff) {
+func (e *Engine) CanEnterPosition(vendorOrderID, location, action string) fleet.PositionHold {
+	// Only a placement can be obstructed. Anything else — pickup, wait, or a block
+	// of no step's kind — passes untouched.
+	if action != protocol.ActionDropoff {
 		return fleet.PositionHold{}
 	}
 

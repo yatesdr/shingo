@@ -2,16 +2,20 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingo/shared/scenefixtures"
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 // station_composer_test.go — the composer block, against the real Hopkinsville
@@ -291,7 +295,7 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	// And the station's own composer read carries what the pick-a-part modal
 	// reads (U4): the part rows, the recipe cards and the picture — and none
 	// of an editor's read: no cells, no routing lists, no travel graph.
-	stn, err := svc.ComposerForStation(seeded.ProcessID)
+	stn, err := svc.ComposerForStation(seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
@@ -411,4 +415,55 @@ func TestComposerPresets_TheCardSuggestsWhereTheCellLastRanTheRecipe(t *testing.
 	if _, ok := after.Presets[0].Cells["PLN_01"]; !ok {
 		t.Error("the recipe's own cells changed; the pre-fill is a suggestion beside them")
 	}
+}
+
+// TestComposerForStation_TheNewPartDoor: the station's composer read draws the
+// New part door — new_part, with the carrier types it offers, sorted — only
+// where HMI setup is on, Core's last ack names part.create and Core has sent a
+// carrier type. Anywhere else both keys are absent and the part list keeps
+// its engineer's sentence.
+func TestComposerForStation_TheNewPartDoor(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	pid, err := db.CreateProcess("SYN Press", "", "", "", false)
+	testutil.MustNoErr(t, err, "process")
+	station, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Code: "syn-press", Name: "SYN Press Screen", Enabled: true})
+	testutil.MustNoErr(t, err, "station")
+	svc := NewStationService(db)
+	answers := map[string]bool{protocol.AskPartCreate: true}
+	families := map[string]string{"SYN-TOTE-CART": "SYN-FAM", "SYN-CART": "SYN-FAM"}
+	svc.SetCoreAnswersResolver(func(kind string) bool { return answers[kind] })
+	svc.SetBinTypeFamilies(func() map[string]string { return families })
+	read := func(what string) (bool, []string, string) {
+		t.Helper()
+		out, err := svc.ComposerForStation(station)
+		testutil.MustNoErr(t, err, what)
+		raw, err := json.Marshal(out)
+		testutil.MustNoErr(t, err, what)
+		return out.NewPart, out.CarrierTypes, string(raw)
+	}
+	drawnNot := func(what string) {
+		t.Helper()
+		on, carriers, raw := read(what)
+		if on || carriers != nil || strings.Contains(raw, `"new_part"`) || strings.Contains(raw, `"carrier_types"`) {
+			t.Errorf("%s: new_part %v, carrier_types %v; want the door not drawn and both keys absent", what, on, carriers)
+		}
+	}
+
+	drawnNot("HMI setup off")
+	testutil.MustNoErr(t, db.SetFlowComposerEnabled(pid, true), "HMI setup on")
+	on, carriers, _ := read("setup on, Core answering, two carriers")
+	if !on || !slices.Equal(carriers, []string{"SYN-CART", "SYN-TOTE-CART"}) {
+		t.Errorf("new_part %v, carrier_types %v; want the door drawn with SYN-CART, SYN-TOTE-CART", on, carriers)
+	}
+	answers = map[string]bool{protocol.AskBinLoad: true}
+	drawnNot("a Core that answers other kinds only")
+	answers = map[string]bool{protocol.AskPartCreate: true}
+	families = map[string]string{}
+	drawnNot("no carrier type heard from Core")
+	svc.SetBinTypeFamilies(nil)
+	drawnNot("no carrier resolver")
+	svc.SetBinTypeFamilies(func() map[string]string { return map[string]string{"SYN-CART": "SYN-FAM"} })
+	svc.SetCoreAnswersResolver(nil)
+	drawnNot("no Core-answers resolver")
 }

@@ -23,6 +23,11 @@ func (db *DB) ListScenePointsByClass(className string) ([]*scene.Point, error) {
 	return scene.ListByClass(db.DB, className)
 }
 
+// SceneLocationsNamed is scene.LocationsNamed: the bin locations of these names.
+func (db *DB) SceneLocationsNamed(names []string) ([]*scene.Point, error) {
+	return scene.LocationsNamed(db.DB, names)
+}
+
 // StationsForPointName resolves a robot-reported point name to the station(s)
 // bound to it — see scene.StationsForPointName for why it is a slice.
 func (db *DB) StationsForPointName(pointName string) ([]string, error) {

@@ -53,9 +53,10 @@ type LocationTasks struct {
 	TaskNames []string
 	// TaskArgs is each task's parameters as the fleet holds them, raw and keyed
 	// by task name (SEER: the binTask entry's value, e.g. Wait's
-	// {"operation":"Wait","recognize":true,"recfile":…}). The node page reads
-	// the Wait key's recognize from it to decide whether a table may turn
-	// there before the lift. Nil when the fleet reports none.
+	// {"operation":"Wait","recognize":true,"recfile":…}). The table-turn door
+	// (dispatch, turnWaitKeysRefusal) reads the recognize of every wait key the
+	// location lists, Wait and each carrier family's, to decide whether a table
+	// may turn there. Nil when the fleet reports none.
 	TaskArgs map[string]json.RawMessage
 }
 

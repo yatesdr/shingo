@@ -1,12 +1,14 @@
-import { debounce, delegateActions, el, escapeHtml, h } from '/static/shared/dom.js';
+import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
+import { mountKeyStrip } from '/static/pages/bins-keystrip.js';
 import { binRowView, uopText } from '/static/pages/bins-row.js';
 import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
+import { newRowsFeed } from '/static/pages/bins-live.js';
 
 // ===== STATE =====
 var currentBinId = null;
@@ -42,8 +44,8 @@ function errText(e) {
 // bin (ids only, www/sse.go). The action's answer already carries the bin, so
 // those echoes are not a reason to read it again. They are counted, not timed
 // (bins-echo.js): each own action expects exactly the number of events its
-// verb emits, for 5 s after its answer; every other event for the open bin is
-// a real update and costs the one read.
+// verb emits, for 5 s after its answer; every other event is a real update and
+// goes to the live feed (see SSE below).
 var ECHO_EXPIRY_MS = 5000;
 var echoes = newEchoLedger(ECHO_EXPIRY_MS);
 
@@ -401,13 +403,15 @@ function renderContents(data) {
   var html = '';
 
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
-    // The count is derived, not stored: uop_remaining x the template line's
-    // parts_per_cycle. A part the template no longer lists shows "—" rather
-    // than 0, because "we cannot count this" and "there are none" are
-    // different things to tell someone standing at the bin.
-    var perCycle = {};
-    (data.template_manifest || []).forEach(function(t) {
-      perCycle[t.part_number] = t.parts_per_cycle;
+    // The count is derived, not stored, from uop_remaining and the template
+    // line, by protocol.ManifestItem's count rule (a template of one line
+    // shows the bin's count as it stands). A part the template no longer
+    // lists shows "—" rather than 0, because "we cannot count this" and "there
+    // are none" are different things to tell someone standing at the bin.
+    var template = data.template_manifest || [];
+    var perUnit = {};
+    template.forEach(function(t) {
+      perUnit[t.part_number] = template.length === 1 ? 1 : t.parts_per_cycle;
     });
     var uop = (b && b.uop_remaining) || 0;
     // Either key: lines are written as part_number, and bins loaded before that
@@ -416,8 +420,8 @@ function renderContents(data) {
     html += h`<table class="table-compact"><thead><tr><th>Part number</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
       data.manifest.items.map(function(item) {
         var part = item.part_number || item.catid;
-        var ppc = perCycle[part];
-        var qty = ppc == null ? '—' : String(uop * ppc);
+        var per = perUnit[part];
+        var qty = per == null ? '—' : String(uop * per);
         return h`<tr><td><code>${part}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
       })
     }</tbody></table>`;
@@ -858,23 +862,22 @@ async function bulkAction(action) {
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
-// refreshBinRow reads one bin without history and repaints its row. Only the
-// callers whose answer does not carry the bin use it (Return, Request
-// Move); an action's answer is painted directly.
+// refreshBinRow asks the live feed for one bin's row. Only the callers whose
+// answer does not carry the bin use it (Return, Request Move, an action whose
+// re-read failed); an action's answer is painted directly.
 function refreshBinRow(id) {
-  readBin(id, false)
-    .then(paintBinRow)
-    .catch(function(err) { console.error('refreshBinRow', id, err); });
+  rowsFeed.bin(id);
 }
 
 // paintBinRow draws one table row from a detail answer as bins.html draws it
 // (bins-row.js binRowView): Location's display name, the Return button, and
-// the sort and search values with the cells.
+// the sort and search values with the cells. False when the table has no row
+// for the bin.
 function paintBinRow(detail) {
   var b = detail && detail.bin;
-  if (!b) return;
+  if (!b) return false;
   var row = document.querySelector('#bin-table tbody tr[data-id="' + b.id + '"]');
-  if (!row) return;
+  if (!row) return false;
   var v = binRowView(detail, PAGE_AUTH);
   row.dataset.label = v.data.label;
   row.dataset.type = v.data.type;
@@ -896,19 +899,64 @@ function paintBinRow(detail) {
     td.innerHTML = html;
     if (sort !== undefined) td.setAttribute('data-sort-value', sort);
   }
-  // Label, Type, Location, Process, Payload, UoP, Status, Flags. Process (3)
-  // is the server's (the mirror's node -> process lookup); the detail API does
-  // not carry it, so the refresh leaves the painted value.
+  // Label, Type, Location, Process, Payload, UoP, Status, Flags.
   cell(0, v.label.html, v.label.sort);
   if (tds[off + 1]) tds[off + 1].textContent = v.type.text;
   cell(2, v.location.html, v.location.sort);
+  if (tds[off + 3]) tds[off + 3].textContent = v.process.text;
   cell(4, v.payload.html, v.payload.sort);
   cell(5, v.uop.html, v.uop.sort);
   cell(6, v.status.html, v.status.sort);
-  // The detail API does not carry the notes flag; keep the one the server
-  // painted rather than dropping it on every refresh.
-  var notes = tds[off + 7] && tds[off + 7].querySelector('[title="Has notes"]');
-  cell(7, v.flags.html + (notes ? notes.outerHTML : '') + v.flags.returnHTML);
+  cell(7, v.flags.html + v.flags.returnHTML);
+  return true;
+}
+
+// insertBinRow adds a row for a bin the table does not have (made since the
+// page was drawn) at the top, where the server's newest-first order puts it,
+// built as bins.html builds one and painted by paintBinRow.
+function insertBinRow(tbody, detail) {
+  var id = detail.bin.id;
+  var tr = document.createElement('tr');
+  tr.dataset.id = id;
+  tr.dataset.action = 'openBinDetailRow';
+  tr.dataset.binId = id;
+  tr.dataset.skipOnCheckbox = '1';
+  tr.innerHTML = (PAGE_AUTH ? '<td data-action="stopPropagation"><input type="checkbox" class="bin-cb" value="' + id +
+    '" data-action-change="updateBulkBar"></td>' : '') +
+    '<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="bin-flags"></td>';
+  tbody.insertBefore(tr, tbody.firstChild);
+  paintBinRow(detail);
+}
+
+// applyRows paints a GET /api/bins/rows answer: each row repainted where the
+// table has it and added where it does not, each gone bin's row dropped, and,
+// for an answer of every row, any row it does not hold dropped too. Then the
+// filters run again, so a row that now matches the search shows and one that
+// no longer does hides. A repainted row keeps its place: sorting again orders
+// by the new values. The open pop-up is read again when its bin was in the
+// answer.
+//
+// A page drawn with no bins has no table to add to; a reload draws one.
+function applyRows(answer, every) {
+  var tbody = document.querySelector('#bin-table tbody');
+  if (!tbody || !answer) return;
+  var held = {};
+  (answer.rows || []).forEach(function(detail) {
+    held[detail.bin.id] = true;
+    if (!paintBinRow(detail)) insertBinRow(tbody, detail);
+  });
+  var drop = (answer.gone || []).slice();
+  if (every) {
+    tbody.querySelectorAll('tr[data-id]').forEach(function(tr) {
+      if (!held[tr.dataset.id]) drop.push(tr.dataset.id);
+    });
+  }
+  drop.forEach(function(id) {
+    var tr = tbody.querySelector('tr[data-id="' + id + '"]');
+    if (tr) tr.remove();
+  });
+  filterBins();
+  if (currentBinId && held[currentBinId]) refreshOpenBin();
 }
 
 function clearSelection() {
@@ -1117,10 +1165,15 @@ function ccSummary() {
 // the parsed payload. Replaces the retired app.js IIFE window.onBinUpdate
 // dispatch (Q-002).
 //
-// The event carries ids only. The counted echoes of this page's own actions
-// are dropped (the action's answer already drew the bin); any other update to
-// the open bin costs one read: history-free, or with history when the Journal
-// is the open tab. The redraw keeps the open tab and anything typed.
+// The events carry ids only. Each names a bin, or an order whose carts' rows
+// changed, to the live feed (bins-live.js), which reads those rows in one
+// request and repaints them (applyRows); the open pop-up is read again when
+// its bin was among them: history-free, or with history when the Journal is
+// the open tab. The redraw keeps the open tab and anything typed.
+//
+// The counted echoes of this page's own actions are dropped: the action's
+// answer already drew the bin. A bin-row that follows an own action is not
+// counted, so it costs one row read: the price of never missing a count tick.
 var refreshOpenBin = debounce(function() {
   if (!binDetailOpen()) return;
   var id = currentBinId;
@@ -1129,13 +1182,55 @@ var refreshOpenBin = debounce(function() {
     .catch(function(e) { console.error('bin-update refresh', id, e); });
 }, 500);
 
+var rowsFeed = newRowsFeed({
+  read: function(query) { return apiGet('/api/bins/rows' + (query ? '?' + query : '')); },
+  apply: applyRows,
+  hidden: function() { return document.hidden; },
+  later: function(fn, ms) { return setTimeout(fn, ms); },
+  cancel: function(handle) { clearTimeout(handle); },
+  quietMs: 400,
+  maxWaitMs: 2000
+});
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) rowsFeed.shown();
+});
+
 onSSE('bin-update', function(data) {
-  if (!data || !data.bin_id) return;
+  if (!data) return;
+  // A bin made elsewhere names only its node, so every row is read.
+  if (!data.bin_id) { rowsFeed.every(); return; }
   // Taken for every bin, open or not, so a counted echo is consumed where it
   // lands and cannot be mistaken for a later real update.
   if (echoes.take(data.bin_id, Date.now())) return;
-  if (!currentBinId || currentBinId !== data.bin_id) return;
-  refreshOpenBin();
+  rowsFeed.bin(data.bin_id);
+});
+
+// A count tick, or a station door's write: no bin-update says so.
+onSSE('bin-row', function(data) {
+  if (data) rowsFeed.bin(data.bin_id);
+});
+
+// An order's dispatch claims its carts and its end releases them, which
+// changes their rows (the order chip, the route) with no bin event.
+var CLAIM_MOVES = { dispatched: true, completed: true, failed: true, cancelled: true, skipped: true };
+onSSE('order-update', function(data) {
+  if (data && CLAIM_MOVES[data.type]) rowsFeed.order(data.order_id);
+});
+
+// RECONNECT ONLY, never on the first connect: the first connect of a fresh
+// page has missed nothing, the server just drew it (sourcing.js has the same
+// rule, and why). After a drop, events were missed and nothing says which.
+var everConnected = false;
+var droppedSinceConnect = false;
+onSSE('disconnected', function() {
+  if (everConnected) droppedSinceConnect = true;
+});
+onSSE('connected', function() {
+  if (everConnected && droppedSinceConnect) {
+    droppedSinceConnect = false;
+    rowsFeed.every();
+  }
+  everConnected = true;
 });
 
 // ===== HELPERS =====
@@ -1153,7 +1248,10 @@ function uopBar(remaining, template) {
 }
 
 // ===== BIN TYPE MODALS =====
+// "+ Bin Type" opens with the open family tab's family filled in.
 function openCreateBTModal() {
+  var family = document.getElementById('bt-create-family');
+  if (family) family.value = openFamilyCode();
   renderRobotGroupChoices(document.getElementById('bt-create-robot-group'), '');
   showModal('bt-create-modal');
 }
@@ -1218,6 +1316,8 @@ function closeBTCreateModal() { hideModal('bt-create-modal'); }
 function openEditBTModal(btn) {
   var d = btn.dataset;
   document.getElementById('bt-edit-id').value = d.id;
+  // The type's id is in the window's heading: the tabs draw no ID column.
+  document.getElementById('bt-edit-heading-id').textContent = d.id ? '#' + d.id : '';
   document.getElementById('bt-edit-code').value = d.code;
   document.getElementById('bt-edit-desc').value = d.desc || '';
   document.getElementById('bt-edit-family').value = d.family || '';
@@ -1340,6 +1440,82 @@ function toggleBinTypesAccordion() {
   if (el) el.classList.toggle('open');
 }
 
+// A family keys Save answers with /bins#bt-accordion
+// (handleBinTypeFamilyKeys): open the table the Save was made from, so the
+// saved keys are in view.
+if (location.hash === '#bt-accordion') toggleBinTypesAccordion();
+
+// ─── THE BIN TYPES SECTION: A TAB PER CARRIER FAMILY ─────────────────
+// The tabs are the shared ones (style guide 22): dom.js's switchTab, wrapped to
+// remember the open family. Every form of the section posts and the page comes
+// back on /bins, so the family a form was for is kept in sessionStorage and its
+// tab reopened: the keys' Save comes back on its own family, a type made or
+// edited on its family's tab (a type moved to another family on that family's),
+// and a type form also reopens the section. The server is unchanged.
+var BT_FAMILY = 'bins.btFamily';
+var BT_REOPEN = 'bins.btReopen';
+
+function showFamilyTab(key, btn) {
+  switchTab(key, btn);
+  rememberFamily(btn && btn.dataset ? btn.dataset.family : '');
+}
+
+function rememberFamily(code) {
+  try { if (code) sessionStorage.setItem(BT_FAMILY, code); } catch (e) { /* no storage: the first tab opens */ }
+}
+
+// openFamilyCode is the open tab's family, '' for none.
+function openFamilyCode() {
+  var tab = document.querySelector('#bt-accordion .tabs .tab.active');
+  return tab ? (tab.dataset.family || '') : '';
+}
+
+function openFamilyTab(code) {
+  if (!code) return;
+  var tabs = document.querySelectorAll('#bt-accordion .tabs .tab');
+  for (var i = 0; i < tabs.length; i++) {
+    if (tabs[i].dataset.family === code) { switchTab(tabs[i].dataset.tab, tabs[i]); return; }
+  }
+}
+
+// rememberFormFamily is a section form's submit: the family it was for. A type
+// made with no family has a family of its own, under its code.
+function rememberFormFamily(evt) {
+  var form = evt.target;
+  if (!form || !form.getAttribute) return;
+  var action = form.getAttribute('action');
+  if (action === '/bin-types/family-keys') { rememberFamily(form.dataset.family); return; }
+  if (action !== '/bin-types/create' && action !== '/bin-types/update') return;
+  var family = form.elements.family ? form.elements.family.value.trim() : '';
+  var code = form.elements.code ? form.elements.code.value.trim() : '';
+  rememberFamily(family || (action === '/bin-types/create' ? code : openFamilyCode()));
+  try { sessionStorage.setItem(BT_REOPEN, '1'); } catch (e) { /* the section stays as it was */ }
+}
+document.addEventListener('submit', rememberFormFamily);
+
+try {
+  openFamilyTab(sessionStorage.getItem(BT_FAMILY));
+  if (sessionStorage.getItem(BT_REOPEN) === '1') {
+    sessionStorage.removeItem(BT_REOPEN);
+    if (location.hash !== '#bt-accordion') toggleBinTypesAccordion();
+  }
+} catch (e) { /* no storage: the first tab, the section as the page drew it */ }
+
+// Each family tab's key strip (bins-keystrip.js): one line at rest, a Change
+// per key that opens its shared picker in place, Save keys and Cancel only
+// while a picked key is not saved. The form posts as it always did.
+var keyStrips = new WeakMap();
+document.querySelectorAll('#bt-accordion form.bt-keys').forEach(function(form) {
+  keyStrips.set(form, mountKeyStrip(form));
+});
+
+function keyStripOf(el) {
+  var form = el && el.closest ? el.closest('form.bt-keys') : null;
+  return form ? keyStrips.get(form) : null;
+}
+function changeFamilyKey(key, el) { var s = keyStripOf(el); if (s) s.change(key); }
+function cancelFamilyKeys(el) { var s = keyStripOf(el); if (s) s.cancel(); }
+
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
 // on document.body. Multiple event types share the same handler
@@ -1378,6 +1554,9 @@ delegateActions(document.body, {
     recordCount,
     requestMove,
     switchTab: showBinTab,
+    showFamilyTab,
+    changeFamilyKey,
+    cancelFamilyKeys,
     toggleAllBins,
     toggleBinTypesAccordion,
     toggleManifest,

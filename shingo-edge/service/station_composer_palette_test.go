@@ -30,7 +30,7 @@ func TestComposerPalette_ReachesBothComposerReadsAndNotThePoll(t *testing.T) {
 		t.Fatalf("ReplaceProcessPayloads: %v", err)
 	}
 
-	station, err := svc.ComposerForStation(seeded.ProcessID)
+	station, err := svc.ComposerForStation(seeded.Stations["screen-a4"])
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}

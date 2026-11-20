@@ -69,6 +69,9 @@ type simulatedBlock struct {
 	blockID  string
 	location string
 	binTask  string
+	// action is the block's fleet.OrderBlock.Action, Core's own label for what it
+	// does: the deck and the position gate read it, never the binTask.
+	action string
 }
 
 // SimulatorBackend implements fleet.TrackingBackend with in-memory order tracking.
@@ -200,6 +203,7 @@ func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Tran
 			blockID:  b.BlockID,
 			location: b.Location,
 			binTask:  b.BinTask,
+			action:   b.Action,
 		})
 	}
 	s.orders[vendorID] = order
@@ -257,6 +261,7 @@ func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Ord
 			blockID:  b.BlockID,
 			location: b.Location,
 			binTask:  b.BinTask,
+			action:   b.Action,
 		})
 	}
 	order.complete = complete

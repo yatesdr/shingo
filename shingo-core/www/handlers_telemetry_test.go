@@ -131,9 +131,10 @@ func TestApiBinLoad_HappyPath(t *testing.T) {
 }
 
 // TestApiBinLoad_UOPFallsBackToCapacity pins the fallback's UNIT. With no
-// declared count the bin is assumed full, and a full bin is uop_capacity
-// CYCLES — not the sum of the manifest's part counts, which is a different
-// unit and agrees only while every payload is one part per cycle.
+// declared count the bin is assumed full, and a full bin is uop_capacity in
+// the bin's own count — not the sum of the manifest's line counts, which
+// agrees with it only for a bin of one part (protocol.ManifestItem's count
+// rule) and is not read.
 //
 // The fixture makes the two disagree on purpose: capacity 50, manifest lines
 // summing 300. Reading 300 would be the old behaviour passing.

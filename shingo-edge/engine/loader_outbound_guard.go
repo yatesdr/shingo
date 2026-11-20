@@ -59,13 +59,7 @@ import (
 // the window to itself. Pinned by TestPinOutbound_* and
 // TestLoadFallback_RefusesASameNodeL2.
 func (e *Engine) outboundFor(node *processes.Node, claim *processes.NodeClaim, role domain.LoaderRole) (string, bool) {
-	outbound := ""
-	if claim != nil {
-		outbound = claim.OutboundDestination
-	}
-	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), role); err == nil && l != nil && l.OutboundDest() != "" {
-		outbound = l.OutboundDest()
-	}
+	outbound := e.outboundDest(node, claim, role)
 	who, leg, what := "loader", "L2", "filled"
 	if role == domain.RoleConsume {
 		who, leg, what = "unloader", "U2", "empty"
@@ -81,6 +75,27 @@ func (e *Engine) outboundFor(node *processes.Node, claim *processes.NodeClaim, r
 		return "", false
 	}
 	return outbound, true
+}
+
+// outboundDest is outboundFor's answer before its checks: the aggregate's
+// outbound for role, else the claim's, "" for none. Says nothing.
+func (e *Engine) outboundDest(node *processes.Node, claim *processes.NodeClaim, role domain.LoaderRole) string {
+	outbound := ""
+	if claim != nil {
+		outbound = claim.OutboundDestination
+	}
+	if l, err := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), role); err == nil && l != nil && l.OutboundDest() != "" {
+		outbound = l.OutboundDest()
+	}
+	return outbound
+}
+
+// hasOutbound reports whether a loader window sends what it loads somewhere
+// (an L2): false at a home, whose outbound is blank or itself. The LOAD's
+// refusal words ask it; nothing is logged.
+func (e *Engine) hasOutbound(node *processes.Node, claim *processes.NodeClaim) bool {
+	out := e.outboundDest(node, claim, domain.RoleProduce)
+	return out != "" && out != node.CoreNodeName
 }
 
 // outboundMoveInFlight reports whether this loader already owes an outbound

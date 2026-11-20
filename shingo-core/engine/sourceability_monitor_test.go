@@ -96,3 +96,51 @@ func TestSourceabilityMonitor_SecondBurstRecomputesAgain(t *testing.T) {
 		t.Errorf("after second burst recomputes = %d, want 2", calls)
 	}
 }
+
+// TestSourceabilityMonitor_StopCancelsAnArmedDebounce: a debounce armed by an
+// event just before the engine stops never fires, and an event after the stop
+// arms nothing. The flush used to fire after Stop, against a closed database.
+func TestSourceabilityMonitor_StopCancelsAnArmedDebounce(t *testing.T) {
+	m, observe := newDebounceTestMonitor(40 * time.Millisecond)
+
+	m.onPayloadChanged("BIN-A")
+	m.stop()
+	m.onPayloadChanged("BIN-B")
+
+	time.Sleep(150 * time.Millisecond)
+	if calls, _ := observe(); calls != 0 {
+		t.Errorf("recomputes after stop = %d, want 0", calls)
+	}
+}
+
+// TestSourceabilityMonitor_StopWaitsForARunningRecompute: a recompute already
+// running when the engine stops finishes before stop returns, so the caller
+// closes the database only after it.
+func TestSourceabilityMonitor_StopWaitsForARunningRecompute(t *testing.T) {
+	m, _ := newDebounceTestMonitor(10 * time.Millisecond)
+	started, release := make(chan struct{}), make(chan struct{})
+	m.recomputeFn = func([]plantclaims.ProcessKey) {
+		close(started)
+		<-release
+	}
+
+	m.onPayloadChanged("BIN-A")
+	<-started
+	stopped := make(chan struct{})
+	go func() {
+		m.stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+		t.Fatal("stop returned while a recompute was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop did not return after the recompute finished")
+	}
+}

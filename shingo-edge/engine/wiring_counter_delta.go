@@ -138,6 +138,32 @@ type tickScope struct {
 	// carrier is the tick's style's part; the other shares go to the ledger.
 	catid string
 	kind  plc.TickKind
+	// unit is what delta counts: counted cycles (a stroke, a held or
+	// off-plan share's release), which a consume spot multiplies by its
+	// part's pieces per cycle, or pieces (a "no cart" row's release, whose
+	// quantity is what the cart did not give), drawn as they are.
+	unit drawUnit
+}
+
+// drawUnit is what a walk's delta counts (tickScope.unit).
+type drawUnit int
+
+const (
+	// drawCycles: the counter's step, or a ledger share kept in strokes. The
+	// zero value: every stroke the PLC counts.
+	drawCycles drawUnit = iota
+	// drawPieces: a "no cart" row's quantity, already pieces.
+	drawPieces
+)
+
+// consumeDraw is the pieces this tick takes at a consume spot of claim: the
+// step times the part's pieces per cycle (NodeClaim.ConsumeDraw), or the
+// pieces a "no cart" row's release carries. A produce spot never reads it.
+func (t tickScope) consumeDraw(claim *processes.NodeClaim) int {
+	if t.unit == drawPieces {
+		return t.delta
+	}
+	return claim.ConsumeDraw(t.delta)
 }
 
 // walkTick charges one tick to the process's nodes. Each node's claim is the
@@ -169,6 +195,11 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 	// storage"). A press-index front names its back position in the same field
 	// and is never a pair, so it neither arms nor disarms one.
 	ab := newABPairs(nodes)
+	// THE PRODUCE SPOTS OF ONE PART SHARE THE STEP. A counter steps by how
+	// many of a part one hit made, so two spots of the tick's style running
+	// that part on this counter split it (produceShares); a spot alone, an
+	// LH/RH die's two parts, an A/B pair (one spot) each take the whole step.
+	shares := e.produceSharesLogged(process, nodes, claims, runtimes, tick, ab.byCore)
 
 	for _, node := range nodes {
 		runtime := runtimes[node.ID]
@@ -229,7 +260,7 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 				attr.secondLit++
 				continue
 			}
-			if e.heldForItsPart(tick, process, &node, runtime, claim, claims) {
+			if e.heldForItsPart(tick, tick.delta, process, &node, runtime, claim, claims) {
 				attr.heldShares++
 				continue
 			}
@@ -248,13 +279,19 @@ func (e *Engine) walkTick(process *processes.Process, nodes []processes.Node, cl
 				attr.secondLit++
 				continue
 			}
-			if e.heldForItsPart(tick, process, &node, runtime, claim, claims) {
+			// This spot's share of the step: the whole step unless another
+			// spot of its part shares it. A share of 0 (a step of 1 between
+			// two spots) is still this spot's, and charges nothing.
+			share := shares[node.ID]
+			if e.heldForItsPart(tick, share, process, &node, runtime, claim, claims) {
 				attr.heldShares++
 				continue
 			}
 			nodeCopy := node
 			attr.produceTicks++
-			e.handleProduceTick(&nodeCopy, runtime, claim, tick.delta)
+			if share > 0 {
+				e.handleProduceTick(&nodeCopy, runtime, claim, share)
+			}
 
 		default:
 			attr.unknownRole++
@@ -285,15 +322,109 @@ func (e *Engine) logUnattributed(tick tickScope, attr tickAttribution) {
 
 // heldForItsPart holds the share of an off-plan tick or a hold's release at a
 // node whose cart is not the tick's style's part, or that has no cart: such a
-// tick charges only a cart of its part (and never the seat hold). Reports
-// whether it held the share.
-func (e *Engine) heldForItsPart(tick tickScope, process *processes.Process, node *processes.Node,
+// tick charges only a cart of its part (and never the seat hold). qty is the
+// node's share: the step, or a produce spot's part of it (produceShares).
+// Reports whether it held the share.
+func (e *Engine) heldForItsPart(tick tickScope, qty int, process *processes.Process, node *processes.Node,
 	runtime *processes.RuntimeState, claim *processes.NodeClaim, claims *store.NodeClaimSet) bool {
 	if (tick.kind != plc.TickOffPlan && tick.kind != tickRelease) || carrierIsPart(process, node, runtime, claim, claims) {
 		return false
 	}
-	e.holdCatidDraw(tick, node.ID, claim.PayloadCode, tick.delta)
+	if qty > 0 {
+		e.holdCatidDraw(tick, node.ID, claim.PayloadCode, qty)
+	}
 	return true
+}
+
+// produceShares is each produce spot's share of the tick's step, by node id,
+// and the parts whose step did not divide between their spots. The spots are
+// the produce spots this walk takes the tick at, by walkTick's own ladder and
+// with no statement of its own: a runtime row, the tick's style's claim, not a
+// loader, counted at this counter, and not a dark A/B side nor a pair's
+// second lit side, so a pair is one spot. Those of one part (the claim's
+// payload code) split the step between them in node order (shareStep); a
+// spot alone, and a spot whose claim names no part, takes the whole step.
+// Spots of different parts are untouched: an LH/RH die's two parts each take
+// the whole step. Pure. Pinned by TestProduce_TwoSpotsOfOnePartShareTheStep.
+func produceShares(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet,
+	runtimes map[int64]*processes.RuntimeState, tick tickScope, byCore map[string]*processes.Node) (map[int64]int, []string) {
+	byPart := map[string][]int64{}
+	var parts []string
+	seenPair := map[string]bool{}
+	for i := range nodes {
+		node := &nodes[i]
+		rt := runtimes[node.ID]
+		if rt == nil {
+			continue
+		}
+		claim := claims.Resolve(process, node, store.ExactStyle(tick.styleID))
+		if claim == nil || claim.IsLoaderNode() || countedAt(node, claim) != tick.counter ||
+			claim.Role != protocol.ClaimRoleProduce || isInactivePairedNode(claim, rt) {
+			continue
+		}
+		if pair := abPairOf(process, node, claim, claims, byCore, tick.styleID); pair != "" {
+			if seenPair[pair] {
+				continue
+			}
+			seenPair[pair] = true
+		}
+		part := producedPayload(claim)
+		if part == "" {
+			// No part named: a spot of its own, never grouped with another.
+			part = fmt.Sprintf("(node %d, no part)", node.ID)
+		}
+		if _, ok := byPart[part]; !ok {
+			parts = append(parts, part)
+		}
+		byPart[part] = append(byPart[part], node.ID)
+	}
+	shares := make(map[int64]int, len(nodes))
+	var uneven []string
+	for _, part := range parts {
+		ids := byPart[part]
+		for i, s := range shareStep(tick.delta, len(ids)) {
+			shares[ids[i]] = s
+		}
+		if len(ids) > 1 && tick.delta%len(ids) != 0 {
+			uneven = append(uneven, fmt.Sprintf("%s over %d spots", part, len(ids)))
+		}
+	}
+	return shares, uneven
+}
+
+// shareStep splits a step between n spots: each takes step/n, and the first
+// step%n spots in node order one more, so the shares sum to the step for every
+// step and spot count, and the same step always splits the same way. The
+// owner has not ruled which cavity an odd piece is (a counter cannot say);
+// this is the safety net so no piece is lost. Pure. Pinned by
+// TestShareStep_SumsToTheStepFloorFirst.
+func shareStep(step, n int) []int {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]int, n)
+	for i := range out {
+		out[i] = step / n
+		if i < step%n {
+			out[i]++
+		}
+	}
+	return out
+}
+
+// produceSharesLogged is produceShares for the walk: the shares, with a step
+// that did not divide said once per process and part, and where the odd
+// pieces went. A Charge's preview reads produceShares and says nothing.
+func (e *Engine) produceSharesLogged(process *processes.Process, nodes []processes.Node, claims *store.NodeClaimSet,
+	runtimes map[int64]*processes.RuntimeState, tick tickScope, byCore map[string]*processes.Node) map[int64]int {
+	shares, uneven := produceShares(process, nodes, claims, runtimes, tick, byCore)
+	for _, u := range uneven {
+		if _, seen := e.unevenShareLogged.LoadOrStore(fmt.Sprintf("%d|%s", tick.processID, u), struct{}{}); !seen {
+			log.Printf("counter delta: process %d: a step of %d did not divide for part %s; the odd pieces went to "+
+				"the first spots in node order (logged once)", tick.processID, tick.delta, u)
+		}
+	}
+	return shares
 }
 
 // tickAttribution is the running account of one counter tick's walk over a
@@ -513,7 +644,7 @@ func (e *Engine) fallThrough(process *processes.Process, claims *store.NodeClaim
 			continue
 		}
 		f := p.fallback
-		if e.heldForItsPart(tick, process, f.node, f.runtime, f.claim, claims) {
+		if e.heldForItsPart(tick, tick.delta, process, f.node, f.runtime, f.claim, claims) {
 			attr.heldShares++
 			continue
 		}
@@ -871,12 +1002,14 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// the lineside report must see all of it or none (countMu).
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
+	// The draw is pieces: the step times the part's pieces per cycle
+	// (tickScope.consumeDraw), taken before the pile and the cart see it.
 	// Lineside first: drain the active pile of this node's primary part
 	// before touching the node counter. The pile is parts the operator
 	// pulled to lineside at the release, which physically leave the station
 	// before the new bin is tapped, until the cutover strands it. Remainder
 	// flows to the cart, or to the ledger.
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.delta)
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim))
 	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, binRemainder)
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
@@ -1228,8 +1361,8 @@ func (e *Engine) handleABFallthrough(tick tickScope, node *processes.Node, runti
 	// re-derive via requestedClaimAtNode here: it prefers the process
 	// ActiveStyleID claim, which during a changeover can differ from the
 	// tick's style and mis-attribute the lineside drain and bin delta
-	// (R43-1).
-	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.delta)
+	// (R43-1). The draw is pieces, as at any consume spot (consumeDraw).
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, tick.consumeDraw(claim))
 	runtime, binAttributed := e.chargeOrLog(node, runtime, claim, tick, binRemainder)
 	e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)
 }
@@ -1331,14 +1464,15 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 }
 
 // drainLinesideFirst decrements the node's active lineside pile(s) for the
-// claim's parts and returns:
+// claim's parts by delta, the stroke's draw in pieces (consumeDraw), and
+// returns:
 //
 //   - drains: per-part qty actually drained from each pile. Empty map (not
 //     nil-valued — the caller iterates safely) means no pile drained.
-//   - binRemainder: the units that should flow to the node counter
+//   - binRemainder: the pieces that should flow to the node counter
 //     after the primary-part drain. The primary's drain reduces
 //     binRemainder; secondary drains do not (they keep the UI
-//     honest but the node counter is one unit per assembly).
+//     honest; the node counter is the primary part's cart).
 //
 // The caller hands the drains to the mutator, which marks each pile's level
 // dirty with its drain, and the binRemainder becomes a BinUOPDelta
@@ -1349,13 +1483,14 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 // through the changeover window until the cutover strands it.
 //
 // Multi-part claims (claims with more than one entry in
-// AllowedPayloads) drain each part by up to delta independently. The
-// rationale: the node counter is a single integer (one UOP = one
-// assembly), and staging/reorder thresholds key off that value;
-// secondary part piles drain so the UI stays honest, even though
-// their draining doesn't affect the node counter arithmetic. If a
-// plant ever ships a claim where secondary parts can deplete
-// independently (e.g. consumables), revisit this.
+// AllowedPayloads) drain each part by up to delta independently: the
+// primary's draw, its pieces per cycle included, since only the claim's own
+// part's ratio is resolved. The rationale: the node counter is a single
+// integer (the primary part's cart, in pieces), and staging/reorder
+// thresholds key off that value; secondary part piles drain so the UI stays
+// honest, even though their draining doesn't affect the node counter
+// arithmetic. If a plant ever ships a claim where secondary parts can deplete
+// independently (e.g. consumables), or at a ratio of their own, revisit this.
 func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, delta int) (drains map[string]int, binRemainder int) {
 	drains = make(map[string]int)
 	binRemainder = delta

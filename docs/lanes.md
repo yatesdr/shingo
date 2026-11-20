@@ -1,6 +1,6 @@
 # Lanes — mouths, digs, admission and liveness
 
-Verified against: 74c3eb77
+Verified against: 4f4870c3
 
 > As of 2026-11 no deployed plant configures LANE nodes; the mechanism is exercised by the sim plants.
 

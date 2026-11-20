@@ -96,7 +96,7 @@ func (p *ocPlant) block(t *testing.T, o *orders.Order, node string, lift bool) {
 		if strings.TrimSpace(b.Location) != node {
 			continue
 		}
-		if lift && engine.IsPickupBlock(b.BinTask) || !lift && engine.IsDropoffBlock(b.BinTask) {
+		if lift && b.Action == protocol.ActionPickup || !lift && b.Action == protocol.ActionDropoff {
 			if p.sim.CompleteBlock(o.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0) {
 				return
 			}

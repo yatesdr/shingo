@@ -17,6 +17,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 type Dispatcher struct {
@@ -101,6 +102,10 @@ type Dispatcher struct {
 	// id: the window in which a row exists that its door has not finished. Nil in
 	// production; set via SetPostBirthHook.
 	postBirthHook func(orderID int64)
+
+	// familyKeys is the carrier families that name a binTask key, by family id
+	// (carrier_keys.go); nil until the first load.
+	familyKeys atomic.Pointer[map[int64]familyKeys]
 
 	// binsRows reads Core's current bins rows for node names, for a refusal
 	// to carry (protocol.OrderError.Rows); wired by the engine
@@ -621,14 +626,15 @@ func (d *Dispatcher) robotGroupForPayload(payloadCode string) string {
 	return p.RobotGroup
 }
 
-// loadSequenceForPayload resolves the ordered binTask names for a payload's
-// configured advanced load sequence (F4c), or nil when the payload has none (the
-// field is empty), the payload is unknown, or the named sequence isn't in the
-// registry. A nil result means the load leg emits today's single JackLoad block,
-// unchanged. Like robotGroupForPayload it never blocks material flow: any lookup
-// failure degrades to nil — config-time validation and RDS's 50001 order-issue
-// rejection are the guards, not the dispatch hot path.
-func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
+// loadSequenceForPayload resolves a payload's configured advanced load sequence
+// (F4c): its ordered binTask names and the one that lifts. nil when the payload
+// has none (the field is empty), the payload is unknown, the named sequence
+// isn't in the registry, or it names no binTask. A nil result means the load leg
+// emits today's single JackLoad block, unchanged. Like robotGroupForPayload it
+// never blocks material flow: any lookup failure degrades to nil — config-time
+// validation and RDS's 50001 order-issue rejection are the guards, not the
+// dispatch hot path.
+func (d *Dispatcher) loadSequenceForPayload(payloadCode string) *payloads.LoadSequence {
 	if payloadCode == "" {
 		return nil
 	}
@@ -642,7 +648,10 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 			p.AdvancedLoadSequence, payloadCode, err)
 		return nil
 	}
-	return seq.TaskNames
+	if len(seq.TaskNames) == 0 {
+		return nil
+	}
+	return seq
 }
 
 // dispatchToFleetCore contains the shared fleet dispatch sequence: generate
@@ -654,10 +663,11 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 // A simple order's plan [pickup@src, dropoff@dst] is a 2-block no-wait staged
 // order — the same shape the complex tail builds, just Complete=true. The blocks
 // come from buildTransportPlan (the plan-builder the simple planner emits) via
-// stepsToBlocks, so simple and complex share one create primitive (CreateOrder);
-// the only difference is the Complete flag. blockId/goodsId differ from the old
-// dedicated transport primitive, but SEER acts only on location + binTask
-// (blockId/goodsId are cosmetic) — both preserved here.
+// the one block builder (orderBlocks), so simple and complex share one create
+// primitive (CreateOrder); the only difference is the Complete flag.
+// blockId/goodsId differ from the old dedicated transport primitive, but SEER
+// acts only on location + binTask (blockId/goodsId are cosmetic) — both
+// preserved here.
 //
 // It is also the single fleet-create seam for every plain order, which is why the
 // gated-lane valve branches HERE rather than in the scanner: routing on the
@@ -781,7 +791,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// THE LOAD SEQUENCE CANNOT RIDE A TURN. F4c expands only the create's
 	// pickups, and at a turn node the lift is in an append, which is never
 	// expanded: the sequence would be silently dropped. So the order waits, named.
-	if turned && len(loadSeq) > 0 {
+	if turned && loadSeq != nil {
 		if node, ok := d.turnLiftWithSequence(spliced); ok {
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseTurnLoadSequence,
 				QueueParams{TableNode: node, Payload: payloadCode, TableLoadSequence: true})
@@ -801,8 +811,11 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	vendorOrderID := mintVendorOrderID(order.ID)
 
 	// F4c: expand the load leg into the payload's configured binTask sequence
-	// (nil for an unconfigured payload → byte-identical single JackLoad block).
-	blocks := stepsToBlocks(vendorOrderID, plan, 0, d.loadSequenceForPayload(payloadCode))
+	// (nil for an unconfigured payload → byte-identical single JackLoad block),
+	// the sequence resolved once, above. The carts are read once, for the
+	// robot group and the carrier keys both.
+	carts := d.capabilityBins(order)
+	blocks := d.orderBlocks(order, vendorOrderID, createRun(plan, plan, carts), loadSeq)
 	// The order's own priority, and nothing else. Core used to add a depth-derived
 	// lane boost here; that was deleted (see lane_gate.go). Lane entries are
 	// first-come-first-serve until priority is something the system plans around.
@@ -812,7 +825,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		ExternalID: order.EdgeUUID,
 		Blocks:     blocks,
 		Priority:   priority,
-		RobotGroup: d.robotGroupForOrder(order),
+		RobotGroup: d.robotGroupForOrder(order, carts),
 		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.

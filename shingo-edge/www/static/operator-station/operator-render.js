@@ -5,7 +5,7 @@ import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, tileRole, takesBare, stageTwoOn, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
-import { windowWords } from './operator-board-model.js';
+import { windowWords, cyclesLeftWords } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
@@ -112,8 +112,8 @@ export function renderHeader() {
     if (header === 'pull-full-from-home') {
         // A dedicated home loader beside a press: the header's act is a home's
         // clear (the full pulled, the partial brought home), not a changeover.
-        // (On the board its cards say it, in Clear partials.)
-        headerActions.appendChild(headerBtn('PULL FULL FROM HOME', 'pull-full-home', openPullFullFromHomePicker));
+        // (On the board its cards say it, in Bring partials home.)
+        headerActions.appendChild(headerBtn('FULL BIN OFF HOME', 'pull-full-home', openPullFullFromHomePicker));
     } else if (header === 'changeover') {
         if (view.active_changeover) {
             headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
@@ -285,7 +285,7 @@ const boardActs = {
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit, a.cart); break;
         case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo); break;
         case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo, a.cart); break;
-        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot); break;
+        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot, a.partial); break;
         case 'modal': openModalRef(a.node); break;
         case 'request-empty': postFromBar(a, '/api/process-nodes/' + a.node + '/request-empty', {}); break;
         case 'request-full': postFromBar(a, '/api/process-nodes/' + a.node + '/request-full', { payload_code: a.payload }); break;
@@ -327,7 +327,7 @@ export function renderGrid() {
         return;
     }
     document.body.classList.remove('os-pc-active');
-    grid.classList.remove('os-pc-board', 'os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3', 'os-pc-showall', 'os-pc-cellsopen');
+    grid.classList.remove('os-pc-board', 'os-pc-step-0', 'os-pc-step-1', 'os-pc-step-2', 'os-pc-step-3', 'os-pc-showall', 'os-pc-cellsopen', 'os-pc-zoneopen');
     grid.style.removeProperty('--os-pc-scale');
     resetBoard();
     grid.innerHTML = '';
@@ -703,17 +703,22 @@ function confirmPushEmpty(nodeID, carriers, bare, lit, stageTwo, cartType) {
 // the tap, so the tap sends one request. Recorded, the confirm closes and the
 // sentence is the board's success toast; refused, the confirm stays and shows
 // the refusal in place of its buttons.
-function confirmClearLoaderHome(nodeID, home, spot) {
+export function confirmClearLoaderHome(nodeID, home, spot, partial) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
+    // What is on the home: a full bin, or a partial (Core's row flag).
+    const held = partial ? 'partial' : 'full';
     panel.appendChild(el('div', { className: 'os-co-picker-title',
-        textContent: home ? 'Clear ' + home + '?' : 'Clear this home bin?' }));
+        textContent: (partial ? 'Partial' : 'Full') + ' bin off ' + (home || 'this home') + '?' }));
+    // The words say the bin comes off by hand first, and that the cart then
+    // leaves recorded empty (SPR SMN_029, 2026-11-17: the bin stayed on, and
+    // 800 parts rode off as an empty).
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: home && spot
-            ? 'Pull the full from ' + home + ' first. CONFIRM records it; Shingo brings the partial on ' + spot + ' home when it can.'
-            : 'Pull the full from this home first. CONFIRM records it.' }));
+            ? 'Take the ' + held + ' bin off the cart first. CONFIRM marks the cart empty: a robot takes it away and brings the partial from ' + spot + ' here.'
+            : 'Take the ' + held + ' bin off the cart first. CONFIRM marks the cart empty.' }));
 
-    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM CLEAR' });
+    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'BIN IS OFF · CONFIRM' });
     confirm.addEventListener('click', async function() {
         confirm.remove();
         cancel.remove();
@@ -746,7 +751,7 @@ function confirmClearLoaderHome(nodeID, home, spot) {
 // whose loader buffer holds a matching partial (the same gate as the Clear
 // partials card). Tapping one opens the clear's confirm. It is
 // offered on a dedicated loader beside a press (the node grid); the
-// board says the same in its Clear partials cards.
+// board says the same in its Bring partials home cards.
 function openPullFullFromHomePicker() {
     var eligible = claimedNodes().filter(function(n) {
         var bs = (n && n.bin_state) || {};
@@ -755,9 +760,9 @@ function openPullFullFromHomePicker() {
 
     var overlay = el('div', { className: 'os-co-picker-overlay' });
     var panel = el('div', { className: 'os-co-picker' });
-    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Pull full from home' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Full bin off a home' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
-        textContent: 'Pick the home whose full you pulled. Shingo records it and brings the partial home when it can.' }));
+        textContent: 'Pick the home you took the full bin off. Shingo marks its cart empty and brings the partial home when it can.' }));
 
     if (eligible.length === 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
@@ -773,7 +778,7 @@ function openPullFullFromHomePicker() {
             style: 'font-size:17px;font-weight:600;margin-top:5px;' }));
         btn.addEventListener('click', function() {
             overlay.remove();
-            confirmClearLoaderHome(n.node.id, n.node.name, '');
+            confirmClearLoaderHome(n.node.id, n.node.name, '', !!bs.partial);
         });
         panel.appendChild(btn);
     });
@@ -1074,6 +1079,10 @@ function createNodeButton(entry) {
                 textContent: '/ ' + capacity
             }));
         }
+        // An assembly that uses more than one of its part a cycle: the count
+        // is pieces, and the cycles they make are said under it.
+        const cycles = cyclesLeftWords(claim, remaining, noCarrier);
+        if (cycles) btn.appendChild(el('span', { className: 'os-node-cycles', textContent: cycles }));
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));

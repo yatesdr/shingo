@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
@@ -173,6 +174,59 @@ func TestClaimCapacity_UnknownPayloadResolvesToZero(t *testing.T) {
 	}
 	if claim.UOPCapacity != 0 {
 		t.Errorf("unknown payload resolved to %d, want 0 — the stored copy must not be a fallback", claim.UOPCapacity)
+	}
+}
+
+// TestClaimPiecesPerCycle_ResolvesFromTheCatalogManifest — a claim's pieces per
+// cycle is its part's one manifest line's ratio, read from the catalog copy on
+// the claim read (every claim read shares claimSelect, the tick's included).
+// Anything but exactly one line is 1: a kit keeps one per stroke, and a part
+// with no lines or no catalog row has no ratio. A ratio below 1, which Core
+// refuses to store, reads 1 rather than a draw of nothing.
+func TestClaimPiecesPerCycle_ResolvesFromTheCatalogManifest(t *testing.T) {
+	db := testDB(t)
+	seedCapacityProcess(t, db)
+	id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		StyleID: 1, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot", PayloadCode: "SYN-PPC",
+		InboundSource: "SMN_001", InboundStaging: "STG_001", OutboundDestination: "SMN_001", PairedCoreNode: "PLN_02",
+		Source: "hmi",
+	})
+	if err != nil {
+		t.Fatalf("upsert claim: %v", err)
+	}
+	line := func(part string, ratio int64) protocol.ManifestItem {
+		return protocol.ManifestItem{PartNumber: part, PartsPerCycle: ratio}
+	}
+	for _, c := range []struct {
+		name     string
+		manifest []protocol.ManifestItem
+		noRow    bool
+		want     int
+	}{
+		{name: "one line at 8", manifest: []protocol.ManifestItem{line("SYN-PPC", 8)}, want: 8},
+		{name: "one line at 1", manifest: []protocol.ManifestItem{line("SYN-PPC", 1)}, want: 1},
+		{name: "a kit of two lines", manifest: []protocol.ManifestItem{line("SYN-PPC-L", 2), line("SYN-PPC-R", 3)}, want: 1},
+		{name: "a row with no lines", want: 1},
+		{name: "one line at 0", manifest: []protocol.ManifestItem{line("SYN-PPC", 0)}, want: 1},
+		{name: "no catalog row", noRow: true, want: 1},
+	} {
+		if _, err := db.Exec(`DELETE FROM payload_catalog`); err != nil {
+			t.Fatalf("%s: clear catalog: %v", c.name, err)
+		}
+		if !c.noRow {
+			if err := catalog.UpsertCatalog(db.DB, &catalog.CatalogEntry{
+				ID: 1, Name: "SYN-PPC", Code: "SYN-PPC", UOPCapacity: 800, Manifest: c.manifest,
+			}); err != nil {
+				t.Fatalf("%s: seed catalog: %v", c.name, err)
+			}
+		}
+		claim, err := processes.GetClaim(db.DB, id)
+		if err != nil {
+			t.Fatalf("%s: get claim: %v", c.name, err)
+		}
+		if claim.PiecesPerCycle != c.want {
+			t.Errorf("%s: pieces per cycle = %d, want %d", c.name, claim.PiecesPerCycle, c.want)
+		}
 	}
 }
 
