@@ -37,9 +37,9 @@ func openRaw(t *testing.T, cfg *config.DatabaseConfig) *store.DB {
 	return db
 }
 
-// TestBaseline_AFailureLateInItLeavesNoTable pins the baseline's crash
-// safety: it is one statement, so a failure at its very end (a division by
-// zero after the last statement) rolls every table back, and the next boot
+// TestBaseline_AFailureLateInItLeavesNoTable pins the baseline's atomicity:
+// it is one statement, so a failure at its very end (a division by zero after
+// the last statement) rolls every table back, and the next boot
 // finds an empty database and births it whole. A baseline applied statement by
 // statement would leave the schema behind with no schema_migrations, which
 // store.migrate refuses as a partial restore, every boot after.

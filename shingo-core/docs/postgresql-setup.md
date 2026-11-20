@@ -61,8 +61,9 @@ When ShinGo Core connects to an empty database, it:
 
 1. Applies the baseline, `store/schema/baseline.sql`, in one transaction: every table, index and constraint, the
    seed rows (the synthetic node types `LANE` and `NGRP`, the `_TRANSIT` node, the default load sequence) and
-   `schema_migrations` v1 to v184. A start that fails part-way leaves the database empty, and the next start
-   applies it again.
+   `schema_migrations` v1 to v184. It lands whole or not at all, never in part: if Core stops part-way, the
+   database server still finishes it, and the next start boots the database it made; if the database server stops
+   part-way, nothing is left and the next start applies it again.
 2. Runs the migrations above v184 in `store/migrations.go`.
 3. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin` in `www/auth.go`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
 

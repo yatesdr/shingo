@@ -127,10 +127,16 @@ func checkRetiredChain(q *sql.DB) (fresh bool, err error) {
 // applyBaseline runs the baseline as ONE Exec. With no arguments pgx sends it
 // on the simple query protocol (pgx v5 Conn.exec: "Always use simple protocol
 // when there are no arguments"), and Postgres runs a multi-statement simple
-// query as one implicit transaction: a failure anywhere in it, or a crash
-// part-way, leaves no table behind, and the next boot sees an empty database
-// again. That atomicity is the crash safety
-// (TestBaseline_AFailureLateInItLeavesNoTable). The baseline sets no session
+// query as one implicit transaction: all of it commits or none of it does,
+// never part. A failing statement anywhere in it leaves no table behind
+// (TestBaseline_AFailureLateInItLeavesNoTable). A Core that dies part-way
+// does NOT stop it: the whole text is already one message on the server, so
+// the orphaned backend runs it to the end and commits it whole, and a boot
+// while the orphan still holds its locks fails on lock_timeout (55P03) and
+// the next restart boots the born database. Only the backend ending (it is
+// terminated, or Postgres crashes) leaves nothing, and the next boot births
+// the database again. Measured both ways in the clean-model round
+// (build/proof-scale, proof 5.3). The baseline sets no session
 // setting (the generator strips them), so the pool connection that ran it
 // keeps Core's caps (TestBaseline_PoolKeepsCoresSessionCaps).
 func applyBaseline(db *sql.DB, baseline string) error {
