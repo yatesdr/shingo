@@ -231,19 +231,21 @@
      a JS-injected <style> — the one shape css_collision_drift_test.go
      cannot see (its documented hole) — and moved here so the scan reads
      them. The three state colours are tokens with their own inks
-     (tokens.css, --dc-*); everything below is layout. Sticky lead columns
-     inherit their row's background; the header pins --surface so it stays
-     opaque over scrolled rows in BOTH themes (the injected version fell
-     back to white and broke dark). */}}
+     (tokens.css, --dc-*); everything below is layout. Two rules carry
+     plant-measured fixes (2026-11-20): the table is FIXED-layout so the
+     frozen columns' rem offsets are exact (auto layout grew a 9rem column
+     to 181px and the frozen columns overlapped), and every cell is opaque
+     so scrolled content cannot bleed through the frozen columns or the
+     sticky header. */}}
 <style>
 .dc-scroll { overflow: auto; max-height: 70vh; border: 1px solid var(--sub-2); }
-.dc-table { border-collapse: collapse; font-size: var(--font-sm); white-space: nowrap; }
-.dc-table th, .dc-table td { padding: 2px 8px; border-bottom: 1px solid var(--sub-1); text-align: left; }
-.dc-table thead th { position: sticky; top: 0; background: var(--surface); z-index: var(--z-sticky); }
-.dc-lead0 { position: sticky; left: 0; background: inherit; z-index: var(--z-raised); min-width: 9rem; }
-.dc-lead1 { position: sticky; left: 9rem; background: inherit; z-index: var(--z-raised); min-width: 8rem; }
-.dc-lead2 { position: sticky; left: 17rem; background: inherit; z-index: var(--z-raised); min-width: 12rem; }
-.dc-robot { min-width: 5.5rem; }
+.dc-table { border-collapse: collapse; table-layout: fixed; font-size: var(--font-sm); white-space: nowrap; }
+.dc-table th, .dc-table td { padding: 2px 8px; border-bottom: 1px solid var(--sub-1); text-align: left; background: var(--bg); overflow: hidden; text-overflow: ellipsis; }
+.dc-table thead th { position: sticky; top: 0; z-index: var(--z-sticky); }
+.dc-lead0 { position: sticky; left: 0; z-index: var(--z-raised); width: 9rem; }
+.dc-lead1 { position: sticky; left: 9rem; z-index: var(--z-raised); width: 8rem; }
+.dc-lead2 { position: sticky; left: 17rem; z-index: var(--z-raised); width: 13rem; }
+.dc-robot { width: 6rem; }
 .dc-date { font-weight: var(--fw-normal); font-size: var(--font-xs); color: var(--text-muted); }
 .dc-toggle { background: none; border: none; cursor: pointer; padding: 0; font: inherit; color: inherit; text-align: left; }
 .dc-sec .dc-lead0, .dc-sub .dc-lead1 { font-weight: var(--fw-bold); }

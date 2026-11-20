@@ -19,6 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration. Core only; the Edges are unchanged and need no install.
 
 - The Robots page's Device Config tab no longer blanks the page when clicked: its panel sat outside the tab bar's wrapper, so the tab switcher hid every panel and showed none
+- The tab's other display faults, found on the floor at Springfield: Collapse all expanded everything (the button's argument is the string "false"); the filter box lost focus on every keystroke and each expand scrolled the table back to its corner (the whole panel was rebuilt per render — now only the table is, inside the one scroll box); scrolled cells showed through the frozen Section/Subsection/Parameter columns (transparent cells); and the frozen columns overlapped each other by the width auto-layout had grown them (the table is fixed-layout now, so the frozen offsets are exact)
 
 ## v0.17.0 — 2026-11-20
 

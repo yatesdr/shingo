@@ -65,7 +65,10 @@ export function filterDeviceConfig(el) {
 }
 
 export function toggleAllDeviceConfig(expand) {
-  if (!expand) { expandedSections.clear(); expandedSubs.clear(); render(); return; }
+  // The colon arg arrives as the STRING "false" (delegateActions dispatch),
+  // and !expand would read it as true — Collapse all expanded everything.
+  const on = expand === true || expand === 'true';
+  if (!on) { expandedSections.clear(); expandedSubs.clear(); render(); return; }
   group().sections.forEach(s => {
     expandedSections.add(s.name);
     s.subs.forEach(x => expandedSubs.add(s.name + '|' + x.name));
@@ -130,24 +133,33 @@ function render() {
   const robots = matrix.robots || [];
   const canEdit = el.dataset.canEdit === '1';
 
-  let h = '<div class="flex flex-between mb-1 flex-wrap gap-1">'
-    + '<div class="flex gap-1 flex-wrap">'
-    + '<input class="set-inp" id="dc-filter" placeholder="Filter params…" value="' + escapeHtml(filterText) + '" data-action-input="filterDeviceConfig" data-action="filterDeviceConfig">'
-    + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:true">Expand all</button>'
-    + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:false">Collapse all</button>'
-    + '</div>'
-    + (canEdit && matrix.can_pull
-        ? '<button type="button" class="btn btn-sm btn-primary" data-action="pullFleetDeviceConfig">Pull fleet</button>'
-        : '')
-    + '</div>'
-    + '<div class="text-muted text-sm mb-1" id="dc-pull-status"></div>'
-    + '<div class="dc-legend text-muted text-sm mb-1">red = differs from fleet · yellow = no value from pull · light blue = device-specific (calibration) value · •••••••• = credential — compared, never stored or shown · click a section to expand/collapse</div>'
-    + '<div class="dc-scroll"><table class="dc-table"><thead><tr>'
-    + '<th class="dc-lead0">Section</th><th class="dc-lead1">Subsection</th><th class="dc-lead2">Parameter</th>'
-    + robots.map(r => '<th class="dc-robot">' + escapeHtml(r.vehicle)
-        + '<div class="dc-date">' + (r.has_pull ? mmddyy(r.pulled_at) : 'never') + '</div></th>').join('')
-    + '</tr></thead><tbody>';
+  // The toolbar is built ONCE and never rebuilt: rebuilding it on every
+  // render dropped the filter box's focus mid-word, and replacing the
+  // .dc-scroll box reset its scroll to 0/0 on every expand. Only the
+  // table inside the persistent box is replaced now — the input keeps its
+  // focus and caret, and the scroller keeps its position.
+  if (!document.getElementById('dc-scroll')) {
+    el.innerHTML = '<div class="flex flex-between mb-1 flex-wrap gap-1">'
+      + '<div class="flex gap-1 flex-wrap">'
+      + '<input class="set-inp" id="dc-filter" placeholder="Filter params…" value="' + escapeHtml(filterText) + '" data-action-input="filterDeviceConfig" data-action="filterDeviceConfig">'
+      + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:true">Expand all</button>'
+      + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:false">Collapse all</button>'
+      + '</div>'
+      + (canEdit && matrix.can_pull
+          ? '<button type="button" class="btn btn-sm btn-primary" data-action="pullFleetDeviceConfig">Pull fleet</button>'
+          : '')
+      + '</div>'
+      + '<div class="text-muted text-sm mb-1" id="dc-pull-status"></div>'
+      + '<div class="dc-legend text-muted text-sm mb-1">red = differs from fleet · yellow = no value from pull · light blue = device-specific (calibration) value · •••••••• = credential — compared, never stored or shown · click a section to expand/collapse</div>'
+      + '<div class="dc-scroll" id="dc-scroll"></div>';
+  }
+  const head = '<table class="dc-table"><thead><tr>'
+      + '<th class="dc-lead0">Section</th><th class="dc-lead1">Subsection</th><th class="dc-lead2">Parameter</th>'
+      + robots.map(r => '<th class="dc-robot">' + escapeHtml(r.vehicle)
+          + '<div class="dc-date">' + (r.has_pull ? mmddyy(r.pulled_at) : 'never') + '</div></th>').join('')
+      + '</tr></thead><tbody>';
 
+  let h = '';
   for (const s of g.sections) {
     const secOpen = expandedSections.has(s.name);
     const f = filterText ? s.rows.some(matchesFilter) : false;
@@ -178,8 +190,7 @@ function render() {
       }
     }
   }
-  h += '</tbody></table></div>';
-  el.innerHTML = h;
+  document.getElementById('dc-scroll').innerHTML = head + h + '</tbody></table>';
 }
 
 function matchesFilter(row) {
