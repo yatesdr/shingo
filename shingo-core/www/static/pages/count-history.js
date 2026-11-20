@@ -16,7 +16,7 @@
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
-import { countReading, countSaid } from '/static/shared/count-words.js';
+import { UOP_WORD, countReading, countSaid } from '/static/shared/count-words.js';
 import { apiGet, timeAgoHTML } from '/static/app.js';
 import { formatClock, formatDuration, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
@@ -494,7 +494,7 @@ function ratioOf(code) {
 function boldCount(code, n, plain) {
   const r = n == null || isNaN(n) ? { split: false } : countReading(n, ratioOf(code));
   // OWNER-WORDS
-  return r.split ? '<b>' + num(r.big) + ' UoP</b> <span class="text-muted-xs">' + escapeHtml(r.small) + '</span>'
+  return r.split ? '<b>' + num(r.big) + ' ' + UOP_WORD + '</b> <span class="text-muted-xs">' + escapeHtml(r.small) + '</span>'
     : '<b>' + plain + '</b>';
 }
 

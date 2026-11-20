@@ -121,7 +121,7 @@ const COUNT = (() => {
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count.js'), 'utf8')
         .replace(/^export (?=function )/mg, ''), c);
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count-words.js'), 'utf8')
-        .replace(/^import[^;]*;/mg, '').replace(/^export (?=function )/mg, ''), c);
+        .replace(/^import[^;]*;/mg, '').replace(/^export (?=function )/mg, '').replace(/^export const /mg, 'var '), c);
     return c;
 })();
 
@@ -150,6 +150,7 @@ function load(gets) {
         el() { return fakeEl(); },
         escapeHtml: (s) => String(s == null ? '' : s),
         uopRatio: COUNT.uopRatio, splitUOP: COUNT.splitUOP, linePieces: COUNT.linePieces, countSaid: COUNT.countSaid,
+        UOP_WORD: COUNT.UOP_WORD,
         hideModal() {},
         showModal() {},
         removeParentElement() {},

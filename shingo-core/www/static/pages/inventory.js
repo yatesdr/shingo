@@ -20,7 +20,7 @@ import { apiGet, apiPost } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
-import { countReading, typedNote } from '/static/shared/count-words.js';
+import { UOP_WORD, countReading, typedNote } from '/static/shared/count-words.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let view = null;          // the last /api/inventory/loop answer
@@ -177,7 +177,7 @@ function doubtHtml(doubt) {
   const items = doubt.map((d) => {
     const r = countReading(d.uop, ratioOf(d.payload_code));
     // OWNER-WORDS: above a ratio of 1 the reading says its UoP and parts.
-    const what = d.reason === 'below_zero' ? 'reads ' + (r.split ? num(r.big) + ' UoP, ' + r.small : num(d.uop)) : 'not confirmed';
+    const what = d.reason === 'below_zero' ? 'reads ' + (r.split ? num(r.big) + ' ' + UOP_WORD + ', ' + r.small : num(d.uop)) : 'not confirmed';
     return '<a href="/bins?open=' + encodeURIComponent(d.bin_id) + '">' + escapeHtml(d.label || ('bin ' + d.bin_id))
       + (d.node ? ' at ' + escapeHtml(d.node) : '') + '</a> ' + escapeHtml(what);
   });

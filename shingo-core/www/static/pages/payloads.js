@@ -2,7 +2,7 @@ import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { linePieces, splitUOP, uopRatio } from '/static/shared/count.js';
-import { countSaid } from '/static/shared/count-words.js';
+import { UOP_WORD, countSaid } from '/static/shared/count-words.js';
 
 /* --- Manifest builder ---
  *
@@ -46,7 +46,7 @@ function renderFullBin(row, containerId) {
   if (cap > 0 && lines.length === 1) {
     var ratio = uopRatio(lines);
     // OWNER-WORDS
-    cell.textContent = ratio > 1 ? '= ' + splitUOP(cap, ratio).uop + ' UoP a full bin' : '';
+    cell.textContent = ratio > 1 ? '= ' + splitUOP(cap, ratio).uop + ' ' + UOP_WORD + ' a full bin' : '';
     return;
   }
   cell.textContent = cap > 0 ? '= ' + linePieces(lines, i, cap) + ' / bin' : '';

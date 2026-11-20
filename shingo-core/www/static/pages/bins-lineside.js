@@ -5,7 +5,7 @@
 // pile. Data: /api/buckets, with updated_at for staleness.
 
 import { escapeHtml } from '/static/shared/dom.js';
-import { countReading } from '/static/shared/count-words.js';
+import { UOP_WORD, countReading } from '/static/shared/count-words.js';
 import { apiGet } from '/static/app.js';
 import { formatTime, serverNow, timeAgo } from '/static/shared/clock.js';
 
@@ -51,7 +51,7 @@ function bucketRowsHtml(buckets) {
 function pileText(b) {
   var ratios = typeof PAGE_UOP_RATIOS === 'object' && PAGE_UOP_RATIOS ? PAGE_UOP_RATIOS : {};
   var r = countReading(b.qty, ratios[b.payload_code]);
-  return r.split ? r.big + ' UoP <span class="text-muted bin-uop-parts">' + escapeHtml(r.small) + '</span>' : num(b.qty);
+  return r.split ? r.big + ' ' + UOP_WORD + ' <span class="text-muted bin-uop-parts">' + escapeHtml(r.small) + '</span>' : num(b.qty);
 }
 
 // staleCount is the head's figure: active piles untouched for 30 days.
