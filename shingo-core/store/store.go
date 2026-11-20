@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"shingocore/config"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -162,19 +164,73 @@ func openPgx(cfg *config.PostgresConfig) (*sql.DB, error) {
 // and the boots after.
 //
 // One statement, so one transaction: a reset that cannot drop the schema
-// changes nothing and says why. A database's owner owns its public schema on
-// PostgreSQL 15 and later (pg_database_owner); on 14 and older the bootstrap
-// superuser owns it, and there the reset is refused unless Core's user does.
+// changes nothing. Only the schema's owner may drop it. On PostgreSQL 15 and
+// later that is the database's owner (pg_database_owner), so a Core user that
+// owns its database drops it; a Core user granted rights on a database another
+// role owns is refused (insufficient_privilege, 42501), as every non-superuser
+// was on 14 and older (Core needs 15 anyway: the baseline's
+// idx_cms_txn_one_movement is NULLS NOT DISTINCT). On that refusal the reset
+// falls back to dropping every object in the schema instead
+// (resetPublicObjects), which a user may do to the objects it created, and the
+// schema itself stays as it was.
 func ResetDatabase(cfg *config.DatabaseConfig) error {
 	sqlDB, err := openPgx(&cfg.Postgres)
 	if err != nil {
 		return fmt.Errorf("connect for reset: %w", err)
 	}
 	defer sqlDB.Close()
-	if _, err := sqlDB.Exec(`DROP SCHEMA public CASCADE;
+	_, err = sqlDB.Exec(`DROP SCHEMA public CASCADE;
 		CREATE SCHEMA public AUTHORIZATION CURRENT_USER;
-		GRANT USAGE ON SCHEMA public TO PUBLIC`); err != nil {
+		GRANT USAGE ON SCHEMA public TO PUBLIC`)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42501" {
+		if ferr := resetPublicObjects(sqlDB); ferr != nil {
+			return fmt.Errorf("drop schema public was refused (%v), and dropping its objects failed: %w", err, ferr)
+		}
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("drop and recreate schema public: %w", err)
+	}
+	return nil
+}
+
+// resetPublicObjects drops every table, view, sequence and function in schema
+// public, in one statement (so one transaction): the reset where the schema
+// itself cannot be dropped. Names are read into arrays before the first drop,
+// so a CASCADE that already took an object leaves only an IF EXISTS no-op.
+// Partition children go with their parents. TestResetDatabase_ObjectFallbackThenBootTwice
+// pins that it leaves nothing the baseline would collide with.
+func resetPublicObjects(db *sql.DB) error {
+	_, err := db.Exec(`DO $$
+DECLARE
+	drops text[];
+	d text;
+BEGIN
+	SELECT coalesce(array_agg(stmt ORDER BY ord), '{}') INTO drops FROM (
+		SELECT 1 AS ord, format('DROP %s IF EXISTS %I.%I CASCADE',
+		       CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' ELSE 'TABLE' END,
+		       n.nspname, c.relname) AS stmt
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm')
+		   AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+		UNION ALL
+		SELECT 2, format('DROP SEQUENCE IF EXISTS %I.%I CASCADE', n.nspname, c.relname)
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relkind = 'S'
+		UNION ALL
+		SELECT 3, format('DROP %s IF EXISTS %s CASCADE',
+		       CASE p.prokind WHEN 'p' THEN 'PROCEDURE' WHEN 'a' THEN 'AGGREGATE' ELSE 'FUNCTION' END,
+		       p.oid::regprocedure)
+		  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+		 WHERE n.nspname = 'public'
+	) s;
+	FOREACH d IN ARRAY drops LOOP
+		EXECUTE d;
+	END LOOP;
+END $$`)
+	if err != nil {
+		return fmt.Errorf("drop the objects in schema public: %w", err)
 	}
 	return nil
 }

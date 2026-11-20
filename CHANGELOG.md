@@ -19,7 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration. Core only; the Edges are unchanged and need no install. A plant whose Core is older than v0.17.1 installs v0.17.1 first, then this release.
 
 - The shared migration runner records an adopted chain's first version on Postgres too (it sent SQLite's placeholder)
-- Core's --reset-db empties the database whole, its function and sequences with its tables
+- Core's --reset-db empties the database whole, its function and sequences with its tables, also where Core's user does not own the schema
 - Core starts only on a database v0.17.1 has brought all the way up; on an older one it stops at start, names the versions missing and says to start v0.17.1 first. It changes nothing in that database
 - Core stops at start on tables restored without their schema_migrations rows and says to restore the whole dump
 - A new Core database is created in one step from a generated baseline; a start that fails part-way leaves it empty, and the next start creates it again

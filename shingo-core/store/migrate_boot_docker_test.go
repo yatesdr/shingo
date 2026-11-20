@@ -177,6 +177,24 @@ func TestMigrate_RefusesAHoleNamingItsVersions(t *testing.T) {
 // that births the database on the baseline fails on "already exists" after it.
 func TestResetDatabase_ThenBootTwice(t *testing.T) {
 	t.Parallel()
+	resetThenBootTwice(t, store.ResetDatabase)
+}
+
+// TestResetDatabase_ObjectFallbackThenBootTwice: the reset where Postgres refuses
+// Core's user the DROP SCHEMA (14 and older: the bootstrap superuser owns
+// public) drops the schema's objects instead, and leaves the same nothing the
+// next boot needs. Run here on the fallback directly, since this server lets
+// the schema drop through.
+func TestResetDatabase_ObjectFallbackThenBootTwice(t *testing.T) {
+	t.Parallel()
+	resetThenBootTwice(t, store.ResetPublicObjectsForTest)
+}
+
+// resetThenBootTwice boots an empty database, resets it with reset, checks the
+// schema holds nothing and still grants what Core needs, boots it twice, and
+// does all of that twice.
+func resetThenBootTwice(t *testing.T, reset func(*config.DatabaseConfig) error) {
+	t.Helper()
 	cfg := testdb.OpenEmpty(t)
 	for round := 1; round <= 2; round++ {
 		db, err := store.Open(cfg)
@@ -184,7 +202,7 @@ func TestResetDatabase_ThenBootTwice(t *testing.T) {
 			t.Fatalf("round %d: boot before the reset: %v", round, err)
 		}
 		db.Close()
-		if err := store.ResetDatabase(cfg); err != nil {
+		if err := reset(cfg); err != nil {
 			t.Fatalf("round %d: reset: %v", round, err)
 		}
 		raw, err := store.OpenWithoutMigrate(cfg)
