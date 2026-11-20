@@ -25,6 +25,11 @@ Deploy: no migration. Core and each Edge, in either order.
 - The Bins page's Cycle Count wizard is gone; a bin's Record Count stays
 - An Edge's admin-Move release, changeover-cancel reseat, Order B clear, CLEAR and unfenced count take the count lock
 - An admin Move's release or an Order B clear no longer zeroes a carrier that landed on the seat a moment before it
+- A part used more than one a cycle shows its count in UoP big, its parts small beside it: floor tiles, the node and release screens, Production, Bins, Inventory and the wall display
+- Count boxes take parts and, above one a cycle, show the UoP they make as you type
+- The inventory export's UOP Remaining is the count's UoP; Qty keeps the parts
+- The threshold calculator's cycle is one assembly cycle, and its answer is in parts
+- A LOAD of 0 says "Type the count first: a LOAD needs 1 or more"
 
 ## v0.15.0 — 2026-11-19
 
