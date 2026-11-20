@@ -33,43 +33,15 @@ func (s *HeartbeatService) CellCatalog(station string) ([]store.EdgeCell, error)
 	return s.db.ListEdgeCells(station)
 }
 
-// State returns the live cell state as of now. Target cycle comes from
-// cell_targets, falling back to a rolling median estimate over the last 2h
-// (§8 #11).
-func (s *HeartbeatService) State(cellID string, now time.Time) (heartbeat.CellState, error) {
-	events, err := s.db.ListCellPartEvents(cellID, now.Add(-2*time.Hour), now)
-	if err != nil {
-		return heartbeat.CellState{}, err
-	}
-	target := s.resolveTarget(cellID, events)
-	return heartbeat.ComputeCellState(events, target, now, heartbeat.DefaultThresholds()), nil
-}
-
-// Stops returns the discrete stop events in [since, until].
+// Stops returns the discrete stop events in [since, until]. The target cycle is
+// the stream's own median per-part gap (heartbeat.EstimateTarget): nothing
+// configures one (cell_targets never had a writer, and v184 drops it).
 func (s *HeartbeatService) Stops(cellID string, since, until time.Time) ([]heartbeat.StopEvent, error) {
 	events, err := s.db.ListCellPartEvents(cellID, since, until)
 	if err != nil {
 		return nil, err
 	}
-	return heartbeat.ComputeStops(events, s.resolveTarget(cellID, events), heartbeat.DefaultThresholds()), nil
-}
-
-// Metrics returns the aggregate loss/MTBF numbers for [since, until].
-func (s *HeartbeatService) Metrics(cellID string, since, until time.Time) (heartbeat.CellMetrics, error) {
-	events, err := s.db.ListCellPartEvents(cellID, since, until)
-	if err != nil {
-		return heartbeat.CellMetrics{}, err
-	}
-	return heartbeat.ComputeMetrics(events, since, until, s.resolveTarget(cellID, events), heartbeat.DefaultThresholds()), nil
-}
-
-// resolveTarget prefers the configured cell target, else a rolling estimate
-// from the supplied events.
-func (s *HeartbeatService) resolveTarget(cellID string, events []heartbeat.PartEvent) time.Duration {
-	if t, ok := s.db.GetCellTarget(cellID, ""); ok {
-		return t
-	}
-	return heartbeat.EstimateTarget(events)
+	return heartbeat.ComputeStops(events, heartbeat.EstimateTarget(events), heartbeat.DefaultThresholds()), nil
 }
 
 // ── cell_config (Phase E, Q-025) ────────────────────────────────────────────
@@ -263,7 +235,7 @@ func (s *HeartbeatService) ResolveCellState(cellID string, now time.Time) (heart
 		if err != nil {
 			return heartbeat.ResolvedCellState{}, err
 		}
-		cs := heartbeat.ComputeCellState(events, s.resolveTarget(cellID, events), now, heartbeat.DefaultThresholds())
+		cs := heartbeat.ComputeCellState(events, heartbeat.EstimateTarget(events), now, heartbeat.DefaultThresholds())
 		return heartbeat.ResolvedCellState{
 			CellID: cellID, Station: cellID, DisplayName: cellID,
 			Primary:      heartbeat.ProcessState{ProcessID: 0, CellState: cs},

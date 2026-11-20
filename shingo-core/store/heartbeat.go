@@ -21,10 +21,6 @@ func (db *DB) ListCellPartEvents(cellID string, since, until time.Time) ([]heart
 	return heartbeat.ListEvents(db.DB, cellID, since, until)
 }
 
-func (db *DB) GetCellTarget(cellID, payloadCode string) (time.Duration, bool) {
-	return heartbeat.GetTarget(db.DB, cellID, payloadCode)
-}
-
 // ── cell_config (Phase E, Q-025) ────────────────────────────────────────────
 
 func (db *DB) ListCellConfigs() ([]heartbeat.CellConfig, error) {

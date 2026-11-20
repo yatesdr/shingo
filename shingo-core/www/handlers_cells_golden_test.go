@@ -147,9 +147,9 @@ func TestCellsAPI_Golden(t *testing.T) {
 
 // TestCellState_TargetIsTheStreamMedianWithNoTargetRow pins the target cycle a
 // cell's state reads when nothing configures one: heartbeat.EstimateTarget, the
-// median per-part gap of the stream. cell_targets has never had a writer, so
-// this is the only branch HeartbeatService.resolveTarget has ever taken; the
-// table and its reader go in v184, and this must read the same across that.
+// median per-part gap of the stream. cell_targets never had a writer, so this
+// was the only answer its reader ever let through; the table and the reader go
+// in v184, and this must read the same across that.
 //
 // Red when the state's target is anything but the stream's median: a target
 // read from somewhere else, a zero, or a different estimate.

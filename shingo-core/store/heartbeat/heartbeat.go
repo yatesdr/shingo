@@ -141,13 +141,13 @@ func perPartGap(gap time.Duration, delta int64) time.Duration {
 	return gap
 }
 
-// EstimateTarget derives a fallback target cycle from the recent stream when
-// no cell_targets row is configured (§8 #11: auto-derive vs admin-set). Uses
+// EstimateTarget derives a cell's target cycle from its recent stream; it is
+// the only target there is (§8 #11 planned an admin-set one, cell_targets, which
+// never had a writer and is gone since v184). Uses
 // the MEDIAN per-part gap — the gap before a fire, divided by the parts it
 // carried — which is robust to the long stop gaps in the stream (a healthy
 // 22.5s cell with occasional stops still medians ≈ 22.5s). A gap that ended in
-// a jump or a reset is not a sample (endsOffline). Returns 0 for < 2 fires;
-// configured targets always take precedence.
+// a jump or a reset is not a sample (endsOffline). Returns 0 for < 2 fires.
 func EstimateTarget(events []PartEvent) time.Duration {
 	ev := sortedFires(events)
 	if len(ev) < 2 {
