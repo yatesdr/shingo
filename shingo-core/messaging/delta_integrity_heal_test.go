@@ -3,12 +3,15 @@
 package messaging
 
 import (
+	"reflect"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/service"
+	"shingocore/store/audit"
 )
 
 // delta_integrity_heal_test.go — the delta-integrity panel against the running
@@ -58,5 +61,62 @@ func TestCloseout_3_RefusedThenLandedDeltaIsRecovered(t *testing.T) {
 	if got.DropRows != 1 || got.PayloadMismatchRows != 1 {
 		t.Errorf("drop_rows = %d, payload_mismatch_rows = %d; the drop itself still happened and is still counted",
 			got.DropRows, got.PayloadMismatchRows)
+	}
+}
+
+// TestCycleTime_PinACycleIsTheSendingStations pins the station the cycle-time
+// page attributes each applied tick to (audit.ListCycleEvents, the read
+// AuditService makes, keyed by domain.BuildCycleSeries): the station on the
+// count message's envelope, taken through the real door (HandleBinUOPDelta),
+// and not the one the message body asserts. Two Edges tick two carriers at one
+// seat. Ticks come only from an Edge's counts, never from an order, so the
+// five order kinds of the actor split do not apply: no Core actor and no
+// Core-born path sends a BinUOPDelta.
+//
+// Red when a tick is attributed to anything but its envelope's station (the
+// read taking a column the station has left, or the body's claim), or when a
+// station's ticks are lost.
+func TestCycleTime_PinACycleIsTheSendingStations(t *testing.T) {
+	t.Parallel()
+	r := newDivergenceRig(t, "CYCLE")
+	since := time.Now().Add(-time.Hour)
+	first, second := r.station, "stn-bbbb2222"
+	binA, epochA := r.carrier(r.seat.ID, "BIN-DV-CYCLE-A", "PART-A", 150)
+	binB, epochB := r.carrier(r.seat.ID, "BIN-DV-CYCLE-B", "PART-A", 150)
+	tick := func(station string, bin, epoch, seq int64) {
+		t.Helper()
+		net := -seq
+		r.svc.HandleBinUOPDelta(linesideEnvelope(station), &protocol.BinUOPDelta{
+			Station: "stn-body-only", BinID: bin, PayloadCode: "PART-A", Delta: -1,
+			Reason: protocol.ReasonConsumeTick, SequenceID: seq, Epoch: epoch, Net: &net,
+			WindowStart: r.at, WindowEnd: r.at,
+		})
+	}
+	for seq := int64(1); seq <= 3; seq++ {
+		tick(first, binA, epochA, seq)
+	}
+	for seq := int64(1); seq <= 2; seq++ {
+		tick(second, binB, epochB, seq)
+	}
+	if got := r.coreCount(binA) + r.coreCount(binB); got != 295 {
+		t.Fatalf("fixture: Core reads %d on the two carriers, want 295 (every tick applied)", got)
+	}
+
+	events, _, err := audit.ListCycleEvents(r.db.DB, since, 500)
+	testutil.MustNoErr(t, err, "list cycle events")
+	got := map[string]int{}
+	for _, e := range events {
+		got[e.Station]++
+	}
+	if want := map[string]int{first: 3, second: 2}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cycle ticks by station = %v, want %v", got, want)
+	}
+	series, unattributable := domain.BuildCycleSeries(events)
+	gaps := map[string]int{}
+	for _, s := range series {
+		gaps[s.Key.Station] = len(s.Gaps)
+	}
+	if want := map[string]int{first: 2, second: 1}; !reflect.DeepEqual(gaps, want) || unattributable != 0 {
+		t.Errorf("cycle series gaps by station = %v (unattributable %d), want %v and none", gaps, unattributable, want)
 	}
 }

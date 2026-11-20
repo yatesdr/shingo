@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -408,5 +409,72 @@ func TestLinesideDivergence_EpisodeOpenedShortClosesWhenTheHealLands(t *testing.
 	}
 	if got := r.closed(); got != 1 {
 		t.Errorf("%d recovered episode(s), want 1", got)
+	}
+}
+
+// TestLinesideDivergence_PinEpisodeIsItsStations pins the episode readers as
+// the next report and the Inventory page read them: OpenReportDivergenceKeys
+// (the station's open episodes, which decide whether a report opens a new one)
+// and ListOpenReportDivergences (the page's list, each episode under its
+// station). Two Edges report the same count gap on the same carrier: each opens
+// its own episode, a re-report from the first leaves its one episode open
+// under the same id (not a duplicate), and neither station's keys hold the
+// other's. Episodes are by reporting station, never by order, so the five
+// order kinds of the actor split do not apply: no Core actor and no Core-born
+// path sends a lineside report, and none can open an episode.
+//
+// Red when the keys stop finding a station's episode (every report then opens
+// a duplicate), when they find another station's, or when the page lists an
+// episode under anything but the station that reported it.
+func TestLinesideDivergence_PinEpisodeIsItsStations(t *testing.T) {
+	t.Parallel()
+	r := newDivergenceRig(t, "PINSTN")
+	first, second := r.station, "stn-bbbb2222"
+	bin, epoch := r.carrier(r.seat.ID, "BIN-DV-PINSTN", "PART-A", 150)
+
+	report := func(station string, count int) {
+		t.Helper()
+		r.station = station
+		r.lastSeq(bin, epoch, 4)
+		r.report(row(r.seat.Name, "PART-A", bin, epoch, 4, count, 0))
+	}
+	keys := func(station string) map[string]int64 {
+		t.Helper()
+		k, err := r.db.OpenReportDivergenceKeys(station)
+		testutil.MustNoErr(t, err, "open keys "+station)
+		return k
+	}
+
+	report(first, 10)
+	opened := keys(first)
+	if len(opened) != 1 {
+		t.Fatalf("%s's open episodes after its report = %v, want one", first, opened)
+	}
+	report(second, 10)
+	report(first, 9)
+	if got := keys(first); !reflect.DeepEqual(got, opened) {
+		t.Errorf("%s's open episodes after a re-report = %v, want the same one, %v", first, got, opened)
+	}
+	theirs := keys(second)
+	if len(theirs) != 1 {
+		t.Fatalf("%s's open episodes = %v, want its own one", second, theirs)
+	}
+	for k, id := range theirs {
+		if opened[k] == id {
+			t.Errorf("%s's episode is %s's (id %d)", second, first, id)
+		}
+	}
+	if got := keys("stn-nobody"); len(got) != 0 {
+		t.Errorf("a station that never reported has open episodes %v", got)
+	}
+
+	list, err := r.db.ListOpenReportDivergences()
+	testutil.MustNoErr(t, err, "list open divergences")
+	byStation := map[string]int{}
+	for _, d := range list {
+		byStation[d.Station]++
+	}
+	if want := map[string]int{first: 1, second: 1}; !reflect.DeepEqual(byStation, want) {
+		t.Errorf("the Inventory page lists episodes by station %v, want %v", byStation, want)
 	}
 }

@@ -5,12 +5,14 @@ package messaging
 import (
 	"database/sql"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/service"
 )
 
 // hold_dropped_handler_test.go — what Core writes for an Edge's dropped produce
@@ -107,5 +109,46 @@ func TestHoldDropped_IncompleteMessageIsStillWritten(t *testing.T) {
 		Scan(&n, &occurred), "count rows")
 	if n != 1 || occurred.IsZero() {
 		t.Errorf("rows = %d occurred_at = %v, want one row stamped with Core's clock", n, occurred)
+	}
+}
+
+// TestHoldDropped_PinARunNamesItsStation pins the station /inventory names on
+// a hold-drop run (store ListHoldDropRuns at service.HoldDropRunGap, the read
+// InventoryService makes): the envelope's station, never the dropper the
+// message names as called_by. Two Edges drop at the same seat, part and reason,
+// interleaved: each is its own run. A message whose envelope names no station
+// is still a run, under a blank station. Hold drops are by sending station,
+// never by order, so the five order kinds of the actor split do not apply: no
+// Core actor and no Core-born path sends a hold drop.
+//
+// Red when a run names the dropper or nothing instead of its station, or when
+// two stations' drops are merged into one run.
+func TestHoldDropped_PinARunNamesItsStation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := newLinesideService(t, db)
+	at := time.Date(2026, 10, 20, 8, 15, 0, 0, time.UTC)
+	drop := func(env, station string, offset time.Duration) {
+		svc.HandleHoldDropped(holdDropEnvelope(env, station), &protocol.HoldDropped{
+			Node: "ALN_PIN", PayloadCode: "SYN-PIN-PART", Qty: 3, Reason: protocol.HoldDropSweep,
+			CalledBy: "edge:uop_stranded_monitor", OccurredAt: at.Add(offset),
+		})
+	}
+	drop("env-pin-a1", "stn-aaaa1111", 0)
+	drop("env-pin-b1", "stn-bbbb2222", 10*time.Second)
+	drop("env-pin-a2", "stn-aaaa1111", 20*time.Second)
+	drop("env-pin-blank", "", 30*time.Second)
+
+	runs, err := db.ListHoldDropRuns(at.Add(-time.Hour), service.HoldDropRunGap, 50)
+	testutil.MustNoErr(t, err, "list hold drop runs")
+	got := map[string]int64{}
+	for _, r := range runs {
+		got[r.Station] += r.Drops
+	}
+	if want := map[string]int64{"stn-aaaa1111": 2, "stn-bbbb2222": 1, "": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hold-drop runs by station = %v (runs %+v), want %v", got, runs, want)
+	}
+	if len(runs) != 3 {
+		t.Errorf("%d runs, want 3: one per station", len(runs))
 	}
 }

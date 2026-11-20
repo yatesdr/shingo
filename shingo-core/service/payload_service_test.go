@@ -522,3 +522,64 @@ func TestPayloadService_FloorCreate_ConcurrentSubmitIsARepeat(t *testing.T) {
 		}
 	}
 }
+
+// TestPayloadService_FloorCreate_PinRepeatIsTheAskingStations pins what
+// floorRepeat returns on a retried floor create, and the station the payloads
+// page names as the part's maker (FloorMade), both read back from the audit
+// row the create wrote (its {"station": ...} record). The station is the
+// asking Edge's (www Doors.partCreate passes the ask's station): a retry from
+// it is a repeat of the same part and writes nothing, before and after
+// another station's identical submit is refused. Floor creates come only from
+// an Edge's ask, never from an order, so the five order kinds of the actor
+// split do not apply: no Core actor and no Core-born path makes a floor part.
+//
+// Red when a retry from the maker is refused (the repeat check reading the
+// station from a key the record no longer holds), when another station's
+// submit counts as a repeat, or when the page names another maker.
+func TestPayloadService_FloorCreate_PinRepeatIsTheAskingStations(t *testing.T) {
+	t.Parallel()
+	db, svc, req, _, _ := floorFix(t)
+	const maker, other = "stn-aaaa1111", "stn-bbbb2222"
+
+	p, repeat, err := svc.CreateFromFloor(maker, req)
+	testutil.MustNoErr(t, err, "floor create")
+	if repeat {
+		t.Fatal("the first submit is marked a repeat")
+	}
+	retry := func(station string) (bool, error) {
+		t.Helper()
+		before := rowCounts(t, db)
+		got, repeat, err := svc.CreateFromFloor(station, req)
+		if after := rowCounts(t, db); after != before {
+			t.Errorf("a retry from %s wrote rows: %v -> %v", station, before, after)
+		}
+		if err == nil && got.ID != p.ID {
+			t.Errorf("a retry from %s answered part %d, want %d", station, got.ID, p.ID)
+		}
+		return repeat, err
+	}
+	if repeat, err := retry(maker); err != nil || !repeat {
+		t.Errorf("the maker's retry: repeat=%v err=%v, want the part marked a repeat", repeat, err)
+	}
+	var exists *PartExistsError
+	if _, err := retry(other); !errors.As(err, &exists) || exists.Code != req.PartNumber {
+		t.Errorf("another station's identical submit: err=%v, want PartExistsError for %s", err, req.PartNumber)
+	}
+	if repeat, err := retry(maker); err != nil || !repeat {
+		t.Errorf("the maker's retry after the refusal: repeat=%v err=%v, want a repeat", repeat, err)
+	}
+
+	second := req
+	second.PartNumber, second.CATID = "SYN-FL-PIN-2", ""
+	q, _, err := svc.CreateFromFloor(other, second)
+	testutil.MustNoErr(t, err, "the other station's own part")
+	made, err := svc.FloorMade()
+	testutil.MustNoErr(t, err, "floor made")
+	got := map[int64]string{}
+	for id, m := range made {
+		got[id] = m.Station
+	}
+	if want := map[int64]string{p.ID: maker, q.ID: other}; !reflect.DeepEqual(got, want) {
+		t.Errorf("the payloads page's makers = %v, want %v", got, want)
+	}
+}
