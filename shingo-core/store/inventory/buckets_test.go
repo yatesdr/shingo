@@ -154,3 +154,48 @@ func TestListLinesideBuckets_Empty(t *testing.T) {
 		t.Errorf("empty DB len = %d, want 0", len(rows))
 	}
 }
+
+// TestCountHolders: the bins and active piles of a payload whose count is not
+// 0, bins first, with the totals; a bin at 0, a stranded pile and another
+// payload's rows are not counted. The payload guards read it.
+func TestCountHolders(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	for _, q := range []string{
+		`INSERT INTO payloads (code, uop_capacity) VALUES ('HOLD-A', 800), ('HOLD-B', 800)`,
+		`INSERT INTO bin_types (code) VALUES ('HOLD-BT')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	for _, b := range []struct {
+		label, code string
+		uop         int
+	}{{"HB-2", "HOLD-A", -5}, {"HB-1", "HOLD-A", 800}, {"HB-3", "HOLD-A", 0}, {"HB-4", "HOLD-B", 9}} {
+		if _, err := db.Exec(`INSERT INTO bins (bin_type_id, label, payload_code, uop_remaining, status)
+			SELECT id, $1, $2, $3, 'available' FROM bin_types WHERE code = 'HOLD-BT'`, b.label, b.code, b.uop); err != nil {
+			t.Fatalf("seed bin %s: %v", b.label, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty) VALUES
+		('STN', 'ALN_1', 'HOLD-A', 'active', 24), ('STN', 'ALN_2', 'HOLD-A', 'stranded', 7), ('STN', 'ALN_3', 'HOLD-B', 'active', 3)`); err != nil {
+		t.Fatalf("seed piles: %v", err)
+	}
+	holders, bins, piles, err := inventory.CountHolders(db.DB, "HOLD-A", 10)
+	if err != nil {
+		t.Fatalf("CountHolders: %v", err)
+	}
+	want := []inventory.Holder{{What: "HB-1", Count: 800}, {What: "HB-2", Count: -5}, {What: "STN · ALN_1", Count: 24, Pile: true}}
+	if bins != 2 || piles != 1 || len(holders) != len(want) {
+		t.Fatalf("CountHolders(HOLD-A) = %+v, %d bins, %d piles; want %+v, 2, 1", holders, bins, piles, want)
+	}
+	for i := range want {
+		if holders[i] != want[i] {
+			t.Errorf("holder %d = %+v, want %+v", i, holders[i], want[i])
+		}
+	}
+	if h, b, p, err := inventory.CountHolders(db.DB, "HOLD-A", 1); err != nil || b != 2 || p != 1 || len(h) != 2 {
+		t.Errorf("limit 1: %+v, %d, %d, %v; want one bin, one pile, totals 2 and 1", h, b, p, err)
+	}
+}

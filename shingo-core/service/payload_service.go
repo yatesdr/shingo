@@ -203,10 +203,23 @@ func (s *PayloadService) CreateWithSets(p *payloads.Payload, sets PayloadSets) e
 // UpdateWithSets is Update with the carrier types and the manifest the save
 // states, the row and both sets committed together or not at all.
 func (s *PayloadService) UpdateWithSets(p *payloads.Payload, sets PayloadSets) error {
+	return s.UpdateWithSetsSeen(p, sets, false)
+}
+
+// UpdateWithSetsSeen is UpdateWithSets for a save whose engineer has seen what a
+// ratio change does to the counts that stand (seen): without it, a ratio change
+// on a payload whose bins or piles hold a count writes nothing and answers
+// *RatioChangeUnseen, the warning; a change between one line and several while
+// they do is refused (ErrKitFlip) either way (checkCountUnit). Pinned by
+// TestCountUnitGuard (the decision) and the update handler's docker test.
+func (s *PayloadService) UpdateWithSetsSeen(p *payloads.Payload, sets PayloadSets, seen bool) error {
 	if err := s.checkUpdate(p); err != nil {
 		return err
 	}
 	if err := s.checkSets(sets); err != nil {
+		return err
+	}
+	if err := s.checkCountUnit(p, sets, seen); err != nil {
 		return err
 	}
 	return s.payloadsWritten(s.db.UpdatePayloadWithSets(p, sets))

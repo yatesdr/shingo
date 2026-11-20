@@ -1,5 +1,5 @@
 import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
-import { hideModal, showModal } from '/static/shared/layer.js';
+import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { linePieces, splitUOP, uopRatio } from '/static/shared/count.js';
 
@@ -626,6 +626,15 @@ function submitPLEdit(el, evt) {
   // stored one stands.
   if (_pleLoaded.binTypes) body.bin_type_ids = getSelectedBinTypes('ple-bin-types');
   if (manifest) body.manifest = manifest.items;
+  savePayloadEdit(body);
+  return false;
+}
+
+// savePayloadEdit posts an Edit Payload save. A ratio change on a part whose
+// bins or piles hold a count comes back unsaved with Core's warning (what each
+// reads now and after; no count moves): the engineer reads it, and the save
+// goes again with confirm_ratio_change only on OK (owner, 2026-11-19).
+function savePayloadEdit(body) {
   console.log('Saving payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/update', {
     method: 'POST',
@@ -633,12 +642,18 @@ function submitPLEdit(el, evt) {
     body: JSON.stringify(body)
   })
   .then(function(r) { return r.json(); })
-  .then(function(data) {
+  .then(async function(data) {
+    if (data.ratio_change && !body.confirm_ratio_change) {
+      // OWNER-WORDS
+      if (await uiConfirm(data.error + '\n\nSave the new ratio?')) {
+        savePayloadEdit(Object.assign({}, body, { confirm_ratio_change: true }));
+      }
+      return;
+    }
     if (data.error) { toast('Save failed: ' + data.error, 'error'); return; }
     surfaceSaveWarnings(data);
   })
   .catch(function(err) { toast('Save error: ' + err, 'error'); });
-  return false;
 }
 
 /* --- Import (.csv / .xlsx) --- */

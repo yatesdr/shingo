@@ -3,10 +3,12 @@
 package www
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -267,5 +269,83 @@ func TestPayloadCreateRefusals_TheFloorRefusesWhatTheDesktopRefuses(t *testing.T
 		if after := count(); after != before {
 			t.Errorf("%s: %d payloads written", c.name, after-before)
 		}
+	}
+}
+
+// TestPayloadRatioChangeWarnsThenSaves: an Edit Payload save that changes the
+// ratio of a part whose bin holds a count writes nothing and answers 409 with
+// the warning and each bin's reading before and after; the same save with
+// confirm_ratio_change writes the ratio and moves no count. A change between
+// one part and a kit is refused while the count stands, confirmed or not
+// (owner, 2026-11-19).
+func TestPayloadRatioChangeWarnsThenSaves(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	p := &payloads.Payload{Code: "RATIO-A", Description: "d", UOPCapacity: 800}
+	testutil.MustNoErr(t, db.CreatePayload(p), "seed payload")
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "RATIO-A", PartsPerCycle: 8}, ""), "seed line")
+	bt := &bins.BinType{Code: "RATIO-BT"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "seed bin type")
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "RATIO-BIN", Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(bin), "seed bin")
+	if _, err := db.Exec(`UPDATE bins SET payload_code = $1, uop_remaining = 800 WHERE id = $2`, p.Code, bin.ID); err != nil {
+		t.Fatalf("seed count: %v", err)
+	}
+	save := func(manifest []map[string]any, confirm bool) (int, map[string]any) {
+		body := map[string]any{"id": p.ID, "code": p.Code, "uop_capacity": 800, "manifest": manifest}
+		if confirm {
+			body["confirm_ratio_change"] = true
+		}
+		rec := postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update", body)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	ratio := func() int64 {
+		lines, err := db.ListPayloadManifest(p.ID)
+		testutil.MustNoErr(t, err, "read lines")
+		if len(lines) != 1 {
+			t.Fatalf("lines = %d, want 1", len(lines))
+		}
+		return lines[0].PartsPerCycle
+	}
+	count := func() int {
+		b, err := db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "read bin")
+		return b.UOPRemaining
+	}
+	at4 := []map[string]any{{"part_number": "RATIO-A", "parts_per_cycle": 4}}
+
+	code, out := save(at4, false)
+	rc, _ := out["ratio_change"].(map[string]any)
+	if code != http.StatusConflict || rc == nil || ratio() != 8 || count() != 800 {
+		t.Fatalf("unconfirmed 8 -> 4: %d %v, ratio %d, count %d; want 409 with the warning, 8, 800", code, out, ratio(), count())
+	}
+	rows, _ := rc["rows"].([]any)
+	row, _ := func() (map[string]any, bool) {
+		if len(rows) == 1 {
+			r, ok := rows[0].(map[string]any)
+			return r, ok
+		}
+		return nil, false
+	}()
+	if row == nil || row["what"] != "RATIO-BIN" || row["parts"] != float64(800) || row["uop_before"] != float64(100) || row["uop_after"] != float64(200) {
+		t.Errorf("the warning's rows = %v, want RATIO-BIN 800 parts, 100 -> 200 UoP", rows)
+	}
+	if code, out := save(at4, true); code != http.StatusOK || ratio() != 4 || count() != 800 {
+		t.Fatalf("confirmed 8 -> 4: %d %v, ratio %d, count %d; want 200, 4, 800 (no count moves)", code, out, ratio(), count())
+	}
+	kit := []map[string]any{{"part_number": "RATIO-A", "parts_per_cycle": 1}, {"part_number": "RATIO-A2", "parts_per_cycle": 2}}
+	if code, out := save(kit, true); code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "RATIO-BIN") || ratio() != 4 {
+		t.Errorf("one part to a kit with a count standing: %d %v; want 409 naming RATIO-BIN, nothing written", code, out)
+	}
+	// A part at 1 a cycle reads at the ratio a kit does, so its flip is caught
+	// by the line count alone, not by a ratio change.
+	at1 := []map[string]any{{"part_number": "RATIO-A", "parts_per_cycle": 1}}
+	if code, out := save(at1, true); code != http.StatusOK || ratio() != 1 {
+		t.Fatalf("confirmed 4 -> 1: %d %v, ratio %d; want 200, 1", code, out, ratio())
+	}
+	if code, out := save(kit, true); code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "RATIO-BIN") || ratio() != 1 {
+		t.Errorf("a part at 1 a cycle to a kit with a count standing: %d %v; want 409 naming RATIO-BIN, nothing written", code, out)
 	}
 }
