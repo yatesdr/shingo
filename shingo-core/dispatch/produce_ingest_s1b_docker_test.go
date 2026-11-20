@@ -70,6 +70,44 @@ func TestS1bIngest_NoLinesStampsTheCount(t *testing.T) {
 	}
 }
 
+// TestApplyIngestManifest_ZeroIsEmptyNegativeRefused: a 0 count is an empty
+// bin on both branches (no lines, and lines), never the payload's capacity;
+// a negative count is refused and the bin is not touched (owner, 2026-11-19).
+func TestApplyIngestManifest_ZeroIsEmptyNegativeRefused(t *testing.T) {
+	t.Parallel()
+	for _, lines := range []bool{false, true} {
+		d, bin, bp := s1bIngestFixture(t)
+		req := func(q int64) *protocol.OrderIngestRequest {
+			r := &protocol.OrderIngestRequest{
+				OrderUUID: "uuid-s1b-zero", PayloadCode: bp.Code, BinID: bin.ID, BinEpoch: bin.DeltaEpoch,
+				SourceNode: "SYN-PRESS-S1B", Quantity: q,
+			}
+			if lines {
+				r.Manifest = []protocol.IngestManifestItem{{PartNumber: "PART-X-TEMPLATE", Quantity: q}}
+			}
+			return r
+		}
+		lerr := d.lifecycle.ApplyIngestManifest(req(-5))
+		if lerr == nil || lerr.Code != "invalid_quantity" {
+			t.Fatalf("lines=%v: a negative ingest = %+v, want invalid_quantity", lines, lerr)
+		}
+		got, err := d.db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "read bin")
+		if got.PayloadCode != "" || got.UOPRemaining != 0 {
+			t.Errorf("lines=%v: a refused ingest wrote the bin: payload %q uop %d", lines, got.PayloadCode, got.UOPRemaining)
+		}
+		if lerr := d.lifecycle.ApplyIngestManifest(req(0)); lerr != nil {
+			t.Fatalf("lines=%v: a 0 ingest: %+v", lines, lerr)
+		}
+		got, err = d.db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "read bin")
+		if got.UOPRemaining != 0 || got.PayloadCode != bp.Code {
+			t.Errorf("lines=%v: a 0 ingest booked %s at %d, want %s at 0 (empty, not the capacity %d)",
+				lines, got.PayloadCode, got.UOPRemaining, bp.Code, bp.UOPCapacity)
+		}
+	}
+}
+
 // A stale epoch: the bin was emptied or re-bound after the Edge counted it.
 // Refused, the bin unchanged, and an audit row names it.
 func TestS1bIngest_StaleEpochIsRefusedWithAnAuditRow(t *testing.T) {

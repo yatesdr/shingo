@@ -1018,8 +1018,8 @@ type OrderIngestRequest struct {
 	// SourceNode is where the filled bin is parked; required when BinLabel is
 	// blank, since Core then resolves the bin from what stands there.
 	SourceNode string `json:"source_node"`
-	// Quantity is the operator-measured produced count (UOP); 0 is the
-	// payload's capacity.
+	// Quantity is the measured count of the bin, in the bin's count
+	// (ManifestItem); 0 is an empty bin, and Core refuses a negative.
 	Quantity int64 `json:"quantity"`
 	// Manifest lists the bin's items explicitly; absent, Core uses the
 	// payload's manifest template.
