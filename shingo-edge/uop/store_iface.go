@@ -29,6 +29,7 @@ type runtimeWriter interface {
 	// the departed bin's).
 	// It reports whether a carrier was bound before the clear.
 	ClearProcessNodeCarrier(processNodeID int64) (wasBound bool, err error)
+	ClearProcessNodeCarrierIfBound(processNodeID, binID int64) (cleared bool, err error)
 
 	// LeaveProcessNodeAtPickup is the same statement at the robot's pickup,
 	// also stamping the lift's generation and adding the ticks after the

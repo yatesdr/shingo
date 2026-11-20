@@ -24,6 +24,7 @@ Deploy: no migration. Core and each Edge, in either order.
 - Core's Record Count refuses a blank box instead of recording 0
 - The Bins page's Cycle Count wizard is gone; a bin's Record Count stays
 - An Edge's admin-Move release, changeover-cancel reseat, Order B clear, CLEAR and unfenced count take the count lock
+- An admin Move's release or an Order B clear no longer zeroes a carrier that landed on the seat a moment before it
 
 ## v0.15.0 — 2026-11-19
 

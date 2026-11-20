@@ -383,3 +383,42 @@ func TestSeatWriters_TakeTheCountLock(t *testing.T) {
 		})
 	}
 }
+
+// TestCarrierLeftIfBound_ALandingInTheWindowStands: an admin Move's Released
+// announcement for bin 4401 reads the seat (4401 bound, the check passes) and
+// then waits on countMu. In that window another carrier lands on the seat. When
+// the lock is let go the clear must find 4401 gone and leave the landed carrier
+// with its pointer and its count: the check and the clear are one statement
+// (owner, 2026-11-19). The clear of whatever is bound zeroed it.
+func TestCarrierLeftIfBound_ALandingInTheWindowStands(t *testing.T) {
+	t.Parallel()
+	const coreNode = "LOCK-WINDOW"
+	eng, nodeID, _, binID := fenceFixture(t, coreNode)
+	landed := binID + 1
+	eng.countMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+			BinID: binID, CoreNodeName: coreNode, Released: true, Epoch: 3, Actor: "admin-under-test",
+		})
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond) // the handler has read the seat and waits on the lock
+	testutil.MustNoErr(t, eng.db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, nil, &landed, 7, 40), "land another carrier")
+	eng.countMu.Unlock()
+	<-done
+	rt, err := eng.db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read the seat")
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != landed || rt.RemainingUOPCached != 40 {
+		t.Errorf("after bin %d's release: seat bound to %v at %d; want the carrier that landed, %d at 40",
+			binID, rt.ActiveBinID, rt.RemainingUOPCached, landed)
+	}
+	// With the named carrier still bound, the same verb clears it.
+	left, err := eng.carrierLeftIfBound(nodeID, coreNode, landed)
+	testutil.MustNoErr(t, err, "clear the bound carrier")
+	rt, err = eng.db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read the seat")
+	if !left || rt.ActiveBinID != nil || rt.RemainingUOPCached != 0 {
+		t.Errorf("clearing the bound %d: left=%v, seat %v at %d; want cleared to 0", landed, left, rt.ActiveBinID, rt.RemainingUOPCached)
+	}
+}

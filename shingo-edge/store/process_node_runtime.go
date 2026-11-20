@@ -80,6 +80,12 @@ func (db *DB) ClearProcessNodeCarrier(processNodeID int64) (wasBound bool, err e
 	return processes.ClearActiveBinAndCount(db.DB, processNodeID)
 }
 
+// ClearProcessNodeCarrierIfBound is ClearProcessNodeCarrier for one named
+// carrier: see processes.ClearActiveBinIfBound.
+func (db *DB) ClearProcessNodeCarrierIfBound(processNodeID, binID int64) (cleared bool, err error) {
+	return processes.ClearActiveBinIfBound(db.DB, processNodeID, binID)
+}
+
 // LeaveProcessNodeAtPickup is the pickup's carrier-left statement (Lane H,
 // D11): see processes.LeaveAtPickup.
 func (db *DB) LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error {

@@ -1284,6 +1284,25 @@ func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) (wasBound bool, err
 	return false, err
 }
 
+// ClearActiveBinIfBound is ClearActiveBinAndCount for one named carrier: the
+// pointer and the count go, in one statement, only while binID is the carrier
+// bound. A caller that read the seat before taking countMu (the admin Move's
+// Released announcement, Order B's completion) names the carrier it saw, and
+// a carrier that landed in between keeps its pointer and its count: the check
+// and the clear are one statement, so nothing can land between them and the
+// clear costs no read of its own (TestEmptySlotGuard_CostsNoStatement). A seat
+// bound to another carrier, or to none, is not written. cleared reports
+// whether binID was the one bound. Pinned by
+// TestCarrierLeftIfBound_ALandingInTheWindowStands.
+func ClearActiveBinIfBound(db *sql.DB, processNodeID, binID int64) (cleared bool, err error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0, released_empty=0,
+		updated_at=datetime('now')
+		WHERE process_node_id=? AND active_bin_id=?`,
+		processNodeID, binID)
+	return oneRow(res, err)
+}
+
 // LeaveAtPickup is ClearActiveBinAndCount for the robot's pickup (Lane H,
 // DECISIONS D11), in the same one statement (+0):
 //

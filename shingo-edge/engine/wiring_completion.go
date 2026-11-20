@@ -335,8 +335,12 @@ func matchOrderBSimple(ctx *orderCompletionCtx) bool {
 func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
 	rt, ob := ctx.runtime.ActiveBinID, ctx.order.BinID
 	if rt != nil && ob != nil && *rt == *ob {
-		if err := e.carrierLeftLocked(ctx.node.ID, ctx.node.CoreNodeName); err != nil {
+		left, err := e.carrierLeftIfBound(ctx.node.ID, ctx.node.CoreNodeName, *ob)
+		if err != nil {
 			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		} else if !left {
+			log.Printf("order B %d completed at node %s: its bin %s left the seat before the completion was applied -- "+
+				"leaving the seat as it stands", ctx.order.ID, ctx.node.CoreNodeName, binIDText(ob))
 		}
 	} else {
 		log.Printf("order B %d completed at node %s: bound carrier %s is not the order's bin %s -- "+

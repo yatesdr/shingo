@@ -163,6 +163,7 @@ func TestArch_ActiveBinPointerWritersAreKnown(t *testing.T) {
 		"SetProcessNodeActiveBinIDAndEpoch(",
 		"ClearProcessNodeActiveBinAndCount(",
 		"ClearProcessNodeCarrier(",
+		"ClearProcessNodeCarrierIfBound(",
 		"SetProcessNodeRuntime(",
 		"SetProcessNodeRuntimeWithBin(",
 		"SetProcessNodeRuntimeWithBinAndEpoch(",
@@ -301,7 +302,8 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 	verb := filepath.Join("engine", "carrier_left.go")
 	patterns := []string{
 		".ClearActiveBin(",
-		"inventoryDelta.LeaveAtPickup(", // the pickup's form of the same statement (Lane H, D11)
+		"inventoryDelta.ClearActiveBinIfBound(", // one named carrier's form of it (carrierLeftIfBound)
+		"inventoryDelta.LeaveAtPickup(",         // the pickup's form of the same statement (Lane H, D11)
 		"domain.CarrierDeparted",
 		"inventoryDelta.SetClaimCountAndEpoch(", // a Core-made count, under countMu
 	}
@@ -342,7 +344,7 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 	}
 	if len(bad) > 0 {
 		t.Errorf("a carrier departure, or a Core-made seat count, outside carrier_left.go:\n  %s\n\n"+
-			"Call Engine.carrierLeft (carrierLeftLocked when countMu is not held) — it clears the "+
+			"Call Engine.carrierLeft (carrierLeftLocked or carrierLeftIfBound when countMu is not held) — it clears the "+
 			"pointer and the count and records the departure through the lineside doorway, so the "+
 			"identity cannot be left behind; write a count Core made through Engine.setSeatCountLocked.",
 			strings.Join(bad, "\n  "))

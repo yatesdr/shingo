@@ -211,6 +211,14 @@ func (m *Mutator) ClearActiveBin(nodeID int64) (wasBound bool, err error) {
 	return m.rw.ClearProcessNodeCarrier(nodeID)
 }
 
+// ClearActiveBinIfBound is ClearActiveBin for one named carrier, in one
+// statement: the pointer and the count go only while binID is the one bound
+// (processes.ClearActiveBinIfBound). Its one production caller is
+// Engine.carrierLeftIfBound (engine/carrier_left.go).
+func (m *Mutator) ClearActiveBinIfBound(nodeID, binID int64) (cleared bool, err error) {
+	return m.rw.ClearProcessNodeCarrierIfBound(nodeID, binID)
+}
+
 // SetClaim points the slot at a claim and writes nothing else: not the count,
 // not either bin pointer, not the hold. Callers: the changeover's claim
 // advances — applyStagedDelivery and advanceClaimOnRelease

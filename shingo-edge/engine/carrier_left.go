@@ -58,20 +58,38 @@ func (e *Engine) carrierLeft(nodeID int64, nodeName string) error {
 	return err
 }
 
-// carrierLeftLocked is carrierLeft under countMu, for the callers that do not
-// hold it: the admin Move's Released announcement, the changeover cancel's
-// reseat and Order B's completion. countMu serialises every path that moves a
-// seat's count (Engine.countMu); these three cleared the count beside it
-// (census E.1, re-read at 55aa18a5). The caller's check of which carrier is
-// bound is still made on its own read, before the lock: reading the seat again
-// under it would cost the Released arm a statement its cost pin refuses
-// (TestEmptySlotGuard_CostsNoStatement), so a carrier landing between that
-// read and the lock is the window this does not close. Pinned by
+// carrierLeftLocked is carrierLeft under countMu, for a caller that does not
+// hold it and clears whatever is bound: the changeover cancel's reseat, which
+// Core answered with no carrier at the node. countMu serialises every path
+// that moves a seat's count (Engine.countMu); the three callers of carrierLeft
+// that ran beside it are census E.1's, re-read at 55aa18a5. Pinned by
 // TestSeatWriters_TakeTheCountLock.
 func (e *Engine) carrierLeftLocked(nodeID int64, nodeName string) error {
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
 	return e.carrierLeft(nodeID, nodeName)
+}
+
+// carrierLeftIfBound is carrierLeft for one named carrier, under countMu: the
+// pointer and the count go only while binID is still the one bound, in the
+// clear's own statement (uop.ClearActiveBinIfBound), and the departure is
+// recorded only then. For a caller that saw binID bound on its own read before
+// the lock: the admin Move's Released announcement and Order B's completion. A
+// carrier that landed between that read and the lock keeps its pointer and its
+// count (owner, 2026-11-19: the check and the clear are one statement), at no
+// statement of its own (TestEmptySlotGuard_CostsNoStatement). Reports whether
+// it cleared. Pinned by TestCarrierLeftIfBound_ALandingInTheWindowStands.
+func (e *Engine) carrierLeftIfBound(nodeID int64, nodeName string, binID int64) (bool, error) {
+	if e.inventoryDelta == nil {
+		return false, nil
+	}
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	cleared, err := e.inventoryDelta.ClearActiveBinIfBound(nodeID, binID)
+	if cleared || err != nil {
+		e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
+	}
+	return cleared, err
 }
 
 // setSeatCountLocked writes a count Core made for the carrier bound at a seat,
