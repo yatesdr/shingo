@@ -185,10 +185,10 @@ type Registry struct {
 	File   string // slash-separated, from the repo root
 }
 
-// Registries are Core's migration chain (migrationList) and the Edge's
-// (edgeMigrations). A migration declared anywhere else is not seen, so the
-// working tree's copy is read for liveness: a registry that is gone or yields
-// no migration is an error, never an empty set.
+// Registries are Core's migrations (migrationList, and the RetiredChain its
+// baseline records) and the Edge's (edgeMigrations). A migration declared
+// anywhere else is not seen, so the working tree's copy is read for liveness: a
+// registry that is gone or yields no migration is an error, never an empty set.
 var Registries = []Registry{
 	{"Core", "shingo-core/store/migrations.go"},
 	{"Edge", "shingo-edge/store/migrations.go"},
@@ -198,8 +198,9 @@ var Registries = []Registry{
 // every element of a slice or array literal that is itself a literal opening
 // with a version and a name, positionally — {176, "add x", fn, verify}, Core's
 // shape, as it was at v0.0.14 too — or by key — {Version: 45, Name: "x", ...},
-// the Edge's migrate.Migration. A version
-// declared twice is an error: the runner would apply one of the two.
+// the Edge's migrate.Migration; and 1..N for a `const RetiredChain = N`, the
+// chain Core's baseline records. A version declared twice by two entries is an
+// error: the runner would apply one of the two.
 func MigrationVersions(file string, src []byte) ([]int, error) {
 	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.SkipObjectResolution)
 	if err != nil {
@@ -236,8 +237,44 @@ func MigrationVersions(file string, src []byte) ([]int, error) {
 	if len(dups) > 0 {
 		return nil, fmt.Errorf("%s declares %s more than once", file, FormatVersions(dups))
 	}
+	// Core's retired chain: the squash at v184 replaced migrations 1..N with a
+	// generated baseline that records them, and migrations.go declares N as
+	// RetiredChain. Those versions are declared still (a database born on the
+	// baseline records them), so a release that adds none since a tag that
+	// carried them as entries has added none.
+	for v, n := 1, retiredChain(f); v <= n; v++ {
+		if !seen[v] {
+			seen[v] = true
+			versions = append(versions, v)
+		}
+	}
 	sort.Ints(versions)
 	return versions, nil
+}
+
+// retiredChain is the value of a top-level `const RetiredChain = N`, or 0.
+func retiredChain(f *ast.File) int {
+	for _, d := range f.Decls {
+		g, ok := d.(*ast.GenDecl)
+		if !ok || g.Tok != token.CONST {
+			continue
+		}
+		for _, s := range g.Specs {
+			vs, ok := s.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if name.Name != "RetiredChain" || i >= len(vs.Values) {
+					continue
+				}
+				if n, ok := intLit(vs.Values[i]); ok {
+					return n
+				}
+			}
+		}
+	}
+	return 0
 }
 
 // migrationVersion reads one element literal as a migration, when it is one.

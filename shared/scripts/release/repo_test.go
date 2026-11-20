@@ -100,6 +100,22 @@ func edgeMigrations() []migrate.Migration {
 	}
 }`, []int{2, 3}, ""},
 		{"none", "package store\n", nil, ""},
+		{"core after the squash", `package store
+const (
+	RetiredChain        = 3
+	RetiredChainRelease = "v0.16.0"
+)
+func migrationList() []migration {
+	return []migration{
+		{5, "five", v5, nil},
+	}
+}`, []int{1, 2, 3, 5}, ""},
+		{"core squashed, nothing above the chain", `package store
+const RetiredChain = 2
+func migrationList() []migration { return []migration{} }`, []int{1, 2}, ""},
+		{"the chain beside its own entries", `package store
+const RetiredChain = 2
+var ms = []migration{{1, "a", nil, nil}, {2, "b", nil, nil}}`, []int{1, 2}, ""},
 		{"twice", `package store
 var ms = []migration{{4, "a", nil, nil}, {4, "b", nil, nil}}`, nil, "v4 more than once"},
 	}

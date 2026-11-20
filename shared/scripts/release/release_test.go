@@ -334,6 +334,40 @@ func TestCheckChangelog_TheDeployLineNamesEveryAddedMigration(t *testing.T) {
 	}
 }
 
+// TestCheckChangelog_ARetiredChainAddsNoMigration: Core's registry squashed to
+// a RetiredChain covering the tag's entries declares no migration added since
+// the tag, and one entry above the chain is a migration the Deploy line names.
+func TestCheckChangelog_ARetiredChainAddsNoMigration(t *testing.T) {
+	t.Parallel()
+	work, _ := clone(t)
+	squashed := "package store\n\nconst RetiredChain = 2\n\nfunc migrationList() []migration {\n\treturn []migration{\n%s\t}\n}\n"
+	cases := []struct {
+		entries, deploy string
+		want            []string
+	}{
+		{"", "Deploy: no migration.", nil},
+		{"", "Deploy: Core v2.", []string{"names Core v2, and no migration was added since v0.1.0"}},
+		{"\t\t{3, \"m\", nil, nil},\n", "Deploy: Core v3.", nil},
+		{"\t\t{3, \"m\", nil, nil},\n", "Deploy: no migration.", []string{"does not name Core v3"}},
+	}
+	for _, c := range cases {
+		write(t, work, map[string]string{
+			"shingo-core/store/migrations.go": strings.Replace(squashed, "%s", c.entries, 1),
+			ChangelogPath:                     withUnreleased(c.deploy + "\n\n- A change"),
+		})
+		r := check(t, work)
+		if len(r.Problems) != len(c.want) {
+			t.Errorf("%q with entries %q: problems %q, want %q", c.deploy, c.entries, r.Problems, c.want)
+			continue
+		}
+		for i := range c.want {
+			if !strings.Contains(r.Problems[i], c.want[i]) {
+				t.Errorf("%q: problem %q, want it to say %q", c.deploy, r.Problems[i], c.want[i])
+			}
+		}
+	}
+}
+
 func TestCheckChangelog_AMovedRegistryIsAnError(t *testing.T) {
 	t.Parallel()
 	work, _ := clone(t)
