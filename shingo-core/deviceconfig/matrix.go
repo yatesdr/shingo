@@ -148,6 +148,9 @@ func rowIdent(l Leaf) string {
 // reds by the same rule. A tie sends every VALUED cell red (light blue on
 // calibration rows) and leaves absent cells plain dashes. One pulled robot
 // compares nothing: its own value is its own plurality, so nothing reds.
+//
+// The body is a driver over the phases, each named below; the semantics
+// live with the phase that owns them.
 func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 	view := &MatrixView{}
 	for _, v := range vehicles {
@@ -158,13 +161,40 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 		view.Robots = append(view.Robots, col)
 	}
 
-	// A pull whose vehicle has no column must not vote: intersect to the
-	// fleet list handed in. The GET handler deliberately unions
-	// stored-pull robots into that list, so a decommissioned robot keeps
-	// its column; the guard makes the function total for any other caller
-	// (a stale store row for a robot the fleet no longer names would
-	// otherwise bend every plurality it ever held, with no cell to see it
-	// by — round-2, cinder-otter F4).
+	pulled := pulledVoters(vehicles, pulls)
+	order, leafOf, values := unionRows(pulled, pulls)
+	disambiguateCollisions(order, leafOf)
+
+	for _, id := range order {
+		l := leafOf[id]
+		row := RowView{
+			Section: l.Section, Subsection: l.Subsection, Kind: l.Kind,
+			Path: l.Path, Ident: l.Ident, Desc: l.Desc, Type: l.Type,
+			Unit: l.Unit, Range: l.Range, Credential: l.Credential,
+			Calibration: calibrationRow(l),
+			Counts:      map[string]int{},
+			Cells:       map[string]Cell{},
+		}
+		counts, best, tie := tallyRow(id, pulled, values)
+		row.Tie = tie
+		if !tie && best != absentToken {
+			row.Plurality = best
+		}
+		fillCounts(&row, counts, best, tie)
+		row.Cells = rowCells(id, row, vehicles, pulls, values, best, tie)
+		view.Rows = append(view.Rows, row)
+	}
+	return view
+}
+
+// pulledVoters intersects the stored pulls to the fleet list handed in: a
+// pull whose vehicle has no column must not vote. The GET handler
+// deliberately unions stored-pull robots into that list, so a
+// decommissioned robot keeps its column; the guard makes BuildMatrix total
+// for any other caller (a stale store row for a robot the fleet no longer
+// names would otherwise bend every plurality it ever held, with no cell to
+// see it by — round-2, cinder-otter F4).
+func pulledVoters(vehicles []string, pulls map[string]Pull) []string {
 	vset := make(map[string]bool, len(vehicles))
 	for _, v := range vehicles {
 		vset[v] = true
@@ -176,12 +206,18 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 		}
 	}
 	sort.Strings(pulled)
+	return pulled
+}
 
-	// Union order + one representative leaf (desc/type/range come from the
-	// first robot that has the row; they are vendor-static).
-	order := []string{}
-	leafOf := map[string]Leaf{}
-	values := map[string]map[string]string{} // rowIdent -> vehicle -> value or absentToken
+// unionRows walks the pulled robots (alphabetical, so the union order is
+// deterministic) and collects the row union in document order of the FIRST
+// robot that has each row, one representative leaf per row (desc/type/
+// range come from it; they are vendor-static), and every robot's value per
+// row. The RoboShop-parity exclusions drop their rows here, so an excluded
+// row never reaches the matrix at all.
+func unionRows(pulled []string, pulls map[string]Pull) (order []string, leafOf map[string]Leaf, values map[string]map[string]string) {
+	leafOf = map[string]Leaf{}
+	values = map[string]map[string]string{} // rowIdent -> vehicle -> value or absentToken
 	for _, v := range pulled {
 		for _, l := range pulls[v].Leaves {
 			if l.Kind == KindParam && excluded(l.Section, l.Ident) {
@@ -196,13 +232,17 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 			values[id][v] = l.Value
 		}
 	}
+	return order, leafOf, values
+}
 
-	// The collision rule runs over the UNION, never over one robot: a
-	// single robot emits only its SELECTED choice's subparams, so two rows
-	// with the same display can only be cross-robot — the brief's named
-	// RS485/RS232 devName case, one mixed pull away. Where one subsection's
-	// rows share a display Path, both fall back to the identity, which
-	// keeps the choice segment (round-2, cinder-otter F2 / argent-condor).
+// disambiguateCollisions runs the collision rule over the UNION, never
+// over one robot: a single robot emits only its SELECTED choice's
+// subparams, so two rows with the same display can only be cross-robot —
+// the brief's named RS485/RS232 devName case, one mixed pull away. Where
+// one subsection's rows share a display Path, both fall back to the
+// identity, which keeps the choice segment (round-2, cinder-otter F2 /
+// argent-condor). It rewrites leafOf's Paths in place.
+func disambiguateCollisions(order []string, leafOf map[string]Leaf) {
 	type displayKey struct{ sec, sub, path string }
 	collisions := map[displayKey]int{}
 	for _, id := range order {
@@ -216,102 +256,103 @@ func BuildMatrix(vehicles []string, pulls map[string]Pull) *MatrixView {
 			leafOf[id] = l
 		}
 	}
+}
 
-	for _, id := range order {
-		l := leafOf[id]
-		row := RowView{
-			Section: l.Section, Subsection: l.Subsection, Kind: l.Kind,
-			Path: l.Path, Ident: l.Ident, Desc: l.Desc, Type: l.Type,
-			Unit: l.Unit, Range: l.Range, Credential: l.Credential,
-			Calibration: calibrationRow(l),
-			Counts:      map[string]int{},
-			Cells:       map[string]Cell{},
+// tallyRow counts the row's votes over the PULLED robots only: a pulled
+// robot without the row is structurally absent (the param does not exist
+// under its selection), which is a compared state, not an abstention —
+// absence votes as absentToken. Plurality is the strict maximum; a shared
+// maximum is a tie.
+func tallyRow(id string, pulled []string, values map[string]map[string]string) (counts map[string]int, best string, tie bool) {
+	counts = map[string]int{}
+	for _, v := range pulled {
+		val, ok := values[id][v]
+		if !ok {
+			val = absentToken
 		}
-
-		// Absence votes: a pulled robot without the row is structurally
-		// absent (the param does not exist under its selection), which is a
-		// compared state, not an abstention.
-		counts := map[string]int{}
-		for _, v := range pulled {
-			val, ok := values[id][v]
-			if !ok {
-				val = absentToken
-			}
-			counts[val]++
-		}
-		// Plurality: the strict maximum; a shared maximum is a tie.
-		best, bestN, tie := "", 0, false
-		for val, n := range counts {
-			if n > bestN {
-				best, bestN, tie = val, n, false
-			} else if n == bestN && val != best {
-				tie = true
-			}
-		}
-		row.Tie = tie
-		if !tie && best != absentToken {
-			row.Plurality = best
-		}
-		if row.Credential {
-			// The fingerprint never ships (rule 4) — and this GET is
-			// public, where an unsalted SHA-256 of a factory default is a
-			// dictionary lookup away from the value. A credential row
-			// speaks in agree/differ buckets only; the per-cell states
-			// already carry agreement (round-2, 3-of-4 reviewers).
-			row.Plurality = ""
-			agree, differ, absent := 0, 0, 0
-			for val, n := range counts {
-				switch {
-				case val == absentToken:
-					absent += n
-				case !tie && val == best:
-					agree += n
-				default:
-					differ += n
-				}
-			}
-			row.Counts["agree"], row.Counts["differ"], row.Counts["absent"] = agree, differ, absent
-		} else {
-			for val, n := range counts {
-				if val == absentToken {
-					row.Counts["absent"] = n
-				} else {
-					row.Counts[val] = n
-				}
-			}
-		}
-
-		for _, v := range vehicles {
-			_, has := pulls[v]
-			if !has {
-				row.Cells[v] = Cell{State: StateMissing}
-				continue
-			}
-			val, ok := values[id][v]
-			if !ok {
-				val = absentToken
-			}
-			if val == absentToken {
-				if tie || best == absentToken {
-					row.Cells[v] = Cell{State: StateAbsent}
-				} else {
-					row.Cells[v] = Cell{State: StateAbsentDiffers}
-				}
-				continue
-			}
-			cell := Cell{State: StateOK}
-			if tie || val != best {
-				cell.State = StateDiffers
-			}
-			if cell.State == StateDiffers && row.Calibration {
-				cell.State = StateCalibration
-			}
-			if !row.Credential {
-				cell.Value = val
-			}
-			row.Cells[v] = cell
-		}
-		view.Rows = append(view.Rows, row)
+		counts[val]++
 	}
-	return view
+	bestN := 0
+	for val, n := range counts {
+		if n > bestN {
+			best, bestN, tie = val, n, false
+		} else if n == bestN && val != best {
+			tie = true
+		}
+	}
+	return counts, best, tie
+}
+
+// fillCounts publishes the hover's counts. A credential row speaks in
+// agree/differ buckets only: the fingerprint never ships (rule 4) — and
+// the GET is public, where an unsalted SHA-256 of a factory default is a
+// dictionary lookup away from the value; the per-cell states already carry
+// agreement (round-2, 3-of-4 reviewers). Every other row shows
+// value -> voters, with absences bucketed as "absent".
+func fillCounts(row *RowView, counts map[string]int, best string, tie bool) {
+	if row.Credential {
+		row.Plurality = ""
+		agree, differ, absent := 0, 0, 0
+		for val, n := range counts {
+			switch {
+			case val == absentToken:
+				absent += n
+			case !tie && val == best:
+				agree += n
+			default:
+				differ += n
+			}
+		}
+		row.Counts["agree"], row.Counts["differ"], row.Counts["absent"] = agree, differ, absent
+		return
+	}
+	for val, n := range counts {
+		if val == absentToken {
+			row.Counts["absent"] = n
+		} else {
+			row.Counts[val] = n
+		}
+	}
+}
+
+// rowCells builds one cell per fleet column: yellow for a robot with no
+// pull (the only non-voter), the absent dash split by whether absence is
+// the plurality's own state (a dash against a valued plurality is a RED
+// dash), and valued cells compared to the plurality — a differing value on
+// a calibration row softens to light blue, and a credential cell ships no
+// value at all. best/tie are tallyRow's answers, NOT row.Plurality/Tie:
+// the comparison always runs against the raw plurality even where the
+// published row redacts it (credential rows, ties).
+func rowCells(id string, row RowView, vehicles []string, pulls map[string]Pull, values map[string]map[string]string, best string, tie bool) map[string]Cell {
+	cells := map[string]Cell{}
+	for _, v := range vehicles {
+		if _, has := pulls[v]; !has {
+			cells[v] = Cell{State: StateMissing}
+			continue
+		}
+		val, ok := values[id][v]
+		if !ok {
+			val = absentToken
+		}
+		if val == absentToken {
+			if tie || best == absentToken {
+				cells[v] = Cell{State: StateAbsent}
+			} else {
+				cells[v] = Cell{State: StateAbsentDiffers}
+			}
+			continue
+		}
+		cell := Cell{State: StateOK}
+		if tie || val != best {
+			cell.State = StateDiffers
+		}
+		if cell.State == StateDiffers && row.Calibration {
+			cell.State = StateCalibration
+		}
+		if !row.Credential {
+			cell.Value = val
+		}
+		cells[v] = cell
+	}
+	return cells
 }

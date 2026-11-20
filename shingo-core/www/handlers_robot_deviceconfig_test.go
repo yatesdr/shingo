@@ -92,7 +92,8 @@ func testHandlersWithDeviceConfigFleet(t *testing.T) (*Handlers, *store.DB, *fak
 	hub.Start()
 	t.Cleanup(func() { hub.Stop() })
 
-	dbgLog, _ := debuglog.New(64, nil)
+	dbgLog, err := debuglog.New(64, nil)
+	testutil.MustNoErr(t, err, "debuglog")
 
 	h := &Handlers{
 		engine:        eng,

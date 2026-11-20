@@ -9,8 +9,10 @@ import (
 
 // The fixture is a REAL robot's #1500 model file (SJV-SW600, saved by Eric
 // 2026-11-19; the same document RoboShop's Device Config renders), with the
-// one credential value already fingerprinted — the raw bytes are never
-// committed, for the same reason the pull path sanitizes before storing.
+// one credential value already fingerprinted and the plant's private IPv4s
+// rewritten to TEST-NET (192.0.2.x, last octet kept; the guards' rule) —
+// the raw bytes are never committed, for the same reason the pull path
+// sanitizes before storing.
 const fixturePath = "testdata/SJV-SW600.model"
 
 func fixture(t *testing.T) *ModelFile {
@@ -252,9 +254,12 @@ func TestSanitizeNoPlaintextInColumns(t *testing.T) {
 	if !jsonContains(config, "sha256:") {
 		t.Error("fingerprint missing from the sanitized config")
 	}
-	// Deterministic: same value, same fingerprint, every time.
-	if Fingerprint("12345678") != Fingerprint("12345678") {
-		t.Error("fingerprint not deterministic")
+	// Deterministic: the fingerprint of the live-measured factory default is
+	// pinned as this exact string (an unsalted SHA-256 is stable by
+	// definition — and comparing two identical calls would prove nothing,
+	// which is what staticcheck's SA4000 exists to say).
+	if got, want := Fingerprint("12345678"), "sha256:ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f"; got != want {
+		t.Errorf("fingerprint = %q, want the pinned digest", got)
 	}
 	if Fingerprint("a") == Fingerprint("b") {
 		t.Error("fingerprint collides on different values")

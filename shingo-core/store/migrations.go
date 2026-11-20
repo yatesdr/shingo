@@ -4601,9 +4601,9 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ConstraintExists(q, "orders", "orders_dispatched_names_its_job")
 			}},
-	{184, "robot_deviceconfig_pulls - one append-only row per robot per Device Config pull: params (the flattened matrix rows) and config (the sanitized whole model), plus the pull-time model_md5 for provenance",
-		v184DeviceConfigPulls,
-		func(q schema.Querier) bool { return schema.TableExists(q, "robot_deviceconfig_pulls") }},
+		{184, "robot_deviceconfig_pulls - one append-only row per robot per Device Config pull: params (the flattened matrix rows) and config (the sanitized whole model), plus the pull-time model_md5 for provenance",
+			v184DeviceConfigPulls,
+			func(q schema.Querier) bool { return schema.TableExists(q, "robot_deviceconfig_pulls") }},
 	}
 }
 
