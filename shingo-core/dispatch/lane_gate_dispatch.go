@@ -695,9 +695,10 @@ func IsGateStaged(order *orders.Order) bool {
 // patchers (applyDeliveryNode / applySourceNode, loader_place.go) round-trip
 // through resolvedStep, so they PRESERVE the stamp rather than dropping it.
 // Both valve functions now stamp. So an unstamped lane wait would have to come
-// from a build older than this field, and none can be in flight: the gate has
-// never run at a plant, no lane carries a mark at either plant,
-// and this branch has never been deployed to one.
+// from a build older than this field, and none can be in flight: the stamp is
+// older than every lane wait a plant has run. No lane at either plant carried a
+// mark until the rule that a lane is never without a waiting spot
+// (store/nodes/marks.go), and every build since stamps its waits.
 //
 // AND IT WOULD HIDE THE NEXT BUG. The splice lands next, and it becomes a THIRD
 // producer of lane waits — in exactly the code most likely to forget the stamp.

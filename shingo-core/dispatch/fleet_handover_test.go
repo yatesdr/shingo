@@ -22,8 +22,9 @@ import (
 // Asserting "one of them returned an error" would pass under the old ordering
 // too, which is the whole point of putting the count on the backend.
 //
-// MUTATION: move the lifecycle.Dispatch call in handoverToFleet back below
-// CreateOrder and this fails with two creates.
+// MUTATION: drop the ask CAS's guard (orders.TakeAskTx matching on its id
+// alone, without `status=$2 AND asked_vendor_order_id=''`) and the loser takes
+// the ask again and creates: this fails with two creates.
 func TestHandover_CASLoserNeverCallsTheFleet(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -218,8 +219,9 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 // The handover is shared; the REQUESTS are not, and must not become so. A sealed
 // two-block transport, a Complete:false plan split at a wait, and a Complete:false
 // unsealed waybill ending at a gate point are three different jobs. This asserts
-// the plain path still ships the shape it shipped before the extraction — the one
-// every plant actually runs, since no lane carries a mark.
+// the plain path still ships the shape it shipped before the extraction: a plan
+// that enters no lane (one that does is spliced and gated, since every lane
+// carries a mark).
 func TestHandover_RequestShapesUnchanged(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

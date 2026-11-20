@@ -696,9 +696,10 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// rather than the mechanism. The mechanism is the splice, and it is installed
 	// at both create sites.
 	//
-	// No-op for every ungated path, which is every lane at both plants: the walk
-	// resolves each step's lane and finds no gated group, so the plan comes back
-	// unchanged and the sealed path below runs byte-identically.
+	// No-op for a plan that enters no lane: the walk finds no lane step, so the
+	// plan comes back unchanged and the sealed path below runs byte-identically.
+	// A plan that enters a lane is always gated, since every lane carries a mark
+	// (store/nodes/marks.go: a lane is never without a waiting spot).
 	// THE DESTINATION-DEFERRED LEG BUILDS A DIFFERENT PLAN, AND THE SAME VALVE
 	// SHIPS IT.
 	//

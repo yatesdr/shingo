@@ -25,7 +25,7 @@ import (
 //
 // ── THE ORDERING, AND WHY IT CHANGED ───────────────────────────────────────
 //
-//	mint → CAS the status → create the fleet order → write the id
+//	mint → CAS the ask → create the fleet order → the yes: `dispatched` with the id
 //
 // It used to be create-then-record at all four sites, so the losing caller of a
 // race discovered it had lost AFTER the robot was physically committed — the old
@@ -39,9 +39,9 @@ import (
 // every site discards CreateOrder's return value, so no step here depends on
 // anything the fleet hands back.
 //
-// THE ID DOES NOT MOVE, and that is deliberate rather than an oversight. An
-// earlier proposal wrote the id before the create too; two guards key on
-// vendor_order_id rather than on status and both would have broken:
+// THE ID IS WRITTEN ONLY BY THE YES, and that is deliberate rather than an
+// oversight. An earlier proposal wrote the id before the create; two guards key
+// on vendor_order_id rather than on status and both would have broken:
 //
 //   - the exactly-once check (compound.go, "already dispatched as %s — refusing a
 //     second dispatch") would have permanently refused to retry a leg whose
@@ -50,31 +50,33 @@ import (
 //     an order LOOK gate-staged and the release evaluator would try to append a
 //     tail to a fleet order that does not exist.
 //
-// So vendor_order_id keeps meaning exactly what it means today: the witness that
-// the fleet has this job. Status means "Core has claimed it." They are different
-// facts and now they are written in that order.
+// So vendor_order_id means one thing, the fleet has this job, and `dispatched`
+// now means the same thing: the yes writes both in one statement. The claim is
+// the ask (orders.asked_vendor_order_id), the job Core is asking the fleet for.
+// While it asks, the order keeps the status it rests in, so a refused create
+// changes nothing its station hears.
 //
-// ── THE FOUR ARMS ──────────────────────────────────────────────────────────
+// ── THE ARMS ───────────────────────────────────────────────────────────────
 //
 //	CAS loses                  → return. The fleet is never called. This is the point.
-//	CAS wins, create fails     → return the error. The order is left claimed for the
-//	                             CALLER to dispose of (see below), and the status is
-//	                             NOT rolled back — rolling back invites a re-dispatch
-//	                             loop against a fleet that just refused.
-//	create ok, order terminal  → someone cancelled it DURING the fleet call. Cancel
-//	                             the vendor order.
-//	create ok, id write fails  → the fleet has a job Core cannot name. Cancel it.
-//	all four ok                → the caller emits dispatched.
+//	the fleet says no          → the ask closes and the hand's holds are demoted in one
+//	                             transaction (RefuseOrderAsk); AskClosed goes back for
+//	                             the CALLER to dispose of (see below). The status never
+//	                             moved, so nothing is rolled back.
+//	the yes finds no row       → the order ended DURING the fleet call. Cancel the job;
+//	                             it stays named until the fleet lets it go.
+//	the yes cannot be written  → the fleet has a job Core cannot name. Cancel it.
+//	the yes is written         → `dispatched`, told to the station; the caller goes on.
 //
 // THE ORPHAN GUARD KEEPS BOTH CAUSES. It was specified as narrowing to one, on the
 // reasoning that "lost the race after committing a robot" cannot happen once the
 // CAS comes first. That is true of the race between two DISPATCHERS and false of
-// the race with a TERMINALIZER: TerminalizeOrder is a direct write that does not
-// go through the CAS, so an operator cancel can still land while the fleet call is
-// in flight, after this function has already claimed the order. Ordering fixes the
-// first race and cannot touch the second — see arm 2b below, which the existing
-// orphan-guard test (dispatcher_test.go, cancel injected inside CreateOrder)
-// caught the moment it went missing.
+// the race with a TERMINALIZER: TerminalizeOrder is a direct write the ask does
+// not block (an ending lands on an asked row by design), so an operator cancel can
+// still land while the fleet call is in flight, after the hand has opened the ask.
+// Ordering fixes the first race and cannot touch the second — see arm 3b below,
+// which the orphan-guard test (dispatcher_test.go, cancel injected inside
+// CreateOrder) caught the moment it went missing.
 //
 // FAILING THE ORDER IS THE CALLER'S JOB, not this function's, and that is not a
 // deferral — the callers already do it and they do it differently. dispatchToFleet

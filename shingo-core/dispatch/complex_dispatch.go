@@ -673,9 +673,13 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// it: every runtime and soak assertion about "who is inside" reads the same
 	// rows this arm was not writing.
 	//
-	// It is the arm that mattered most. Complex is the bulk of both plants' lane
-	// traffic, and THIS branch — ungated — is the one that runs, because no lane
-	// at either plant carries a mark.
+	// It was the arm that mattered most when this was written: complex is the
+	// bulk of both plants' lane traffic, and no lane then carried a mark, so
+	// every complex create ran ungated. Every lane carries a mark now (a lane is
+	// never without a waiting spot: store/nodes/marks.go, and Core will not boot
+	// on one that is), so a complex plan that enters a lane is spliced and its
+	// create stops at the lane's mark (buildComplexCommit). The row is still
+	// taken for every node of the segment the create sends.
 	//
 	// THE NODES ARE THE PRE-WAIT SEGMENT'S, not the whole plan's, and the
 	// distinction is the same one the create makes: only `preWait` is being
