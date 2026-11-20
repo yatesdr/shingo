@@ -22,7 +22,6 @@ import (
 // Adding a column to the orders DDL therefore forces a decision: write it at
 // creation, or say here who writes it instead.
 var deliberatelyNotWritten = map[string]string{
-	"bin_id":          "the one-cart column v174 drops (an order's carts are its order_bins rows); the base DDL keeps it because v173 reads it on a database that predates the rows",
 	"id":              "serial primary key, assigned by RETURNING id",
 	"vendor_order_id": "fleet identifier, minted at dispatch (dispatcher.go)",
 	"vendor_state":    "vendor lifecycle mirror, written on vendor callbacks",
@@ -60,8 +59,12 @@ var deliberatelyNotWritten = map[string]string{
 // is either written by Create or listed in deliberatelyNotWritten with a reason.
 //
 // It reads the two sources as text rather than querying a database, so it runs
-// in the plain gate with no container: the DDL constant in store/schema and the
-// INSERT in this package are both the literal strings that ship.
+// in the plain gate with no container: the committed schema snapshot (the
+// columns a fresh boot ships, store/schema/schema.snapshot.sql) and the INSERT
+// in this package, the literal string that ships. It read the baseline DDL
+// constant until the squash at v184; that constant was the table's shape at
+// the baseline, not what shipped, and so it kept bin_id, which v174 dropped,
+// and missed nothing only because every later column was listed by hand.
 func TestWriter_CoversEveryOrdersColumn(t *testing.T) {
 	t.Parallel()
 	ddl := ordersDDLColumns(t)
@@ -102,40 +105,36 @@ func TestWriter_CoversEveryOrdersColumn(t *testing.T) {
 	}
 }
 
-// ordersDDLColumns returns the column names declared in the CREATE TABLE for
-// orders, in declaration order.
+// ordersDDLColumns returns the column names of the orders table the committed
+// snapshot ships, in the snapshot's order.
 func ordersDDLColumns(t *testing.T) []string {
 	t.Helper()
-	const ddlPath = "../schema/postgres_ddl.go"
-	b, err := os.ReadFile(ddlPath)
+	const snapshotPath = "../schema/schema.snapshot.sql"
+	b, err := os.ReadFile(snapshotPath)
 	if err != nil {
-		t.Fatalf("read %s: %v", ddlPath, err)
+		t.Fatalf("read %s: %v", snapshotPath, err)
 	}
-	_, rest, found := strings.Cut(string(b), "CREATE TABLE IF NOT EXISTS orders (")
+	_, rest, found := strings.Cut(strings.ReplaceAll(string(b), "\r\n", "\n"), "CREATE TABLE public.orders (\n")
 	if !found {
-		t.Fatalf("no CREATE TABLE for orders in %s — did the table move, or the DDL style change?", ddlPath)
+		t.Fatalf("no CREATE TABLE public.orders in %s — did the table move, or pg_dump's form change?", snapshotPath)
 	}
 	body, _, found := strings.Cut(rest, "\n);")
 	if !found {
-		t.Fatalf("unterminated CREATE TABLE for orders in %s", ddlPath)
+		t.Fatalf("unterminated CREATE TABLE for orders in %s", snapshotPath)
 	}
 
 	var cols []string
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "--") {
+		if line == "" {
 			continue
 		}
 		name, _, _ := strings.Cut(line, " ")
-		name = strings.TrimSuffix(name, ",")
 		// Table-level constraints are not columns.
-		switch strings.ToUpper(name) {
-		case "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT", "EXCLUDE":
+		if strings.EqualFold(name, "CONSTRAINT") {
 			continue
 		}
-		if name != "" {
-			cols = append(cols, name)
-		}
+		cols = append(cols, strings.Trim(name, `"`))
 	}
 	return cols
 }
