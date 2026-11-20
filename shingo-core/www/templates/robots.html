@@ -260,7 +260,9 @@
 .dc-sec .dc-lead0, .dc-sub .dc-lead1 { font-weight: var(--fw-bold); }
 /* The legend: a boxed row per state, the state's own fill on its word —
    the swatch IS the cell class it explains, so the legend can never drift
-   from the matrix's colours. */
+   from the matrix's colours. It sits inside the toolbar row (between
+   Collapse all and the pull status), which centers on its tallest child. */
+.dc-toolbar { align-items: center; }
 .dc-legend { border: 1px solid var(--sub-2); background: var(--bg); max-width: max-content; }
 .dc-legend > div { padding: 2px 8px; font-size: var(--font-sm); color: var(--text-muted); }
 .dc-legend > div + div { border-top: 1px solid var(--sub-1); }

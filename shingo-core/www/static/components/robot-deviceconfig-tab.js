@@ -139,23 +139,26 @@ function render() {
   // table inside the persistent box is replaced now — the input keeps its
   // focus and caret, and the scroller keeps its position.
   if (!document.getElementById('dc-scroll')) {
-    el.innerHTML = '<div class="flex flex-between mb-1 flex-wrap gap-1">'
+    // Toolbar order (Eric, 2026-11-20): buttons, legend, pull status, Pull
+    // fleet — the legend and the status live IN the bar, between the
+    // Collapse-all and Pull-fleet buttons, not above the table.
+    el.innerHTML = '<div class="dc-toolbar flex flex-between mb-1 flex-wrap gap-1">'
       + '<div class="flex gap-1 flex-wrap">'
       + '<input class="set-inp" id="dc-filter" placeholder="Filter params…" value="' + escapeHtml(filterText) + '" data-action-input="filterDeviceConfig" data-action="filterDeviceConfig">'
       + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:true">Expand all</button>'
       + '<button type="button" class="btn btn-sm" data-action="toggleAllDeviceConfig:false">Collapse all</button>'
       + '</div>'
-      + (canEdit && matrix.can_pull
-          ? '<button type="button" class="btn btn-sm btn-primary" data-action="pullFleetDeviceConfig">Pull fleet</button>'
-          : '')
-      + '</div>'
-      + '<div class="text-muted text-sm mb-1" id="dc-pull-status"></div>'
       + '<div class="dc-legend">'
       + '<div><span class="dc-cell dc-red">red</span> = differs from fleet</div>'
       + '<div><span class="dc-cell dc-yellow">yellow</span> = no value from pull</div>'
       + '<div><span class="dc-cell dc-blue">light blue</span> = device-specific (calibration) value</div>'
       + '<div><span class="dc-cell">••••••••</span> = credential — compared, never stored or shown</div>'
       + '<div>click a section to expand / collapse</div>'
+      + '</div>'
+      + '<div class="text-muted text-sm" id="dc-pull-status"></div>'
+      + (canEdit && matrix.can_pull
+          ? '<button type="button" class="btn btn-sm btn-primary" data-action="pullFleetDeviceConfig">Pull fleet</button>'
+          : '')
       + '</div>'
       + '<div class="dc-scroll" id="dc-scroll"></div>';
   }
