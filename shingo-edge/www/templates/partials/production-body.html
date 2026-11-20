@@ -62,7 +62,7 @@
                         {{if .ActiveClaim}}
                             {{if eq .ActiveClaim.SwapMode "manual_swap"}}
                                 {{if .Runtime}}
-                                    {{if gt .Runtime.RemainingUOPCached 0}}<strong>{{.Runtime.RemainingUOPCached}}</strong>{{else}}<span class="text-muted">0</span>{{end}}
+                                    {{if gt .Runtime.RemainingUOPCached 0}}<strong>{{uopShown .Runtime.RemainingUOPCached .UOPRatio}}</strong>{{with uopParts .Runtime.RemainingUOPCached .UOPRatio}} <span class="text-muted">{{.}}</span>{{end}}{{else}}<span class="text-muted">0</span>{{end}}
                                 {{else}}--{{end}}
                             {{else}}
                                 {{if .Runtime}}
@@ -98,7 +98,7 @@
                             <button class="btn btn-sm" data-action="openRequestEmptyModal" data-node-id="{{.Node.ID}}" data-allowed-payloads="{{json .ActiveClaim.AllowedPayloads}}" title="Request an empty bin">Request Empty</button>
                             {{else}}
                                 {{if .BinState.Manifest}}
-                            <button class="btn btn-sm" data-action="viewBinContents" data-bin-state="{{json .BinState}}" title="View bin contents">View</button>
+                            <button class="btn btn-sm" data-action="viewBinContents" data-bin-state="{{json .BinState}}"{{if gt .UOPRatio 1}} data-uop-ratio="{{.UOPRatio}}"{{end}} title="View bin contents">View</button>
                                 {{end}}
                             <button class="btn btn-sm btn-primary" data-action="openLoadBinModal" data-node-id="{{.Node.ID}}" data-allowed-payloads="{{json .ActiveClaim.AllowedPayloads}}" data-uop-capacity="{{.ActiveClaim.UOPCapacity}}" title="Load bin with payload manifest">Load Bin</button>
                                 {{if .Runtime}}{{if gt .Runtime.RemainingUOPCached 0}}

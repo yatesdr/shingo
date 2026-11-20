@@ -3,7 +3,7 @@ import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm, hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
-import { countBoxLabel, typedNote } from '/static/shared/count-words.js';
+import { countBoxLabel, countSaid, typedNote } from '/static/shared/count-words.js';
 import { linePieces, uopRatio } from '/static/shared/count.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { toast } from '/static/shared/notice.js';
@@ -55,10 +55,13 @@ async function releaseNodeWithPrompt(nodeID, el) {
 
 // binContents is the word for what a bin holds, from its row in the bins
 // table: stocked (above zero) and partial (above zero, below its part's
-// capacity). A held partial says its declared count.
-function binContents(binState) {
+// capacity). A held partial says its declared count, at the tile's ratio
+// (ratio: the View button's data-uop-ratio, absent at 1) as its UoP and
+// parts.
+function binContents(binState, ratio) {
+    const held = binState.uop_remaining || 0;
     // OWNER-WORDS
-    if (binState.held_since) return 'Partial, held (' + (binState.uop_remaining || 0) + ' declared)';
+    if (binState.held_since) return 'Partial, held (' + countSaid(held, ratio, String(held)) + ' declared)';
     // OWNER-WORDS
     if (!binState.stocked) return 'Empty';
     // OWNER-WORDS
@@ -80,7 +83,7 @@ function viewBinContents() {
     // The bins table carries whether the bin holds parts and whether fewer
     // than its part's capacity, never a count (binContents).
     // OWNER-WORDS
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Contents</div><strong>' + binContents(binState) + '</strong></div>';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Contents</div><strong>' + escapeHtml(binContents(binState, Number(this.dataset.uopRatio) || 1)) + '</strong></div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + escapeHtml(binState.bare ? 'Cart, no bin' : (binState.bin_type_code || '-')) + '</div>';
     html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Confirmed</div>' + (binState.manifest_confirmed ? 'Yes' : 'No') + '</div>';
     html += '</div>';

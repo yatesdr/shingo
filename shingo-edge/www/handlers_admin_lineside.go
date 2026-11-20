@@ -22,6 +22,10 @@ type linesideBucketRow struct {
 	PayloadCode string
 	Qty         int
 	State       string
+	// Ratio is the pile's part's UoP ratio (StationService.PartRatio), 1 when
+	// the catalog copy has none: the table shows the pile's UoP, its parts
+	// beside it, above 1 only.
+	Ratio int
 }
 
 // apiAdminClearLinesideBucket deletes one pile, active or stranded, and
