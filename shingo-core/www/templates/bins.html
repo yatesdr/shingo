@@ -210,7 +210,7 @@
              the bin Inventory lists under "Count below zero"; only a bin with no
              payload AND no count is not applicable. Twin: bins.js uopText. */}}
         <td data-sort-value="{{.UOPRemaining}}">
-          {{if or .PayloadCode (ne .UOPRemaining 0)}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
+          {{if .UOPParts}}{{.UOPShown}} <span class="text-muted bin-uop-parts">{{.UOPParts}}</span>{{else if or .PayloadCode (ne .UOPRemaining 0)}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
         </td>
         <td data-sort-value="{{.Status}}"><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
         <td class="bin-flags">
@@ -449,6 +449,7 @@
   var PAGE_BIN_TYPES = {{.BinTypesJSON}};
   var PAGE_PAYLOAD_BIN_TYPES = {{.PayloadBinTypesJSON}};
   var PAGE_AUTH = {{.Authenticated}};
+  var PAGE_UOP_RATIOS = {{.UOPRatiosJSON}};
 </script>
 <script type="module">import "/static/pages/bins.js";</script>
 <script type="module">import "/static/pages/bins-lineside.js";</script>

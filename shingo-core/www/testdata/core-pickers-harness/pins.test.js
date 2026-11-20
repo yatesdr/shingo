@@ -107,6 +107,8 @@ function lender(rec, doc, extra) {
         openNodeModal() { rec.modals.push('openNodeModal'); },
         abovePackNote: COUNT_WORDS.abovePackNote,
         linePieces: COUNT.linePieces,
+        countReading: COUNT.countReading,
+        uopRatio: COUNT.uopRatio,
     };
     return (n) => (extra && n in extra ? extra[n] : stubs[n]);
 }
@@ -394,7 +396,7 @@ function binsPage() {
     // (bins-rdskeys.js) over the same recorded shell as the node and part
     // adapters, and the key strip (bins-keystrip.js) over it.
     const echo = D.loadPage('static/pages/bins-echo.js', { console: g.console }, () => undefined);
-    const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, () => undefined);
+    const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, (n) => (n === 'countReading' ? COUNT.countReading : undefined));
     const live = D.loadPage('static/pages/bins-live.js', { console: g.console }, () => undefined);
     const keys = D.loadPage('static/pages/bins-rdskeys.js', { console: g.console }, () => undefined);
     const strip = D.loadPage('static/pages/bins-keystrip.js', { console: g.console, MutationObserver: function () {} },

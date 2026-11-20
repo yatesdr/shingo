@@ -43,6 +43,11 @@ type LoopView struct {
 	Doubt    []DoubtBin `json:"doubt"`
 	LeadDays int        `json:"lead_days"`
 	Safety   float64    `json:"safety"`
+	// UOPRatios is each payload's UOP ratio above 1 by code
+	// (PayloadService.UOPRatios), so the page shows its counts in UoP with
+	// the parts beside them. Absent at a ratio-1 plant: the answer is what it
+	// was. Set by the handler, not by Loop.
+	UOPRatios map[string]int `json:"uop_ratios,omitempty"`
 }
 
 // LoopRow is one row of either table. Pointers are absent values (rule 4: no

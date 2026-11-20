@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -551,4 +552,34 @@ func (s *PayloadService) CompatibleNodeNamesByPayload() (map[int64][]string, err
 // BinTypeCodesByPayload maps each payload to its bin type codes.
 func (s *PayloadService) BinTypeCodesByPayload() (map[int64][]string, error) {
 	return s.db.ListBinTypeCodesByPayload()
+}
+
+// UOPRatios is every payload's UOP ratio above 1, by payload code: what a page
+// needs to show a count in UoP with its parts beside it (owner, 2026-11-19).
+// A payload at a ratio of 1 is absent, so a page's data at ratio 1 is what it
+// was. Two statements, the payloads and every manifest line; the arithmetic is
+// protocol.UOPRatio's (uopRatiosOf).
+func (s *PayloadService) UOPRatios() (map[string]int, error) {
+	ps, err := s.db.ListPayloads()
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.db.PayloadManifestLines()
+	if err != nil {
+		return nil, err
+	}
+	return uopRatiosOf(ps, lines), nil
+}
+
+// uopRatiosOf is UOPRatios over rows already read: each payload's ratio from
+// its manifest lines (protocol.UOPRatio), kept only above 1. Pinned by
+// TestUOPRatiosOf.
+func uopRatiosOf(ps []*payloads.Payload, lines map[int64][]*payloads.ManifestItem) map[string]int {
+	out := map[string]int{}
+	for _, p := range ps {
+		if r := protocol.UOPRatio(domain.ProtocolLines(lines[p.ID])); r > 1 {
+			out[p.Code] = r
+		}
+	}
+	return out
 }

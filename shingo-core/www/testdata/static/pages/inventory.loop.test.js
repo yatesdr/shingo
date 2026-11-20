@@ -44,7 +44,7 @@ function lift(kind, name) {
 
 const NAMES = ['num', 'dur', 'timeToEmpty', 'timeLeft', 'worstFirst', 'foldedBodyHtml', 'offHomeTitle', 'thrTitle',
     'doubtHtml', 'hl', 'help', 'posHeadHtml', 'thrHeadHtml', 'thresholdCell', 'meterHtml', 'coming', 'posRowHtml', 'posBodyHtml',
-    'lineHeadHtml', 'lineRowHtml', 'lineBodyHtml', 'matches'];
+    'lineHeadHtml', 'lineRowHtml', 'lineBodyHtml', 'matches', 'ratioOf', 'counted', 'inBinPack'];
 
 function load(authenticated) {
     const ctx = {
@@ -53,8 +53,10 @@ function load(authenticated) {
         formatTime: (iso) => 'T(' + iso + ')',
         encodeURIComponent,
         authenticated, searchTerm: '', flashKey: '', thrPopOpen: false, open: { positions: false, lines: false },
+        view: null,
     };
     vm.createContext(ctx);
+    require('./lend-count.js')(ctx);
     const parts = [lift('const', 'HELP')].concat(NAMES.map((n) => lift('function', n)));
     const missing = ['HELP'].concat(NAMES).filter((n, i) => !parts[i]);
     if (missing.length) return { missing };
@@ -91,6 +93,24 @@ if (ctx.missing) {
     process.exit(1);
 }
 const run = (expr) => vm.runInContext(expr, ctx);
+
+// Counts above a ratio of 1 (owner, 2026-11-19): the answer's uop_ratios names
+// the part, and its counts read in UoP with the parts beside them. A part not
+// in it reads as it always did.
+{
+    ctx.view = { uop_ratios: { 'P-8': 8 } };
+    check('ratio: a part above 1', run('ratioOf("P-8")') === 8);
+    check('ratio: any other part is 1', run('ratioOf("P-1")') === 1);
+    check('counted: 404 at 8', run('counted("P-8", 404)') === '50 <span class="text-muted loop-parts">404 parts</span>',
+        run('counted("P-8", 404)'));
+    check('counted: at 1 as before', run('counted("P-1", 404)') === '404');
+    check('in bin / pack at 8', run('inBinPack({ payload_code: "P-8", in_bin: 404, pack: 800 })') ===
+        '50 / 100 <span class="text-muted loop-parts">404 / 800 parts</span>', run('inBinPack({ payload_code: "P-8", in_bin: 404, pack: 800 })'));
+    check('in bin / pack at 1 as before', run('inBinPack({ payload_code: "P-1", in_bin: 404, pack: 800 })') === '404 / 800');
+    check('doubt: below zero at 8', run('doubtHtml([{ bin_id: 1, label: "B1", node: "N1", payload_code: "P-8", uop: -5, reason: "below_zero" }])')
+        .indexOf('reads 0 UoP, -5 parts') >= 0);
+    ctx.view = null;
+}
 const call = (fn, ...args) => { ctx.__args = args; return run(fn + '(...__args)'); };
 // cells is a row's <td> contents, tags stripped but titles kept out.
 const cells = (html) => (html.match(/<td[^>]*>([\s\S]*?)<\/td>/g) || [])

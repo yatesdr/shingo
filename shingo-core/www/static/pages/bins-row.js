@@ -9,6 +9,7 @@
 //
 // No DOM: bins.row.test.js runs these under plain Node.
 import { escapeHtml } from '/static/shared/dom.js';
+import { countReading } from '/static/shared/count-words.js';
 
 var TRANSIT_NODE = '_TRANSIT';
 var CARRIER_PREFIX = '_ROBOT:';
@@ -16,8 +17,12 @@ var CARRIER_PREFIX = '_ROBOT:';
 // uopText is a bin's count as the table and the detail modal show it: wherever
 // there is one, including a payload-less bin left negative by a clear (the bin
 // Inventory lists under "Count below zero"). Only no payload AND no count is not
-// applicable. Twin of the bins.html UoP cell.
-export function uopText(b) {
+// applicable. Above a ratio of 1 (ratio: the payload's, PAGE_UOP_RATIOS) the
+// count's UoP with its parts beside it; at 1 the count as it always was. Twin
+// of the bins.html UoP cell.
+export function uopText(b, ratio) {
+  var r = countReading(b.uop_remaining, ratio);
+  if (r.split) return r.big + ' <span class="text-muted bin-uop-parts">' + escapeHtml(r.small) + '</span>';
   return (b.payload_code || b.uop_remaining) ? String(b.uop_remaining) : '<span class="text-muted">-</span>';
 }
 
@@ -75,7 +80,7 @@ export function binTransit(detail) {
 // Process and the notes chip come from the answer's process and has_notes,
 // which handleBins reads the same way. `auth` is PAGE_AUTH: the Return button
 // is drawn only for a signed-in viewer, as the template does.
-export function binRowView(detail, auth) {
+export function binRowView(detail, auth, ratios) {
   var b = detail.bin;
   var t = binTransit(detail);
   var esc = escapeHtml;
@@ -137,7 +142,7 @@ export function binRowView(detail, auth) {
     location: { html: loc, sort: node },
     process: { text: detail.process || '' },
     payload: { html: payloadHTML, sort: payload },
-    uop: { html: uopText(b), sort: String(b.uop_remaining) },
+    uop: { html: uopText(b, (ratios || {})[b.payload_code]), sort: String(b.uop_remaining) },
     status: { html: '<span class="badge badge-' + esc(b.status) + '">' + esc(b.status) + '</span>', sort: b.status || '' },
     flags: { html: flagsHTML(b, detail.has_notes), returnHTML: returnHTML }
   };

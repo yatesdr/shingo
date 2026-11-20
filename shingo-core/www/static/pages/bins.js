@@ -2,7 +2,7 @@ import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { abovePackNote } from '/static/shared/count-words.js';
-import { linePieces } from '/static/shared/count.js';
+import { linePieces, uopRatio } from '/static/shared/count.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
@@ -351,7 +351,7 @@ function renderOverview(data) {
         ? '<code>' + escapeHtml(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
         : '<span class="text-muted">empty</span>');
   html += bdField('Payload', payloadDisplay);
-  html += bdField('UoP Remaining', uopText(b) + (b.payload_code ? uopBar(b.uop_remaining, data.template) : ''));
+  html += bdField('UoP Remaining', uopText(b, uopRatio(data.template_manifest)) + (b.payload_code ? uopBar(b.uop_remaining, data.template) : ''));
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));
   html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + escapeHtml(b.locked_by) + '</span>' : 'No');
@@ -894,7 +894,7 @@ function paintBinRow(detail) {
   if (!b) return false;
   var row = document.querySelector('#bin-table tbody tr[data-id="' + b.id + '"]');
   if (!row) return false;
-  var v = binRowView(detail, PAGE_AUTH);
+  var v = binRowView(detail, PAGE_AUTH, typeof PAGE_UOP_RATIOS === 'object' ? PAGE_UOP_RATIOS : null);
   row.dataset.label = v.data.label;
   row.dataset.type = v.data.type;
   row.dataset.status = v.data.status;

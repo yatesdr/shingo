@@ -44,9 +44,10 @@ function escapeHtml(s) {
 
 function load() {
     let src = fs.readFileSync(path.join(SRC_DIR, 'bins-row.js'), 'utf8');
-    src = src.replace(/^import .*$/m, '').replace(/^export /mg, '');
+    src = src.replace(/^import .*$/mg, '').replace(/^export /mg, '');
     const ctx = { escapeHtml };
     vm.createContext(ctx);
+    require('./lend-count.js')(ctx);
     vm.runInContext(src + '\nthis.binRowView = binRowView; this.uopText = uopText; this.binTransit = binTransit;', ctx);
     return ctx;
 }
@@ -443,6 +444,19 @@ async function feedTests() {
         r.advance(10000);
         eq('nothing read', r.reads.length, 0);
     }
+}
+
+// The UoP cell above a ratio of 1 (owner, 2026-11-19): a bin pulled at 404 at
+// 8 a cycle reads 50 with its 404 parts beside it; at 1, and with no ratio, the
+// count as it always was.
+{
+    eq('uop: 404 at 8', m.uopText({ payload_code: 'P-8', uop_remaining: 404 }, 8),
+        '50 <span class="text-muted bin-uop-parts">404 parts</span>');
+    eq('uop: 404 at 1', m.uopText({ payload_code: 'P-1', uop_remaining: 404 }, 1), '404');
+    eq('uop: no ratio given', m.uopText({ payload_code: 'P-1', uop_remaining: 404 }), '404');
+    const v = m.binRowView({ bin: bin({ payload_code: 'P-8', uop_remaining: 800 }), recent_orders: [] }, true, { 'P-8': 8 });
+    eq('row: a full pack at 8 reads 100', v.uop.html, '100 <span class="text-muted bin-uop-parts">800 parts</span>');
+    eq('row: the cell still sorts by the count', v.uop.sort, '800');
 }
 
 function finish() {

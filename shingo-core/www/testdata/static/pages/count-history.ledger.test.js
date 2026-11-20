@@ -309,14 +309,16 @@ console.log('the sections count history gave away render where they went (owner,
     const rows = liftFrom('bins-lineside.js', 'function', 'bucketRowsHtml');
     const age = liftFrom('bins-lineside.js', 'function', 'bucketAgeMs');
     const numFn = liftFrom('bins-lineside.js', 'function', 'num');
-    if (!rows || !age || !numFn) {
-        check('bins-lineside.js defines bucketRowsHtml, bucketAgeMs and num', false);
+    const pileFn = liftFrom('bins-lineside.js', 'function', 'pileText');
+    if (!rows || !age || !numFn || !pileFn) {
+        check('bins-lineside.js defines bucketRowsHtml, bucketAgeMs, num and pileText', false);
     } else {
         const now = Date.parse('2026-10-29T12:00:00Z');
         const bctx = { escapeHtml: esc, timeAgo: () => 'ago', formatTime: (t) => 'T(' + t + ')', serverNow: () => now,
             STALE_WARN_MS: 7 * 24 * 3600 * 1000, STALE_BAD_MS: 30 * 24 * 3600 * 1000 };
         vm.createContext(bctx);
-        vm.runInContext([numFn, age, rows].join('\n'), bctx);
+        require('./lend-count.js')(bctx);
+        vm.runInContext([numFn, age, pileFn, rows].join('\n'), bctx);
         const html = vm.runInContext('bucketRowsHtml(' + JSON.stringify([
             { node_name: 'ALN_001', payload_code: 'P-A', state: 'active', qty: 12, updated_at: '2026-10-29T11:00:00Z' },
             { node_name: 'ALN_002', payload_code: 'P-B', state: 'active', qty: 3, updated_at: '2026-09-01T00:00:00Z' },
