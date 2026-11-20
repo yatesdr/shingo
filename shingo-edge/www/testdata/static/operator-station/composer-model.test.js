@@ -2332,7 +2332,7 @@ function gridLines(M, FLOWSPEC) {
         auto_reorder: true, lineside_soft_threshold: 3,
         auto_push: true, keep_staged_node: 'STG_1', evacuate_on_changeover: true,
         changeover_carryover_disposition: 'keep_lineside', index_robot_supplies: true,
-        auto_confirm: true, curtain_required: true, strict_pack: true, pack_tolerance_pct: 5,
+        auto_confirm: true, curtain_required: true, strict_pack: true, pack_tolerance_pct: 5, hold_limit: 20,
         sequence: 2, refill_by: 'index_robot',
     };
     // The page asks advancedShows about one key that is not an Advanced

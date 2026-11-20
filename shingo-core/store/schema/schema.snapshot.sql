@@ -992,7 +992,9 @@ CREATE TABLE public.orders (
     named_bin_id bigint,
     want text DEFAULT ''::text NOT NULL,
     steps_done integer DEFAULT 0 NOT NULL,
-    block_actions jsonb DEFAULT '{}'::jsonb
+    block_actions jsonb DEFAULT '{}'::jsonb,
+    version bigint DEFAULT 1 NOT NULL,
+    asked_vendor_order_id text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.orders_id_seq
@@ -1888,6 +1890,9 @@ ALTER TABLE ONLY public.order_history
 
 ALTER TABLE ONLY public.order_intake_refusals
     ADD CONSTRAINT order_intake_refusals_pkey PRIMARY KEY (edge_uuid);
+
+ALTER TABLE public.orders
+    ADD CONSTRAINT orders_dispatched_names_its_job CHECK (((status <> 'dispatched'::text) OR (vendor_order_id <> ''::text))) NOT VALID;
 
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_pkey PRIMARY KEY (id);

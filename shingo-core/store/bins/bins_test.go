@@ -8,7 +8,6 @@ import (
 	"errors"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/orders"
 	"shingocore/store/reservations"
 	"testing"
 	"time"
@@ -179,10 +178,14 @@ func TestClaim_And_Unclaim(t *testing.T) {
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-1", NodeID: &std.StorageNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
+	// The claimant below keeps its ask open to the end. Its fixture opts out
+	// under the subtest's name, and this database is swept under this test's.
+	testdb.ExpectAskLeftOpen(t, "Claim_sets_claimed_by's claimant stands for a create in flight")
 
 	t.Run("Claim_sets_claimed_by", func(t *testing.T) {
-		// (C1.5: the claimant keeps the claim, so it is built at dispatched.)
-		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+		// The claimant keeps the claim, so it is built as the hand holds it:
+		// resting pending with its ask open (the create in flight).
+		o := testdb.CreateOrder(t, db, testdb.AskingFor(protocol.StatusPending, "sg-bin-clm-1"))
 		testdb.ReserveBin(t, db, o.ID, bin.ID) // demoted-CAS guard requires a pending reservation
 		testutil.MustNoErr(t, bins.Claim(db.DB, bin.ID, o.ID), "bins.Claim")
 		got, _ := bins.Get(db.DB, bin.ID)
@@ -380,8 +383,8 @@ func TestNodeTileStates(t *testing.T) {
 	// Empty (no manifest) bin at line node, claimed by an order.
 	empty := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-TILE-EMPTY", NodeID: &std.LineNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, empty), "bins.Create empty")
-	// (C1.5: the holder is built at dispatched; a bin claim is a hard hold.)
-	emptyOrder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	// (C1.5: the holder is one the fleet has; a bin claim is a hard hold.)
+	emptyOrder := testdb.CreateOrder(t, db, testdb.FleetHas("sg-tile-empty"))
 	testdb.ClaimBinForTest(t, db, empty.ID, emptyOrder.ID)
 
 	states, err := bins.NodeTileStates(db.DB)

@@ -63,7 +63,7 @@ func TestHoldsAtRest_TheInstrumentIsSelective(t *testing.T) {
 	waitingOcc := order(protocol.StatusPending, nil)
 	nodeRes(waitingOcc, "occupancy", "confirmed", sd.StorageNode.ID)
 
-	holdBin(order(protocol.StatusDispatched, nil), "HAR-SOAK-DISPATCHED-BIN")
+	holdBin(testdb.CreateOrder(t, db, testdb.FleetHas("sg-har-soak-dispatched")).ID, "HAR-SOAK-DISPATCHED-BIN")
 	parent := order(protocol.StatusReshuffling, nil)
 	holdBin(order(protocol.StatusPending, &parent), "HAR-SOAK-LEG-BIN")
 	holdBin(order(protocol.StatusConfirmed, nil), "HAR-SOAK-TERMINAL-BIN")
@@ -101,7 +101,12 @@ func TestPair_HistoryWedgesAgeFromTheLastHistoryRow(t *testing.T) {
 
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	seed := func(status protocol.Status, lastAgo time.Duration) {
-		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = status })
+		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.Status = status
+			if status == protocol.StatusDispatched {
+				o.VendorOrderID = "sg-hist-dispatched" // a `dispatched` row names its job (v183)
+			}
+		})
 		_, err := db.Exec(`DELETE FROM order_history WHERE order_id = $1`, o.ID)
 		testutil.MustNoErr(t, err, "clear history")
 		_, err = db.Exec(`INSERT INTO order_history (order_id, status, created_at) VALUES ($1, $2, $3)`,

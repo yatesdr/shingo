@@ -136,7 +136,7 @@ func TestEmptyingStatements_ColumnLists(t *testing.T) {
 		sd := testdb.SetupStandardData(t, db)
 		svc := NewBinManifestService(db, EpochAnnounce{})
 		bin := loadedBinOffDefaults(t, db, sd.StorageNode.ID, "COLS-CLAIM")
-		order := createTestOrder(t, db, sd.LineNode.ID)
+		order := createAskingTestOrder(t, db, sd.LineNode.ID)
 		testdb.ReserveBin(t, db, order.ID, bin.ID)
 		before := binRowJSON(t, db, bin.ID)
 
@@ -181,7 +181,7 @@ func TestEmptyingStatements_AFullBuiltOnTopsAndBottomsReadsUnknownOnceEmptied(t 
 			testutil.MustNoErr(t, err, "ClearForReuse")
 		}},
 		{"the claim that empties", func(t *testing.T, db *store.DB, svc *BinManifestService, sd *testdb.StandardData, binID int64) {
-			order := createTestOrder(t, db, sd.LineNode.ID)
+			order := createAskingTestOrder(t, db, sd.LineNode.ID)
 			testdb.ReserveBin(t, db, order.ID, binID)
 			testutil.MustNoErr(t, svc.ClearAndClaim(binID, order.ID), "ClearAndClaim")
 		}},

@@ -203,11 +203,14 @@ func TestCoverage_ReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 	if err := bins.Create(db.DB, bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "active-order", StationID: "edge.1", OrderType: "retrieve", Status: "dispatched", SourceNode: node.Name}
+	// The active claim holder is one the fleet has: born pending (the INSERT
+	// binds no vendor id), then `dispatched` naming its job in one write.
+	order := &orders.Order{EdgeUUID: "active-order", StationID: "edge.1", OrderType: "retrieve", Status: "pending", SourceNode: node.Name}
 	order.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	testdb.SeedDispatched(t, db, order.ID, "sg-active-order")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	if _, err := recovery.ReleaseTerminalBinClaim(db.DB, bin.ID); err == nil {
 		t.Fatalf("expected active claim release to fail")

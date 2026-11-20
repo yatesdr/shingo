@@ -94,10 +94,10 @@ func TestDigExclusion_GoAndSQLAgree(t *testing.T) {
 
 	group, lane := seedGroupWithOneLane(t, db, "DIGPAR")
 
-	// (C1.5: the top-level dig holders are built at dispatched; a confirmed mouth is a hard hold.)
-	parent := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	// (C1.5: the top-level dig holders are ones the fleet has; a confirmed mouth is a hard hold.)
+	parent := testdb.CreateOrder(t, db, testdb.FleetHas("sg-dig-parent"))
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) { o.ParentOrderID = &parent.ID })
-	foreign := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	foreign := testdb.CreateOrder(t, db, testdb.FleetHas("sg-dig-foreign"))
 	id := map[digRole]int64{roleNone: 0, roleParent: parent.ID, roleChild: child.ID, roleForeign: foreign.ID}
 
 	for _, c := range digMatrix {
@@ -154,8 +154,8 @@ func TestDigExclusion_UnexemptedSourcingReproducesTheArrest(t *testing.T) {
 	db := testdb.Open(t)
 	group, lane := seedGroupWithOneLane(t, db, "DIGARREST")
 
-	// (C1.5: the dig holder is built at dispatched.)
-	parent := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	// (C1.5: the dig holder is one the fleet has.)
+	parent := testdb.CreateOrder(t, db, testdb.FleetHas("sg-dig-parent"))
 	if err := reservations.AcquireLanes(db.DB, parent.ID, reservations.ModeDig, "paritytest", lane.ID); err != nil {
 		t.Fatalf("fixture: dig hold for parent: %v", err)
 	}

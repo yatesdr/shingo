@@ -119,7 +119,7 @@ func ReadGroupSlotState(db *sql.DB, groupID int64) (*GroupSlotState, error) {
 		helpers.AwaitingFleetSQL("ho"),
 		"COALESCE(hp.priority, ho.priority)", "COALESCE(hp.created_at, ho.created_at)", "COALESCE(hp.id, ho.id)",
 		agg("nm.id", `FROM orders nm WHERE nm.delivery_node = n.name
-			AND nm.status NOT IN (`+protocol.TerminalStatusSQLList()+`, `+protocol.PreDispatchStatusSQLList()+`)`),
+			AND nm.status NOT IN (`+protocol.TerminalStatusSQLList()+`) AND `+helpers.PastPreDispatchSQL("nm")),
 		agg("lv.id", `FROM orders lv WHERE lv.delivery_node = n.name
 			AND lv.status NOT IN (`+protocol.TerminalStatusSQLList()+`)`),
 		helpers.ReachableSQL("n"),

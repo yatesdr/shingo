@@ -241,11 +241,14 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	bin2 := &bins.Bin{BinTypeID: bt.ID, Label: "RACE-BIN-2", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin2)
 
-	// Create two orders that will race to claim (C1.5: a claimant is dispatched)
-	order1 := &orders.Order{EdgeUUID: "race-1", StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: "dispatched", Quantity: 1, DeliveryNode: "LINE1-IN"}
-	db.CreateOrder(order1)
-	order2 := &orders.Order{EdgeUUID: "race-2", StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: "dispatched", Quantity: 1, DeliveryNode: "LINE1-IN"}
-	db.CreateOrder(order2)
+	// Create two orders that will race to claim. A claim is taken inside the
+	// hand, so each rests `pending` with its ask open (C1.5).
+	order1 := &orders.Order{EdgeUUID: "race-1", StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE1-IN"}
+	testutil.MustNoErr(t, db.CreateOrder(order1), "create order1")
+	testdb.SeedAsk(t, db, order1.ID, protocol.StatusPending, "sg-race-1")
+	order2 := &orders.Order{EdgeUUID: "race-2", StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE1-IN"}
+	testutil.MustNoErr(t, db.CreateOrder(order2), "create order2")
+	testdb.SeedAsk(t, db, order2.ID, protocol.StatusPending, "sg-race-2")
 
 	// Race: two goroutines try to find and claim empty bins concurrently
 	var wg sync.WaitGroup

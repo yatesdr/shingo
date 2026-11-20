@@ -584,6 +584,19 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	if msg := PackToleranceRefusal(in.PackTolerancePct); msg != "" {
 		add(string(flowspec.PackTolerancePct), msg)
 	}
+	// The hold limit is a number of parts. Not refused past the pack (one pack
+	// is the most held) nor with strict pack off, where nothing reads it.
+	if msg := HoldLimitRefusal(in.HoldLimit); msg != "" {
+		add(string(flowspec.HoldLimit), msg)
+	}
+	for _, f := range []struct {
+		field flowspec.Field
+		n     int
+	}{{flowspec.ReorderPoint, in.ReorderPoint}, {flowspec.LinesideSoftThreshold, in.LinesideSoftThreshold}} {
+		if msg := NegativeCountRefusal(flowspec.Label(f.field), f.n); msg != "" {
+			add(string(f.field), msg)
+		}
+	}
 
 	// THE PER-MODE HALF READS ONE TABLE. Which fields this claim's mode
 	// requires and which it must not carry is flowspec.Steady's answer, shared

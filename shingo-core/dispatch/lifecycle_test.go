@@ -55,7 +55,15 @@ func makeOrderAt(t *testing.T, db *store.DB, uuid string, status protocol.Status
 	// CreateOrder persists Status directly, so the fixture is already at the
 	// requested (possibly terminal) status — no round-trip through
 	// UpdateOrderStatus, which now refuses terminal writes. This helper
-	// deliberately bypasses lifecycle validation to seed arbitrary states.
+	// deliberately bypasses lifecycle validation to seed arbitrary states. A
+	// `dispatched` seed is an order the fleet has, and names its job
+	// (orders_dispatched_names_its_job): testdb.CreateOrder writes the two together.
+	if status == StatusDispatched {
+		return testdb.CreateOrder(t, db, func(o *orders.Order) {
+			*o = *ord
+			o.VendorOrderID = "sg-" + uuid
+		})
+	}
 	if err := db.CreateOrder(ord); err != nil {
 		t.Fatalf("create order at status %s: %v", status, err)
 	}
@@ -80,7 +88,16 @@ func TestLifecycle_LegalTransitions_AllPersist(t *testing.T) {
 				// park whose cause is not on the order.
 				ord.QueueCode = string(protocol.QueueWaitingForMaterial)
 			}
-			err := lc.transition(ord, to, Event{Actor: "test", Reason: "matrix"})
+			var err error
+			if to == StatusDispatched {
+				// `dispatched` is the fleet's yes: the order asks, and Dispatch
+				// writes the status with the job (transition refuses it).
+				job := fmt.Sprintf("sg-legal-%d", i)
+				openAsk(t, db, ord.ID, job)
+				err = lc.Dispatch(ord, job, "", "test", nil)
+			} else {
+				err = lc.transition(ord, to, Event{Actor: "test", Reason: "matrix"})
+			}
 			if err != nil {
 				t.Errorf("legal %s→%s rejected: %v", from, to, err)
 				continue
@@ -270,7 +287,7 @@ func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 
 	// The stale caller now tries the transition that was legal when it loaded.
 	stale.QueueCode = string(protocol.QueueWaitingForMaterial)
-	err = lc.Dispatch(&stale, "vendor-stale", "fulfillment")
+	err = lc.Dispatch(&stale, "vendor-stale", "", "fulfillment", nil)
 	if err == nil {
 		t.Fatal("stale queued→dispatched was accepted; a cancelled order must not be resurrectable")
 	}
@@ -433,13 +450,13 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 			func(o *orders.Order) error { return lc.Release(o, "test") },
 			StatusInTransit},
 		{"MarkInTransit_AcknowledgedToInTransit", StatusAcknowledged,
-			func(o *orders.Order) error { return lc.MarkInTransit(o, "robot-1", "fleet") },
+			func(o *orders.Order) error { return lc.MarkInTransit(o, "robot-1", "fleet", protocol.OrderUpdate{}) },
 			StatusInTransit},
 		{"MarkStaged_InTransitToStaged", StatusInTransit,
-			func(o *orders.Order) error { return lc.MarkStaged(o, "fleet") },
+			func(o *orders.Order) error { return lc.MarkStaged(o, "fleet", protocol.OrderUpdate{}) },
 			StatusStaged},
 		{"MarkDelivered_InTransitToDelivered", StatusInTransit,
-			func(o *orders.Order) error { return lc.MarkDelivered(o, "fleet") },
+			func(o *orders.Order) error { return lc.MarkDelivered(o, "fleet", protocol.OrderUpdate{}) },
 			StatusDelivered},
 		{"Park_PendingToQueued", StatusPending,
 			func(o *orders.Order) error {
@@ -447,11 +464,18 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 				return lc.Park(o, "scanner")
 			},
 			StatusQueued},
+		// The fleet's yes lands only on a row asking for that job (the hand's ask).
 		{"Dispatch_PendingToDispatched", StatusPending,
-			func(o *orders.Order) error { return lc.Dispatch(o, "vendor-id-0", "hand") },
+			func(o *orders.Order) error {
+				openAsk(t, db, o.ID, "vendor-id-0")
+				return lc.Dispatch(o, "vendor-id-0", "", "hand", nil)
+			},
 			StatusDispatched},
 		{"Dispatch_QueuedToDispatched", StatusQueued,
-			func(o *orders.Order) error { return lc.Dispatch(o, "vendor-id-1", "dispatcher") },
+			func(o *orders.Order) error {
+				openAsk(t, db, o.ID, "vendor-id-1")
+				return lc.Dispatch(o, "vendor-id-1", "", "dispatcher", nil)
+			},
 			StatusDispatched},
 		{"Acknowledge_QueuedToAcknowledged", StatusQueued,
 			func(o *orders.Order) error { return lc.Acknowledge(o, "fleet") },
@@ -560,7 +584,7 @@ func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
 		lc, emitter := newLifecycleForTest(t, db)
 		ord := makeOrderAt(t, db, fmt.Sprintf("fault-in-%d", i), from)
 
-		if err := lc.MarkFaulted(ord, "robot-42", protocol.TermRef{}, "obstacle detected"); err != nil {
+		if err := lc.MarkFaulted(ord, "robot-42", protocol.TermRef{}, "obstacle detected", protocol.OrderUpdate{}); err != nil {
 			t.Fatalf("MarkFaulted from %s: %v", from, err)
 		}
 		if ord.Status != StatusFaulted {
@@ -585,7 +609,7 @@ func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fault-recover-1", StatusFaulted)
 
-	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42", protocol.TermRef{}, "Recovered after 18 s"),
+	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42", protocol.TermRef{}, "Recovered after 18 s", protocol.OrderUpdate{}),
 		"MarkFaultedRecovered")
 	if ord.Status != StatusInTransit {
 		t.Errorf("status = %q, want %q", ord.Status, StatusInTransit)
@@ -623,4 +647,12 @@ func TestLifecycle_Faulted_IllegalTransitions(t *testing.T) {
 			t.Errorf("Faulted → %s: persisted status changed to %q", to, persisted.Status)
 		}
 	}
+}
+
+// openAsk writes the ask the hand opens (orders.TakeAskTx) onto an order's row,
+// for a test that drives the fleet's yes directly.
+func openAsk(t *testing.T, db *store.DB, id int64, ask string) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE orders SET asked_vendor_order_id=$2 WHERE id=$1`, id, ask)
+	testutil.MustNoErr(t, err, "open the ask")
 }

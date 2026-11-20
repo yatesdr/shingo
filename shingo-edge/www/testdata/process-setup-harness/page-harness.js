@@ -132,12 +132,13 @@ function classList(set) {
 
 // The modules a page imports from shared/ that run here for real: the
 // components (layer.js, notice.js, http.js, picker.js and its node and part
-// adapters, exceptions.js, the set pick, settings.js), the DOM file they build with, and the
+// adapters, exceptions.js, the set pick, settings.js), the DOM file they build with, the
 // scene network the key-route walk asks (scene-net.js) with the geometry under
-// it (scene-geom.js). esc.js and clock.js stay the realm globals they always
-// were (see open).
+// it (scene-geom.js), and the count rule and its words the count settings'
+// UoP line reads (count.js, count-words.js). esc.js and clock.js stay the
+// realm globals they always were (see open).
 const SHARED_REAL = new Set(['dom.js', 'notice.js', 'http.js', 'layer.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'exceptions.js',
-    'set-pick.js', 'settings.js', 'scene-geom.js', 'scene-net.js']);
+    'set-pick.js', 'settings.js', 'scene-geom.js', 'scene-net.js', 'count.js', 'count-words.js']);
 const sharedFile = spec => {
     const m = /^\/static\/shared\/([\w.-]+\.js)$/.exec(spec);
     return m && SHARED_REAL.has(m[1]) ? m[1] : null;

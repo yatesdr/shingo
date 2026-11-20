@@ -1,4 +1,6 @@
 import { esc } from '/static/shared/esc.js';
+import { countBoxLabel, typedNote } from '/static/shared/count-words.js';
+import { linePieces, uopRatio } from '/static/shared/count.js';
 import { postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
 import { findNodeByID, getView } from './operator-state.js';
@@ -120,23 +122,25 @@ function viewTemplate(code) {
 function applyTemplate(data) {
     const rows = document.getElementById('load-bin-rows');
     const items = data.items || [];
-    loadBinState.uopCount = loadBinState.typedCount ? 0 : (data.uop_capacity || 0);
+    loadBinState.pack = data.uop_capacity || 0;
+    loadBinState.uopCount = loadBinState.typedCount ? 0 : loadBinState.pack;
     // The template the catalog holds, shown so the operator can check the bin
     // matches it; the ratios are the catalog's and are not editable here.
     //
-    // What is held is the TEMPLATE: per part, how many of it one unit of the
-    // UoP count is (per_unit), by protocol.ManifestItem's count rule — 1 for a
-    // template of one line, whose bin counts pieces, so a press's screen never
-    // shows a count scaled by an assembly's pieces per cycle. The count a line
-    // shows is per_unit times the UoP count the operator sets, derived at
-    // render, because the operator can change UoP after the template opens.
-    // LOAD sends the part and the count, and the Edge builds the bin's
-    // manifest from the same catalog copy by the same rule (engine
-    // loadManifest).
-    loadBinState.manifest = items.map(function(item) {
+    // What is held is the TEMPLATE (its lines), and each line shows its
+    // pieces in the count the operator sets, by the count rule (count.js
+    // linePieces): the count itself for a template of one line, whose bin
+    // counts pieces, so a press's screen never shows a count scaled by an
+    // assembly's pieces per cycle; the count times the line's ratio for a kit.
+    // Derived at render, because the operator can change the count after the
+    // template opens. LOAD sends the part and the count, and the Edge builds
+    // the bin's manifest from the same catalog copy by the same rule (engine
+    // loadManifest, protocol.LinePieces).
+    loadBinState.lines = items;
+    loadBinState.manifest = items.map(function(item, i) {
         return {
             part_number: item.part_number,
-            per_unit: items.length === 1 ? 1 : (item.parts_per_cycle || 0),
+            line: i,
             description: item.description || '',
         };
     });
@@ -209,13 +213,23 @@ function renderRows() {
     const uopRow = document.createElement('div');
     uopRow.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-bottom:12px;padding:10px;background:#1a2a1a;border-radius:6px;border:1px solid #2a4a2a';
     uopRow.innerHTML =
-        '<div style="font-size:16px;font-weight:600;color:#fff">UoP Count</div>' +
+        '<div style="font-size:16px;font-weight:600;color:#fff">' + esc(countBoxLabel(uopRatio(state.lines), 'UoP Count')) + '</div>' +
         '<button type="button" id="os-load-uop-display" ' +
             'style="min-width:120px;background:#0f141a;border:1px solid var(--os-border);' +
             'border-radius:8px;padding:10px 16px;color:#fff;font-size:24px;font-weight:700;' +
             'cursor:pointer;touch-action:manipulation">' +
             state.uopCount + '</button>';
     rows.appendChild(uopRow);
+    // The line under the count: the UoP it makes above a ratio of 1, and the
+    // above-pack note (count-words.js typedNote).
+    const note = typedNote(state.uopCount, uopRatio(state.lines), state.pack);
+    if (note) {
+        const noteRow = document.createElement('div');
+        noteRow.className = 'os-keypad-note';
+        if (note.tone) noteRow.dataset.tone = note.tone;
+        noteRow.textContent = note.text;
+        rows.appendChild(noteRow);
+    }
     document.getElementById('os-load-uop-display').addEventListener('click', openUopKeypad);
 
     // Manifest line items — display-only. Operators can see what the payload
@@ -234,7 +248,7 @@ function renderRows() {
                     : '') +
             '</div>' +
             '<div style="min-width:60px;text-align:right;color:#cfd;font-size:18px;font-weight:600">' +
-                (item.per_unit * state.uopCount) + '</div>';
+                linePieces(state.lines, item.line, state.uopCount) + '</div>';
         rows.appendChild(row);
     });
 }
@@ -243,7 +257,8 @@ function openUopKeypad() {
     const state = loadBinState;
     if (!state || state.submitting) return;
     openKeypad(0, state.uopCount, {
-        title: 'UoP Count',
+        title: countBoxLabel(uopRatio(state.lines), 'UoP Count'),
+        note: function(qty) { return typedNote(qty, uopRatio(state.lines), state.pack); },
         onOk: function(_nodeID, qty) {
             state.uopCount = qty > 0 ? qty : 0;
             renderRows();
@@ -287,7 +302,8 @@ async function submitLoadBin() {
     // its requests and Core's standard-pack arm is never reached from here.
     // The absence case comes from the production page, whose field is optional.
     if (state.uopCount <= 0) {
-        showToast('Set UoP Count first', 'error');
+        // OWNER-WORDS (owner, 2026-11-19: keep refusing a LOAD of 0, reworded)
+        showToast('Type the count first: a LOAD needs 1 or more', 'error');
         return;
     }
     // The part and the count, and no manifest: the Edge builds the bin's lines

@@ -747,8 +747,20 @@ func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []res
 	}
 
 	// Persist any fungible reverts so the next tick re-resolves them to free slots.
+	//
+	// THE ROWS GO WITH THE PLAN. resolvedSteps is the plan the pass works, without
+	// the waits a refused create left spliced into the stored one (Q6,
+	// withoutInsertedWaits), so writing it drops them, and the rows at or after a
+	// wait are then past where their steps are, the last past the end of the plan
+	// (order 392 in the outage sim; at the base the next bin type read panicked).
+	// They move back first (unspliceCarts), as persistWidenedPlan moves them, and
+	// a revert whose rows could not move is not written: the stored pair stays as
+	// it was, and the order still holds this pass.
 	if reverted {
-		if j, mErr := json.Marshal(resolvedSteps); mErr == nil {
+		if uErr := unspliceCarts(a.db, a.dbg, order, resolvedSteps); uErr != nil {
+			log.Printf("dispatch: complex order %d: its rows could not leave the spliced plan: %v "+
+				"(the slot revert is not written this pass)", order.ID, uErr)
+		} else if j, mErr := json.Marshal(resolvedSteps); mErr == nil {
 			if uErr := a.db.UpdateOrderStepsJSON(order.ID, string(j)); uErr != nil {
 				log.Printf("dispatch: update steps_json after slot revert for order %d: %v", order.ID, uErr)
 			} else {

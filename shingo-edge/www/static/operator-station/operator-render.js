@@ -1,11 +1,12 @@
 import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
 import { formatClock } from '/static/shared/clock.js';
+import { countBracketed, typedNote } from '/static/shared/count-words.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, tileRole, takesBare, stageTwoOn, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
-import { windowWords, cyclesLeftWords } from './operator-board-model.js';
+import { windowWords, tileCount, ratioFor } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
@@ -283,7 +284,7 @@ const boardActs = {
         switch (a.kind) {
         case 'load': openLoadBinRef(a.node, a.codes, 0); break;
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit, a.cart); break;
-        case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo); break;
+        case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo, a.pack, a.part); break;
         case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo, a.cart); break;
         case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot, a.partial); break;
         case 'modal': openModalRef(a.node); break;
@@ -358,7 +359,7 @@ export function renderGrid() {
 // motions the person makes before the tap; the cart is then a dressed empty
 // the line may fetch. COUNT is a small secondary beside it, the one correction
 // for a lost count. At any other unloader window: COUNT and UNLOAD.
-function confirmUnloadHeld(nodeID, line, count, stageTwo) {
+function confirmUnloadHeld(nodeID, line, count, stageTwo, pack, part) {
     var overlay = el('div', { className: 'os-co-picker-overlay' });
     var panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Partial, held for ' + (line || 'its line') }));
@@ -371,8 +372,11 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo) {
         textContent: 'COUNT' });
     countBtn.addEventListener('click', function() {
         overlay.remove();
+        const ratio = ratioFor((getView() || {}).load_templates, null, part);
         openKeypad(nodeID, count || 0, {
-            title: 'Count on this carrier',
+            // OWNER-WORDS: above a ratio of 1 the box takes parts.
+            title: ratio > 1 ? 'Count on this carrier (parts)' : 'Count on this carrier',
+            note: function(qty) { return typedNote(qty, ratio, pack); },
             onOk: function(_n, qty) {
                 return postAction('/api/process-nodes/' + nodeID + '/record-count', { actual_uop: qty }, loadViewRef);
             },
@@ -443,6 +447,19 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo) {
 //
 // Exported for the node modal's CLEAR BIN on an unloader, which goes through
 // this panel (operator-modal.js).
+// discardWords is the clear's discard line: the slot's count at its bin's
+// part's ratio (the view's load templates; count-words.js countBracketed),
+// "This slot still counts 50 UoP (404 parts)." above a ratio of 1, the count
+// alone at 1, as it always read.
+function discardWords(nodeID, discarding) {
+    const view = getView() || {};
+    const tile = (view.nodes || []).find(n => n.node && n.node.id === nodeID);
+    const part = tile && tile.bin_state ? tile.bin_state.payload_code || '' : '';
+    const said = countBracketed(discarding, ratioFor(view.load_templates, null, part), String(discarding), '');
+    // OWNER-WORDS
+    return 'This slot still counts ' + said + '. Confirming writes it to zero.';
+}
+
 export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit, cartType) {
     if (leavesBare) {
         confirmFullOff(nodeID, discarding);
@@ -457,7 +474,7 @@ export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit,
         textContent: 'Confirms the bin is unloaded. The empty returns to the supermarket and the next full is requested.' }));
     if (discarding > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
-            textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
+            textContent: discardWords(nodeID, discarding) }));
     }
 
     // Single-type stations with no heights auto-fill: skip the picker and send
@@ -570,7 +587,7 @@ function confirmFullOff(nodeID, discarding) {
     const subs = [];
     if (discarding > 0) {
         subs.push(el('div', { className: 'os-co-picker-subtitle os-co-picker-warn',
-            textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
+            textContent: discardWords(nodeID, discarding) }));
     }
     oneTapPanel(nodeID, 'Bin on the cart', subs, 'BIN OFF', 'The cart goes on to Stage 2.');
 }
@@ -913,8 +930,10 @@ function createNodeButton(entry) {
     // make the tile flicker color right when the robot is closest.
     const releaseReady = isReleaseReady(entry);
     const inChangeover = !!entry.changeover_task;
+    // Dispatched is inbound too: a robot is being sent. It was purple when its
+    // waybill wrote in_transit, and stays purple now that Core tells dispatched.
     const inboundOrders = (entry.orders || []).filter(o =>
-        o.status === 'in_transit' || o.status === 'staged'
+        o.status === 'in_transit' || o.status === 'staged' || o.status === 'dispatched'
     );
     const unloaderWindow = isUnloaderWindow(entry);
     let stateClass;
@@ -1067,20 +1086,20 @@ function createNodeButton(entry) {
         // field Core reads as a physical measurement (SwitchNode); saying what
         // is true is the replacement for inventing a number.
         const noCarrier = claim && runtime.active_bin_id == null;
+        // The count and the pack in UoP above a ratio of 1, the parts under
+        // them; at 1 the tile as it always was (tileCount).
+        const shown = tileCount(claim, remaining, capacity, noCarrier, entry.bin_ratio);
         btn.appendChild(el('span', {
             className: 'os-node-remaining',
-            textContent: claim ? (noCarrier ? 'NO BIN' : String(remaining)) : '--'
+            textContent: claim ? (noCarrier ? 'NO BIN' : String(shown.count)) : '--'
         }));
         if (claim && capacity > 0 && !noCarrier) {
             btn.appendChild(el('span', {
                 className: 'os-node-capacity',
-                textContent: '/ ' + capacity
+                textContent: '/ ' + shown.capacity
             }));
         }
-        // An assembly that uses more than one of its part a cycle: the count
-        // is pieces, and the cycles they make are said under it.
-        const cycles = cyclesLeftWords(claim, remaining, noCarrier);
-        if (cycles) btn.appendChild(el('span', { className: 'os-node-cycles', textContent: cycles }));
+        if (shown.parts) btn.appendChild(el('span', { className: 'os-node-parts', textContent: shown.parts }));
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
@@ -1095,7 +1114,7 @@ function createNodeButton(entry) {
             const bs = entry.bin_state;
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
-            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.held_uop, takesBare(entry)); return; }
+            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.held_uop, takesBare(entry), bs.uop_capacity, bs.payload_code); return; }
             // The panel lights what the window should go back as (clearHighlight).
             const lit = loader.leaves_bare ? null : clearHighlight(entry, getView().serves);
             if (fullPresent) confirmUnloadSwap(entry.node.id, carriersOf(entry),
@@ -1109,8 +1128,12 @@ function createNodeButton(entry) {
     return btn;
 }
 
-// Renders one pill per inbound order. Three states:
+// Renders one pill per inbound order, by its state:
+//   - dispatched                       → the robot's name, "Dispatched" until the
+//     fleet names one (Core tells dispatched before any robot moves)
 //   - in_transit + no bin at this node → ETA countdown ("ETA: ~3 min")
+//   - staged, released here and sent   → "Released · sent" (the robot
+//     leaves when Core says so)
 //   - staged                           → "Arrived" (robot at the spot)
 //   - in_transit + bin already at node → skip (the order has reverted
 //     to in_transit on the back half of a two-robot swap — partner
@@ -1127,7 +1150,12 @@ function appendETAPills(btn, inboundOrders, binState) {
     const binAtNode = !!(binState && binState.occupied);
     const pills = [];
     inboundOrders.forEach(o => {
-        if (o.status === 'staged') {
+        if (o.status === 'dispatched') {
+            pills.push({ text: o.robot_id || 'Dispatched', overdue: false });
+        } else if (o.status === 'staged' && o.release_sent) {
+            // Released here and sent; the robot leaves when Core says so.
+            pills.push({ text: 'Released · sent', overdue: false });
+        } else if (o.status === 'staged') {
             pills.push({ text: 'Arrived', overdue: false });
         } else if (o.status === 'faulted') {
             // The pill is one word ("Fault" / "Replanning"); the reason is in

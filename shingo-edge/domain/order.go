@@ -183,10 +183,20 @@ type Order struct {
 	// ReleaseHeld is the last hold or rejection sentence for this leg's
 	// release, which the board's chip shows; "" when none.
 	ReleaseHeld string `json:"release_held,omitempty"`
+	// ReleaseSent: the order stands staged at a station wait and this station's
+	// release for that wait has gone out (release.ReleasedFromWait). A Core that
+	// versions its orders keeps a released leg staged until its robot moves, so
+	// the board reads this to drop RELEASE at the tap and say the release went
+	// out. Set when the row is read.
+	ReleaseSent bool `json:"release_sent,omitempty"`
 	// StagedAt is the engine's clock when this Edge last mirrored the order to
 	// staged (its robot parked); nil until then (orders.staged_at). The idle
 	// rule's hour does not start before it.
 	StagedAt *time.Time `json:"-"`
+	// CoreVersion is the version of the last word of Core's this Edge applied to
+	// the order (protocol.OrderUpdate.Version; orders.core_version). 0 means none
+	// yet: an order an older Core holds, or one no versioned word has reached.
+	CoreVersion int64 `json:"-"`
 	// DepartedAt is when this leg stopped being its cell's business: the
 	// instant the fleet confirmed the last step of its plan whose node is in
 	// the claim's cell set. A departed leg is still a live order — what it

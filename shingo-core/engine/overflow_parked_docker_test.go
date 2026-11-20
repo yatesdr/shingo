@@ -202,12 +202,11 @@ func TestOverflow_ADispatchedPushIsNeverReAimed(t *testing.T) {
 		o.EdgeUUID = "OVP2-moving"
 		o.StationID = "ovp-line"
 		o.OrderType = dispatch.OrderTypeMove
-		o.Status = protocol.StatusDispatched
 		o.SourceNode = "OVP2-AWAY"
 		o.DeliveryNode = fx.group + "-PB"
 		o.RobotID = "AMR-OVP2"
 		o.HoldFromBirth(inFlightBin)
-	})
+	}, testdb.FleetHas("sg-ovp2-moving"))
 	testdb.ClaimBinForTest(t, db, inFlightBin, moving.ID)
 
 	fx.freeOverflow(t, db)

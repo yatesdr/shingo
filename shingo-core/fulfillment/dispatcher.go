@@ -19,10 +19,6 @@ import (
 type Dispatcher interface {
 	DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error)
 
-	// NotifyWaitChanged tells the order's station its wait changed cause
-	// (dispatch.WriteQueueDetail decides when).
-	NotifyWaitChanged(order *orders.Order)
-
 	// DispatchPreparedComplex is the scanner's entrypoint for complex orders
 	// born through HandleComplexOrderRequest. The dispatcher already has the
 	// resolved steps stored on the order (StepsJSON); this call claims bins,
@@ -82,7 +78,7 @@ type Dispatcher interface {
 	// The scanner used to release the claim and the lanes here itself, through a
 	// primitive that also deleted the reservations — the pointer wedge. It carries
 	// no release logic of its own now, which is the point of there being a door.
-	DemoteAfterFleetRefusal(order *orders.Order, told dispatch.QueueWait, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
+	DemoteAfterFleetRefusal(order *orders.Order, refusal error, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
 
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).

@@ -41,7 +41,8 @@
     ],
     "refusals": null,
     "replies": [
-      "order.ack"
+      "order.ack",
+      "order.update status=dispatched"
     ]
   }
 }

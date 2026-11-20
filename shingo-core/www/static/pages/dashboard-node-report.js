@@ -1,11 +1,14 @@
 import { escapeHtml } from '/static/shared/dom.js';
 import { formatClock, serverNow } from '/static/shared/clock.js';
 import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
+import { countSaid } from '/static/shared/count-words.js';
 
 (function () {
   var body = document.body;
   var dashboardId = body.getAttribute('data-dashboard-id');
   var MAX_ROWS = 8;
+  // lastRatios is the last answer's uop_ratios (parts above a ratio of 1).
+  var lastRatios = null;
 
   function tickClock() {
     var el = document.getElementById('dash-clock');
@@ -26,12 +29,20 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
     return '<th>Node</th><th>Node Group</th><th>Status</th><th>Payload</th><th>UoP</th>';
   }
 
+  // uopWords is a count on the kiosk: "N UoP", and above its part's ratio of 1
+  // (the answer's uop_ratios) the UoP with the parts beside it
+  // (count-words.js countSaid); "—" for none.
+  function uopWords(code, n) {
+    var ratio = (lastRatios && lastRatios[code]) || 1;
+    return n ? countSaid(n, ratio, n + ' UoP') : '\u2014';
+  }
+
   function rowHTML(r, grain) {
     var isShared = grain === 'payloads';
     var statusHTML = r.occupied
       ? '<span class="nr-dot nr-dot-filled"></span> FILLED'
       : '<span class="nr-dot nr-dot-empty nr-dot-pulse"></span> EMPTY';
-    var uopText = r.uop_remaining ? r.uop_remaining + ' UoP' : '\u2014';
+    var uopText = uopWords(r.payload_code, r.uop_remaining);
     var activeClass = r.is_active_style ? ' nr-row-active' : '';
 
     if (isShared) {
@@ -129,7 +140,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
         parts.push('\u25c6 EMPTY ' + src + 'returning');
       } else if (r.is_partial) {
         var src2 = r.source_node ? escapeHtml(r.source_node) + ' \u2192 ' : '';
-        parts.push('\u25c6 PARTIAL (' + r.uop_remaining + ' UoP) ' + src2 + 'returning');
+        parts.push('\u25c6 PARTIAL (' + escapeHtml(uopWords(r.payload_code, r.uop_remaining)) + ') ' + src2 + 'returning');
       } else {
         var arrow = '\u2192 ' + escapeHtml(r.payload_code);
         if (r.dest_node) {
@@ -165,6 +176,7 @@ import { onSSE, setSSEReloadOnBuild } from '/static/shared/bus.js';
           var label = grain === 'payloads' ? 'payload' : 'position';
           if (subEl) subEl.textContent = data.layout + ' \u00b7 ' + count + ' ' + label + (count !== 1 ? 's' : '');
         }
+        lastRatios = data.uop_ratios || null;
         render(grain, data.rows || []);
         renderTransit(data.transit || []);
       })

@@ -77,6 +77,7 @@ func TestOrderProjection_NoFieldDropsSilently(t *testing.T) {
 		OriginClass:  "MG1C-DRIFT-CLASS",
 		QueueReason:  "MG1C-DRIFT-REASON",
 		QueueCode:    "MG1C-DRIFT-CODE",
+		Version:      9137,
 	}
 
 	proj := dispatch.ProjectionFor(order)
@@ -166,6 +167,7 @@ func TestOrderProjection_KnownDroppedAreStillDropped(t *testing.T) {
 		OriginClass:  "MG1C-KNOWN-CLASS",
 		QueueReason:  "MG1C-KNOWN-REASON",
 		QueueCode:    "MG1C-KNOWN-CODE",
+		Version:      9138,
 	}
 	proj := dispatch.ProjectionFor(order)
 

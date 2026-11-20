@@ -49,8 +49,9 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(nodeA), "node A")
 	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "QEH-BIN-A")
 	other := &orders.Order{EdgeUUID: "qeh-other", StationID: "s", OrderType: OrderTypeRetrieve,
-		Status: StatusDispatched, Quantity: 1}
+		Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create the holding order")
+	testdb.SeedDispatched(t, db, other.ID, "sg-qeh-other") // the fleet has it, holding its bin
 	testdb.ClaimBinForTest(t, db, binA.ID, other.ID)
 
 	steps := []resolvedStep{
@@ -159,9 +160,9 @@ func TestPark_ASameCauseWrittenAgainAddsNoRow(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	logf := func(string, ...any) {}
 	params := QueueParams{Payload: "PART-A"}
-	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params, nil)
-	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params, nil)
-	WriteQueueDetail(db, logf, "test", o, protocol.QueueStorageRearranging, CauseLaneHeldTraffic, QueueParams{Lane: "L1"}, nil)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueWaitingForMaterial, CauseReserveHolding, params)
+	WriteQueueDetail(db, logf, "test", o, protocol.QueueStorageRearranging, CauseLaneHeldTraffic, QueueParams{Lane: "L1"})
 
 	want := [][2]string{
 		{string(StatusQueued), ""},

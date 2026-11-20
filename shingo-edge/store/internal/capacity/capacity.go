@@ -91,6 +91,11 @@ func Resolved(raw int, payloadCode string) int {
 // kit (several lines) keeps the arithmetic it always had, one per stroke; a
 // row with no lines, or no row at all, is a part nobody set a ratio on. A
 // missing row is already said once per code by Resolved.
+//
+// This is protocol.UOPRatio in SQL, which cannot call Go: the pair
+// (PiecesPerCycleSQL, then PiecesPerCycle) answers UOPRatio for every worked
+// example of protocol/testdata/count-examples.json, pinned by
+// TestClaimPiecesPerCycle_AgreesWithTheCountExamples.
 
 // PiecesPerCycleSQL is the SELECT-list expression that resolves a claim's
 // pieces per cycle, 0 when it does not give one. Pair it with PiecesPerCycle.

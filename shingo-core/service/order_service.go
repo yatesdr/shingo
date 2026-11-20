@@ -232,10 +232,11 @@ func (s *OrderService) ListByBin(binID int64, limit int) ([]*orders.Order, error
 }
 
 // FailAtomic transitions an order to "failed" and releases every bin
-// claim in a single transaction. Absorbed from engine_db_methods.go
-// as part of the Phase 3a closeout (PR 3a.6). Internal engine and
-// dispatch flows still call *store.DB.FailOrderAtomic directly — this
-// method is the handler-layer entry point only.
-func (s *OrderService) FailAtomic(orderID int64, detail string) error {
-	return s.db.FailOrderAtomic(orderID, detail)
+// claim in a single transaction, and the write tells the order's station
+// (store queueTellTx). It reports whether this call ended the order: a
+// failure that lost to another ending wrote nothing and tells nothing, so its
+// caller must not announce one either. Absorbed from engine_db_methods.go as
+// part of the Phase 3a closeout (PR 3a.6); the handler-layer entry point only.
+func (s *OrderService) FailAtomic(orderID int64, detail string) (bool, error) {
+	return s.db.TerminalizeOrder(orderID, protocol.StatusFailed, detail)
 }

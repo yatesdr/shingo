@@ -160,7 +160,7 @@ func (d *Dispatcher) storePlan(order *orders.Order, steps []resolvedStep, mv ste
 	if len(shift) == 0 {
 		return nil
 	}
-	if _, err := d.moveCarts(order, shift); err != nil {
+	if _, err := moveCarts(d.db, order, shift); err != nil {
 		return fmt.Errorf("repoint order %d: move its carts with the plan: %w", order.ID, err)
 	}
 	if vErr := cartsPlanMismatch(steps, order.Carts); vErr != nil {

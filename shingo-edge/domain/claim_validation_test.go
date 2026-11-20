@@ -735,6 +735,52 @@ func TestValidateNodeClaim_PackToleranceIsZeroToTwenty(t *testing.T) {
 	}
 }
 
+// TestValidateNodeClaim_HoldLimitIsZeroOrMore: the save refuses a hold limit
+// below 0 by name, and takes one past the pack (it holds one pack) and one on a
+// claim with strict pack off (it has no reader there).
+func TestValidateNodeClaim_HoldLimitIsZeroOrMore(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		limit   int
+		strict  bool
+		refused bool
+	}{
+		{0, true, false}, {20, true, false}, {500, true, false},
+		{-1, true, true}, {20, false, false}, {-1, false, true},
+	} {
+		in := validClaim()
+		in.StrictPack, in.HoldLimit = c.strict, c.limit
+		if got := hasField(ValidateNodeClaim(in, ClaimNodeContext{}), "hold_limit"); got != c.refused {
+			t.Errorf("limit %d (strict %v): refused = %v, want %v", c.limit, c.strict, got, c.refused)
+		}
+	}
+}
+
+// TestValidateNodeClaim_NegativeCountSettings: the save refuses a reorder point
+// or a lineside soft threshold below 0 by name, and takes 0 and above (owner,
+// 2026-11-19: a person can never type a negative).
+func TestValidateNodeClaim_NegativeCountSettings(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		field   string
+		n       int
+		refused bool
+	}{
+		{"reorder_point", 0, false}, {"reorder_point", 800, false}, {"reorder_point", -1, true},
+		{"lineside_soft_threshold", 0, false}, {"lineside_soft_threshold", 40, false}, {"lineside_soft_threshold", -1, true},
+	} {
+		in := validClaim()
+		if c.field == "reorder_point" {
+			in.ReorderPoint = c.n
+		} else {
+			in.LinesideSoftThreshold = c.n
+		}
+		if got := hasField(ValidateNodeClaim(in, ClaimNodeContext{}), c.field); got != c.refused {
+			t.Errorf("%s %d: refused = %v, want %v", c.field, c.n, got, c.refused)
+		}
+	}
+}
+
 // TestValidateNodeClaim_EveryLineModeMarksItsPositions: a tool change marks a
 // line's positions on every mode a robot serves, and the save takes it; a
 // loader card has no positions to clear and is refused.

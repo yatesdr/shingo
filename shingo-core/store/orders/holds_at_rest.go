@@ -3,8 +3,6 @@ package orders
 import (
 	"database/sql"
 	"fmt"
-
-	"shingo/protocol"
 )
 
 // HoldAtRest is one order that is waiting while it holds something hard.
@@ -56,8 +54,10 @@ func (h HoldAtRest) Line() string {
 //
 // Compound legs (parent_order_id set) are excepted: a dig leg is born holding
 // its part of the parent's hand, and moving that hold to the handover is its own
-// phase. The population is the pre-dispatch predicate from protocol, not a typed
-// list, so a status joining that family joins this check with it.
+// phase. The population is PreDispatchSQL, not a typed list, so a status joining
+// the pre-dispatch family joins this check with it, and an order Core is asking
+// the fleet for is out of it: it holds hard for the create in flight. The
+// invariant is that an order with no ask open holds nothing hard.
 //
 // One spelling for its readers: soakstat's invariant, the engine
 // characterisation and the verify-red pins. soakstat's books-over-time ledger
@@ -72,14 +72,14 @@ func HoldsAtRestSQL() string {
 		       (SELECT COUNT(*) FROM reservations r WHERE %[2]s AND r.resource_kind = 'mouth' AND NOT %[3]s),
 		       (SELECT COUNT(*) FROM reservations r WHERE %[2]s AND r.resource_kind = 'occupancy')
 		FROM orders o
-		WHERE o.status IN (%[1]s)
+		WHERE %[1]s
 		  AND o.parent_order_id IS NULL
 		  AND (EXISTS (SELECT 1 FROM bins b WHERE b.claimed_by = o.id)
 		    OR EXISTS (SELECT 1 FROM nodes n WHERE n.claimed_by = o.id)
 		    OR EXISTS (SELECT 1 FROM reservations r WHERE %[2]s
 		               AND (r.resource_kind IN ('slot', 'occupancy')
 		                    OR (r.resource_kind = 'mouth' AND NOT %[3]s))))
-		ORDER BY o.id`, protocol.PreDispatchStatusSQLList(), confirmedResOf, digLockRow)
+		ORDER BY o.id`, PreDispatchSQL("o"), confirmedResOf, digLockRow)
 }
 
 // DigLockTags are the reserved_by tags of a dig lock's mouth rows:
@@ -118,10 +118,10 @@ func DigLocksAtRestSQL() string {
 		SELECT o.id, o.status,
 		       (SELECT COUNT(*) FROM reservations r WHERE %[2]s AND r.resource_kind = 'mouth' AND %[3]s)
 		FROM orders o
-		WHERE o.status IN (%[1]s)
+		WHERE %[1]s
 		  AND o.parent_order_id IS NULL
 		  AND EXISTS (SELECT 1 FROM reservations r WHERE %[2]s AND r.resource_kind = 'mouth' AND %[3]s)
-		ORDER BY o.id`, protocol.PreDispatchStatusSQLList(), confirmedResOf, digLockRow)
+		ORDER BY o.id`, PreDispatchSQL("o"), confirmedResOf, digLockRow)
 }
 
 // ListDigLocksAtRest runs DigLocksAtRestSQL.

@@ -90,10 +90,10 @@ func TestGateWait_StationReleaseIsRefused(t *testing.T) {
 	// and RDS turns WAITING. Skipping the drive leaves the order in `dispatched`,
 	// where HandleOrderRelease bounces on its own status check and this test would
 	// pass without the fence existing.
-	if err := d.lifecycle.MarkInTransit(parked, "ROBOT-1", "fleet"); err != nil {
+	if err := d.lifecycle.MarkInTransit(parked, "ROBOT-1", "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark in_transit (the robot driving to the wait point): %v", err)
 	}
-	if err := d.lifecycle.MarkStaged(parked, "fleet"); err != nil {
+	if err := d.lifecycle.MarkStaged(parked, "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark staged (the transition handleVendorStatusChange makes): %v", err)
 	}
 
@@ -191,10 +191,10 @@ func TestStationWait_ReleaseStillWorks(t *testing.T) {
 	// Same two transitions as the gate case: the robot drives to the line, then
 	// dwells there awaiting the operator. `staged` is HandleOrderRelease's
 	// precondition and it is not reachable from `dispatched`.
-	if err := d.lifecycle.MarkInTransit(o, "ROBOT-2", "fleet"); err != nil {
+	if err := d.lifecycle.MarkInTransit(o, "ROBOT-2", "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark in_transit: %v", err)
 	}
-	if err := d.lifecycle.MarkStaged(o, "fleet"); err != nil {
+	if err := d.lifecycle.MarkStaged(o, "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark staged: %v", err)
 	}
 	before := len(backend.ReleaseCalls())
@@ -396,10 +396,10 @@ func TestGateWait_StationReleaseIsRefusedAsInvalidState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload before staging: %v", err)
 	}
-	if err := d.lifecycle.MarkInTransit(parked, "ROBOT-1", "fleet"); err != nil {
+	if err := d.lifecycle.MarkInTransit(parked, "ROBOT-1", "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark in_transit: %v", err)
 	}
-	if err := d.lifecycle.MarkStaged(parked, "fleet"); err != nil {
+	if err := d.lifecycle.MarkStaged(parked, "fleet", protocol.OrderUpdate{}); err != nil {
 		t.Fatalf("mark staged: %v", err)
 	}
 	advertised, err := db.GetOrder(order.ID)

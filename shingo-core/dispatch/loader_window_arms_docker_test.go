@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch/plan"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -115,19 +116,17 @@ func TestLoaderWindows_AClaimDrivenDeliveryIsSeenByItsArm(t *testing.T) {
 			req, cfg, w := oneWindowLoader(t, db, "CDD")
 			cell := &nodes.Node{Name: "CDD-CELL", Enabled: true}
 			testutil.MustNoErr(t, db.CreateNode(cell), "the cell")
-			// A held claim is a dispatched order's (the claim is taken for the fleet
-			// call); one not yet claimed is still pending.
-			status := StatusPending
-			if c.claimed {
-				status = StatusDispatched
-			}
+			// A held claim is taken in the hand, for the fleet call: that order
+			// rests `pending` with its ask open. One not yet claimed is pending
+			// with no ask.
 			o := &orders.Order{
-				EdgeUUID: "CDD-CLAIM", StationID: "edge.line1", OrderType: c.typ, Status: status,
+				EdgeUUID: "CDD-CLAIM", StationID: "edge.line1", OrderType: c.typ, Status: StatusPending,
 				Quantity: 1, SourceNode: cell.Name, DeliveryNode: w.Name, PayloadCode: req.PayloadCode,
 				SourceIntent: SourceIntentForType(c.typ),
 			}
 			testutil.MustNoErr(t, db.CreateOrder(o), "the claim's order to the window")
 			if c.claimed {
+				testdb.SeedAsk(t, db, o.ID, StatusPending, "sg-CDD-CLAIM")
 				b := makeLoaderBin(t, db, req.PayloadCode, cell.ID, "CDD-CARRIED", 10, time.Now())
 				// The claim book as a dispatch leaves it: the order holds its bin.
 				_, err := db.DB.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, b.ID)

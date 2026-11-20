@@ -54,29 +54,48 @@ func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode 
 
 var testOrderSeq int64
 
+// createTestOrder is a move order to nodeID that the fleet has: `dispatched`,
+// naming its job in the same write (orders_dispatched_names_its_job). Its
+// callers claim or hold a bin for an order whose robot is committed: a
+// release, a landing, a lift.
 func createTestOrder(t *testing.T, db *store.DB, nodeID int64) *orders.Order {
 	t.Helper()
-	seq := atomic.AddInt64(&testOrderSeq, 1)
-	node, _ := db.GetNode(nodeID)
-	// (C1.5: dispatched, not pending.) Every caller claims or holds a bin for
-	// this order, and a hard bin claim belongs to a committed robot.
-	order := &orders.Order{
-		EdgeUUID:     fmt.Sprintf("test-order-%s-%d", t.Name(), seq),
-		StationID:    "test",
-		OrderType:    "move",
-		Status:       "dispatched",
-		Quantity:     1,
-		DeliveryNode: node.Name,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	return order
+	return newTestOrder(t, db, nodeID, true)
 }
 
-// dispatchedHolder is a testdb order at `dispatched`: the rung a fixture's
-// hard-claim holder needs, since a pre-dispatch order holds nothing hard.
+// createAskingTestOrder is a move order to nodeID that Core is asking the
+// fleet for: it rests `pending` with an open ask, the state the hand's
+// dispatch-time claim primitives (ClaimForDispatch, ClearAndClaim,
+// SyncUOPAndClaim) run in. The hard claim is the hand's, taken for the create
+// in flight.
+func createAskingTestOrder(t *testing.T, db *store.DB, nodeID int64) *orders.Order {
+	t.Helper()
+	return newTestOrder(t, db, nodeID, false)
+}
+
+func newTestOrder(t *testing.T, db *store.DB, nodeID int64, fleetHas bool) *orders.Order {
+	t.Helper()
+	seq := atomic.AddInt64(&testOrderSeq, 1)
+	node, err := db.GetNode(nodeID)
+	testutil.MustNoErr(t, err, "read the delivery node")
+	job := fmt.Sprintf("sg-test-order-%d", seq)
+	at := testdb.AskingFor(protocol.StatusPending, job)
+	if fleetHas {
+		at = testdb.FleetHas(job)
+	}
+	return testdb.CreateOrder(t, db, at, func(o *orders.Order) {
+		o.EdgeUUID = fmt.Sprintf("test-order-%s-%d", t.Name(), seq)
+		o.OrderType = "move"
+		o.DeliveryNode = node.Name
+	})
+}
+
+// dispatchedHolder is a testdb order the fleet has (`dispatched` naming its
+// job): the rung a fixture's hard-claim holder needs, since a pre-dispatch
+// order with no ask open holds nothing hard.
 func dispatchedHolder(t *testing.T, db *store.DB) *orders.Order {
 	t.Helper()
-	return testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	return testdb.CreateOrder(t, db, testdb.FleetHas(fmt.Sprintf("sg-holder-%d", atomic.AddInt64(&testOrderSeq, 1))))
 }
 
 func TestBinManifestService_ClearForReuse(t *testing.T) {
@@ -244,7 +263,7 @@ func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AC-1", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	// Atomic clear and claim (guard requires a pending reservation first)
 	testdb.ReserveBin(t, db, order.ID, bin.ID)
@@ -273,8 +292,8 @@ func TestBinManifestService_ClearAndClaim_FailsIfAlreadyClaimed(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AC-2", "PART-A", 100)
-	order1 := createTestOrder(t, db, sd.LineNode.ID)
-	order2 := createTestOrder(t, db, sd.LineNode.ID)
+	order1 := createAskingTestOrder(t, db, sd.LineNode.ID)
+	order2 := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	// First claim succeeds (guard requires a pending reservation first)
 	testdb.ReserveBin(t, db, order1.ID, bin.ID)
@@ -301,7 +320,7 @@ func TestBinManifestService_SyncUOPAndClaim(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SC-1", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	originalManifest := *bin.Manifest
 
@@ -337,7 +356,7 @@ func TestBinManifestService_ClaimForDispatch_NilIsPlainClaim(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-1", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	// nil = no UOP change, plain claim
 	testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, nil), "ClaimForDispatch(nil)")
@@ -365,7 +384,7 @@ func TestBinManifestService_ClaimForDispatch_ZeroClearsManifest(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-2", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	// 0 = full depletion, clear manifest + claim
 	zero := 0
@@ -402,7 +421,7 @@ func TestBinManifestService_ClaimForDispatch_NegativeClearsManifest(t *testing.T
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-NEG", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	neg := -1
 	testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, &neg), "ClaimForDispatch(-1)")
@@ -427,7 +446,7 @@ func TestBinManifestService_ClaimForDispatch_PositiveSyncsUOP(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CD-3", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	// >0 = partial consumption, sync UOP + claim
 	partial := 55
@@ -596,7 +615,7 @@ func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-LCK-1", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 
 	// Reserve first so the ONLY reason the claim fails below is the lock, not a
 	// missing reservation (otherwise the test would pass for the wrong reason).
@@ -649,7 +668,7 @@ func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
 
 	orders := make([]int64, N)
 	for i := 0; i < N; i++ {
-		o := createTestOrder(t, db, sd.LineNode.ID)
+		o := createAskingTestOrder(t, db, sd.LineNode.ID)
 		orders[i] = o.ID
 	}
 

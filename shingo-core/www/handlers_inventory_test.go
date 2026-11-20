@@ -16,6 +16,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
+	"shingocore/store/payloads"
 )
 
 // Characterization tests for handlers_inventory.go —
@@ -326,6 +327,37 @@ func TestApiInventoryLedgerExceptions_ListsOpenReportDivergences(t *testing.T) {
 	}
 	if d["opened_at"] == nil || d["opened_at"] == "" {
 		t.Error("opened_at is missing")
+	}
+}
+
+// TestApiInventoryLedgerExceptions_CarriesRatiosAboveOne: the answer carries
+// each part's ratio above 1 (uop_ratios), which count history reads to show a
+// count in UoP with its parts beside it; at a ratio-1 plant the key is absent
+// and the answer is what it was (owner, 2026-11-19).
+func TestApiInventoryLedgerExceptions_CarriesRatiosAboveOne(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	p := &payloads.Payload{Code: "RATIO-CH", Description: "d", UOPCapacity: 800}
+	testutil.MustNoErr(t, db.CreatePayload(p), "seed payload")
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "RATIO-CH", PartsPerCycle: 1}, ""), "seed line")
+	get := func() map[string]any {
+		rec := getPlain(t, h.apiInventoryLedgerExceptions, "/api/inventory/ledger-exceptions")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &body), "decode")
+		return body
+	}
+	if body := get(); body["uop_ratios"] != nil {
+		t.Fatalf("at 1 the answer carries uop_ratios %v; want no key", body["uop_ratios"])
+	}
+	if _, err := db.Exec(`UPDATE payload_manifest SET parts_per_cycle = 8 WHERE payload_id = $1`, p.ID); err != nil {
+		t.Fatalf("set the ratio to 8: %v", err)
+	}
+	ratios, _ := get()["uop_ratios"].(map[string]any)
+	if ratios["RATIO-CH"] != float64(8) {
+		t.Errorf("at 8 the answer's uop_ratios = %v, want RATIO-CH: 8", ratios)
 	}
 }
 

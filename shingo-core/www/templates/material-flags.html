@@ -238,7 +238,7 @@
         <td class="tnum de-sub">
           <a href="/api/audit/bin/{{.BinID}}">{{template "de-cell" .BoundAt}}</a>
         </td>
-        <td class="col-num tnum">{{template "de-cell" .LedgerCell}}</td>
+        <td class="col-num tnum">{{template "de-cell" .LedgerCell}}{{with .LedgerParts}} <span class="text-muted-xs">{{.}}</span>{{end}}</td>
         {{/*
           The reading is a PRINTED NAME plus a ring on the one class that
           carries a finding. No chip, and never colour alone.

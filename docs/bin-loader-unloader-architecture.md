@@ -1,6 +1,6 @@
 # Bin Loader / Unloader
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 This document covers the bin loader and unloader: the forklift-worked staging points where material enters and
 leaves the AMR system. Loaders bring material in (an operator fills empties); unloaders take it out (an operator
@@ -88,7 +88,7 @@ copy of Core's catalog: its UOP capacity, which the count starts at, and its tem
 (`load_templates`, `StationService.loadTemplatesForBoard`, held in memory between catalog writes). The modal posts
 the part and the count and no manifest; the Edge builds the bin's manifest from the same copy, each line's count
 derived from the declared one by the count rule in [uop-architecture.md](uop-architecture.md#process-semantics) (a
-template of one line carries the count itself; `Engine.loadManifest`), and refuses a payload the copy has no row
+template of one line carries the count itself; `Engine.loadManifest`, `protocol.LinePieces`), and refuses a payload the copy has no row
 for. A request that carries a manifest (the Production page, whose counts a person may edit) is sent as it came. The
 modal falls back to `GET /api/payload/{code}/manifest` only for a part the view did not carry.
 

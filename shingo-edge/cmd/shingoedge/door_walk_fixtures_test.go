@@ -450,8 +450,13 @@ func subjectFixtures() map[string]subjectFixture {
 				Payloads: []protocol.CatalogPayloadInfo{{ID: 9001, Name: "Walk part", Code: "PART-W", UOPCapacity: 40}}, Digest: w.uniq("cat")})
 		}},
 		"data:" + protocol.SubjectOrderStatusResponse: {moves: true, env: func(w *walk) *protocol.Envelope {
+			// A live order of its own, like the order doors above. The walk's
+			// order is cancelled by the abort route before the inbound doors
+			// run, and the reconcile leaves an ended row as it ended, so a
+			// snapshot naming it moves nothing.
+			o := w.freshOrder("acknowledged")
 			return w.dataEnv(protocol.SubjectOrderStatusResponse, protocol.OrderStatusResponse{Orders: []protocol.OrderStatusSnapshot{{
-				OrderUUID: w.orderUUID, Found: true, Status: string(protocol.StatusQueued), QueueReason: w.uniq("Waiting for a slot"),
+				OrderUUID: o, Found: true, Status: string(protocol.StatusQueued), QueueReason: w.uniq("Waiting for a slot"),
 				QueueCode: "dropoff-occupied"}}})
 		}},
 		"data:" + protocol.SubjectEdgeRegisterRequest: {env: func(w *walk) *protocol.Envelope {

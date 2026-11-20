@@ -39,11 +39,16 @@ func admitOrder(t *testing.T, db *store.DB, uuid string, slot *nodes.Node, opts 
 	}}, opts...)...)
 }
 
-// asDispatched builds an order at `dispatched`. A hard hold (a bin or slot
-// claim, a confirmed mouth or occupancy row) is a committed robot's: the
-// holds-at-rest teardown forbids one on a waiting order, so a fixture whose
-// point is the hold builds its holder here (C1.5).
-func asDispatched(o *orders.Order) { o.Status = StatusDispatched }
+// asDispatched builds an order the fleet has: `dispatched`, naming its job
+// (sg-<edge uuid>, so it runs after the option that sets the uuid). A hard hold
+// (a bin or slot claim, a confirmed mouth or occupancy row) is a committed
+// robot's: the holds-at-rest teardown forbids one on a waiting order, so a
+// fixture whose point is the hold builds its holder here (C1.5). A holder that
+// the test then runs the hand's own primitives on is not the fleet's yet: it
+// rests with an ask (testdb.AskingFor).
+func asDispatched(o *orders.Order) {
+	o.Status, o.VendorOrderID = StatusDispatched, "sg-"+o.EdgeUUID
+}
 
 // TestAdmit_PhysicalChecksIgnoreTheEnforcementMode is a CORRECTION to the
 // version of this file that shipped with admission, and the assertion is the

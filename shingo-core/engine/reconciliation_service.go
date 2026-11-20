@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -28,8 +29,13 @@ import (
 // EmitOrderCompleted. The old direct-DB path bypassed that emit, which
 // left Edge stranded at delivered.
 type ReconciliationService struct {
-	db               ReconciliationStore
-	logFn            LogFunc
+	db    ReconciliationStore
+	logFn LogFunc
+	// bootAsks is each ask a crash left open on a live row, named at boot
+	// (TakeBootAsks): order id to the asked vendor order id. Read by the
+	// anomaly list and the pass; guarded by bootMu.
+	bootMu           sync.Mutex
+	bootAsks         map[int64]string
 	confirmDelivered func(order *orders.Order) error
 	// advanceCompound re-drives a compound (reshuffle) parent whose children
 	// are all terminal. Late-bound to dispatch.Dispatcher.AdvanceCompoundOrder
@@ -67,12 +73,38 @@ func newReconciliationService(db ReconciliationStore, logFn LogFunc) *Reconcilia
 	return &ReconciliationService{db: db, logFn: logFn}
 }
 
+// Summary is the store's rollup with the asks named at boot counted in: each is
+// an anomaly, and the plant is not ok while one is open.
 func (s *ReconciliationService) Summary() (*reconciliation.Summary, error) {
-	return s.db.GetReconciliationSummary()
+	summary, err := s.db.GetReconciliationSummary()
+	if err != nil {
+		return nil, err
+	}
+	asks, err := s.bootAskAnomalies()
+	if err != nil {
+		return nil, err
+	}
+	if len(asks) > 0 {
+		summary.TotalAnomalies += len(asks)
+		if summary.Status == "ok" {
+			summary.Status = "degraded"
+		}
+	}
+	return summary, nil
 }
 
+// ListAnomalies is the store's findings and the asks named at boot that are
+// still open (reconciliation_boot_asks.go).
 func (s *ReconciliationService) ListAnomalies() ([]*reconciliation.Anomaly, error) {
-	return s.db.ListReconciliationAnomalies()
+	out, err := s.db.ListReconciliationAnomalies()
+	if err != nil {
+		return nil, err
+	}
+	asks, err := s.bootAskAnomalies()
+	if err != nil {
+		return nil, err
+	}
+	return append(out, asks...), nil
 }
 
 func (s *ReconciliationService) ListRecoveryActions(limit int) ([]*recovery.Action, error) {
@@ -138,6 +170,7 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 					s.logFn("engine: auto-confirmed %d stuck delivered orders", n)
 				}
 			}
+			s.chaseEndedBootAsks()
 			if n, err := s.AdvanceStuckReshuffleParents(); err != nil {
 				s.logFn("engine: advance stuck reshuffle parents error: %v", err)
 			} else if n > 0 {

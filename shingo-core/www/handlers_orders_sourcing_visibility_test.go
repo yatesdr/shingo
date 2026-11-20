@@ -13,6 +13,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -137,8 +138,11 @@ func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 
 	o := parkOrder(t, db, "sv-moving", protocol.StatusQueued,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
-	moved, err := db.UpdateOrderStatusFromWithReason(o.ID,
-		string(protocol.StatusQueued), string(protocol.StatusDispatched), "on its way", store.HistoryReason{})
+	// The fleet's yes is the one write of `dispatched`: Core asks for the job
+	// from queued, and the yes names it and ends the wait in one statement.
+	testdb.SeedAsk(t, db, o.ID, protocol.StatusQueued, "sg-sv-moving")
+	_, moved, err := db.FleetYes(o.ID, protocol.StatusQueued, "sg-sv-moving", "", nil, "on its way",
+		store.HistoryReason{}, protocol.OrderUpdate{})
 	testutil.MustNoErr(t, err, "queued→dispatched")
 	if !moved {
 		t.Fatal("queued→dispatched refused")

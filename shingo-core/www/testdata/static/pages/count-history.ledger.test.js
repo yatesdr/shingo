@@ -56,14 +56,17 @@ function load(ledger) {
         ledgerExceptions: ledger,
     };
     vm.createContext(ctx);
+    require('./lend-count.js')(ctx);
     const parts = [
         lift('function', 'num'),
         lift('const', 'HOLD_DROP_REASON'),
         'const HOLD_DROP_RUNS_SHOWN = ' + (src.match(/^const HOLD_DROP_RUNS_SHOWN = (\d+);/m) || [])[1] + ';',
         lift('function', 'renderHoldDrops'),
         lift('function', 'renderDeclaredStamps'),
+        lift('function', 'ratioOf'),
+        lift('function', 'boldCount'),
     ];
-    const missing = ['num', 'HOLD_DROP_REASON', 'HOLD_DROP_RUNS_SHOWN', 'renderHoldDrops', 'renderDeclaredStamps']
+    const missing = ['num', 'HOLD_DROP_REASON', 'HOLD_DROP_RUNS_SHOWN', 'renderHoldDrops', 'renderDeclaredStamps', 'ratioOf', 'boldCount']
         .filter((n, i) => !parts[i] || /undefined/.test(parts[i].slice(0, 40)));
     if (missing.length) return { missing };
     // `let ledgerExceptions` in the page; a context global here.
@@ -179,9 +182,11 @@ console.log('count history: bins below zero — none renders nothing, two render
             ledgerExceptions: { open_bins: openBins },
         };
         vm.createContext(ctx);
+        require('./lend-count.js')(ctx);
         const fn = lift('function', 'renderLedgerExceptions');
         if (!fn) return null;
-        vm.runInContext(fn + '\nrenderLedgerExceptions();', ctx);
+        vm.runInContext([lift('function', 'num'), lift('function', 'ratioOf'), lift('function', 'boldCount'), fn].join('\n')
+            + '\nrenderLedgerExceptions();', ctx);
         return host.innerHTML;
     };
     const none = render([]);
@@ -196,6 +201,65 @@ console.log('count history: bins below zero — none renders nothing, two render
         ]);
         check('two doubtful bins: both listed with their counts', (two.match(/<li>/g) || []).length === 2
             && two.includes('<b>-407</b>') && two.includes('<b>-10</b>') && two.includes('ALN_004'), two);
+    }
+}
+
+console.log('count history at a ratio of 8: a count reads its UoP, its parts beside it (owner, 2026-11-19)');
+{
+    // One render of every list, its counts of a part at 8 a cycle (the
+    // answer's uop_ratios) and of a part at 1 (absent from it).
+    const hosts = {};
+    const ctx = {
+        document: { getElementById: (id) => (hosts[id] = hosts[id] || { innerHTML: 'stale' }) },
+        escapeHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+        formatTime: (iso) => 'T(' + iso + ')',
+        formatDuration: () => '5m',
+        serverNow: () => Date.parse('2026-11-19T12:00:00Z'),
+        ledgerExceptions: {
+            since: '2026-11-12T00:00:00Z',
+            uop_ratios: { 'P-8': 8 },
+            open_bins: [{ bin_id: 7, label: 'SHG:0007', payload_code: 'P-8', node_name: 'ALN_004', uop_remaining: -407 },
+                { bin_id: 8, label: 'SHG:0008', payload_code: 'P-1', node_name: 'ALN_003', uop_remaining: -10 }],
+            delta_integrity: [{ payload_code: 'P-8', drop_rows: 2, uop_lost: 404, credits_dropped: 404, consumes_dropped: 0,
+                bins: 1, ledger_total: -37, mixed_contents: 0 }],
+            report_divergences: [{ bin_id: 7, bin_label: 'SHG:0007', payload_code: 'P-8', node: 'ALN_004', class: 'count',
+                edge_count: 404, core_count: null, opened_at: '2026-11-19T11:55:00Z' }],
+            hold_drop_runs: [{ node: 'ALN_011', payload_code: 'P-8', drops: 1, qty: 24, reason: 'sweep', station: 's',
+                first: '2026-11-19T08:15:00Z', last: '2026-11-19T08:15:00Z' }],
+            declared_full_stamps: [{ node: 'ALN_011', bin_id: 812, bin_label: 'SHG:0812', payload_code: 'P-8',
+                counted: 404, declared: 800, applied_at: '2026-11-19T08:20:00Z' }],
+        },
+    };
+    vm.createContext(ctx);
+    require('./lend-count.js')(ctx);
+    const names = ['num', 'ratioOf', 'boldCount', 'openFor', 'renderLedgerExceptions', 'renderDeltaIntegrity',
+        'renderReportDivergence', 'renderHoldDrops', 'renderDeclaredStamps'];
+    const fns = names.map((n) => lift('function', n));
+    const missing = names.filter((n, i) => !fns[i]);
+    if (missing.length) {
+        check('count-history.js defines ' + missing.join(', '), false);
+    } else {
+        vm.runInContext([lift('const', 'DIVERGENCE_CLASS'), lift('const', 'HOLD_DROP_REASON'),
+            'const HOLD_DROP_RUNS_SHOWN = 6;'].concat(fns).join('\n')
+            + '\nrenderLedgerExceptions(); renderDeltaIntegrity(); renderReportDivergence(); renderHoldDrops(); renderDeclaredStamps();', ctx);
+        const below = hosts['rh-ledger-exceptions'].innerHTML;
+        check('below zero: a bin at 8 reads its UoP, its parts beside it', below.includes('counts <b>-50 UoP</b> <span class="text-muted-xs">-407 parts</span>'), below);
+        check('below zero: a bin at 1 reads as it did', below.includes('counts <b>-10</b>'), below);
+        const di = hosts['rh-delta-integrity'].innerHTML;
+        check('not landing: the figure is its UoP, its parts beside it', di.includes('>50 <span class="text-muted-xs">404 parts</span>'), di);
+        check('not landing: the tip says the UoP and the parts', di.includes('Reads 50 UoP · 404 parts BELOW reality')
+            && di.includes('Dropped credits 404 parts'), di);
+        check('not landing: the ledger total says its UoP and parts', di.includes('-4 UoP · -37 parts'), di);
+        const dv = hosts['rh-report-divergence'].innerHTML;
+        check('anomalies: Edge reads its UoP and parts; a missing Core count stays a dash',
+            dv.includes('Edge <b>50 UoP</b> <span class="text-muted-xs">404 parts</span>') && dv.includes('Core <b>—</b>'), dv);
+        const dr = hosts['rh-hold-drops'].innerHTML;
+        check('hold drops: the line and its run read UoP, parts beside', dr.includes('<b>3 UoP</b> <span class="text-muted-xs">24 parts</span> of')
+            && dr.includes('— <b>3 UoP</b>'), dr);
+        const st = hosts['rh-declared-stamps'].innerHTML;
+        check('stamps: counted and the pack read UoP, parts beside',
+            st.includes('counted <b>50 UoP</b> <span class="text-muted-xs">404 parts</span> → its pack <b>100 UoP</b> <span class="text-muted-xs">800 parts</span>'), st);
     }
 }
 
@@ -309,14 +373,16 @@ console.log('the sections count history gave away render where they went (owner,
     const rows = liftFrom('bins-lineside.js', 'function', 'bucketRowsHtml');
     const age = liftFrom('bins-lineside.js', 'function', 'bucketAgeMs');
     const numFn = liftFrom('bins-lineside.js', 'function', 'num');
-    if (!rows || !age || !numFn) {
-        check('bins-lineside.js defines bucketRowsHtml, bucketAgeMs and num', false);
+    const pileFn = liftFrom('bins-lineside.js', 'function', 'pileText');
+    if (!rows || !age || !numFn || !pileFn) {
+        check('bins-lineside.js defines bucketRowsHtml, bucketAgeMs, num and pileText', false);
     } else {
         const now = Date.parse('2026-10-29T12:00:00Z');
         const bctx = { escapeHtml: esc, timeAgo: () => 'ago', formatTime: (t) => 'T(' + t + ')', serverNow: () => now,
             STALE_WARN_MS: 7 * 24 * 3600 * 1000, STALE_BAD_MS: 30 * 24 * 3600 * 1000 };
         vm.createContext(bctx);
-        vm.runInContext([numFn, age, rows].join('\n'), bctx);
+        require('./lend-count.js')(bctx);
+        vm.runInContext([numFn, age, pileFn, rows].join('\n'), bctx);
         const html = vm.runInContext('bucketRowsHtml(' + JSON.stringify([
             { node_name: 'ALN_001', payload_code: 'P-A', state: 'active', qty: 12, updated_at: '2026-10-29T11:00:00Z' },
             { node_name: 'ALN_002', payload_code: 'P-B', state: 'active', qty: 3, updated_at: '2026-09-01T00:00:00Z' },

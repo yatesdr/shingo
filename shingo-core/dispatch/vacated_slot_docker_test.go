@@ -78,13 +78,14 @@ func vsPairRows(t *testing.T, db *store.DB, prefix, line, supplySrc, home string
 }
 
 // vsLift hands the pass context a partner that claimed bin at node at step 0 —
-// what the supply leaves behind when it acquires first. (C1.5: the partner's
-// row is dispatched, so its claim is a committed robot's and not a hold at rest;
-// placement reads the pass context, not the partner's status.)
+// what the supply leaves behind when it acquires first. (C1.5: the pair's hand
+// takes the claim with the partner's ask, so the partner rests `pending` asking
+// the fleet, and its claim is not a hold at rest; placement reads the pass
+// context, not the partner's status.)
 func vsLift(t *testing.T, db *store.DB, partner *orders.Order, binID int64, node string) *pairPass {
 	t.Helper()
 	testdb.ClaimBinForTest(t, db, binID, partner.ID)
-	testdb.SeedOrderStatus(t, db, partner.ID, string(StatusDispatched), "")
+	testdb.SeedAsk(t, db, partner.ID, StatusPending, "sg-"+partner.EdgeUUID)
 	steps, ok := decodeSteps(partner.StepsJSON)
 	if !ok {
 		t.Fatalf("partner %d plan unreadable", partner.ID)
@@ -468,7 +469,9 @@ func TestVacatedSlot_P6_LoaderArmRefusalsWait(t *testing.T) {
 			return vsLift(t, db, supply, partial, buffer.Name), nil
 		}},
 		{"a one-leg slice: no pass context (P10)", func(t *testing.T, db *store.DB, supply, ret *orders.Order, home, buffer *nodes.Node, partial int64) (*pairPass, []resolvedStep) {
-			vsLift(t, db, supply, partial, buffer.Name) // it holds the bin, and is committed — not in this pass
+			// It holds the bin, and is committed (the fleet has it) — not in this pass.
+			testdb.ClaimBinForTest(t, db, partial, supply.ID)
+			testdb.SeedDispatched(t, db, supply.ID, "sg-"+supply.EdgeUUID)
 			mustExecDispatch(t, db, `UPDATE orders SET status='faulted' WHERE id=$1`, supply.ID)
 			return nil, nil
 		}},
@@ -695,12 +698,16 @@ func TestVacatedSlot_P24_RepointedStampsDoNotCount(t *testing.T) {
 // ── P9, P9b, P18-P22: the release fence ─────────────────────────────────────
 
 // vsStagedLeg makes a staged, fleet-committed leg at wait 0 with the given plan.
+// Its job is V-<uuid>: a `dispatched` leg is born naming it (testdb.CreateOrder
+// writes the status and the job in one statement); any other status gets it
+// from the write after the INSERT, which does not bind a vendor id.
 func vsStagedLeg(t *testing.T, db *store.DB, uuid, sibling, delivery string, status protocol.Status, steps []resolvedStep) *orders.Order {
 	t.Helper()
 	j := mustJSON(t, steps)
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, status
 		o.DeliveryNode, o.SiblingOrderUUID, o.Coordinated, o.StepsJSON = delivery, sibling, true, string(j)
+		o.VendorOrderID = "V-" + uuid
 	})
 	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "V-"+uuid, "CREATED", ""), "vendor")
 	return prReload(t, db, o.ID)

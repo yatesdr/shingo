@@ -81,11 +81,15 @@ function newDocument() {
     const byId = {};
     const doc = {
         body: fakeEl('body'),
+        // The boxes' unit words, as the template draws them (data-unit-words).
+        unitWords: [],
         getElementById(id) { return (byId[id] = byId[id] || Object.assign(fakeEl(), { id })); },
         createElement(tag) { return fakeEl(tag); },
         addEventListener() {},
         querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
         querySelectorAll(sel) {
+            const u = /^\[data-unit-words="(\w+)"\]$/.exec(sel);
+            if (u) return this.unitWords.filter((e) => e.dataset.unitWords === u[1]);
             const m = /^#(\S+) (.*)$/.exec(sel);
             if (!m) return [];
             const host = this.getElementById(m[1]);
@@ -111,6 +115,16 @@ function deferred() {
 }
 function okJSON(data) { return { ok: true, status: 200, json: () => Promise.resolve(data), text: () => Promise.resolve(JSON.stringify(data)) }; }
 
+// COUNT is shared/count.js, real: a line's readout is its arithmetic.
+const COUNT = (() => {
+    const c = vm.createContext({});
+    vm.runInContext(fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count.js'), 'utf8')
+        .replace(/^export (?=function )/mg, ''), c);
+    vm.runInContext(fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count-words.js'), 'utf8')
+        .replace(/^import[^;]*;/mg, '').replace(/^export (?=function )/mg, '').replace(/^export const /mg, 'var '), c);
+    return c;
+})();
+
 function load(gets) {
     let src = fs.readFileSync(path.join(SRC_DIR, 'payloads.js'), 'utf8');
     src = src.replace(/^import .*$/mg, '');
@@ -135,6 +149,8 @@ function load(gets) {
         api() {},
         el() { return fakeEl(); },
         escapeHtml: (s) => String(s == null ? '' : s),
+        uopRatio: COUNT.uopRatio, splitUOP: COUNT.splitUOP, linePieces: COUNT.linePieces, countSaid: COUNT.countSaid,
+        UOP_WORD: COUNT.UOP_WORD,
         hideModal() {},
         showModal() {},
         removeParentElement() {},
@@ -259,7 +275,7 @@ async function main() {
         };
         const one = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 2 }]);
         same('one line at 2 per assembly cycle: the cycles a full bin feeds, not 40 x 2 per bin',
-            readouts(one.doc), ['= 20 cycles / bin']);
+            readouts(one.doc), ['= 20 UoP a full bin']);
         const unit = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 1 }]);
         same('one line at 1: the pack says it all', readouts(unit.doc), ['']);
         const kit = await open([
@@ -269,7 +285,41 @@ async function main() {
             readouts(kit.doc), ['= 80 / bin', '= 40 / bin']);
         kit.ctx.removeManifestRow(rowsOf(kit.doc)[1].querySelector('.btn'));
         same("the kit's second line removed: the line left is a part alone, and redraws",
-            readouts(kit.doc), ['= 20 cycles / bin']);
+            readouts(kit.doc), ['= 20 UoP a full bin']);
+    }
+
+    console.log('above a ratio of 1 the pack and per-tote boxes name parts, and the cart hint says its UoP (owner, 2026-11-19)');
+    {
+        const open = async (lines) => {
+            const { ctx, doc } = load({
+                [MANIFEST]: () => Promise.resolve(okJSON(lines)),
+                [BIN_TYPES]: () => Promise.resolve(okJSON([{ id: 1, code: 'TYPE-1' }])),
+            });
+            for (const [plain, parts] of [['UoP Capacity', 'Standard pack (parts)'], ['UoP per tote', 'Parts per tote']]) {
+                const w = fakeEl('span');
+                w.dataset = { unitWords: 'ple', plain, parts };
+                w.textContent = plain;
+                doc.unitWords.push(w);
+            }
+            ctx.openEditPayloadModal(editButton(7));
+            await settle(); await settle();
+            // Two layers of TYPE-1's four totes, 50 to a tote.
+            doc.getElementById('ple-tote-layers').value = '2';
+            doc.getElementById('ple-uop-per-tote').value = '50';
+            doc.getElementById('ple-bin-types').children[0].dataset.totesPerLayer = '4';
+            ctx.refreshToteHint('ple');
+            return { words: doc.unitWords.map((w) => w.textContent), hint: doc.getElementById('ple-tote-hint').textContent };
+        };
+        const at8 = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 8 }]);
+        same('one line at 8: the boxes name parts', at8.words, ['Standard pack (parts)', 'Parts per tote']);
+        same('one line at 8: a full cart says its UoP, then its parts', at8.hint, 'TYPE-1: 50 × 4 × 2 = 50 UoP · 400 parts a full cart');
+        const at1 = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 1 }]);
+        same('one line at 1: the boxes keep their words', at1.words, ['UoP Capacity', 'UoP per tote']);
+        same('one line at 1: the cart hint reads as it did', at1.hint, 'TYPE-1: 50 × 4 × 2 = 400 UoP a full cart');
+        const kit = await open([
+            { part_number: 'SYN-PL-L', catid: '', parts_per_cycle: 2 },
+            { part_number: 'SYN-PL-R', catid: '', parts_per_cycle: 1 }]);
+        same('a kit: the boxes keep their words (a kit counts kits)', kit.words, ['UoP Capacity', 'UoP per tote']);
     }
 
     if (failures) {

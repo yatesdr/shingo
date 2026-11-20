@@ -36,6 +36,20 @@ func TestProcessLabels(t *testing.T) {
 			t.Errorf("%s: process %q, want %q", tc.name, got, tc.want)
 		}
 	}
+	// A Bins-table row: a bin at a node is its node's process; a bin in flight
+	// is the process of the order carrying it, never of _TRANSIT.
+	atNode := &domain.Bin{NodeName: "SMN_001"}
+	carried := &domain.Bin{NodeName: domain.TransitNodeName}
+	line := &domain.Order{DeliveryNode: "ALN_001"}
+	if got := p.bin(atNode, nil); got != "SNF3 / SNF4" {
+		t.Errorf("bin at a node: process %q, want %q", got, "SNF3 / SNF4")
+	}
+	if got := p.bin(carried, line); got != "SNF2" {
+		t.Errorf("bin in flight to ALN_001: process %q, want %q", got, "SNF2")
+	}
+	if got := p.bin(carried, nil); got != "" {
+		t.Errorf("bin in flight with no order: process %q, want nothing", got)
+	}
 	if got := processLabels(nil).node("ALN_001"); got != "" {
 		t.Errorf("a failed read labels %q, want nothing", got)
 	}

@@ -43,14 +43,15 @@ func TestC2aPin_ABuriedRetrieveWaitingForParkingHasOneWait(t *testing.T) {
 	t.Parallel()
 	const passes = 5
 	db := testDBShared(t)
-	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	tellToStations(db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, _, bp := setupDwellGroup(t, db, "C2AF", 1, false)
 
 	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "C2AF-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "C2AF-TGT")
 
 	// A robot from another order inside the only lane with room.
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "c2af-inside"; o.Status = StatusDispatched })
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "c2af-inside" }, testdb.FleetHas("sg-c2af-inside"))
 	_, aErr := reservations.AcquireOccupancy(db.DB, inside.ID, sib.ID)
 	testutil.MustNoErr(t, aErr, "occupy the sibling lane")
 
@@ -63,7 +64,7 @@ func TestC2aPin_ABuriedRetrieveWaitingForParkingHasOneWait(t *testing.T) {
 	buried := &BuriedError{Bin: target, Slot: dugSlots[1], LaneID: dug.ID}
 
 	rowsBefore := waitRows(t, db, o.ID)
-	tellsBefore := len(emitter.waitChanged)
+	tellsBefore := len(stationTellsOf(t, db, "c2af-demand"))
 	for pass := 1; pass <= passes; pass++ {
 		fresh, err := db.GetOrder(o.ID)
 		testutil.MustNoErr(t, err, "re-read the order, as tryFulfill does")
@@ -76,7 +77,7 @@ func TestC2aPin_ABuriedRetrieveWaitingForParkingHasOneWait(t *testing.T) {
 			ReshuffleWaitParams(perr, fresh.PayloadCode))
 	}
 	rows := waitRows(t, db, o.ID) - rowsBefore
-	tells := len(emitter.waitChanged) - tellsBefore
+	tells := len(stationTellsOf(t, db, "c2af-demand")) - tellsBefore
 
 	if rows != 1 || tells != 1 {
 		t.Errorf("a buried retrieve waiting for parking opened %d wait row(s) and told its station %d time(s) "+

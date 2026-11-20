@@ -50,11 +50,20 @@ type Order struct {
 	// the robot is from it (RouteStops). An order with no stored plan counts
 	// its two implied steps, the lift and the drop.
 	StepsDone int `json:"steps_done"`
+	// Version is orders.version: bumped in the same statement as every write
+	// the order's station is told about (status, robot, wait), and carried on
+	// what it is told, so the station keeps only the newest. 1 at birth.
+	Version int64 `json:"version"`
+	// AskedVendorOrderID is orders.asked_vendor_order_id: the vendor order id
+	// Core is asking the fleet to create, from the hand until the fleet answers;
+	// "" when Core is not asking. Core-only, never on the wire. Read it through
+	// the questions in order_ask.go, never beside a raw status test.
+	AskedVendorOrderID string `json:"-"`
 	// BlockActions is what each block Core sent the fleet for this order is,
 	// by block id: protocol.ActionPickup, ActionDropoff, ActionWait, or "" for
 	// a block of no step's kind (the turns of an advanced load sequence around
-	// its lift). Core's own record, written as the blocks are sent (the create's
-	// vendor write and orders.ClaimAppend) and read when one finishes; never on
+	// its lift). Core's own record, written as the blocks are sent (the
+	// fleet's yes and orders.ClaimAppend) and read when one finishes; never on
 	// the wire. nil is an order sent before the record existed (the column is
 	// NULL): its blocks are read by their binTask names for its whole life.
 	BlockActions map[string]string `json:"-"`

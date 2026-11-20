@@ -3,7 +3,7 @@
 # bus.js's: a server topic opens the stream, the bus's own frames (connected, disconnected, heartbeat, stream-gap, build-changed) never do.
 # A non-literal onSSE type is listed as it is written; the station's are its stationEvents keys.
 
-core bins.html: opens a stream; topics bin-update,system-status; bus frames build-changed,connected,disconnected
+core bins.html: opens a stream; topics bin-row,bin-update,order-update,system-status; bus frames build-changed,connected,disconnected
 core config.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected
 core count-history.html: opens a stream; topics order-update,system-status; bus frames build-changed,connected,disconnected
 core cycle-time.html: opens a stream; topics system-status; bus frames build-changed,connected,disconnected

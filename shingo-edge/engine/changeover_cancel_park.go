@@ -250,6 +250,15 @@ func (e *Engine) finishParkedTrips(parks []parkedBin, rows map[string]protocol.N
 			continue
 		}
 		done[p.park] = true
+		// ONE MOVE PER CARRIER, NOT PER MESSAGE ABOUT IT. A carrier a live move
+		// already takes off the park is on its way: a redelivered order.cancelled
+		// names it again, and a second move would send a second robot for it.
+		if live, err := e.db.LiveMoveOffNode(p.park); err != nil || live {
+			if err != nil {
+				e.logFn("cancel: %s: read the moves off %s: %v (sending none)", p.line, p.park, err)
+			}
+			continue
+		}
 		mu := e.primeNodeLock(&processes.NodeClaim{CoreNodeName: p.line})
 		mu.Lock()
 		nodeID := p.nodeID
@@ -337,7 +346,19 @@ func (e *Engine) carrierLeftWaiting(changed OrderStatusChangedEvent) (parkedBin,
 	if changed.NewStatus != string(protocol.StatusCancelled) || changed.OldStatus != string(protocol.StatusStaged) {
 		return parkedBin{}, false
 	}
-	order, err := e.db.GetOrder(changed.OrderID)
+	return e.carrierLeftWaitingBy(changed.OrderID, false)
+}
+
+// carrierLeftWaitingBy is carrierLeftWaiting for an order known to have been
+// cancelled while staged. versionedOnly says who is asking: the status event
+// answers only for an order whose status is not Core's versioned word, and
+// Core's order.cancelled only for one whose is (onCancelledMessage), so one
+// cancel sends one carrier back.
+func (e *Engine) carrierLeftWaitingBy(orderID int64, versionedOnly bool) (parkedBin, bool) {
+	order, err := e.db.GetOrder(orderID)
+	if err == nil && order != nil && (order.CoreVersion > 0) != versionedOnly {
+		return parkedBin{}, false
+	}
 	if err != nil || order == nil || order.OrderType != ordermgr.TypeComplex ||
 		order.ProcessNodeID == nil || order.StationWait == nil {
 		return parkedBin{}, false

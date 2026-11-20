@@ -71,7 +71,8 @@ func TestLaneHoldKind_ASourceLockIsNotAnExcavation(t *testing.T) {
 		_, laneID, _ := gatedLane(t, db, "HKIND-SRC", "")
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-src" }, asDispatched) // (C1.5: a lane holder is dispatched)
+		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-src" },
+			testdb.AskingFor(StatusPending, "sg-hkind-src")) // the hand takes its source hold inside its ask
 		adm := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
 		admitted, err := adm.admitted, adm.err
 		if err != nil || !admitted {

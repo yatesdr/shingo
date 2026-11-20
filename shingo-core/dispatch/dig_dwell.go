@@ -891,8 +891,5 @@ func (d *Dispatcher) takeSlotByRank(leg *orders.Order, dest *nodes.Node) bool {
 	log.Printf("dig dwell: leg %d (dig %d) took %s from order %d — the dig's demand outranks the "+
 		"holder's promise; order %d is told and re-resolves its destination",
 		leg.ID, named, dest.Name, holder, holder)
-	if h, gErr := d.db.GetOrder(holder); gErr == nil && h != nil {
-		d.NotifyWaitChanged(h)
-	}
 	return true
 }

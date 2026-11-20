@@ -355,9 +355,10 @@ func stagedAt(o *storeorders.Order) time.Time {
 // 2026-11-14: a pair the sim operator released, held at G3 after an Edge
 // restart, was sent back).
 //
-// THE STATION'S WAIT, IN CORE'S WORD. Core releases only a wait it owns, and
-// tells the Edge nothing when it does, so the row reads staged while the robot
-// drives on. Its order.staged names the owner, so a leg at Core's wait reads
+// THE STATION'S WAIT, IN CORE'S WORD. Core releases only a wait it owns; a
+// Core that versions its orders tells the station in_transit when it does, and
+// an older one tells it nothing, so the row reads staged while the robot drives
+// on. Either way its order.staged names the owner, so a leg at Core's wait reads
 // lane, vacate or turn. A blank kind is not the station's here, though the
 // board reads it so (protocol.IsStationWaitKind): it is a leg no order.staged
 // placed, staged by the boot reconcile, whose snapshot names no wait, after an

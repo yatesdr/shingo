@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/release"
 	"shingoedge/store"
 	storemsg "shingoedge/store/messaging"
 	"shingoedge/store/orders"
@@ -89,13 +90,22 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 	}
 	storemsg.NotifyEnqueued()
 
-	// Transition Edge status to in_transit now, at the click, without waiting
-	// for Core. Core does push in_transit too — its OrderUpdate carries the
-	// status and the Edge applies it (ApplyCoreStatus) — but only once the fleet
-	// moves, and Core answers a release only with errors, never an acceptance.
-	// Recording the release locally is what lets the board and the next click
-	// see it at once; a Core refusal rolls it back (RollbackReleaseRejection).
-	if err := m.TransitionOrder(orderID, StatusInTransit, ReleasedFromStagingDetail); err != nil {
+	// THE TAP IS AN INTENT, NOT A STATUS, for an order whose status is Core's
+	// versioned word: the leg stays `staged` until Core says its robot moves
+	// (Core's release writes in_transit and tells it, core_word.go). The intent
+	// sent just now is what the board reads as released (release.
+	// ReleasedFromWait): RELEASE goes at the tap and the tile says the release
+	// went out. The history row records the tap; the boards drawing the order
+	// refetch. A Core rejection clears the intent (RollbackReleaseRejection).
+	//
+	// An older Core never tells a release, so for its order the tap writes
+	// in_transit at the click, as it always did, and a rejection rolls it back.
+	if versioned(order) {
+		if err := m.db.InsertOrderHistory(order.ID, string(order.Status), string(order.Status), ReleasedFromStagingDetail); err != nil {
+			log.Printf("orders: history for the release of order %d: %v", order.ID, err)
+		}
+		m.emitter.EmitOrderTouched(order.ID, order.UUID, order.ProcessNodeID)
+	} else if err := m.TransitionOrder(orderID, StatusInTransit, ReleasedFromStagingDetail); err != nil {
 		return fmt.Errorf("transition to in_transit: %w", err)
 	}
 
@@ -330,6 +340,12 @@ func (m *Manager) RollbackForRetry(orderUUID, detail string) error {
 		return fmt.Errorf("get order %s: %w", orderUUID, err)
 	}
 	m.clearIntentForRejection(order.ID, detail)
+	if versioned(order) {
+		// The tap wrote no status (ReleaseOrderWithDisposition): the leg never
+		// left staged, and the cleared intent is the rollback.
+		m.emitter.EmitOrderTouched(order.ID, order.UUID, order.ProcessNodeID)
+		return nil
+	}
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
 }
@@ -360,6 +376,21 @@ func (m *Manager) RollbackReleaseRejection(orderUUID, coreDetail string) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("get order %s: %w", orderUUID, err)
+	}
+	if versioned(order) {
+		// THE REJECTION KEYS ON THE INTENT for an order whose status is Core's
+		// word: the tap wrote no status, so the leg is still staged, and what
+		// Core refused is the release that went out. Its intent is cleared and
+		// Core's sentence written for the chip; RELEASE is offered again. A
+		// rejection with no sent intent is a stray fan-out and changes nothing.
+		in, derr := release.DecodeIntent(order.ReleaseIntent)
+		if derr != nil || in == nil || !in.Sent() {
+			m.DebugLog.Log("release rejection ignored for order %s (no release sent)", orderUUID)
+			return nil
+		}
+		m.clearIntentForRejection(order.ID, releaseRejectionDetail(order, coreDetail))
+		m.emitter.EmitOrderTouched(order.ID, order.UUID, order.ProcessNodeID)
+		return nil
 	}
 	if order.Status != StatusInTransit {
 		m.DebugLog.Log("release rejection ignored for order %s (status=%s, not in_transit)", orderUUID, order.Status)
@@ -405,7 +436,8 @@ func releaseRejectionDetail(order *orders.Order, coreDetail string) string {
 }
 
 // ReleasedFromStagingDetail is the order_history detail this Edge writes when
-// it releases a leg from a wait. PassedAStationWait reads it back.
+// it releases a leg from a wait: the row that records the tap, whether the tap
+// moved the status (an older Core) or not.
 const ReleasedFromStagingDetail = "released from staging"
 
 // clearIntentForRejection is a Core rejection's effect on the release intent:

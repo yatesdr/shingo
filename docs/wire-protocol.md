@@ -1,6 +1,6 @@
 # Shingo Wire Protocol Specification
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 **Protocol version:** 1
 
@@ -1167,7 +1167,7 @@ Core returns the payload catalog. Used by edge to populate payload code dropdown
 | `name` | string |  | the payload template's name |
 | `code` | string |  | the unique payload code |
 | `description` | string |  | a human-readable description |
-| `uop_capacity` | integer |  | the standard pack: the pieces a full bin of a part alone holds (a kit: cycles) |
+| `uop_capacity` | integer |  | the standard pack, in the bin's count: parts for a part alone, kits for a kit |
 | `catid` | string | omitempty | CATID is the payload's part identity from its Core manifest: the DISTINCT part numbers, comma-joined (a single-part payload sends one value; a multi-part kit sends the full list). The edge splits it back into the style's part-identity SET — membership semantics, so a multi-part payload contributes every part it carries rather than nothing. Empty when the payload's manifest carries no part numbers. |
 | `manifest` | [`ManifestItem`](#manifestitem)[] | omitempty | Manifest is the payload's manifest TEMPLATE: its lines in Core's order (payload_manifest by id), each a part and its per-cycle ratio. Absent when the payload has no lines, so a row without a template encodes, and digests, exactly as it did before the lines rode the catalog (TestCatalogDigest_ManifestLines). The Edge's load modal reads it from its catalog copy instead of asking Core per tap. CATID is derivable from the same rows and is still sent as its own field. |
 
@@ -1672,6 +1672,7 @@ Sent on `order.status_response`: the answer, plus `unlisted` — orders for that
 | `fault_notice` | boolean | omitempty |  |
 | `fault_notice_after_s` | integer | omitempty |  |
 | `fault_ref` | [`TermRef`](#termref) | omitempty |  |
+| `version` | integer | omitempty | Version is the row's orders.version, as on OrderUpdate: the reconcile applies a snapshot only when it is newer than what the station last applied. 0 is an older Core. |
 
 <!-- /generated -->
 
@@ -1697,6 +1698,7 @@ Sent on `order.projected`: a whole order row, so an order the Edge did not creat
 | `origin_class` | string | omitempty | See `origin_id`. |
 | `queue_reason` | string | omitempty | QueueReason / QueueCode mirror OrderStatusSnapshot's, so a projection that arrives for a queued order explains the wait without a second round trip. |
 | `queue_code` | string | omitempty | See `queue_reason`. |
+| `version` | integer | omitempty | Version is the row's orders.version, as on OrderUpdate: a projection that lands after a newer status was applied is older, and the station keeps what it has. 0 is an older Core. |
 
 <!-- /generated -->
 
@@ -2053,6 +2055,7 @@ Status change or ETA update for an in-progress order. May be sent multiple times
 | `fault_notice` | boolean | omitempty | FaultNotice is Core's decision AT PUSH TIME about whether this is a replan or a fault worth the word. Always false on the push that creates the fault, because nothing has been faulted for a minute at the instant it faults — which is exactly why FaultNoticeAfterS rides along. |
 | `fault_notice_after_s` | integer | omitempty | FaultNoticeAfterS is Core's threshold in whole seconds (config rds.fault_notice_after). It is echoed rather than hard-coded so the Edge can flip its own sentence from "Replanning" to "Fault" as the clock passes it, without owning the rule or waiting for another push. Same reasoning as DisplayConstants() on Core's own pages: the number that decides what an operator is told lives in one config file, and every surface is told what it is. Whole seconds because it crosses to a browser that does millisecond arithmetic on it, and a duration string would need a parser at the far end for a number nobody sets below a second. |
 | `fault_ref` | [`TermRef`](#termref) | omitempty | FaultRef is the fleet's reason, the same reference stored on the faulted history row. Nil when the fleet gave none, which is the common case. THE REFERENCE CROSSES, NOT THE SENTENCE, and that is what makes one formatter possible. Detail carries the sentence as it stood at push time, and at push time an order has just faulted, so it always reads "Replanning" — the vendor reason is deliberately withheld under the threshold. An Edge given only Detail could therefore never show the reason, because no second push arrives to reveal it. Given the ref, the Edge calls FormatFaultSentence itself, with the same code Core calls, and crosses the threshold on its own clock. |
+| `version` | integer | omitempty | Version is the order's version at Core when this was written (orders.version): one counter, bumped in the same statement as every write Core tells the station about (its status, its robot, its wait). A station applies a message only when its version is newer than the one it last applied, so a late or repeated copy cannot move the row back. Every order Core holds is at 1 or more; 0 (absent) is an older Core that does not version, and the station then applies as it always did. Additive: an older Edge ignores it. |
 
 <!-- /generated -->
 
@@ -2142,6 +2145,7 @@ Confirms that an order has been successfully cancelled on the core side.
 |---|---|---|---|
 | `order_uuid` | string |  | OrderUUID is the cancelled order's UUID. |
 | `reason` | string |  | Reason is the cancellation reason, echoed from the cancel. |
+| `previous_status` | string | omitempty | PreviousStatus is the status Core held when it cancelled the order. A station acts on it where the cancel's moment matters, not its own copy of the status: an order cancelled while staged at a station wait left its carrier there, and the station sends it back. "" from an older Core, and on the cancel reply to a station's own cancel request (the cancellation notice that follows it carries it). Additive. |
 
 <!-- /generated -->
 
@@ -2301,7 +2305,7 @@ Bin identity resolves in this order: a non-zero `bin_id` pins the exact bin (the
 | `bin_id` | integer | omitempty | BinID pins the exact Core bin (0 = absent → BinLabel/SourceNode resolution). Exists for the release-time produce manifest: by the time Core processes a deferred ingest, a press-index R2 may already have indexed the fresh tote onto the position the manifest's tote occupied, so resolve-by-node would credit the wrong bin. Edge passes the runtime's active bin id, which Core itself seeded at delivery. |
 | `bin_epoch` | integer | omitempty | BinEpoch fences the ingest to one life of the bin: Core applies it only while the bin's delta_epoch still equals it, and refuses it with an audit row otherwise. The ingest neither expires nor dead-letters, so a late one must not re-stamp a bin that has since been emptied and refilled. 0 = absent (the manual HTTP door), today's behaviour. |
 | `source_node` | string |  | SourceNode is where the filled bin is parked; required when BinLabel is blank, since Core then resolves the bin from what stands there. |
-| `quantity` | integer |  | Quantity is the operator-measured produced count (UOP); 0 is the payload's capacity. |
+| `quantity` | integer |  | Quantity is the measured count of the bin, in the bin's count (ManifestItem); 0 is an empty bin, and Core refuses a negative. |
 | `manifest` | [`IngestManifestItem`](#ingestmanifestitem)[] | omitempty | Manifest lists the bin's items explicitly; absent, Core uses the payload's manifest template. |
 | `produced_at` | string | omitempty | RFC3339 timestamp from Edge at cell completion |
 | `declared_qty` | integer | omitempty | DeclaredQty is the count a station's RELEASE FULL declared for a bin it counted below its pack (0 = absent: no declaration, an older Edge, or a release that is not a station's FULL). Quantity keeps its meaning, the counted number. A declaration makes Core write the count (set_for_production) and then stamp the bin to the pack of the part it books the bin under, from its own catalog (release_declared_full, counted to that pack), in one transaction, with a row naming who declared it; the row's detail keeps DeclaredQty and the declared part. A pack at or below the count stamps nothing; no pack for the part books the count with a no_pack row. An older Core ignores the field and books the counted number. |
@@ -2407,7 +2411,7 @@ The full graph is `validTransitions`; this is the path an order normally walks.
 | `sourcing` | `StatusSourcing` | no | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `queued` | `StatusQueued` | no | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `submitted` | `StatusSubmitted` | no | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |
-| `dispatched` | `StatusDispatched` | no | `in_transit`, `staged`, `delivered`, `queued`, `cancelled`, `faulted`, `failed` |
+| `dispatched` | `StatusDispatched` | no | `in_transit`, `staged`, `delivered`, `cancelled`, `faulted`, `failed` |
 | `acknowledged` | `StatusAcknowledged` | no | `dispatched`, `in_transit`, `staged`, `cancelled`, `faulted`, `failed` |
 | `in_transit` | `StatusInTransit` | no | `delivered`, `staged`, `cancelled`, `faulted`, `failed` |
 | `staged` | `StatusStaged` | no | `in_transit`, `delivered`, `cancelled`, `faulted`, `failed` |

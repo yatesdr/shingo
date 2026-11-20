@@ -208,11 +208,10 @@ func TestStage2Pull_WindowWithInboundOrBinIsNotFree(t *testing.T) {
 	// the startup sweep meets the same two windows the pull below does. (C1:
 	// dispatched, not pending; a pending order is the scanner's, and this one,
 	// with no payload, fails on the first pass and frees the window.)
-	inbound := &orders.Order{
-		EdgeUUID: "s2f-inbound", StationID: "test-station", OrderType: dispatch.OrderTypeMove,
-		Status: dispatch.StatusDispatched, Quantity: 1, DeliveryNode: p.windows[1].Name,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(inbound), "inbound order to window 2")
+	testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.OrderType = "s2f-inbound", "test-station", dispatch.OrderTypeMove
+		o.Quantity, o.DeliveryNode = 1, p.windows[1].Name
+	}, testdb.FleetHas("sg-s2f-inbound"))
 	eng := newTestEngine(t, db, simulator.New())
 
 	n, err := eng.dispatcher.PullStage2(p.stage1)

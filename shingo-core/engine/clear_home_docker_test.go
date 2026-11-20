@@ -636,20 +636,28 @@ func TestClearHome_PullCancelledBeforeLift_RerunsToSpot(t *testing.T) {
 
 // TestClearHome_PullDemoted_RerunOnTheFloor: a fleet refusal demotes the pull
 // (its claim becomes a soft hold): not an end, so nothing re-runs. When the
-// hold is gone (reaped), the floor's re-run chooses again.
+// hold is gone (reaped), the floor's re-run chooses again. The fleet refuses the
+// pull's own create: the hand claims the carrier, the refusal closes the ask and
+// demotes the claim, and the pull waits `queued`.
 func TestClearHome_PullDemoted_RerunOnTheFloor(t *testing.T) {
 	t.Parallel()
-	r := newClearRig(t, "CHR", false)
+	var flt *refuseCreatesTo
+	r := newClearRigWith(t, "CHR", false, clearRigOpts{fleet: func(s *simulator.SimulatorBackend) fleet.Backend {
+		flt = &refuseCreatesTo{SimulatorBackend: s}
+		return flt
+	}})
 	far := &nodes.Node{Name: "CHR-FAR", Enabled: true}
 	testutil.MustNoErr(t, r.db.CreateNode(far), "far node")
+	flt.to = far.Name // every create of the pull, and of nothing else
 	r.d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "chr-pull",
 		OrderType: dispatch.OrderTypeRetrieveEmpty, DeliveryNode: far.Name, Quantity: 1})
+	if pull := testdb.RequireOrder(t, r.db, "chr-pull"); pull.Status != protocol.StatusQueued || pull.VendorOrderID != "" {
+		t.Fatalf("the refused pull is %s vendor %q, want queued with no job", pull.Status, pull.VendorOrderID)
+	}
 	if ans := r.tap(t); ans.Body.Arm != protocol.ClearArmDemand {
 		t.Fatalf("tap: %+v, want demand", ans.Body)
 	}
 	parent := r.parent(t)
-	pull := testdb.RequireOrder(t, r.db, "chr-pull")
-	r.d.DemoteAfterFleetRefusal(pull, dispatch.QueueWait{}, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
 	testutil.MustNoErr(t, r.db.DeleteBin(r.xBin.ID), "a spot opens")
 
 	if n := r.d.RerunClears(); n != 0 {
@@ -990,7 +998,7 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 			http.StatusBadRequest, func(*clearRig) string { return "CRG-H has no bin with parts to clear" }},
 		{"a carrier an order has claimed", "CRH", true,
 			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
-				o := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				o := testdb.CreateOrder(t, r.db, testdb.FleetHas("sg-crh-claimant"))
 				testdb.ClaimBinForTest(t, r.db, r.e.ID, o.ID)
 				return home(r)
 			},
@@ -1101,4 +1109,22 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 			testdb.AssertNoHoldsAtRest(t, r.db, "after the refusal")
 		})
 	}
+}
+
+// refuseCreatesTo is the simulator refusing every create with a block at
+// one node: the fleet's no to one order, as a plant sees it.
+type refuseCreatesTo struct {
+	*simulator.SimulatorBackend
+	to string
+}
+
+func (f *refuseCreatesTo) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
+	refuse := false
+	for _, b := range req.Blocks {
+		refuse = refuse || (f.to != "" && b.Location == f.to)
+	}
+	if refuse {
+		return fleet.TransportOrderResult{}, fmt.Errorf("sim: the fleet refused the create of %s", req.OrderID)
+	}
+	return f.SimulatorBackend.CreateOrder(req)
 }

@@ -1,6 +1,9 @@
 package store
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -226,6 +229,55 @@ func TestClaimPiecesPerCycle_ResolvesFromTheCatalogManifest(t *testing.T) {
 		}
 		if claim.PiecesPerCycle != c.want {
 			t.Errorf("%s: pieces per cycle = %d, want %d", c.name, claim.PiecesPerCycle, c.want)
+		}
+	}
+}
+
+// TestClaimPiecesPerCycle_AgreesWithTheCountExamples — the claim read's SQL
+// copy of the ratio rule (capacity.PiecesPerCycleSQL, which cannot call Go)
+// answers protocol.UOPRatio for every worked example of
+// protocol/testdata/count-examples.json, the file the Go and browser copies
+// are pinned by.
+func TestClaimPiecesPerCycle_AgreesWithTheCountExamples(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "protocol", "testdata", "count-examples.json"))
+	if err != nil {
+		t.Fatalf("read the worked examples: %v", err)
+	}
+	var f struct {
+		Examples []struct {
+			Name  string                  `json:"name"`
+			Lines []protocol.ManifestItem `json:"lines"`
+			Ratio int                     `json:"ratio"`
+		} `json:"examples"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil || len(f.Examples) == 0 {
+		t.Fatalf("parse the worked examples (%d read): %v", len(f.Examples), err)
+	}
+	db := testDB(t)
+	seedCapacityProcess(t, db)
+	id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
+		StyleID: 1, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot", PayloadCode: "SYN-CNT",
+		InboundSource: "SMN_001", InboundStaging: "STG_001", OutboundDestination: "SMN_001", PairedCoreNode: "PLN_02",
+		Source: "hmi",
+	})
+	if err != nil {
+		t.Fatalf("upsert claim: %v", err)
+	}
+	for _, ex := range f.Examples {
+		if _, err := db.Exec(`DELETE FROM payload_catalog`); err != nil {
+			t.Fatalf("%s: clear catalog: %v", ex.Name, err)
+		}
+		if err := catalog.UpsertCatalog(db.DB, &catalog.CatalogEntry{
+			ID: 1, Name: "SYN-CNT", Code: "SYN-CNT", UOPCapacity: 800, Manifest: ex.Lines,
+		}); err != nil {
+			t.Fatalf("%s: seed catalog: %v", ex.Name, err)
+		}
+		claim, err := processes.GetClaim(db.DB, id)
+		if err != nil {
+			t.Fatalf("%s: get claim: %v", ex.Name, err)
+		}
+		if want := protocol.UOPRatio(ex.Lines); claim.PiecesPerCycle != want || want != ex.Ratio {
+			t.Errorf("%s: the claim read gives %d, protocol.UOPRatio %d, the example %d", ex.Name, claim.PiecesPerCycle, want, ex.Ratio)
 		}
 	}
 }

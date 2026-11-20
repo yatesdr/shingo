@@ -59,6 +59,7 @@ function extractFn(src, name) {
 // pure functions out rather than evaluating the module.
 const src = fs.readFileSync(path.join(SRC_DIR, 'operator-release.js'), 'utf8');
 const ctx = vm.createContext({ console: console, getView: () => ({ station: { name: 'P400' } }) });
+require('./lend-count.js')(ctx);
 vm.runInContext(
     extractFn(src, 'calledByFromView') + '\n' +
     extractFn(src, 'releasedNothingBody') + '\n' +
@@ -155,6 +156,7 @@ eq(calledByFromView(), 'P400', 'a real station name is used verbatim');
 // RELEASE EMPTY wire shape that wiped full bins at Hopkinsville. A changeover's
 // release never offers it: a changeover ships the real count.
 const fullCtx = vm.createContext({ console: console, esc: (v) => String(v), getView: () => ({ station: { name: 'P400' } }) });
+require('./lend-count.js')(fullCtx);
 vm.runInContext(
     extractFn(src, 'isChangeoverRelease') + '\n' +
     extractFn(src, 'offersReleaseFull') + '\n' +

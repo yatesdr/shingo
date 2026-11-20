@@ -29,6 +29,7 @@ import (
 
 func TestKanbanCounts_TheBatchedReadsAgreeWithTheSingleReads(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the rows are raw inserts for the counting reads to agree on, not a plant state")
 	db := testdb.Open(t)
 	exec := func(q string, args ...any) {
 		t.Helper()

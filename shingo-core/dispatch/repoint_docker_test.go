@@ -272,7 +272,7 @@ func TestRepoint_AVacateStampLandsOnTheHeldDrop(t *testing.T) {
 	mkt, lane, slots := rpLanedGroup(t, c.db, "RPE-MKT")
 	sup, dst := prNode(t, c.db, "RPE-SUP"), prNode(t, c.db, "RPE-DST")
 	resident := makeEmptyBin(t, c.db, dst.ID, "RPE-RESIDENT")
-	partner := testdb.CreateOrder(t, c.db, func(o *orders.Order) { o.EdgeUUID, o.Status = "rpe-partner", StatusDispatched })
+	partner := testdb.CreateOrder(t, c.db, func(o *orders.Order) { o.EdgeUUID = "rpe-partner" }, testdb.FleetHas("sg-rpe-partner"))
 	b := c.carrier(40)
 	drop := resolvedStep{Action: protocol.ActionDropoff, Node: slots[0].Name, Group: mkt.Name}
 	held := voDrop(dst.Name, &vacateStamp{Node: dst.Name, Bin: resident.ID, Partner: partner.ID})

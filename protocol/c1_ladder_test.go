@@ -32,7 +32,8 @@ func TestTransitions_NothingEntersSourcing(t *testing.T) {
 // TestTransitions_TheLadderEdges: the edges C1 adds and removes.
 //
 // RED at 647b65af: dispatched → queued and reshuffling → pending are not edges;
-// reshuffling → queued is.
+// reshuffling → queued is. dispatched → queued left again when `dispatched`
+// became the fleet's yes: a refused order never left the status it rests in.
 func TestTransitions_TheLadderEdges(t *testing.T) {
 	for _, c := range []struct {
 		from, to Status
@@ -42,7 +43,7 @@ func TestTransitions_TheLadderEdges(t *testing.T) {
 		{StatusPending, StatusDispatched, true, "every order's first hand (C1.1.2)"},
 		{StatusPending, StatusQueued, true, "the park"},
 		{StatusQueued, StatusDispatched, true, "a parked order's hand"},
-		{StatusDispatched, StatusQueued, true, "a fleet refusal queues under fleet_unavailable (C1.1.3)"},
+		{StatusDispatched, StatusQueued, false, "dispatched is the fleet's yes; a refusal leaves the order where it rests"},
 		{StatusReshuffling, StatusPending, true, "a resumed or dissolved parent goes back to the start (F2)"},
 		{StatusReshuffling, StatusQueued, false, "a resumed parent is not waiting on anything (F2)"},
 		{StatusPending, StatusSkipped, true, "the skip door: a move whose named bin has gone"},

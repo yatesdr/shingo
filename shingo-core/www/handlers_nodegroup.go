@@ -140,9 +140,13 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 				}
 				// Force mode: fail blocked orders terminally
 				for _, order := range blocked {
-					_ = h.engine.OrderService().FailAtomic(order.ID,
+					ended, _ := h.engine.OrderService().FailAtomic(order.ID,
 						fmt.Sprintf("source group %q restructured "+
 							"(node %s reparented)", oldParent.Name, node.Name))
+					if !ended {
+						// Another ending got there first: it told the station.
+						continue
+					}
 					// Populate EdgeUUID/StationID so the EventOrderFailed
 					// handler's notification gate can route the message to
 					// Edge. Without these fields the handler silently skips
@@ -333,8 +337,12 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			for _, order := range blocked {
-				_ = h.engine.OrderService().FailAtomic(order.ID,
+				ended, _ := h.engine.OrderService().FailAtomic(order.ID,
 					fmt.Sprintf("source group %q deleted", group.Name))
+				if !ended {
+					// Another ending got there first: it told the station.
+					continue
+				}
 				// Populate EdgeUUID/StationID so the EventOrderFailed handler's
 				// notification gate routes the message to Edge.
 				h.engine.EventBus().Emit(engine.Event{

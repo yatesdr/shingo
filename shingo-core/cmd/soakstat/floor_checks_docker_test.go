@@ -114,35 +114,42 @@ func mustRecord(t *testing.T, db *store.DB, orderID int64, cause string) {
 // Every other dispatched-family check filters for a NON-EMPTY vendor_order_id, correctly
 // for what it measures. So the empty case had no reader at all: the poller's
 // re-registration selects non-empty ids only, which means an order in this state
-// is watched by nothing. Core writes `dispatched` and then creates the vendor
-// order — the racing-dispatchers lock, kept deliberately — so a crash inside
-// that window leaves an order armored, claimed, holding its lane, and silent.
+// is watched by nothing. Before v183 Core wrote `dispatched` and then created the
+// vendor order, so a crash inside that window left an order armored, claimed,
+// holding its lane, and silent. The v183 rule (orders_dispatched_names_its_job)
+// refuses such a row as a new write but is NOT VALID, so a plant keeps the old
+// ones, and this check is what reads them.
 //
 // Three rows: the wedge, a fresh one inside the window that must NOT be reported
 // (or the check fires on every ordinary dispatch), and a normal armored order
-// with a vendor id.
+// with a vendor id. The first two are pre-v183 rows, written with the rule
+// dropped in this test's database.
 func TestArmoredWithNoVendorOrder(t *testing.T) {
 	t.Parallel()
 	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testdb.Open(t)
 
-	wedged := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	// The wedge and the in-window row are pre-v183 rows a plant keeps (NOT VALID): drop the rule here.
+	if _, err := db.Exec(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_dispatched_names_its_job`); err != nil {
+		t.Fatalf("drop the v183 rule: %v", err)
+	}
+
+	wedged := testdb.CreateOrder(t, db)
 	if _, err := db.Exec(
-		`UPDATE orders SET vendor_order_id = '', updated_at = now() - interval '30 minutes' WHERE id = $1`,
+		`UPDATE orders SET status = 'dispatched', vendor_order_id = '', updated_at = now() - interval '30 minutes' WHERE id = $1`,
 		wedged.ID); err != nil {
 		t.Fatalf("seed the wedge: %v", err)
 	}
 
-	fresh := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	fresh := testdb.CreateOrder(t, db)
 	if _, err := db.Exec(
-		`UPDATE orders SET vendor_order_id = '', updated_at = now() WHERE id = $1`, fresh.ID); err != nil {
+		`UPDATE orders SET status = 'dispatched', vendor_order_id = '', updated_at = now() WHERE id = $1`, fresh.ID); err != nil {
 		t.Fatalf("seed the in-window order: %v", err)
 	}
 
-	healthy := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	healthy := testdb.CreateOrder(t, db, testdb.FleetHas("RDS-1"))
 	if _, err := db.Exec(
-		`UPDATE orders SET vendor_order_id = 'RDS-1', updated_at = now() - interval '30 minutes' WHERE id = $1`,
-		healthy.ID); err != nil {
+		`UPDATE orders SET updated_at = now() - interval '30 minutes' WHERE id = $1`, healthy.ID); err != nil {
 		t.Fatalf("seed the healthy order: %v", err)
 	}
 

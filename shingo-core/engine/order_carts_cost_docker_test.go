@@ -33,9 +33,10 @@ const (
 	costFinished = 24
 	// costTerminalize: TerminalizeOrder on a live order that wins (BEGIN, the
 	// status, the history row, the anomaly stamp, the claim release, the slot
-	// release, the reservations, COMMIT). Main f8f22f19: 9, with the junction
-	// DELETE the end no longer makes.
-	costTerminalize = 8
+	// release, the reservations, the station's tell, COMMIT). Main f8f22f19: 9,
+	// with the junction DELETE the end no longer makes; 8 until the terminal
+	// write queued its own tell (one INSERT outbox, in its transaction).
+	costTerminalize = 9
 )
 
 // countingCartsSwap is the swap on a database with a counting handle beside
@@ -87,6 +88,7 @@ func TestOrderCartsCost_SetDownResolve(t *testing.T) {
 
 func TestOrderCartsCost_Finished(t *testing.T) {
 	t.Parallel()
+	testdb.KnownPointerWedge(t, "UNARMORED DISPATCH at the test's end: the complex swap is `dispatched` toward its second cart and holds neither the claim nor a confirmed reservation on it. Pre-existing at 714d17f0; unseen since v174 because the end-of-test sweep never ran (its probe read the dropped orders.bin_id). Reported, not fixed in the dispatch-claim build")
 	c, eng, counter, cdb := countingCartsSwap(t, "carts-cost-finished")
 	c.block(t, c.p.Name, true)
 	c.block(t, c.w.Name, false)

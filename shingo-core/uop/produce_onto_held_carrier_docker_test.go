@@ -9,7 +9,6 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/service"
-	"shingocore/store/orders"
 	"shingocore/uop"
 )
 
@@ -31,7 +30,7 @@ func TestProduceWriters_RecordOntoAHeldCarrier(t *testing.T) {
 
 	held := func(label string) int64 {
 		bin := createTestBin(t, db, sd.StorageNode.ID, label, "", 0)
-		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+		o := testdb.CreateOrder(t, db, testdb.FleetHas("sg-"+label))
 		testdb.ClaimBinForTest(t, db, bin.ID, o.ID)
 		return bin.ID
 	}

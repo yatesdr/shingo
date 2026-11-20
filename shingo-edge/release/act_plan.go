@@ -27,8 +27,10 @@ type StaticPoint struct {
 	NoWaits bool
 }
 
-// PointOf locates a leg. A staged leg is at the station wait Core numbered;
-// an in_transit leg is heading to the one after the wait its release was for
+// PointOf locates a leg. A staged leg is at the station wait Core numbered,
+// unless this station's release for that wait has gone out: then, like an
+// in_transit leg, it is heading to the one after. An in_transit leg is heading
+// to the one after the wait its release was for
 // (its intent's) or, with no intent, after the one Core last staged it at, or
 // to its first. A leg not yet moving is heading to its first.
 func PointOf(status protocol.Status, stationWait *int, waitKind string, intent *Intent, purposes []string) StaticPoint {
@@ -43,6 +45,13 @@ func PointOf(status protocol.Status, stationWait *int, waitKind string, intent *
 		return 0
 	}
 	switch {
+	case status == protocol.StatusStaged && waitKind == protocol.WaitKindStation && intent.SentFor(stationWait):
+		// RELEASED AT THIS WAIT, still staged: this station's release for it has
+		// gone out, and a Core that versions its orders keeps the leg staged until
+		// its robot moves (ReleasedFromWait). It is heading to the next wait, as
+		// an in_transit leg is, so RELEASE is not offered again and a second
+		// press past its last wait is refused.
+		p.Ordinal, p.Driving = *stationWait+1, true
 	case status == protocol.StatusStaged && waitKind == protocol.WaitKindStation && stationWait != nil:
 		p.Ordinal, p.AtWait = *stationWait, true
 	case status == protocol.StatusStaged:

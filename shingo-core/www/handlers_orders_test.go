@@ -384,11 +384,11 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-CLAIMED")
 
 	// Stand up a prior order and have it claim the bin.
-	// (C1.5: the prior order is dispatched; a hard claim is a committed robot's.)
-	prior := testdb.CreateOrder(t, db, func(o *orders.Order) {
+	// (C1.5: the prior order is dispatched, naming its job; a hard claim is a
+	// committed robot's.)
+	prior := testdb.CreateOrder(t, db, testdb.FleetHas("sg-prior-claim-1"), func(o *orders.Order) {
 		o.EdgeUUID = "prior-claim-1"
 		o.OrderType = "move"
-		o.Status = "dispatched"
 	})
 	testdb.ClaimBinForTest(t, db, bin.ID, prior.ID)
 

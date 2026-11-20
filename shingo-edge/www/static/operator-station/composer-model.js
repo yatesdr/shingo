@@ -240,6 +240,11 @@ const ADVANCED_DEFAULTS = {
     // tolerance, the real count ships. Without this key advancedFor drops a
     // stored percentage and an Apply writes it off, the strict_pack hazard.
     pack_tolerance_pct: 0,
+    // A strict position's hold limit: the most parts its line's packer,
+    // conveyor or accumulator holds off the cart. Past it the pile is thrown
+    // away and logged. Default 0 = one pack. Without this key advancedFor
+    // drops a stored limit and an Apply writes it off, the strict_pack hazard.
+    hold_limit: 0,
     // The loader board's draw order. Zero is "the store's order", not
     // position zero — Expand speaks the column only when this block exists at
     // all, so a save that never opened the sheet leaves it alone.

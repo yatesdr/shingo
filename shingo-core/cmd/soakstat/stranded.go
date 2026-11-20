@@ -80,6 +80,7 @@ type activeOrder struct {
 	waitLane                                 int64    // the lane its current wait is on, 0 if none
 	waitLaneName                             string
 	uuid, sibling                            string // edge_uuid, and the paired leg's
+	asked                                    string // asked_vendor_order_id: the job Core is asking the fleet for, "" if none
 	carries                                  string // the payload it carries: its bin's, else its own; "" is an empty
 }
 
@@ -171,7 +172,7 @@ func readActive(db *sql.DB, now any) (*runEnd, error) {
 		SELECT o.id, COALESCE(o.parent_order_id, 0), o.order_type, o.status, o.source_node, o.delivery_node,
 		       o.station_id, o.payload_code, o.robot_id, o.vendor_state,
 		       COALESCE(o.queue_cause, ''), o.queue_reason, o.steps_json, o.wait_index,
-		       o.edge_uuid, COALESCE(o.sibling_order_uuid, ''),
+		       o.edge_uuid, COALESCE(o.sibling_order_uuid, ''), o.asked_vendor_order_id,
 		       COALESCE((SELECT b.payload_code FROM order_bins ob JOIN bins b ON b.id = ob.bin_id
 		                  WHERE ob.order_id = o.id AND `+store.StepNodeSQL("o", "ob.drop_step")+` = o.delivery_node
 		                  ORDER BY ob.drop_step DESC LIMIT 1), o.payload_code),
@@ -188,7 +189,7 @@ func readActive(db *sql.DB, now any) (*runEnd, error) {
 		o := &activeOrder{}
 		if err := rows.Scan(&o.id, &o.parent, &o.typ, &o.status, &o.src, &o.dst, &o.station, &o.payload,
 			&o.robot, &o.vendorState, &o.cause, &o.reason, &o.steps, &o.waitIndex,
-			&o.uuid, &o.sibling, &o.carries, &o.ageMin, &o.quietMin); err != nil {
+			&o.uuid, &o.sibling, &o.asked, &o.carries, &o.ageMin, &o.quietMin); err != nil {
 			return nil, fmt.Errorf("active orders: %w", err)
 		}
 		o.stranded = o.ageMin > strandedAge || o.quietMin > strandedQuiet

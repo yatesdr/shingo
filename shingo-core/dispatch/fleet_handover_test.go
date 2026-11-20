@@ -22,8 +22,9 @@ import (
 // Asserting "one of them returned an error" would pass under the old ordering
 // too, which is the whole point of putting the count on the backend.
 //
-// MUTATION: move the lifecycle.Dispatch call in handoverToFleet back below
-// CreateOrder and this fails with two creates.
+// MUTATION: drop the ask CAS's guard (orders.TakeAskTx matching on its id
+// alone, without its status and no-ask-open conditions) and the loser takes the
+// ask again and creates: this fails with two creates.
 func TestHandover_CASLoserNeverCallsTheFleet(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -111,14 +112,14 @@ func TestHandover_UnclaimableOrderNeverReachesTheFleet(t *testing.T) {
 	}
 }
 
-// TestHandover_CreateFailureLeavesTheOrderClaimedAndDoesNotRollBack
+// TestHandover_CreateFailureClosesTheAskAndLeavesTheOrderWhereItRests
 //
-// CAS wins, the fleet refuses. The status is deliberately NOT rolled back:
-// re-queueing an order the fleet just refused invites a re-dispatch loop against
-// a fleet that is saying no. The order is left `dispatched` for its caller to
-// fail. If the caller's own write fails, Diagnostics flags it stuck after 30
-// minutes for a person; nothing ends it on a timer.
-func TestHandover_CreateFailureLeavesTheOrderClaimedAndDoesNotRollBack(t *testing.T) {
+// The ask's CAS wins, the fleet refuses. The order never left the status it
+// rests in (`dispatched` is the fleet's yes, and there was none), so there is
+// nothing to roll back: the handover closes the ask and demotes the hand in one
+// transaction and returns the refusal as AskClosed, and the caller disposes of
+// the order (a wait, a fail, a cancel). Nothing names a fleet job.
+func TestHandover_CreateFailureClosesTheAskAndLeavesTheOrderWhereItRests(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -137,15 +138,19 @@ func TestHandover_CreateFailureLeavesTheOrderClaimedAndDoesNotRollBack(t *testin
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	if _, err := d.dispatchToFleetCore(o, src, dst, Hand{}); err == nil {
+	_, err = d.dispatchToFleetCore(o, src, dst, Hand{})
+	if err == nil {
 		t.Fatal("a refusing fleet must surface an error")
+	}
+	if !askClosed(err) {
+		t.Errorf("err = %v (%T), want AskClosed: the handover closes the ask and demotes the hand itself", err, err)
 	}
 
 	after, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "reload order")
-	if after.Status != protocol.StatusDispatched {
-		t.Errorf("status = %s, want dispatched — the claim stands and the caller disposes of it; "+
-			"rolling back here would re-queue against a fleet that just refused", after.Status)
+	if after.Status != StatusQueued || after.AskedVendorOrderID != "" || o.AskedVendorOrderID != "" {
+		t.Errorf("status %s, ask %q (in hand %q); want queued, as it rested, with the ask closed",
+			after.Status, after.AskedVendorOrderID, o.AskedVendorOrderID)
 	}
 	if after.VendorOrderID != "" {
 		t.Errorf("vendor_order_id = %q, want empty — nothing was created, so nothing may claim the "+
@@ -157,12 +162,13 @@ func TestHandover_CreateFailureLeavesTheOrderClaimedAndDoesNotRollBack(t *testin
 // TestHandover_IDWriteFailureCancelsTheFleetOrder — the surviving orphan-guard
 // cause, and the only one left once the CAS comes first.
 //
-// The fleet accepted the job and the database would not record its id. Nothing
+// The fleet accepted the job and the database would not record it: the yes
+// write (`dispatched` with the vendor id) failed. Nothing
 // can track it (loadActiveOrders selects on a non-empty vendor_order_id), nothing
 // can re-track it after a restart, and no later cancel can find it. So it is
 // cancelled here, while the id is still in hand.
 //
-// The failure is injected by dropping the column the id write targets, so the
+// The failure is injected by renaming the column the yes write targets, so the
 // create genuinely succeeds and only the write fails.
 func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 	t.Parallel()
@@ -183,7 +189,7 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	// Break ONLY the id write. The CAS above it and the create before it both
+	// Break ONLY the yes write. The ask's CAS before it and the create both
 	// still succeed, which is what makes this the right window.
 	backend.SetOnCreate(func() {
 		if _, err := db.DB.Exec(`ALTER TABLE orders RENAME COLUMN vendor_order_id TO vendor_order_id_x`); err != nil {
@@ -213,8 +219,9 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 // The handover is shared; the REQUESTS are not, and must not become so. A sealed
 // two-block transport, a Complete:false plan split at a wait, and a Complete:false
 // unsealed waybill ending at a gate point are three different jobs. This asserts
-// the plain path still ships the shape it shipped before the extraction — the one
-// every plant actually runs, since no lane carries a mark.
+// the plain path still ships the shape it shipped before the extraction: a plan
+// that enters no lane (one that does is spliced and gated, since every lane
+// carries a mark).
 func TestHandover_RequestShapesUnchanged(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

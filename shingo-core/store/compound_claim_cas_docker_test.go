@@ -116,11 +116,10 @@ func TestCompoundClaim_RefusesABinHeldOutsideTheCompound(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CAS-STRANGER")
 
-	// (C1.5: the stranger is carrying the bin, so it is built at dispatched.)
+	// (C1.5: the stranger is carrying the bin, so the fleet has it.)
 	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cas-stranger"
-		o.Status = protocol.StatusDispatched
-	})
+	}, testdb.FleetHas("sg-cas-stranger"))
 	claimFor(t, db, bin.ID, stranger.ID)
 
 	parent := compoundParent(t, db, "cas-parent")

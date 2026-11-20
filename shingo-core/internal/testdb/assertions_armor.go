@@ -1,6 +1,7 @@
 package testdb
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -20,11 +21,12 @@ import (
 // suite and the floor disagreed about what a violation is — the shape where a
 // green suite certifies a plant that is reporting the fault.
 //
-// The window itself is one handover attempt: handoverToFleet CASes the order to
-// `dispatched` and THEN asks the fleet to create, deliberately (it is the
-// racing-dispatchers lock, and reordering trades a swept transient for an orphan
-// vendor order). Inside that window the state is correct and expected. Five
-// minutes is many multiples of one RDS request, so nothing healthy reaches it,
+// The window was one handover attempt: the hand used to CAS the order to
+// `dispatched` and THEN ask the fleet to create. It no longer does: the hand opens
+// an ask and `dispatched` is the fleet's yes, written with the vendor id, and since
+// v183 orders_dispatched_names_its_job refuses a vendorless `dispatched` write. So
+// the clause finds only a row from before v183 (the rule is NOT VALID). Five
+// minutes is many multiples of one RDS request, so nothing healthy reached it,
 // and it is short enough to catch the wedge inside a shift.
 const crashSliverAge = 5 * time.Minute
 
@@ -99,6 +101,7 @@ func AssertArmorMatchesStatus(t testing.TB, db *store.DB) {
 	t.Helper()
 	assertDispatchedIsArmored(t, db)
 	assertNoOldCrashSliver(t, db)
+	assertNoAskLeftOpen(t, db)
 	assertNothingHeldAtRest(t, db)
 	assertWindowRowIsItsDrop(t, db)
 }
@@ -236,3 +239,81 @@ func assertWindowRowIsItsDrop(t testing.TB, db *store.DB) {
 			"old drop holds a window nothing is coming to.", id, node, delivery)
 	}
 }
+
+// askLeftOpenOK records the tests that end with an ask open on purpose. Guarded
+// by the wedge sweep's lock: the two opt-outs are read by one sweep.
+var askLeftOpenOK = map[string]bool{}
+
+// ExpectAskLeftOpen opts one test out of the end-of-test open-ask clause: a test
+// that stops Core inside a create, whose ask is then the one record of the job
+// it asked for, or one that writes an ask to ask a reader about it. A fixture
+// ask (testdb.AskingFor, SeedAsk) calls it.
+//
+// KEYED BY THE TOP-LEVEL TEST, AND NEVER CLEARED. A subtest's fixture ask lands
+// in a database its parent opened and its parent's sweep reads; a test can open
+// two databases, each swept. The flag only widens one test's allowance, test
+// names are unique in a run, and a cleanup to clear it would have to run after
+// every sweep, which cleanups registered after Open do not (they are LIFO). So
+// it is callable any time and stays set.
+func ExpectAskLeftOpen(t testing.TB, why string) {
+	t.Helper()
+	if why == "" {
+		t.Fatal("ExpectAskLeftOpen needs a reason")
+	}
+	wedgeSweepMu.Lock()
+	askLeftOpenOK[rootTestName(t)] = true
+	wedgeSweepMu.Unlock()
+}
+
+// rootTestName is the top-level test of t: its name up to the first slash.
+func rootTestName(t testing.TB) string {
+	name := t.Name()
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// assertNoAskLeftOpen is the open-ask clause: every ask is answered before the
+// call that opened it returns. The fleet's yes names the job and closes it; a no
+// closes it and demotes the hand in one transaction (refuseAsk); an ending
+// during the create cancels the job, and the ask closes or moves to the ended
+// row for the terminate chase. An ask still open when the test ends is a
+// refusal arm that skipped refuseAsk, or a yes that was not written: the order
+// is held as asked, with its holds, and no status move lands on it.
+func assertNoAskLeftOpen(t testing.TB, db *store.DB) {
+	t.Helper()
+	wedgeSweepMu.Lock()
+	ok := askLeftOpenOK[rootTestName(t)]
+	wedgeSweepMu.Unlock()
+	if ok {
+		return
+	}
+	rows, err := db.DB.Query(`SELECT id, status, asked_vendor_order_id FROM orders
+		WHERE asked_vendor_order_id <> '' ORDER BY id`)
+	if err != nil {
+		t.Fatalf("AssertArmorMatchesStatus: scan open asks: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var status, asked string
+		if err := rows.Scan(&id, &status, &asked); err != nil {
+			t.Fatalf("AssertArmorMatchesStatus: scan open ask: %v", err)
+		}
+		t.Errorf("ASK LEFT OPEN: order %d (%s) is still asking the fleet for %s at the end of the test.\n"+
+			"    Every ask is answered before its call returns: the yes names the job, a no closes it and "+
+			"demotes the hand, an ending cancels the job. Find the refusal arm that skipped refuseAsk.",
+			id, status, asked)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("AssertArmorMatchesStatus: open asks: %v", err)
+	}
+}
+
+// sweepProbeSQL reads every orders column and the order_bins table the
+// end-of-test sweeps read: a test that broke its own database on purpose fails
+// it, and the sweeps then stay out of its way. It must run on every database the migrations build, or no sweep
+// runs after any test (TestSweepProbe_RunsOnAMigratedDatabase).
+const sweepProbeSQL = `SELECT o.id, o.status, o.vendor_order_id, o.updated_at, o.asked_vendor_order_id, ob.bin_id
+	FROM orders o LEFT JOIN order_bins ob ON ob.order_id = o.id LIMIT 1`

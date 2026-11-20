@@ -17,6 +17,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingoedge/domain"
+	"shingoedge/release"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -37,7 +38,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.want,
 	o.waybill_id, o.robot_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.staged_at, o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.staged_at, o.core_version, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -218,12 +219,13 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 			&o.WaybillID, &o.RobotID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &o.CoreVersion, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
 		readWant(&o, want)
 		o.StagedAt = helpers.ScanTimePtr(stagedAt)
+		o.ReleaseSent = o.Status == protocol.StatusStaged && release.ReleasedFromWait(o.Status, nullInt(stationWait), o.ReleaseIntent)
 		o.LaneHeld = laneHeld == 1
 		o.StationWait = nullInt(stationWait)
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
@@ -267,12 +269,13 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 		&o.WaybillID, &o.RobotID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &o.CoreVersion, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
 	readWant(o, want)
 	o.StagedAt = helpers.ScanTimePtr(stagedAt)
+	o.ReleaseSent = o.Status == protocol.StatusStaged && release.ReleasedFromWait(o.Status, nullInt(stationWait), o.ReleaseIntent)
 	o.LaneHeld = laneHeld == 1
 	o.StationWait = nullInt(stationWait)
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
@@ -387,6 +390,13 @@ type ProjectionRow struct {
 	// for it — and a blank arrival is not a statement that it should go.
 	OriginID    string
 	OriginClass string
+
+	// Version is Core's order version on the projection (0 from an older Core).
+	// A new row is born holding it. On an existing row a versioned projection
+	// writes no status and no wait: Core's word on those goes through the
+	// versioned applier (orders.Manager.ApplyCoreWord), newer only, with its
+	// history row and event.
+	Version int64
 }
 
 // AuthoredByEdge is orders.authored_by on a row this Edge created and sent up
@@ -395,7 +405,8 @@ type ProjectionRow struct {
 const AuthoredByEdge = "edge"
 
 // UpsertProjection writes a Core-authored order row, creating it or updating it
-// in place. Returns whether the row was newly created.
+// in place, unless the stored row has already ended (below). Returns whether
+// the row was newly created.
 //
 // IDEMPOTENT BY UUID, which is the property the whole projection depends on.
 // Core re-sends a projection freely — once when it authors the order, and again
@@ -458,6 +469,16 @@ const AuthoredByEdge = "edge"
 // and Core's view of the order does not contain them. Overwriting them with zero
 // values on every re-projection would erase what the Edge learned by doing the
 // work.
+//
+// A ROW THAT HAS ALREADY ENDED IS NOT UPDATED AT ALL: the conflict arm's WHERE
+// leaves a stored terminal status, and every other column, as it ended. The
+// live status path never moves a terminal row (orders.ApplyCoreStatus), and a
+// repair path must not have weaker guards than the path it repairs. Without it
+// the statement wrote status=excluded.status over any row, with no history row
+// and no event: an operator's abort whose order.cancel was lost before Core had
+// it came back through the reconcile's Unlisted list, and the projection set
+// the cancelled row live again. A new row (the INSERT arm) is unchanged, and
+// created still reads whether the row existed before this call.
 func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 	// A terminal projection lands with no queue text, as UpdateStatus clears it:
 	// an ended order is not waiting for anything.
@@ -471,11 +492,11 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 	_, err = db.Exec(`
 		INSERT INTO orders (uuid, order_type, status, process_node_id, retrieve_empty, quantity,
 			source_node, delivery_node, payload_code, payload_desc, queue_reason, queue_code,
-			origin_id, origin_class, authored_by)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'core')
+			origin_id, origin_class, authored_by, core_version)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'core',?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			order_type=excluded.order_type,
-			status=excluded.status,
+			status=CASE WHEN excluded.core_version > 0 THEN orders.status ELSE excluded.status END,
 			process_node_id=COALESCE(orders.process_node_id, excluded.process_node_id),
 			retrieve_empty=excluded.retrieve_empty,
 			quantity=excluded.quantity,
@@ -483,14 +504,16 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 			delivery_node=excluded.delivery_node,
 			payload_code=excluded.payload_code,
 			payload_desc=excluded.payload_desc,
-			queue_reason=excluded.queue_reason,
-			queue_code=excluded.queue_code,
+			queue_reason=CASE WHEN excluded.core_version > 0 THEN orders.queue_reason ELSE excluded.queue_reason END,
+			queue_code=CASE WHEN excluded.core_version > 0 THEN orders.queue_code ELSE excluded.queue_code END,
 			origin_id=COALESCE(NULLIF(excluded.origin_id, ''), orders.origin_id),
 			origin_class=COALESCE(NULLIF(excluded.origin_class, ''), orders.origin_class),
-			updated_at=datetime('now')`,
+			updated_at=datetime('now')
+		WHERE orders.status NOT IN (`+protocol.TerminalStatusSQLList()+`)
+		  AND (excluded.core_version = 0 OR excluded.core_version > orders.core_version)`,
 		r.UUID, r.OrderType, r.Status, r.ProcessNodeID, r.RetrieveEmpty, r.Quantity,
 		r.SourceNode, r.DeliveryNode, r.PayloadCode, r.PayloadDesc, r.QueueReason, r.QueueCode,
-		r.OriginID, r.OriginClass)
+		r.OriginID, r.OriginClass, r.Version)
 	if err != nil {
 		return false, fmt.Errorf("upsert projected order %s: %w", r.UUID, err)
 	}

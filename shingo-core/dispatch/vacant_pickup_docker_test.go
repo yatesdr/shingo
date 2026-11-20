@@ -201,7 +201,9 @@ func TestVacantPickup_APairNeverWaitsOnItsOwnRefill(t *testing.T) {
 }
 
 // liveOrder stands another live order for the coming read: placing at the
-// on-deck by its steps (a complex leg) or its delivery node (a plain one).
+// on-deck by its steps (a complex leg) or its delivery node (a plain one). A
+// `dispatched` one is born `pending` and names its job (sg-<uuid>) in the
+// write that moves it: the INSERT does not bind a vendor id.
 func (c vpCell) liveOrder(uuid string, orderType protocol.OrderType, status protocol.Status, delivery string, steps []resolvedStep) *orders.Order {
 	c.t.Helper()
 	raw := ""
@@ -210,9 +212,17 @@ func (c vpCell) liveOrder(uuid string, orderType protocol.OrderType, status prot
 		testutil.MustNoErr(c.t, err, "steps")
 		raw = string(j)
 	}
-	o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: orderType, Status: status, Quantity: 1,
+	born := status
+	if status == protocol.StatusDispatched {
+		born = protocol.StatusPending
+	}
+	o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: orderType, Status: born, Quantity: 1,
 		PayloadCode: c.part, DeliveryNode: delivery, ProcessNode: c.press.Name, StepsJSON: raw}
 	testutil.MustNoErr(c.t, c.db.CreateOrder(o), "order "+uuid)
+	if status == protocol.StatusDispatched {
+		testdb.SeedDispatched(c.t, c.db, o.ID, "sg-"+uuid)
+		o.Status, o.VendorOrderID = status, "sg-"+uuid
+	}
 	return o
 }
 
@@ -296,8 +306,7 @@ func TestVacantPickup_ANamedMoveOffTheOutsideHoldsThePair(t *testing.T) {
 	// longer returns the cart, and the pair still holds for outside material.
 	_, err := c.db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, move.ID, outside.ID)
 	testutil.MustNoErr(t, err, "the move claims its cart")
-	_, err = c.db.Exec(`UPDATE orders SET status = 'dispatched' WHERE id = $1`, move.ID)
-	testutil.MustNoErr(t, err, "the move is sent")
+	testdb.SeedDispatched(t, c.db, move.ID, "sg-send-back-move") // the move is sent: the fleet has its job
 	c.scan(r1, r2)
 	c.requireHolds(protocol.QueueWaitingForOutside, r1, r2)
 
@@ -367,9 +376,10 @@ func TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside(t *testing.T) {
 				c := newVPCell(t, "VP7", role)
 				cart := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP7-ON-DECK")
 				move := &orders.Order{EdgeUUID: "vp7-move", StationID: "line-1", OrderType: protocol.OrderTypeMove,
-					Status: protocol.StatusDispatched, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
+					Status: protocol.StatusPending, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
 					NamedBinID: &cart.ID}
-				testutil.MustNoErr(t, c.db.CreateOrder(move), "the named move, sent")
+				testutil.MustNoErr(t, c.db.CreateOrder(move), "the named move")
+				testdb.SeedDispatched(t, c.db, move.ID, "sg-vp7-move") // sent: the fleet has its job
 				_, err := c.db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, move.ID, cart.ID)
 				testutil.MustNoErr(t, err, "the move claims its cart")
 				r1, r2 := c.submitPair("VP7", flipped, "VP7-r2", "VP7-r1")

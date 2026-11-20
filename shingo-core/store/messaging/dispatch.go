@@ -66,6 +66,27 @@ func BuildDataEnvelope(subject, coreStation, edgeStation string, payload any) ([
 	return data, "data." + subject, nil
 }
 
+// EnqueueToEdge is EnqueueDataToEdge for an order-channel message (a typed
+// envelope, msgType such as order.update): the envelope the engine's plain
+// send builds, written on ex so it commits with the write that caused it. The
+// outbox row's msg_type is msgType.
+func EnqueueToEdge(ex Execer, topic, msgType, coreStation, edgeStation string, payload any) error {
+	coreAddr := protocol.Address{Role: protocol.RoleCore, Station: coreStation}
+	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: edgeStation}
+	env, err := protocol.NewEnvelope(msgType, coreAddr, edgeAddr, payload)
+	if err != nil {
+		return fmt.Errorf("build %s: %w", msgType, err)
+	}
+	data, err := env.Encode()
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", msgType, err)
+	}
+	if err := EnqueueOutbox(ex, topic, data, msgType, edgeStation); err != nil {
+		return fmt.Errorf("enqueue %s: %w", msgType, err)
+	}
+	return nil
+}
+
 // EnqueueDataToEdge builds the envelope and writes the outbox row on ex.
 //
 // Pass a *sql.Tx and the message becomes part of that transaction: it is

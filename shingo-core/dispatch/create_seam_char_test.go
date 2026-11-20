@@ -176,7 +176,7 @@ func TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail(t *testing.T) {
 	// the state under test — never exists.
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cseam-gated-blocker"
-		o.Status = StatusDispatched
+		o.Status, o.VendorOrderID = StatusDispatched, "sg-cseam-gated-blocker"
 	})
 	testutil.MustNoErr(t, d.TakeLaneOccupancy(blocker.ID, mouth), "the blocker occupies the lane")
 
@@ -270,7 +270,7 @@ func TestCharSeam_ComplexIsRefusedByAnotherOrdersOccupancy(t *testing.T) {
 
 	sitting := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cseam-cread-sitting"
-		o.Status = StatusDispatched
+		o.Status, o.VendorOrderID = StatusDispatched, "sg-cseam-cread-sitting"
 	})
 	testutil.MustNoErr(t, d.TakeLaneOccupancy(sitting.ID, mouth), "somebody else is inside")
 

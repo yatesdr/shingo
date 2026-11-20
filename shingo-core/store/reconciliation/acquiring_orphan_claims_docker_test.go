@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -113,11 +112,10 @@ func TestAcquiringOrphanClaims_OneSweepFreesTheBinAndTheDemandEscapes(t *testing
 			// AND THE DEMAND ESCAPES. Freeing the column is not the deliverable —
 			// the next order getting the bin through the guarded production path
 			// (reserve, then the CAS-guarded claim) is.
-			// (C1.5: the taker keeps the claim it takes, so it is built at dispatched.)
+			// (C1.5: the taker keeps the claim it takes, so the fleet has it.)
 			taker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 				o.EdgeUUID = "orph-taker-" + status
-				o.Status = protocol.StatusDispatched
-			})
+			}, testdb.FleetHas("sg-orph-taker-"+status))
 			testutilAcquire(t, db, taker.ID, bin.ID)
 			if err := db.ClaimBin(bin.ID, taker.ID); err != nil {
 				t.Fatalf("the orphaned claim is gone but the bin still could not be taken: %v", err)

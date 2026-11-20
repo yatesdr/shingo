@@ -5,6 +5,7 @@ package nodes_test
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -34,18 +35,26 @@ func newPartnerFixture(t *testing.T, name string) partnerFixture {
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	slot := mkSlotNode(t, db.DB, name+"-SLOT")
-	// (C1.5: both are built at dispatched. The partner's lift holds the bin hard,
-	// and the order keeps the slot claim when the arm credits it.)
-	p := &orders.Order{EdgeUUID: name + "-p", StationID: "edge.1", OrderType: "complex", Status: "dispatched",
+	// (C1.5: both are built as the hand holds them, resting pending with an ask
+	// open. The partner's lift holds the bin hard, and the order keeps the slot
+	// claim when the arm credits it.)
+	p := &orders.Order{EdgeUUID: name + "-p", StationID: "edge.1", OrderType: "complex", Status: protocol.StatusPending,
 		Quantity: 1, SiblingOrderUUID: name + "-l"}
 	if err := orders.Create(db.DB, p); err != nil {
 		t.Fatalf("create partner: %v", err)
 	}
-	l := &orders.Order{EdgeUUID: name + "-l", StationID: "edge.1", OrderType: "complex", Status: "dispatched",
+	testdb.SeedAsk(t, db, p.ID, protocol.StatusPending, "sg-"+name+"-p")
+	l := &orders.Order{EdgeUUID: name + "-l", StationID: "edge.1", OrderType: "complex", Status: protocol.StatusPending,
 		Quantity: 1, SiblingOrderUUID: name + "-p"}
 	if err := orders.Create(db.DB, l); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	testdb.SeedAsk(t, db, l.ID, protocol.StatusPending, "sg-"+name+"-l")
+	// Each database's end-of-test sweep consumes the open-ask opt-out, and a test
+	// here can build two fixtures, so it is registered again as a cleanup:
+	// cleanups run last-in first-out, so it runs just before this fixture's own
+	// database is swept.
+	t.Cleanup(func() { testdb.ExpectAskLeftOpen(t, "the fixture's asks stand for creates in flight") })
 	b := testdb.CreateBinAtNode(t, db, sd.Payload.Code, slot, name+"-BIN")
 	testdb.ClaimBinForTest(t, db, b.ID, p.ID) // reserve → claim → confirm: the hold confirmComplexPlan leaves
 	if err := reservations.AcquireSlot(db.DB, l.ID, slot, "test"); err != nil {

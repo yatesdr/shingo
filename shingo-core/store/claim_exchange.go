@@ -9,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/store/bins"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
@@ -95,7 +96,7 @@ func exchangeHeldPickupTx(tx *sql.Tx, ex HeldPickupExchange) error {
 		return err
 	}
 	if err := one("the digger changed since the decision read it", fmt.Sprintf(`UPDATE orders SET steps_json=$1, updated_at=$2
-		WHERE id=$3 AND steps_json=$4 AND status IN (%s)`, protocol.AcquiringStatusSQLList()),
+		WHERE id=$3 AND steps_json=$4 AND %s`, orders.AcquiringSQL("")),
 		ex.DiggerStepsNow, now, ex.DiggerID, ex.DiggerStepsWas); err != nil {
 		return err
 	}

@@ -660,9 +660,12 @@ func TestBuildNodeBins_InboundOrders(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(src), "source")
 	order := func(uuid, dest string, claimed bool) int64 {
 		t.Helper()
-		o := &domain.Order{EdgeUUID: uuid, StationID: "edge.a", OrderType: "retrieve", Status: "dispatched",
+		o := &domain.Order{EdgeUUID: uuid, StationID: "edge.a", OrderType: "retrieve", Status: "pending",
 			Quantity: 1, SourceNode: "STORE-1", DeliveryNode: dest, PayloadCode: "PART-A"}
 		testutil.MustNoErr(t, orders.Create(db.DB, o), "order "+uuid)
+		// The fleet has it: `dispatched` names its job in one write (the INSERT
+		// binds no vendor id).
+		testdb.SeedDispatched(t, db, o.ID, "sg-"+uuid)
 		if claimed {
 			b := &bins.Bin{BinTypeID: tote, Label: "CARRIED-" + uuid, NodeID: &src.ID, Status: "available"}
 			testutil.MustNoErr(t, db.CreateBin(b), "carrier "+uuid)

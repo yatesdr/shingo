@@ -348,13 +348,12 @@ func TestKanbanDoor_ARobotUnderTheCartIsNotRedirected(t *testing.T) {
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceIntent = dispatch.SourceIntentLocal
 		o.OriginClass = protocol.OriginClassNoDemand
-		o.Status = protocol.StatusDispatched
 		o.SourceNode = r.windows[1].Name
 		o.DeliveryNode = r.k.Name + "-P8"
 		o.RobotID = "AMR-KD7"
 		o.NamedBinID = &bin
 		o.HoldFromBirth(bin)
-	})
+	}, testdb.FleetHas("sg-kd7"))
 	testdb.ClaimBinForTest(t, r.db, bin, moving.ID)
 	r.eng.fulfillment.RunOnce()
 	r.eng.fulfillment.RunOnce()
@@ -613,7 +612,7 @@ func TestKanbanDoor_ItsFreeSlotsAreTheResolversSlots(t *testing.T) {
 		{"a live order names it", false, func(t *testing.T, r *kanbanCostRig, s *nodes.Node) { anOrder(t, r, "kd10-namer", s.Name) }},
 		{"claimed", false, func(t *testing.T, r *kanbanCostRig, s *nodes.Node) {
 			o := anOrder(t, r, "kd10-claimer", "")
-			testutil.MustNoErr(t, r.db.UpdateOrderStatus(o.ID, string(protocol.StatusDispatched), "a robot holds it"), "dispatched")
+			testdb.SeedDispatched(t, r.db, o.ID, "sg-kd10-claimer") // a robot holds it
 			set(t, r, s, fmt.Sprintf("claimed_by = %d", o.ID))
 		}},
 		{"reserved by another order", false, func(t *testing.T, r *kanbanCostRig, s *nodes.Node) {

@@ -3,7 +3,6 @@ package helpers
 import (
 	"fmt"
 
-	"shingo/protocol"
 	"shingocore/store/reservations"
 )
 
@@ -151,19 +150,6 @@ func ComingForBinCommittedSQL(holder, bin, slot string) string {
 		holder, bin, slot, AwaitingFleetSQL(holder), StepNodeSQL(holder, "aim.pick_step"))
 }
 
-// AwaitingFleetSQL is orders.AwaitingFleetSQL's one spelling — see it for why
-// vendor_order_id is the authority and the status set is derived. It lives here
-// because the burial guard's holder arm reads it, and this package cannot import
-// store/orders. alias is the orders table alias ("" for an unaliased `orders`).
-func AwaitingFleetSQL(alias string) string {
-	q := ""
-	if alias != "" {
-		q = alias + "."
-	}
-	return fmt.Sprintf("%sstatus IN (%s) AND COALESCE(%svendor_order_id, '') = ''",
-		q, protocol.PreDispatchStatusSQLList(), q)
-}
-
 // LaneBlockerPredicate is the definition: `blocker` is an occupied slot sitting
 // strictly shallower than `target` in the same lane. Both arguments name `nodes`
 // rows already in scope — a table alias, or a derived table exposing
@@ -262,7 +248,7 @@ func BuriedSQL(target string) string {
 // is the load-bearing half, and a compound that entombs a slot its own next leg
 // is driving to has cost itself the same slot as anybody else would.
 //
-// A pre-dispatch order that only NAMES the deeper slot does not count, for the
+// An order at rest before the fleet (PreDispatchSQL) that only NAMES the deeper slot does not count, for the
 // reason nodes.SlotTakeableSQL gives: it holds nothing, and it chooses again when
 // acquired. One that holds the slot reserves it, and the reservation clause reads
 // that. The two spellings of "spoken for" say the same thing.
@@ -276,12 +262,12 @@ func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) 
 			     OR %[4]s
 			     OR EXISTS (SELECT 1 FROM orders spoken_ord
 			                 WHERE spoken_ord.delivery_node = spoken.name
-			                   AND spoken_ord.status NOT IN (%[3]s, %[5]s)
+			                   AND spoken_ord.status NOT IN (%[3]s) AND %[5]s
 			                   AND spoken_ord.id <> %[2]s)
 			   )
 		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList,
 		reservations.SlotSpokenForByStrangerSQL("spoken_res", "spoken.id", ownerParam),
-		protocol.PreDispatchStatusSQLList())
+		PastPreDispatchSQL("spoken_ord"))
 }
 
 // ── ONE SPELLING FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ─────────────

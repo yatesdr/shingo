@@ -81,3 +81,10 @@ func (db *DB) LoopLiveOrders() ([]inventory.LiveOrder, error) {
 func (db *DB) LeadTimesByPayload(r orders.LeadTimeRange) (map[string]orders.LeadTimeInputs, error) {
 	return orders.LeadTimesByPayload(db.DB, r)
 }
+
+// PayloadCountHolders lists the bins and active piles of a payload whose count
+// is not 0, at most limit of each, with the totals (inventory.CountHolders), for
+// the payload guards in service.PayloadService.
+func (db *DB) PayloadCountHolders(code string, limit int) ([]inventory.Holder, int, int, error) {
+	return inventory.CountHolders(db.DB, code, limit)
+}

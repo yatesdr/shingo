@@ -79,7 +79,7 @@ func (s *CoreSyncService) HandleOrderStatusSnapshots(items []protocol.OrderStatu
 // with the projection rather than after it, and why it is tested first.
 func (s *CoreSyncService) HandleUnlistedOrders(items []protocol.OrderProjection) {
 	for _, p := range items {
-		created, err := s.engine.ApplyOrderProjection(p)
+		created, err := s.engine.applyOrderProjection(p, true)
 		if err != nil {
 			s.engine.debugFn.Log("reconcile: heal unlisted order uuid=%s: %v", p.OrderUUID, err)
 			continue

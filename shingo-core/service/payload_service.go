@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -202,10 +203,23 @@ func (s *PayloadService) CreateWithSets(p *payloads.Payload, sets PayloadSets) e
 // UpdateWithSets is Update with the carrier types and the manifest the save
 // states, the row and both sets committed together or not at all.
 func (s *PayloadService) UpdateWithSets(p *payloads.Payload, sets PayloadSets) error {
+	return s.UpdateWithSetsSeen(p, sets, false)
+}
+
+// UpdateWithSetsSeen is UpdateWithSets for a save whose engineer has seen what a
+// ratio change does to the counts that stand (seen): without it, a ratio change
+// on a payload whose bins or piles hold a count writes nothing and answers
+// *RatioChangeUnseen, the warning; a change between one line and several while
+// they do is refused (ErrKitFlip) either way (checkCountUnit). Pinned by
+// TestCountUnitGuard (the decision) and the update handler's docker test.
+func (s *PayloadService) UpdateWithSetsSeen(p *payloads.Payload, sets PayloadSets, seen bool) error {
 	if err := s.checkUpdate(p); err != nil {
 		return err
 	}
 	if err := s.checkSets(sets); err != nil {
+		return err
+	}
+	if err := s.checkCountUnit(p, sets, seen); err != nil {
 		return err
 	}
 	return s.payloadsWritten(s.db.UpdatePayloadWithSets(p, sets))
@@ -445,36 +459,60 @@ func ValidateManifestLines(lines []payloads.Line) error {
 
 // CreateManifestItem inserts a manifest item on a payload template, minting or
 // matching the part it names. catid is the part's controls identity when the
-// caller is originating it; blank leaves a known part's alone.
-func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem, catid string) error {
+// caller is originating it; blank leaves a known part's alone. A line that
+// changes the ratio or makes the part a kit under standing counts is the
+// payload guards' (checkLines); seen says the ratio change's warning was seen.
+func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem, catid string, seen bool) error {
 	if err := ValidateManifestLines([]payloads.Line{{
 		PartNumber: item.PartNumber, PartsPerCycle: item.PartsPerCycle,
 	}}); err != nil {
+		return err
+	}
+	added := protocol.ManifestItem{PartNumber: item.PartNumber, PartsPerCycle: item.PartsPerCycle}
+	if err := s.checkLines(item.PayloadID, func(stored []*payloads.ManifestItem) []protocol.ManifestItem {
+		return append(storedLinesExcept(stored, 0, nil), added)
+	}, seen); err != nil {
 		return err
 	}
 	return s.payloadsWritten(s.db.CreatePayloadManifestItem(item, catid))
 }
 
 // UpdateManifestItem adjusts a manifest item's part, that part's cat id, and
-// its per-cycle ratio.
-func (s *PayloadService) UpdateManifestItem(id int64, partNumber, catid string, partsPerCycle int64) error {
+// its per-cycle ratio, through the payload guards (lineGuard).
+func (s *PayloadService) UpdateManifestItem(id int64, partNumber, catid string, partsPerCycle int64, seen bool) error {
 	if err := ValidateManifestLines([]payloads.Line{{
 		PartNumber: partNumber, PartsPerCycle: partsPerCycle,
 	}}); err != nil {
 		return err
 	}
+	if err := s.lineGuard(id, &protocol.ManifestItem{PartNumber: partNumber, PartsPerCycle: partsPerCycle}, seen); err != nil {
+		return err
+	}
 	return s.payloadsWritten(s.db.UpdatePayloadManifestItem(id, partNumber, catid, partsPerCycle))
 }
 
-// DeleteManifestItem removes a manifest item from a payload template.
-func (s *PayloadService) DeleteManifestItem(id int64) error {
+// DeleteManifestItem removes a manifest item from a payload template, through
+// the payload guards (lineGuard): a kit left with one line, or a part's only
+// line removed, under standing counts.
+func (s *PayloadService) DeleteManifestItem(id int64, seen bool) error {
+	if err := s.lineGuard(id, nil, seen); err != nil {
+		return err
+	}
 	return s.payloadsWritten(s.db.DeletePayloadManifestItem(id))
 }
 
 // ReplaceManifest swaps out a payload template's whole manifest in one pass,
-// validating every line and minting or matching each line's part.
+// validating every line and minting or matching each line's part. Its caller
+// is the importer, which has no warning to show: a ratio change or a kit flip
+// under standing counts is refused (checkLines, never seen), and the engineer
+// makes it on Edit Payload, where the warning is.
 func (s *PayloadService) ReplaceManifest(payloadID int64, lines []payloads.Line) error {
 	if err := ValidateManifestLines(lines); err != nil {
+		return err
+	}
+	if err := s.checkLines(payloadID, func([]*payloads.ManifestItem) []protocol.ManifestItem {
+		return protocolLinesOf(lines)
+	}, false); err != nil {
 		return err
 	}
 	return s.payloadsWritten(s.db.ReplacePayloadManifest(payloadID, lines))
@@ -551,4 +589,34 @@ func (s *PayloadService) CompatibleNodeNamesByPayload() (map[int64][]string, err
 // BinTypeCodesByPayload maps each payload to its bin type codes.
 func (s *PayloadService) BinTypeCodesByPayload() (map[int64][]string, error) {
 	return s.db.ListBinTypeCodesByPayload()
+}
+
+// UOPRatios is every payload's UOP ratio above 1, by payload code: what a page
+// needs to show a count in UoP with its parts beside it (owner, 2026-11-19).
+// A payload at a ratio of 1 is absent, so a page's data at ratio 1 is what it
+// was. Two statements, the payloads and every manifest line; the arithmetic is
+// protocol.UOPRatio's (uopRatiosOf).
+func (s *PayloadService) UOPRatios() (map[string]int, error) {
+	ps, err := s.db.ListPayloads()
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.db.PayloadManifestLines()
+	if err != nil {
+		return nil, err
+	}
+	return uopRatiosOf(ps, lines), nil
+}
+
+// uopRatiosOf is UOPRatios over rows already read: each payload's ratio from
+// its manifest lines (protocol.UOPRatio), kept only above 1. Pinned by
+// TestUOPRatiosOf.
+func uopRatiosOf(ps []*payloads.Payload, lines map[int64][]*payloads.ManifestItem) map[string]int {
+	out := map[string]int{}
+	for _, p := range ps {
+		if r := protocol.UOPRatio(domain.ProtocolLines(lines[p.ID])); r > 1 {
+			out[p.Code] = r
+		}
+	}
+	return out
 }

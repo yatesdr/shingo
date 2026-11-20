@@ -3,6 +3,8 @@ package release
 import (
 	"encoding/json"
 	"fmt"
+
+	"shingo/protocol"
 )
 
 // Intent is an act's promise to one leg for one station wait (SHAPE §3.5),
@@ -99,4 +101,30 @@ func (i *Intent) OnStaged(ordinal *int, purpose Purpose) StageEffect {
 		return StageResend
 	}
 	return StageKeep
+}
+
+// SentFor reports whether the intent's release has gone out for the station
+// wait stationWait: the leg standing there has been released by this station.
+func (i *Intent) SentFor(stationWait *int) bool {
+	return i != nil && i.Sent() && stationWait != nil && i.StationWait == *stationWait
+}
+
+// ReleasedFromWait is the one read of "this leg was released" at a station
+// wait: Core holds it in transit, or it stands staged at a station wait and
+// this station's release for that wait has gone out. A Core that versions its
+// orders keeps a released leg `staged` until its robot moves (the RELEASE tap
+// writes no status), so the sent intent is the station's word in between; an
+// older Core's leg reads in_transit from the tap. PointOf, the board's
+// swap-ready, the changeover START gate (through releasedWaits) and the admin
+// Orders row all read it. raw is orders.release_intent; one that will not
+// decode is no intent.
+func ReleasedFromWait(status protocol.Status, stationWait *int, raw string) bool {
+	if status == protocol.StatusInTransit {
+		return true
+	}
+	if status != protocol.StatusStaged {
+		return false
+	}
+	in, err := DecodeIntent(raw)
+	return err == nil && in.SentFor(stationWait)
 }

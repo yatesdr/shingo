@@ -447,9 +447,8 @@ func occupy(t *testing.T, db *store.DB, lane, endsAt *nodes.Node) *orders.Order 
 	t.Helper()
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "occupant-" + lane.Name
-		o.Status = dispatch.StatusDispatched
 		o.DeliveryNode = endsAt.Name
-	})
+	}, testdb.FleetHas("sg-occupant-"+lane.Name))
 	if _, err := reservations.AcquireOccupancy(db.DB, o.ID, lane.ID); err != nil {
 		t.Fatalf("occupy %s: %v", lane.Name, err)
 	}

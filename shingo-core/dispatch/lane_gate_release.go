@@ -220,8 +220,8 @@ func (d *Dispatcher) redriveHeldCompoundLegs(laneID int64) []int64 {
 // wait in this group). Deriving the set from durable order state and then
 // gating the whole pass on live config was the one place those two disagreed.
 //
-// WHAT IT COSTS on an ungated plant: one ActiveGateCandidates query per
-// lane-touching event, which returns nothing when no order carries a lane wait.
+// WHAT IT COSTS when no order is waiting at a lane: one ActiveGateCandidates
+// query per lane-touching event, which returns nothing.
 // Its sibling on the same events — RedriveHeldCompoundLegs — already runs a
 // per-lane query with no mode gate at all, and for the same reason: the state
 // it recovers is mode-independent.

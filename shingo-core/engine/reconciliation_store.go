@@ -22,6 +22,10 @@ type ReconciliationStore interface {
 	GetReconciliationSummary() (*reconciliation.Summary, error)
 	ListReconciliationAnomalies() ([]*reconciliation.Anomaly, error)
 
+	// The asks a crash left open (reconciliation_boot_asks.go).
+	ListOpenAsks() ([]orders.OpenAsk, error)
+	ChaseEndedOrderAsk(id int64, askedVendorOrderID string) (bool, error)
+
 	// Recovery action log.
 	ListRecoveryActions(limit int) ([]*recovery.Action, error)
 	RecordRecoveryAction(action, targetType string, targetID int64, detail, actor string) error

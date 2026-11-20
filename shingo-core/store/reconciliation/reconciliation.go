@@ -903,7 +903,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  WHERE b.claimed_by IS NOT NULL
 		    AND EXISTS (
 		      SELECT 1 FROM orders o
-		      WHERE o.id = b.claimed_by AND o.status IN (%s) AND o.parent_order_id IS NULL
+		      WHERE o.id = b.claimed_by AND %s AND o.parent_order_id IS NULL
 		    )
 		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindBin, "b.id")+`
 		), swept AS (
@@ -912,7 +912,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  RETURNING id
 		)
 		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
-		protocol.AcquiringStatusSQLList()))
+		helpers.AcquiringSQL("o")))
 	if err != nil {
 		return 0, fmt.Errorf("reconciliation acquiring-orphan-bin-claims: %w", err)
 	}
@@ -945,7 +945,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  WHERE nd.claimed_by IS NOT NULL
 		    AND EXISTS (
 		      SELECT 1 FROM orders o
-		      WHERE o.id = nd.claimed_by AND o.status IN (%s) AND o.parent_order_id IS NULL
+		      WHERE o.id = nd.claimed_by AND %s AND o.parent_order_id IS NULL
 		    )
 		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindSlot, "nd.id")+`
 		), swept AS (
@@ -954,7 +954,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  RETURNING id
 		)
 		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
-		protocol.AcquiringStatusSQLList()))
+		helpers.AcquiringSQL("o")))
 	if err != nil {
 		return n, fmt.Errorf("reconciliation acquiring-orphan-slot-claims: %w", err)
 	}

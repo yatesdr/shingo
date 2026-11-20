@@ -37,9 +37,9 @@ func (r turnRig) arrive(t *testing.T, id int64) *orders.Order {
 	t.Helper()
 	o := prReload(t, r.db, id)
 	r.backend.SetOrderVehicle(o.VendorOrderID, ttVehicle)
-	testutil.MustNoErr(t, r.d.lifecycle.MarkInTransit(o, ttVehicle, "fleet"), "in transit")
+	testutil.MustNoErr(t, r.d.lifecycle.MarkInTransit(o, ttVehicle, "fleet", protocol.OrderUpdate{}), "in transit")
 	o = prReload(t, r.db, id)
-	testutil.MustNoErr(t, r.d.lifecycle.MarkStaged(o, "fleet"), "staged")
+	testutil.MustNoErr(t, r.d.lifecycle.MarkStaged(o, "fleet", protocol.OrderUpdate{}), "staged")
 	return prReload(t, r.db, id)
 }
 
@@ -371,7 +371,7 @@ func TestTableTurnSetDown_SupplyWaitsForTheEvac(t *testing.T) {
 	}
 	r.table.loaded(true)
 	o := prReload(t, r.db, supply.ID)
-	testutil.MustNoErr(t, r.d.lifecycle.MarkStaged(o, "fleet"), "staged at the line")
+	testutil.MustNoErr(t, r.d.lifecycle.MarkStaged(o, "fleet", protocol.OrderUpdate{}), "staged at the line")
 	r.d.RedriveTableTurns(o.ID)
 	r.table.turn(1.569, false)
 	if got := r.d.RedriveTableTurns(0); len(got) != 1 {

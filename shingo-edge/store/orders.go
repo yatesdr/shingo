@@ -312,3 +312,21 @@ func (db *DB) GetOrderPendingIntent(id int64) (string, error) {
 func (db *DB) TakeOrderPendingIntent(id int64, expected string) (bool, error) {
 	return orders.TakePendingIntent(db.DB, id, expected)
 }
+
+// ApplyCoreWord writes a word of Core's onto the order when its version is
+// newer than the last applied (orders.ApplyCoreWord). Reports whether it wrote.
+func (db *DB) ApplyCoreWord(id int64, w orders.CoreWordRow) (bool, error) {
+	return orders.ApplyCoreWord(db.DB, id, w)
+}
+
+// NoteCoreVersion records a newer version read for an order whose status it
+// does not move (orders.NoteCoreVersion).
+func (db *DB) NoteCoreVersion(id, version int64) error {
+	return orders.NoteCoreVersion(db.DB, id, version)
+}
+
+// LiveMoveOffNode reports whether a live move already takes a carrier off
+// node (orders.LiveMoveOffNode).
+func (db *DB) LiveMoveOffNode(node string) (bool, error) {
+	return orders.LiveMoveOffNode(db.DB, node)
+}

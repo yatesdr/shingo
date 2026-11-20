@@ -58,6 +58,55 @@ func (e *Engine) carrierLeft(nodeID int64, nodeName string) error {
 	return err
 }
 
+// carrierLeftLocked is carrierLeft under countMu, for a caller that does not
+// hold it and clears whatever is bound: the changeover cancel's reseat, which
+// Core answered with no carrier at the node. countMu serialises every path
+// that moves a seat's count (Engine.countMu); the three callers of carrierLeft
+// that ran beside it are census E.1's, re-read at 55aa18a5. Pinned by
+// TestSeatWriters_TakeTheCountLock.
+func (e *Engine) carrierLeftLocked(nodeID int64, nodeName string) error {
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	return e.carrierLeft(nodeID, nodeName)
+}
+
+// carrierLeftIfBound is carrierLeft for one named carrier, under countMu: the
+// pointer and the count go only while binID is still the one bound, in the
+// clear's own statement (uop.ClearActiveBinIfBound), and the departure is
+// recorded only then. For a caller that saw binID bound on its own read before
+// the lock: the admin Move's Released announcement and Order B's completion. A
+// carrier that landed between that read and the lock keeps its pointer and its
+// count (owner, 2026-11-19: the check and the clear are one statement), at no
+// statement of its own (TestEmptySlotGuard_CostsNoStatement). Reports whether
+// it cleared. Pinned by TestCarrierLeftIfBound_ALandingInTheWindowStands.
+func (e *Engine) carrierLeftIfBound(nodeID int64, nodeName string, binID int64) (bool, error) {
+	if e.inventoryDelta == nil {
+		return false, nil
+	}
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	cleared, err := e.inventoryDelta.ClearActiveBinIfBound(nodeID, binID)
+	if cleared || err != nil {
+		e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
+	}
+	return cleared, err
+}
+
+// setSeatCountLocked writes a count Core made for the carrier bound at a seat,
+// with its new generation stamp (uop.SetClaimCountAndEpoch), under countMu:
+// a CLEAR's zero, a home clear's zero, the market pull-back's auto-clear and
+// an unfenced Record Count. Every caller is past the network call that made
+// the count and holds no lock. nil sink: nothing is written. Pinned by
+// TestSeatWriters_TakeTheCountLock.
+func (e *Engine) setSeatCountLocked(nodeID int64, claimID *int64, count int, binID, deltaEpoch int64) error {
+	if e.inventoryDelta == nil {
+		return nil
+	}
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	return e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimID, count, binID, deltaEpoch)
+}
+
 // carrierGone reads what carrierLeft writes: no bin bound to the seat, and the
 // last carrier recorded as departed. A seat that is merely unbound (a carrier
 // placed by a path that sent no landing) is not gone; it cannot say. Two
@@ -88,12 +137,13 @@ func (e *Engine) carrierLeftAtPickup(nodeID int64, nodeName string, pickupEpoch 
 // by the operator whose clear it was — the shape operator_bin_ops.go's CLEAR
 // records. Used by the market-pullback auto-clear and a dedicated loader's
 // home clear (ClearLoaderHome). Not a departure: the pointer stays, and the
-// identity is an answer, not an absence.
+// identity is an answer, not an absence. The count is written under countMu
+// (setSeatCountLocked); neither caller holds it.
 func (e *Engine) carrierClearedInPlace(nodeID int64, nodeName string, claimID *int64, binID, deltaEpoch int64) error {
 	if e.inventoryDelta == nil {
 		return nil
 	}
-	err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimID, 0, binID, deltaEpoch)
+	err := e.setSeatCountLocked(nodeID, claimID, 0, binID, deltaEpoch)
 	e.recordLinesideCarrier(nodeID, nodeName, domain.KnownCarrier(""), domain.CarrierFromOperator)
 	return err
 }

@@ -13,14 +13,10 @@ type Emitter interface {
 	EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string)
 	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64)
 	EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64)
-	// EmitOrderResumed announces Reshuffling → Queued — a compound finished and
-	// its complex parent is live again. Its subscriber tells the station: a
-	// resumed parent has no wait sentence, so the queue-reason push never would,
-	// and its mirror stayed at `reshuffling`, rejecting everything after it.
+	// EmitOrderResumed announces Reshuffling → Pending — a compound finished and
+	// its complex parent is live again. Its subscriber runs the parent's one
+	// acquire; the station hears each write it makes from the write.
 	EmitOrderResumed(orderID int64, edgeUUID, stationID string)
-	// EmitOrderWaitChanged: an order still waiting has a new reason for it, and
-	// its station should read the new sentence (see WriteQueueDetail).
-	EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string)
 	EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)
 	EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)
 	// EmitBinHeld: an order's birth set a bin's quality-hold marker (a

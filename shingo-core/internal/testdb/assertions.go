@@ -259,7 +259,7 @@ func AssertNoPointerWedge(t testing.TB, db *store.DB) {
 		  FROM orders o
 		  JOIN order_bins ob ON ob.order_id = o.id
 		  LEFT JOIN bins b ON b.id = ob.bin_id
-		 WHERE o.status IN (` + protocol.AcquiringStatusSQLList() + `)
+		 WHERE ` + orders.AcquiringSQL("o") + `
 		   AND o.parent_order_id IS NULL
 		   -- The PLAIN population: its row routes it to dispatchHeldBin. A
 		   -- coordinated order re-allocates on every pass (ReplaceOrderBins); a

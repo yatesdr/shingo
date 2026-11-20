@@ -10,9 +10,11 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
@@ -65,6 +67,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
 	ClearProcessNodeCarrier(processNodeID int64) (bool, error)
+	ClearProcessNodeCarrierIfBound(processNodeID, binID int64) (bool, error)
 	LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
@@ -136,6 +139,19 @@ func (s *fakeDeltaSink) BindActiveBin(nodeID, binID int64, deltaEpoch int64) err
 		return db.SetProcessNodeActiveBinIDAndEpoch(nodeID, &binID, deltaEpoch)
 	}
 	return nil
+}
+
+// ClearActiveBinIfBound with no db reports the named carrier cleared, as
+// ClearActiveBin reports one bound.
+func (s *fakeDeltaSink) ClearActiveBinIfBound(nodeID, binID int64) (bool, error) {
+	s.mu.Lock()
+	s.clearActiveCalls = append(s.clearActiveCalls, nodeID)
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.ClearProcessNodeCarrierIfBound(nodeID, binID)
+	}
+	return true, nil
 }
 
 // ClearActiveBin with no db reports a carrier bound: the recorded-calls-only
@@ -702,6 +718,40 @@ func TestConsume_DrawsPiecesPerCycleAtEveryConsumePath(t *testing.T) {
 	eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 1})
 	if got := runtimeOf(t, eng, f.node(t, "CELL")).RemainingUOPCached; got != -3 {
 		t.Errorf("8 against 5 = %d, want -3: the draw takes the count below 0", got)
+	}
+}
+
+// TestConsume_DrawsAtTheBinsPart: a consume seat draws at the ratio of the part
+// of the bin bound there (Engine.seatRatio), not the claim's part's. The claim
+// names SYN-S8 (8 a cycle) and also takes SYN-S2 (2 a cycle); the cart at the
+// seat is SYN-S2, as the seat records it: a cycle draws 2, where it drew the
+// claim's 8 (brief step 6). With the cart the claim's own part, it draws 8.
+func TestConsume_DrawsAtTheBinsPart(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	b1 := int64(81)
+	f := seedWalkerProcess(t, db, "SEAT", []walkerNode{
+		{Suffix: "CELL", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-S8", Capacity: 800, Remaining: 400, BoundBin: &b1, ActivePull: true},
+	})
+	piecesPerCycle(t, db, "SYN-S8", 8)
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(&catalog.CatalogEntry{ID: 9082, Name: "SYN-S2", Code: "SYN-S2", UOPCapacity: 400,
+		Manifest: []protocol.ManifestItem{{PartNumber: "SYN-S2", PartsPerCycle: 2}}}), "catalog SYN-S2")
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET allowed_payload_codes='["SYN-S8","SYN-S2"]' WHERE id=?`,
+		f.ClaimIDs["CELL"]); err != nil {
+		t.Fatalf("the claim also takes SYN-S2: %v", err)
+	}
+	eng := testEngine(t, db)
+	eng.recordLinesideCarrier(f.node(t, "CELL"), "SEAT_CELL", domain.KnownCarrier("SYN-S2"), domain.CarrierFromOperator)
+
+	eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 1})
+	if got := runtimeOf(t, eng, f.node(t, "CELL")).RemainingUOPCached; got != 398 {
+		t.Errorf("a cart of SYN-S2 at a claim of SYN-S8 after a cycle = %d, want 398: it draws its own part's 2", got)
+	}
+	eng.recordLinesideCarrier(f.node(t, "CELL"), "SEAT_CELL", domain.KnownCarrier("SYN-S8"), domain.CarrierFromOperator)
+	eng.handleCounterDelta(CounterDeltaEvent{ProcessID: f.ProcessID, StyleID: f.StyleID, Delta: 1})
+	if got := runtimeOf(t, eng, f.node(t, "CELL")).RemainingUOPCached; got != 390 {
+		t.Errorf("a cart of the claim's own part after a cycle = %d, want 390: it draws the claim's 8", got)
 	}
 }
 

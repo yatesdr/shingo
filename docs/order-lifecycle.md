@@ -1,6 +1,6 @@
 # Order Status Lifecycle
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 **What this is:** the order lifecycle status vocabulary — every status × who
 writes it × who reads it × what the operator sees — then the swap modes that
@@ -169,7 +169,6 @@ stateDiagram-v2
     dispatched --> in_transit
     dispatched --> staged
     dispatched --> delivered: fireCompleted
-    dispatched --> queued
     dispatched --> cancelled: fireCancelled
     dispatched --> faulted: fireFaulted
     dispatched --> failed: fireFailed
@@ -222,11 +221,17 @@ Notes on the Core machine:
   wiring, which runs its one acquire and tells the station where it landed
   (`queued` through its park, or `dispatched`). Simple-retrieve compounds
   terminate at `confirmed`. `reshuffling → queued` is not an edge.
-- **`dispatched → queued` is the refusal door** — `DemoteAfterFleetRefusal`
-  ("armor off, paper kept") is its live writer. The caller names the cause
+- **`dispatched` is the fleet's yes, written once** (`LifecycleService.Dispatch`,
+  with the vendor id). While Core asks the fleet the order keeps its status and
+  holds an ask (`orders.asked_vendor_order_id`, [Ask](terminology.md#ask)), and
+  no status move but an ending lands on it. A refusal closes the ask and demotes
+  the hand in one transaction, then `DemoteAfterFleetRefusal` ("armor off, paper
+  kept") writes the caller's cause and parks a `pending` order `queued`; a
+  `queued` one stays, told only if its cause changed. The caller names the cause
   (`fleet_unavailable`, or the scanner's ngrp-resolve carve-out); an empty code
-  is refused and nothing is undone. A redirect writes no status:
-  `HandleOrderRedirect` refuses anything not pre-dispatch.
+  is refused and nothing is undone. `dispatched → queued` is not an edge. A
+  redirect writes no status: `HandleOrderRedirect` refuses anything not at rest
+  before the fleet, an order being asked for included.
 - **Doors.** The wire door (`HandleOrderRequest`) and complex intake write
   plan facts on the row after its INSERT, so each holds the scanner's lock
   across its issue, its apply and its one acquire (`dispatch/door.go`), and a
@@ -291,7 +296,6 @@ stateDiagram-v2
     dispatched --> in_transit
     dispatched --> staged
     dispatched --> delivered
-    dispatched --> queued
     dispatched --> cancelled
     dispatched --> faulted
     dispatched --> failed

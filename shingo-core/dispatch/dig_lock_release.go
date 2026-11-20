@@ -790,7 +790,14 @@ func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, s
 // status to the committed list, or moving one out of it, is a lane-lock change.
 // `faulted` is handled LOCALLY at gate 3 rather than here, because that caller's
 // answer for it is the right one.
+//
+// An open ask is committed, whatever the status: Core is asking the fleet for
+// the leg, its hand is held, and a `false` here would convert the dig row and
+// keep a corridor for a robot that may be coming.
 func swapLegCommittedToFleet(sib *orders.Order) bool {
+	if sib.AskOpen() {
+		return true
+	}
 	switch sib.Status {
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:
 		return true

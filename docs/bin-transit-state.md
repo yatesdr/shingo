@@ -1,6 +1,6 @@
 # Bin Transit State
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 This document covers how Shingo tracks bins while they're physically in
 flight, and how dropoff capacity gates dispatch.
@@ -176,8 +176,8 @@ Every block Core sends carries Core's own label of what it does
 (`fleet.OrderBlock.Action`: pickup, dropoff, wait, or blank for a block of no
 step's kind), set where the block is built (`stepsToBlocks`) and never sent to
 the fleet. The order keeps them by block id in `orders.block_actions`, written
-by the statements that already run as blocks go out: the create's vendor write
-(`orders.NameFleetOrder`) and the append's compare-and-set (`orders.ClaimAppend`),
+by the statements that already run as blocks go out: the fleet's yes to the create
+(`orders.FleetYesTx`) and the append's compare-and-set (`orders.ClaimAppend`),
 and by nothing else (`TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent`).
 An advanced load sequence's expansion records pickup on the one block its
 `load_sequences.lift_at` names and blank on the others.

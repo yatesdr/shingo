@@ -574,10 +574,10 @@ var validTransitions = map[Status][]Status{
 	// was rejected (SPR order 7664, 2026-10-08: the supply robot had just
 	// dropped the spare it was sent to lift).
 	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
-	// Dispatched → Queued is a fleet refusal: the robot system would not take the
-	// order, so it waits under fleet_unavailable and is asked again (C1.1.3,
-	// SYNTH §2.4). The refusal's caller writes the cause before the move.
-	StatusDispatched: {StatusInTransit, StatusStaged, StatusDelivered, StatusQueued, StatusCancelled, StatusFaulted, StatusFailed},
+	// `dispatched` is the fleet's yes, so nothing leads back from it to a wait:
+	// a fleet refusal leaves the order in the status it rests in (pending parks
+	// queued), because the order never left it while Core asked.
+	StatusDispatched: {StatusInTransit, StatusStaged, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},
 
 	StatusInTransit: {StatusDelivered, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
 	StatusStaged:    {StatusInTransit, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},

@@ -145,8 +145,9 @@ func TestPairRule_BlockedEvacParksThePairHoldingNothing(t *testing.T) {
 func TestPairRule_APartnerWhoseWaitChangesIsToldOnce(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
+	tellToStations(db)
 	sd := testdb.SetupStandardData(t, db)
-	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	stage := prNode(t, db, "PR4T-STAGE")
 	full := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "PR4T", NumSlots: 1})
 	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "PR4T-FRESH")
@@ -167,15 +168,7 @@ func TestPairRule_APartnerWhoseWaitChangesIsToldOnce(t *testing.T) {
 	if err := d.ParkAndTell(supply, "test"); err != nil {
 		t.Fatalf("park the supply under its own wait: %v", err)
 	}
-	told := func() int {
-		n := 0
-		for _, id := range emitter.waitChanged {
-			if id == supply.ID {
-				n++
-			}
-		}
-		return n
-	}
+	told := func() int { return len(stationTellsOf(t, db, "pr4t-supply")) }
 	before := told()
 
 	prScanPass(t, d, db, "pr4t-evac", "pr4t-supply")

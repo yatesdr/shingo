@@ -245,7 +245,7 @@ func TestR1Pin_AWaiterBornSinceThePreviousPassIsNotAMissedEvent(t *testing.T) {
 		d.laneLock.Unlock(laneID, digger.ID)
 		blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.EdgeUUID = "R1HELD-blocker"
-			o.Status = StatusDispatched
+			o.Status, o.VendorOrderID = StatusDispatched, "sg-R1HELD-blocker"
 		})
 		_, err := reservations.AcquireOccupancy(db.DB, blocker.ID, laneID)
 		testutil.MustNoErr(t, err, "somebody is inside the lane")

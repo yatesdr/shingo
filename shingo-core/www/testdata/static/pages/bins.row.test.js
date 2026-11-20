@@ -1,7 +1,8 @@
 // Unit tests for bins-row.js, the Bins table row drawn from a bin's detail
-// answer, and bins-echo.js, the counting of the page's own-action echoes. Run
-// under plain Node via the Go wrapper bins_row_view_test.go. Exit
-// 0 on pass, 1 on any assertion failure.
+// answer, bins-echo.js, the counting of the page's own-action echoes, and
+// bins-live.js, the feed that keeps the rows current. Run under plain Node via
+// the Go wrapper bins_row_view_test.go. Exit 0 on pass, 1 on any assertion
+// failure.
 //
 // The bug these exist to prevent: refreshBinRow (the repaint after an action)
 // wrote the raw _TRANSIT / _ROBOT:<id> node name into Location, rebuilt Flags
@@ -43,9 +44,10 @@ function escapeHtml(s) {
 
 function load() {
     let src = fs.readFileSync(path.join(SRC_DIR, 'bins-row.js'), 'utf8');
-    src = src.replace(/^import .*$/m, '').replace(/^export /mg, '');
+    src = src.replace(/^import .*$/mg, '').replace(/^export /mg, '');
     const ctx = { escapeHtml };
     vm.createContext(ctx);
+    require('./lend-count.js')(ctx);
     vm.runInContext(src + '\nthis.binRowView = binRowView; this.uopText = uopText; this.binTransit = binTransit;', ctx);
     return ctx;
 }
@@ -87,6 +89,15 @@ console.log('plain bin at a node');
     eq('status sort', v.status.sort, 'available');
     check('flags carry locked and unconfirmed', v.flags.html.indexOf('>locked<') !== -1 && v.flags.html.indexOf('>unconfirmed<') !== -1, v.flags.html);
     eq('no Return button off a robot', v.flags.returnHTML, '');
+    eq('no process in the answer: an empty Process cell', v.process.text, '');
+    check('no has_notes: no notes chip', v.flags.html.indexOf('>notes<') === -1, v.flags.html);
+}
+
+console.log('Process and the notes chip come from the answer, as handleBins draws them');
+{
+    const v = m.binRowView({ bin: bin(), recent_orders: [], process: 'SNF3 / SNF4', has_notes: true }, true);
+    eq('process cell', v.process.text, 'SNF3 / SNF4');
+    check('notes chip, after the other flags', /chip-muted" title="Has notes">notes<\/span>$/.test(v.flags.html), v.flags.html);
 }
 
 console.log('names are escaped in the cells, raw in the sort/search values');
@@ -249,13 +260,15 @@ function extractFn(src, name) {
 function loadContents() {
     const bins = fs.readFileSync(path.join(SRC_DIR, 'bins.js'), 'utf8');
     const dom = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'dom.js'), 'utf8');
+    const count = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count.js'), 'utf8');
     const els = {};
     const ctx = {
         escapeHtml, PAGE_AUTH: false,
         document: { getElementById: (id) => (els[id] = els[id] || { innerHTML: '' }) },
     };
     vm.createContext(ctx);
-    vm.runInContext(extractFn(dom, 'h') + '\n' + extractFn(bins, 'renderContents') +
+    vm.runInContext(extractFn(dom, 'h') + '\n' + extractFn(count, 'linePieces').replace(/^export /, '') + '\n' +
+        extractFn(bins, 'renderContents') +
         '\nthis.renderContents = renderContents;', ctx);
     // qtys draws the answer and returns each row's part and Qty cell.
     return function qtys(data) {
@@ -285,8 +298,176 @@ console.log('the Contents table counts a bin of one part in its pieces');
         JSON.stringify({ 'SYN-BN-L': '8', 'SYN-BN-R': '12' }));
 }
 
-if (failures > 0) {
-    console.log(failures + ' failure(s)');
-    process.exit(1);
+// ── bins-live.js: the live feed ─────────────────────────────────────────────
+// Driven with a fake clock and a reader whose answers the test settles, so each
+// case says exactly when a read goes out and what it names.
+function loadLive() {
+    let src = fs.readFileSync(path.join(SRC_DIR, 'bins-live.js'), 'utf8');
+    src = src.replace(/^export /mg, '');
+    const ctx = {};
+    vm.createContext(ctx);
+    vm.runInContext(src + '\nthis.newRowsFeed = newRowsFeed; this.rowsQuery = rowsQuery; this.MAX_NAMED = MAX_NAMED;', ctx);
+    return ctx;
 }
-console.log('all passed');
+const live = loadLive();
+
+// rig is one feed with its clock, its reads and its paints.
+function rig() {
+    let now = 0, seq = 0;
+    const timers = new Map();
+    const r = { reads: [], applied: [], hidden: false };
+    r.feed = live.newRowsFeed({
+        read: (query) => new Promise((resolve, reject) => r.reads.push({ query, resolve, reject })),
+        apply: (answer, every) => r.applied.push({ answer, every }),
+        hidden: () => r.hidden,
+        later: (fn, ms) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
+        cancel: (id) => { timers.delete(id); },
+        quietMs: 400,
+        maxWaitMs: 2000,
+    });
+    // advance runs every timer due within ms, in time order.
+    r.advance = (ms) => {
+        const end = now + ms;
+        for (;;) {
+            let next = null;
+            for (const [id, t] of timers) if (t.at <= end && (!next || t.at < next.t.at)) next = { id, t };
+            if (!next) break;
+            timers.delete(next.id);
+            now = next.t.at;
+            next.t.fn();
+        }
+        now = end;
+    };
+    return r;
+}
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+async function feedTests() {
+    console.log('live feed: rowsQuery');
+    eq('bins and orders', live.rowsQuery(['1', '2'], ['7']), 'ids=1,2&orders=7');
+    eq('orders only', live.rowsQuery([], ['7']), 'orders=7');
+    eq('nothing named is every row', live.rowsQuery([], []), '');
+
+    console.log('live feed: a burst is one read, once it goes quiet');
+    {
+        const r = rig();
+        r.feed.bin(1); r.feed.bin(2); r.feed.bin(1); r.feed.order(7);
+        r.advance(399);
+        eq('no read while the burst may go on', r.reads.length, 0);
+        r.advance(1);
+        eq('one read', r.reads.length, 1);
+        eq('it names each bin once, and the order', r.reads[0].query, 'ids=1,2&orders=7');
+        r.reads[0].resolve({ rows: [], gone: [] });
+        await settled();
+        eq('the answer is painted', r.applied.length, 1);
+        eq('not as every row', r.applied[0].every, false);
+    }
+
+    console.log('live feed: names that keep coming are read at the cap');
+    {
+        const r = rig();
+        for (let t = 0; t < 2000; t += 300) { r.feed.bin(10 + t); r.advance(300); }
+        eq('read by the cap, not starved by the stream', r.reads.length, 1);
+    }
+
+    console.log('live feed: a name that arrives during a read waits for the next');
+    {
+        const r = rig();
+        r.feed.bin(1);
+        r.advance(400);
+        r.feed.bin(3);
+        r.advance(400);
+        eq('no second read while the first is out', r.reads.length, 1);
+        r.reads[0].resolve({ rows: [], gone: [] });
+        await settled();
+        r.advance(400);
+        eq('then a second read', r.reads.length, 2);
+        eq('naming what waited', r.reads[1].query, 'ids=3');
+    }
+
+    console.log('live feed: a hidden tab reads once it is shown');
+    {
+        const r = rig();
+        r.hidden = true;
+        r.feed.bin(1); r.feed.bin(2);
+        r.advance(10000);
+        eq('nothing read while hidden', r.reads.length, 0);
+        r.hidden = false;
+        r.feed.shown();
+        r.advance(400);
+        eq('one read on showing', r.reads.length, 1);
+        eq('naming what waited', r.reads[0].query, 'ids=1,2');
+    }
+    {
+        const r = rig();
+        r.feed.shown();
+        r.advance(10000);
+        eq('shown with nothing waiting reads nothing', r.reads.length, 0);
+    }
+
+    console.log('live feed: every row');
+    {
+        const r = rig();
+        r.feed.bin(4);
+        r.feed.every();
+        r.advance(400);
+        eq('every() reads every row', r.reads[0].query, '');
+        r.reads[0].resolve({ rows: [] });
+        await settled();
+        eq('painted as every row', r.applied[0].every, true);
+    }
+    {
+        const r = rig();
+        for (let id = 1; id <= live.MAX_NAMED + 1; id++) r.feed.bin(id);
+        r.advance(400);
+        eq('more bins than one read names is every row', r.reads[0].query, '');
+    }
+
+    console.log('live feed: a failed read loses its names, so the next read is every row');
+    {
+        const r = rig();
+        r.feed.bin(1);
+        r.advance(400);
+        r.reads[0].reject(new Error('503'));
+        await settled();
+        r.advance(10000);
+        eq('nothing retries on its own', r.reads.length, 1);
+        r.feed.bin(5);
+        r.advance(400);
+        eq('the next name reads every row', r.reads[1].query, '');
+    }
+
+    console.log('live feed: only positive ids are names');
+    {
+        const r = rig();
+        r.feed.bin(0); r.feed.bin(undefined); r.feed.order('x');
+        r.advance(10000);
+        eq('nothing read', r.reads.length, 0);
+    }
+}
+
+// The UoP cell above a ratio of 1 (owner, 2026-11-19): a bin pulled at 404 at
+// 8 a cycle reads 50 with its 404 parts beside it; at 1, and with no ratio, the
+// count as it always was.
+{
+    eq('uop: 404 at 8', m.uopText({ payload_code: 'P-8', uop_remaining: 404 }, 8),
+        '50 <span class="text-muted bin-uop-parts">404 parts</span>');
+    eq('uop: 404 at 1', m.uopText({ payload_code: 'P-1', uop_remaining: 404 }, 1), '404');
+    eq('uop: no ratio given', m.uopText({ payload_code: 'P-1', uop_remaining: 404 }), '404');
+    const v = m.binRowView({ bin: bin({ payload_code: 'P-8', uop_remaining: 800 }), recent_orders: [] }, true, { 'P-8': 8 });
+    eq('row: a full pack at 8 reads 100', v.uop.html, '100 <span class="text-muted bin-uop-parts">800 parts</span>');
+    eq('row: the cell still sorts by the count', v.uop.sort, '800');
+}
+
+function finish() {
+    if (failures > 0) {
+        console.log(failures + ' failure(s)');
+        process.exit(1);
+    }
+    console.log('all passed');
+}
+feedTests().then(finish, (e) => {
+    failures++;
+    console.log('  FAIL live feed tests threw — ' + (e && e.stack || e));
+    finish();
+});

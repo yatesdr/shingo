@@ -109,6 +109,8 @@ func boardFixture() domain.OperatorStationView {
 		Bins:        &domain.BinsKnown{Known: true},
 		Containment: &domain.ContainmentKnown{Known: false},
 		Catalog:     &domain.CatalogKnown{Known: false},
+		// The board reads a served row's part's ratio from it (ratioFor).
+		LoadTemplates: map[string]domain.LoadTemplate{"PART-A": {UOPCapacity: 10}},
 	}
 }
 
@@ -226,7 +228,7 @@ func fullOrder() domain.Order {
 		StagedExpireAt: &at, BinID: &n, PayloadCode: "PART-A", PayloadDesc: "d", SiblingOrderID: &n,
 		QueueReason: "r", QueueCode: "c", FaultSince: &at, FaultDeadline: &at, FaultNoticeAfterS: 1,
 		AuthoredBy: "a", OriginID: "o", OriginClass: "c", LaneHeld: true, StationWait: &wait, WaitKind: "k",
-		ReleaseHeld: "h", DepartedAt: &at, Departed: true, CreatedAt: at, UpdatedAt: at, RobotID: "r",
+		ReleaseHeld: "h", DepartedAt: &at, Departed: true, CreatedAt: at, UpdatedAt: at, RobotID: "r", ReleaseSent: true,
 		ProcessName: "p", ProcessNodeName: "pn", StationName: "sn"}
 }
 
@@ -239,7 +241,7 @@ func fullOrder() domain.Order {
 // template.
 var stationOrderKeys = []string{
 	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "fault_line", "id", "lane_held", "order_type",
-	"payload_code", "queue_code", "queue_reason", "robot_id", "sibling_order_id", "source_node", "status",
+	"payload_code", "queue_code", "queue_reason", "release_sent", "robot_id", "sibling_order_id", "source_node", "status",
 }
 
 // TestStationView_OrderRowsCarryTheKeysTheGlassReads: a tile's order on the

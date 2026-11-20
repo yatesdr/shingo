@@ -34,6 +34,7 @@ import (
 // and keeps it as its own: one row.
 func TestHandMeetsHandOff_NeitherSideAborts(t *testing.T) {
 	t.Parallel()
+	testdb.ExpectAskLeftOpen(t, "the test takes a hand and stops before the fleet is asked")
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	_, laneID, _ := gatedLane(t, db, "MEET", "")
@@ -60,7 +61,7 @@ func TestHandMeetsHandOff_NeitherSideAborts(t *testing.T) {
 		handDone <- d.acquireHand(picker, Hand{
 			Bins:  []HandBin{{BinID: bin.ID}},
 			Lanes: []laneHold{{laneID: laneID, mode: reservations.ModeOutbound}},
-		}, nil, "test", "meeting")
+		}, nil, "sg-meeting")
 	}()
 	waitForAdvisoryWaiter(t, db.DB, laneID)
 
@@ -98,17 +99,18 @@ func TestHandMeetsHandOff_NeitherSideAborts(t *testing.T) {
 		t.Fatalf("the hand did not commit: %v", handErr)
 	}
 
-	var status string
+	var status, asked string
 	var claimedBy sql.NullInt64
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT status FROM orders WHERE id=$1`, picker.ID).Scan(&status), "picker status")
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT status, asked_vendor_order_id FROM orders WHERE id=$1`, picker.ID).Scan(&status, &asked), "picker status")
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT claimed_by FROM bins WHERE id=$1`, bin.ID).Scan(&claimedBy), "bin claim")
 	var mouthRows int
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM reservations
 		 WHERE order_id=$1 AND resource_kind='mouth' AND node_id=$2 AND mode=$3`,
 		picker.ID, laneID, string(reservations.ModeOutbound)).Scan(&mouthRows), "mouth rows")
-	if status != string(StatusDispatched) || !claimedBy.Valid || claimedBy.Int64 != picker.ID || mouthRows != 1 {
-		t.Fatalf("both committed but the picker is status=%s, bin claimed_by=%v, outbound rows on the lane=%d; want %s, %d, 1",
-			status, claimedBy, mouthRows, StatusDispatched, picker.ID)
+	// The hand writes the ask, not a status: the picker rests `queued` and asks.
+	if status != string(StatusQueued) || asked != "sg-meeting" || !claimedBy.Valid || claimedBy.Int64 != picker.ID || mouthRows != 1 {
+		t.Fatalf("both committed but the picker is status=%s ask=%q, bin claimed_by=%v, outbound rows on the lane=%d; want %s asking sg-meeting, %d, 1",
+			status, asked, claimedBy, mouthRows, StatusQueued, picker.ID)
 	}
 }
 

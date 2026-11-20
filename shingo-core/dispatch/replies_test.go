@@ -122,44 +122,6 @@ func TestReplySender_SendCancelled(t *testing.T) {
 	}
 }
 
-func TestReplySender_SendUpdate(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	rs := newReplySender(db, "test.topic", "core-station", nil)
-
-	env := &protocol.Envelope{
-		ID:  "corr-update",
-		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-4"},
-		Dst: protocol.Address{Role: protocol.RoleCore},
-	}
-	rs.SendUpdate(env, "order-uuid-4", "queued", "awaiting inventory")
-
-	msgs, err := db.ListPendingOutbox(10)
-	if err != nil {
-		t.Fatalf("list outbox: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("outbox messages = %d, want 1", len(msgs))
-	}
-	if msgs[0].MsgType != "order.update" {
-		t.Errorf("event_type = %q, want %q", msgs[0].MsgType, "order.update")
-	}
-
-	var replyEnv protocol.Envelope
-	testutil.MustNoErr(t, json.Unmarshal(msgs[0].Payload, &replyEnv), "unmarshal envelope")
-	var p protocol.OrderUpdate
-	testutil.MustNoErr(t, json.Unmarshal(replyEnv.Payload, &p), "unmarshal update")
-	if p.OrderUUID != "order-uuid-4" {
-		t.Errorf("order_uuid = %q, want %q", p.OrderUUID, "order-uuid-4")
-	}
-	if p.Status != "queued" {
-		t.Errorf("status = %q, want %q", p.Status, "queued")
-	}
-	if p.Detail != "awaiting inventory" {
-		t.Errorf("detail = %q, want %q", p.Detail, "awaiting inventory")
-	}
-}
-
 func TestReplySender_SendReply_EnvelopeConstruction(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

@@ -69,7 +69,7 @@ func TestCancelReturnNotice_ReturningThenReturned(t *testing.T) {
 	// Both fire EventOrderCompleted; "returned" is sent once.
 	live, err := db.GetOrder(ret.ID)
 	testutil.MustNoErr(t, err, "re-read the return")
-	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkDelivered(live, "test"), "deliver the return")
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkDelivered(live, "test", protocol.OrderUpdate{}), "deliver the return")
 	live, err = db.GetOrder(ret.ID)
 	testutil.MustNoErr(t, err, "re-read the delivered return")
 	_, err = eng.dispatcher.Lifecycle().ConfirmReceipt(live, "", "auto", 0)

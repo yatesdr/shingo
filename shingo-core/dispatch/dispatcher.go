@@ -164,7 +164,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	d.pure = plan.NewPlanner(db, d.finder.picker, resolver, d.dbg)
 	d.pure.SetSlotViews(func(groupID int64, l *nodes.DoorLine) plan.Reader { return db.DoorReads(groupID, l) })
 	d.lifecycle.pure = d.pure
-	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.createDigCompound, d.NotifyWaitChanged)
+	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.createDigCompound)
 	d.planner.pure = d.pure
 	d.allocator = newAllocator(db, binManifest, d.finder, d.dbg)
 	d.allocator.slotReleased = d.wakeLanesOfSlots
@@ -706,9 +706,10 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// rather than the mechanism. The mechanism is the splice, and it is installed
 	// at both create sites.
 	//
-	// No-op for every ungated path, which is every lane at both plants: the walk
-	// resolves each step's lane and finds no gated group, so the plan comes back
-	// unchanged and the sealed path below runs byte-identically.
+	// No-op for a plan that enters no lane: the walk finds no lane step, so the
+	// plan comes back unchanged and the sealed path below runs byte-identically.
+	// A plan that enters a lane is always gated, since every lane carries a mark
+	// (store/nodes/marks.go: a lane is never without a waiting spot).
 	// THE DESTINATION-DEFERRED LEG BUILDS A DIFFERENT PLAN, AND THE SAME VALVE
 	// SHIPS IT.
 	//
@@ -897,50 +898,54 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 //
 // ── THE CLAUSES ───────────────────────────────────────────────────────────
 //
+// THE ASK AND THE ARMOR GO FIRST, TOGETHER, AND NOT HERE. A refusal the fleet
+// answered reaches this door as AskClosed: the handover closed the order's ask
+// and demoted its hard holds in one transaction (refuseAsk) before it returned,
+// because closing the ask makes the order acquiring again, and a demote after
+// that could release the holds a second pass had just taken. An order whose ask
+// is still open (that write failed) is held as asked, for a person, and this
+// door writes nothing on it.
+//
 // LOST CAS TOUCHES NOTHING. IsConcurrentTransition means another caller owns
-// this order and is dispatching it; rolling back its status or releasing its
-// holds would describe the loser's failure on the winner's live row. Same rule,
-// same reason, as the occupancy release in commitToFleet.
+// this order and is dispatching it; writing a cause or releasing its holds would
+// describe the loser's failure on the winner's live row. Same rule, same reason,
+// as the occupancy release in commitToFleet.
 //
-// THE CAUSE, THEN THE STATUS, THEN THE BOOKS. The cause goes on the row first
-// because `queued` refuses a row without one (WaitWithoutCause, C1.1.5). The
-// status before the books: a crash between them leaves a `queued` order still
-// holding its armor and its confirmed paper — legal (a hard claim beside its own
-// live reservation) and re-dispatchable. The other order leaves `dispatched`
-// with no armor at all, which is the state the two-clause assertion exists to
-// call a violation.
+// THE WAIT, TOLD ONLY IF IT CHANGED; THE STATUS ONLY FROM `pending`. The cause
+// goes on the row first because `queued` refuses a row without one
+// (WaitWithoutCause, C1.1.5). An order on its first refusal is `pending` and
+// parks `queued`, which tells its station the wait; one already `queued` stays
+// there, and its station hears the new cause only when the cause changed
+// (WriteQueueDetail short-circuits an unchanged one, and the store tells a wait
+// only when it changed). A refusal after the first therefore tells nothing:
+// the order never left the status its station holds.
 //
-// PARKS IN `queued` (dispatched → queued, C1.1.3; SYNTH §2.4). The order keeps
-// its paper and its bin pointer, holds no claim, so the dropoff gate counts it
-// for nothing (orders.InFlightForDropoffSQL reads holders) and it re-competes for
-// its node. What stops a refusal burst double-booking a node when the fleet comes
-// back is the gate re-run: the scanner runs the dropoff gate before it routes a
-// held-bin order to dispatchHeldBin, and the hand takes the claim before the
-// fleet call, so the first order to re-dispatch claims and every other order
-// bound there parks behind it. Pinned by
+// The order keeps its paper and its bin pointer, holds no claim, so the dropoff
+// gate counts it for nothing (orders.InFlightForDropoffSQL reads holders) and it
+// re-competes for its node. What stops a refusal burst double-booking a node
+// when the fleet comes back is the gate re-run: the scanner runs the dropoff
+// gate before it routes a held-bin order to dispatchHeldBin, and the hand takes
+// the claim before the fleet call, so the first order to re-dispatch claims and
+// every other order bound there parks behind it. Pinned by
 // TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes (engine).
 //
 // THE CAUSE IS THE CALLER'S, AND THERE ALWAYS IS ONE (F5). The callers differ —
 // the scanner parks under fleet_unavailable or its ngrp-resolve carve-out, a
 // compound leg under fleet_unavailable — but every one of them waits, so every
 // one names why. A door with a person waiting does not come here: it fails the
-// row from `dispatched` (a legal edge). An empty code is refused and nothing is
-// undone; dispatchDirect returns the refusal to its caller and undoes nothing
-// itself.
+// row (a legal edge from `pending` or `queued`). An empty code is refused and
+// nothing is undone; dispatchDirect returns the refusal to its caller and undoes
+// nothing itself.
 //
-// THE STATION IS TOLD A WAIT IT DOES NOT ALREADY HOLD. told is the wait the
-// caller's order carried before its hand ran — what the station was last told,
-// since the hand's `dispatched` write clears the row's wait and the station hears
-// nothing of it. A first park (told is empty) or a new code is told, once; a
-// re-park under the wait the station already shows is not. The scanner retries a
-// parked order on every pass, and a fleet that refuses every create re-parks it
-// under the same fleet_unavailable each time: telling each one was a station
-// message per pass, on the Pi, for as long as the fleet was down.
+// A REFUSAL BEFORE ANY ASK (a synthetic destination or an undeclared lane,
+// refused at the commit seam; refusal is not AskClosed) took no hand. Its armor,
+// if it holds any (a compound leg is born holding its part of the parent's
+// hand), is demoted here, after the status, as every refusal's was.
 //
 // The cause is FLOORED, NOT EVENTED. causeReleasers records a reasoned absence
 // for fleet-error — "the fleet became willing" is not an event — so nothing here
 // subscribes anything, and the releaser is the ordinary scanner pass.
-func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, told QueueWait, code protocol.QueueCode, cause QueueCause, params QueueParams) {
+func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, refusal error, code protocol.QueueCode, cause QueueCause, params QueueParams) {
 	if order == nil {
 		return
 	}
@@ -949,12 +954,13 @@ func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, told QueueWait
 			"that waits names why (F5); a door that does not wait fails the row itself", order.ID)
 		return
 	}
-	parked := false
-	if order.Status == protocol.StatusDispatched {
-		// The write runs while the order is still `dispatched`, so its own tell is
-		// withheld (WriteQueueDetail tells waiting orders only); the park's tell
-		// is below, against told.
-		d.setQueueReason(order, code, cause, params)
+	if order.AskOpen() {
+		log.Printf("dispatch: order %d — the fleet's answer to ask %s was not written, so the order is held "+
+			"as asked, with its holds, until a person releases it: %v", order.ID, order.AskedVendorOrderID, refusal)
+		return
+	}
+	d.setQueueReason(order, code, cause, params)
+	if order.Status == protocol.StatusPending {
 		if err := d.lifecycle.Park(order, "dispatcher"); err != nil {
 			if IsConcurrentTransition(err) {
 				// Another caller owns it now. Nothing of ours to undo.
@@ -962,14 +968,12 @@ func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, told QueueWait
 					"this order; leaving it alone)", order.ID, err)
 				return
 			}
-			log.Printf("dispatch: order %d could not be moved back to queued after a fleet refusal: "+
-				"%v (it is `dispatched` with no vendor order; the armor is dropped below and the "+
-				"crash-sliver assertion is the backstop)", order.ID, err)
-		} else {
-			parked = true
+			log.Printf("dispatch: order %d could not be parked after a fleet refusal: %v (it rests "+
+				"`pending` under its cause, and the next pass asks again)", order.ID, err)
 		}
-	} else {
-		d.setQueueReason(order, code, cause, params)
+	}
+	if askClosed(refusal) {
+		return
 	}
 	// The books, after the status, and only the armor.
 	// FAIL CLOSED ON AN UNREADABLE PARENT. This flag gates a DELETE of the order's
@@ -980,9 +984,6 @@ func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, told QueueWait
 	if err := d.db.DemoteHoldsAfterFleetRefusal(order.ID, resolved && laneOwner == order.ID); err != nil {
 		log.Printf("dispatch: order %d — could not demote its holds after a fleet refusal: %v "+
 			"(it keeps armor it has no robot for; the acquiring-claim backstop sweeps it)", order.ID, err)
-	}
-	if next := WaitOf(order); parked && (told.Code == "" || WaitTold(told, next)) {
-		d.NotifyWaitChanged(order)
 	}
 }
 
@@ -1305,7 +1306,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	// invalid_state for the same reason the coordinated arm below uses it: Edge
 	// treats that code as recoverable, so the operator sees a refusal and the Edge
 	// mirror survives. Any other code terminalizes the Edge row.
-	if !protocol.IsPreDispatch(order.Status) {
+	if !order.PreDispatch() {
 		d.dbg("redirect refused: order %d is %s — past the point where a redirect is an edit",
 			order.ID, order.Status)
 		d.replies.SendError(env, p.OrderUUID, "invalid_state",
@@ -1389,8 +1390,9 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		if perr := d.lifecycle.Park(order, "dispatcher"); perr != nil {
 			log.Printf("dispatch: park redirected order %d: %v", order.ID, perr)
 		}
+		// The park's own write tells the station `queued` with the cause; a
+		// park that was refused wrote nothing and tells nothing.
 		d.dbg("redirect: order %d held at its new destination (%s)", order.ID, cause)
-		d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), order.QueueReason)
 		return
 	}
 

@@ -360,7 +360,7 @@ function loadModule(file, opts) {
 ['clock.js', 'bus.js', 'esc.js'].forEach(f => loadModule(path.join(SHARED_DIR, f)));
 ctx.serverNow = () => now;
 const boot = loadModule(path.join(SRC_DIR, 'composer-boot.js'), { imports: 1 });
-['order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
+['../../../../shared/count.js', '../../../../shared/count-words.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
     'operator-board-model.js', 'operator-board.js'].forEach(f => loadModule(path.join(SRC_DIR, f)));
 loadModule(path.join(SRC_DIR, 'operator-flow.js'), { imports: 1 });
 ['operator-supply-refusal.js', 'operator-load-bin.js', 'operator-release.js', 'operator-modal.js',

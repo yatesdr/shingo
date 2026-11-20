@@ -52,6 +52,8 @@ func TestSetupEngineListeners_TypedBroadcast(t *testing.T) {
 		{"cancelled", engine.EventOrderCancelled, engine.OrderCancelledEvent{OrderID: 6, Reason: "x"}, "order-update", `"type":"cancelled"`},
 		{"skipped", engine.EventOrderSkipped, engine.OrderSkippedEvent{OrderID: 7, Detail: "x"}, "order-update", `"type":"skipped"`},
 		{"bin", engine.EventBinUpdated, engine.BinUpdatedEvent{NodeID: 9, Action: engine.BinActionMoved, BinID: 1}, "bin-update", ""},
+		{"lift", engine.EventBinEnteredTransit, engine.BinEnteredTransitEvent{BinID: 2, FromNodeID: 9}, "bin-update", `"action":"lifted"`},
+		{"bin_row", engine.EventBinRowChanged, engine.BinRowChangedEvent{BinID: 3}, "bin-row", `"bin_id":3`},
 
 		{"node", engine.EventNodeUpdated, engine.NodeUpdatedEvent{NodeID: 11, Action: "updated"}, "node-update", ""},
 		{"cms", engine.EventCMSTransaction, engine.CMSTransactionEvent{}, "cms-transaction", ""},

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/domain"
 )
 
 // stranded_source.go — the releaser at a chain's end: something live bringing
@@ -77,7 +78,7 @@ func (re *runEnd) bringer(near nearProgress) func(*activeOrder) (string, bool) {
 		}
 		for _, id := range re.ids {
 			h := re.byID[id]
-			if h.id == o.id || h.stranded || protocol.Status(h.status).IsPreDispatch() {
+			if h.id == o.id || h.stranded || domain.PreDispatch(protocol.Status(h.status), h.asked) {
 				continue
 			}
 			if brings(h, w, near) {

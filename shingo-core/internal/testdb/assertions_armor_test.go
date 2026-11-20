@@ -44,8 +44,10 @@ func (s *spy) caught(want string) bool {
 }
 
 // armorFixture builds a bin, a node and an order in one line, for the clauses
-// below to break in one specific way each.
-func armorFixture(t *testing.T, db *store.DB, label string, status protocol.Status) (*orders.Order, int64) {
+// below to break in one specific way each. A `dispatched` order names the
+// fleet's job, job, in the write that makes it so
+// (orders_dispatched_names_its_job); a resting one passes "".
+func armorFixture(t *testing.T, db *store.DB, label string, status protocol.Status, job string) (*orders.Order, int64) {
 	t.Helper()
 	sd := testdb.SetupStandardData(t, db)
 	node := &nodes.Node{Name: "ARMOR-" + label, Enabled: true}
@@ -54,8 +56,18 @@ func armorFixture(t *testing.T, db *store.DB, label string, status protocol.Stat
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "armor-" + label
 		o.Status = status
+		o.VendorOrderID = job
 	})
 	return o, bin.ID
+}
+
+// holdRowFromBeforeV181 drops the rule from this test's own database so it can
+// hold a `dispatched` row with no job: the rule is NOT VALID, so a row written
+// before v183 stays at a plant, and the crash-sliver clause is about those.
+func holdRowFromBeforeV181(t *testing.T, db *store.DB) {
+	t.Helper()
+	_, err := db.DB.Exec(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_dispatched_names_its_job`)
+	testutil.MustNoErr(t, err, "drop the rule to hold a row from before v183")
 }
 
 // TestArmorAssertion_CatchesAnUnarmoredDispatch is clause 1's proof: an order
@@ -68,10 +80,8 @@ func TestArmorAssertion_CatchesAnUnarmoredDispatch(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "unarmored", protocol.StatusDispatched)
+	o, binID := armorFixture(t, db, "unarmored", protocol.StatusDispatched, "RDS-1") // the fleet said yes
 	testdb.HoldCart(t, db, o.ID, binID)
-	_, err := db.DB.Exec(`UPDATE orders SET vendor_order_id='RDS-1' WHERE id=$1`, o.ID)
-	testutil.MustNoErr(t, err, "the fleet said yes")
 
 	s := &spy{TB: t}
 	testdb.AssertArmorMatchesStatus(s, db)
@@ -98,8 +108,8 @@ func TestArmorAssertion_ACompoundSiblingsClaimIsArmor(t *testing.T) {
 	db := testdb.Open(t)
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "armor-parent" })
-	legA, binID := armorFixture(t, db, "sibling-a", protocol.StatusDispatched)
-	_, err := db.DB.Exec(`UPDATE orders SET parent_order_id=$1, vendor_order_id='RDS-2' WHERE id=$2`, parent.ID, legA.ID)
+	legA, binID := armorFixture(t, db, "sibling-a", protocol.StatusDispatched, "RDS-2")
+	_, err := db.DB.Exec(`UPDATE orders SET parent_order_id=$1 WHERE id=$2`, parent.ID, legA.ID)
 	testutil.MustNoErr(t, err, "make leg A a child")
 	legB := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "armor-sibling-b"
@@ -128,10 +138,12 @@ func TestArmorAssertion_CatchesTheOldCrashSliver(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "sliver", protocol.StatusDispatched)
+	holdRowFromBeforeV181(t, db)
+	o, binID := armorFixture(t, db, "sliver", protocol.StatusPending, "")
 	testdb.ClaimBinForTest(t, db, binID, o.ID) // armored — clause 1 has nothing to say
+	// The old hand's status write, with no job, aged past one handover attempt.
 	_, err := db.DB.Exec(
-		`UPDATE orders SET vendor_order_id='', updated_at = NOW() - INTERVAL '30 minutes' WHERE id=$1`, o.ID)
+		`UPDATE orders SET status='dispatched', updated_at = NOW() - INTERVAL '30 minutes' WHERE id=$1`, o.ID)
 	testutil.MustNoErr(t, err, "age the sliver")
 
 	s := &spy{TB: t}
@@ -142,9 +154,11 @@ func TestArmorAssertion_CatchesTheOldCrashSliver(t *testing.T) {
 	}
 }
 
-// TestArmorAssertion_AFreshSliverIsARaceNotAFinding is clause 2's selectivity.
-// Inside the handover window the state is correct and expected; an assertion
-// that fired on every ordinary dispatch would say nothing.
+// TestArmorAssertion_AFreshSliverIsARaceNotAFinding is clause 2's selectivity:
+// the age bound. A fresh vendorless `dispatched` row is not reported. New writes
+// cannot make one since v183; the row stands for one from before it, and the
+// bound is what kept the old handover window, where the state was expected, from
+// reading as a wedge.
 func TestArmorAssertion_AFreshSliverIsARaceNotAFinding(t *testing.T) {
 	t.Parallel()
 	// BEFORE Open, and that ordering is load-bearing: cleanups are LIFO, and
@@ -153,8 +167,12 @@ func TestArmorAssertion_AFreshSliverIsARaceNotAFinding(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "fresh", protocol.StatusDispatched)
+	holdRowFromBeforeV181(t, db)
+	o, binID := armorFixture(t, db, "fresh", protocol.StatusPending, "")
 	testdb.ClaimBinForTest(t, db, binID, o.ID)
+	// The old hand's status write, with no job, a moment ago.
+	_, err := db.DB.Exec(`UPDATE orders SET status='dispatched', updated_at = NOW() WHERE id=$1`, o.ID)
+	testutil.MustNoErr(t, err, "the fresh sliver")
 
 	s := &spy{TB: t}
 	testdb.AssertArmorMatchesStatus(s, db)
@@ -178,7 +196,7 @@ func TestArmorAssertion_CatchesAHoldAtRest(t *testing.T) {
 			testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 			db := testdb.Open(t)
 
-			o, binID := armorFixture(t, db, map[bool]string{false: "halfpark", true: "papered"}[papered], protocol.StatusQueued)
+			o, binID := armorFixture(t, db, map[bool]string{false: "halfpark", true: "papered"}[papered], protocol.StatusQueued, "")
 			testdb.ClaimBinForTest(t, db, binID, o.ID)
 			if !papered {
 				// The reservation goes; the claim stands.
@@ -202,7 +220,7 @@ func TestArmorAssertion_ASoftHoldIsFine(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "soft", protocol.StatusQueued)
+	o, binID := armorFixture(t, db, "soft", protocol.StatusQueued, "")
 	testdb.ReserveBin(t, db, o.ID, binID)
 
 	s := &spy{TB: t}

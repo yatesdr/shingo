@@ -1,6 +1,6 @@
 # Order state machine — bypasses and the lint guard
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 **The code is the state machine; this document is not.** It carries one table
 copied out of the code — the transition table below — only because a test fails
@@ -39,7 +39,7 @@ and `AllStatuses()`.
 | `sourcing` | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `queued` | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `submitted` | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |
-| `dispatched` | `in_transit`, `staged`, `delivered`, `queued`, `cancelled`, `faulted`, `failed` |
+| `dispatched` | `in_transit`, `staged`, `delivered`, `cancelled`, `faulted`, `failed` |
 | `acknowledged` | `dispatched`, `in_transit`, `staged`, `cancelled`, `faulted`, `failed` |
 | `in_transit` | `delivered`, `staged`, `cancelled`, `faulted`, `failed` |
 | `staged` | `in_transit`, `delivered`, `cancelled`, `faulted`, `failed` |
@@ -66,14 +66,31 @@ name collision: `reservations.State` has its own `pending` and `confirmed`, and
 
 ## What bypasses `transition()`
 
-Two things write an order's status without going through the state machine.
+Four kinds of write set an order's status without going through the state
+machine's validation.
 
 1. **The driver itself** — `dispatch/lifecycle.go`. `transition()` has to call the
-   underlying store methods to do its job.
+   underlying store methods to do its job. The fleet's yes is the driver's too:
+   `LifecycleService.Dispatch` writes `dispatched` and the vendor id in one
+   statement guarded on the order's ask (`store.DB.FleetYes`), validating the
+   edge and running the transition's actions itself.
 2. **The INSERT** — `orders.Create` binds the struct's `Status` field directly,
    and writes the creation `order_history` row in the same transaction
    (`IssueOrder` opens one for an order issued alone; a dig's legs and the
    home clear's ride their compound's).
+3. **The bare terminal write** — `store.DB.TerminalizeOrder`, through
+   `FailOrderAtomic`: a compound leg's config fault (`dispatch/compound.go`, four
+   sites), the node-group force-fail (`service.OrderService.FailAtomic`), and the
+   boot retirement of reshuffle-restore orders (`RetireReshuffleRestoreOrders`).
+   No action fires.
+4. **Migrations** — the legacy `completed`→`confirmed` rename and v148's
+   `sourcing`→`queued`.
+
+Whichever door writes it, **the station is told by the store write itself**: the
+status CAS, the fleet's yes and the terminal CAS queue the order's
+`order.update` in their own transaction, carrying the version the same statement bumps
+(`store/order_tell.go`). A bypass skips validation and actions; it does not skip
+the station's tell.
 
 **Number two is the one to know about.** Movement is governed; *entry* is not.
 There is no CHECK constraint on `orders.status` in either schema, `Scan`

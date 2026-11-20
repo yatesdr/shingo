@@ -27,6 +27,19 @@ const D = require('./dom.js');
 // left on screen.
 const { makeRealm } = require(path.join(__dirname, '..', '..', '..', '..', 'shared', 'testdata', 'helper-pins-harness', 'world.js'));
 
+// shared/count.js and count-words.js, real, in one context (count-words.js
+// imports count.js's split): the words a count shows and a line's pieces are
+// the page's, not a stub's.
+const COUNT = (() => {
+    const ctx = require('vm').createContext({});
+    ['count.js', 'count-words.js'].forEach((name) => require('vm').runInContext(
+        fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'shared', name), 'utf8')
+            .replace(/^import .*$/mg, '').replace(/^export (?=function |const )/mg, '')
+            .replace(/^const UOP_WORD/m, 'var UOP_WORD'), ctx));
+    return ctx;
+})();
+const COUNT_WORDS = COUNT;
+
 const fx = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const goldens = {};
 // The Orders page's manual-order node rows, for the Test orders page to be read against.
@@ -92,6 +105,12 @@ function lender(rec, doc, extra) {
         formatClockSeconds() { return ''; }, plantDate() { return ''; },
         relevantNotices() { return []; }, routeStripHTML() { return ''; }, routeTimelineHTML() { return ''; },
         openNodeModal() { rec.modals.push('openNodeModal'); },
+        abovePackNote: COUNT_WORDS.abovePackNote,
+        linePieces: COUNT.linePieces,
+        countReading: COUNT.countReading,
+        uopRatio: COUNT.uopRatio,
+        countBoxLabel: COUNT.countBoxLabel,
+        typedNote: COUNT.typedNote,
     };
     return (n) => (extra && n in extra ? extra[n] : stubs[n]);
 }
@@ -379,13 +398,15 @@ function binsPage() {
     // (bins-rdskeys.js) over the same recorded shell as the node and part
     // adapters, and the key strip (bins-keystrip.js) over it.
     const echo = D.loadPage('static/pages/bins-echo.js', { console: g.console }, () => undefined);
-    const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, () => undefined);
+    const row = D.loadPage('static/pages/bins-row.js', { console: g.console }, (n) => (n === 'countReading' ? COUNT.countReading : undefined));
+    const live = D.loadPage('static/pages/bins-live.js', { console: g.console }, () => undefined);
     const keys = D.loadPage('static/pages/bins-rdskeys.js', { console: g.console }, () => undefined);
     const strip = D.loadPage('static/pages/bins-keystrip.js', { console: g.console, MutationObserver: function () {} },
         (n) => (n === 'rdsKeyPicker' ? keys.ctx.rdsKeyPicker : undefined));
     const p = D.loadPage('static/pages/bins.js', g, lender(rec, doc, {
         echoesFor: echo.ctx.echoesFor, newEchoLedger: echo.ctx.newEchoLedger,
         binRowView: row.ctx.binRowView, uopText: row.ctx.uopText,
+        newRowsFeed: live.ctx.newRowsFeed,
         mountKeyStrip: strip.ctx.mountKeyStrip,
         switchTab(key) { return key; },
     }));

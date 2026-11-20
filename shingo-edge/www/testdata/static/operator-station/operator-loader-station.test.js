@@ -273,7 +273,7 @@ function loadModule(name) {
     Object.assign(ctx, out.exported);
     mods[name] = out.fns;
 }
-['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
+['../../../../shared/esc.js', '../../../../shared/count.js', '../../../../shared/count-words.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
     'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js', 'operator-modal.js',
     'operator-render.js',
 ].forEach(loadModule);
@@ -511,7 +511,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
         'board bar: Request empty greyed while an order is live; Pull from market beside it (sentence case)');
     eq(barButtons()[0].disabled, true, 'board bar: the greyed Request empty is disabled');
     const c = pcCard('PART-A');
-    eq(cardText(c), ['SMN_A1', ' · no bin', 'PART-A', '· CELL-1 has 30 left'.slice(2)],
+    eq(cardText(c), ['SMN_A1', ' · no bin', 'PART-A', '· CELL-1 has 15 UoP left (30 parts)'.slice(2)],
         'Load card: the spot, the part, the cell it serves');
     eq(pcCard('PART-B'), null, 'a part no running style uses on a threshold loader draws no card');
     await tap(c);
@@ -768,7 +768,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq(headerButtons(), [], 'a shared unloader: no CHANGEOVER (changed: the header kept it)');
     eq(zoneTitles(), ['At the windows'], 'a shared unloader: one list');
     eq(pcCards().map(c => cardText(c)), [
-        ['ULN_A1', 'ARRIVED', 'PART-A · 7', 'Send back TOTE-1'],
+        ['ULN_A1', 'ARRIVED', 'PART-A · 3 UoP (7 parts)', 'Send back TOTE-1'],
         ['ULN_A2', 'TOTE-1 · empty', 'Send it'],
     ], 'At the windows: one card a cart in three lines, the spot and its state, what is on the cart (a full: its part and ' +
         'the count of its row), the instruction; a station of two bin types says what to send back (changed 2026-11-10)');
@@ -779,7 +779,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     await tap(winCard('ULN_A1'));
     eq(overlayTexts()[0], 'Full pulled, empty filled?', 'cart full: the CLEAR panel');
     eq(overlayButtons(), ['TOTE-1', 'TOTE-2', 'CANCEL'], 'cart full: a type per part');
-    eq(overlayTexts().indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true, 'cart full: the discard count');
+    // PART-A runs 2 a cycle here: the count reads its UoP, its parts in brackets.
+    eq(overlayTexts().indexOf('This slot still counts 3 UoP (7 parts). Confirming writes it to zero.') >= 0, true, 'cart full: the discard count');
     await tapOverlay('TOTE-2');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-2' } }],
         'cart full: a type\'s tap posts clear-bin with it');
@@ -1178,9 +1179,11 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // tablet's draws the same bands at twice the size, so none is replaced;
     // the grid drawn as anything else drops it.
     const scaleNow = () => [grid.style.props['--os-pc-scale'], grid.className.split(' ').filter(c => /^os-pc-step-/.test(c))];
+    // The bands kept are the tablet's own: the draw before was at another
+    // width, whose cells row may lay out in other columns.
     ctx.window.innerWidth = 1024; ctx.window.innerHeight = 768;
-    const kept = grid.children.slice();
     ctx.renderGrid();
+    const kept = grid.children.slice();
     const tablet = scaleNow();
     ctx.window.innerWidth = 2048; ctx.window.innerHeight = 1536;
     ctx.renderGrid();
@@ -1536,7 +1539,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     await keypad.onOk(0, 0);
     await confirmLoad();
     const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
-    eq([posts(), toasts.slice(-1)], [[], ['Set UoP Count first']], 'LOAD: a count of 0 posts nothing');
+    eq([posts(), toasts.slice(-1)], [[], ['Type the count first: a LOAD needs 1 or more']], 'LOAD: a count of 0 posts nothing');
     ctx.openKeypad = realKeypad;
 }
 

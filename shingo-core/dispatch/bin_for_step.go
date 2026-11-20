@@ -118,13 +118,13 @@ func wantedBin(order *orders.Order) stepBin {
 // the failure they produce is the same sentence — a swap refused entry forever
 // because it was checked against the machine-side bin.
 //
-// IsPreDispatch IS THE PREDICATE, not a status list written out again: pending,
-// sourcing and queued are exactly the states in which no robot has been sent, so
+// PreDispatch IS THE PREDICATE, not a status list written out again: pending and
+// queued with no ask open are exactly the orders no robot has been sent for, so
 // no wait has been reached, so wait_index cannot mean what it says. Everything
 // else keeps laneEntryAfterWait, which is correct for an order that really is
 // standing at a mark.
 func entryStepIndex(order *orders.Order, steps []resolvedStep) (int, bool) {
-	if protocol.IsPreDispatch(order.Status) {
+	if order.PreDispatch() {
 		for i, s := range steps {
 			switch s.Action {
 			case protocol.ActionPickup, protocol.ActionDropoff:

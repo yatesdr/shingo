@@ -180,9 +180,10 @@ export function cardModel(entry, code) {
     const payloadDelivered = payloadOrders.some(function (o) { return o.status === 'delivered'; });
     // acknowledged is Core's intake ack (the fleet accepted the order,
     // pre-dispatch) — it is NOT a moving robot. Keep it separate from in_transit
-    // so it renders as its own step, not "IN TRANSIT"; in_transit alone is the
-    // real transit bucket.
-    const payloadInTransit = payloadOrders.some(function (o) { return o.status === 'in_transit'; });
+    // so it renders as its own step, not "IN TRANSIT". The transit bucket is
+    // in_transit and dispatched: a dispatched order read IN TRANSIT when its
+    // waybill wrote the status, and still does now that Core tells `dispatched`.
+    const payloadInTransit = payloadOrders.some(function (o) { return o.status === 'in_transit' || o.status === 'dispatched'; });
     const payloadAcknowledged = payloadOrders.some(function (o) { return o.status === 'acknowledged'; });
     const loadNow = f.binEmpty && hasPayloadDemand;
     const canClearThisPayload = f.canClearLoaded && f.binPayload === code;
@@ -244,7 +245,7 @@ export function cardModel(entry, code) {
     // queued) so the badge's colour and its text can never describe different
     // orders when a payload has more than one in flight.
     const badgeOrder = payloadOrders.find(function (o) { return o.status === 'delivered'; }) ||
-        payloadOrders.find(function (o) { return o.status === 'in_transit'; }) ||
+        payloadOrders.find(function (o) { return o.status === 'in_transit' || o.status === 'dispatched'; }) ||
         payloadOrders[0];
 
     // Queue facts for a waiting card. queueReason is Core's own blocking sentence,
@@ -303,7 +304,8 @@ export function headerModel(entry) {
     // order (fleet accepted, not yet moving) is NOT arriving, so it falls
     // through to the "AWAITING" default rather than pretending a bin is on its
     // way.
-    if (f.activeOrders.some(function (o) { return o.status === 'in_transit'; })) {
+    // dispatched reads as in transit, as it did when the waybill made it so.
+    if (f.activeOrders.some(function (o) { return o.status === 'in_transit' || o.status === 'dispatched'; })) {
         return { text: w.awaiting + ' ARRIVING', color: 'background:#1a2a3a;color:#6cf' };
     }
     return { text: 'AWAITING ' + w.awaiting, color: 'background:#2a2a1a;color:#ff6' };

@@ -51,7 +51,9 @@ var deliberatelyNotWritten = map[string]string{
 	// fact it does not decide, and would put a second writer next to
 	// SetCompoundOpen. Openness is written on purpose, by one place, or not at
 	// all.
-	"open_for_children": "born sealed by DEFAULT false; only SetCompoundOpen ever changes it (store/orders.go)",
+	"open_for_children":     "born sealed by DEFAULT false; only SetCompoundOpen ever changes it (store/orders.go)",
+	"version":               "born 1 by DEFAULT (v181); bumped only by the writes its station is told about (the status, robot and wait writes), in their own statements",
+	"asked_vendor_order_id": "born blank by DEFAULT (v182); only the hand sets it, and the fleet's answer clears it (store/orders/ask.go)",
 }
 
 // TestWriter_CoversEveryOrdersColumn pins that every column on the orders table

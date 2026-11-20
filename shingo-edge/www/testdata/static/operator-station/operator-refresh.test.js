@@ -373,7 +373,7 @@ ctx.formatClock = (iso) => String(iso);
 const bannerCalls = [];
 ctx.showLostConnectionBanner = (server, lastFrameAt) => { bannerCalls.push('show ' + server + ' ' + lastFrameAt); };
 ctx.clearLostConnectionBanner = () => { bannerCalls.push('clear'); };
-['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
+['../../../../shared/esc.js', '../../../../shared/count.js', '../../../../shared/count-words.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
     'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js',
     'operator-release.js', 'operator-modal.js', 'operator-render.js', 'operator-robot-panel.js',
 ].forEach(loadModule);

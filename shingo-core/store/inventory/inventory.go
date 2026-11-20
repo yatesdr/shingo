@@ -57,7 +57,9 @@ WITH bin_items AS (
     -- Bins with manifest items
     -- qty is DERIVED from uop_remaining by protocol.ManifestItem's count rule:
     -- a template of one line (pl.lines = 1) lists the bin's count as it
-    -- stands, and a kit's line is that count times its parts_per_cycle. The
+    -- stands, and a kit's line is that count times its parts_per_cycle
+    -- (protocol.LinePieces in SQL, pinned to it over the worked examples by
+    -- TestListInventory_AgreesWithTheCountExamples). The
     -- manifest line carries no count of its own — it used to, and nothing
     -- rewrote that number as the bin was drawn down, so this column reported
     -- a stale count for every partially-consumed bin.

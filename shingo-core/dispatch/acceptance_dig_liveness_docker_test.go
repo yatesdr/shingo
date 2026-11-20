@@ -80,7 +80,7 @@ func claimedWallFixture(t *testing.T, db *store.DB, tag string) (
 	claimant = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = tag + "-claimant"
 		o.SourceNode = w[0].Name
-		o.Status = protocol.StatusDispatched
+		o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-"+tag+"-claimant"
 	})
 	testdb.ClaimBinForTest(t, db, bin.ID, claimant.ID)
 	return laneNode, w[1], bin.ID, claimant

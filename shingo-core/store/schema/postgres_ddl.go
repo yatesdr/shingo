@@ -286,7 +286,19 @@ CREATE TABLE IF NOT EXISTS orders (
     -- Written by the create and by each append; the block subscriber reads a
     -- finished block's meaning from it. NULL on an order sent before migration
     -- 179, which added it, and read by the old name rule for its whole life.
-    block_actions JSONB DEFAULT '{}'::jsonb
+    block_actions JSONB DEFAULT '{}'::jsonb,
+    -- One counter for everything the order's station is told: bumped in the
+    -- same statement as a status write, a robot write that names a new robot,
+    -- and a change of wait the station is told. It rides the order.update, the
+    -- reconcile snapshot and the projection, and the station applies only a
+    -- newer one. Born 1, so a 0 on the wire is an older Core. Added by
+    -- migration 181.
+    version BIGINT NOT NULL DEFAULT 1,
+    -- The vendor order id Core is asking the fleet to create, from the hand
+    -- that takes the order's holds until the fleet answers; blank when Core is
+    -- not asking. Core-only, never on the wire. An open ask is spoken for
+    -- whatever the status says. Added by migration 182.
+    asked_vendor_order_id TEXT NOT NULL DEFAULT ''
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

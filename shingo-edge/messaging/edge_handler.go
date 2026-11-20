@@ -55,8 +55,20 @@ func (h *EdgeHandler) HandleOrderWaybill(env *protocol.Envelope, p *protocol.Ord
 }
 
 func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.OrderUpdate) {
-	h.DebugLog.Log("order_update uuid=%s status=%s robot=%s", p.OrderUUID, p.Status, p.RobotID)
-	log.Printf("edge_handler: order update: uuid=%s status=%s robot=%s", p.OrderUUID, p.Status, p.RobotID)
+	h.DebugLog.Log("order_update uuid=%s status=%s robot=%s version=%d", p.OrderUUID, p.Status, p.RobotID, p.Version)
+	log.Printf("edge_handler: order update: uuid=%s status=%s robot=%s version=%d", p.OrderUUID, p.Status, p.RobotID, p.Version)
+
+	// A CORE THAT VERSIONS ITS ORDERS tells the status from the write that set
+	// it, and the whole message is applied in one place, only when it is newer
+	// than what this Edge holds (orders/core_word.go): the status, the robot,
+	// the ETA, the wait and the fault clock. Everything below is the arms for a
+	// Core that does not (version 0), unchanged.
+	if p.Version > 0 {
+		if err := h.orderMgr.ApplyCoreUpdate(p); err != nil {
+			log.Printf("edge_handler: apply core word %s v%d for %s: %v", p.Status, p.Version, p.OrderUUID, err)
+		}
+		return
+	}
 
 	// AN OLD CORE STILL SAYS `sourcing`, and this Edge never stores it (C1; F3):
 	// it is `queued` with a cause, translated here at the door, before the status
@@ -275,7 +287,7 @@ func (h *EdgeHandler) HandleOrderSkipped(env *protocol.Envelope, p *protocol.Ord
 func (h *EdgeHandler) HandleOrderCancelled(env *protocol.Envelope, p *protocol.OrderCancelled) {
 	h.DebugLog.Log("order_cancelled uuid=%s reason=%s", p.OrderUUID, p.Reason)
 	log.Printf("edge_handler: order cancelled: uuid=%s reason=%s", p.OrderUUID, p.Reason)
-	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyCancelled, "", "", p.Reason); err != nil {
+	if err := h.orderMgr.HandleCancelledNotice(p); err != nil {
 		log.Printf("edge_handler: handle cancelled for %s: %v", p.OrderUUID, err)
 	}
 }

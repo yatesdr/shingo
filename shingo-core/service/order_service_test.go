@@ -288,13 +288,22 @@ func TestOrderService_ListOrderHistory_ReturnsTransitions(t *testing.T) {
 	o := makeOrder(t, db, sd.LineNode.Name)
 	// (C1: a park carries its code on the row; a bare →queued write is a wait
 	// nobody can explain, and the teardown sweep reports it.)
-	moved, err := db.UpdateOrderStatusFromWithReason(o.ID, "pending", "queued", "ready",
-		store.HistoryReason{Code: string(protocol.QueueWaitingForMaterial)})
+	_, moved, err := db.UpdateOrderStatusFromWithReason(o.ID, "pending", "queued", "ready",
+		store.HistoryReason{Code: string(protocol.QueueWaitingForMaterial)}, protocol.OrderUpdate{})
 	testutil.MustNoErr(t, err, "park pending→queued")
 	if !moved {
 		t.Fatal("pending→queued was refused")
 	}
-	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, "dispatched", "assigned"), "UpdateOrderStatus dispatched")
+	// `dispatched` is the fleet's yes: the status and the job in one write, with
+	// its history row. A status write alone is refused
+	// (orders_dispatched_names_its_job), so the order asks and the fleet answers.
+	testdb.SeedAsk(t, db, o.ID, protocol.StatusQueued, "sg-history")
+	_, moved, err = db.FleetYes(o.ID, protocol.StatusQueued, "sg-history", "", nil, "assigned",
+		store.HistoryReason{}, protocol.OrderUpdate{})
+	testutil.MustNoErr(t, err, "the fleet's yes")
+	if !moved {
+		t.Fatal("the fleet's yes found no ask on the queued order")
+	}
 
 	history, err := svc.ListOrderHistory(o.ID)
 	if err != nil {

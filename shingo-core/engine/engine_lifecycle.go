@@ -28,21 +28,12 @@ import (
 // stop channel and halts each subsystem that owns a goroutine.
 
 func (e *Engine) Start() {
-	// Create emitter adapters
-	de := &dispatchEmitter{bus: e.Events, engine: e}
-	pe := &pollerEmitter{bus: e.Events, audit: e.auditOrderNote}
+	// Every ask open now was left by a Core that died inside a create: nothing
+	// in this process can have opened one yet (the doors subscribe after Start,
+	// the scanner starts below). Named first (reconciliation_boot_asks.go).
+	e.reconciliation.TakeBootAsks()
 
-	// Create dispatcher with synthetic node resolver
-	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
-	e.dispatcher = e.newDispatcher(de, resolver)
-
-	// Initialize tracker if backend supports it
-	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
-		tb.InitTracker(pe, &orderResolver{db: e.db})
-		e.tracker = tb.Tracker()
-	}
-
-	e.startFulfillment(resolver)
+	e.startFulfillment(e.startDispatch())
 
 	// Wire event handlers, and start the goroutine the ones that acquire hand
 	// their work to.
@@ -260,6 +251,21 @@ func (e *Engine) startFulfillment(resolver dispatch.NodeResolver) {
 	e.dispatcher.SetAcquirer(e.fulfillment)
 }
 
+// startDispatch builds the dispatcher, with the synthetic node resolver, and the
+// tracker when the backend tracks orders; it returns the resolver for the
+// fulfillment scanner.
+func (e *Engine) startDispatch() *dispatch.DefaultResolver {
+	de := &dispatchEmitter{bus: e.Events, engine: e}
+	pe := &pollerEmitter{bus: e.Events, audit: e.auditOrderNote}
+	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
+	e.dispatcher = e.newDispatcher(de, resolver)
+	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
+		tb.InitTracker(pe, &orderResolver{db: e.db})
+		e.tracker = tb.Tracker()
+	}
+	return resolver
+}
+
 // startBootScan scans, on its own goroutine, the orders queued before a restart,
 // and closes bootScanned when the scan has finished.
 func (e *Engine) startBootScan() {
@@ -330,7 +336,7 @@ func (e *Engine) backfillETAsForInTransitOrders() {
 		return
 	}
 	const q = `
-SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node, o.status,
+SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node,
        (SELECT MAX(created_at) FROM order_history
             WHERE order_id = o.id AND status = 'in_transit') AS last_in_transit_at
 FROM orders o
@@ -347,11 +353,11 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 	var sent int
 	for rows.Next() {
 		var (
-			id                                                    int64
-			edgeUUID, stationID, sourceNode, deliveryNode, status string
-			inTransitAt                                           sql.NullTime
+			id                                            int64
+			edgeUUID, stationID, sourceNode, deliveryNode string
+			inTransitAt                                   sql.NullTime
 		)
-		if err := rows.Scan(&id, &edgeUUID, &stationID, &sourceNode, &deliveryNode, &status, &inTransitAt); err != nil {
+		if err := rows.Scan(&id, &edgeUUID, &stationID, &sourceNode, &deliveryNode, &inTransitAt); err != nil {
 			e.logFn("engine: eta backfill scan: %v", err)
 			continue
 		}
@@ -362,9 +368,14 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 		if etaStr == "" {
 			continue
 		}
+		// THE ETA ONLY, NO STATUS. The order's status reached its station from
+		// the write that set it (store queueTellTx); this restores a pill a Core
+		// restart lost, and claims nothing about the status. An empty status is
+		// no status claim: an Edge applies the ETA and leaves the status as it
+		// is. It once carried the row's status, which made the backfill the only
+		// thing that ever told a station a Core-side release happened.
 		if err := e.sendToEdge(protocol.TypeOrderUpdate, stationID, &protocol.OrderUpdate{
 			OrderUUID: edgeUUID,
-			Status:    status,
 			Detail:    "eta restored on boot",
 			ETA:       etaStr,
 		}); err != nil {

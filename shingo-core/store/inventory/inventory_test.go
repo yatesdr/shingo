@@ -3,8 +3,14 @@
 package inventory_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/inventory"
@@ -174,5 +180,75 @@ func TestListInventory_QtyFollowsUOPNotTheManifest(t *testing.T) {
 	}
 	if got := qtyOf("KNOWN"); got != 4 {
 		t.Errorf("drawn-down KNOWN qty = %d, want 4 — the count did not follow uop_remaining", got)
+	}
+}
+
+// TestListInventory_AgreesWithTheCountExamples — the inventory list's SQL copy
+// of the count rule (a line's qty from uop_remaining: the count for a payload of
+// one line, count x the line's ratio for a kit; it cannot call Go) answers
+// protocol.LinePieces for every worked example of
+// protocol/testdata/count-examples.json that has a line, the file the Go and
+// browser copies are pinned by.
+func TestListInventory_AgreesWithTheCountExamples(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "protocol", "testdata", "count-examples.json"))
+	if err != nil {
+		t.Fatalf("read the worked examples: %v", err)
+	}
+	var f struct {
+		Examples []struct {
+			Name       string                  `json:"name"`
+			Lines      []protocol.ManifestItem `json:"lines"`
+			Count      int                     `json:"count"`
+			LinePieces []int64                 `json:"line_pieces"`
+		} `json:"examples"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil || len(f.Examples) == 0 {
+		t.Fatalf("parse the worked examples (%d read): %v", len(f.Examples), err)
+	}
+	db := testdb.Open(t)
+	bt := &bins.BinType{Code: "CNT-BT"}
+	bins.CreateType(db.DB, bt)
+	node := &nodes.Node{Name: "CNT-NODE", Enabled: true}
+	nodes.Create(db.DB, node)
+	checked := 0
+	for i, ex := range f.Examples {
+		if len(ex.Lines) == 0 {
+			continue // no line, no inventory row to read
+		}
+		code, label := fmt.Sprintf("PAY-CNT-%d", i), fmt.Sprintf("CNT-BIN-%d", i)
+		pay := &payloads.Payload{Code: code, UOPCapacity: 800}
+		payloads.Create(db.DB, pay)
+		var items []map[string]string
+		for _, l := range ex.Lines {
+			payloads.CreateItem(db.DB, &payloads.ManifestItem{PayloadID: pay.ID, PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle}, "")
+			items = append(items, map[string]string{"part_number": l.PartNumber})
+		}
+		manifest, err := json.Marshal(map[string]any{"items": items})
+		testutil.MustNoErr(t, err, "marshal the manifest")
+		b := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &node.ID, Status: "available"}
+		bins.Create(db.DB, b)
+		bins.SetManifest(db.DB, b.ID, string(manifest), code, ex.Count)
+		rows, err := inventory.List(db.DB)
+		if err != nil {
+			t.Fatalf("%s: List: %v", ex.Name, err)
+		}
+		got := map[string]int64{}
+		for _, r := range rows {
+			if r.BinLabel == label {
+				got[r.PartNumber] = r.Qty
+			}
+		}
+		for li, l := range ex.Lines {
+			want := protocol.LinePieces(ex.Lines, li, int64(ex.Count))
+			if want != ex.LinePieces[li] || got[l.PartNumber] != want {
+				t.Errorf("%s: line %s: the inventory list gives %d, protocol.LinePieces %d, the example %d",
+					ex.Name, l.PartNumber, got[l.PartNumber], want, ex.LinePieces[li])
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no example line was checked")
 	}
 }

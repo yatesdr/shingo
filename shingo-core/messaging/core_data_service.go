@@ -81,6 +81,11 @@ type CoreDataService struct {
 	// (Phase E). Optional; nil in tests and headless runs. Set once at the
 	// composition root before the Kafka subscription starts delivering.
 	cellTickEmitter func(station string, processID, styleID int64, recordedAt time.Time)
+	// binCountEmitter, if set, fires once per count delta applied to a bin, so
+	// the composition root can tell the screens that bin's count moved (the
+	// SSE bin-row). Optional; nil in tests and headless runs. Set once at the
+	// composition root before the Kafka subscription starts delivering.
+	binCountEmitter func(binID int64)
 	// faultGrace / faultNoticeAfter are config durations echoed onto faulted
 	// order snapshots so a reconciling Edge can render the fault line and its
 	// clock. Optional (see SetFaultWindow); zero means the snapshot carries the
@@ -131,6 +136,14 @@ func (s *CoreDataService) SetFaultWindow(grace, noticeAfter time.Duration) {
 // cell-heartbeat. Optional; may be nil. Set before messages are consumed.
 func (s *CoreDataService) SetCellTickEmitter(fn func(station string, processID, styleID int64, recordedAt time.Time)) {
 	s.cellTickEmitter = fn
+}
+
+// SetBinCountEmitter wires a callback invoked for each count delta applied to
+// a bin (HandleBinUOPDelta). The composition root points it at the engine
+// event bus as EventBinRowChanged, which SetupEngineListeners rebroadcasts as
+// the SSE bin-row. Optional; may be nil. Set before messages are consumed.
+func (s *CoreDataService) SetBinCountEmitter(fn func(binID int64)) {
+	s.binCountEmitter = fn
 }
 
 // NewCoreDataService constructs a CoreDataService. Subject-router
@@ -339,6 +352,9 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 	}
 	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d wire_delta=%d net=%s reason=%s",
 		station, d.BinID, d.SequenceID, d.Delta, netString(d.Net), d.Reason)
+	if s.binCountEmitter != nil {
+		s.binCountEmitter(d.BinID)
+	}
 
 	// Notify the UOP-threshold monitor, which re-reads the payload's
 	// authoritative total (the just-applied write included) and checks its
@@ -636,6 +652,7 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 			snap.ErrorDetail = order.ErrorDetail
 			snap.QueueReason = order.QueueReason
 			snap.QueueCode = order.QueueCode
+			snap.Version = order.Version
 			s.attachFaultWindow(&snap, order.ID, order.Status)
 		}
 		resp.Orders = append(resp.Orders, snap)

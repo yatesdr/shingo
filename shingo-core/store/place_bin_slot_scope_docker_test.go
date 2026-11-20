@@ -73,11 +73,10 @@ func (w slotWorld) holder(t *testing.T) (claimedBy *int64, rows int) {
 func TestPlaceBin_AnArrivalLeavesAStrangersSlotAlone(t *testing.T) {
 	t.Parallel()
 	w := newSlotWorld(t, "SCOPE-STRANGER")
-	// A robot's order: dispatched, so its confirmed slot is a hold in flight.
+	// A robot's order: the fleet has it, so its confirmed slot is a hold in flight.
 	stranger := testdb.CreateOrder(t, w.db, func(o *orders.Order) {
 		o.EdgeUUID = "scope-stranger"
-		o.Status = protocol.StatusDispatched
-	})
+	}, testdb.FleetHas("sg-scope-stranger"))
 	placer := testdb.CreateOrder(t, w.db, func(o *orders.Order) { o.EdgeUUID = "scope-placer" })
 	w.holdSlot(t, stranger.ID)
 

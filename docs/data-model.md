@@ -1,6 +1,6 @@
 # Data Model
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 This document describes the core data entities in Shingo, their relationships, and the key concepts that drive dispatch and storage logic.
 
@@ -31,11 +31,12 @@ A **Payload** defines what a container should hold. A **Bin** is the physical co
 
 A template defining a container's expected contents and capacity. Analogous to a product SKU for containers.
 
-Columns: [`payloads`](#core-payloads). `uop_capacity` is the standard pack, in the bin's count: the pieces a full
-bin of a part alone holds, or the cycles a full bin of a kit feeds. The template manifest is its rows in
+Columns: [`payloads`](#core-payloads). `uop_capacity` is the standard pack, in the bin's count: the parts a full
+bin of a part alone holds, or the kits a full cart of a kit holds. The template manifest is its rows in
 [`payload_manifest`](#core-payload_manifest): one per part, each with `parts_per_cycle`, the pieces of the part one
-cycle of an assembly that consumes it uses (an assembly consume setting; a press never reads it). How a count turns
-into pieces is [uop-architecture.md](uop-architecture.md#process-semantics)'s.
+cycle of an assembly that consumes it uses (the payload's ratio; an assembly consume setting; a press never reads
+it). No column stores UOP: it is the count divided by the ratio, worked out where it is shown
+([uop-architecture.md](uop-architecture.md#process-semantics)).
 
 **Relationships:**
 - Has many compatible **bin_types** (via `payload_bin_types` junction)
@@ -55,7 +56,7 @@ Columns: [`bins`](#core-bins). Notes the schema does not say:
   [Reservations](#reservations)). They can drift briefly: `ReleaseOrphanedClaims` clears the claim and leaves the
   reservation row for `ReapOrphanedReservations`.
 - `manifest` is the actual contents (which parts, no counts); `uop_remaining` the count left, in the unit of the
-  payload's `uop_capacity` (pieces, for a part alone).
+  payload's `uop_capacity` (parts for a part alone, kits for a kit), not UOP despite its name.
 - `loaded_at` is when the manifest was confirmed, and drives FIFO ordering.
 - `staged_expires_at` is written NULL by every staging writer (`helpers.StagedSetSQL`): staging does not expire
   (`resolveNodeStaging` stamps no expiry). A non-NULL value is an old stamp, which reconciliation reports and
@@ -145,14 +146,25 @@ Columns: [`orders`](#core-orders). Notes the schema does not say:
 - `order_type` is an [Order Type](#order-types); `status` a [status](#order-statuses).
 - `delivery_node` — see the caveat below. `source_node` and `delivery_node` are node names, not keys: the table
   has no reference to `nodes`.
-- `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string.
+- `vendor_order_id` and `vendor_state` are the fleet backend's order id and current state string. A `dispatched`
+  order names its job (`orders_dispatched_names_its_job`, v183): `dispatched` is written once, by the fleet's
+  yes, with the vendor id. The rule is NOT VALID, so rows written before v183 that break it are kept (v183 counts
+  and logs them) and every new write is held to it.
 - `block_actions` is what each block sent to the fleet for the order is, by block id: `pickup`, `dropoff`, `wait`,
-  or `''` for a block of no step's kind. Written by the create's vendor write and by each append's compare-and-set,
-  read when a block finishes; never on the wire. `NULL` on an order sent before the column existed, which is read by
+  or `''` for a block of no step's kind. Written by the fleet's yes, with the vendor id, and by each append's
+  compare-and-set; read when a block finishes; never on the wire. `NULL` on an order sent before the column existed, which is read by
   its block names for its whole life ([What a block was](bin-transit-state.md#what-a-block-was)).
 - `named_bin_id` is the one bin the asker named the order for, if any — a constraint, not a record.
 - `parent_order_id` is the parent compound order (for reshuffle child orders); `sequence` the step sequence within
   it.
+- `version` is one counter for everything the order's station is told: it is bumped in the same statement as a
+  status write, a robot write that changes the robot to a named one, and a change of wait the station is told
+  (`orders.WaitTells`). It rides `order.update`, the reconcile snapshot and the projection, and the station applies
+  only a newer one. Every row starts at 1 (v181), so a 0 on the wire is an older Core.
+- `asked_vendor_order_id` is the vendor order id Core is asking the fleet to create (v182). The order's hand writes
+  it in the transaction that takes its holds; the fleet's yes moves it to `vendor_order_id`, and a no clears it.
+  Blank is no ask. While it is set the order is spoken for whatever its status says, and no other status move
+  lands on it except an ending. Core-only: never on the wire.
 
 The bins an order carries are not a column of the order: they are its rows in
 `order_bins` ([Order carts](#order-carts-order_bins)).
@@ -264,7 +276,7 @@ allow-list: only `available` and `staged` may be picked (`BinStatus.Sourceable`,
 | `sourcing` | `StatusSourcing` | no | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `queued` | `StatusQueued` | no | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `submitted` | `StatusSubmitted` | no | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |
-| `dispatched` | `StatusDispatched` | no | `in_transit`, `staged`, `delivered`, `queued`, `cancelled`, `faulted`, `failed` |
+| `dispatched` | `StatusDispatched` | no | `in_transit`, `staged`, `delivered`, `cancelled`, `faulted`, `failed` |
 | `acknowledged` | `StatusAcknowledged` | no | `dispatched`, `in_transit`, `staged`, `cancelled`, `faulted`, `failed` |
 | `in_transit` | `StatusInTransit` | no | `delivered`, `staged`, `cancelled`, `faulted`, `failed` |
 | `staged` | `StatusStaged` | no | `in_transit`, `delivered`, `cancelled`, `faulted`, `failed` |
@@ -492,7 +504,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`order_bins`](#core-order_bins) | 6 | `id` | [`bins`](#core-bins), [`orders`](#core-orders) |
 | [`order_history`](#core-order_history) | 8 | `id` | [`orders`](#core-orders) |
 | [`order_intake_refusals`](#core-order_intake_refusals) | 5 | `edge_uuid` |  |
-| [`orders`](#core-orders) | 46 | `id` | `orders` |
+| [`orders`](#core-orders) | 48 | `id` | `orders` |
 | [`outbox`](#core-outbox) | 8 | `id` |  |
 | [`parts`](#core-parts) | 6 | `id` |  |
 | [`payload_bin_types`](#core-payload_bin_types) | 2 | `payload_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`payloads`](#core-payloads) |
@@ -1437,7 +1449,10 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `want` | `text` | yes | `''` |  |
 | `steps_done` | `integer` | yes | `0` |  |
 | `block_actions` | `jsonb` |  | `'{}'::jsonb` |  |
+| `version` | `bigint` | yes | `1` |  |
+| `asked_vendor_order_id` | `text` | yes | `''` |  |
 
+- Check `((status <> 'dispatched') OR (vendor_order_id <> ''))`
 - Unique (edge_uuid) where `edge_uuid <> ''`
 
 #### Core: `outbox`
@@ -1990,7 +2005,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 14 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
-| [`orders`](#edge-orders) | 45 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
+| [`orders`](#edge-orders) | 46 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
 | [`payload_catalog`](#edge-payload_catalog) | 8 | `id` |  |
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
@@ -2010,8 +2025,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 48 | `id` | [`styles`](#edge-styles) |
-| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 52 |  |  |
+| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
 
@@ -2373,6 +2388,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `release_intent` | `TEXT` | yes | `''` |  | release_intent / release_held (Edge v9): the act's promise to this leg for one station wait (release.Intent, JSON; '' = none), and the last hold or rejection sentence the board's chip shows. |
 | `release_held` | `TEXT` | yes | `''` |  |  |
 | `staged_at` | `TEXT` |  |  |  | staged_at (Edge v54): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
+| `core_version` | `INTEGER` | yes | `0` |  | core_version (Edge v59): the version of the last Core word applied to the order (protocol.OrderUpdate.Version). 0 = none yet. |
 | `want` | `TEXT` | yes | `''` |  | want (Edge v30): the height an empty is wanted at, as this Edge stated it on the order's request (protocol.Height's spelling; '' is none). SEND BACK knows its pull by it; a projection never writes it. |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
 | `updated_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
@@ -2690,6 +2706,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_required` | `INTEGER` | yes | `0` |  | The light-curtain release interlock's style tie (v19): whether THIS style's releases at THIS node wait for the node's curtain. The claim is the (style, node) pair, and the rule the plant chose is THE BIN DICTATES: a full bin leaving carries the claim that filled it, and that claim's flag - not the node's blanket enable, not the style the line is becoming during a changeover - decides whether the release gates on the tag. An empty carrier carries no claim, so empty placements never gate (they never pass the curtain; an empty that does is the operator's fault, not the robot's). |
 | `strict_pack` | `INTEGER` | yes | `0` |  | strict_pack (v26): a produce claim's bound bin is charged only up to its pack (the catalog's uop_capacity for the claim's part); the ticks past it are held on the seat for the next bin of the part. 0 = uncapped, today's count. |
 | `pack_tolerance_pct` | `INTEGER` | yes | `0` |  | pack_tolerance_pct (v34): a strict claim's miscount tolerance, a percent of the pack (0-20). A station's RELEASE of a bin within it of the pack declares the bin full; further short ships the real count. 0 = no tolerance: the real count always ships. |
+| `hold_limit` | `INTEGER` | yes | `0` |  | hold_limit (v58): the most a strict seat sets aside off the cart, what the line's packer, conveyor or accumulator holds while the cart is full or swapping. Past it the pile is thrown away and logged. 0 = one pack. |
 | `allowed_payload_codes` | `TEXT` | yes | `''` |  |  |
 | `keep_staged_node` | `TEXT` | yes | `''` |  | The keep-staged node: one more node this line's full or empty comes from instead of inbound_source, with a spare kept standing on it. Blank is off. Replaced the keep_staged flag, which armed a spot on inbound_staging and so gave that column a second meaning. |
 | `paired_core_node` | `TEXT` | yes | `''` |  |  |
@@ -2745,6 +2762,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `curtain_required` | `INT` |  |  |  |
 | `strict_pack` | `INT` |  |  |  |
 | `pack_tolerance_pct` | `INT` |  |  |  |
+| `hold_limit` | `INT` |  |  |  |
 | `allowed_payload_codes` | `TEXT` |  |  |  |
 | `keep_staged_node` | `TEXT` |  |  |  |
 | `paired_core_node` | `TEXT` |  |  |  |

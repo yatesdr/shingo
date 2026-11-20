@@ -253,7 +253,7 @@ func TestStaleDig_HardClaimedObstruction_Waits(t *testing.T) {
 	wall := testdb.CreateBinAtNode(t, db, bp.Code, slots[0].ID, "SD-WAIT-WALL")
 	hauler := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "sd-wait-hauler"
-		o.Status = protocol.StatusDispatched
+		o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-sd-wait-hauler"
 	})
 	// The dug-lane collision IS this test's subject, and reservations.Acquire now
 	// refuses to create it — see ClaimBinInDugLaneForTest for why the state stays
@@ -424,7 +424,7 @@ func TestStaleDig_DeadClaimantObstruction_Dissolves(t *testing.T) {
 			wall := testdb.CreateBinAtNode(t, db, bp.Code, slots[0].ID, tc.tag+"-WALL")
 			hauler := testdb.CreateOrder(t, db, func(o *orders.Order) {
 				o.EdgeUUID = tc.tag + "-hauler"
-				o.Status = protocol.StatusDispatched
+				o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-"+tc.tag+"-hauler"
 			})
 			// The dug-lane collision IS this test's subject, and reservations.Acquire now
 			// refuses to create it — see ClaimBinInDugLaneForTest for why the state stays
@@ -664,7 +664,7 @@ func TestStaleDig_TheOwnDigResumeReAsksTheDropBeforeItAppends(t *testing.T) {
 	// Another order claims the bin behind the store's slot while it waits.
 	collector := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "sd-rs-collector"
-		o.Status = protocol.StatusDispatched
+		o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-sd-rs-collector"
 		o.SourceNode = slots[2].Name
 	})
 	testdb.ClaimBinForTest(t, db, claimed.ID, collector.ID)

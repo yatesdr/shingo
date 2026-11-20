@@ -164,6 +164,9 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"RobotsAt":      pd.RobotsAt,
 		"BinTypesJSON":  string(binTypesJSON),
 		"EdgesJSON":     string(edgesJSON),
+		// Each part's ratio above 1, for the node modal's inventory (owner,
+		// 2026-11-19); {} at a ratio-1 plant or on a failed read.
+		"UOPRatiosJSON": uopRatiosJSON(h.payloadRatios()),
 	}
 	h.render(w, r, "nodes.html", data)
 }

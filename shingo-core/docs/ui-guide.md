@@ -1,6 +1,6 @@
 # UI Guide
 
-Verified against: 9103e844
+Verified against: 4f4870c3
 
 ShinGo Core provides a web-based management interface at `http://<host>:8083`. All pages support light and dark mode via the theme toggle in the navigation bar.
 
@@ -236,7 +236,7 @@ marker is a quiet line under its type with no buttons (the type's Edit sets its
 robot group, and its Delete removes it too), and a tote carrier's line says its top is
 totes, so many per layer, with its marker's line its bottom. **+ Bin Type** opens
 with the open tab's family filled in. **+ Bin** creates 1 to 100 carriers from a
-label prefix; **Cycle Count** walks the filtered bins for a count. The **Lineside Buckets** section is Core's mirror of the Edges' piles.
+label prefix. The **Lineside Buckets** section is Core's mirror of the Edges' piles.
 
 A row opens the bin's detail, in four tabs:
 

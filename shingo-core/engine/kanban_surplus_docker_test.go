@@ -651,8 +651,7 @@ func dispatched(t *testing.T, db *store.DB, uuid string) int64 {
 	t.Helper()
 	return testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.Status = protocol.StatusDispatched
-	}).ID
+	}, testdb.FleetHas("sg-"+uuid)).ID
 }
 
 // surplusCart is the one cart an order of the arm's carries, 0 for none.

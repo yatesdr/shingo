@@ -81,8 +81,8 @@ are greyed with their reason; groups and lanes stay (the server decides those).
 -- Request Move to GRP-B-N1 (the detail re-reads never answer here)
   POST /api/bins/request-move {"bin_id":50,"destination_node_id":6}
   GET /api/bins/detail?id=50&history=0
-  GET /api/bins/detail?id=50&history=0
   toast info: Move #41 to GRP-B-N1 requested (queued): the lane is busy
+  timers: 400, 2000 ms
 -- Load PART-A, count blank
   POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A"}}
 -- Load PART-A, count 0

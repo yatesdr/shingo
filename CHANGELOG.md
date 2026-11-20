@@ -16,6 +16,51 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.16.0 — 2026-11-20
+
+Deploy: Edge v59 first, at every Edge of the plant; then Core v181–v183. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit.
+
+- The station hears every status Core writes, from the write itself: a Core-side release reads in transit
+- An order Core has dispatched reads dispatched on its tile, with its robot once the fleet names one
+- RELEASE goes at the tap and the tile says released, sent; the leg reads in transit when its robot moves
+- A refused release never leaves staged; its tile shows Core's sentence and RELEASE again
+- A finished or cancelled order stays as it ended through a re-sync with Core
+- A robot the fleet swaps under an order shows on its tile at once, and a reshuffling order reads reshuffling
+- A cancel the station sent that Core never had is sent again while Core still holds the order
+- Core's order messages and a station's cancel are no longer dropped after ten failed sends
+- An order the robot system refuses keeps its waiting look and reason; it never reads dispatched
+- A refused order's wait clock runs from its first park, and a retry adds no history rows
+- Changeover START, ABANDON and SEND BACK work on an order the robot system is refusing
+- Core flags an order the robot system has refused for half an hour as stuck
+- Core no longer stops when a two-cart swap through a lane is refused and then re-planned
+- After Core restarts partway through sending an order, Diagnostics names the order and its job
+- Core's database tests run their end-of-test order checks again; they had gone silent at Core v174
+- An order ingest of 0 books the bin empty, not full; the Edge's manual ingest now needs a quantity
+- A count typed below zero is refused: LOAD, Load Payload, a release's count and lineside parts, a reorder point, a lineside soft threshold, a refill threshold
+- A count typed above the pack is saved as typed, and the box or its answer says so
+- Core's Record Count refuses a blank box instead of recording 0
+- The Bins page's Cycle Count wizard is gone; a bin's Record Count stays
+- An Edge's admin-Move release, changeover-cancel reseat, Order B clear, CLEAR and unfenced count take the count lock
+- An admin Move's release or an Order B clear no longer zeroes a carrier that landed on the seat a moment before it
+- A part used more than one a cycle shows its count in UoP big, its parts small beside it: floor tiles, the node and release screens, Production, Bins, Inventory and the wall display
+- Count boxes take parts and, above one a cycle, show the UoP they make as you type
+- The inventory export's UOP Remaining is the count's UoP; Qty keeps the parts
+- The threshold calculator's cycle is one assembly cycle, and its answer is in parts
+- Changing a part's parts a cycle while its bins or piles hold a count shows what each will read, and saves on OK; nothing stored moves
+- A part cannot change between one line and a kit while any bin or pile of it holds a count
+- A seat draws and shows its count at the ratio of the part in its bin, not its claim's part
+- The Processes page's reorder point, lineside soft threshold and hold limit show the UoP they make as you type
+- The loader board, unloader windows, Production's manual swap row, lineside piles and held partials read in UoP too, as do Core's node inventory, Count history, dashboard anomalies, Material flags, demand episodes and Payloads table
+- A LOAD of 0 says "Type the count first: a LOAD needs 1 or more"
+
+## v0.15.0 — 2026-11-19
+
+Deploy: Edge v58 (style_node_claims.hold_limit). Each Edge, then Core.
+
+- A strict-pack position has a new setting, Most held off the cart: the most parts its packer, conveyor or accumulator holds while the cart is full or swapping. Past it the held parts are thrown away and logged, and the next cart counts only its own. Blank is one pack, as before
+- Core's Bins page keeps its table current while it is open: a bin a robot lifts or sets down, a station's count, LOAD or CLEAR, and an order taking or letting go of a bin show on its row without a reload, and a search or filter follows them
+- A bin moved, made or recovered onto a node that already holds one is refused with the bin that is there: "SMN_007 already has CARRIER-0012; move or retire it first"
+
 ## v0.14.0 — 2026-11-19
 
 Deploy: no migration. Core first, then each Edge. When this lands, an engineer restates in pieces, on Core, the standard pack of every part whose pieces per cycle is above 1 (a full bin's pieces, not its cycles).

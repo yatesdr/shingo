@@ -47,6 +47,7 @@ import (
 var countOtherQuestions = map[string]string{
 	"shingo-core/service/bin_manifest.go:emptiedCarrierSET":            "a write (SET uop_remaining=0), not a comparison",
 	"shingo-core/store/bins/ledger_integrity.go:OpenNegativeBins":      "the overpack finding: a count below 0 is the finding, not the stock question",
+	"shingo-core/store/inventory/holders.go:CountHolders":              "`<> 0`: the payload guards ask which bins hold any count, below 0 included, since each reads otherwise at a new ratio; not the stock question",
 	"shingo-core/www/material_flags_view.go:ClassifyLedger":            "the ledger's reading (settled, or binloads below 0): the overpack question",
 	"shingo-edge/engine/sim_operator.go:simOperator.clearNegativeBins": "the sim sweeps overpacked market bins: the overpack question",
 	// Judged and named in phase F (the brief's "judged and named").

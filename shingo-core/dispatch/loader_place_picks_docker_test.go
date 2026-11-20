@@ -212,7 +212,7 @@ func reservedBy(n func(fx *pickFixture) *nodes.Node, confirm bool) func(t *testi
 		h := strangerOrder(t, db, "pick-res-"+n(fx).Name)
 		testutil.MustNoErr(t, db.ReserveSlot(n(fx).ID, h.ID), "reserve "+n(fx).Name)
 		if confirm {
-			testdb.SeedOrderStatus(t, db, h.ID, string(StatusDispatched), "") // (C1.5: a confirmed holder is dispatched)
+			testdb.SeedDispatched(t, db, h.ID, "sg-"+h.EdgeUUID) // (C1.5: a confirmed holder is dispatched)
 			testutil.MustNoErr(t, db.ConfirmSlotReservation(n(fx).ID, h.ID), "confirm the reservation")
 		}
 	}

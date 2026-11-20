@@ -89,7 +89,7 @@ func TestPlainFamily_EveryTypeHasItsIntentAndItsPlanner(t *testing.T) {
 		t.Fatalf("plainFamily has %d types, this pin names %d: give the new type its intent here and in SourceIntentForType",
 			len(plainFamily), len(want))
 	}
-	s := newPlanningService(nil, nil, nil, nil, nil, nil, nil)
+	s := newPlanningService(nil, nil, nil, nil, nil, nil)
 	for _, typ := range plainFamily {
 		intent, ok := want[typ]
 		if !ok {

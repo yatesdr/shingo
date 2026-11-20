@@ -59,6 +59,17 @@ func (m *Manager) handleDeliveredWire(orderUUID, statusDetail string, stagedExpi
 }
 
 func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
+	if versioned(order) {
+		// The status is Core's versioned word, applied from its own tell; this
+		// message is the carrier's facts. They are written, then meet Core's
+		// delivered (core_word.go, deliveredFactsIn).
+		m.lifecycle.writeDeliveredFacts(order, stagedExpireAt, binID)
+		m.deliveredFactsIn(order, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
+		if m.OnDeliveredMessage != nil {
+			m.OnDeliveredMessage(order.ID, order.ProcessNodeID)
+		}
+		return nil
+	}
 	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode, landingSent); err != nil {
 		return err
 	}
@@ -77,6 +88,18 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
 
+	// WITH A VERSION, a reply is not the status: Core's versioned word is, from
+	// its own tell (core_word.go). The ack, the error, the staged notice, the
+	// cancel and the skip write none, and the cancel's toast and the failure's
+	// and cancel's reorder hold are the applier's, at its live-to-terminal edge.
+	// The waybill and the delivered keep their facts below.
+	if versioned(order) {
+		switch replyType {
+		case ReplyAck, ReplyQueued, ReplyError, ReplySkipped, ReplyStaged, ReplyCancelled:
+			m.DebugLog.Log("dispatch reply: uuid=%s type=%s writes no status (version %d)", orderUUID, replyType, order.CoreVersion)
+			return nil
+		}
+	}
 	switch replyType {
 	case ReplyAck:
 		return m.mirrorTransition(order.ID, StatusAcknowledged, statusDetail)
@@ -158,6 +181,25 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	}
 }
 
+// HandleCancelledNotice is the wire's order.cancelled. For an order whose
+// status is Core's versioned word it writes no status (Core's tell did, and its
+// toast and hold), and its follow-on runs from what Core says the order was
+// when it cancelled (OnCancelledMessage). For an older Core's order it is the
+// cancelled reply, as it always was.
+func (m *Manager) HandleCancelledNotice(p *protocol.OrderCancelled) error {
+	order, err := m.db.GetOrderByUUID(p.OrderUUID)
+	if err != nil {
+		return fmt.Errorf("order %s not found: %w", p.OrderUUID, err)
+	}
+	if versioned(order) {
+		if m.OnCancelledMessage != nil {
+			m.OnCancelledMessage(order.ID, protocol.Status(p.PreviousStatus))
+		}
+		return nil
+	}
+	return m.HandleDispatchReply(p.OrderUUID, ReplyCancelled, "", "", p.Reason)
+}
+
 // HandleWaybill is the wire's order.waybill: the vendor order, the robot Core
 // assigned and the ETA, then the mirror's move to in_transit. For a plain order
 // Core sends one at dispatch, which names no robot yet (Core's
@@ -178,6 +220,12 @@ func (m *Manager) HandleWaybill(p *protocol.OrderWaybill) error {
 func (m *Manager) applyWaybill(order *orders.Order, waybillID, robotID, eta string) error {
 	if err := m.db.UpdateOrderWaybill(order.ID, waybillID, robotID, eta); err != nil {
 		return err
+	}
+	if versioned(order) {
+		// The waybill is not a status: Core tells `dispatched` and `in_transit`
+		// from the writes that set them. A waybill read as in_transit showed a
+		// robot driving while Core held the order dispatched.
+		return nil
 	}
 	return m.mirrorTransition(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
 }
@@ -201,7 +249,9 @@ const mirrorJumpDetail = "MIRROR JUMP"
 
 // expectedMirrorJumps are the forward jumps Core NEVER PROMISED TO ANNOUNCE, so
 // the mirror catching up across them is the design working rather than a defect
-// to go find. Each entry names the pure transition being skipped and why its
+// to go find. They are an older Core's: a Core that versions its orders
+// tells the station every status it writes, and its words never come here
+// (core_word.go). Each entry names the pure transition being skipped and why its
 // silence is intended — at the transition, where the next reader will look.
 //
 // ── WHY THIS LIST HAD TO EXIST ────────────────────────────────────────────
@@ -304,16 +354,41 @@ func (m *Manager) mirrorTransition(orderID int64, target protocol.Status, detail
 	return m.lifecycle.ForceTransition(orderID, target, jump)
 }
 
-// ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative status.
+// ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative
+// status. A local row that has already ended is left as it ended.
+//
+// A snapshot that carries a version goes through the one applier, as the live
+// word does (core_word.go): newer only, with the history row and the event, a
+// terminal row kept, and an operator's cancel Core still holds live sent again.
+// An older Core's snapshot (version 0) takes the arms below.
 func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {
 	m.lifecycle.debug = m.DebugLog
+	if snapshot.Found && snapshot.Version > 0 {
+		detail := "startup reconciliation with core"
+		if snapshot.ErrorDetail != "" && IsTerminal(protocol.Status(snapshot.Status)) {
+			detail = snapshot.ErrorDetail
+		}
+		return m.ApplyCoreWord(snapshot.OrderUUID, CoreWord{
+			Status:            protocol.Status(snapshot.Status),
+			Version:           snapshot.Version,
+			Detail:            detail,
+			QueueReason:       snapshot.QueueReason,
+			QueueCode:         snapshot.QueueCode,
+			HasFault:          true,
+			FaultSince:        snapshot.FaultSince,
+			FaultDeadline:     snapshot.FaultDeadline,
+			FaultNoticeAfterS: snapshot.FaultNoticeAfterS,
+			FaultRef:          encodeSnapshotFaultRef(snapshot.FaultRef),
+			Reconcile:         true,
+		})
+	}
 	return m.lifecycle.ApplyCoreStatusSnapshot(snapshot)
 }
 
-// ApplyCoreStatus is the Core→Edge status mapping — the one function used by
-// both the live-push path (HandleCoreStatusPush, driven by HandleOrderUpdate)
-// and the boot-reconcile path (ApplyCoreStatusSnapshot). See
-// LifecycleService.ApplyCoreStatus for the arm-by-arm mapping.
+// ApplyCoreStatus is the Core→Edge status mapping on the live-push path
+// (HandleCoreStatusPush, driven by HandleOrderUpdate). The reconcile snapshot
+// is a second function (ApplyCoreStatusSnapshot) that shares its terminal
+// guard. See LifecycleService.ApplyCoreStatus for the arm-by-arm mapping.
 func (m *Manager) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ApplyCoreStatus(order, coreStatus, detail)
@@ -376,8 +451,12 @@ func (m *Manager) HandleSkipped(orderUUID, errorCode, detail string) error {
 			order.UUID, order.Status, detail)
 	}
 	m.lifecycle.debug = m.DebugLog
-	if err := m.lifecycle.ForceTransition(order.ID, StatusSkipped, detail); err != nil {
-		return err
+	// With a version the status is Core's word from its own tell (core_word.go);
+	// this message keeps only its own work, the node task's.
+	if !versioned(order) {
+		if err := m.lifecycle.ForceTransition(order.ID, StatusSkipped, detail); err != nil {
+			return err
+		}
 	}
 	task, _, terr := m.db.FindChangeoverNodeTaskByOrderID(order.ID)
 	if terr != nil || task == nil {

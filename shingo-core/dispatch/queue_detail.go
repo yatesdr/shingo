@@ -98,24 +98,25 @@ func WaitTold(prev, next QueueWait) bool { return orders.WaitTold(prev, next) }
 // who names the subsystem in the log line, so a failure is still attributable
 // after the three copies became one.
 //
-// A CHANGED WAIT IS TOLD TO THE STATION, ONCE. notify is called when the write
-// is one WaitTold tells and the order is waiting (`queued`, IsWaiting). A
-// `pending` order's first cause is told by whoever parks it (ParkAndTell).
-// A wait that changed later used to stay in Core: a refill that waited for
-// material and then for its slot went on reading "waiting for material" at the
-// station. Writes that repeat the row write nothing, so a wait re-asserted on
-// every scanner pass costs no statement and no message. nil notifies nobody.
+// A CHANGED WAIT IS TOLD TO THE STATION, ONCE, BY THE WRITE: the store queues
+// the order.update in the write's own transaction when the write is one
+// orders.WaitTells tells (a changed wait, WaitTold, on a waiting order that is
+// not a leg). A `pending` order's first cause is told by the park that follows
+// it, whose status write carries it. A wait that changed later used to stay in
+// Core: a refill that waited for material and then for its slot went on reading
+// "waiting for material" at the station. Writes that repeat the row write
+// nothing, so a wait re-asserted on every scanner pass costs no statement and
+// no message.
 func WriteQueueDetail(db QueueDetailStore, logf func(string, ...any), who string,
-	order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams,
-	notify func(*orders.Order)) bool {
+	order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
 	return writeQueueWait(db, logf, who, order,
-		QueueWait{Code: string(code), Cause: string(cause), Reason: FormatQueueSentence(code, params)}, notify)
+		QueueWait{Code: string(code), Cause: string(cause), Reason: FormatQueueSentence(code, params)})
 }
 
 // writeQueueWait is WriteQueueDetail for a sentence that is already formatted:
 // the pair park copies the blocked leg's wait onto its partner as it stands.
 func writeQueueWait(db QueueDetailStore, logf func(string, ...any), who string,
-	order *orders.Order, next QueueWait, notify func(*orders.Order)) bool {
+	order *orders.Order, next QueueWait) bool {
 	prev := WaitOf(order)
 	if prev == next {
 		return false
@@ -125,8 +126,5 @@ func writeQueueWait(db QueueDetailStore, logf func(string, ...any), who string,
 		return false
 	}
 	order.QueueReason, order.QueueCode, order.QueueCause = next.Reason, next.Code, next.Cause
-	if notify != nil && WaitTold(prev, next) && protocol.IsWaiting(order.Status) {
-		notify(order)
-	}
 	return true
 }

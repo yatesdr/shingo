@@ -39,6 +39,9 @@ import (
 //     bin's history-free detail to its result.
 //   - apiBinDetail: the key set, and that `audit` is the bin's whole history
 //     (unchanged by LC12); ?history=0 is the same answer without the audit.
+//     The live table (2026-11-19) adds `process` and `has_notes`, each absent
+//     when empty: a bin with notes carries has_notes.
+//   - apiBinRows: the rows the live table repaints from (TestPinBins_Rows).
 //   - record_count: a typed value, a stale value (the count moved after the page
 //     loaded) and a refused bin.
 
@@ -122,8 +125,10 @@ func pinCountBinUpdates(h *Handlers, id int64, fn func()) int {
 }
 
 // pinHistoryFreeKeys is the key set of a history-free answer for a bin with a
-// payload and no claim (LC12): the detail's keys without `audit`.
-const pinHistoryFreeKeys = "bin,manifest,recent_orders,template"
+// payload, notes and no claim (LC12): the detail's keys without `audit`. The
+// live table (2026-11-19) added has_notes, present because the pin's bin has
+// notes.
+const pinHistoryFreeKeys = "bin,has_notes,manifest,recent_orders,template"
 
 // pinRequireBinAnswer is what every successful verb answers since LC12: the
 // "status":"ok" it always carried, plus the bin as it now is, without history.
@@ -483,8 +488,9 @@ func TestPinBins_DetailKeysAndFullAudit(t *testing.T) {
 		t.Fatalf("seeded %d audit rows, want >= 120", len(all))
 	}
 
+	// has_notes is the live table's (2026-11-19): this bin has 120 notes.
 	got := pinBinDetail(t, h, b.ID)
-	if k := pinKeys(got); k != "audit,bin,manifest,recent_orders,template" {
+	if k := pinKeys(got); k != "audit,bin,has_notes,manifest,recent_orders,template" {
 		t.Errorf("detail keys (unclaimed) = %s", k)
 	}
 	var audit []json.RawMessage
@@ -506,7 +512,7 @@ func TestPinBins_DetailKeysAndFullAudit(t *testing.T) {
 	// carries the sentence the page shows in place of Load Payload
 	// (load_refusal, service.LoadRefusalFor).
 	got = pinBinDetail(t, h, b.ID)
-	if k := pinKeys(got); k != "audit,bin,current_order,load_refusal,manifest,recent_orders,template" {
+	if k := pinKeys(got); k != "audit,bin,current_order,has_notes,load_refusal,manifest,recent_orders,template" {
 		t.Errorf("detail keys (claimed) = %s", k)
 	}
 	// Undo the hand-written claim: the cleanup wedge sweep (testdb.go) rightly
@@ -560,14 +566,93 @@ func TestPinBins_DetailHistoryFree(t *testing.T) {
 	}
 }
 
-// TestPinBins_RecordCount pins the cycle-count door (the wizard posts
-// record_count through /api/bins/action, bins.js:654-675):
+// pinBinRows drives apiBinRows with a query and returns the decoded answer:
+// each row's bin id, has_notes and keys, and the gone ids.
+func pinBinRows(t *testing.T, h *Handlers, query string) (rows []map[string]json.RawMessage, gone []int64) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/bins/rows"+query, nil)
+	rec := httptest.NewRecorder()
+	h.apiBinRows(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rows %q: status %d, body %s", query, rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Rows []map[string]json.RawMessage `json:"rows"`
+		Gone []int64                      `json:"gone"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &body), "decode rows")
+	return body.Rows, body.Gone
+}
+
+// pinRowBinID is a rows-answer row's bin id.
+func pinRowBinID(t *testing.T, row map[string]json.RawMessage) int64 {
+	t.Helper()
+	var b struct {
+		ID int64 `json:"id"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal(row["bin"], &b), "decode row bin")
+	return b.ID
+}
+
+// TestPinBins_Rows pins GET /api/bins/rows, what the Bins page repaints its
+// table from while it is open (bins-live.js): a named bin's row, with the
+// notes fact the bin record does not carry; a named bin that no longer exists
+// in gone; an order's carts; and, naming nothing, every bin.
+func TestPinBins_Rows(t *testing.T) {
+	t.Parallel()
+	h, db, sd, b := setupBinForAction(t)
+	if code, _, raw := pinBinPost(t, h, b.ID, "add_note",
+		map[string]any{"note_type": "general", "message": "n"}); code != http.StatusOK {
+		t.Fatalf("note: %d %s", code, raw)
+	}
+	other := pinEmptyBin(t, db, sd.LineNode.ID, "PIN-ROWS-OTHER")
+
+	rows, gone := pinBinRows(t, h, fmt.Sprintf("?ids=%d,%d,%d", b.ID, b.ID, 999999))
+	if len(rows) != 1 || pinRowBinID(t, rows[0]) != b.ID {
+		t.Fatalf("ids: rows = %v, want bin %d once", rows, b.ID)
+	}
+	if string(rows[0]["has_notes"]) != "true" {
+		t.Errorf("a bin with a note: has_notes = %s, want true", rows[0]["has_notes"])
+	}
+	// A row reads what handleBins reads for one: no template, no audit, no
+	// load refusal; those are the pop-up's.
+	for _, k := range []string{"template", "template_manifest", "audit", "load_refusal"} {
+		if _, ok := rows[0][k]; ok {
+			t.Errorf("row carries %q, which only the pop-up draws", k)
+		}
+	}
+	if len(gone) != 1 || gone[0] != 999999 {
+		t.Errorf("gone = %v, want [999999]", gone)
+	}
+
+	// An order out with the fleet, holding its cart: a cart row with no hold is
+	// a wedged order, which the end-of-test sweep refuses (AssertNoPointerWedge).
+	o := testdb.CreateOrder(t, db, testdb.FleetHas("sg-pin-rows"))
+	testdb.SeedCartRow(t, db, o.ID, other.ID, 0, 1)
+	testdb.ClaimBinForTest(t, db, other.ID, o.ID)
+	rows, gone = pinBinRows(t, h, fmt.Sprintf("?orders=%d", o.ID))
+	if len(rows) != 1 || pinRowBinID(t, rows[0]) != other.ID || len(gone) != 0 {
+		t.Errorf("orders: rows %v gone %v, want the order's cart %d", rows, gone, other.ID)
+	}
+	if _, ok := rows[0]["has_notes"]; ok {
+		t.Error("a bin with no notes carries has_notes; absent is none")
+	}
+
+	all, err := db.ListBins()
+	testutil.MustNoErr(t, err, "list bins")
+	rows, _ = pinBinRows(t, h, "")
+	if len(rows) != len(all) {
+		t.Errorf("naming nothing: %d rows, the store has %d bins", len(rows), len(all))
+	}
+}
+
+// TestPinBins_RecordCount pins the record_count door (the bin pop-up's Record
+// Count posts it through /api/bins/action; the cycle-count wizard that also
+// posted it was removed on the owner's ruling, 2026-11-19):
 //   - typed: the typed value is stored, the audit says expected -> typed;
-//   - stale: the page loaded at 100, the count then moved to 80, and the wizard
-//     posts the page-load 100 (what ccConfirm sends, bins.js:656). TODAY the
-//     server takes it: stored 100, expected read fresh (80), a +20 discrepancy
-//     note, 200 ok. The fix is client-side (step 2 re-reads the bin), so the
-//     server answer is predicted unchanged;
+//   - stale: the page loaded at 100, the count then moved to 80, and a client
+//     posts the page-load 100. The server takes it: stored 100, expected read
+//     fresh (80), a +20 discrepancy note, 200 ok;
 //   - refused: a bin with no payload is a 400 with the reason; nothing stored.
 func TestPinBins_RecordCount(t *testing.T) {
 	t.Parallel()

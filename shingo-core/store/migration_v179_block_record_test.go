@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -79,7 +80,7 @@ func TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad(t *
 }
 
 // TestBlockRecord_TheCreateReplacesAndTheAppendMerges reads both writers back.
-// The create's vendor write replaces the record with the blocks it sent; the
+// The fleet's yes to the create replaces the record with the blocks it sent; the
 // append's claim merges its segment's blocks in, and records nothing when the
 // claim refuses. An order sent before the record (NULL) stays NULL through an
 // append, so it is read by its block names for its whole life.
@@ -95,8 +96,18 @@ func TestBlockRecord_TheCreateReplacesAndTheAppendMerges(t *testing.T) {
 		return testutil.Must(t, o, err, "read the order").BlockActions
 	}
 
-	testutil.MustNoErr(t, db.NameFleetOrder(live.ID, "V-live", "CREATED", "", map[string]string{"V-live-b1": "pickup", "V-live-b2": "wait"}),
-		"the create's write")
+	// The create's write is the fleet's yes: Core asks for the job, and the yes
+	// names it and records the blocks it sent.
+	yes := func(id int64, job string, actions map[string]string, what string) {
+		t.Helper()
+		testdb.SeedAsk(t, db, id, protocol.StatusQueued, job)
+		_, moved, err := db.FleetYes(id, protocol.StatusQueued, job, "", actions, "vendor order "+job+" created",
+			store.HistoryReason{}, protocol.OrderUpdate{})
+		if err != nil || !moved {
+			t.Fatalf("%s: moved=%v err=%v", what, moved, err)
+		}
+	}
+	yes(live.ID, "V-live", map[string]string{"V-live-b1": "pickup", "V-live-b2": "wait"}, "the create's write")
 	if got := read(live.ID); len(got) != 2 || got["V-live-b1"] != "pickup" || got["V-live-b2"] != "wait" {
 		t.Fatalf("after the create the record is %v, want the two blocks it sent", got)
 	}
@@ -122,8 +133,7 @@ func TestBlockRecord_TheCreateReplacesAndTheAppendMerges(t *testing.T) {
 	// An order born before the record and sent after it (it queued across the
 	// deploy) is recorded by its create: every block of the new vendor order is
 	// sent now, so the create's write replaces the NULL.
-	testutil.MustNoErr(t, db.NameFleetOrder(old.ID, "V-old2", "CREATED", "", map[string]string{"V-old2-b1": "pickup"}),
-		"the create of an order born before the record")
+	yes(old.ID, "V-old2", map[string]string{"V-old2-b1": "pickup"}, "the create of an order born before the record")
 	if got := read(old.ID); len(got) != 1 || got["V-old2-b1"] != "pickup" {
 		t.Errorf("an order sent after the record reads %v, want the one block its create sent", got)
 	}

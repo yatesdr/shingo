@@ -102,6 +102,7 @@ import (
 	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/dispatch"
+	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -143,6 +144,7 @@ type ledgerOrder struct {
 	ID            int64       `json:"id"`
 	Kind          string      `json:"kind"`
 	Status        string      `json:"status"`
+	Asked         string      `json:"asked_vendor_order_id,omitempty"`
 	QueueCode     string      `json:"queue_code"`
 	QueueCause    string      `json:"queue_cause"`
 	Parent        *int64      `json:"parent"`
@@ -277,7 +279,7 @@ func takeLedgerSample(db *sql.DB, n int, wall time.Time, simS *float64) (*ledger
 func (r *ledgerReader) readOrders() error {
 	rows, err := r.query(fmt.Sprintf(`
 		SELECT id, order_type, status, COALESCE(queue_code, ''), COALESCE(queue_cause, ''), parent_order_id,
-		       source_node, delivery_node, vendor_order_id <> '', coordinated
+		       source_node, delivery_node, vendor_order_id <> '', coordinated, asked_vendor_order_id
 		FROM orders WHERE status NOT IN (%s) ORDER BY id`, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return fmt.Errorf("ledger orders: %w", err)
@@ -285,7 +287,7 @@ func (r *ledgerReader) readOrders() error {
 	for rows.Next() {
 		o := ledgerOrder{Rec: "order", N: r.out.sample.N}
 		if err := rows.Scan(&o.ID, &o.Kind, &o.Status, &o.QueueCode, &o.QueueCause, &o.Parent,
-			&o.Source, &o.Delivery, &o.Fleet, &o.Coordinated); err != nil {
+			&o.Source, &o.Delivery, &o.Fleet, &o.Coordinated, &o.Asked); err != nil {
 			rows.Close()
 			return fmt.Errorf("ledger orders scan: %w", err)
 		}
@@ -478,7 +480,7 @@ func (r *ledgerReader) orderBooks() {
 		} else {
 			o.Committed = &h
 		}
-		atRest := protocol.IsPreDispatch(protocol.Status(o.Status)) && o.Parent == nil
+		atRest := domain.PreDispatch(protocol.Status(o.Status), o.Asked) && o.Parent == nil
 		o.HoldsAtRest = atRest && h.restHolds() > 0
 		o.DigLockAtRest = atRest && h.DigLock > 0
 		o.NoShuffleSlot = o.QueueCause == string(dispatch.CauseNoShuffleSlot)

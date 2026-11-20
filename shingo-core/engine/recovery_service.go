@@ -217,7 +217,7 @@ func (s *RecoveryService) RecoverFaultedOrder(orderID int64, actor string) error
 		return fmt.Errorf("order %d is not faulted (status: %s)", orderID, order.Status)
 	}
 
-	if err := e.dispatcher.Lifecycle().MarkInTransit(order, order.RobotID, "recovery"); err != nil {
+	if err := e.dispatcher.Lifecycle().MarkInTransit(order, order.RobotID, "recovery", protocol.OrderUpdate{}); err != nil {
 		return fmt.Errorf("mark in_transit: %w", err)
 	}
 

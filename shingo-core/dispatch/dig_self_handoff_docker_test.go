@@ -241,6 +241,9 @@ func TestSelfHandoff_ACollectedDemandReleasesInsteadOfConverting(t *testing.T) {
 				o.EdgeUUID = "selfhc-" + tc.name
 				o.Coordinated = true
 				o.Status = tc.status
+				if tc.status == StatusDispatched {
+					o.VendorOrderID = "sg-selfhc-" + tc.name // `dispatched` names the fleet's job
+				}
 			})
 			if !d.laneLock.TryLock(lane.ID, demand.ID) {
 				t.Fatal("the demand could not take the lane it excavated")
@@ -425,6 +428,7 @@ func TestSelfHandoff_ADispatchedHolderWithItsBinStillInTheLaneKeepsIt(t *testing
 		o.EdgeUUID = "selfhf-demand"
 		o.Coordinated = true
 		o.Status = StatusDispatched // committed to the fleet — but not yet arrived
+		o.VendorOrderID = "sg-selfhf-demand"
 	})
 	// Its target is still sitting at the mouth, claimed, waiting to be collected.
 	target := testdb.CreateBinAtNode(t, db, payload.Code, wallSlots[0].ID, "SELFHF-TARGET")

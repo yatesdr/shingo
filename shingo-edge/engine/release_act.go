@@ -562,14 +562,6 @@ func (e *Engine) onPickupForIntents(o *storeorders.Order) {
 	}
 }
 
-// onReleaseStatusChanged is the status event's one release duty: a leg that
-// ended wakes its sibling's node. (Staged is the message's, not the event's.)
-func (e *Engine) onReleaseStatusChanged(changed OrderStatusChangedEvent) {
-	if protocol.IsTerminal(protocol.Status(changed.NewStatus)) {
-		e.onTerminalForIntents(changed.OrderID)
-	}
-}
-
 // onTerminalForIntents wakes a terminal leg's sibling: its placer may wait on
 // it no longer, or die with it.
 func (e *Engine) onTerminalForIntents(orderID int64) {

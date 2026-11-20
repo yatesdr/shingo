@@ -231,19 +231,21 @@ func TestCensus_FleetTransportCreateIsNotADoor(t *testing.T) {
 	}
 	got := callSitesExcept(t, fleetCallers, "db", "CreateOrder")
 	sameSites(t, "the fleet CreateOrder callers", got, map[string]string{
-		"dispatch/fleet_handover.go:handoverToFleet":   "the handover: an order row that already exists goes to the fleet — the one sanctioned call",
-		"engine/cleaning.go:dispatchCleaning":          "the air-knife cleaning order: a pinned vendor transport with NO order row, recorded only in cleaning_missions — not a door, and invisible to every order reader by design",
-		"fleet/seerrds/adapter.go:CreateOrder":         "the adapter's own implementation, calling the RDS client",
-		"fleet/seerrds/adapter.go:executeOrderCommand": "the adapter's command path, calling the RDS client",
-		"www/handlers_robots.go:apiRobotMoveTo":        "a person drives a robot to a point: a vendor transport with NO order row — not a door, and invisible to every order reader by design",
+		"dispatch/fleet_handover.go:handoverToFleet":         "the handover: an order row that already exists goes to the fleet — the one sanctioned call",
+		"engine/cleaning.go:dispatchCleaning":                "the air-knife cleaning order: a pinned vendor transport with NO order row, recorded only in cleaning_missions — not a door, and invisible to every order reader by design",
+		"fleet/seerrds/adapter.go:CreateOrder":               "the adapter's own implementation, calling the RDS client",
+		"fleet/seerrds/adapter.go:executeOrderCommand":       "the adapter's command path, calling the RDS client",
+		"internal/testdb/create_window_fleet.go:CreateOrder": "the create-window test fleet: a test double that runs the test inside a create, then answers through the tracking mock it embeds; no robot, no order row",
+		"internal/testdb/create_window_fleet.go:take":        "the same test fleet recording a job it took on a create whose answer Core never hears",
+		"www/handlers_robots.go:apiRobotMoveTo":              "a person drives a robot to a point: a vendor transport with NO order row — not a door, and invisible to every order reader by design",
 	}, "A new caller of a fleet's CreateOrder either hands over an order row (route it through "+
 		"handoverToFleet) or moves a robot with no order, which has to be said here.")
 }
 
 // TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent names every statement
-// that writes orders.block_actions, and every caller of the two that do: the
-// record is written by the create's vendor write and by the append's claim, from
-// the blocks those two hand the fleet, and nowhere else. A third writer could
+// that writes orders.block_actions, and every caller of the ones that do: the
+// record is written by the fleet's yes to the create and by the append's claim,
+// from the blocks those two hand the fleet, and nowhere else. A new writer could
 // record a block the fleet was never sent, or forget one it was.
 func TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent(t *testing.T) {
 	t.Parallel()
@@ -273,18 +275,19 @@ func TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent(t *testing.T) {
 	}
 	slices.Sort(writers)
 	sameSites(t, "the statements that write orders.block_actions", writers, map[string]string{
-		"store/orders/orders.go:ClaimAppend":    "the append's compare-and-set, merging the segment's blocks",
-		"store/orders/orders.go:NameFleetOrder": "the create's vendor write, the blocks the create sent",
+		"store/orders/ask.go:FleetYesTx":     "the fleet's yes to the create, the blocks the create sent",
+		"store/orders/orders.go:ClaimAppend": "the append's compare-and-set, merging the segment's blocks",
 	}, "A new writer of block_actions records blocks somewhere other than where they are sent. "+
-		"Record them in the create (NameFleetOrder) or the append (ClaimAppend).")
+		"Record them in the fleet's yes (FleetYesTx) or the append (ClaimAppend).")
 
 	callers := only(sources, "dispatch/", "engine/", "store/", "fleet/", "www/", "service/", "fulfillment/")
-	sameSites(t, "the callers of the block record's writers", callSites(t, callers, "NameFleetOrder", "ClaimAppend"),
+	sameSites(t, "the callers of the block record's writers",
+		callSites(t, callers, "FleetYesTx", "FleetYes", "ClaimAppend"),
 		map[string]string{
-			"dispatch/complex_release.go:appendSegment":  "the one fleet append, with the segment it sends",
-			"dispatch/fleet_handover.go:handoverToFleet": "the one fleet create, with the blocks it sent",
-			"store/orders.go:ClaimAppend":                "the store delegate",
-			"store/orders.go:NameFleetOrder":             "the store delegate",
+			"dispatch/complex_release.go:appendSegment": "the one fleet append, with the segment it sends",
+			"dispatch/lifecycle.go:Dispatch":            "the fleet's yes, with the blocks the create sent (handoverToFleet's)",
+			"store/orders.go:ClaimAppend":               "the store delegate",
+			"store/orders.go:FleetYes":                  "the yes on a transaction of its own",
 		}, "The block record is written from the blocks the fleet is handed, at the create and the append.")
 }
 

@@ -277,27 +277,25 @@ func TestReconciliationService_Summary_FreshDB(t *testing.T) {
 
 func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	t.Parallel()
-	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
-	// Seed a dispatched order and backdate it past the stuck-age threshold (30
-	// minutes). Must be older than stuckOrderAge in store/reconciliation.go.
+	// Seed an order the fleet has (`dispatched`, naming its job) and backdate it
+	// past the stuck-age threshold (30 minutes). Must be older than
+	// stuckOrderAge in store/reconciliation.go.
 	//
 	// BOTH CLOCKS, and the second one is the one that counts: the detector reads
 	// the last STATUS TRANSITION (an order_history row), falling back to
 	// created_at for an order that has never transitioned, which this is. An
 	// updated_at-only fixture describes an order that has just progressed.
-	order := &orders.Order{
-		EdgeUUID:     "stuck-uuid",
-		StationID:    "line-1",
-		OrderType:    "retrieve",
-		Status:       "dispatched",
-		SourceNode:   "STORAGE-A1",
-		DeliveryNode: "LINE1-IN",
-	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "stuck-uuid"
+		o.StationID = "line-1"
+		o.OrderType = "retrieve"
+		o.SourceNode = "STORAGE-A1"
+		o.DeliveryNode = "LINE1-IN"
+	}, testdb.FleetHas("sg-stuck-uuid"))
 	if _, err := db.Exec(
 		`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours',
 		                   created_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
@@ -375,18 +373,15 @@ func TestReconciliationService_ListAnomalies_Empty(t *testing.T) {
 
 func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 	t.Parallel()
-	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	testdb.SetupTestData(t, db)
 	svc := newReconService(t, db)
 
-	order := &orders.Order{
-		EdgeUUID:  "anom-uuid",
-		StationID: "line-1",
-		OrderType: "retrieve",
-		Status:    "dispatched",
-	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "anom-uuid"
+		o.StationID = "line-1"
+		o.OrderType = "retrieve"
+	}, testdb.FleetHas("sg-anom-uuid"))
 	// AGE IS AGE SINCE THE LAST TRANSITION. active_order_stuck keys on an
 	// order_history row now, with orders.created_at as the fallback for one that
 	// has never transitioned — which this is — so backdating updated_at alone

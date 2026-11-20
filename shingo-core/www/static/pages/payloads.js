@@ -1,6 +1,8 @@
 import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
-import { hideModal, showModal } from '/static/shared/layer.js';
+import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { linePieces, splitUOP, uopRatio } from '/static/shared/count.js';
+import { UOP_WORD, countSaid } from '/static/shared/count-words.js';
 
 /* --- Manifest builder ---
  *
@@ -34,20 +36,51 @@ function uopCapacityFor(containerId) {
 // the pieces a full bin holds, its ratio times the capacity. The rows decide
 // which, so adding or removing one redraws them all (refreshFullBinCells).
 function renderFullBin(row, containerId) {
+  refreshUnitWords(containerId);
   var cell = row.querySelector('.mr-fullbin');
   if (!cell) return;
-  var per = parseInt(row.querySelector('.mr-per-cycle').value) || 0;
   var cap = uopCapacityFor(containerId);
-  if (cap > 0 && manifestRows(containerId).length === 1) {
+  var rows = Array.prototype.slice.call(manifestRows(containerId));
+  var lines = formLines(containerId);
+  var i = rows.indexOf(row);
+  if (cap > 0 && lines.length === 1) {
+    var ratio = uopRatio(lines);
     // OWNER-WORDS
-    cell.textContent = per > 1 ? '= ' + Math.floor(cap / per) + ' cycles / bin' : '';
+    cell.textContent = ratio > 1 ? '= ' + splitUOP(cap, ratio).uop + ' ' + UOP_WORD + ' a full bin' : '';
     return;
   }
-  cell.textContent = cap > 0 ? '= ' + (per * cap) + ' / bin' : '';
+  cell.textContent = cap > 0 ? '= ' + linePieces(lines, i, cap) + ' / bin' : '';
 }
 
 function manifestRows(containerId) {
   return document.querySelectorAll('#' + containerId + ' .plpart-row');
+}
+
+// formLines is the form's lines as typed, the shape count.js reads.
+function formLines(containerId) {
+  return Array.prototype.slice.call(manifestRows(containerId)).map(function(r) {
+    return { parts_per_cycle: parseInt(r.querySelector('.mr-per-cycle').value) || 0 };
+  });
+}
+
+// formRatio is the payload's UOP ratio as the form's lines stand
+// (count.js uopRatio): a part's pieces per assembly cycle, 1 for a kit.
+function formRatio(prefix) {
+  return uopRatio(formLines(prefix === 'plc' ? 'plc-manifest-rows' : 'ple-manifest-rows'));
+}
+
+// refreshUnitWords names the pack and the per-tote boxes by what they take
+// once the payload's ratio is above 1: parts, whose UoP the readouts show
+// beside them (data-parts, the template's OWNER-WORDS). At a ratio of 1 and
+// for a kit, where the two are the same, the boxes keep their own words
+// (data-plain). The tote hint is redrawn with them.
+function refreshUnitWords(containerId) {
+  var prefix = containerId === 'plc-manifest-rows' ? 'plc' : 'ple';
+  var parts = formRatio(prefix) > 1;
+  document.querySelectorAll('[data-unit-words="' + prefix + '"]').forEach(function(span) {
+    span.textContent = parts ? span.dataset.parts : span.dataset.plain;
+  });
+  refreshToteHint(prefix);
 }
 
 // renderCATIDNote is the drift-catcher, and it is the reason the CATID box is
@@ -194,8 +227,11 @@ function refreshToteHint(prefix) {
     document.querySelectorAll('#' + prefix + '-bin-types input[type=checkbox]:checked').forEach(function(cb) {
       var perLayer = parseInt(cb.dataset.totesPerLayer, 10);
       if (!perLayer) return;
+      var full = perTote * perLayer * layers;
+      // Above a ratio of 1 the product is parts: the UoP they make, then the
+      // parts (count-words.js countSaid); at 1, as it always read.
       lines.push(cb.dataset.code + ': ' + perTote + ' × ' + perLayer + ' × ' + layers +
-        ' = ' + (perTote * perLayer * layers) + ' UoP a full cart');
+        ' = ' + countSaid(full, formRatio(prefix), full + ' UoP') + ' a full cart');
     });
   }
   hint.textContent = lines.join(' · ');
@@ -619,6 +655,15 @@ function submitPLEdit(el, evt) {
   // stored one stands.
   if (_pleLoaded.binTypes) body.bin_type_ids = getSelectedBinTypes('ple-bin-types');
   if (manifest) body.manifest = manifest.items;
+  savePayloadEdit(body);
+  return false;
+}
+
+// savePayloadEdit posts an Edit Payload save. A ratio change on a part whose
+// bins or piles hold a count comes back unsaved with Core's warning (what each
+// reads now and after; no count moves): the engineer reads it, and the save
+// goes again with confirm_ratio_change only on OK (owner, 2026-11-19).
+function savePayloadEdit(body) {
   console.log('Saving payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/update', {
     method: 'POST',
@@ -626,12 +671,18 @@ function submitPLEdit(el, evt) {
     body: JSON.stringify(body)
   })
   .then(function(r) { return r.json(); })
-  .then(function(data) {
+  .then(async function(data) {
+    if (data.ratio_change && !body.confirm_ratio_change) {
+      // OWNER-WORDS
+      if (await uiConfirm(data.error + '\n\nSave the new ratio?')) {
+        savePayloadEdit(Object.assign({}, body, { confirm_ratio_change: true }));
+      }
+      return;
+    }
     if (data.error) { toast('Save failed: ' + data.error, 'error'); return; }
     surfaceSaveWarnings(data);
   })
   .catch(function(err) { toast('Save error: ' + err, 'error'); });
-  return false;
 }
 
 /* --- Import (.csv / .xlsx) --- */

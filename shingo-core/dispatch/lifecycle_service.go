@@ -248,7 +248,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		return nil, "", lerr
 	}
 	s.failTakenForCart(taken, order, cart)
-	s.tellWindowTaken(taken, order)
+	s.logWindowTaken(taken, order)
 	// Emitted by the CALLER, not by admit, and deliberately with the RAW
 	// wire values: p.OrderType rather than the promoted orderType, and
 	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
@@ -270,9 +270,11 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// called worth taking: it gives the projection path real production traffic
 	// before it becomes load-bearing, on orders that are low-volume and already
 	// visible, where a bug shows up as a redundant update rather than as a
-	// missing order. The applier is an idempotent upsert by UUID, so the second
-	// arrival is a no-op — and if it is NOT a no-op, that is precisely the defect
-	// worth finding here rather than after the cutover.
+	// missing order. The applier is an upsert by UUID, and the projection carries
+	// the order's version: an Edge that versions applies its status only when it
+	// is newer, so a projection that lands after the order moved on changes
+	// nothing. An Edge that does not version wrote its status over the row
+	// whatever arrived since; that was the defect this path was kept to find.
 	s.projectOrder(order)
 	return order, payloadCode, nil
 }
@@ -420,19 +422,15 @@ func (s *LifecycleService) failTakenForCart(taken Taken, by *orders.Order, cart 
 	}
 }
 
-// tellWindowTaken pushes the new wait of the order whose pending hold on the
-// move's drop the station's move took at its issue (Taken.Window), as a dig's
-// take pushes its holder's (takeSlotByRank): the holder was told slot-taken in
-// the issue's transaction.
-func (s *LifecycleService) tellWindowTaken(taken Taken, by *orders.Order) {
+// logWindowTaken names the order whose pending hold on the window a station's
+// move took. That order was told its new wait (slot-taken) by the take's own
+// write, in the issue's transaction (issueOwnTx).
+func (s *LifecycleService) logWindowTaken(taken Taken, by *orders.Order) {
 	if taken.Window == 0 {
 		return
 	}
 	log.Printf("dispatch: order %d (a station's move) took %s from order %d's pending hold — "+
 		"order %d is told slot-taken", by.ID, by.DeliveryNode, taken.Window, taken.Window)
-	if h, err := s.db.GetOrder(taken.Window); err == nil && h != nil {
-		notifyWaitChanged(s.emitter, h)
-	}
 }
 
 // checkOrderRefs answers whether the things an order names actually exist.
@@ -702,7 +700,18 @@ func (s *LifecycleService) resolveIngestBin(p *protocol.OrderIngestRequest) (*bi
 // inventory manifest write (manifest + UOP + confirm via BinManifestService).
 // It creates no order and dispatches nothing — ingest is manifest-only. Returns
 // a lifecycleError on failure, nil on success.
+//
+// THE COUNT IS WRITTEN AS GIVEN: 0 is an empty bin, and a negative is refused
+// before anything is read or written (owner, 2026-11-19: a typed 0 means empty
+// everywhere; a person can never type a negative). The release-time ingest
+// ships only a count above 0 (finalizeDepartingProduce), so the 0 here comes
+// from the manual door, which requires the field. 0 used to become the
+// payload's capacity: a typed "none" booked a full bin. Pinned by
+// TestApplyIngestManifest_ZeroIsEmptyNegativeRefused.
 func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *lifecycleError {
+	if p.Quantity < 0 {
+		return lifecycleErr("invalid_quantity", fmt.Sprintf("ingest quantity %d is negative: a count is 0 or more", p.Quantity), nil)
+	}
 	tmpl, err := s.db.GetPayloadByCode(p.PayloadCode)
 	if err != nil {
 		return lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
@@ -776,17 +785,10 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 			manifest.Items[i] = bins.ManifestEntry{PartNumber: item.PartNumber}
 		}
 		manifestJSON, _ := json.Marshal(manifest)
-		// Use the operator-measured count Edge captured at finalize time
-		// (carried in p.Quantity == runtime.RemainingUOP from produce_plan.go),
-		// not tmpl.UOPCapacity: a finalized bin may hold fewer than its
-		// standard pack when the operator finalizes early or the run wrapped
-		// on a non-multiple-of-capacity count. Falls back to
-		// tmpl.UOPCapacity only if the wire value is missing (transitional Edge
-		// builds and the no-Quantity test fixtures).
+		// The count is the measured one the Edge sent (p.Quantity, the seat's
+		// count at the release), never tmpl.UOPCapacity: a finalized bin may
+		// hold fewer than its standard pack, and 0 is an empty bin.
 		uop := int(p.Quantity)
-		if uop <= 0 {
-			uop = tmpl.UOPCapacity
-		}
 		if err := s.binManifest.RecordProducedBin(bin.ID, string(manifestJSON), part, uop, p.ProducedAt, full); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
@@ -799,13 +801,9 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		// appeared in bin_uop_ledger only at the first downstream delta.
 		// No lines: the release-time produce ingest sends none and lets Core
 		// resolve the payload's template. The count is the Edge's (Quantity),
-		// not the template's capacity; 0 still falls back to capacity.
-		var uopOverride *int
-		if p.Quantity > 0 {
-			q := int(p.Quantity)
-			uopOverride = &q
-		}
-		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, part, uopOverride, p.ProducedAt, full); err != nil {
+		// not the template's capacity, and 0 is an empty bin.
+		q := int(p.Quantity)
+		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, part, &q, p.ProducedAt, full); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	}

@@ -50,14 +50,24 @@ var orderStatusWriters = []struct {
 	},
 	{
 		file: "../orders/orders.go", fn: "func UpdateStatusFromWithReasonTx(",
-		mustStatusGuard: "AND status=$4",
-		why:             "The CAS write transition() rides on. The AND status=$4 arm is the compare-and-swap itself; without it every transition is a blind overwrite and the resurrect incident (stale scanner wrote queued→sourcing over a cancel) is re-opened.",
+		mustStatusGuard: "AND status=$4 AND asked_vendor_order_id=''",
+		why:             "The CAS write transition() rides on. The AND status=$4 arm is the compare-and-swap itself; without it every transition is a blind overwrite and the resurrect incident (stale scanner wrote queued→sourcing over a cancel) is re-opened. The ask arm refuses a row Core is asking the fleet for: only the fleet's answer or an ending moves it.",
+	},
+	{
+		file: "../orders/ask.go", fn: "func FleetYesTx(",
+		mustStatusGuard: "WHERE id=$5 AND status=$6 AND asked_vendor_order_id=$2",
+		why:             "The fleet's yes, the one write of `dispatched`. Guarded on the status the hand found and on the ask it opened: an order that ended during the create is not resurrected, and its job is cancelled instead.",
 	},
 	// ── Edge: order store ──────────────────────────────────────────────
 	{
 		file: "@edge/store/orders/orders.go", fn: "func UpdateStatus(",
 		mustStatusGuard: "WHERE id=?",
 		why:             "Edge's id-scoped status write. Edge statuses mirror Core's machine for the operator board; a dropped WHERE re-stamps the whole board.",
+	},
+	{
+		file: "@edge/store/orders/core_word.go", fn: "func ApplyCoreWord(",
+		mustStatusGuard: "WHERE id = ? AND core_version < ?",
+		why:             "The Edge's versioned applier: Core's word written only when newer than the last applied. Without the version compare a late or repeated word moves the row back, which is the mirror disagreeing with Core again.",
 	},
 }
 

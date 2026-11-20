@@ -2,6 +2,7 @@ package payloads
 
 import (
 	"database/sql"
+	"errors"
 
 	"shingocore/domain"
 )
@@ -173,4 +174,18 @@ func insertManifestLine(tx *sql.Tx, payloadID int64, l Line, partID int64) (int6
 		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
 		payloadID, l.PartNumber, partID, l.PartsPerCycle, l.Description).Scan(&id)
 	return id, err
+}
+
+// ItemPayload is the payload a manifest line belongs to, and whether the line
+// is there: the payload guards read it before a line's edit or delete.
+func ItemPayload(db *sql.DB, id int64) (int64, bool, error) {
+	var payloadID int64
+	err := db.QueryRow(`SELECT payload_id FROM payload_manifest WHERE id=$1`, id).Scan(&payloadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return payloadID, true, nil
 }

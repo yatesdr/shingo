@@ -53,10 +53,13 @@ func engDriftHolder(t *testing.T, db *store.DB, fx *engDriftFixture, mutate ...f
 	}}, mutate...)...)
 }
 
-// engDriftCommitted builds a holder at `dispatched` (C1.5): a hard hold (a slot
-// claim, a confirmed row, occupancy) belongs to a committed robot, and a
-// pre-dispatch order holds nothing hard.
-func engDriftCommitted(o *orders.Order) { o.Status = protocol.StatusDispatched }
+// engDriftCommitted builds a holder at `dispatched` (C1.5), naming the job the
+// fleet has (v183): a hard hold (a slot claim, a confirmed row, occupancy)
+// belongs to a committed robot, and a pre-dispatch order holds nothing hard.
+func engDriftCommitted(o *orders.Order) {
+	o.Status = protocol.StatusDispatched
+	o.VendorOrderID = "sg-" + o.EdgeUUID
+}
 
 var engDriftHolds = []engDriftHold{
 	{name: "free"},

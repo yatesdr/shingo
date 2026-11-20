@@ -28,6 +28,9 @@ func TestReorderHoldChip(t *testing.T) {
 		want    string
 	}{
 		{"nothing held", consume, ReorderHoldNone, "", false, ""},
+		// Above a ratio of 1 the level reads in UoP, its parts in brackets.
+		{"a part at 8 a cycle", &NodeClaim{Role: protocol.ClaimRoleConsume, ReorderPoint: 400, UOPCapacity: 800, AutoReorder: true, PiecesPerCycle: 8},
+			ReorderHoldOff, IdleOffNote("1 hour"), false, "REORDER AT 50 UoP (400 parts): LINE IDLE"},
 		{"paused", consume, ReorderHoldPaused, "a person cancelled order 12", false, "REORDER AT 110: PAUSED"},
 		{"the idle rule's off", consume, ReorderHoldOff, IdleOffNote("1 hour"), false, "REORDER AT 110: LINE IDLE"},
 		{"an older Core's off", consume, ReorderHoldOff, coreNote, false, "REORDER AT 110: CORE GAVE UP"},

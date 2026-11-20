@@ -38,10 +38,18 @@ func (e fleetRobotsEngine) GetAllCachedRobots() []fleet.RobotStatus { return e.r
 // seedPinOrder inserts one order row with chosen timestamps and returns its id.
 func seedPinOrder(t *testing.T, db *store.DB, uuid, status, robot string, created time.Time, completed *time.Time) int64 {
 	t.Helper()
+	return seedPinOrderJob(t, db, uuid, status, robot, "", created, completed)
+}
+
+// seedPinOrderJob is seedPinOrder naming the fleet's job in the INSERT: a
+// `dispatched` row names it in the write that makes it
+// (orders_dispatched_names_its_job).
+func seedPinOrderJob(t *testing.T, db *store.DB, uuid, status, robot, job string, created time.Time, completed *time.Time) int64 {
+	t.Helper()
 	var id int64
-	err := db.DB.QueryRow(`INSERT INTO orders (edge_uuid, station_id, status, robot_id, created_at, updated_at, completed_at)
-		VALUES ($1, 'pin-station', $2, $3, $4, $4, $5) RETURNING id`,
-		uuid, status, robot, created, completed).Scan(&id)
+	err := db.DB.QueryRow(`INSERT INTO orders (edge_uuid, station_id, status, robot_id, vendor_order_id, created_at, updated_at, completed_at)
+		VALUES ($1, 'pin-station', $2, $3, $4, $5, $5, $6) RETURNING id`,
+		uuid, status, robot, job, created, completed).Scan(&id)
 	testutil.MustNoErr(t, err, "seed order "+uuid)
 	return id
 }
@@ -309,18 +317,17 @@ func overviewOverlapFixture(t *testing.T) *Handlers {
 	at := func(hh, mm int) time.Time {
 		return day.Add(time.Duration(hh)*time.Hour + time.Duration(mm)*time.Minute)
 	}
-	open := func(uuid, robot, status string, steps ...any) {
-		id := seedPinOrder(t, db, uuid, status, robot, at(0, 30), nil)
+	openJob := func(uuid, robot, status, job string, steps ...any) {
+		id := seedPinOrderJob(t, db, uuid, status, robot, job, at(0, 30), nil)
 		seedPinHistory(t, db, id, "queued", "", at(0, 30))
 		for i := 0; i < len(steps); i += 2 {
 			seedPinHistory(t, db, id, steps[i].(string), "", steps[i+1].(time.Time))
 		}
 	}
+	open := func(uuid, robot, status string, steps ...any) { openJob(uuid, robot, status, "", steps...) }
 	open("ov-r1-a", "R1", "staged", "in_transit", at(2, 0), "staged", at(2, 30))
 	open("ov-r1-b", "R1", "in_transit", "in_transit", at(3, 0))
-	open("ov-r1-n", "R1", "dispatched", "dispatched", at(1, 0))
-	_, err := db.DB.Exec(`UPDATE orders SET vendor_order_id = 'pin-vendor-n' WHERE edge_uuid = 'ov-r1-n'`)
-	testutil.MustNoErr(t, err, "vendor id on the dispatched order")
+	openJob("ov-r1-n", "R1", "dispatched", "pin-vendor-n", "dispatched", at(1, 0))
 	faultedMission := seedPinOrder(t, db, "ov-r2-f", "confirmed", "R2", at(3, 29), nil)
 	for _, s := range []struct {
 		status string

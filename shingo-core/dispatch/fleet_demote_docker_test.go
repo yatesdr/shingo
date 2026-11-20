@@ -117,7 +117,7 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	code, cause, params := FleetRefusalCause(derr, order.DeliveryNode)
-	refusing.DemoteAfterFleetRefusal(order, QueueWait{}, code, cause, params)
+	refusing.DemoteAfterFleetRefusal(order, derr, code, cause, params)
 
 	got, gerr := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, gerr, "re-read the order")
@@ -216,13 +216,12 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 		reservations.AcquireLanes(db.DB, leg.ID, reservations.ModeInbound, "test-leg", dropLane),
 		"the leg takes its own dropoff lane")
 
+	// The leg reaches the refusal door resting `pending`, its ask already closed
+	// by the refusal (refuseAsk): the hand writes no status.
 	legRow, gerr := db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, gerr, "read the leg")
-	_, execErr := db.DB.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, string(StatusDispatched), leg.ID)
-	testutil.MustNoErr(t, execErr, "force the leg row to dispatched")
-	legRow.Status = StatusDispatched
 
-	d.DemoteAfterFleetRefusal(legRow, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(legRow, errDoorRefusal, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
 	mouthRows := func(owner int64) int {
 		t.Helper()
@@ -267,7 +266,7 @@ func TestFleetRefusal_ASecondRefusalStillNamesItsWait(t *testing.T) {
 	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
-	d.DemoteAfterFleetRefusal(order, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(order, errDoorRefusal, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
 	got, err := db.GetOrder(order.ID)
 	got = testutil.Must(t, got, err, "db.GetOrder(order.ID)")
@@ -304,11 +303,11 @@ func TestFleetRefusal_TheDoubleInvocationIsANoOp(t *testing.T) {
 	// ...and then the caller's park, exactly as the scanner does it.
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
-	d.DemoteAfterFleetRefusal(order, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(order, errDoorRefusal, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 	// ...and asked again, of an order already parked.
 	orderRaw, err = db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID) after the park")
-	d.DemoteAfterFleetRefusal(order, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(order, errDoorRefusal, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
 	// One refusal is one WAIT, so one `queued` row carrying the fleet cause. It
 	// counts the waiting rows only: the cause is written while the order is

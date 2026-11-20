@@ -54,6 +54,10 @@ type CurtainPoint struct {
 type StationNodeView struct {
 	Node    Node          `json:"node"`
 	Runtime *RuntimeState `json:"runtime,omitempty"`
+	// BinRatio is the UOP ratio of the bin bound here when it is another part
+	// than the claim's and reads at another ratio (StationService.stampBinRatios);
+	// absent otherwise, where the claim's pieces_per_cycle is the bin's.
+	BinRatio int `json:"bin_ratio,omitempty"`
 	// ActiveClaim is the claim the node answers to. On a loader tile it is the
 	// loader's synthesised claim, kept on the Go tile for the engine and the
 	// Production page's template; the station's JSON leaves it off a loader
@@ -670,6 +674,11 @@ type stationOrder struct {
 	// all (operator-robot-panel.js robotOrders); the robot it draws is the one
 	// the position stream names, since this one can be stale (LEAD-NOTES D14).
 	RobotID string `json:"robot_id,omitempty"`
+	// ReleaseSent: staged, and this station's release for the wait went out
+	// (Order.ReleaseSent). The board drops RELEASE at the tap and says the
+	// release was sent; the order stays staged until Core says its robot moves.
+	// Absent while false.
+	ReleaseSent bool `json:"release_sent,omitempty"`
 }
 
 func stationOrders(orders []Order) []stationOrder {
@@ -684,7 +693,7 @@ func stationOrders(orders []Order) []stationOrder {
 			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
 			QueueReason: o.QueueReason, QueueCode: o.QueueCode, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
 			Departed: o.Departed, CreatedAt: o.CreatedAt, FaultLine: stationFaultLine(o, now),
-			RobotID: o.RobotID,
+			RobotID: o.RobotID, ReleaseSent: o.ReleaseSent,
 		}
 	}
 	return out
@@ -762,4 +771,17 @@ type ReleasePurpose struct {
 // positions (SwitchedOffOnTiles).
 type StationAutoReorderSwitch struct {
 	On bool `json:"on"`
+}
+
+// UOPRatio is the ratio a tile's count reads at: the bin's own part's
+// (BinRatio) when it differs from the claim's, else the claim's
+// (NodeClaim.PiecesPerCycle), else 1. The Production page's table reads it.
+func (v StationNodeView) UOPRatio() int {
+	if v.BinRatio > 0 {
+		return v.BinRatio
+	}
+	if v.ActiveClaim != nil {
+		return max(v.ActiveClaim.PiecesPerCycle, 1)
+	}
+	return 1
 }

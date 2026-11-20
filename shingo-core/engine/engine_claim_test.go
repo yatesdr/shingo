@@ -11,7 +11,6 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
-	"shingocore/store/orders"
 )
 
 // --- TC-ClaimBin: Silent Claim Overwrite ---
@@ -29,8 +28,9 @@ func TestClaimBin_SilentOverwrite(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := testdb.SetupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CLAIM")
-	// (C1.5: the first claimant is dispatched; a hard claim is a committed robot's.)
-	order1 := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+	// The first claimant is in its hand: Core is asking the fleet for it, so it
+	// rests `pending` with an open ask, and the hand's hard claim is its to take.
+	order1 := testdb.CreateOrder(t, db, testdb.AskingFor(protocol.StatusPending, "sg-claim-order1"))
 	order2 := testdb.CreateOrder(t, db)
 
 	// Order 1 claims the bin (reserve-then-claim, as the demoted-CAS guard requires)

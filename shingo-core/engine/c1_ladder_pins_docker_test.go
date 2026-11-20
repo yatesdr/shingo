@@ -4,6 +4,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,8 +133,7 @@ func TestLadder_WalkPath(t *testing.T) {
 	bin := createTestBinAtNode(t, db, bp.Code, storage.ID, "WALK-BIN")
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "walk-holder"
-		o.Status = protocol.StatusDispatched
-	})
+	}, testdb.FleetHas("sg-walk-holder"))
 	eng := newTestEngine(t, db, simulator.New())
 	d := eng.Dispatcher()
 
@@ -182,8 +182,8 @@ func TestLadder_WalkPath(t *testing.T) {
 // TestResume_TheParentGoesBackToPendingAndAcquiresOnce (F2): a resumed compound
 // parent is not waiting on anything, so it does not say `queued`. It returns to
 // the ladder's start and gets its one acquire at once, landing on `dispatched` or
-// on `queued` with the cause its park wrote; the station is told where it
-// landed, never `pending`.
+// on `queued` with the cause its park wrote; the station is told each write,
+// `pending` from the restart's and then where it landed.
 //
 // The fixture parent (main's TestResumeCompound_KeepsTheWaitTheScanWrites) parks
 // again on its acquire, under ngrp-resolve.
@@ -225,13 +225,10 @@ func TestResume_TheParentGoesBackToPendingAndAcquiresOnce(t *testing.T) {
 		t.Fatalf("the resumed parent is %s under %q, want queued under %q", after.Status, after.QueueCause,
 			dispatch.CauseNGRPResolve)
 	}
-	for _, st := range statusUpdates(t, db, parent.EdgeUUID) {
-		if st != string(protocol.StatusQueued) {
-			t.Errorf("the station was told %q; a resumed parent that parks again is told queued, once", st)
-		}
-	}
-	if n := len(statusUpdates(t, db, parent.EdgeUUID)); n != 1 {
-		t.Errorf("the station was sent %d status updates for the resumed parent, want 1 (where it landed)", n)
+	// Each status write now tells its own: the restart's `pending`, then the park's `queued`.
+	told := strings.Join(statusUpdates(t, db, parent.EdgeUUID), " ")
+	if want := string(protocol.StatusPending) + " " + string(protocol.StatusQueued); told != want {
+		t.Errorf("the station was told %q for the resumed parent, want %q (the restart's write, then where it landed)", told, want)
 	}
 }
 

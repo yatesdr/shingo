@@ -185,8 +185,7 @@ func TestLoad_AStagedCarrierAtRestLoads(t *testing.T) {
 			h, db := testHandlers(t)
 			sd := testdb.SetupStandardData(t, db)
 			bin := testdb.CreateBinAtNode(t, db, "", sd.LineNode.ID, "BIN-LEGAL-STAGED")
-			o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-				o.Status = protocol.StatusDispatched
+			o := testdb.CreateOrder(t, db, testdb.FleetHas("sg-legal-staged"), func(o *orders.Order) {
 				o.DeliveryNode = sd.LineNode.Name
 			})
 			testdb.ClaimBinForTest(t, db, bin.ID, o.ID)

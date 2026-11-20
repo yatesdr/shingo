@@ -61,6 +61,17 @@ const (
 	// event, not an EventOrderStatusChanged, because that handler reads every
 	// event as a possible transition.
 	EventOrderRobotChanged
+	// EventBinRowChanged — what a bin shows changed through a write that emits
+	// no EventBinUpdated: a station's count tick (the UOP-delta applier) or a
+	// write behind the bin-changed hook (the station doors, a home clear, a CMS
+	// booking). SetupEngineListeners rebroadcasts it as the SSE `bin-row`, which
+	// the Bins page repaints that bin's row on.
+	//
+	// FOR SCREENS ONLY: nothing in the engine subscribes to it. A count tick
+	// comes every few seconds per running line (SPR 2026-11-19: ~0.2 a second
+	// across nine bins), and EventBinUpdated's subscribers — the fulfillment
+	// scanner, the bins feed, the threshold monitor — would wake on each one.
+	EventBinRowChanged
 )
 
 // --- Event payloads ---
@@ -108,6 +119,12 @@ type OrderRobotChangedEvent struct {
 	VendorState   string
 	FromRobotID   string
 	RobotID       string
+}
+
+// BinRowChangedEvent is EventBinRowChanged's payload: the bin whose row changed.
+type BinRowChangedEvent struct {
+	eventbus.PayloadBase
+	BinID int64
 }
 
 type OrderCompletedEvent struct {
@@ -166,7 +183,7 @@ type OrderCancelledEvent struct {
 	EdgeUUID       string
 	StationID      string
 	Reason         string
-	PreviousStatus string // status before cancellation; carried on the event, read by no engine subscriber today
+	PreviousStatus string // status before cancellation; the cancellation notice carries it to the station (order.cancelled)
 	// RecoversOrderID is the emitting order's recovers_order_id: set only on a
 	// cancel-return order (the cancelled order whose bin it returns), nil on
 	// every other order. Carried so a subscriber that cares about returns can

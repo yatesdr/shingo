@@ -96,6 +96,7 @@ type RecipeAdvanced struct {
 	CurtainRequired       bool              `json:"curtain_required,omitempty"`
 	StrictPack            bool              `json:"strict_pack,omitempty"`
 	PackTolerancePct      int               `json:"pack_tolerance_pct,omitempty"`
+	HoldLimit             int               `json:"hold_limit,omitempty"`
 }
 
 // recipePartKeys are the Advanced keys that would put a part on a recipe.
@@ -224,7 +225,7 @@ func (g RecipeAdvanced) LayOver(a *FlowAdvanced) {
 	a.KeepStagedNode = g.KeepStagedNode
 	a.RefillBy = g.RefillBy
 	a.AutoConfirm, a.CurtainRequired, a.StrictPack = g.AutoConfirm, g.CurtainRequired, g.StrictPack
-	a.PackTolerancePct = g.PackTolerancePct
+	a.PackTolerancePct, a.HoldLimit = g.PackTolerancePct, g.HoldLimit
 }
 
 // groupRefusal is a save refused for its groups, in the engineer's words.
@@ -450,6 +451,7 @@ var advancedFields = []struct {
 	{flowspec.CurtainRequired, func(a RecipeAdvanced) bool { return a.CurtainRequired }},
 	{flowspec.StrictPack, func(a RecipeAdvanced) bool { return a.StrictPack }},
 	{flowspec.PackTolerancePct, func(a RecipeAdvanced) bool { return a.PackTolerancePct != 0 }},
+	{flowspec.HoldLimit, func(a RecipeAdvanced) bool { return a.HoldLimit != 0 }},
 }
 
 // advancedTheModeTakes refuses a group's Advanced setting a field its ★ cell's
@@ -457,8 +459,8 @@ var advancedFields = []struct {
 // every claim it makes, and the claim validator would then refuse every style
 // made from the recipe — a save that cannot be used, found at the floor's Go
 // instead of at the desktop's Save (D26 of DECISIONS-recipe-groups). A pack
-// tolerance out of range is refused here for the same reason
-// (PackToleranceRefusal, the claim validator's own sentence).
+// tolerance or a hold limit out of range is refused here for the same reason
+// (PackToleranceRefusal, HoldLimitRefusal: the claim validator's sentences).
 func (c *groupCheck) advancedTheModeTakes() error {
 	for _, g := range c.groups {
 		if g.Advanced == nil {
@@ -473,6 +475,15 @@ func (c *groupCheck) advancedTheModeTakes() error {
 			}
 		}
 		if msg := PackToleranceRefusal(g.Advanced.PackTolerancePct); msg != "" {
+			return refusef("%s's Advanced: %s", g.Name, msg)
+		}
+		if msg := HoldLimitRefusal(g.Advanced.HoldLimit); msg != "" {
+			return refusef("%s's Advanced: %s", g.Name, msg)
+		}
+		if msg := NegativeCountRefusal(flowspec.Label(flowspec.ReorderPoint), g.Advanced.ReorderPoint); msg != "" {
+			return refusef("%s's Advanced: %s", g.Name, msg)
+		}
+		if msg := NegativeCountRefusal(flowspec.Label(flowspec.LinesideSoftThreshold), g.Advanced.LinesideSoftThreshold); msg != "" {
 			return refusef("%s's Advanced: %s", g.Name, msg)
 		}
 	}

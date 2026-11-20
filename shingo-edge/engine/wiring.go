@@ -14,15 +14,19 @@
 //                                replenishment, keep-staged pre-stage),
 //                                plus the OrderFailed counterpart for
 //                                changeover-task error marking.
-//   OrderStatusChanged         – the release layer's (release_act.go
-//                                onReleaseStatusChanged), a carrier
+//   OrderCompleted also wakes   – the ended leg's sibling's release intents
+//                                (release_act.go onTerminalForIntents).
+//   OrderStatusChanged         – for an older Core's order only: a carrier
 //                                left waiting (changeover_cancel_park.go)
 //                                and the held pulling leg
-//                                (changeover_sequential_order.go). The
-//                                sequential backfill is not one: the
-//                                release act calls it when Order A's
-//                                release at the line goes out
-//                                (sequential_backfill.go).
+//                                (changeover_sequential_order.go). For an
+//                                order whose status is Core's versioned
+//                                word they hang on order.cancelled and
+//                                order.delivered (onCancelledMessage,
+//                                onDeliveredMessage). The sequential
+//                                backfill is not one: the release act calls
+//                                it when Order A's release at the line goes
+//                                out (sequential_backfill.go).
 //
 // Stage 2A.2 (2026-04) split this file out of an 813-line monolith to
 // match the Phase 2C precedent on the core side. The split is a pure
@@ -47,6 +51,8 @@ import (
 func (e *Engine) wireEventHandlers() {
 	if e.orderMgr != nil {
 		e.orderMgr.OnStagedMessage = e.onStagedMessage
+		e.orderMgr.OnDeliveredMessage = e.onDeliveredMessage
+		e.orderMgr.OnCancelledMessage = e.onCancelledMessage
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CounterDeltaEvent]) {
 		e.hourlyTracker.HandleDelta(evt.Payload)
@@ -68,7 +74,12 @@ func (e *Engine) wireEventHandlers() {
 		e.stationHealth.onRead(evt.Payload.PLCName, evt.Payload.TagName, evt.Payload.Error)
 	}, EventCounterReadError)
 
+	// An order that ended wakes its sibling's release intents, once, at the
+	// edge where it ended: Completed fires there for an order whose status is
+	// Core's versioned word (the applier) and for an older Core's (the
+	// lifecycle's transition) alike.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		e.onTerminalForIntents(evt.Payload.OrderID)
 		e.handleNodeOrderCompleted(evt.Payload)
 	}, EventOrderCompleted)
 
@@ -80,8 +91,12 @@ func (e *Engine) wireEventHandlers() {
 		e.handleNodeOrderFailed(evt.Payload)
 	}, EventOrderFailed)
 
+	// THE STATUS EVENT CARRIES NO DURABLE WORK for an order whose status is
+	// Core's versioned word: its carrier return and its held pulling leg hang on
+	// Core's order.cancelled and order.delivered (onCancelledMessage,
+	// onDeliveredMessage). These two are the same follow-ons for an older Core's
+	// order, which hears no versioned word, and each declines a versioned one.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
-		e.onReleaseStatusChanged(evt.Payload)
 		e.returnCarrierLeftWaiting(evt.Payload)
 		e.createHeldPullingLeg(evt.Payload)
 	}, EventOrderStatusChanged)

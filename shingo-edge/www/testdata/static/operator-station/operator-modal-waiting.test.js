@@ -114,6 +114,9 @@ eq(waitingLabel({ status: 'in_transit', eta: '' }), BASE + ' — in transit', 'i
 eq(waitingLabel({ status: 'in_transit', eta: 'not-a-date' }), BASE + ' — in transit', 'in_transit, unparseable eta');
 eq(waitingLabel({ status: 'in_transit', eta: new Date(Date.now() + 5 * 60 * 1000).toISOString() }),
     BASE + ' — ETA: ~5 min', 'in_transit with a real eta');
+// dispatched reads as in transit: the partner read so when its waybill wrote the
+// status, and still does now that Core tells dispatched before the robot moves.
+eq(waitingLabel({ status: 'dispatched' }), BASE + ' — in transit', 'dispatched reads as in transit');
 
 // Unknown//future statuses degrade to the base rather than rendering junk.
 eq(waitingLabel({ status: 'reshuffling' }), BASE, 'unmapped status → bare base');

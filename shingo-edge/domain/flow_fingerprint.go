@@ -49,6 +49,9 @@ import (
 // books (whether a short bin is declared full), not a tick, a leg or anything
 // a plan does, so a save that set it leaves every open preview's plan as it
 // was.
+//
+// Nor is hold_limit (2026-11-19): it changes how much a strict seat sets aside
+// off the cart, not a leg or anything a plan does.
 
 // FlowFingerprintColumns is the claim column list the fingerprint serialises,
 // in order. It must equal cloneClaimColumns plus id, and a test in

@@ -142,7 +142,7 @@ func TestSyncUOPAndClaim_StartsANewGenerationAndAnnouncesIt(t *testing.T) {
 	// storage node is not sent, so the bin stands at a seat pinStation claims.
 	seat := ownedSeat(t, db, "SEAT-SYNC", pinStation)
 	bin := createTestBin(t, db, seat.ID, "BIN-SYNC", "PART-A", 100)
-	order := createTestOrder(t, db, sd.LineNode.ID)
+	order := createAskingTestOrder(t, db, sd.LineNode.ID)
 	epoch := binEpoch(t, db, bin.ID)
 
 	remaining := 37

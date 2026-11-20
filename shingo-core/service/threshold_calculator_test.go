@@ -43,3 +43,16 @@ func TestScoreConfidence(t *testing.T) {
 		t.Errorf("thin coverage = %q, want LOW", g)
 	}
 }
+
+// TestInParts: the calculator's answer in UoP becomes parts once, by the
+// payload's ratio; at 1 it is as it was.
+func TestInParts(t *testing.T) {
+	t.Parallel()
+	in := ThresholdCalculatorOutputs{L1Threshold: 13, CellReorder: 4, SafetyApplied: 1.5, Confidence: "HIGH"}
+	if got := inParts(in, 8); got.L1Threshold != 104 || got.CellReorder != 32 || got.SafetyApplied != 1.5 || got.Confidence != "HIGH" {
+		t.Errorf("inParts at 8 = %+v, want 104 and 32 parts, the rest as it was", got)
+	}
+	if got := inParts(in, 1); got != in {
+		t.Errorf("inParts at 1 = %+v, want %+v", got, in)
+	}
+}

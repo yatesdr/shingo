@@ -156,8 +156,6 @@ type PlanningService struct {
 	debug func(string, ...any)
 
 	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan, dig *digLaneTake) error
-	// waitChanged tells a station its order's wait changed (WriteQueueDetail).
-	waitChanged func(*orders.Order)
 
 	handlers map[protocol.OrderType]PlanningHandler
 	// ahead: the types whose handler is planTransport, whose questions a door
@@ -166,7 +164,7 @@ type PlanningService struct {
 	ahead map[protocol.OrderType]bool
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan, *digLaneTake) error, waitChanged func(*orders.Order)) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan, *digLaneTake) error) *PlanningService {
 	s := &PlanningService{
 		db:             db,
 		resolver:       resolver,
@@ -174,7 +172,6 @@ func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinde
 		laneLock:       laneLock,
 		debug:          debug,
 		createCompound: createCompound,
-		waitChanged:    waitChanged,
 		handlers:       make(map[protocol.OrderType]PlanningHandler),
 	}
 	// One planTransport folds the plain family (plainFamily). The handler map
@@ -294,7 +291,7 @@ func (s *PlanningService) disposeSource(order *orders.Order, res SourceResult) (
 // was new. The door returns one and this drops it, rather than every planning
 // call site growing a discard.
 func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
-	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params, s.waitChanged)
+	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params)
 }
 
 // planTransport is the single planner for the plain family (plainFamily) —

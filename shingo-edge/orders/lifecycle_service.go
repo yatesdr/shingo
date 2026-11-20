@@ -84,11 +84,15 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 	return s.applyTransition(order, newStatus, detail, true)
 }
 
-// ApplyCoreStatus maps a status Core pushes onto the Edge order row. It is the
-// one function shared by the live-push path (HandleOrderUpdate →
-// HandleCoreStatusPush) and the boot-reconcile path (ApplyCoreStatusSnapshot),
-// so live and boot can never diverge. It replaces the older partial mapping
-// that branched on `queued` alone and discarded every other status.
+// ApplyCoreStatus maps a status Core pushes onto the Edge order row, on the
+// live-push path (HandleOrderUpdate → HandleCoreStatusPush). It is the arms for a
+// Core that does not version its orders (version 0): a versioned word goes
+// through the one applier instead (core_word.go), and these arms are what that
+// Core's words still need. The reconcile
+// snapshot is a second function, ApplyCoreStatusSnapshot, with its own arms;
+// what the two share is this one's terminal guard: neither moves a row that has
+// already ended. It replaces the older partial mapping that branched on
+// `queued` alone and discarded every other status.
 //
 // The operator is shown the truth of whichever machine owns the order at that
 // moment: the pre-fleet status (queued) reflects Core's planning, fleet
@@ -243,25 +247,33 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 }
 
 func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
-	if stagedExpireAt != nil {
-		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
-			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
-		}
-	}
 	// Capture Core's bin id at delivery so the PLC tick path can
 	// attribute deltas to the right bin. Nil for multi-bin orders /
 	// older Core builds. uop+epoch are Core's snapshot of that bin at
 	// delivery (from the OrderDelivered envelope) — stashed here for the
 	// delivered emit in applyTransition so Edge seeds its runtime cache
 	// and active_bin_epoch without an HTTP pull.
+	s.writeDeliveredFacts(order, stagedExpireAt, binID)
+	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
+	defer s.deliveredSeeds.Delete(order.ID)
+	return s.Transition(order.ID, StatusDelivered, statusDetail)
+}
+
+// writeDeliveredFacts writes what order.delivered says about the carrier onto
+// the order: the staged expiry when one is sent, and Core's bin id at delivery
+// (nil for a multi-bin order, or an older Core), which the PLC tick path
+// attributes deltas by.
+func (s *LifecycleService) writeDeliveredFacts(order *orders.Order, stagedExpireAt *time.Time, binID *int64) {
+	if stagedExpireAt != nil {
+		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
+			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
+		}
+	}
 	if binID != nil {
 		if err := s.db.UpdateOrderBinID(order.ID, binID); err != nil {
 			log.Printf("update order bin_id: %v", err)
 		}
 	}
-	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
-	defer s.deliveredSeeds.Delete(order.ID)
-	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }
 
 // encodeSnapshotFaultRef renders the fleet's reason as the JSON the Edge column
@@ -281,6 +293,18 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 	order, err := s.db.GetOrderByUUID(snapshot.OrderUUID)
 	if err != nil {
 		return err
+	}
+	// A row that has ended is left exactly as it ended: no status write, and
+	// none of the side writes below either (the fault clock, the queue reason).
+	// This is the live path's guard (ApplyCoreStatus never moves a terminal
+	// row), and a repair path must not have weaker guards than the path it
+	// repairs. Without it every arm below forced its status over an ended row: a
+	// snapshot taken before Core had the operator's receipt moved a confirmed row
+	// back to delivered, so EventOrderDelivered and then EventOrderCompleted fired
+	// a second time for one order, and a snapshot still saying in_transit set a
+	// cancelled row live again.
+	if IsTerminal(order.Status) {
+		return nil
 	}
 	snapStatus := protocol.Status(snapshot.Status)
 	// An old Core's `sourcing` is `queued` here, with the cause the snapshot

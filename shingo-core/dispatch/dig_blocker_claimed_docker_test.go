@@ -68,7 +68,7 @@ func TestDig_BlockerHardClaimed_Parks(t *testing.T) {
 	// under test is a real hold, not a value written into the column.
 	orderA := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "dig-hard-a"
-		o.Status = protocol.StatusDispatched
+		o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-dig-hard-a"
 	})
 	testdb.ClaimBinForTest(t, db, blocker.ID, orderA.ID)
 
@@ -148,7 +148,7 @@ func TestDig_BlockerLeavesTheLane_ThenDigs(t *testing.T) {
 
 	orderA := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "dig-leave-a"
-		o.Status = protocol.StatusDispatched
+		o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-dig-leave-a"
 	})
 	testdb.ClaimBinForTest(t, db, blocker.ID, orderA.ID)
 

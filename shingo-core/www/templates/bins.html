@@ -142,8 +142,7 @@
     </select>
     <span class="text-muted" style="font-size:0.8rem" id="bin-count">{{len .Bins}} bins</span>
     {{if .Authenticated}}
-    <button class="btn btn-sm ml-auto" data-action="openCycleCount">Cycle Count</button>
-    <button class="btn btn-primary btn-sm" data-action="openCreateBinModal">+ Bin</button>
+    <button class="btn btn-primary btn-sm ml-auto" data-action="openCreateBinModal">+ Bin</button>
     {{end}}
   </div>
 
@@ -211,7 +210,7 @@
              the bin Inventory lists under "Count below zero"; only a bin with no
              payload AND no count is not applicable. Twin: bins.js uopText. */}}
         <td data-sort-value="{{.UOPRemaining}}">
-          {{if or .PayloadCode (ne .UOPRemaining 0)}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
+          {{if .UOPParts}}{{.UOPShown}} <span class="text-muted bin-uop-parts">{{.UOPParts}}</span>{{else if or .PayloadCode (ne .UOPRemaining 0)}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
         </td>
         <td data-sort-value="{{.Status}}"><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
         <td class="bin-flags">
@@ -431,51 +430,6 @@
   </div>
 </div>
 
-<!-- Cycle Count Modal -->
-<div id="cc-modal" class="modal-overlay" data-backdrop-close>
-  <div class="modal modal-wide">
-    <div class="modal-header flex flex-between">
-      <h2>Cycle Count</h2>
-      <button class="modal-close" data-action="closeCycleCount">&times;</button>
-    </div>
-    <div id="cc-step1">
-      <p class="text-muted mb-1">Select bins to count. Filters apply to current table view.</p>
-      <div class="flex flex-between mb-1">
-        <span id="cc-preview-count" class="text-muted">0 bins to count</span>
-        <button class="btn btn-primary" data-action="ccStart">Start Counting</button>
-      </div>
-    </div>
-    <div id="cc-step2" class="hide">
-      <div class="cc-progress mb-1"><div class="cc-progress-fill" id="cc-progress-bar"></div></div>
-      <div class="text-muted mb-1" style="font-size:0.8rem"><span id="cc-index">0</span> of <span id="cc-total">0</span></div>
-      <div class="cc-bin-card" id="cc-bin-card"></div>
-      <div class="inline-form mb-1">
-        <div class="form-group">
-          <label>Actual UoP Count</label>
-          <input type="number" id="cc-actual" min="0" style="width:120px">
-          <small id="cc-capacity-hint" class="text-muted" style="display:block"></small>
-        </div>
-        <div class="form-group">
-          <label>Counter</label>
-          <input type="text" id="cc-actor" placeholder="Name" style="width:150px">
-        </div>
-      </div>
-      <div class="flex gap-1 flex-wrap">
-        <button class="btn btn-primary" data-action="ccConfirm">Confirm Match</button>
-        <button class="btn" data-action="ccDiscrepancy">Record Discrepancy</button>
-        <button class="btn" data-action="ccSkip">Skip</button>
-        <button class="btn btn-danger" data-action="ccFlag">Flag</button>
-      </div>
-      <p class="text-muted" style="font-size:0.75rem;margin-top:0.5rem">Enter=Confirm &middot; Tab=Skip &middot; F=Flag</p>
-    </div>
-    <div id="cc-step3" class="hide">
-      <h3 class="mb-1">Summary</h3>
-      <div id="cc-summary"></div>
-      <button class="btn btn-primary mt-2" data-action="closeCycleCount">Close</button>
-    </div>
-  </div>
-</div>
-
 <!-- Bulk Action Bar -->
 <div id="bulk-bar" class="bulk-bar hide">
   <span id="bulk-count">0 selected</span>
@@ -495,6 +449,7 @@
   var PAGE_BIN_TYPES = {{.BinTypesJSON}};
   var PAGE_PAYLOAD_BIN_TYPES = {{.PayloadBinTypesJSON}};
   var PAGE_AUTH = {{.Authenticated}};
+  var PAGE_UOP_RATIOS = {{.UOPRatiosJSON}};
 </script>
 <script type="module">import "/static/pages/bins.js";</script>
 <script type="module">import "/static/pages/bins-lineside.js";</script>

@@ -46,7 +46,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		EdgeUUID:     "uuid-empty-leg",
 		StationID:    "line-1",
 		OrderType:    OrderTypeComplex,
-		Status:       StatusDispatched, // (C1.5: the confirmed claims are a committed robot's)
+		Status:       StatusPending, // the confirm runs in the hand: the order rests with its ask open (C1.5)
 		Quantity:     1,
 		SourceNode:   lineNode.Name,
 		ProcessNode:  lineNode.Name,
@@ -54,6 +54,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		PayloadCode:  bp.Code,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedAsk(t, db, order.ID, StatusPending, "sg-uuid-empty-leg")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

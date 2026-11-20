@@ -114,8 +114,11 @@ func TestBinService_Create_FailsWhenPhysicalNodeOccupied(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Create to fail on occupied physical node")
 	}
-	if !strings.Contains(err.Error(), "already has") {
-		t.Errorf("error = %q, want occupancy message", err.Error())
+	// The refusal names the node and the bin standing on it, so the person can
+	// check the floor; "already has" is what httpStatusForCreate maps to 409.
+	want := sd.StorageNode.Name + " already has BS-OCC-1; move or retire it first"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
 

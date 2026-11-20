@@ -58,15 +58,16 @@ type dispatchStep struct {
 // fleet rejection, a partner Core refused at intake — fails it through
 // lifecycle.Fail.
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
-	// Defense-in-depth: the fulfillment scanner already gates on IsAcquiring
-	// ({pending, queued}) before calling here, so a parent in Reshuffling (with a
+	// Defense-in-depth: the fulfillment scanner already gates on Acquiring
+	// (pending or queued, no ask open) before calling here, so a parent in Reshuffling (with a
 	// compound in flight), or one already dispatched or terminal, won't reach us
 	// through the scanner. Anything calling this directly must still respect the
 	// invariant — proceeding on a non-acquiring order would re-dispatch a parent
 	// mid-reshuffle or race a post-resume. Return nil so the caller treats a
 	// non-acquiring order as a no-op, not an error.
-	if !protocol.IsAcquiring(order.Status) {
-		d.dbg("complex: DispatchPreparedComplex called with status=%s (want pending/queued); skipping", order.Status)
+	if !order.Acquiring() {
+		d.dbg("complex: DispatchPreparedComplex called with status=%s, ask %q (want pending/queued, no ask); skipping",
+			order.Status, order.AskedVendorOrderID)
 		return nil
 	}
 
@@ -94,7 +95,7 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		// A claim exchange gave this order the mouth bin: acquire it once more
 		// now, on the plan and hold the exchange wrote, rather than at the next
 		// pass.
-		if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && protocol.IsAcquiring(fresh.Status) {
+		if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && fresh.Acquiring() {
 			*order = *fresh
 			resolvedSteps, hand, _, st = d.prepareComplexHand(order, nil)
 		}
@@ -640,7 +641,6 @@ type complexCommit struct {
 	entering []*nodes.Node
 	hand     Hand
 	actor    string
-	told     QueueWait // the wait the station was last told, before the hand
 	gated    bool
 	target   laneGateTarget
 	hasWait  bool
@@ -652,7 +652,7 @@ type complexCommit struct {
 // create has already disposed of the order (buildComplexCommit); a handover
 // that does not send it goes through refuseComplexHandover.
 func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep, hand Hand) error {
-	c, err := d.buildComplexCommit(order, resolvedSteps, hand, WaitOf(order))
+	c, err := d.buildComplexCommit(order, resolvedSteps, hand)
 	if err != nil {
 		return err
 	}
@@ -673,9 +673,13 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// it: every runtime and soak assertion about "who is inside" reads the same
 	// rows this arm was not writing.
 	//
-	// It is the arm that mattered most. Complex is the bulk of both plants' lane
-	// traffic, and THIS branch — ungated — is the one that runs, because no lane
-	// at either plant carries a mark.
+	// It was the arm that mattered most when this was written: complex is the
+	// bulk of both plants' lane traffic, and no lane then carried a mark, so
+	// every complex create ran ungated. Every lane carries a mark now (a lane is
+	// never without a waiting spot: store/nodes/marks.go, and Core will not boot
+	// on one that is), so a complex plan that enters a lane is spliced and its
+	// create stops at the lane's mark (buildComplexCommit). The row is still
+	// taken for every node of the segment the create sends.
 	//
 	// THE NODES ARE THE PRE-WAIT SEGMENT'S, not the whole plan's, and the
 	// distinction is the same one the create makes: only `preWait` is being
@@ -684,7 +688,7 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// wall that lane for the whole dwell — the mistake the gated arm exists to
 	// avoid, arrived at from the other direction.
 	if err := d.commitToFleet(order, c.req, c.actor, hand, c.entering...); err != nil {
-		d.refuseComplexHandover(order, c.told, err)
+		d.refuseComplexHandover(order, err)
 		return err
 	}
 	d.afterComplexCreate(c)
@@ -698,7 +702,7 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 // send, waiting for a database that did not answer, or, for the gated valve's
 // own refusals, through refuseComplexHandover — and the caller only returns it.
 // told is the wait the station was last told, carried for the refusal door.
-func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []resolvedStep, hand Hand, told QueueWait) (*complexCommit, error) {
+func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []resolvedStep, hand Hand) (*complexCommit, error) {
 	// THE SPLICE, AND THIS IS WHERE IT LIVES FOR COORDINATED ORDERS.
 	//
 	// A coordinated order never reaches dispatchToFleetCore — the scanner branches
@@ -757,11 +761,11 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 		// to the simple transport path and complex has never been expanded.
 		req, preWait, gErr := d.buildGatedCreate(order, target, spliced, nil)
 		if gErr != nil {
-			d.refuseComplexHandover(order, told, gErr)
+			d.refuseComplexHandover(order, gErr)
 			return nil, gErr
 		}
 		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(preWait),
-			hand: hand, actor: "dispatcher", told: told, gated: true, target: target, hasWait: true}, nil
+			hand: hand, actor: "dispatcher", gated: true, target: target, hasWait: true}, nil
 	}
 	// A PLAN THAT GAINED A TURN WAIT AND NO LANE WAIT is STORED, because the
 	// table turn's re-driver reads the plan it runs: the ungated arm below
@@ -771,11 +775,11 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 	if hasTurnWait(spliced) {
 		req, preWait, uErr := d.buildUnsealedCreate(order, spliced, nil, "turned")
 		if uErr != nil {
-			d.refuseComplexHandover(order, told, uErr)
+			d.refuseComplexHandover(order, uErr)
 			return nil, uErr
 		}
 		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(preWait),
-			hand: hand, actor: "scanner", told: told, hasWait: true}, nil
+			hand: hand, actor: "scanner", hasWait: true}, nil
 	}
 
 	preWait, hasWait := splitAtWait(resolvedSteps)
@@ -809,7 +813,7 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
 	return &complexCommit{order: order, steps: resolvedSteps, req: req, entering: d.planNodes(preWait),
-		hand: hand, actor: "scanner", told: told, hasWait: hasWait}, nil
+		hand: hand, actor: "scanner", hasWait: hasWait}, nil
 }
 
 // afterComplexCreate is what follows a create the fleet took: a gated order's
@@ -1196,21 +1200,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 // lives once, in queue_detail.go, along with the account of what the bool and
 // the short-circuit are load-bearing for.
 func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
-	return WriteQueueDetail(d.db, log.Printf, "dispatch", order, code, cause, params, d.NotifyWaitChanged)
-}
-
-// NotifyWaitChanged tells the order's station that the reason it is waiting
-// changed (WriteQueueDetail decides when). A Core-internal order no station
-// placed has nobody to tell.
-func (d *Dispatcher) NotifyWaitChanged(order *orders.Order) { notifyWaitChanged(d.emitter, order) }
-
-// notifyWaitChanged is NotifyWaitChanged on an emitter in hand: the dispatcher's,
-// or admission's after a station's move took a window (tellWindowTaken).
-func notifyWaitChanged(emitter Emitter, order *orders.Order) {
-	if order.EdgeUUID == "" || order.StationID == "" || order.ParentOrderID != nil {
-		return
-	}
-	emitter.EmitOrderWaitChanged(order.ID, order.EdgeUUID, order.StationID)
+	return WriteQueueDetail(d.db, log.Printf, "dispatch", order, code, cause, params)
 }
 
 // SetQueueReason is the exported form, for a door OUTSIDE this package that
@@ -1294,7 +1284,20 @@ func (d *Dispatcher) SkipOrder(order *orders.Order, code, detail string) {
 // widening silently means re-deriving it forever if the plan ever contains
 // something unmarshalable, with no cause on the row and no line in the log --
 // and every neighbouring write in this block already logs its failure.
+//
+// A SPLICED PLAN GOES WITH ITS ROWS. A create the fleet refused leaves the
+// spliced plan stored and the order's rows on its positions (Q6); a pass works
+// the plan without the waits (withoutInsertedWaits), so writing its result
+// drops them, and every row at or after a wait is then one or more steps past
+// where its lift now is, the last ones past the end of the plan. The rows move
+// back first (unspliceCarts), and a plan whose rows could not be moved is not
+// written: the stored pair stays as it was and the next pass re-widens.
 func (d *Dispatcher) persistWidenedPlan(order *orders.Order, newSteps []resolvedStep) {
+	if err := unspliceCarts(d.db, d.dbg, order, newSteps); err != nil {
+		log.Printf("dispatch: complex order %d: its rows could not leave the spliced plan: %v "+
+			"(the plan is not rewritten this pass)", order.ID, err)
+		return
+	}
 	stepsJSON, mErr := json.Marshal(newSteps)
 	if mErr != nil {
 		log.Printf("dispatch: marshal widened steps for complex order %d: %v", order.ID, mErr)
@@ -1385,7 +1388,7 @@ func (d *Dispatcher) revertFungibleDropoffToGroup(order *orders.Order, steps []r
 // demand on a robot-system blip (C1 ruling 6) and wrote `failed` over a
 // winner's `dispatched` row on a lost CAS. `fleet_failed` is now written for
 // nothing.
-func (d *Dispatcher) refuseComplexHandover(order *orders.Order, told QueueWait, err error) {
+func (d *Dispatcher) refuseComplexHandover(order *orders.Order, err error) {
 	switch {
 	case ownerEnded(err):
 		d.dbg("complex: order %d ended before its fleet handover: nothing sent", order.ID)
@@ -1402,7 +1405,7 @@ func (d *Dispatcher) refuseComplexHandover(order *orders.Order, told QueueWait, 
 	default:
 		log.Printf("dispatch: complex order %d was not taken by the fleet, re-queuing (paper kept): %v", order.ID, err)
 		code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
-		d.DemoteAfterFleetRefusal(order, told, code, cause, params)
+		d.DemoteAfterFleetRefusal(order, err, code, cause, params)
 	}
 }
 

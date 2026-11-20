@@ -1,6 +1,10 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+
+	"shingo/protocol"
+)
 
 // reorder_hold_words.go — a held position's chip on the station board.
 //
@@ -41,9 +45,20 @@ func ReorderHoldCause(hold ReorderHold, note string) string {
 // already reads off, and a tile's chip marks a position that differs from its
 // line. Where the header carries no switch, the chip is the board's only word
 // that a person switched the line off.
+//
+// The level is the claim's count (parts for a part alone); above its part's
+// ratio of 1 it reads in UoP, the parts in brackets: "REORDER AT 50 UoP (400
+// parts): LINE IDLE" (owner, 2026-11-19: UOP big, the parts beside it). At 1
+// the chip reads as it always did.
 func ReorderHoldChip(c *NodeClaim, hold ReorderHold, note string, switchOnBoard bool) string {
 	if hold == ReorderHoldNone || (hold == ReorderHoldPersonOff && switchOnBoard) {
 		return ""
 	}
-	return fmt.Sprintf("REORDER AT %d: %s", c.DemandLevel(), ReorderHoldCause(hold, note))
+	level := c.DemandLevel()
+	if c.PiecesPerCycle > 1 {
+		u, _ := protocol.SplitUOP(level, c.PiecesPerCycle)
+		// OWNER-WORDS
+		return fmt.Sprintf("REORDER AT %d UoP (%d parts): %s", u, level, ReorderHoldCause(hold, note))
+	}
+	return fmt.Sprintf("REORDER AT %d: %s", level, ReorderHoldCause(hold, note))
 }

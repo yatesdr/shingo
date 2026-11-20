@@ -78,6 +78,9 @@
     "refusals": null,
     "replies": [
       "order.ack",
+      "order.update status=reshuffling",
+      "order.update status=dispatched",
+      "order.update status=in_transit",
       "order.ack"
     ]
   }

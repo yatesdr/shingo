@@ -47,6 +47,7 @@ CREATE INDEX idx_order_bins_bin ON order_bins (bin_id);
 //
 // Not parallel: it reads the migration's census lines from the process logger.
 func TestV173_AnOrdersCartsBecomeRowsPerLift(t *testing.T) {
+	testdb.DisableWedgeSweep(t, "the rows are pre-v173 fixtures aged into the old shape for the migration to convert, not a plant state")
 	db, cfg := testdb.OpenWithConfig(t)
 	sd := testdb.SetupStandardData(t, db)
 	if _, err := db.Exec(ageOrderCartsSchema); err != nil {

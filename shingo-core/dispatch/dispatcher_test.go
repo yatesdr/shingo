@@ -3,6 +3,8 @@
 package dispatch
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +32,6 @@ type mockEmitter struct {
 	faulted          []emitFaulted
 	faultedRecovered []emitFaultedRecovered
 	projected        []emitProjected
-	waitChanged      []int64
 }
 
 type emitReceived struct {
@@ -89,9 +90,6 @@ func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string, _ *int64) {
 }
 func (m *mockEmitter) EmitOrderResumed(orderID int64, _, _ string) {
 	m.resumed = append(m.resumed, orderID)
-}
-func (m *mockEmitter) EmitOrderWaitChanged(orderID int64, _, _ string) {
-	m.waitChanged = append(m.waitChanged, orderID)
 }
 func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
 	m.faulted = append(m.faulted, emitFaulted{orderID, reason})
@@ -159,6 +157,33 @@ func newTestDispatcher(t *testing.T, db *store.DB, backend fleet.Backend) (*Disp
 	d.DebugLog = testDebugLog(t)
 	return d, emitter
 }
+
+// stationTellsOf lists the order.update tells queued for the order with edge
+// uuid uuid, oldest first, as "status vN". The store queues a tell only once the
+// station tells are named (SetStationTells), as the engine names them; a test
+// that reads them names them first, with tellToStations.
+func stationTellsOf(t *testing.T, db *store.DB, uuid string) []string {
+	t.Helper()
+	msgs, err := db.ListPendingOutbox(500)
+	testutil.MustNoErr(t, err, "list outbox")
+	var out []string
+	for _, m := range msgs {
+		if m.MsgType != protocol.TypeOrderUpdate {
+			continue
+		}
+		var env protocol.Envelope
+		var u protocol.OrderUpdate
+		if json.Unmarshal(m.Payload, &env) != nil || json.Unmarshal(env.Payload, &u) != nil || u.OrderUUID != uuid {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s v%d", u.Status, u.Version))
+	}
+	return out
+}
+
+// tellToStations names the station tells as the engine does, so the store
+// queues an order.update with every write a station is told about.
+func tellToStations(db *store.DB) { db.SetStationTells("shingo.dispatch", "core") }
 
 // testDebugLog routes the dispatcher's dbg lines into the test log.
 //
@@ -319,7 +344,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		// asserting a disposition production no longer produced. Calling the door
 		// means it cannot drift again.
 		code, cause, params := FleetRefusalCause(err, o.DeliveryNode)
-		d.DemoteAfterFleetRefusal(o, QueueWait{}, code, cause, params)
+		d.DemoteAfterFleetRefusal(o, err, code, cause, params)
 		o, _ = db.GetOrderByUUID(orderUUID)
 		return o
 	}
@@ -339,6 +364,7 @@ func testEnvelope() *protocol.Envelope {
 func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
+	tellToStations(db)
 	_, lineNode, _ := testdb.SetupTestData(t, db)
 
 	// No fleet backend needed since it should fail before dispatch
@@ -359,12 +385,12 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 	}
 
 	// Should park because no available payloads exist: `queued` with its cause,
-	// and its station told once (C1: the door parks and tells).
+	// and its station told once, by the park's own write (C1: the door parks).
 	if o := testdb.AssertOrderStatus(t, db, "uuid-1", StatusQueued); o != nil && o.QueueCode == "" {
 		t.Errorf("parked with no cause on the row")
 	}
-	if len(emitter.waitChanged) != 1 {
-		t.Fatalf("wait-changed tells = %d, want 1", len(emitter.waitChanged))
+	if got := stationTellsOf(t, db, "uuid-1"); len(got) != 1 || !strings.HasPrefix(got[0], "queued ") {
+		t.Fatalf("station tells = %v, want one queued", got)
 	}
 }
 
@@ -418,6 +444,7 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
+	tellToStations(db)
 	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -442,12 +469,13 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	if len(emitter.failed) != 0 {
 		t.Fatalf("failed events = %d, want 0 (a move with no source bin now queues, not fails)", len(emitter.failed))
 	}
-	// (C1: the door parks it `queued` with its cause and tells its station once.)
+	// (C1: the door parks it `queued` with its cause; the park's write tells its
+	// station once.)
 	if o := testdb.AssertOrderStatus(t, db, "uuid-4", StatusQueued); o != nil && o.QueueCode == "" {
 		t.Errorf("parked with no cause on the row")
 	}
-	if len(emitter.waitChanged) != 1 {
-		t.Fatalf("wait-changed tells = %d, want 1 (move held for scanner retry)", len(emitter.waitChanged))
+	if got := stationTellsOf(t, db, "uuid-4"); len(got) != 1 || !strings.HasPrefix(got[0], "queued ") {
+		t.Fatalf("station tells = %v, want one queued (move held for scanner retry)", got)
 	}
 }
 
@@ -633,8 +661,9 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := testdb.SetupTestData(t, db)
 
-	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusDispatched}
-	db.CreateOrder(order)
+	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusPending}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-unclaim")
 
 	// Create a bin at the storage node
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-UC-1", NodeID: &storageNode.ID, Status: "available"}
@@ -775,8 +804,9 @@ func TestCancelOrder_NonCompound_NoSpuriousChildCancel(t *testing.T) {
 	// status would have skipped cancelCompoundChildren entirely; post-
 	// fix we always call it, but the call must no-op because there are
 	// no child rows.
-	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationID: "line-1", Status: StatusDispatched}
+	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationID: "line-1", Status: StatusPending}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-nc-cancel")
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -896,8 +926,9 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := testdb.SetupTestData(t, db)
 
-	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
-	db.CreateOrder(order)
+	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusPending, SourceNode: lineNode.Name}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-redir-own")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -994,11 +1025,12 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 		EdgeUUID:     "receipt-err-1",
 		StationID:    "edge.line1",
 		OrderType:    OrderTypeRetrieve,
-		Status:       StatusDispatched,
+		Status:       StatusPending,
 		Quantity:     1,
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testdb.SeedDispatched(t, db, order.ID, "sg-receipt-err-1")
 
 	env := testEnvelope()
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -1235,10 +1267,10 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	// and its parent with it through the sibling cascade.
 	//
 	// What DispatchDirect owes its caller is an error and an order in a state the
-	// caller can act on. It does not undo its own move (C1): the hand CAS'd the
-	// order into `dispatched` before the create, and it is left there, with no
-	// vendor id, for the caller to dispose of. The scanner parks it under
-	// fleet_unavailable (dispatched → queued) and retries. The bin-move door,
+	// caller can act on. The order never left the status it rests in: the hand
+	// opened its ask, the refusal closed it and demoted the hand in one
+	// transaction, and `dispatched` is written only on the fleet's yes. The scanner
+	// parks it under fleet_unavailable (pending → queued) and retries. The bin-move door,
 	// which has a person waiting, used to fail the row itself (that pin was
 	// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim); since
 	// "refactor(core): every Core door births its order through the planner and
@@ -1250,9 +1282,9 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 		t.Errorf("status = %q — DispatchDirect terminalized, so no caller can dispose of the order "+
 			"and a transient fleet refusal is permanent", persisted.Status)
 	}
-	if persisted.Status != StatusDispatched {
-		t.Errorf("status = %q, want %q — the disposition is the caller's; DispatchDirect leaves the "+
-			"hand's `dispatched` for it", persisted.Status, StatusDispatched)
+	if persisted.Status != StatusPending || persisted.AskedVendorOrderID != "" {
+		t.Errorf("status = %q, ask %q; want %q with the ask closed — the disposition is the caller's, "+
+			"and the order never left the status it rests in", persisted.Status, persisted.AskedVendorOrderID, StatusPending)
 	}
 	if persisted.VendorOrderID != "" {
 		t.Errorf("vendor order ID = %q, want empty — the fleet never accepted it", persisted.VendorOrderID)
@@ -1262,11 +1294,10 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 			len(emitter.failed))
 	}
 
-	// The waiting caller's disposition brings it back out of `dispatched`, where it
-	// has no vendor id and nothing tracks it, into `queued` under its cause.
+	// The waiting caller's disposition parks it `queued` under its cause.
 	order.Status = persisted.Status
 	code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
-	d.DemoteAfterFleetRefusal(order, QueueWait{}, code, cause, params)
+	d.DemoteAfterFleetRefusal(order, err, code, cause, params)
 	after, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
 	if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) {
@@ -1275,18 +1306,20 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	}
 }
 
-// TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce: a fleet that refuses the
-// same order on every pass tells its station once. The scanner retries a parked
-// order on each pass; each retry is queued → dispatched → (refused) → queued under
-// the same fleet_unavailable wait. The first park changes the wait and is told;
-// the retries change nothing the station sees, so they send nothing. A station
-// message per retry is a Pi write per scanner pass for as long as the fleet is
-// down (the C1 rig's long refusal window: 300 for one held-bin order).
-func TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce(t *testing.T) {
+// TestDemoteAfterFleetRefusal_OnlyTheFirstRefusalTellsThePark: a fleet that
+// refuses the same order on every pass tells its station one thing for the
+// whole window: the first park's `queued` with its cause. The order never
+// leaves the status it rests in while Core asks (its ask is a column, not a
+// status), so a refusal after the first, under the same wait, writes no status
+// and tells nothing. As built before, each pass told the hand's `dispatched` and
+// the park's `queued` (two tells and two station writes per scanner pass for as
+// long as the fleet refused: 300 passes for one held-bin order on the C1 rig).
+func TestDemoteAfterFleetRefusal_OnlyTheFirstRefusalTellsThePark(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
+	tellToStations(db)
 	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
-	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	order := &orders.Order{
 		EdgeUUID:     "direct-fail-repeat",
@@ -1301,25 +1334,23 @@ func TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce(t *testing.T) {
 	order.Status = StatusPending
 
 	for pass := 1; pass <= 3; pass++ {
-		told := WaitOf(order) // the caller's snapshot, before the hand clears the row's wait
 		_, err := d.DispatchDirect(order, storageNode, lineNode)
 		if err == nil {
 			t.Fatalf("pass %d: expected a fleet refusal", pass)
 		}
-		order.Status = StatusDispatched
 		code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
-		d.DemoteAfterFleetRefusal(order, told, code, cause, params)
+		d.DemoteAfterFleetRefusal(order, err, code, cause, params)
 		after, err := db.GetOrder(order.ID)
 		testutil.MustNoErr(t, err, "reload order")
-		if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) {
-			t.Fatalf("pass %d: status %q code %q, want %q under %q", pass,
-				after.Status, after.QueueCode, StatusQueued, protocol.QueueFleetUnavailable)
+		if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) || after.AskedVendorOrderID != "" {
+			t.Fatalf("pass %d: status %q code %q ask %q, want %q under %q with the ask closed", pass,
+				after.Status, after.QueueCode, after.AskedVendorOrderID, StatusQueued, protocol.QueueFleetUnavailable)
 		}
-		order.Status = after.Status
 	}
-	if len(emitter.waitChanged) != 1 {
-		t.Errorf("wait-changed tells = %d over 3 refusals, want 1 — only the first park changed the "+
-			"wait the station sees", len(emitter.waitChanged))
+	// Born pending at version 1: the first park is v2, and nothing after it.
+	want := []string{"queued v2"}
+	if got := stationTellsOf(t, db, "direct-fail-repeat"); strings.Join(got, ", ") != strings.Join(want, ", ") {
+		t.Errorf("station tells over 3 refusals = %v, want %v", got, want)
 	}
 }
 
@@ -1331,13 +1362,14 @@ func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 	order := &orders.Order{
 		EdgeUUID:      "redir-noexist",
 		StationID:     "edge.line1",
-		Status:        StatusDispatched,
+		Status:        StatusPending,
 		SourceNode:    lineNode.Name,
 		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-123-test",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"), "set dispatched")
+	// The INSERT does not bind the vendor id: `dispatched` and its job land together.
+	testdb.SeedDispatched(t, db, order.ID, order.VendorOrderID)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -1373,12 +1405,13 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 	order := &orders.Order{
 		EdgeUUID:      "redir-nosrc",
 		StationID:     "edge.line1",
-		Status:        StatusDispatched,
+		Status:        StatusPending,
 		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-456-test",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"), "set dispatched")
+	// The INSERT does not bind the vendor id: `dispatched` and its job land together.
+	testdb.SeedDispatched(t, db, order.ID, order.VendorOrderID)
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

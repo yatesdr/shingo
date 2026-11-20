@@ -1,6 +1,7 @@
 package www
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,6 +20,9 @@ import (
 // the request was well-formed and the server is not going to guess. Everything
 // else is the caller's error (a blank part, a zero ratio) or the server's.
 func (h *Handlers) manifestWriteError(w http.ResponseWriter, err error) {
+	if h.countGuardError(w, err) {
+		return
+	}
 	var conflict *service.CATIDConflict
 	switch {
 	case errors.As(err, &conflict):
@@ -247,7 +251,33 @@ func templateSets(binTypeIDs *[]int64, manifest *[]templateManifestLine) service
 // refused, none of it was saved. A refused carrier type keeps its "bin types:"
 // prefix; a cat-id conflict is a question (409); a refused field (code,
 // capacity, tote number) or a manifest line is the caller's error.
+// countGuardError answers the payload guards' two answers, true when err was
+// one: a ratio change not yet seen is 409 with the warning and what it is
+// about (ratio_change), for the caller to show before it saves again with
+// confirm_ratio_change; a kit flip under standing counts is 409 with its
+// sentence. Nothing was written either way.
+func (h *Handlers) countGuardError(w http.ResponseWriter, err error) bool {
+	var unseen *service.RatioChangeUnseen
+	switch {
+	case errors.As(err, &unseen):
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(struct {
+			Error       string              `json:"error"`
+			RatioChange service.RatioChange `json:"ratio_change"`
+		}{unseen.Error(), unseen.Change})
+		return true
+	case errors.Is(err, service.ErrKitFlip):
+		h.jsonError(w, err.Error(), http.StatusConflict)
+		return true
+	}
+	return false
+}
+
 func (h *Handlers) payloadSaveError(w http.ResponseWriter, err error) {
+	if h.countGuardError(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, service.ErrBareTypeInPayloadRule):
 		h.jsonError(w, "bin types: "+err.Error(), payloadRuleWriteStatus(err))
@@ -327,6 +357,9 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		UOPPerTote           optionalCount           `json:"uop_per_tote"`
 		BinTypeIDs           *[]int64                `json:"bin_type_ids"`
 		Manifest             *[]templateManifestLine `json:"manifest"`
+		// ConfirmRatioChange says the engineer has seen what this save's ratio
+		// change does to the counts that stand (service.RatioChangeUnseen).
+		ConfirmRatioChange bool `json:"confirm_ratio_change"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -357,7 +390,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.engine.PayloadService().UpdateWithSets(p, templateSets(req.BinTypeIDs, req.Manifest)); err != nil {
+	if err := h.engine.PayloadService().UpdateWithSetsSeen(p, templateSets(req.BinTypeIDs, req.Manifest), req.ConfirmRatioChange); err != nil {
 		h.payloadSaveError(w, err)
 		return
 	}

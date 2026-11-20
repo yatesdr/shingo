@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"shingo/protocol/migrate"
@@ -4589,10 +4590,105 @@ func migrationList() []migration {
 				return schema.ColumnExists(q, "carrier_families", "lift_bintask") &&
 					schema.ColumnExists(q, "carrier_families", "wait_bintask")
 			}},
-		{181, "robot_deviceconfig_pulls - one append-only row per robot per Device Config pull: params (the flattened matrix rows) and config (the sanitized whole model), plus the pull-time model_md5 for provenance",
-			v181DeviceConfigPulls,
-			func(q schema.Querier) bool { return schema.TableExists(q, "robot_deviceconfig_pulls") }},
+		{181, "orders.version - one counter per order, bumped with every write the station is told (status, robot, wait); 1 on every existing order",
+			v181OrderVersion,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "version") }},
+		{182, "orders.asked_vendor_order_id - the fleet order Core is asking the fleet to create for this order, for as long as it asks; blank on every existing order",
+			v182OrderAskedVendorOrderID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "asked_vendor_order_id") }},
+		{183, "orders_dispatched_names_its_job - a `dispatched` order names its fleet job (vendor_order_id); NOT VALID: the rows already breaking it are counted and logged, not rewritten",
+			v183DispatchedNamesItsJob,
+			func(q schema.Querier) bool {
+				return schema.ConstraintExists(q, "orders", "orders_dispatched_names_its_job")
+			}},
+	{184, "robot_deviceconfig_pulls - one append-only row per robot per Device Config pull: params (the flattened matrix rows) and config (the sanitized whole model), plus the pull-time model_md5 for provenance",
+		v184DeviceConfigPulls,
+		func(q schema.Querier) bool { return schema.TableExists(q, "robot_deviceconfig_pulls") }},
 	}
+}
+
+// v183DispatchedNamesItsJob adds the rule that `dispatched` means the fleet has
+// the job: a `dispatched` row names it in vendor_order_id. `dispatched` is
+// written once, by the fleet's yes, with the vendor id (orders.FleetYesTx), so
+// no write since v182 breaks it. Rows written before, by a hand that wrote
+// `dispatched` before asking and died or was refused before the id, may: they
+// are counted and logged by id, and left as they are, because nothing says
+// which side of the fleet's answer each is on. The rule is added NOT VALID, so
+// it holds every new write and does not reject the rows it found. ROLLBACK is
+// the previous binary plus DROP CONSTRAINT. Pin:
+// TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows.
+func v183DispatchedNamesItsJob(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id FROM orders WHERE status = 'dispatched' AND vendor_order_id = '' ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("v183 count dispatched orders naming no job: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("v183 count dispatched orders naming no job: %w", err)
+		}
+		ids = append(ids, strconv.FormatInt(id, 10))
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("v183 count dispatched orders naming no job: %w", err)
+	}
+	log.Printf("store: v183 dispatched orders naming no fleet job: %d, left as they are%s", len(ids), v183IDList(ids))
+	var present bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint
+		WHERE conname = 'orders_dispatched_names_its_job' AND conrelid = 'orders'::regclass)`).Scan(&present); err != nil {
+		return fmt.Errorf("v183 read the rule: %w", err)
+	}
+	if present {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE orders ADD CONSTRAINT orders_dispatched_names_its_job
+		CHECK (status <> 'dispatched' OR vendor_order_id <> '') NOT VALID`); err != nil {
+		return fmt.Errorf("v183 the rule: %w", err)
+	}
+	return nil
+}
+
+// v183IDList renders the ids v183 logs, the first 50.
+func v183IDList(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	if len(ids) > 50 {
+		return ": " + strings.Join(ids[:50], ", ") + ", ..."
+	}
+	return ": " + strings.Join(ids, ", ")
+}
+
+// v182OrderAskedVendorOrderID adds orders.asked_vendor_order_id: the vendor
+// order id Core is asking the fleet to create, written by the order's hand in
+// the transaction that takes its holds, and cleared when the fleet answers (the
+// yes names the job in vendor_order_id; a no leaves it unnamed). Core-only: it
+// is never on the wire. An open ask means the order is spoken for, whatever its
+// status says (orders.PreDispatchSQL and its twins). Blank, the default and
+// what every existing order reads, is no ask. ROLLBACK is the previous binary
+// plus DROP COLUMN. Pin: TestOrderMigration_V182_NoOrderIsAsking.
+func v182OrderAskedVendorOrderID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS asked_vendor_order_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v182 orders.asked_vendor_order_id: %w", err)
+	}
+	return nil
+}
+
+// v181OrderVersion adds orders.version: one counter per order, bumped in the
+// same statement as every write Core tells the order's station about (its
+// status, its robot, its wait). It rides the status tell, the reconcile
+// snapshot and the projection, so the station applies a message only when it
+// is newer than the one it last applied, and a late copy cannot move the row
+// back. The default is 1, on every existing order and every new one, so a
+// version of 0 on the wire can only mean an older Core. ROLLBACK is the
+// previous binary plus DROP COLUMN. Pin: TestOrderMigration_V181_EveryOrderStartsAtOne.
+func v181OrderVersion(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("v181 orders.version: %w", err)
+	}
+	return nil
 }
 
 // v180CarrierFamilyKeys adds a carrier family's two RDS binTask keys: the one a
@@ -4625,7 +4721,7 @@ func v180CarrierFamilyKeys(tx *sql.Tx) error {
 // a staleness signal and nothing reads this column for one.
 //
 // ROLLBACK is the previous binary: it reads no row of this table.
-func v181DeviceConfigPulls(tx *sql.Tx) error {
+func v184DeviceConfigPulls(tx *sql.Tx) error {
 	for _, s := range []string{
 		`CREATE TABLE IF NOT EXISTS robot_deviceconfig_pulls (
 			id         BIGSERIAL PRIMARY KEY,
@@ -4639,7 +4735,7 @@ func v181DeviceConfigPulls(tx *sql.Tx) error {
 			ON robot_deviceconfig_pulls (vehicle_id, pulled_at DESC)`,
 	} {
 		if _, err := tx.Exec(s); err != nil {
-			return fmt.Errorf("v181 deviceconfig pulls: %w", err)
+			return fmt.Errorf("v184 deviceconfig pulls: %w", err)
 		}
 	}
 	return nil
