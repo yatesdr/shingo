@@ -773,7 +773,7 @@ func TestBinLoadDoor_Arms(t *testing.T) {
 		{name: "a replace of a carrier a live order holds is refused, its clear with it",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-R-HELD")
-				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				o := testdb.CreateOrder(t, f.db, testdb.FleetHas("sg-ld-r-held"))
 				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
 				f.holder = o.ID
 				b = binByLabel(t, f.db, "LD-R-HELD")

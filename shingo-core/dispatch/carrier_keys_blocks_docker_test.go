@@ -194,8 +194,10 @@ func TestCarrierKeys_EveryKeyBlankIsToday(t *testing.T) {
 // costUnkeyedSealedCreate is DispatchDirect's statements for a held retrieve
 // at a plant with no key: 21 before the carrier keys (measured at d5b9fac7),
 // less the second payload read the sealed path made for its load sequence,
-// which it now resolves once.
-const costUnkeyedSealedCreate = 20
+// which it now resolves once; plus one for the fleet's yes, which writes
+// `dispatched` with the job in a transaction of its own (BEGIN, COMMIT) where
+// the vendor id was one bare UPDATE (TestKanbanCost_ScannerParkedPass's +1).
+const costUnkeyedSealedCreate = 21
 
 // ckHeldRetrieve files a retrieve of the plant's cart and takes it to the
 // moment the scanner hands it to DispatchDirect: found, claimed, held, its
@@ -354,7 +356,8 @@ func TestCarrierKeys_AnAppendNamesItsStepByPlanPosition(t *testing.T) {
 // the fleet calls of the call that sends it, at a plant with no key and at one
 // whose families name keys. Unkeyed, a sealed create, a complex create and an
 // append cost what they cost before the carrier keys (measured at d5b9fac7:
-// 21, 60 and 6), less the sealed create's second payload read. Keyed, a create
+// 21, 60 and 6), less the sealed create's second payload read, plus one on a
+// create for the fleet's yes's own transaction. Keyed, a create
 // adds the scene read (1) and an append its carts' read and the scene read
 // (2); a sealed create of a payload with a load sequence adds nothing (the
 // sequence names its lift, and the set-down sends the default). No shape adds
@@ -407,13 +410,13 @@ func TestCarrierKeys_WhatAKeyCosts(t *testing.T) {
 		sh             shape
 	}{
 		{"a sealed create", costUnkeyedSealedCreate, 1, sealed("ck-cost-sealed")},
-		{"a sealed create with a load sequence", 27, 0,
+		{"a sealed create with a load sequence", 28, 0,
 			func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, backend fleet.Backend) func() {
 				_, err := db.Exec(`UPDATE payloads SET advanced_load_sequence = 'Child cart interlock' WHERE code = $1`, p.payload.Code)
 				testutil.MustNoErr(t, err, "the payload's load sequence")
 				return sealed("ck-cost-sequence")(t, d, db, p, backend)
 			}},
-		{"a complex create", 60, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
+		{"a complex create", 61, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
 			d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{OrderUUID: "ck-cost-complex",
 				PayloadCode: p.payload.Code, Quantity: 1, ProcessNode: p.line.Name,
 				Steps: []protocol.ComplexOrderStep{{Action: protocol.ActionPickup, Node: p.storage.Name},

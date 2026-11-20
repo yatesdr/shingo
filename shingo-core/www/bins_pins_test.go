@@ -625,8 +625,11 @@ func TestPinBins_Rows(t *testing.T) {
 		t.Errorf("gone = %v, want [999999]", gone)
 	}
 
-	o := testdb.CreateOrder(t, db)
+	// An order out with the fleet, holding its cart: a cart row with no hold is
+	// a wedged order, which the end-of-test sweep refuses (AssertNoPointerWedge).
+	o := testdb.CreateOrder(t, db, testdb.FleetHas("sg-pin-rows"))
 	testdb.SeedCartRow(t, db, o.ID, other.ID, 0, 1)
+	testdb.ClaimBinForTest(t, db, other.ID, o.ID)
 	rows, gone = pinBinRows(t, h, fmt.Sprintf("?orders=%d", o.ID))
 	if len(rows) != 1 || pinRowBinID(t, rows[0]) != other.ID || len(gone) != 0 {
 		t.Errorf("orders: rows %v gone %v, want the order's cart %d", rows, gone, other.ID)
