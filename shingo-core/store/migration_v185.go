@@ -257,11 +257,7 @@ var v185Moves = []v185Move{
 			WHERE kind = 'hold_dropped' AND detail ? 'station'`,
 		`UPDATE bin_uop_exception SET detail = COALESCE(detail, '{}'::jsonb) || jsonb_build_object('station', station_uid)
 			WHERE kind = 'hold_dropped'`},
-	{"audit_log floor_create: the JSON key follows the column",
-		`UPDATE audit_log SET new_value = ((new_value::jsonb - 'station') || jsonb_build_object('station_uid', new_value::jsonb -> 'station'))::text
-			WHERE entity_type = 'payload' AND action = 'floor_create' AND new_value LIKE '{%' AND new_value::jsonb ? 'station'`,
-		`UPDATE audit_log SET new_value = ((new_value::jsonb - 'station_uid') || jsonb_build_object('station', new_value::jsonb -> 'station_uid'))::text
-			WHERE entity_type = 'payload' AND action = 'floor_create' AND new_value LIKE '{%' AND new_value::jsonb ? 'station_uid'`},
+	{"audit_log floor_create: the JSON key follows the column", v185AuditKeyMove("station", "station_uid"), v185AuditKeyMove("station_uid", "station")},
 }
 
 // v185LedgerActorOps are V185LedgerUIDOps but edge_rollback, whose station
@@ -395,10 +391,16 @@ func v185Up(tx *sql.Tx) error {
 		}
 	}
 	// 4. The moves, the registry fold last among them.
+	if err := v185Exec(tx, "the JSON guard", v185JSONGuardOn); err != nil {
+		return err
+	}
 	for _, m := range v185Moves {
 		if err := v185Exec(tx, m.name, m.up); err != nil {
 			return err
 		}
+	}
+	if err := v185JSONGuardOff(tx); err != nil {
+		return err
 	}
 	if err := v185FoldRegistry(tx); err != nil {
 		return err
@@ -557,15 +559,18 @@ func v185FoldRegistry(tx *sql.Tx) error {
 	return v185Exec(tx, "fold the registry", `UPDATE edge_registry SET station_uid = station_id WHERE station_uid = ''`)
 }
 
-// v185Verify is v185's post-condition: every rename, add and drop, every
-// relabel and constraint. Catalog reads only.
+// v185Verify is v185's post-condition, and only the part a re-run of
+// v185Up restores: every column rename, add and drop, and every dropped table.
+// The runner re-runs a migration whose verify fails on every boot, and a
+// re-run takes ACCESS EXCLUSIVE on every table v185 touches; one that cannot
+// repair what failed would do that forever. A missing index or constraint
+// name (a hand-dropped index, say) is the boot's drift report's to name, not
+// this verify's (TestV185_AHandDroppedIndexIsDriftNotARerun). Catalog reads
+// only.
 func v185Verify(q schema.Querier) bool {
 	ok := true
 	for _, r := range v185Ops.renames {
 		ok = ok && schema.ColumnAbsent(q, r.table, r.from) && schema.ColumnExists(q, r.table, r.to)
-	}
-	for _, r := range v185Ops.relabels {
-		ok = ok && schema.IndexAbsent(q, r.from) && schema.IndexExists(q, r.to)
 	}
 	for _, a := range v185Ops.adds {
 		ok = ok && schema.ColumnExists(q, a.table, a.column)
@@ -576,11 +581,7 @@ func v185Verify(q schema.Querier) bool {
 	for _, d := range v185Ops.dropTables {
 		ok = ok && schema.TableAbsent(q, d.table)
 	}
-	ok = ok && schema.ColumnAbsent(q, "edge_registry", "station_id")
-	for _, c := range v185Ops.checks {
-		ok = ok && schema.ConstraintExists(q, c.table, c.name)
-	}
-	return ok
+	return ok && schema.ColumnAbsent(q, "edge_registry", "station_id")
 }
 
 // migrateDown185 puts the v184 shape back, generated from v185Ops and
@@ -663,11 +664,17 @@ func v185Down(tx *sql.Tx) error {
 			return err
 		}
 	}
+	if err := v185Exec(tx, "the JSON guard", v185JSONGuardOn); err != nil {
+		return err
+	}
 	for i := len(v185Moves) - 1; i >= 0; i-- {
 		m := v185Moves[i]
 		if err := v185Exec(tx, "invert: "+m.name, m.down); err != nil {
 			return err
 		}
+	}
+	if err := v185JSONGuardOff(tx); err != nil {
+		return err
 	}
 	for i := len(v185Ops.adds) - 1; i >= 0; i-- {
 		a := v185Ops.adds[i]
@@ -720,4 +727,39 @@ func v185CommentsOff(comments string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// v185AuditKeyMove renames the from key of audit_log's floor_create rows to
+// to. new_value is text a writer wrote as JSON; a row that does not parse as
+// a JSON object is left as it was (v185JSONGuard counts it), so one bad row
+// cannot fail the migration on every boot.
+func v185AuditKeyMove(from, to string) string {
+	return `UPDATE audit_log a SET new_value = ((p.j - '` + from + `') || jsonb_build_object('` + to + `', p.j -> '` + from + `'))::text
+		  FROM (SELECT id, pg_temp.v185_jsonb(new_value) AS j FROM audit_log
+		         WHERE entity_type = 'payload' AND action = 'floor_create') p
+		 WHERE a.id = p.id AND jsonb_typeof(p.j) = 'object' AND p.j ? '` + from + `'`
+}
+
+// v185JSONGuardOn creates, for this transaction's session, the function the
+// audit_log move reads new_value through: the text as jsonb, or NULL where
+// the cast fails, in place of the cast's error.
+const v185JSONGuardOn = `CREATE OR REPLACE FUNCTION pg_temp.v185_jsonb(t text) RETURNS jsonb LANGUAGE plpgsql AS $$
+BEGIN
+	RETURN t::jsonb;
+EXCEPTION WHEN others THEN
+	RETURN NULL;
+END $$`
+
+// v185JSONGuardOff counts the floor_create rows the move left as they were,
+// logs the count once, and drops the function.
+func v185JSONGuardOff(tx *sql.Tx) error {
+	var left int
+	if err := tx.QueryRow(`SELECT count(*) FROM audit_log WHERE entity_type = 'payload' AND action = 'floor_create'
+		AND jsonb_typeof(pg_temp.v185_jsonb(new_value)) IS DISTINCT FROM 'object'`).Scan(&left); err != nil {
+		return fmt.Errorf("v185 count the floor_create rows that are not JSON: %w", err)
+	}
+	if left > 0 {
+		log.Printf("v185: %d audit_log floor_create rows whose new_value is not a JSON object were left as they were", left)
+	}
+	return v185Exec(tx, "drop the JSON guard", `DROP FUNCTION pg_temp.v185_jsonb(text)`)
 }

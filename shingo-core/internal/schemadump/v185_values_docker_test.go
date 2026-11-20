@@ -48,7 +48,8 @@ INSERT INTO bin_uop_exception (id, kind, op, actor, occurred_at, detail) VALUES
   (9, 'hold_dropped', 'hold_dropped', 'edge:loader', now(), '{"station": "uid-a", "count": 3}');
 INSERT INTO audit_log (id, entity_type, entity_id, action, new_value) VALUES
   (1, 'payload', 7, 'floor_create', '{"code":"P1","station":"uid-a"}'),
-  (2, 'payload', 7, 'update', '{"station":"uid-a"}');
+  (2, 'payload', 7, 'update', '{"station":"uid-a"}'),
+  (3, 'payload', 8, 'floor_create', '{"station": "uid-a", broken');
 INSERT INTO edge_registry (id, station_uid, station_id) VALUES
   (1, 'uid-r1', 'uid-r1'),
   (2, '', 'uid-r2'),
@@ -80,8 +81,8 @@ var v185Want = []struct {
 		[]string{"1:negative_crossing:uid-a::", "2:stale_epoch:uid-a::", "3:payload_mismatch:uid-a::", "4:edge_rollback:uid-a::",
 			"5:boundary:uid-a::", "6:report_divergence:uid-a::", "7:boundary::system:", "8:negative_crossing::alice:",
 			`9:hold_dropped:uid-a:edge:loader:{"count": 3}`}},
-	{"audit_log: floor_create's key follows the column, nothing else moves", `SELECT id || ':' || new_value FROM audit_log ORDER BY id`,
-		[]string{`1:{"code": "P1", "station_uid": "uid-a"}`, `2:{"station":"uid-a"}`}},
+	{"audit_log: floor_create's key follows the column, nothing else moves, a row that is not JSON stays as it was", `SELECT id || ':' || new_value FROM audit_log ORDER BY id`,
+		[]string{`1:{"code": "P1", "station_uid": "uid-a"}`, `2:{"station":"uid-a"}`, `3:{"station": "uid-a", broken`}},
 	{"edge_registry: folded, the collision and the both-blank row gone", `SELECT id || ':' || station_uid FROM edge_registry ORDER BY id`,
 		[]string{"1:uid-r1", "2:uid-r2", "3:uid-r4"}},
 	{"bin_uop_delta_daily: actor is station_uid", `SELECT station_uid FROM bin_uop_delta_daily`, []string{"uid-a"}},
@@ -204,7 +205,7 @@ func v184Rows(t *testing.T, db *sql.DB) map[string]string {
 		"mission_telemetry":   `SELECT order_id || ':' || station_id FROM mission_telemetry ORDER BY order_id`,
 		"bin_uop_ledger":      `SELECT id || ':' || op || ':' || station || ':' || actor FROM bin_uop_ledger ORDER BY id`,
 		"bin_uop_exception":   `SELECT id || ':' || kind || ':' || op || ':' || actor || ':' || COALESCE(detail::text, '') FROM bin_uop_exception ORDER BY id`,
-		"audit_log":           `SELECT id || ':' || (new_value::jsonb)::text FROM audit_log ORDER BY id`,
+		"audit_log":           `SELECT id || ':' || CASE WHEN id = 3 THEN new_value ELSE (new_value::jsonb)::text END FROM audit_log ORDER BY id`,
 		"edge_registry":       `SELECT id || ':' || CASE id WHEN 2 THEN '(folded)' WHEN 3 THEN '(selector restored as the uid)' ELSE station_id || ':' || station_uid END FROM edge_registry WHERE id NOT IN (4, 5) ORDER BY id`,
 		"bin_uop_delta_daily": `SELECT actor FROM bin_uop_delta_daily`,
 		"cell_part_events":    `SELECT cell_id FROM cell_part_events UNION ALL (SELECT indexname FROM pg_indexes WHERE tablename = 'cell_part_events_2026_06' ORDER BY indexname)`,
