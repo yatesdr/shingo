@@ -33,21 +33,7 @@ func (e *Engine) Start() {
 	// the scanner starts below). Named first (reconciliation_boot_asks.go).
 	e.reconciliation.TakeBootAsks()
 
-	// Create emitter adapters
-	de := &dispatchEmitter{bus: e.Events, engine: e}
-	pe := &pollerEmitter{bus: e.Events, audit: e.auditOrderNote}
-
-	// Create dispatcher with synthetic node resolver
-	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
-	e.dispatcher = e.newDispatcher(de, resolver)
-
-	// Initialize tracker if backend supports it
-	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
-		tb.InitTracker(pe, &orderResolver{db: e.db})
-		e.tracker = tb.Tracker()
-	}
-
-	e.startFulfillment(resolver)
+	e.startFulfillment(e.startDispatch())
 
 	// Wire event handlers, and start the goroutine the ones that acquire hand
 	// their work to.
@@ -263,6 +249,21 @@ func (e *Engine) startFulfillment(resolver dispatch.NodeResolver) {
 	sourceFinder := dispatch.NewSourceFinder(e.db, resolver, e.debugLog)
 	e.fulfillment = fulfillment.NewScanner(e.db, e.dispatcher, e.dispatcher.Lifecycle(), sourceFinder, e.binManifest, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
 	e.dispatcher.SetAcquirer(e.fulfillment)
+}
+
+// startDispatch builds the dispatcher, with the synthetic node resolver, and the
+// tracker when the backend tracks orders; it returns the resolver for the
+// fulfillment scanner.
+func (e *Engine) startDispatch() *dispatch.DefaultResolver {
+	de := &dispatchEmitter{bus: e.Events, engine: e}
+	pe := &pollerEmitter{bus: e.Events, audit: e.auditOrderNote}
+	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
+	e.dispatcher = e.newDispatcher(de, resolver)
+	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
+		tb.InitTracker(pe, &orderResolver{db: e.db})
+		e.tracker = tb.Tracker()
+	}
+	return resolver
 }
 
 // startBootScan scans, on its own goroutine, the orders queued before a restart,
