@@ -205,3 +205,20 @@ pg_dump -h localhost -U shingocore shingocore > shingocore_backup.sql
 psql -h localhost -U shingocore shingocore < shingocore_backup.sql
 ```
 
+Restore into an empty database, and restore the whole dump: Core refuses to start on tables that arrived without
+their `schema_migrations` rows, because nothing can then tell what shape they are.
+
+**A dump from an older release.** This release carries no migration below v184; a database is born on the baseline
+or already holds v1 to v184. A dump taken from a Core older than v0.17.1 (a `schema_migrations` that stops below
+v184, or has a hole) is refused at start, naming the missing versions, and nothing in it is changed. To bring one
+up:
+
+1. Restore it whole into an empty database.
+2. Start v0.17.1 on it once (`install-core.sh --tag v0.17.1`, or that release's binary by hand). It applies the
+   versions this release no longer carries.
+3. Then install this release, which applies the migrations above v184.
+
+`shingocore migrate -config /etc/shingo/shingocore.yaml check` says, without changing anything, which of these a
+database needs: `database v<cur> -> v<target>` when this build would start on it, or the refusal and the release to
+start first.
+

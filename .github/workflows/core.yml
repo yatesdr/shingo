@@ -67,13 +67,15 @@ jobs:
         with:
           # FULL HISTORY, and it is load-bearing.
           #
-          # TestSchemaConvergesAcrossVintages builds an "aged" database from a
-          # baseline read out of git at a pinned revision — `git show
-          # <rev>:store/schema/...`. actions/checkout defaults to a SHALLOW
-          # clone (fetch-depth 1), where neither an older commit nor a tag
-          # exists, so every pinned vintage fails with "invalid object name"
-          # and the test that exists to catch upgrade-path bugs cannot run at
-          # all.
+          # TestSchemaConvergesAcrossVintages builds its "aged" databases with
+          # Core's own releases, each built from its tag (`git archive <tag>`:
+          # v0.11.0, v0.13.2, v0.16.0 and the retired chain's release), plus
+          # one born on v0.0.14's DDL (`git show v0.0.14:...`).
+          # TestBaselineIsCurrent builds the retired chain's release the same
+          # way to regenerate the baseline. actions/checkout defaults to a
+          # SHALLOW clone (fetch-depth 1), where no tag exists, so every one of
+          # those fails and the tests that exist to catch upgrade-path bugs
+          # cannot run at all.
           #
           # Skipping the test when the revision is missing would be worse than
           # this cost: it would go green in CI while asserting nothing, which is
@@ -199,8 +201,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Full history: TestSchemaConvergesAcrossVintages reads pinned
-          # revisions out of git. See the note in the build job.
+          # Full history: TestSchemaConvergesAcrossVintages and
+          # TestBaselineIsCurrent build Core releases from their tags. See the
+          # note in the build job.
           fetch-depth: 0
 
       - uses: actions/setup-go@v7

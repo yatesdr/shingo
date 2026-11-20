@@ -9,7 +9,8 @@
 // Every Go package is its own test process, so "one container per process" is one
 // container per PACKAGE — and shingo-core has 31 packages carrying docker-tagged
 // tests. MEASURED on the dev host, that fixed setup is ~5.4s per package (~3s for
-// Postgres to boot, ~2.4s to replay the migration stack into the template) against
+// Postgres to boot, ~2.4s to replay the migration chain into the template, before
+// the squash; the template is born on the baseline now) against
 // ~0.2s of actual query work in a small package like store/admin. Serialized by
 // `go test -p 1`, it was ~167s of a ~274s suite: 61% of the docker run spent
 // booting Postgres and building the same schema over and over. Worse, the

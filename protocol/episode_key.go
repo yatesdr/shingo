@@ -136,7 +136,7 @@ const (
 // for free; this is a PERSISTED identity compared across services and across
 // time, where it cannot. The monitor now keys everything by this key.
 //
-// nodes.name is TEXT NOT NULL UNIQUE (store/schema/postgres_ddl.go), so the
+// nodes.name is TEXT NOT NULL UNIQUE (shingo-core/store/schema/schema.snapshot.sql), so the
 // Core node name alone names the place. Adding the reporting edge to it would
 // mean one loader's replenishment demand splits into two episode streams the
 // moment a second edge reports the same node, and neither side could detect

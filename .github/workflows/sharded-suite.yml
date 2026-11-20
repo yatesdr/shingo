@@ -117,9 +117,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Full history: shingo-core's TestSchemaConvergesAcrossVintages reads
-          # pinned revisions out of git, and a shallow clone fails it with
-          # "invalid object name" rather than skipping it.
+          # Full history: shingo-core's TestSchemaConvergesAcrossVintages and
+          # TestBaselineIsCurrent build Core releases from their tags, and a
+          # shallow clone fails them rather than skipping them.
           fetch-depth: 0
 
       - uses: actions/setup-go@v7

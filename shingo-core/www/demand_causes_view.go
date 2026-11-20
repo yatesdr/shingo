@@ -58,7 +58,7 @@ import (
 // AN EARLIER VERSION OF THIS PARAGRAPH ALSO SAID THERE IS NO STATUS-HISTORY
 // TABLE, "CONFIRMED against the schema snapshot". That was wrong, and it is the
 // first thing a reader of this file would have believed. order_history exists
-// (store/schema/postgres_ddl.go), carries (status, detail, code, actor, ref,
+// (store/schema/schema.snapshot.sql), carries (status, detail, code, actor, ref,
 // created_at), is written by transition() on every status change, and is
 // indexed by order_id. orders.EverReachedStatus asks it this EXACT question for
 // one order — "did this order ever record `dispatched`" — and its own header

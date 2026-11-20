@@ -42,7 +42,7 @@ import (
 // property of demo.yaml's tick rates and not a bound on anything.
 //
 // Runs on idx_orders_origin_id, the partial index over origin_id WHERE origin_id
-// IS NOT NULL declared in the baseline DDL. An empty originID would scan the
+// IS NOT NULL in the schema (store/schema/schema.snapshot.sql). An empty originID would scan the
 // table off the index's own predicate, so it is rejected rather than issued:
 // "no origin" is not an episode and has no orders by definition.
 func ListByOrigin(db *sql.DB, originID string, limit int) (out []*Order, truncated bool, err error) {
