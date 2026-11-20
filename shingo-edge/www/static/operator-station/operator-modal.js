@@ -1,7 +1,7 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // this modal puts payload codes and node names inside attributes.
 import { esc } from '/static/shared/esc.js';
-import { countReading, countSaid } from '/static/shared/count-words.js';
+import { UOP_WORD, countReading, countSaid } from '/static/shared/count-words.js';
 import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, showToast, stationID } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, confirmSkipChangeoverStep, REFUSE_LABEL, UNDO_LABEL,
@@ -186,7 +186,7 @@ export function renderModal(entry) {
             activeBuckets.forEach(function(b) {
                 const pile = countReading(b.qty || 0, ratioFor((getView() || {}).load_templates, entry, b.payload_code));
                 html += '<span class="os-lineside-chip active">' +
-                    esc(b.payload_code) + ': <strong>' + pile.big + (pile.split ? ' UoP' : '') + '</strong>' +
+                    esc(b.payload_code) + ': <strong>' + pile.big + (pile.split ? ' ' + UOP_WORD : '') + '</strong>' +
                     (pile.split ? ' <span class="os-count-parts">' + esc(pile.small) + '</span>' : '') + '</span>';
             });
             html += '</div></div>';

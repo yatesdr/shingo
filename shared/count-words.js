@@ -18,9 +18,10 @@ import { splitUOP } from '/static/shared/count.js';
 
 // UOP_WORD is the unit's word on screen. docs/terminology.md › Units and
 // casing writes UoP in UI text, and every existing label does; the owner's
-// brief writes UOP. One constant, so the choice is one edit.
+// brief writes UOP. One constant, so the choice is one edit: a screen that
+// writes the word beside a number it composed itself reads it from here.
 // OWNER-WORDS
-const UOP_WORD = 'UoP';
+export const UOP_WORD = 'UoP';
 
 // partsWords is a number of parts, said: "404 parts", "1 part".
 function partsWords(n) {
@@ -46,6 +47,24 @@ export function countSaid(count, ratio, plain) {
     const r = countReading(count, ratio);
     // OWNER-WORDS
     return r.split ? r.big + ' ' + UOP_WORD + ' \u00b7 ' + r.small : plain;
+}
+
+// countBracketed is a count said in a sentence: plain at a ratio of 1; above
+// it the UOP, then after (a word such as "left", or ''), then the parts in
+// brackets: "50 UoP left (404 parts)", "100 UoP (800 parts)".
+export function countBracketed(count, ratio, plain, after) {
+    const r = countReading(count, ratio);
+    // OWNER-WORDS
+    return r.split ? r.big + ' ' + UOP_WORD + (after ? ' ' + after : '') + ' (' + r.small + ')' : plain;
+}
+
+// countOfSaid is a count against its pack: plain at a ratio of 1; above it
+// "50 of 100 UoP (404 of 800 parts)" (RELEASE FULL's prompt, the loader
+// board's press rows).
+export function countOfSaid(have, capacity, ratio, plain) {
+    const h = countReading(have, ratio), c = countReading(capacity, ratio);
+    // OWNER-WORDS
+    return h.split ? h.big + ' of ' + c.big + ' ' + UOP_WORD + ' (' + have + ' of ' + capacity + ' parts)' : plain;
 }
 
 // countBoxLabel is the label of a box a person types a bin's count into:

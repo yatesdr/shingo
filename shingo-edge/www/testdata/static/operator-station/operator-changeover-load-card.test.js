@@ -51,6 +51,8 @@ function fakeEl(tag) {
 const ctx = vm.createContext({
     el: function (tag, props) { return Object.assign(fakeEl(tag), props || {}); },
 });
+// The count's arithmetic and words, real (the board model's counts read them).
+require('./lend-count.js')(ctx);
 ['operator-window-state.js', 'operator-board-model.js', 'operator-board.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
         .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);

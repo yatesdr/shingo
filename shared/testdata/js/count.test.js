@@ -23,7 +23,7 @@ function check(name, cond, detail) {
 
 const load = realm(undefined, ['count.js', 'count-words.js'], { 'count-words.js': ['partsWords'] });
 const { uopRatio, splitUOP, linePieces } = load('count.js');
-const { abovePackNote, countReading, typedNote, partsWords, countBoxLabel, countSaid } = load('count-words.js');
+const { abovePackNote, countReading, typedNote, partsWords, countBoxLabel, countSaid, countBracketed, countOfSaid, UOP_WORD } = load('count-words.js');
 
 const EXAMPLES = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', '..', '..', 'protocol', 'testdata', 'count-examples.json'), 'utf8')).examples;
@@ -83,6 +83,12 @@ check('a count box above ratio 1 names its parts', countBoxLabel(8, 'UoP Count')
 check('a count box at ratio 1 keeps its label', countBoxLabel(1, 'UoP Count') === 'UoP Count');
 check('a count said at 8', countSaid(404, 8, '404 UoP') === '50 UoP · 404 parts');
 check('a count said at 1 is the plain words', countSaid(404, 1, '404 UoP') === '404 UoP');
+check('the one unit word is exported for a screen that composes its own', UOP_WORD === 'UoP');
+check('a count left, said at 8', countBracketed(404, 8, '404 left', 'left') === '50 UoP left (404 parts)');
+check('a pack said at 8', countBracketed(800, 8, '800', '') === '100 UoP (800 parts)');
+check('a count left at 1 is the plain words', countBracketed(404, 1, '404 left', 'left') === '404 left');
+check('a count against its pack at 8', countOfSaid(404, 800, 8, '404 of 800') === '50 of 100 UoP (404 of 800 parts)');
+check('a count against its pack at 1 is the plain words', countOfSaid(404, 800, 1, '404 of 800') === '404 of 800');
 
 if (failures > 0) {
     console.log(failures + ' failure(s)');

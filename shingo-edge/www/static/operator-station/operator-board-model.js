@@ -21,7 +21,7 @@
 'use strict';
 
 import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand, windowRole } from './operator-window-state.js';
-import { countReading } from '/static/shared/count-words.js';
+import { countBracketed, countOfSaid, countReading } from '/static/shared/count-words.js';
 import { uopRatio } from '/static/shared/count.js';
 
 // ratioFor is a part's UOP ratio as the board knows it. code '' is the seat's
@@ -604,7 +604,15 @@ function loadReason(view, cov, part) {
     if (c.state === 'out') return { tone: 'red', word: 'NOW', reason: cell + ' out', rank: [0, 0], fixes: cell + '|' + part };
     if (c.state === 'waiting') return { tone: 'amber', word: 'SOON', reason: cell + ' waiting', rank: [1, c.left === null ? Infinity : c.left] };
     if (c.state === 'unknown') return { tone: 'plain', reason: cell + ' count unknown', rank: [3, 0] };
-    return { tone: 'plain', reason: cell + ' has ' + fmtCount(c.left) + ' left', rank: [2, c.left] };
+    return { tone: 'plain', reason: cell + ' has ' + leftWords(view, c.row.part, c.left), rank: [2, c.left] };
+}
+
+// leftWords is a served row's count as what is left: "212 left" at a ratio of
+// 1, and above it the UoP with the parts in brackets, "50 UoP left (404
+// parts)" (count-words.js countBracketed), the part's ratio from the board's
+// load templates (ratioFor).
+function leftWords(view, part, left) {
+    return countBracketed(left, ratioFor(view.load_templates, null, part), fmtCount(left) + ' left', 'left');
 }
 
 function byRank(a, b) {
@@ -643,7 +651,7 @@ export function cellsRow(view, fixes) {
             cells.push(cell);
         }
         cell.first = Math.min(cell.first, c.i);
-        let words = c.left === null ? 'count unknown' : fmtCount(c.left) + ' left';
+        let words = c.left === null ? 'count unknown' : leftWords(view, c.row.part, c.left);
         if (c.state === 'out') words = 'none left';
         else if (c.state === 'covered') words = '';
         cell.rows.push({
@@ -726,7 +734,10 @@ export function pressesRow(view, tiles) {
         const known = typeof r.have_uop === 'number' && r.have_uop >= 0;
         const full = known && r.capacity_uop > 0 && r.have_uop >= r.capacity_uop;
         let words = 'count unknown';
-        if (known) words = full ? 'full' : fmtCount(r.have_uop) + ' of ' + fmtCount(r.capacity_uop);
+        if (known && !full) {
+            words = countOfSaid(r.have_uop, r.capacity_uop, ratioFor(view.load_templates, null, r.part),
+                fmtCount(r.have_uop) + ' of ' + fmtCount(r.capacity_uop));
+        } else if (known) words = 'full';
         return {
             cell: r.cell, node: shortNode(r.node), bin: r.carrier, part: r.part,
             have: known ? r.have_uop : null, capacity: r.capacity_uop, words: words,
@@ -918,14 +929,14 @@ function headlineOf(tile) {
 // reason is the cell and when it was said, short enough for a 1024 px card:
 // "CELL out", "CELL waiting", "CELL 212 left", "CELL running" (a count the
 // Edge cannot read); plain "CELL bin ready" (covered) or "No cell runs it".
-function refusalReason(c, when) {
+function refusalReason(view, c, when) {
     const at = when ? ' · ' + when : '';
     if (!c || c.state === 'covered') return { tone: 'plain', reason: (c ? c.row.cell + ' bin ready' : 'No cell runs it') + at };
     const cell = c.row.cell;
     let words = cell + ' running';
     if (c.state === 'out') words = cell + ' out';
     else if (c.state === 'waiting') words = cell + ' waiting';
-    else if (c.left !== null) words = cell + ' ' + fmtCount(c.left) + ' left';
+    else if (c.left !== null) words = cell + ' ' + leftWords(view, c.row.part, c.left);
     return { tone: 'red', reason: words + at };
 }
 
@@ -968,7 +979,7 @@ function loaderCards(t, ctx) {
     const loadable = [];
     cardParts(t, view.serves).forEach(function (code) {
         if (refusals[code]) {
-            const r = refusalReason(worstRow(ctx.cov, code, 'consume'), ctx.when(refusals[code].refused_at));
+            const r = refusalReason(view, worstRow(ctx.cov, code, 'consume'), ctx.when(refusals[code].refused_at));
             ctx.refused.push(ctx.card(t, 'refused:' + code, [r.tone === 'red' ? 0 : 1], {
                 tone: r.tone, spotWords: spot.words, spotCode: spot.code, headline: code, reason: r.reason,
                 act: held ? { kind: 'modal', node: t.node.id } : { kind: 'load', node: t.node.id, codes: [code] },

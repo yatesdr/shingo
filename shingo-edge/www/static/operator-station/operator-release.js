@@ -1,7 +1,7 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // the prompt puts payload codes inside attributes.
 import { esc } from '/static/shared/esc.js';
-import { countReading, countSaid, typedNote } from '/static/shared/count-words.js';
+import { countBracketed, countOfSaid, countReading, countSaid, typedNote } from '/static/shared/count-words.js';
 import { ratioFor } from './operator-board-model.js';
 import { postAction } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
@@ -173,10 +173,9 @@ function releaseFullPromptHTML(entry) {
     const claim = entry && entry.active_claim;
     const pack = claim && claim.uop_capacity ? claim.uop_capacity : 0;
     const ratio = ratioFor(null, entry, '');
-    const c = countReading(counted, ratio), p = countReading(pack, ratio);
-    // OWNER-WORDS: above a ratio of 1 the UoP, the parts in brackets.
-    const countedWords = c.split ? c.big + ' of ' + p.big + ' UoP (' + counted + ' of ' + pack + ' parts)' : counted + ' of ' + pack;
-    const packWords = p.split ? p.big + ' UoP (' + pack + ' parts)' : String(pack);
+    // Above a ratio of 1 the UoP, the parts in brackets (count-words.js).
+    const countedWords = countOfSaid(counted, pack, ratio, counted + ' of ' + pack);
+    const packWords = countBracketed(pack, ratio, String(pack), '');
     let html = '';
     html += '<div class="modal-header">';
     html += '<div class="modal-node-name">Release</div>';
@@ -408,9 +407,10 @@ function renderReleasePromptUnderpackConfirm() {
 
     html += '<div class="os-release-prompt">';
     html += '<div class="os-release-primary-label">';
-    const shows = countReading(remainingUOP, ratioFor(null, state.entry, ''));
-    // OWNER-WORDS: above a ratio of 1, the UoP and the parts it records.
-    html += 'System shows <strong>' + esc(shows.split ? shows.big + ' UoP (' + shows.small + ')' : remainingUOP + ' UoP') + '</strong> remaining.<br>';
+    const ratio = ratioFor(null, state.entry, '');
+    const shows = countReading(remainingUOP, ratio);
+    // Above a ratio of 1, the UoP and the parts it records (count-words.js).
+    html += 'System shows <strong>' + esc(countBracketed(remainingUOP, ratio, remainingUOP + ' UoP', '')) + '</strong> remaining.<br>';
     html += 'This will record <strong>' + esc(shows.split ? shows.small : remainingUOP + ' units') + '</strong> as missing inventory.';
     html += '</div>';
     html += '</div>';

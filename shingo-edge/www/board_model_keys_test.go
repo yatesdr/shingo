@@ -109,6 +109,8 @@ func boardFixture() domain.OperatorStationView {
 		Bins:        &domain.BinsKnown{Known: true},
 		Containment: &domain.ContainmentKnown{Known: false},
 		Catalog:     &domain.CatalogKnown{Known: false},
+		// The board reads a served row's part's ratio from it (ratioFor).
+		LoadTemplates: map[string]domain.LoadTemplate{"PART-A": {UOPCapacity: 10}},
 	}
 }
 

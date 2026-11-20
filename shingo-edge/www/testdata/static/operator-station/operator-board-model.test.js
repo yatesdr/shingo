@@ -512,6 +512,19 @@ eq([NOBIN, FULLBIN('PART-A'), Object.assign(FULLBIN('PART-A'), { partial: true }
     ], 'cells: red only where a red card fixes it; an out row with no card says "none left" plainly; the tick only above 0; ' +
         'unknown last, a waiting row at an unknown count with them (changed: it read "null left")');
     eq(b.words.slice(0, 3), ['1 to load', 'C1 out', 'C2 out'], 'top line: every cell out, card or none');
+    // A served row's count at its part's ratio (the board's load templates):
+    // at 8 the UoP left with the parts in brackets, at 1 the count as it was.
+    const at8 = { 'PART-8': { uop_capacity: 800, items: [{ part_number: 'PART-8', parts_per_cycle: 8 }] },
+        'PART-1': { uop_capacity: 800, items: [{ part_number: 'PART-1', parts_per_cycle: 1 }] } };
+    const ratioCells = M.cellsRow({ nodes: [], load_templates: at8,
+        serves: [row('PART-8', 404, { cell: 'C8' }), row('PART-1', 404, { cell: 'C1' })] });
+    eq(ratioCells.tiles.map(t => t.rows[0].words), ['50 UoP left (404 parts)', '404 left'],
+        'cells: a count left reads its UoP at 8, as it was at 1');
+    const ratioPresses = M.pressesRow({ nodes: [], load_templates: at8, serves: [
+        row('PART-8', 404, { cell: 'P8', role: 'produce', capacity_uop: 800 }),
+        row('PART-1', 404, { cell: 'P1', role: 'produce', capacity_uop: 800 })] }, []);
+    eq(ratioPresses.all.map(p => p.words).sort(), ['404 of 800', '50 of 100 UoP (404 of 800 parts)'],
+        'presses: a count against its pack reads its UoP at 8, as it was at 1');
     // One cell with five rows.
     const hop = M.cellsRow({ nodes: [], serves: [1, 2, 3, 4, 5].map(i => row('PART-' + i, i * 10, { cell: 'CELL-H' })) });
     eq([hop.tiles.length, hop.tiles[0].rows.length, hop.tiles[0].hidden], [1, 4, 1], 'cells: at most four rows a tile, then "+N"');

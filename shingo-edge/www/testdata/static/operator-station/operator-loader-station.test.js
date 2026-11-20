@@ -511,7 +511,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
         'board bar: Request empty greyed while an order is live; Pull from market beside it (sentence case)');
     eq(barButtons()[0].disabled, true, 'board bar: the greyed Request empty is disabled');
     const c = pcCard('PART-A');
-    eq(cardText(c), ['SMN_A1', ' · no bin', 'PART-A', '· CELL-1 has 30 left'.slice(2)],
+    eq(cardText(c), ['SMN_A1', ' · no bin', 'PART-A', '· CELL-1 has 15 UoP left (30 parts)'.slice(2)],
         'Load card: the spot, the part, the cell it serves');
     eq(pcCard('PART-B'), null, 'a part no running style uses on a threshold loader draws no card');
     await tap(c);
@@ -1178,9 +1178,11 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // tablet's draws the same bands at twice the size, so none is replaced;
     // the grid drawn as anything else drops it.
     const scaleNow = () => [grid.style.props['--os-pc-scale'], grid.className.split(' ').filter(c => /^os-pc-step-/.test(c))];
+    // The bands kept are the tablet's own: the draw before was at another
+    // width, whose cells row may lay out in other columns.
     ctx.window.innerWidth = 1024; ctx.window.innerHeight = 768;
-    const kept = grid.children.slice();
     ctx.renderGrid();
+    const kept = grid.children.slice();
     const tablet = scaleNow();
     ctx.window.innerWidth = 2048; ctx.window.innerHeight = 1536;
     ctx.renderGrid();
