@@ -434,6 +434,10 @@
    *              control floating over the canvas it belongs to
    *   sticky     a sticky table header or filter bar, over its own scrolled
    *              rows and nothing else
+   *   sticky-over a sticky header cell that is ALSO a frozen column: it
+   *              clears its own scrolled rows AND the header cells that
+   *              scroll under it — equal z would let later-in-DOM headers
+   *              win (the Device Config matrix's corner cells, 2026-11-20)
    *   tooltip    a hover tip anchored to page content
    *   dropdown   a menu / combobox / notification panel opened from chrome
    *   chrome     fixed page furniture — a bulk-action bar, the sim strip
@@ -456,6 +460,7 @@
    * MatchesShared in shingo-edge/www holds the two copies together. */
   --z-raised: 1;
   --z-sticky: 10;
+  --z-sticky-over: 11;
   --z-tooltip: 20;
   --z-dropdown: 30;
   --z-chrome: 40;

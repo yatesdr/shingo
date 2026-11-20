@@ -250,7 +250,7 @@
    it, and at equal z the later-in-DOM robot headers painted over the frozen
    Subsection/Parameter headers when scrolled under them (the body's frozen
    cells never had the problem — nothing else in a body row is sticky). */
-.dc-table thead .dc-lead0, .dc-table thead .dc-lead1, .dc-table thead .dc-lead2 { z-index: calc(var(--z-sticky) + 1); }
+.dc-table thead .dc-lead0, .dc-table thead .dc-lead1, .dc-table thead .dc-lead2 { z-index: var(--z-sticky-over); }
 .dc-lead0 { position: sticky; left: 0; z-index: var(--z-raised); width: 9rem; }
 .dc-lead1 { position: sticky; left: 9rem; z-index: var(--z-raised); width: 8rem; }
 .dc-lead2 { position: sticky; left: 17rem; z-index: var(--z-raised); width: 13rem; }

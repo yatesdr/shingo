@@ -143,6 +143,7 @@ keeps the light value):
 | `--ease` | `cubic-bezier(0.4, 0, 0.2, 1)` | — |
 | `--z-raised` | `1` | — |
 | `--z-sticky` | `10` | — |
+| `--z-sticky-over` | `11` | — |
 | `--z-tooltip` | `20` | — |
 | `--z-dropdown` | `30` | — |
 | `--z-chrome` | `40` | — |
@@ -199,6 +200,7 @@ The operator station's own `:root` block
 | `--os-footer-h` | `40px` |
 | `--z-raised` | `1` |
 | `--z-sticky` | `10` |
+| `--z-sticky-over` | `11` |
 | `--z-tooltip` | `20` |
 | `--z-dropdown` | `30` |
 | `--z-chrome` | `40` |

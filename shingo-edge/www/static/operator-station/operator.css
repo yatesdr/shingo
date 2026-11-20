@@ -39,10 +39,11 @@
      * decision with them.
      *
      * TestOperatorStationZLayerScaleMatchesShared in shingo-edge/www fails
-     * if these nine values ever stop matching the shared block. See
+     * if these ten values ever stop matching the shared block. See
      * shared/tokens.css for what each rung means. */
     --z-raised: 1;
     --z-sticky: 10;
+    --z-sticky-over: 11;
     --z-tooltip: 20;
     --z-dropdown: 30;
     --z-chrome: 40;
