@@ -226,13 +226,17 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 // means the manifest report was ACCEPTED into the durable outbox, NOT that
 // Core recorded it (Core processes asynchronously and does not reply on
 // success). Not a product/order endpoint — no order is created.
+//
+// THE COUNT IS TYPED, SO IT IS REQUIRED: 0 is an empty bin and a negative is
+// refused (owner, 2026-11-19). An absent quantity used to decode as 0 and book
+// the payload's capacity at Core.
 func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessNodeID int64                         `json:"process_node_id"`
 		PayloadCode   string                        `json:"payload_code"`
 		BinLabel      string                        `json:"bin_label"`
 		SourceNode    string                        `json:"source_node"`
-		Quantity      int64                         `json:"quantity"`
+		Quantity      *int64                        `json:"quantity"`
 		Manifest      []protocol.IngestManifestItem `json:"manifest"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -247,6 +251,14 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bin_label is required")
 		return
 	}
+	if req.Quantity == nil {
+		writeError(w, http.StatusBadRequest, "quantity is required: the bin's count, 0 for an empty bin")
+		return
+	}
+	if *req.Quantity < 0 {
+		writeError(w, http.StatusBadRequest, "quantity must be 0 or more")
+		return
+	}
 
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
@@ -259,7 +271,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 	producedAt := time.Now().UTC().Format(time.RFC3339)
 	if err := h.engine.OrderManager().QueueIngestManifest(
 		req.PayloadCode, req.BinLabel, 0, 0, req.SourceNode,
-		req.Quantity, req.Manifest, producedAt,
+		*req.Quantity, req.Manifest, producedAt,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -268,7 +280,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]any{
 		"bin_label":    req.BinLabel,
 		"payload_code": req.PayloadCode,
-		"quantity":     req.Quantity,
+		"quantity":     *req.Quantity,
 		"accepted":     true,
 	})
 }

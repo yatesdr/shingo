@@ -874,14 +874,6 @@ textarea { resize: vertical; min-height: 60px; }
 #bin-table tbody tr { cursor:pointer; }
 #bin-table tbody tr:hover { background:color-mix(in srgb, var(--primary) 5%, var(--bg)); }
 
-/* Cycle count bin card */
-.cc-bin-card { background:var(--surface); border:2px solid var(--border); border-radius:0.5rem; padding:1.5rem; text-align:center; margin-bottom:1rem; }
-.cc-bin-card .cc-label { font-size:1.5rem; font-weight:700; font-family:monospace; }
-/* Meter track — neutral --bg-dark (U9), not --border. A border token used as a
-   fill is how the track ends up at whatever weight the border happens to be. */
-.cc-progress { height:4px; background:var(--bg-dark); border-radius:2px; margin-bottom:0.5rem; }
-.cc-progress-fill { height:100%; background:var(--primary); border-radius:2px; transition:width 0.3s; }
-
 /* Action button groups */
 .action-group { margin-bottom:1rem; }
 .action-group h4 { font-size:0.8rem; text-transform:uppercase; color:var(--text-muted); margin-bottom:0.5rem; }
@@ -899,7 +891,6 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .bulk-bar { box-shadow:0 -4px 12px rgba(0,0,0,0.4); }
 [data-theme="dark"] #bin-table tbody tr:hover { background:color-mix(in srgb, var(--primary) 8%, var(--surface)); }
 [data-theme="dark"] .uop-bar { background:#30363d; }
-[data-theme="dark"] .cc-bin-card { border-color:var(--border); }
 
 /* Mission detail — stages (R6). One bar on a true time scale in four
    classes. The three where the order is waiting for or using a robot are drawn

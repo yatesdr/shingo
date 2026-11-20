@@ -213,7 +213,7 @@ func applyReseat(e *Engine, a *protocol.EdgeAnswer) {
 	if err != nil || node == nil {
 		return
 	}
-	if err := e.carrierLeft(node.ID, node.CoreNodeName); err != nil {
+	if err := e.carrierLeftLocked(node.ID, node.CoreNodeName); err != nil {
 		log.Printf("changeover cancel: clear active bin for node %s: %v", node.Name, err)
 	}
 }

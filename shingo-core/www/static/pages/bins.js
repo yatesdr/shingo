@@ -1,6 +1,8 @@
 import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { abovePackNote, countBoxLabel, typedNote } from '/static/shared/count-words.js';
+import { linePieces, uopRatio } from '/static/shared/count.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
@@ -17,13 +19,6 @@ var currentBinData = null;
 // draw. The pop-up reads the bin without history (LC12); the history is read
 // when the Journal is opened, and again on an update while it is the open tab.
 var journalFresh = false;
-var ccState = newCCState();
-var ccLayer = null; // the wizard's entry on the overlay stack (layer.js)
-
-function newCCState() {
-  return { step: 0, bins: [], index: 0, results: [], ready: false, busy: false, seq: 0 };
-}
-
 // ===== READS =====
 // readBin is the one way this page reads a bin. withHistory=false is the
 // history-free read (?history=0): what the pop-up, the row and the cycle count
@@ -356,7 +351,7 @@ function renderOverview(data) {
         ? '<code>' + escapeHtml(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
         : '<span class="text-muted">empty</span>');
   html += bdField('Payload', payloadDisplay);
-  html += bdField('UoP Remaining', uopText(b) + (b.payload_code ? uopBar(b.uop_remaining, data.template) : ''));
+  html += bdField('UoP Remaining', uopText(b, uopRatio(data.template_manifest)) + (b.payload_code ? uopBar(b.uop_remaining, data.template) : ''));
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));
   html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + escapeHtml(b.locked_by) + '</span>' : 'No');
@@ -404,15 +399,13 @@ function renderContents(data) {
 
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
     // The count is derived, not stored, from uop_remaining and the template
-    // line, by protocol.ManifestItem's count rule (a template of one line
+    // line, by the count rule (count.js linePieces: a template of one line
     // shows the bin's count as it stands). A part the template no longer
     // lists shows "—" rather than 0, because "we cannot count this" and "there
     // are none" are different things to tell someone standing at the bin.
     var template = data.template_manifest || [];
-    var perUnit = {};
-    template.forEach(function(t) {
-      perUnit[t.part_number] = template.length === 1 ? 1 : t.parts_per_cycle;
-    });
+    var lineOf = {};
+    template.forEach(function(t, i) { lineOf[t.part_number] = i; });
     var uop = (b && b.uop_remaining) || 0;
     // Either key: lines are written as part_number, and bins loaded before that
     // change carry catid. Same fallback the Go reader and the inventory query
@@ -420,8 +413,8 @@ function renderContents(data) {
     html += h`<table class="table-compact"><thead><tr><th>Part number</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
       data.manifest.items.map(function(item) {
         var part = item.part_number || item.catid;
-        var per = perUnit[part];
-        var qty = per == null ? '—' : String(uop * per);
+        var line = lineOf[part];
+        var qty = line == null ? '—' : String(linePieces(template, line, uop));
         return h`<tr><td><code>${part}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
       })
     }</tbody></table>`;
@@ -445,7 +438,8 @@ function renderContents(data) {
     if (held) html += '<p class="text-muted mb-1" id="bd-load-held">' + escapeHtml(held) + '</p>';
     html += '<div class="inline-form">';
     html += '<div class="form-group"><label>Payload</label><div id="bd-load-payload" class="bd-picker"></div></div>';
-    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off + '></div>';
+    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off +
+      ' data-action-input="showLoadNote"><small id="bd-load-note" class="text-muted" style="display:block" hidden></small></div>';
     html += held ? '<button class="btn btn-primary btn-sm" disabled>Load</button>'
       : '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
     html += '</div></div>';
@@ -560,7 +554,10 @@ async function renderActions(data) {
   // Record Count
   html += '<div class="action-group"><h4>Record Count</h4>';
   html += '<div class="inline-form">';
-  html += '<div class="form-group"><label>Actual UoP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"></div>';
+  var countRatio = uopRatio(data.template_manifest);
+  html += '<div class="form-group"><label>' + escapeHtml(countBoxLabel(countRatio, 'Actual UoP')) + '</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"' +
+    ' data-pack="' + (b.uop_capacity || 0) + '" data-ratio="' + countRatio + '" data-action-input="showCountNote">' +
+    '<small id="bd-count-note" class="text-muted" style="display:block" hidden></small></div>';
   html += '<div class="form-group"><label>Counter</label><input type="text" id="bd-count-actor" placeholder="Name" style="width:150px"></div>';
   html += '<button class="btn btn-sm" data-action="recordCount">Record</button>';
   html += '</div></div>';
@@ -670,6 +667,11 @@ function runBinAction(action, params, reset) {
       // A done action can carry a warning (a move onto a line whose parts
       // take another carrier type): shown, never a refusal.
       if (resp && resp.warning) toast(resp.warning, 'warning');
+      // A typed count above the pack is taken as typed, and said (owner,
+      // 2026-11-19): the same sentence as every other typed box.
+      var over = (action === 'load_payload' || action === 'record_count') && resp && resp.bin
+        ? abovePackNote(resp.bin.uop_remaining, resp.bin.uop_capacity) : null;
+      if (over) toast(over.text, 'warning');
       if (!resp || !resp.bin) { refreshBinRow(id); return; }
       clearFields(reset || []);
       paintBinRow(resp);
@@ -763,8 +765,37 @@ async function askRobotToSetDown(binId, robot) {
     .catch(function(e) { toast(e.error || e, 'error'); });
 }
 
+// showCountNote is Record Count's live line under the box: the above-pack
+// note while the typed count is over the bin's pack.
+function showCountNote(input) {
+  var note = document.getElementById('bd-count-note');
+  if (!note || !input) return;
+  var said = typedNote(parseInt(input.value, 10), Number(input.dataset.ratio) || 1, Number(input.dataset.pack) || 0);
+  note.textContent = said ? said.text : '';
+  note.hidden = !said;
+}
+
+// showLoadNote is Load Payload's live line under the count: the UoP it makes
+// for the part picked (PAGE_UOP_RATIOS) and the above-pack note.
+function showLoadNote(input) {
+  var note = document.getElementById('bd-load-note');
+  if (!note || !input) return;
+  var code = BD_PICKERS['bd-load-payload'] ? BD_PICKERS['bd-load-payload'].value() : '';
+  var ratios = typeof PAGE_UOP_RATIOS === 'object' && PAGE_UOP_RATIOS ? PAGE_UOP_RATIOS : {};
+  var p = (PAGE_PAYLOADS || []).find(function(x) { return x.code === code; });
+  var said = input.value.trim() === '' ? null : typedNote(parseInt(input.value, 10), ratios[code], p ? p.uop_capacity : 0);
+  note.textContent = said ? said.text : '';
+  note.hidden = !said;
+}
+
 function recordCount() {
-  var uop = parseInt(document.getElementById('bd-count-uop').value) || 0;
+  // A blank box is not a count: it used to record 0 (parseInt || 0), an
+  // empty bin nobody counted. A typed 0 is an empty bin; a negative is
+  // refused here and at the door (owner, 2026-11-19).
+  var raw = document.getElementById('bd-count-uop').value.trim();
+  var uop = parseInt(raw, 10);
+  if (raw === '' || isNaN(uop)) { toast('Type the count: 0 for an empty bin', 'info'); return; }
+  if (uop < 0) { toast('Count must be 0 or more', 'info'); return; }
   var actor = document.getElementById('bd-count-actor').value.trim();
   runBinAction('record_count', { actual_uop: uop, actor: actor }, ['bd-count-uop', 'bd-count-actor']);
 }
@@ -878,7 +909,7 @@ function paintBinRow(detail) {
   if (!b) return false;
   var row = document.querySelector('#bin-table tbody tr[data-id="' + b.id + '"]');
   if (!row) return false;
-  var v = binRowView(detail, PAGE_AUTH);
+  var v = binRowView(detail, PAGE_AUTH, typeof PAGE_UOP_RATIOS === 'object' ? PAGE_UOP_RATIOS : null);
   row.dataset.label = v.data.label;
   row.dataset.type = v.data.type;
   row.dataset.status = v.data.status;
@@ -964,200 +995,6 @@ function clearSelection() {
   var hdr = document.querySelector('#bin-table thead input[type=checkbox]');
   if (hdr) hdr.checked = false;
   updateBulkBar();
-}
-
-// ===== CYCLE COUNT =====
-function openCycleCount() {
-  // Preview: count visible rows with payloads
-  var rows = document.querySelectorAll('#bin-table tbody tr');
-  var count = 0;
-  rows.forEach(function(row) {
-    if (row.style.display !== 'none' && row.dataset.payload) count++;
-  });
-  document.getElementById('cc-preview-count').textContent = count + ' bins to count';
-  document.getElementById('cc-step1').classList.remove('hide');
-  document.getElementById('cc-step2').classList.add('hide');
-  document.getElementById('cc-step3').classList.add('hide');
-  // A wizard closed any way (×, Escape, the backdrop, Discard) is closed for
-  // good: its bins, index and results do not outlive it.
-  ccLayer = showModal('cc-modal', { onClose: function() { ccState = newCCState(); } });
-}
-
-function closeCycleCount() {
-  hideModal('cc-modal');
-  ccState = newCCState();
-}
-
-function ccStart() {
-  var rows = document.querySelectorAll('#bin-table tbody tr');
-  ccState.bins = [];
-  rows.forEach(function(row) {
-    if (row.style.display !== 'none' && row.dataset.payload) {
-      ccState.bins.push({
-        id: parseInt(row.dataset.id),
-        label: row.dataset.label,
-        node: row.dataset.node,
-        payload: row.dataset.payload,
-        uop: parseInt(row.dataset.uop) || 0,
-        uopCapacity: parseInt(row.dataset.uopCapacity) || 0
-      });
-    }
-  });
-  if (ccState.bins.length === 0) { toast('No bins with payloads to count', 'info'); return; }
-  ccState.index = 0;
-  ccState.results = [];
-  document.getElementById('cc-step1').classList.add('hide');
-  document.getElementById('cc-step2').classList.remove('hide');
-  document.getElementById('cc-total').textContent = ccState.bins.length;
-  ccShowBin();
-}
-
-// ccShowBin opens step 2 on the next bin and reads it again (history-free):
-// the count the wizard shows, and the one Confirm records, is the bin's count
-// now, not the one the table was painted with when the page loaded. Confirm
-// and Record Discrepancy wait for that read.
-function ccShowBin() {
-  var st = ccState;
-  var bin = st.bins[st.index];
-  var seq = ++st.seq;
-  st.ready = false;
-  document.getElementById('cc-index').textContent = st.index + 1;
-  var pct = ((st.index) / st.bins.length * 100);
-  document.getElementById('cc-progress-bar').style.width = pct + '%';
-  ccPaintCard(bin, '&hellip;');
-  document.getElementById('cc-actual').value = '';
-  readBin(bin.id, false)
-    .then(function(resp) {
-      if (st !== ccState || seq !== st.seq) return;
-      bin.uop = resp.bin.uop_remaining;
-      bin.uopCapacity = resp.bin.uop_capacity || 0;
-      ccPaintCard(bin, String(bin.uop));
-      document.getElementById('cc-actual').value = bin.uop;
-      // The wizard filled the count, not the person: only what is typed over
-      // it is work the layer asks about before Escape discards it.
-      if (ccLayer && ccLayer.open) ccLayer.markClean();
-      st.ready = true;
-    })
-    .catch(function(e) {
-      if (st !== ccState || seq !== st.seq) return;
-      ccPaintCard(bin, 'could not read (' + escapeHtml(errText(e)) + ')');
-      toast('Could not read ' + bin.label + ': ' + errText(e) + '. Skip it or flag it.', 'error');
-    });
-}
-
-function ccPaintCard(bin, expectedHTML) {
-  document.getElementById('cc-bin-card').innerHTML =
-    '<div class="cc-label">' + escapeHtml(bin.label) + '</div>' +
-    '<div class="text-muted">' + escapeHtml(bin.node || 'unassigned') + ' &middot; ' + escapeHtml(bin.payload) + '</div>' +
-    '<div style="margin-top:0.5rem">Expected UoP: <strong>' + expectedHTML + '</strong></div>';
-  document.getElementById('cc-actual').max = bin.uopCapacity || '';
-  var hint = document.getElementById('cc-capacity-hint');
-  if (bin.uopCapacity > 0) {
-    hint.textContent = 'Max: ' + bin.uopCapacity;
-    hint.style.display = 'block';
-  } else {
-    hint.textContent = '';
-    hint.style.display = 'none';
-  }
-  document.getElementById('cc-actual').focus();
-}
-
-// ccPost posts one wizard step and waits for it. The step is counted only
-// when the server took it; a refusal is shown and the wizard stays on the
-// bin (Skip or Flag moves on).
-async function ccPost(action, params, result) {
-  var st = ccState;
-  if (st.busy) return;
-  var bin = st.bins[st.index];
-  if (!bin) return;
-  st.busy = true;
-  try {
-    await postBinAction(bin.id, action, params);
-  } catch (e) {
-    if (st === ccState) toast(bin.label + ' not recorded: ' + errText(e), 'error');
-    return;
-  } finally {
-    st.busy = false;
-  }
-  if (st !== ccState) return;
-  st.results.push(Object.assign({ id: bin.id, label: bin.label }, result));
-  ccAdvance();
-}
-
-function ccConfirm() {
-  var st = ccState;
-  var bin = st.bins[st.index];
-  if (!bin || !st.ready) return;
-  var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
-  ccPost('record_count', { actual_uop: bin.uop, actor: actor },
-    { result: 'match', expected: bin.uop, actual: bin.uop });
-}
-
-function ccDiscrepancy() {
-  var st = ccState;
-  var bin = st.bins[st.index];
-  if (!bin || !st.ready) return;
-  var actual = parseInt(document.getElementById('cc-actual').value) || 0;
-  if (bin.uopCapacity > 0) {
-    actual = Math.max(0, Math.min(actual, bin.uopCapacity));
-    document.getElementById('cc-actual').value = actual;
-  }
-  var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
-  ccPost('record_count', { actual_uop: actual, actor: actor },
-    { result: 'discrepancy', expected: bin.uop, actual: actual });
-}
-
-function ccSkip() {
-  var st = ccState;
-  var bin = st.bins[st.index];
-  if (!bin || st.busy) return;
-  st.results.push({ id: bin.id, label: bin.label, result: 'skipped' });
-  ccAdvance();
-}
-
-function ccFlag() {
-  if (!ccState.bins[ccState.index]) return;
-  ccPost('flag', {}, { result: 'flagged' });
-}
-
-function ccAdvance() {
-  ccState.index++;
-  if (ccState.index >= ccState.bins.length) {
-    ccSummary();
-  } else {
-    ccShowBin();
-  }
-}
-
-function ccSummary() {
-  document.getElementById('cc-step2').classList.add('hide');
-  document.getElementById('cc-step3').classList.remove('hide');
-  var matched = 0, disc = 0, skipped = 0, flagged = 0;
-  ccState.results.forEach(function(r) {
-    if (r.result === 'match') matched++;
-    else if (r.result === 'discrepancy') disc++;
-    else if (r.result === 'skipped') skipped++;
-    else if (r.result === 'flagged') flagged++;
-  });
-  var html = '<div class="grid grid-4 mb-2">';
-  html += '<div class="stat"><div class="value">' + matched + '</div><div class="label">Matched</div></div>';
-  html += '<div class="stat"><div class="value" style="color:var(--warning)">' + disc + '</div><div class="label">Discrepancies</div></div>';
-  html += '<div class="stat"><div class="value">' + skipped + '</div><div class="label">Skipped</div></div>';
-  html += '<div class="stat"><div class="value" style="color:var(--danger)">' + flagged + '</div><div class="label">Flagged</div></div>';
-  html += '</div>';
-  if (disc > 0) {
-    html += '<h4 style="font-size:0.85rem;margin-bottom:0.5rem">Discrepancies</h4>';
-    html += '<table class="table-compact"><thead><tr><th>Bin</th><th>Expected</th><th>Actual</th><th>Diff</th></tr></thead><tbody>';
-    ccState.results.forEach(function(r) {
-      if (r.result === 'discrepancy') {
-        var diff = r.actual - r.expected;
-        html += '<tr><td><code>' + escapeHtml(r.label) + '</code></td><td>' + r.expected + '</td><td>' + r.actual + '</td>';
-        html += '<td style="color:' + (diff < 0 ? 'var(--danger)' : 'var(--success)') + '">' + (diff > 0 ? '+' : '') + diff + '</td></tr>';
-      }
-    });
-    html += '</tbody></table>';
-  }
-  document.getElementById('cc-summary').innerHTML = html;
 }
 
 // ===== SSE =====
@@ -1407,31 +1244,6 @@ async function confirmBinCreate(form, evt) {
   form.submit();
 }
 
-// ===== KEYBOARD =====
-// Escape is the layer's (shared/layer.js): it closes the innermost pop-up and
-// asks before it discards what was typed; each pop-up's own state goes in its
-// onClose.
-document.addEventListener('keydown', function(e) {
-  // Cycle count shortcuts: only while the wizard is open on step 2. Step 2 is
-  // hidden by class, not by style, so the old style test was always true and
-  // every Enter, Tab and F on the page went to the wizard.
-  var ccModal = document.getElementById('cc-modal');
-  var step2 = document.getElementById('cc-step2');
-  if (ccModal && ccModal.classList.contains('active') && step2 && !step2.classList.contains('hide')) {
-    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      ccConfirm();
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      ccSkip();
-    } else if (e.key === 'f' || e.key === 'F') {
-      if (document.activeElement && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-        e.preventDefault();
-        ccFlag();
-      }
-    }
-  }
-});
 
 // Action handler called via data-action="toggleBinTypesAccordion" —
 // formerly inline document.getElementById(...).classList.toggle.
@@ -1527,11 +1339,6 @@ delegateActions(document.body, {
     addNote,
     askRobotToSetDown,
     bulkAction,
-    ccConfirm,
-    ccDiscrepancy,
-    ccFlag,
-    ccSkip,
-    ccStart,
     clearBin,
     confirmBinCreate,
     clearSelection,
@@ -1539,7 +1346,6 @@ delegateActions(document.body, {
     closeBTEditModal,
     closeBinDetail,
     closeCreateBinModal,
-    closeCycleCount,
     doBinAction,
     filterBins,
     loadPayload,
@@ -1548,10 +1354,11 @@ delegateActions(document.body, {
     openBinDetailRow,
     openCreateBTModal,
     openCreateBinModal,
-    openCycleCount,
     openEditBTModal,
     previewBinLabels,
     recordCount,
+    showCountNote,
+    showLoadNote,
     requestMove,
     switchTab: showBinTab,
     showFamilyTab,

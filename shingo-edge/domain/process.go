@@ -332,6 +332,21 @@ func (r *RuntimeState) PartRecorded() bool {
 	return r.LinesidePayloadKnown || r.LinesideSource == string(CarrierAssumed)
 }
 
+// SeatPart is the part of the bin bound at the seat: the part the seat records
+// for its cart (PartRecorded), else the claim's part (claimPart); "" when no
+// bin is bound. The one statement of the rule binAtNode and the station view's
+// bin ratio read (owner, 2026-11-19: a seat's draw and its displays take the
+// ratio of the bin's part, not the claim's).
+func (r *RuntimeState) SeatPart(claimPart string) string {
+	if r == nil || r.ActiveBinID == nil {
+		return ""
+	}
+	if !r.PartRecorded() {
+		return claimPart
+	}
+	return string(r.LinesidePayloadCode)
+}
+
 // NodeClaim is a per-Style binding to a process Node — declares the
 // payload, capacity, reorder behaviour, two-robot swap mode, and
 // staging conventions. The active NodeClaim drives material orders
@@ -344,11 +359,13 @@ type NodeClaim struct {
 	SwapMode     protocol.SwapMode  `json:"swap_mode"`
 	PayloadCode  string             `json:"payload_code"`
 	UOPCapacity  int                `json:"uop_capacity"`
-	// PiecesPerCycle is how many pieces of its part one counted cycle of this
-	// spot uses: the part's manifest ratio in Core, resolved on every claim
-	// read from the catalog copy (capacity.PiecesPerCycleSQL), never stored.
-	// 1 when the part has no ratio, is a kit, or is not in the catalog. Only a
-	// consume draw reads it (ConsumeDraw); a produce spot never does.
+	// PiecesPerCycle is the claim's part's UOP ratio (protocol.UOPRatio): how
+	// many of the part one counted cycle of this spot uses, the part's manifest
+	// ratio in Core, resolved on every claim read from the catalog copy
+	// (capacity.PiecesPerCycleSQL), never stored. 1 when the part is a kit, has
+	// no ratio, or is not in the catalog. Two readers: a consume draw
+	// (ConsumeDraw; a produce spot never draws) and the floor's tiles, which
+	// read pieces_per_cycle to show a count's UOP.
 	PiecesPerCycle int `json:"pieces_per_cycle"`
 	// ReorderPoint has role-dependent semantics, and DemandLevel below is
 	// the one place that resolves them. Read that method, not this field,
@@ -1017,6 +1034,17 @@ func HoldLimitRefusal(n int) string {
 	return fmt.Sprintf("Most held off the cart is a number of parts, 0 or more; %d is out of range", n)
 }
 
+// NegativeCountRefusal is the sentence for a count setting typed below zero:
+// the reorder point and the lineside soft threshold, each compared with a
+// seat's or a pile's count (owner, 2026-11-19: a person can never type a
+// negative). "" when n is 0 or more. Pinned by TestValidateNodeClaim_NegativeCountSettings.
+func NegativeCountRefusal(label string, n int) string {
+	if n >= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is a count, 0 or more; %d is out of range", label, n)
+}
+
 // StrictPackApplies is the gate for the strict arm: the claim carries
 // strict_pack, is a produce claim, and has a pack (UOPCapacity, resolved from
 // the catalog on every read; the claim's uop_capacity column is dead and a
@@ -1041,7 +1069,14 @@ func (c *NodeClaim) StrictPackApplies() bool {
 // A draw bigger than what is left takes the count below 0, as any stroke does.
 // Pinned by TestConsume_DrawsPiecesPerCycleAtEveryConsumePath.
 func (c *NodeClaim) ConsumeDraw(step int) int {
-	return step * max(c.PiecesPerCycle, 1)
+	return c.ConsumeDrawAt(step, c.PiecesPerCycle)
+}
+
+// ConsumeDrawAt is ConsumeDraw at the ratio of the bin bound at the seat
+// (Engine.seatRatio), which is the claim's own unless the bin is another part:
+// step × ratio, a ratio below 1 counting 1.
+func (c *NodeClaim) ConsumeDrawAt(step, ratio int) int {
+	return step * max(ratio, 1)
 }
 
 // CappedPack is the pack the strict arm caps the seat's bound bin at, or 0

@@ -349,6 +349,7 @@ func buildLinesideRows(eng ServiceAccess, stations []domain.Station) []linesideB
 				PayloadCode: b.PayloadCode,
 				Qty:         b.Qty,
 				State:       b.State,
+				Ratio:       max(eng.StationService().PartRatio(b.PayloadCode), 1),
 			}
 			if n.OperatorStationID != nil {
 				row.StationName = stationName[*n.OperatorStationID]

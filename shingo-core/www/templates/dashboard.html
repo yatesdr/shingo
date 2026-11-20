@@ -82,7 +82,7 @@
     </div>
     {{with .CountAnomalies}}
     <ul class="cs-anomalies">
-      {{range .}}<li><code>{{.Bin}}</code> <span class="text-muted-xs">{{.Payload}}</span> at {{.Seat}} &mdash; {{.Class}}: Edge <b>{{.Edge}}</b>, Core <b>{{.Core}}</b> <span class="text-muted-xs">{{.Station}}, open {{.Open}}</span></li>{{end}}
+      {{range .}}<li><code>{{.Bin}}</code> <span class="text-muted-xs">{{.Payload}}</span> at {{.Seat}} &mdash; {{.Class}}: Edge <b>{{.Edge}}</b>{{with .EdgeParts}} <span class="text-muted-xs">{{.}}</span>{{end}}, Core <b>{{.Core}}</b>{{with .CoreParts}} <span class="text-muted-xs">{{.}}</span>{{end}} <span class="text-muted-xs">{{.Station}}, open {{.Open}}</span></li>{{end}}
     </ul>
     {{end}}
   </section>

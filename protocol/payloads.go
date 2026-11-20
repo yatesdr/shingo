@@ -1034,8 +1034,8 @@ type OrderIngestRequest struct {
 	// SourceNode is where the filled bin is parked; required when BinLabel is
 	// blank, since Core then resolves the bin from what stands there.
 	SourceNode string `json:"source_node"`
-	// Quantity is the operator-measured produced count (UOP); 0 is the
-	// payload's capacity.
+	// Quantity is the measured count of the bin, in the bin's count
+	// (ManifestItem); 0 is an empty bin, and Core refuses a negative.
 	Quantity int64 `json:"quantity"`
 	// Manifest lists the bin's items explicitly; absent, Core uses the
 	// payload's manifest template.
@@ -1423,7 +1423,7 @@ type CatalogPayloadInfo struct {
 	Name        string `json:"name"`         // the payload template's name
 	Code        string `json:"code"`         // the unique payload code
 	Description string `json:"description"`  // a human-readable description
-	UOPCapacity int    `json:"uop_capacity"` // the standard pack: the pieces a full bin of a part alone holds (a kit: cycles)
+	UOPCapacity int    `json:"uop_capacity"` // the standard pack, in the bin's count: parts for a part alone, kits for a kit
 	// CATID is the payload's part identity from its Core manifest: the
 	// DISTINCT part numbers, comma-joined (a single-part payload sends one
 	// value; a multi-part kit sends the full list). The edge splits it back

@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -545,6 +546,15 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 	}
 	if !ok {
 		return
+	}
+
+	// Each payload's UOP ratio above 1, so the kiosk shows a count in UoP with
+	// its parts beside it (owner, 2026-11-19). Absent at a ratio-1 plant: the
+	// answer is what it was.
+	if ratios, err := h.engine.PayloadService().UOPRatios(); err != nil {
+		log.Printf("node report: payload ratios: %v", err)
+	} else if len(ratios) > 0 {
+		resp["uop_ratios"] = ratios
 	}
 
 	w.Header().Set("Cache-Control", "no-store")

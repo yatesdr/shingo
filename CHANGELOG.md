@@ -33,6 +33,23 @@ Deploy: Edge v59 first, at every Edge of the plant; then Core v181–v183. No Co
 - Core no longer stops when a two-cart swap through a lane is refused and then re-planned
 - After Core restarts partway through sending an order, Diagnostics names the order and its job
 - Core's database tests run their end-of-test order checks again; they had gone silent at Core v174
+- An order ingest of 0 books the bin empty, not full; the Edge's manual ingest now needs a quantity
+- A count typed below zero is refused: LOAD, Load Payload, a release's count and lineside parts, a reorder point, a lineside soft threshold, a refill threshold
+- A count typed above the pack is saved as typed, and the box or its answer says so
+- Core's Record Count refuses a blank box instead of recording 0
+- The Bins page's Cycle Count wizard is gone; a bin's Record Count stays
+- An Edge's admin-Move release, changeover-cancel reseat, Order B clear, CLEAR and unfenced count take the count lock
+- An admin Move's release or an Order B clear no longer zeroes a carrier that landed on the seat a moment before it
+- A part used more than one a cycle shows its count in UoP big, its parts small beside it: floor tiles, the node and release screens, Production, Bins, Inventory and the wall display
+- Count boxes take parts and, above one a cycle, show the UoP they make as you type
+- The inventory export's UOP Remaining is the count's UoP; Qty keeps the parts
+- The threshold calculator's cycle is one assembly cycle, and its answer is in parts
+- Changing a part's parts a cycle while its bins or piles hold a count shows what each will read, and saves on OK; nothing stored moves
+- A part cannot change between one line and a kit while any bin or pile of it holds a count
+- A seat draws and shows its count at the ratio of the part in its bin, not its claim's part
+- The Processes page's reorder point, lineside soft threshold and hold limit show the UoP they make as you type
+- The loader board, unloader windows, Production's manual swap row, lineside piles and held partials read in UoP too, as do Core's node inventory, Count history, dashboard anomalies, Material flags, demand episodes and Payloads table
+- A LOAD of 0 says "Type the count first: a LOAD needs 1 or more"
 
 ## v0.15.0 — 2026-11-19
 

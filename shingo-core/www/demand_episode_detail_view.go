@@ -130,10 +130,15 @@ type EpisodeDetail struct {
 	BandLabel    string
 	RampStep     int
 
-	OpenedTotal   int
-	Threshold     Cell
-	Rerequests    int
-	Discretionary bool
+	OpenedTotal int
+	Threshold   Cell
+	// OpenedTotalParts and ThresholdParts are a threshold episode's level at
+	// open and its threshold in parts, said small beside them above the part's
+	// ratio of 1, where they show their whole UoP (showInUoP); "" at 1.
+	OpenedTotalParts string
+	ThresholdParts   string
+	Rerequests       int
+	Discretionary    bool
 
 	// Orders is the child count AS A CELL, which is the difference between this
 	// page and the list. On the list the count is always measured, because a
@@ -170,6 +175,25 @@ type EpisodeDetail struct {
 // `now` is a parameter for the same reason it is one on BuildEpisodeRow: an open
 // episode's duration depends on it, and a function that reads the clock cannot
 // be tested at a boundary.
+// showInUoP restates a threshold episode's level at open and its threshold
+// above its part's ratio of 1 (countShown): both are the in-loop count, in
+// parts, the threshold monitor read (engine/threshold_episodes.go). A kanban
+// episode counts carriers, and an Edge's episode carries its own level, so
+// they are left as they read.
+func (d *EpisodeDetail) showInUoP(o domain.DemandOrigin, ratio int) {
+	if o.Kind != protocol.EpisodeKindThreshold {
+		return
+	}
+	shown, parts := countShown(o.OpenedTotal, ratio)
+	if parts == "" {
+		return
+	}
+	d.OpenedTotal, d.OpenedTotalParts = shown, parts
+	t, tparts := countShown(o.Threshold, ratio)
+	d.Threshold = Value(FormatCount(t))
+	d.ThresholdParts = tparts
+}
+
 func BuildEpisodeDetail(
 	o domain.DemandOrigin,
 	children []*domain.Order,

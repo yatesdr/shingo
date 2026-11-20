@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // PayloadManifestItem is one line of a payload template — a part
 // number and how many of it one assembly cycle consumes, optionally
@@ -41,4 +45,20 @@ type PayloadManifestItem struct {
 	PartsPerCycle int64     `json:"parts_per_cycle"`
 	Description   string    `json:"description"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// ProtocolLines is a template's lines as the wire carries them
+// (protocol.ManifestItem: part, ratio, description; the line and part ids and
+// the part's CATID stay on Core), nil for none. It is the shape the count
+// arithmetic reads (protocol.UOPRatio, protocol.LinePieces). Callers: the
+// catalog feed (messaging catalogRows) and CMS's per-line pieces
+// (material postablePerUnit).
+func ProtocolLines(items []*PayloadManifestItem) []protocol.ManifestItem {
+	var lines []protocol.ManifestItem
+	for _, l := range items {
+		lines = append(lines, protocol.ManifestItem{
+			PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle, Description: l.Description,
+		})
+	}
+	return lines
 }

@@ -480,6 +480,12 @@ func (c *groupCheck) advancedTheModeTakes() error {
 		if msg := HoldLimitRefusal(g.Advanced.HoldLimit); msg != "" {
 			return refusef("%s's Advanced: %s", g.Name, msg)
 		}
+		if msg := NegativeCountRefusal(flowspec.Label(flowspec.ReorderPoint), g.Advanced.ReorderPoint); msg != "" {
+			return refusef("%s's Advanced: %s", g.Name, msg)
+		}
+		if msg := NegativeCountRefusal(flowspec.Label(flowspec.LinesideSoftThreshold), g.Advanced.LinesideSoftThreshold); msg != "" {
+			return refusef("%s's Advanced: %s", g.Name, msg)
+		}
 	}
 	return nil
 }

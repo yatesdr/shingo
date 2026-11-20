@@ -265,7 +265,7 @@ func (e *Engine) holdRows(h *store.CatidHold, styleID int64, styleName string) (
 		switch share, ok := shares[nodes[i].ID]; {
 		case claim.Role == protocol.ClaimRoleConsume:
 			// What the cart is drawn, in pieces, as the release's walk draws it.
-			row.Qty = int64(tickScope{delta: int(h.Qty), unit: releaseUnit(h)}.consumeDraw(claim))
+			row.Qty = int64(tickScope{delta: int(h.Qty), unit: releaseUnit(h)}.consumeDraw(claim, e.seatRatio(rt, claim)))
 		case ok:
 			row.Qty = int64(share)
 		}

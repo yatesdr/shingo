@@ -114,7 +114,7 @@
                     <td>
                         {{if eq .State "active"}}<span class="badge">active</span>{{else}}<span class="badge text-muted">count anomaly at cutover</span>{{end}}
                     </td>
-                    <td style="text-align:right;" class="mono">{{.Qty}}</td>
+                    <td style="text-align:right;" class="mono">{{uopShown .Qty .Ratio}}{{with uopParts .Qty .Ratio}} <span class="text-muted">{{.}}</span>{{end}}</td>
                     <td>
                         <button class="btn btn-sm btn-danger" data-action="clearLinesideBucket">Clear</button>
                     </td>

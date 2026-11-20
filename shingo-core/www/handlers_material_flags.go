@@ -97,6 +97,7 @@ func (h *Handlers) handleMaterialFlags(w http.ResponseWriter, r *http.Request) {
 		data["BindingError"] = err.Error()
 	} else {
 		rows, summary := BuildBindingRows(carriers, now, c)
+		showLedgersInUoP(rows, h.payloadRatios())
 		data["Bindings"] = rows
 		data["BindingSummary"] = summary
 

@@ -86,13 +86,21 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// Built here, from the service's rows, rather than in a helper that
 		// names their type: a www handler does not import the store.
 		now := clock.Now()
+		// Each part's ratio above 1, read only when there is an anomaly to
+		// show (two statements; PayloadService.UOPRatios). A failed read shows
+		// the counts as they were.
+		var ratios map[string]int
+		if len(anomalies) > 0 {
+			ratios = h.payloadRatios()
+		}
 		views := make([]countAnomalyView, 0, len(anomalies))
 		for _, d := range anomalies {
 			v := countAnomalyView{
 				Bin: "bucket", Seat: d.Node, Payload: d.Payload, Class: countAnomalyClass[d.Class],
-				Edge: countOrDash(d.EdgeCount), Core: countOrDash(d.CoreCount),
 				Open: openFor(now.Sub(d.OpenedAt)), Station: d.Station,
 			}
+			v.Edge, v.EdgeParts = anomalyCount(d.EdgeCount, ratios[d.Payload])
+			v.Core, v.CoreParts = anomalyCount(d.CoreCount, ratios[d.Payload])
 			if v.Class == "" {
 				v.Class = d.Class
 			}
@@ -153,8 +161,12 @@ type countAnomalyView struct {
 	Class   string
 	Edge    string
 	Core    string
-	Open    string
-	Station string
+	// EdgeParts and CoreParts are each side's parts, said small beside it
+	// above the part's ratio of 1 (anomalyCount); "" at 1.
+	EdgeParts string
+	CoreParts string
+	Open      string
+	Station   string
 }
 
 // countAnomalyClass is the same wording the Inventory page uses.
@@ -167,11 +179,20 @@ var countAnomalyClass = map[string]string{
 	"bucket":          "lineside bucket differs",
 }
 
-func countOrDash(n *int) string {
+// anomalyCount is one side of a count anomaly as the dashboard says it: "-"
+// when that side has no count; the count at its part's ratio of 1, as it
+// always read; above 1 the whole UoP, with its parts said small beside it
+// (countShown).
+func anomalyCount(n *int, ratio int) (said, parts string) {
 	if n == nil {
-		return "-"
+		return "-", ""
 	}
-	return strconv.Itoa(*n)
+	shown, parts := countShown(*n, ratio)
+	if parts == "" {
+		return strconv.Itoa(*n), ""
+	}
+	// OWNER-WORDS
+	return strconv.Itoa(shown) + " UoP", parts
 }
 
 // openFor prints an episode's age in the two largest units: "12m", "1h 30m",

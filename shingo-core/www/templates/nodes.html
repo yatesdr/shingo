@@ -412,7 +412,7 @@
   </div>
 </div>
 
-<div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
+<div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}' data-uop-ratios='{{.UOPRatiosJSON}}'></div>
 <!-- ONE TAG PER MODULE, AND ONLY FOR MODULES NOBODY IMPORTS.
      A module reached BOTH by a tag and by an import is two URLs the moment
      the two are written differently (tags here once carried a per-render

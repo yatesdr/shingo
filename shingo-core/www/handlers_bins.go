@@ -28,6 +28,12 @@ import (
 // and where it's headed (plant 2026-06-02).
 type binRow struct {
 	*domain.Bin
+	// UOPShown and UOPParts are the UoP cell above a ratio of 1: the whole UoP
+	// of the count, and its parts said beside it (protocol.SplitUOP; owner,
+	// 2026-11-19). UOPParts is "" at a ratio of 1, and the cell shows the count
+	// as it always did. Twin: bins-row.js uopText.
+	UOPShown       int
+	UOPParts       string
 	InTransit      bool
 	TransitPayload string
 	TransitSource  string
@@ -98,6 +104,10 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("bins page: list payloads: %v", err)
 	}
+	ratios, err := h.engine.PayloadService().UOPRatios()
+	if err != nil {
+		log.Printf("bins page: payload ratios: %v", err)
+	}
 
 	// Build bin IDs for notes indicator
 	binIDs := make([]int64, len(bins))
@@ -117,6 +127,10 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	rows := make([]binRow, len(bins))
 	for i, b := range bins {
 		row := binRow{Bin: b}
+		if r := ratios[b.PayloadCode]; r > 1 {
+			row.UOPShown, _ = protocol.SplitUOP(b.UOPRemaining, r)
+			row.UOPParts = countPartsWords(b.UOPRemaining)
+		}
 		switch {
 		case b.NodeName == domain.TransitNodeName:
 			row.InTransit = true
@@ -192,6 +206,7 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 		"PayloadsJSON":        template.JS(payloadsJSON),
 		"BinTypesJSON":        template.JS(binTypesJSON),
 		"PayloadBinTypesJSON": template.JS(payloadBinTypesJSON),
+		"UOPRatiosJSON":       template.JS(uopRatiosJSON(ratios)),
 	}
 	h.render(w, r, "bins.html", data)
 }
@@ -727,4 +742,29 @@ func (h *Handlers) carrierFamilies() ([]string, map[int64]pageFamilyKeys) {
 		keys[f.ID] = pageFamilyKeys{lift: f.LiftBinTask, wait: f.WaitBinTask}
 	}
 	return codes, keys
+}
+
+// countPartsWords is a number of parts as a Core page says it beside a count
+// in UoP: "404 parts", "1 part". The browser's twin is count-words.js
+// partsWords.
+func countPartsWords(n int) string {
+	// OWNER-WORDS
+	if n == 1 || n == -1 {
+		return strconv.Itoa(n) + " part"
+	}
+	return strconv.Itoa(n) + " parts"
+}
+
+// uopRatiosJSON is a page's ratios above 1 by payload code, as the page's
+// script reads them (PAGE_UOP_RATIOS): {} at a ratio-1 plant or on a failed
+// read, which shows every count as it was.
+func uopRatiosJSON(ratios map[string]int) string {
+	if len(ratios) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(ratios)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }

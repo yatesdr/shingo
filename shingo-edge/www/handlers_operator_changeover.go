@@ -362,6 +362,10 @@ func (h *Handlers) apiEvacuateNode(w http.ResponseWriter, r *http.Request) {
 		Qty int64 `json:"qty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Qty < 0 {
+		writeError(w, http.StatusBadRequest, "qty must be 0 or more")
+		return
+	}
 	_, err = h.orchestration.EvacuateNode(processID, nodeID, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

@@ -150,6 +150,11 @@ func (e *Engine) stageTwoParts(l *domain.Loader) []domain.StageTwoPart {
 // and returns what it wrote, and that answer — not this argument — is what
 // gets seated on the node. See seatManuallyLoadedBin.
 func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error {
+	// A typed count is never negative (owner, 2026-11-19); Core refuses one
+	// at bin.load too, and the floor keypad has no sign.
+	if uopCount != nil && *uopCount < 0 {
+		return fmt.Errorf("the count must be 0 or more (got %d)", *uopCount)
+	}
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
@@ -326,12 +331,8 @@ func (e *Engine) loadManifest(payloadCode string, uopCount *int64, sent []protoc
 	lines := entry.TemplateLines()
 	out := make([]protocol.IngestManifestItem, len(lines))
 	for i, l := range lines {
-		perUnit := l.PartsPerCycle
-		if len(lines) == 1 {
-			perUnit = 1
-		}
 		out[i] = protocol.IngestManifestItem{
-			PartNumber: l.PartNumber, Quantity: perUnit * *uopCount, Description: l.Description,
+			PartNumber: l.PartNumber, Quantity: protocol.LinePieces(lines, i, *uopCount), Description: l.Description,
 		}
 	}
 	return out, nil
@@ -646,13 +647,12 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 		_, notSent = e.sendCartOut(node, claim, cleared.BinID)
 	}
 	claimIDPtr := persistedClaimID(claim)
-	if e.inventoryDelta != nil {
-		// Take the new generation stamp with the zeroed count. The clear ended
-		// this carrier's life on Core and started the next one; keeping the old
-		// stamp means every count reported for it from here on is discarded.
-		if err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
-			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
-		}
+	// Take the new generation stamp with the zeroed count, under the count
+	// lock. The clear ended this carrier's life on Core and started the next
+	// one; keeping the old stamp means every count reported for it from here
+	// on is discarded.
+	if err := e.setSeatCountLocked(nodeID, claimIDPtr, 0, cleared.BinID, cleared.DeltaEpoch); err != nil {
+		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 	}
 	// THE CLEAR IS AN IDENTITY EVENT, and it was not going through the doorway.
 	// The three writers were delivery, hand-load and departure; CLEAR left the

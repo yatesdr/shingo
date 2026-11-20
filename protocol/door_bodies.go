@@ -74,17 +74,19 @@ type NodeBinInfo struct {
 
 // ManifestItem describes a single line in a payload manifest TEMPLATE.
 //
-// THE COUNT RULE, the one place it is written. A bin of a payload with ONE line
-// counts pieces of that part: its count (uop_remaining, a release's declared
-// count, a LOAD's count) is how many are in it, and no reader multiplies it.
-// PartsPerCycle is an assembly consume setting: how many pieces of the part one
-// cycle of an assembly that consumes it uses, usually 1. An assembly's consume
-// spot draws its counter step times it (the Edge's handleConsumeTick and
-// handleABFallthrough); a press never reads it. A payload of SEVERAL lines (a
-// kit) keeps counting cycles: a line's pieces are the bin's count times its
-// PartsPerCycle, the arithmetic it always had. The readers that turn a count
-// into pieces (CMS postings, the inventory list, the Bins page, the LOAD
-// screens) each follow this; docs/uop-architecture.md says it for people.
+// THE COUNT RULE (owner, 2026-11-19). A UOP is one assembly cycle's worth, and
+// it is never stored. A bin's count (uop_remaining, a release's declared count,
+// a LOAD's count; every name on the wire that says uop holds it) is what is
+// physically in the carrier: parts for a payload of ONE line, kits for a
+// payload of SEVERAL. PartsPerCycle is the one line's ratio, an assembly consume
+// setting: how many of the part one cycle of an assembly that consumes it uses,
+// usually 1. An assembly's consume spot draws its counter step times it (the
+// Edge's handleConsumeTick and handleABFallthrough); a press never reads it. A
+// kit's ratio is 1, and a line's pieces are the bin's count times its
+// PartsPerCycle. The arithmetic is count.go's: UOPRatio, SplitUOP (the UOP a
+// count reads as: count ÷ ratio, the parts beside it) and LinePieces; every
+// reader goes through it or its browser twin. docs/uop-architecture.md says it
+// for people.
 //
 // The JSON key was `quantity` until Core's rename — same value, a name that
 // says what it is. Core and Edge ship that rename together, so there is no

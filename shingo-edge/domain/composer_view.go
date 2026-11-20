@@ -66,6 +66,12 @@ type ComposerData struct {
 	// desktop's alone — a recipe draft draws it beside the row's empty field;
 	// absent when the set has a source and a destination.
 	RoutingGaps map[string]string `json:"routing_gaps,omitempty"`
+	// UOPRatios is each claimed part's UoP ratio, for a part that reads above
+	// 1 only (NodeClaim.PiecesPerCycle, which every claim read resolves): the
+	// desktop's count settings show the UoP they make as typed
+	// (processes-desktop.js placeRatio). Absent when every part is at 1, so a
+	// ratio-1 plant's read is the one it was.
+	UOPRatios map[string]int `json:"uop_ratios,omitempty"`
 	// Presets are this process's flow presets, newest version of each name.
 	// The S4 strip renders a card per preset; empty means the strip carries
 	// FLOW · Start blank · PARTS and nothing more.

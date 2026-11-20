@@ -589,6 +589,14 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	if msg := HoldLimitRefusal(in.HoldLimit); msg != "" {
 		add(string(flowspec.HoldLimit), msg)
 	}
+	for _, f := range []struct {
+		field flowspec.Field
+		n     int
+	}{{flowspec.ReorderPoint, in.ReorderPoint}, {flowspec.LinesideSoftThreshold, in.LinesideSoftThreshold}} {
+		if msg := NegativeCountRefusal(flowspec.Label(f.field), f.n); msg != "" {
+			add(string(f.field), msg)
+		}
+	}
 
 	// THE PER-MODE HALF READS ONE TABLE. Which fields this claim's mode
 	// requires and which it must not carry is flowspec.Steady's answer, shared

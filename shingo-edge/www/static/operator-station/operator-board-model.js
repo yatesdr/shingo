@@ -21,19 +21,39 @@
 'use strict';
 
 import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand, windowRole } from './operator-window-state.js';
+import { countBracketed, countOfSaid, countReading } from '/static/shared/count-words.js';
+import { uopRatio } from '/static/shared/count.js';
 
-// cyclesLeftWords is what a consume tile says of a part an assembly uses more
-// than one of a cycle: the tile's count is pieces, so it says the cycles they
-// make too, the count divided by the claim's pieces per cycle (the Edge's
-// NodeClaim.PiecesPerCycle), rounded down and never below 0. '' everywhere
-// else: a produce tile (a press never reads the number), a part at 1 a cycle,
-// a tile with no cart.
-export function cyclesLeftWords(claim, count, noCarrier) {
+// ratioFor is a part's UOP ratio as the board knows it. code '' is the seat's
+// bin: its own part's ratio when the view sends one (bin_ratio: the bin is
+// another part than the claim's), else the claim's. A code that is the claim's
+// part reads the claim's (NodeClaim.PiecesPerCycle); any other, the part's load
+// template on a loader board (templates: the view's load_templates, count.js
+// uopRatio); else 1, which shows a count as it always was. A pile of a part
+// that is neither the tile's claim's nor on the board's templates reads in
+// parts only.
+export function ratioFor(templates, entry, code) {
+    const claim = entry && entry.active_claim;
+    if (claim && !code) return Number(entry.bin_ratio) || Number(claim.pieces_per_cycle) || 1;
+    if (claim && code === claim.payload_code) return Number(claim.pieces_per_cycle) || 1;
+    const t = templates && templates[code];
+    return t ? uopRatio(t.items) : 1;
+}
+
+// tileCount is what a node tile shows of its count and its pack, press and
+// assembly alike (owner, 2026-11-19: UOP big, the parts small beside it). Above
+// a ratio of 1 (the claim's part's, NodeClaim.PiecesPerCycle) the count and the
+// pack read in UoP where they stood, and the parts the bin holds go under them:
+// 404 of a pack of 800 at 8 a cycle reads 50 / 100 with "404 parts" under. At a
+// ratio of 1, or a claim with no number, the count and the pack as they are and
+// nothing under: the tile as it always was. A tile with no cart says nothing
+// under (count-words.js countReading). binRatio is the view's bin_ratio: the
+// bin bound here is another part, read at its own ratio; the pack is the
+// claim's and reads at the claim's.
+export function tileCount(claim, count, capacity, noCarrier, binRatio) {
     const ratio = claim ? Number(claim.pieces_per_cycle) || 1 : 1;
-    if (!claim || claim.role !== 'consume' || noCarrier || ratio <= 1) return '';
-    const cycles = Math.max(0, Math.floor((Number(count) || 0) / ratio));
-    // OWNER-WORDS
-    return cycles === 1 ? '1 cycle left' : cycles + ' cycles left';
+    const c = countReading(count, Number(binRatio) || ratio);
+    return { count: c.big, capacity: countReading(capacity, ratio).big, parts: noCarrier ? '' : c.small };
 }
 
 // loaderOf is a tile's loader, or null on every tile that is not a Core
@@ -584,7 +604,15 @@ function loadReason(view, cov, part) {
     if (c.state === 'out') return { tone: 'red', word: 'NOW', reason: cell + ' out', rank: [0, 0], fixes: cell + '|' + part };
     if (c.state === 'waiting') return { tone: 'amber', word: 'SOON', reason: cell + ' waiting', rank: [1, c.left === null ? Infinity : c.left] };
     if (c.state === 'unknown') return { tone: 'plain', reason: cell + ' count unknown', rank: [3, 0] };
-    return { tone: 'plain', reason: cell + ' has ' + fmtCount(c.left) + ' left', rank: [2, c.left] };
+    return { tone: 'plain', reason: cell + ' has ' + leftWords(view, c.row.part, c.left), rank: [2, c.left] };
+}
+
+// leftWords is a served row's count as what is left: "212 left" at a ratio of
+// 1, and above it the UoP with the parts in brackets, "50 UoP left (404
+// parts)" (count-words.js countBracketed), the part's ratio from the board's
+// load templates (ratioFor).
+function leftWords(view, part, left) {
+    return countBracketed(left, ratioFor(view.load_templates, null, part), fmtCount(left) + ' left', 'left');
 }
 
 function byRank(a, b) {
@@ -623,7 +651,7 @@ export function cellsRow(view, fixes) {
             cells.push(cell);
         }
         cell.first = Math.min(cell.first, c.i);
-        let words = c.left === null ? 'count unknown' : fmtCount(c.left) + ' left';
+        let words = c.left === null ? 'count unknown' : leftWords(view, c.row.part, c.left);
         if (c.state === 'out') words = 'none left';
         else if (c.state === 'covered') words = '';
         cell.rows.push({
@@ -706,7 +734,10 @@ export function pressesRow(view, tiles) {
         const known = typeof r.have_uop === 'number' && r.have_uop >= 0;
         const full = known && r.capacity_uop > 0 && r.have_uop >= r.capacity_uop;
         let words = 'count unknown';
-        if (known) words = full ? 'full' : fmtCount(r.have_uop) + ' of ' + fmtCount(r.capacity_uop);
+        if (known && !full) {
+            words = countOfSaid(r.have_uop, r.capacity_uop, ratioFor(view.load_templates, null, r.part),
+                fmtCount(r.have_uop) + ' of ' + fmtCount(r.capacity_uop));
+        } else if (known) words = 'full';
         return {
             cell: r.cell, node: shortNode(r.node), bin: r.carrier, part: r.part,
             have: known ? r.have_uop : null, capacity: r.capacity_uop, words: words,
@@ -823,7 +854,7 @@ function unloadAct(tile, lit) {
     // count of it riding along (bin.held_uop, which does not tick while held).
     if (bin.held_since) {
         return { kind: 'unload-held', node: tile.node.id, heldFor: bin.held_for || '', count: bin.held_uop || 0,
-            stageTwo: takesBare(tile) };
+            stageTwo: takesBare(tile), pack: bin.uop_capacity || 0, part: bin.payload_code || '' };
     }
     return {
         kind: 'unload', node: tile.node.id, carriers: carriersOf(tile),
@@ -898,14 +929,14 @@ function headlineOf(tile) {
 // reason is the cell and when it was said, short enough for a 1024 px card:
 // "CELL out", "CELL waiting", "CELL 212 left", "CELL running" (a count the
 // Edge cannot read); plain "CELL bin ready" (covered) or "No cell runs it".
-function refusalReason(c, when) {
+function refusalReason(view, c, when) {
     const at = when ? ' · ' + when : '';
     if (!c || c.state === 'covered') return { tone: 'plain', reason: (c ? c.row.cell + ' bin ready' : 'No cell runs it') + at };
     const cell = c.row.cell;
     let words = cell + ' running';
     if (c.state === 'out') words = cell + ' out';
     else if (c.state === 'waiting') words = cell + ' waiting';
-    else if (c.left !== null) words = cell + ' ' + fmtCount(c.left) + ' left';
+    else if (c.left !== null) words = cell + ' ' + leftWords(view, c.row.part, c.left);
     return { tone: 'red', reason: words + at };
 }
 
@@ -948,7 +979,7 @@ function loaderCards(t, ctx) {
     const loadable = [];
     cardParts(t, view.serves).forEach(function (code) {
         if (refusals[code]) {
-            const r = refusalReason(worstRow(ctx.cov, code, 'consume'), ctx.when(refusals[code].refused_at));
+            const r = refusalReason(view, worstRow(ctx.cov, code, 'consume'), ctx.when(refusals[code].refused_at));
             ctx.refused.push(ctx.card(t, 'refused:' + code, [r.tone === 'red' ? 0 : 1], {
                 tone: r.tone, spotWords: spot.words, spotCode: spot.code, headline: code, reason: r.reason,
                 act: held ? { kind: 'modal', node: t.node.id } : { kind: 'load', node: t.node.id, codes: [code] },
@@ -1088,7 +1119,11 @@ function windowCards(consumers, ctx) {
         const count = typeof bin.display_uop === 'number' ? bin.display_uop
             : (bin.held_since && typeof bin.held_uop === 'number' ? bin.held_uop : null);
         let headline = 'no bin';
-        if (full) headline = bin.payload_code + (count !== null ? ' · ' + fmtCount(count) : '');
+        // The count at its part's ratio: "PART-A · 50 UoP (404 parts)" above 1.
+        if (full) {
+            headline = bin.payload_code + (count !== null ? ' · ' +
+                countBracketed(count, ratioFor(ctx.view && ctx.view.load_templates, null, bin.payload_code), fmtCount(count), '') : '');
+        }
         else if (!bin.bare) {
             const height = heightLabel(bin);
             headline = (own || bin.bin_label || 'Unknown bin') + ' · empty' + (height ? ' · ' + height : '');

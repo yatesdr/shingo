@@ -1161,6 +1161,7 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	view.Family = s.familiesForBoard(view.Nodes)
 	// After the served pass: it stamps a stage 2's partial and full parts.
 	view.LoadTemplates = s.loadTemplatesForBoard(view.Nodes)
+	s.stampBinRatios(view.Nodes)
 
 	return view, nil
 }
@@ -1216,6 +1217,40 @@ func (s *StationService) loadTemplatesForBoard(tiles []store.StationNodeView) ma
 		return nil
 	}
 	return out
+}
+
+// PartRatio is a part's UOP ratio from this Edge's catalog copy
+// (protocol.UOPRatio over its template lines), held between catalog writes
+// (heldLoadTemplates: no statement between them), and 0 when the copy has no
+// row for it, where the caller keeps the ratio it has. Readers: the engine's
+// seat draw (Engine.seatRatio) and the view's bin ratios (stampBinRatios).
+func (s *StationService) PartRatio(code string) int {
+	t, ok := s.heldLoadTemplates()[code]
+	if !ok {
+		return 0
+	}
+	return protocol.UOPRatio(t.Items)
+}
+
+// stampBinRatios sets a tile's BinRatio where the bin bound at it is not the
+// claim's part and its ratio differs from the claim's (RuntimeState.SeatPart,
+// PartRatio), so the board shows that bin at its own part's ratio. Every other
+// tile carries none, so a view whose bins are their claims' parts is what it
+// was. The catalog copy is read only for such a tile.
+func (s *StationService) stampBinRatios(tiles []store.StationNodeView) {
+	for i := range tiles {
+		c, rt := tiles[i].ActiveClaim, tiles[i].Runtime
+		if c == nil || rt == nil {
+			continue
+		}
+		part := rt.SeatPart(c.PayloadCode)
+		if part == "" || part == c.PayloadCode {
+			continue
+		}
+		if r := s.PartRatio(part); r > 0 && r != max(c.PiecesPerCycle, 1) {
+			tiles[i].BinRatio = r
+		}
+	}
 }
 
 // heldTemplates is every catalog row's load template, as of one catalog

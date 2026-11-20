@@ -120,6 +120,8 @@ func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 			return d.refuseAt(req.NodeName, http.StatusConflict, loaderCarrierRefusal(carrier))
 		case errors.Is(err, service.ErrCountRequired):
 			return d.refuseAt(req.NodeName, http.StatusConflict, err.Error()+" — enter the count on the LOAD")
+		case errors.Is(err, service.ErrNegativeCount):
+			return d.refuseAt(req.NodeName, http.StatusBadRequest, err.Error())
 		case errors.Is(err, service.ErrUnknownPayload):
 			return d.refuseAt(req.NodeName, http.StatusBadRequest, err.Error())
 		default:

@@ -1,0 +1,15 @@
+{
+  "about": "Worked examples of a bin's count (protocol/count.go, shared/count.js). Read by TestCountExamples (Go), shared/testdata/js/count.test.js (JS), and the tests of the two SQL copies: the Edge claim read (capacity.PiecesPerCycleSQL) and Core's inventory list. Owner's rule, 2026-11-19: a bin counts what is in the carrier, parts for one line and kits for several; UOP = count / ratio, whole part, the parts left over beside it.",
+  "examples": [
+    {"name": "a full pack, 800 parts at 8 a cycle", "lines": [{"part_number": "P-8", "parts_per_cycle": 8}], "count": 800, "ratio": 8, "uop": 100, "parts": 0, "line_pieces": [800]},
+    {"name": "803 parts at 8, typed above the pack", "lines": [{"part_number": "P-8", "parts_per_cycle": 8}], "count": 803, "ratio": 8, "uop": 100, "parts": 3, "line_pieces": [803]},
+    {"name": "a bin pulled at 404 at 8", "lines": [{"part_number": "P-8", "parts_per_cycle": 8}], "count": 404, "ratio": 8, "uop": 50, "parts": 4, "line_pieces": [404]},
+    {"name": "a bin pulled at 403 at 8", "lines": [{"part_number": "P-8", "parts_per_cycle": 8}], "count": 403, "ratio": 8, "uop": 50, "parts": 3, "line_pieces": [403]},
+    {"name": "3 parts left and a cycle of 8 drawn: -5", "lines": [{"part_number": "P-8", "parts_per_cycle": 8}], "count": -5, "ratio": 8, "uop": 0, "parts": -5, "line_pieces": [-5]},
+    {"name": "1500 parts at 5, a pack of 300 UOP", "lines": [{"part_number": "P-5", "parts_per_cycle": 5}], "count": 1500, "ratio": 5, "uop": 300, "parts": 0, "line_pieces": [1500]},
+    {"name": "a kit cart of 60: 60 A, 60 B, 120 C", "lines": [{"part_number": "K-A", "parts_per_cycle": 1}, {"part_number": "K-B", "parts_per_cycle": 1}, {"part_number": "K-C", "parts_per_cycle": 2}], "count": 60, "ratio": 1, "uop": 60, "parts": 0, "line_pieces": [60, 60, 120]},
+    {"name": "ratio 1: the count is the UOP", "lines": [{"part_number": "P-1", "parts_per_cycle": 1}], "count": 800, "ratio": 1, "uop": 800, "parts": 0, "line_pieces": [800]},
+    {"name": "a line that says 0 a cycle is 1", "lines": [{"part_number": "P-0", "parts_per_cycle": 0}], "count": 40, "ratio": 1, "uop": 40, "parts": 0, "line_pieces": [40]},
+    {"name": "a payload with no line is 1", "lines": [], "count": 12, "ratio": 1, "uop": 12, "parts": 0, "line_pieces": []}
+  ]
+}

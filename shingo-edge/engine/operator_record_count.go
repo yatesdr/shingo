@@ -76,8 +76,8 @@ func (e *Engine) RecordBinCount(nodeID int64, actualUOP int, actor string) error
 		// Refused or failed (logged by fencedCount): nothing was written, so
 		// there is no new number to show.
 		return nil
-	case e.inventoryDelta != nil:
-		if err := e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimIDPtr,
+	default:
+		if err := e.setSeatCountLocked(nodeID, claimIDPtr,
 			counted.UOPRemaining, counted.BinID, counted.DeltaEpoch); err != nil {
 			log.Printf("record_count: set runtime for node %d: %v", nodeID, err)
 		}

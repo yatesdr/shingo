@@ -55,7 +55,9 @@ const ctx = vm.createContext({
     },
     el: el,
     getView: function () { return view; },
-    postAction: function (url, body) { posts.push({ url: url, body: body }); return Promise.resolve(true); },
+    postAction: function (url, body) { posts.push({ url: url, body: body });
+// The count's arithmetic and words, real (the discard line reads them).
+require('./lend-count.js')(ctx); return Promise.resolve(true); },
     isActive: function () { return false; },
 });
 // The board model the panels read their choices and their lit one from

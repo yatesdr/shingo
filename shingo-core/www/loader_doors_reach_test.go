@@ -26,3 +26,14 @@ func TestLoaderDoors_ReachNoDispatcher(t *testing.T) {
 		return true
 	})
 }
+
+// TestThresholdRefusal: both loader doors refuse a refill threshold below 0
+// and take 0 (not monitored) and above (owner, 2026-11-19).
+func TestThresholdRefusal(t *testing.T) {
+	t.Parallel()
+	for n, refused := range map[int]bool{-1: true, 0: false, 40: false} {
+		if got := thresholdRefusal(n) != ""; got != refused {
+			t.Errorf("threshold %d: refused = %v, want %v", n, got, refused)
+		}
+	}
+}

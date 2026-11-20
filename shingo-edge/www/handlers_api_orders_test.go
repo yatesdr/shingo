@@ -430,6 +430,27 @@ func TestApiOrders_CreateIngestOrder_MissingBinLabel(t *testing.T) {
 	assertJSONPath(t, resp, "error", "bin_label is required")
 }
 
+// The typed count is required and never negative: an absent quantity used to
+// book the payload's capacity at Core (owner, 2026-11-19: 0 means empty).
+func TestApiOrders_CreateIngestOrder_QuantityRequiredNotNegative(t *testing.T) {
+	t.Parallel()
+	_, router := newApiOrdersRouter(t)
+	for _, c := range []struct {
+		body map[string]any
+		want string
+	}{
+		{map[string]any{"payload_code": "BIN-Z", "bin_label": "BIN-Z1"}, "quantity is required: the bin's count, 0 for an empty bin"},
+		{map[string]any{"payload_code": "BIN-Z", "bin_label": "BIN-Z1", "quantity": -1}, "quantity must be 0 or more"},
+	} {
+		resp := doRequest(t, router, "POST", "/api/orders/ingest", c.body, nil)
+		assertStatus(t, resp, http.StatusBadRequest)
+		assertJSONPath(t, resp, "error", c.want)
+	}
+	resp := doRequest(t, router, "POST", "/api/orders/ingest",
+		map[string]any{"payload_code": "BIN-Z", "bin_label": "BIN-Z1", "quantity": 0}, nil)
+	assertStatus(t, resp, http.StatusOK)
+}
+
 // TestApiOrders_CreateOrder_InvalidJSON drives all five create endpoints with
 // a syntactically valid body whose field has the wrong type, forcing the
 // json.Decoder to fail. Each handler returns 400.

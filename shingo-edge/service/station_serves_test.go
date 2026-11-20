@@ -544,3 +544,58 @@ func TestLoadTemplatesForBoard(t *testing.T) {
 		t.Errorf("a view with no templates sends the key: %s", raw)
 	}
 }
+
+// TestStampBinRatios: a tile whose bound bin is another part than the claim's,
+// at another ratio, carries that bin's ratio (bin_ratio); a tile whose bin is
+// its claim's part, or another part at the same ratio, or with no bin, carries
+// none, so its JSON is what it was.
+func TestStampBinRatios(t *testing.T) {
+	db, _ := countingDB(t)
+	for _, e := range []*catalog.CatalogEntry{
+		{ID: 1, Name: "P-8", Code: "P-8", UOPCapacity: 800, Manifest: []protocol.ManifestItem{{PartNumber: "P-8", PartsPerCycle: 8}}},
+		{ID: 2, Name: "P-2", Code: "P-2", UOPCapacity: 400, Manifest: []protocol.ManifestItem{{PartNumber: "P-2", PartsPerCycle: 2}}},
+		{ID: 3, Name: "Q-8", Code: "Q-8", UOPCapacity: 800, Manifest: []protocol.ManifestItem{{PartNumber: "Q-8", PartsPerCycle: 8}}},
+	} {
+		if err := db.UpsertPayloadCatalog(e); err != nil {
+			t.Fatalf("seed %s: %v", e.Code, err)
+		}
+	}
+	bin := int64(5)
+	seat := func(part string) *domain.RuntimeState {
+		return &domain.RuntimeState{ActiveBinID: &bin, LinesidePayloadCode: domain.LinesidePayloadCode(part), LinesidePayloadKnown: part != ""}
+	}
+	claim := func() *domain.NodeClaim { return &domain.NodeClaim{PayloadCode: "P-8", PiecesPerCycle: 8} }
+	tiles := []store.StationNodeView{
+		{ActiveClaim: claim(), Runtime: seat("P-2")},
+		{ActiveClaim: claim(), Runtime: seat("P-8")},
+		{ActiveClaim: claim(), Runtime: seat("Q-8")},
+		{ActiveClaim: claim(), Runtime: &domain.RuntimeState{}},
+		{ActiveClaim: claim(), Runtime: seat("")},
+	}
+	NewStationService(db).stampBinRatios(tiles)
+	for i, want := range []int{2, 0, 0, 0, 0} {
+		if tiles[i].BinRatio != want {
+			t.Errorf("tile %d: bin_ratio %d, want %d", i, tiles[i].BinRatio, want)
+		}
+	}
+	if tiles[0].UOPRatio() != 2 || tiles[1].UOPRatio() != 8 {
+		t.Errorf("UOPRatio = %d and %d, want 2 (the bin's part) and 8 (the claim's)", tiles[0].UOPRatio(), tiles[1].UOPRatio())
+	}
+}
+
+// TestClaimRatios: the composer read's uop_ratios carries each claimed part
+// that reads above 1, once, and nothing when every part reads at 1, so a
+// ratio-1 plant's read is the one it was.
+func TestClaimRatios(t *testing.T) {
+	t.Parallel()
+	got := claimRatios(map[int64][]domain.NodeClaim{
+		1: {{PayloadCode: "P-8", PiecesPerCycle: 8}, {PayloadCode: "P-1", PiecesPerCycle: 1}, {PiecesPerCycle: 4}},
+		2: {{PayloadCode: "P-8", PiecesPerCycle: 8}, {PayloadCode: "P-2", PiecesPerCycle: 2}},
+	})
+	if len(got) != 2 || got["P-8"] != 8 || got["P-2"] != 2 {
+		t.Errorf("claimRatios = %v, want P-8 at 8 and P-2 at 2 only", got)
+	}
+	if got := claimRatios(map[int64][]domain.NodeClaim{1: {{PayloadCode: "P-1", PiecesPerCycle: 1}, {PayloadCode: "K", PiecesPerCycle: 0}}}); got != nil {
+		t.Errorf("every part at 1: %v, want nil (uop_ratios omitted)", got)
+	}
+}

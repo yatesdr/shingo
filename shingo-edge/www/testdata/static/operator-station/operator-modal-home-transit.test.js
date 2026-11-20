@@ -73,6 +73,7 @@ const ctx = {
     UNDO_LABEL: 'UNDO',
 };
 vm.createContext(ctx);
+require('./lend-count.js')(ctx);
 vm.runInContext(statusSrc, ctx);
 vm.runInContext(modelSrc, ctx);
 vm.runInContext('var PRESS_MAX_MS = 2000; var pressInFlight = false; var pressStartedAt = 0; var pendingEntry = null;', ctx);

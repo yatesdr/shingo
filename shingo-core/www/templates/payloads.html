@@ -75,7 +75,7 @@
       <tr>
         <td>{{.ID}}</td>
         <td><code>{{.Code}}</code></td>
-        <td>{{.UOPCapacity}}{{if $.FullCartTotes}}{{range index $.FullCartTotes .ID}}<br><span class="text-muted" style="font-size:0.8rem" title="A full cart by its tote numbers: UOP per tote × totes per layer × layers">{{.}}</span>{{end}}{{end}}</td>
+        <td>{{$cap := false}}{{if $.CapacityInUoP}}{{$cap = index $.CapacityInUoP .ID}}{{end}}{{if $cap}}{{$cap.Shown}} <span class="text-muted bin-uop-parts">{{$cap.Parts}}</span>{{else}}{{.UOPCapacity}}{{end}}{{if $.FullCartTotes}}{{range index $.FullCartTotes .ID}}<br><span class="text-muted" style="font-size:0.8rem" title="A full cart by its tote numbers: UOP per tote × totes per layer × layers">{{.}}</span>{{end}}{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{if .RobotGroup}}{{.RobotGroup}}{{else}}<span class="text-muted">-</span>{{end}}{{if .NearEmptyEnabled}}<br><span title="near-empty relaxation">&rarr; {{if .NearEmptyRobotGroup}}{{.NearEmptyRobotGroup}}{{else}}any robot{{end}} @ &le;{{.NearEmptyThresholdPct}}%</span>{{end}}</td>
         <td class="text-muted" style="font-size:0.8rem">{{with index $.PayloadBinTypes .ID}}{{range $i, $bt := .}}{{if $i}}, {{end}}{{$bt}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
         <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
@@ -174,7 +174,7 @@
           <span>Part number</span>
           <span>CATID</span>
           <!-- OWNER-WORDS -->
-          <span>Pieces per assembly cycle <span class="tooltip-trigger" title="Read only where an assembly consumes this part: each of its cycles draws this many from the bin. A press never reads it. Leave 1 unless an assembly uses more than one a cycle.">?</span></span>
+          <span>Pieces per assembly cycle <span class="tooltip-trigger" title="How many of this part one assembly cycle uses: one UoP. An assembly draws this many a cycle, and every count of the part shows its UoP beside its parts. No stored count changes with it. Leave 1 unless an assembly uses more than one a cycle.">?</span></span>
         </div>
         <div id="plc-manifest-rows"></div>
       </div>
@@ -189,7 +189,7 @@
         </div>
         <div class="form-group">
           <!-- OWNER-WORDS -->
-          <label>UoP Capacity <span class="tooltip-trigger" title="The standard pack: how many pieces of the part a full bin holds. A bin of several parts counts cycles instead: how many a full bin feeds.">?</span></label>
+          <label><span data-unit-words="plc" data-plain="UoP Capacity" data-parts="Standard pack (parts)">UoP Capacity</span> <span class="tooltip-trigger" title="The standard pack: how many parts a full bin holds. A bin of several parts counts kits instead: how many a full bin feeds.">?</span></label>
           <input type="number" name="uop_capacity" id="plc-uop" min="1" required data-action-input="refreshFullBinCells:plc-manifest-rows">
         </div>
       </div>
@@ -200,7 +200,7 @@
         </div>
         <div class="form-group">
           <!-- OWNER-WORDS -->
-          <label>UoP per tote <span class="tooltip-trigger" title="How many fill one tote, in the capacity's unit: pieces, for a bin of one part. Blank if unknown.">?</span></label>
+          <label><span data-unit-words="plc" data-plain="UoP per tote" data-parts="Parts per tote">UoP per tote</span> <span class="tooltip-trigger" title="How many fill one tote, in the pack's unit: parts for a bin of one part, kits for a bin of several. Blank if unknown.">?</span></label>
           <input type="number" name="uop_per_tote" id="plc-uop-per-tote" min="1" step="1" placeholder="(not in totes)" data-action-input="refreshToteHint:plc">
         </div>
       </div>
@@ -266,21 +266,9 @@
     </div>
     <form id="pl-edit-form" method="POST" action="/payloads/update" data-action-submit="submitPLEdit">
       <input type="hidden" name="id" id="pl-edit-id">
-      <!-- Same order as Create, for the same reason. -->
-      <div class="form-group mb-1">
-        <div class="flex flex-between">
-          <!-- OWNER-WORDS -->
-          <label class="font-semibold text-sm" style="margin:0">Parts in the bin <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many of it one assembly cycle uses</span></label>
-          <button type="button" class="btn btn-sm" data-action="addBlankManifestRow:ple-manifest-rows">+ Part</button>
-        </div>
-        <div class="plpart-grid plpart-head text-muted">
-          <span>Part number</span>
-          <span>CATID</span>
-          <!-- OWNER-WORDS -->
-          <span>Pieces per assembly cycle <span class="tooltip-trigger" title="Read only where an assembly consumes this part: each of its cycles draws this many from the bin. A press never reads it. Leave 1 unless an assembly uses more than one a cycle.">?</span></span>
-        </div>
-        <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
-      </div>
+      <!-- EDIT OPENS ON THE PAYLOAD'S CODE AND ITS PACK, the fields an edit most
+           often changes, with the part number offered as the code; the parts
+           follow. Create keeps the parts first, for the reason above. -->
       <div class="grid grid-2">
         <div class="form-group">
           <label>Payload Code</label>
@@ -292,9 +280,23 @@
         </div>
         <div class="form-group">
           <!-- OWNER-WORDS -->
-          <label>UoP Capacity <span class="tooltip-trigger" title="The standard pack: how many pieces of the part a full bin holds. A bin of several parts counts cycles instead: how many a full bin feeds.">?</span></label>
+          <label><span data-unit-words="ple" data-plain="UoP Capacity" data-parts="Standard pack (parts)">UoP Capacity</span> <span class="tooltip-trigger" title="The standard pack: how many parts a full bin holds. A bin of several parts counts kits instead: how many a full bin feeds.">?</span></label>
           <input type="number" name="uop_capacity" id="pl-edit-uop" min="1" required data-action-input="refreshFullBinCells:ple-manifest-rows">
         </div>
+      </div>
+      <div class="form-group mb-1">
+        <div class="flex flex-between">
+          <!-- OWNER-WORDS -->
+          <label class="font-semibold text-sm" style="margin:0">Parts in the bin <span class="text-muted" style="font-weight:normal">— part number, its CATID, and how many of it one assembly cycle uses</span></label>
+          <button type="button" class="btn btn-sm" data-action="addBlankManifestRow:ple-manifest-rows">+ Part</button>
+        </div>
+        <div class="plpart-grid plpart-head text-muted">
+          <span>Part number</span>
+          <span>CATID</span>
+          <!-- OWNER-WORDS -->
+          <span>Pieces per assembly cycle <span class="tooltip-trigger" title="How many of this part one assembly cycle uses: one UoP. An assembly draws this many a cycle, and every count of the part shows its UoP beside its parts. No stored count changes with it. Leave 1 unless an assembly uses more than one a cycle.">?</span></span>
+        </div>
+        <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
       </div>
       <div class="grid grid-2">
         <div class="form-group">
@@ -303,7 +305,7 @@
         </div>
         <div class="form-group">
           <!-- OWNER-WORDS -->
-          <label>UoP per tote <span class="tooltip-trigger" title="How many fill one tote, in the capacity's unit: pieces, for a bin of one part. Blank if unknown.">?</span></label>
+          <label><span data-unit-words="ple" data-plain="UoP per tote" data-parts="Parts per tote">UoP per tote</span> <span class="tooltip-trigger" title="How many fill one tote, in the pack's unit: parts for a bin of one part, kits for a bin of several. Blank if unknown.">?</span></label>
           <input type="number" name="uop_per_tote" id="ple-uop-per-tote" min="1" step="1" placeholder="(not in totes)" data-action-input="refreshToteHint:ple">
         </div>
       </div>

@@ -67,9 +67,9 @@ operations for good and clears its node, and the record is kept.
 ### Payload
 
 A template defining what a bin should contain: its parts, each with its [pieces per cycle](#pieces-per-cycle), and
-its UOP capacity, the standard pack: the pieces of the part a full bin holds, or, for a kit, the cycles a full bin
-feeds. Assigning a payload to a bin gives the bin the payload code, populates its manifest from the template, and
-sets UOP remaining to capacity.
+its UOP capacity, the standard pack: what a full bin holds, in parts for a part alone and in kits for a kit (800
+parts at 8 a cycle is a pack that reads 100 UOP). Assigning a payload to a bin gives the bin the payload code,
+populates its manifest from the template, and sets UOP remaining to capacity.
 
 | System | Term |
 |---|---|
@@ -382,19 +382,37 @@ Control whether a robot accepts new dispatch orders (`SetAvailability`).
 
 ### UOP (Unit of Production)
 
-The count a bin, a payload or a lineside pile carries and a cell consumes. A bin of a payload with one manifest line
-counts pieces of that part: UOP capacity 800 is a full bin of 800 pieces, and UOP remaining is how many are left. A
-kit (a payload of several lines) counts cycles: each line's pieces are the count times the line's
-[pieces per cycle](#pieces-per-cycle). Reorder levels and Core's loader thresholds are counted in it. How it is
-counted is [uop-architecture.md](uop-architecture.md#process-semantics)'s. UI text writes it **UoP** (see
-[Units and casing](#units-and-casing)); code identifiers keep `UOP`.
+One assembly cycle's worth of a part: what one cycle of the assembly that consumes it takes (owner, 2026-11-19).
+**It is never stored.** A bin, a lineside pile, a pack, a reorder point and a threshold store what is physically
+there: parts for a payload of one manifest line, kits for a kit. UOP is worked out where it is shown, the count
+divided by the payload's ratio ([pieces per cycle](#pieces-per-cycle); 1 for a kit), the whole part, with the parts
+beside it: 800 parts at 8 a cycle read 100 UOP, 404 read 50 UOP and 404 parts. At a ratio of 1 the count is the UOP.
+How it is counted is [uop-architecture.md](uop-architecture.md#process-semantics)'s; the arithmetic is
+`protocol/count.go`. UI text writes it **UoP** (see [Units and casing](#units-and-casing)); code identifiers keep
+`UOP`.
+
+#### Names that say UOP and hold the count
+
+These names are older than the rule above, and each holds the count in the carrier's unit, not UOP: parts for a
+part alone, kits for a kit. They keep their names (renaming the columns and Go fields is a later, signed-off step;
+the JSON keys and subjects are never renamed, because a renamed key decodes as a silent zero on a peer of the other
+version, `TestCountMessages_Golden`). Read each as "count".
+
+| Where | Names |
+|---|---|
+| Core columns | `bins.uop_remaining`, `orders.remaining_uop`, `tte_samples.uop_remaining`, `payloads.uop_capacity` (the pack), `payloads.uop_per_tote`, `style_claims.uop_capacity`, `bin_loader_homes.uop_threshold`, `bin_loader_payloads.uop_threshold`, `demand_registry.replenish_uop_threshold`, `bin_uop_ledger.before_uop`/`after_uop`, `bin_uop_exception.*_uop`, `bin_uop_delta_daily.*_uop` |
+| Edge columns | `process_node_runtime_states.remaining_uop_cached`, `pending_uop_delta`, `payload_catalog.uop_capacity` |
+| Wire keys and subjects | `remaining_uop`, `uop_remaining`, `uop_count`, `actual_uop`, `cleared_uop`, `held_uop`, `display_uop`, `uop_capacity`, `bin_uop`, `uop`, `uop_per_tote`; `inventory.bin_uop_delta`, `inventory.uop_adjustment` |
+| Go fields | `RemainingUOPCached`, `UOPRemaining`, `RemainingUOP`, `UOPCapacity`, `UOPCount`, `ActualUOP`, `ClearedUOP`, `HeldUOP`, `DisplayUOP`, `BinUOP`; types `BinUOPDelta`, `UOPAdjustment` |
 
 ### Pieces per Cycle
 
 How many pieces of a part one cycle of an assembly that consumes it uses: `payload_manifest.parts_per_cycle`, set by
-an engineer on the part's manifest line in Core, usually 1. It is an assembly consume setting: an assembly's
-consume spot draws its counter step times it, and a press never reads it. It never scales a bin's count of a part
-alone. UI text calls it **Pieces per assembly cycle**.
+an engineer on the part's manifest line in Core, usually 1. It is the payload's **ratio**: a bin of the part alone
+reads its parts divided by it in [UOP](#uop-unit-of-production) (`protocol.UOPRatio`; a kit's ratio is 1). It is an
+assembly consume setting: an assembly's consume spot draws its counter step times it, and a press never reads it.
+It never changes a stored count: changing it changes only the UOP shown. UI text calls it **Pieces per assembly
+cycle**.
 
 ### Totes on Cart
 
@@ -441,7 +459,7 @@ say "bare position" for a vacant one, and the two must not be confused.
 
 ### UOP per Tote
 
-The UOP that fills one tote of a payload, in its capacity's unit (pieces, for a part alone):
+What fills one tote of a payload, in its capacity's unit (parts for a part alone, kits for a kit):
 `payloads.uop_per_tote`, NULL when the part states none. With it, Core turns a press's count into the totes it
 filled. Without it, no tote count is derived.
 

@@ -1,6 +1,7 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // this modal puts payload codes and node names inside attributes.
 import { esc } from '/static/shared/esc.js';
+import { UOP_WORD, countReading, countSaid } from '/static/shared/count-words.js';
 import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, showToast, stationID } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, confirmSkipChangeoverStep, REFUSE_LABEL, UNDO_LABEL,
@@ -14,7 +15,7 @@ import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { emptyCarrierHeld, isOwnEmptyOut } from './operator-window-state.js';
-import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight, replacePartialPart, bringHomeOf } from './operator-board-model.js';
+import { loaderOf, tileRole, takesBare, partCodes, carriersOf, binsKnown, clearHighlight, replacePartialPart, bringHomeOf, ratioFor, tileCount } from './operator-board-model.js';
 import { confirmUnloadSwap, confirmClearLoaderHome } from './operator-render.js';
 
 const nodeModal = document.getElementById('node-modal');
@@ -161,7 +162,8 @@ export function renderModal(entry) {
         const roleLabel = tileRole(entry) === 'produce' ? 'Loader' : 'Unloader';
         html += '<div class="modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
         html += '<div class="modal-fill-row">';
-        html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UoP)' : 'EMPTY') + '</div>';
+        const loaded = countSaid(remaining, ratioFor((getView() || {}).load_templates, entry, binPayload), remaining + ' UoP');
+        html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + esc(loaded) + ')' : 'EMPTY') + '</div>';
         html += '</div>';
     } else {
         const binState = entry.bin_state;
@@ -169,7 +171,10 @@ export function renderModal(entry) {
         html += '<div class="modal-payload">' + esc(claim ? claim.payload_code || 'Unassigned' : 'No claim') + binLabel + '</div>';
         html += '<div class="modal-fill-row">';
         html += '<div class="modal-fill-bar"><div class="modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
-        html += '<div class="modal-fill-text">' + remaining + ' / ' + capacity + '</div>';
+        // UoP big, the parts small beside them, above a ratio of 1 (tileCount).
+        const shown = tileCount(claim, remaining, capacity, false, entry.bin_ratio);
+        html += '<div class="modal-fill-text">' + shown.count + ' / ' + shown.capacity +
+            (shown.parts ? ' <span class="os-count-parts">' + esc(shown.parts) + '</span>' : '') + '</div>';
         html += '</div>';
 
         // Active lineside chips — operator-pulled parts on the current style.
@@ -179,8 +184,10 @@ export function renderModal(entry) {
             html += '<div class="os-lineside-label">Lineside</div>';
             html += '<div class="os-lineside-chips">';
             activeBuckets.forEach(function(b) {
+                const pile = countReading(b.qty || 0, ratioFor((getView() || {}).load_templates, entry, b.payload_code));
                 html += '<span class="os-lineside-chip active">' +
-                    esc(b.payload_code) + ': <strong>' + (b.qty || 0) + '</strong></span>';
+                    esc(b.payload_code) + ': <strong>' + pile.big + (pile.split ? ' ' + UOP_WORD : '') + '</strong>' +
+                    (pile.split ? ' <span class="os-count-parts">' + esc(pile.small) + '</span>' : '') + '</span>';
             });
             html += '</div></div>';
         }
@@ -194,7 +201,7 @@ export function renderModal(entry) {
             html += '<div class="os-lineside-chips">';
             strandedBuckets.forEach(function(b) {
                 html += '<span class="os-lineside-chip stranded">' +
-                    esc(b.payload_code) + ': ' + (b.qty || 0) + '</span>';
+                    esc(b.payload_code) + ': ' + esc(countSaid(b.qty || 0, ratioFor((getView() || {}).load_templates, entry, b.payload_code), String(b.qty || 0))) + '</span>';
             });
             html += '</div></div>';
         }
@@ -1253,7 +1260,7 @@ const ACTION_HANDLERS = {
             if (await postAction(url, undefined, loadViewRef)) closeModal();
             return;
         }
-        pickHeldPartial(list, async (binID) => {
+        pickHeldPartial(list, ratioFor((getView() || {}).load_templates, null, payload), async (binID) => {
             if (await postAction(url, { bin_id: binID }, loadViewRef)) closeModal();
         });
     },
@@ -1418,7 +1425,7 @@ nodeModal.addEventListener('click', evt => {
 // pickHeldPartial lists a part's held partials, oldest held first and that one
 // pre-selected, and calls go with the chosen bin's id. The count and the time
 // it entered its home are shown, as on the home's own board.
-function pickHeldPartial(list, go) {
+function pickHeldPartial(list, ratio, go) {
     let chosen = list[0].bin_id;
     const overlay = document.createElement('div');
     overlay.className = 'os-co-picker-overlay';
@@ -1435,7 +1442,7 @@ function pickHeldPartial(list, go) {
         const since = new Date(p.held_since);
         const when = isNaN(since.getTime()) ? p.held_since
             : since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        b.textContent = p.bin_label + ' — ' + p.uop_remaining + ' · held since ' + when + ' · ' + p.node_name;
+        b.textContent = p.bin_label + ' — ' + countSaid(p.uop_remaining, ratio, String(p.uop_remaining)) + ' · held since ' + when + ' · ' + p.node_name;
         b.addEventListener('click', function() {
             chosen = p.bin_id;
             rows.forEach(function(r) { r.classList.toggle('on', r === b); });

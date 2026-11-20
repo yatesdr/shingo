@@ -20,6 +20,7 @@ import { apiGet, apiPost } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
+import { UOP_WORD, countReading, typedNote } from '/static/shared/count-words.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let view = null;          // the last /api/inventory/loop answer
@@ -76,6 +77,21 @@ function editing() {
 // ── pure helpers (lifted by inventory.loop.test.js) ──────────────────────
 
 function num(n) { return (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString(); }
+
+// ratioOf is a part's UOP ratio from the last answer (uop_ratios: only parts
+// above 1), 1 for every other part.
+function ratioOf(code) {
+  return (view && view.uop_ratios && view.uop_ratios[code]) || 1;
+}
+
+// counted is a count as the page shows it: above its part's ratio of 1 the
+// UoP, the parts small beside it (count-words.js countReading); at 1, num(n),
+// as it always was.
+function counted(code, n) {
+  if (n == null || isNaN(n)) return num(n);
+  const r = countReading(n, ratioOf(code));
+  return r.split ? num(r.big) + ' <span class="text-muted loop-parts">' + escapeHtml(r.small) + '</span>' : num(n);
+}
 
 // dur is a duration as the floor reads it: "47 min", or "2.3 h" from 90
 // minutes up; "—" when there is none.
@@ -159,7 +175,9 @@ function thrTitle(r) {
 function doubtHtml(doubt) {
   if (!doubt || !doubt.length) return '';
   const items = doubt.map((d) => {
-    const what = d.reason === 'below_zero' ? 'reads ' + num(d.uop) : 'not confirmed';
+    const r = countReading(d.uop, ratioOf(d.payload_code));
+    // OWNER-WORDS: above a ratio of 1 the reading says its UoP and parts.
+    const what = d.reason === 'below_zero' ? 'reads ' + (r.split ? num(r.big) + ' ' + UOP_WORD + ', ' + r.small : num(d.uop)) : 'not confirmed';
     return '<a href="/bins?open=' + encodeURIComponent(d.bin_id) + '">' + escapeHtml(d.label || ('bin ' + d.bin_id))
       + (d.node ? ' at ' + escapeHtml(d.node) : '') + '</a> ' + escapeHtml(what);
   });
@@ -215,7 +233,8 @@ function thresholdCell(r) {
   const value = authenticated
     ? '<input type="number" min="0" step="1" class="loop-thr-input tnum" value="' + r.threshold + '" data-orig="'
       + r.threshold + '" data-key="' + key + '" title="' + escapeHtml(title) + '" aria-label="UoP threshold for '
-      + escapeHtml(r.payload_code) + ' at ' + escapeHtml(r.node) + '" data-action-keydown="thrKey" data-action-input="thrInput">'
+      + escapeHtml(r.payload_code) + ' at ' + escapeHtml(r.node) + '" data-action-keydown="thrKey" data-action-input="thrInput"'
+      + ' data-payload="' + escapeHtml(r.payload_code) + '">' + thrNoteHtml(r.payload_code, r.threshold)
     : '<span class="tnum" title="' + escapeHtml(title) + '">' + num(r.threshold) + '</span>';
   return '<div class="loop-thr">' + chip + value + '</div>';
 }
@@ -252,7 +271,7 @@ function posRowHtml(r) {
     + '<td>' + hl(r.node) + '</td>'
     + '<td class="loop-r tnum' + (r.in_loop < 0 ? ' loop-short' : '') + '"><span class="loop-inloop">' + meterHtml(r)
       + '<span class="loop-inloop__n">'
-      + (off ? '<span class="loop-tip" title="' + escapeHtml(off) + '">' + num(r.in_loop) + '</span>' : num(r.in_loop))
+      + (off ? '<span class="loop-tip" title="' + escapeHtml(off) + '">' + counted(r.payload_code, r.in_loop) + '</span>' : counted(r.payload_code, r.in_loop))
       + '</span></span></td>'
     + '<td class="loop-r tnum' + (r.beyond && tte != null ? ' loop-short' : '') + '">'
       + (!r.group ? '—' : tte == null ? '?' : dur(tte)) + '</td>'
@@ -281,10 +300,20 @@ function lineHeadHtml() {
     + '</tr>';
 }
 
+// inBinPack is a line row's "In bin / pack": above its part's ratio of 1 both
+// in UoP, the parts small beside them; at 1, "N / M" as it always was.
+function inBinPack(r) {
+  const ratio = ratioOf(r.payload_code);
+  const b = countReading(r.in_bin, ratio), p = countReading(r.pack, ratio);
+  if (!b.split) return num(r.in_bin) + ' / ' + num(r.pack);
+  return num(b.big) + ' / ' + num(p.big) + ' <span class="text-muted loop-parts">'
+    + escapeHtml(num(r.in_bin) + ' / ' + num(r.pack) + ' parts') + '</span>';
+}
+
 // lineRowHtml is one claim at a line. A line with two spots for one part names
 // the spot beside the line, so its rows are told apart.
 function lineRowHtml(r, twoSpots) {
-  const inBin = r.in_bin == null || !r.pack ? '—' : num(r.in_bin) + ' / ' + num(r.pack);
+  const inBin = r.in_bin == null || !r.pack ? '—' : inBinPack(r);
   const left = r.cover_seconds != null ? dur(r.cover_seconds) : r.in_bin == null ? '—' : '?';
   const where = (r.station ? r.station + '\'s' : 'its') + ' Edge';
   return '<tr class="loop-row" data-key="' + escapeHtml(r.key) + '">'
@@ -293,7 +322,7 @@ function lineRowHtml(r, twoSpots) {
     + '<td class="loop-role">' + escapeHtml(r.role) + '</td>'
     + '<td class="loop-r tnum"' + (r.in_bin == null ? ' title="no bin at the line"' : '') + '>' + inBin + '</td>'
     + '<td class="loop-r tnum' + (r.beyond && r.cover_seconds != null ? ' loop-short' : '') + '">' + left + '</td>'
-    + '<td class="loop-r tnum" title="' + escapeHtml('Set on ' + where) + '">' + num(r.reorder_point) + '</td>'
+    + '<td class="loop-r tnum" title="' + escapeHtml('Set on ' + where) + '">' + counted(r.payload_code, r.reorder_point) + '</td>'
     + '<td class="loop-r tnum">' + coming(r.coming) + '</td>'
     + '</tr>';
 }
@@ -346,6 +375,19 @@ function rowByKey(key) { return ((view && view.rows) || []).find((r) => r.key ==
 function thrInput(el) {
   const tr = el.closest('tr');
   if (tr) tr.classList.toggle('loop-row--dirty', el.value !== el.dataset.orig);
+  const note = el.parentNode && el.parentNode.querySelector('.loop-thr-note');
+  if (note) {
+    const said = typedNote(parseInt(el.value, 10), ratioOf(el.dataset.payload), 0);
+    note.textContent = said ? said.text : '';
+  }
+}
+
+// thrNoteHtml is the line under a threshold box: the UoP the typed parts make,
+// above the part's ratio of 1; '' at 1, where the box is as it was.
+function thrNoteHtml(code, n) {
+  if (ratioOf(code) <= 1) return '';
+  const said = typedNote(n, ratioOf(code), 0);
+  return '<span class="loop-thr-note text-muted">' + escapeHtml(said ? said.text : '') + '</span>';
 }
 
 function thrKey(el, ev) {
@@ -430,11 +472,15 @@ function openCalc(key) {
     + calcRows().map((o) => '<option value="' + escapeHtml(o.key) + '"' + (o.key === key ? ' selected' : '') + '>'
       + escapeHtml(o.payload_code + ' at ' + o.node) + '</option>').join('') + '</select></label>';
   const days = (view && view.lead_days) || 14;
-  const cyc = r.cycle_seconds != null ? (Math.round(r.cycle_seconds * 10) / 10) : '';
+  // The cycle is one assembly cycle: the running rate's seconds per part times
+  // the part's ratio. Core turns the answer into parts (inParts).
+  const ratio = ratioOf(r.payload_code);
+  const cyc = r.cycle_seconds != null ? (Math.round(r.cycle_seconds * ratio * 10) / 10) : '';
   const field = (label, val) => '<tr><th>' + escapeHtml(label) + '</th><td class="loop-r tnum">' + val + '</td></tr>';
   const body = document.getElementById('loop-calc-body');
   body.innerHTML = pick + '<table class="loop-calc-table"><tbody>'
-    + '<tr><th>Cycle (s)</th><td class="loop-r"><input type="number" min="0" step="0.1" id="calc-cycle" class="tnum" value="' + cyc + '"></td></tr>'
+    // OWNER-WORDS: above a ratio of 1 the box says which cycle it is.
+    + '<tr><th>' + (ratio > 1 ? 'Assembly cycle (s)' : 'Cycle (s)') + '</th><td class="loop-r"><input type="number" min="0" step="0.1" id="calc-cycle" class="tnum" value="' + cyc + '"></td></tr>'
     + field('L1 queue', secs(i.l1_queue_seconds))
     + field('L1 transit', secs(i.l1_transit_seconds))
     + field('L2 load (median)', secs(i.l2_load_seconds))

@@ -155,8 +155,27 @@ func (s *StationService) composerForProcess(processID int64, whole bool) (*domai
 	routing := routingFromBlock(out)
 	out.Cell = s.processCellPicture(process, claims, nodes, routing)
 	out.RoutingGaps = domain.RoutingGaps(process.Name, routing)
+	out.UOPRatios = claimRatios(claims)
 	out.Map = s.composerMap()
 	return out, nil
+}
+
+// claimRatios is each claimed part's UoP ratio above 1, from the claims the
+// read already holds (no statement); nil when every part reads at 1.
+func claimRatios(claims map[int64][]processes.NodeClaim) map[string]int {
+	var out map[string]int
+	for _, cs := range claims {
+		for _, c := range cs {
+			if c.PayloadCode == "" || c.PiecesPerCycle <= 1 {
+				continue
+			}
+			if out == nil {
+				out = map[string]int{}
+			}
+			out[c.PayloadCode] = c.PiecesPerCycle
+		}
+	}
+	return out
 }
 
 // ComposerForStation is the STATION's read, made once when CHANGEOVER opens

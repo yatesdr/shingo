@@ -1,6 +1,7 @@
 import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { countReading } from '/static/shared/count-words.js';
 import { apiGet, apiPost, openFromQuery } from '/static/app.js';
 import { confirmAllowedBinsNarrowing, kanbanLoading, renderKeeperLevels, renderKanbanSection, saveKanban } from '/static/pages/nodes-kanban.js';
 
@@ -493,6 +494,20 @@ async function deleteNode() {
   form.submit();
 }
 
+// _uopRatios is each part's UOP ratio above 1 (#page-data data-uop-ratios,
+// PayloadService.UOPRatios); {} at a ratio-1 plant, where every count reads as
+// it did.
+var _uopRatios = JSON.parse(document.getElementById('page-data').dataset.uopRatios || '{}');
+
+// invCount is a bin's UoP cell in the node's inventory: its count, and above
+// its part's ratio of 1 the whole UoP with its parts small beside it
+// (count-words.js countReading).
+function invCount(b) {
+  var n = b.uop_remaining || 0;
+  var r = countReading(n, _uopRatios[b.payload_code]);
+  return r.split ? r.big + ' <span class="text-muted">' + escapeHtml(r.small) + '</span>' : String(n);
+}
+
 function loadInventory(nodeID) {
   var list = document.getElementById('inv-list');
   var countEl = document.getElementById('inv-count');
@@ -519,7 +534,7 @@ function loadInventory(nodeID) {
           '<td>' + escapeHtml(b.bin_type_code || '-') + '</td>' +
           '<td>' + binBadges + '</td>' +
           '<td>' + contents + '</td>' +
-          '<td>' + (b.uop_remaining || 0) + '</td>' +
+          '<td>' + invCount(b) + '</td>' +
           '</tr>';
       });
       html += '</tbody></table>';

@@ -65,7 +65,11 @@ func TestStationTemplate_NoComposerModelTag(t *testing.T) {
 // server clock (clock.js), the one event stream (bus.js), the quote-safe
 // escape its renderers concatenate attributes with (esc.js), and the notice's
 // lost-connection banner (notice.js, with the el it builds with, dom.js: S5,
-// ruling 4, one wording on every surface). The touch layer (toasts, press
+// ruling 4, one wording on every surface), and the note a typed count box
+// shows (count-words.js: the owner's one sentence for a count above the pack
+// on every typed box of both servers, 2026-11-19), and a count's arithmetic
+// (count.js, protocol/count.go's twin: a tile's cycles left, a LOAD's line
+// counts). The touch layer (toasts, press
 // guard, touch sheets) is the station's own and is not extracted, so a shared
 // UI module here is a decision to make, not a convenience: add it to the list
 // with the reason.
@@ -80,7 +84,7 @@ func TestStationTemplate_NoComposerModelTag(t *testing.T) {
 func TestStationBoot_SharedFiles(t *testing.T) {
 	t.Parallel()
 	want := []string{"/static/shared/bus.js", "/static/shared/clock.js", "/static/shared/comet-layer.js",
-		"/static/shared/dom.js", "/static/shared/esc.js", "/static/shared/notice.js",
+		"/static/shared/count-words.js", "/static/shared/count.js", "/static/shared/dom.js", "/static/shared/esc.js", "/static/shared/notice.js",
 		"/static/shared/robot-motion.js", "/static/shared/scene-geom.js", "/static/shared/scene-net.js",
 		"/static/shared/scene-path.js", "/static/shared/scene-view.js"}
 	reach := staticAssets().ImportMap(stationEntry)

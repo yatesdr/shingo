@@ -44,12 +44,34 @@ func testHandlers(t *testing.T) (*Handlers, *store.DB) {
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "test-www"
 
+	// THE ENGINE'S LOG GOES QUIET WHEN THE TEST ENDS. Engine.Stop does not wait
+	// for the after-queue's goroutine, so a job still running when it returns
+	// (a threshold recheck after a count, its database closed under it) logs
+	// after the test is done, and t.Logf then races the test's end: the race
+	// detector caught it in TestAdminCount_BroadcastsCoresNumberFenced
+	// (2026-11-20). A line after the test's cleanup is dropped; the lock makes
+	// the drop and a line in flight one or the other.
+	var logMu sync.Mutex
+	ended := false
+	logf := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		if !ended {
+			t.Logf(format, args...)
+		}
+	}
+	t.Cleanup(func() {
+		logMu.Lock()
+		ended = true
+		logMu.Unlock()
+	})
+
 	eng := engine.New(engine.Config{
 		AppConfig: cfg,
 		DB:        db,
 		Fleet:     sim,
 		MsgClient: nil,
-		LogFunc:   t.Logf,
+		LogFunc:   logf,
 	})
 	eng.Start()
 	t.Cleanup(func() { eng.Stop() })

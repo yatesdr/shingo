@@ -428,7 +428,8 @@ function sheetParts(doc, scrim) {
 const SHARED_DIR = path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared');
 function loadShared(deps) {
     const mods = { 'notice.js': { toast: deps.toast } };
-    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js', 'set-pick.js', 'settings.js']) {
+    for (const file of ['dom.js', 'layer.js', 'http.js', 'picker.js', 'node-picker.js', 'part-picker.js', 'esc.js', 'exceptions.js', 'set-pick.js', 'settings.js',
+        'count.js', 'count-words.js']) {
         const names = [];
         const binds = [];
         const src = fs.readFileSync(path.join(SHARED_DIR, file), 'utf8')
@@ -442,7 +443,7 @@ function loadShared(deps) {
             { filename: file })(mods);
     }
     return Object.assign({}, mods['dom.js'], mods['layer.js'], mods['http.js'], mods['picker.js'], mods['node-picker.js'], mods['part-picker.js'],
-        mods['exceptions.js'], mods['set-pick.js'], mods['settings.js']);
+        mods['exceptions.js'], mods['set-pick.js'], mods['settings.js'], mods['count.js'], mods['count-words.js']);
 }
 
 // The scene network and route model the page imports, loaded once the way a
@@ -595,6 +596,7 @@ function loadPage(loadOpts) {
         partPicker: shared.partPicker, partSource: shared.partSource,
         mountPicker: shared.mountPicker, nodeRows: shared.nodeRows, createSetPick: shared.createSetPick,
         exceptionList: shared.exceptionList, countOf: shared.countOf, settingsPage: shared.settingsPage,
+        typedNote: shared.typedNote, uopRatio: shared.uopRatio,
     });
     // The sheets' writes build their bodies through the real body module.
     win.DesktopBodies = require(path.join(SRC_DIR, 'desktop-bodies.js'));
@@ -2494,18 +2496,50 @@ async function mainAsync() {
         return c;
     };
 
-    // The reorder point lives on the row's Auto reorder cell (S4 U3).
-    const reorderPop = async () => {
-        const ctx = loadPage({ hash: '#style=1', flowspec: true, composer: advComposer() });
+    // The reorder point lives on the row's Auto reorder cell (S4 U3). ratio is
+    // PART-A's parts a cycle as the composer read sends it (uop_ratios, above
+    // 1 only); none, the read as it was.
+    const reorderPop = async (ratio) => {
+        const composer = advComposer();
+        if (ratio > 1) composer.uop_ratios = { 'PART-A': ratio };
+        const ctx = loadPage({ hash: '#style=1', flowspec: true, composer: composer });
         await settle();
         const b = makeElement('');
         b.classList.add('pd-sel');
         Object.assign(b.dataset, { act: 'pick', node: 'PLN_01', kind: 'reorder' });
         ctx.main.appendChild(b);
+        // The pop's markup is a string here (no parser): the field and the
+        // note line the page reads back are these, as it spells them.
+        const field = makeElement('');
+        Object.assign(field.dataset, { f: 'rp' });
+        field.value = '5';
+        field.focus = () => {};
+        const note = makeElement('');
+        note.className = 'none';
+        note.dataset.rpnote = '';
+        if (ratio) ctx.pop.querySelector = sel => (sel === '[data-f="rp"]' ? field : sel === '[data-rpnote]' ? note : null);
         bubble(b, 'click', ctx.doc);
         if (ctx.pop.hidden !== false) throw new Error('a click on the Auto reorder chip did not open its popover');
-        return ctx.pop.innerHTML;
+        return ratio ? Object.assign(ctx, { field: field, note: note }) : ctx.pop.innerHTML;
     };
+
+    // THE POINT IS TYPED IN PARTS and says the UoP it makes above a ratio of 1
+    // (owner, 2026-11-19): PART-A at 8 a cycle, a point of 5 reads "= 0 UoP +
+    // 5 parts", 404 typed reads "= 50 UoP + 4 parts". At 1 the note line is
+    // the one it was: hidden and empty.
+    await pin('a reorder point says the UoP it makes above a ratio of 1, and nothing at 1', async () => {
+        const ctx = await reorderPop(8);
+        const note = ctx.note;
+        const input = ctx.field;
+        if (ctx.pop.innerHTML.indexOf('data-rpnote') < 0) throw new Error('setup: the pop has no note line: ' + ctx.pop.innerHTML);
+        if (note.textContent !== '= 0 UoP + 5 parts') throw new Error('at 8 a cycle the point of 5 reads ' + JSON.stringify(note.textContent));
+        input.value = '404';
+        bubble(input, 'input', ctx.doc);
+        if (note.textContent !== '= 50 UoP + 4 parts') throw new Error('404 typed at 8 a cycle reads ' + JSON.stringify(note.textContent));
+        const one = await reorderPop(1);
+        const n1 = one.note;
+        if (n1.textContent || n1.className !== 'none') throw new Error('at 1 a cycle the note line reads ' + JSON.stringify(n1 && n1.textContent) + ' as ' + (n1 && n1.className));
+    });
 
     await pin('a reorder point is the number alone, with no source tag', async () => {
         const html = await reorderPop();
@@ -3550,6 +3584,24 @@ async function recipeGroupPins(h) {
         const a = cellOf(body, 'PLN_010').advanced || {};
         if (a.strict_pack !== true || a.pack_tolerance_pct !== 5 || a.hold_limit !== 20) throw new Error('PLN_010 saved ' + JSON.stringify(a));
         if ((cellOf(body, 'PLN_012').advanced || {}).strict_pack) throw new Error('PLN_012 saved a strict pack nobody set');
+    });
+
+    // A COUNT SETTING IS TYPED IN PARTS and says the UoP it makes above a
+    // ratio of 1 (owner, 2026-11-19): SYN-P6-A at 8 a cycle, a hold limit of
+    // 20 reads "= 2 UoP + 4 parts" beside its box; at 1 the box is the one it
+    // was, with no line.
+    await pin('a hold limit says the UoP it makes above a ratio of 1, and nothing at 1', async () => {
+        for (const [ratio, want] of [[8, '= 2 UoP + 4 parts'], [1, null]]) {
+            const composer = withAdvanced({ PLN_010: { strict_pack: true, hold_limit: 20 } });
+            if (ratio > 1) composer.uop_ratios = { 'SYN-P6-A': ratio };
+            const ctx = setPage(composer);
+            await settle();
+            const html = (await advSheet(ctx, 'PLN_010')).html();
+            if (html.indexOf('data-setnum="hold_limit"') < 0) throw new Error('setup: no hold limit box at ' + ratio + ': ' + html);
+            const line = html.match(/<small class="pd-dim" data-uopnote="hold_limit">([^<]*)<\/small>/);
+            if (want && (!line || line[1] !== want)) throw new Error('at ' + ratio + ' a cycle the hold limit of 20 reads ' + JSON.stringify(line && line[1]));
+            if (!want && html.indexOf('data-uopnote') >= 0) throw new Error('at 1 a cycle a box carries a UoP line: ' + html);
+        }
     });
 
     // AUTO REQUEST PART IS GONE (Edge v55: nothing had read it since

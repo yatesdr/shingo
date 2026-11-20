@@ -2,9 +2,13 @@
 
 Verified against: 4f4870c3
 
-UOP (Unit of Production) is a physical bin's count and a lineside bench's count: for a bin of one part, the pieces of
-that part in it (a kit counts cycles; [Process semantics](#process-semantics) has the rule). This document describes
-how UOP is tracked, mutated, audited, and propagated across `shingo-core` and `shingo-edge`. What a count triggers
+UOP (Unit of Production) is one assembly cycle's worth of a part: what one cycle of the assembly that consumes it
+takes. **Shingo never stores it.** Every stored count is what is physically there: a bin's, a lineside pile's, a pack,
+a reorder point and a threshold are parts for a payload of one manifest line, and kits for a payload of several. UOP
+is worked out wherever it is shown: the count divided by the payload's ratio, the whole part, with the parts shown
+beside it ([Process semantics](#process-semantics) has the rule; owner, 2026-11-19). The names of the stored counts
+still say UOP: [terminology.md](terminology.md#names-that-say-uop-and-hold-the-count) lists them. This document
+describes how the count is tracked, mutated, audited, and propagated across `shingo-core` and `shingo-edge`. What a count triggers
 (thresholds and cell autoreorder) is [uop-threshold-replenishment.md](uop-threshold-replenishment.md)'s.
 
 ## Ownership: Edge-authoritative, Core-aggregating
@@ -162,17 +166,28 @@ bumps `delta_epoch`, which retires the old generation's in-flight deltas.
 
 The rules the counting code is held to, each with its guard.
 
-**A bin of one part counts pieces.** A bin whose payload has one manifest line counts the pieces of that part in it:
-its UOP is how many are there, the standard pack (`payloads.uop_capacity`) is how many a full bin holds, and no
-reader multiplies either. A press that packs 800 fills a bin of 800.
+**A count is what is in the carrier.** A bin whose payload has one manifest line counts the parts in it; a bin of a
+kit (several lines) counts kits. One whole number, stored on the Edge seat (`remaining_uop_cached`) and on Core
+(`bins.uop_remaining`). The pack (`payloads.uop_capacity`), reorder points, loader and refill thresholds, the hold
+limit and the lineside pile are in the same unit, so no comparison converts. A press that packs 800 fills a bin of 800
+parts. A person types parts too (kits, for a kit): a LOAD, a count, a release, a pile, a pack, a threshold.
 
-**Pieces per cycle is an assembly consume setting.** `payload_manifest.parts_per_cycle` (the catalog line's
-`PartsPerCycle`) is how many pieces of the part one cycle of an assembly that consumes it uses, set by an engineer on
-the part in Core. An assembly's consume spot draws its counter step times it (`handleConsumeTick`,
+**UOP is shown, never stored.** A payload's ratio is its one line's `parts_per_cycle`, at least 1, and 1 for a kit
+(`protocol.UOPRatio`). A count reads as count ÷ ratio, the whole part, toward zero, with the parts beside it: never a
+fraction, never a lost part (`protocol.SplitUOP`; the browser's twin is `shared/count.js`, and both are pinned to
+`protocol/testdata/count-examples.json` by `TestCountExamples` and `TestCountJS`). At 8 a cycle a pack of 800 parts
+reads 100 UOP, a bin pulled at 404 reads 50 UOP with its 404 parts beside it, and a typed 803 reads 100 UOP and 3
+parts. At a ratio of 1 the count is the UOP and nothing extra is shown. Changing a ratio rewrites no stored number:
+800 parts read 200 UOP at 4. The example runs through a real Edge and Core, each hop checked in both books and at
+CMS, in `TestUOP_OwnersExample_StoresPartsReadsUOP` (integration).
+
+**The ratio is an assembly consume setting.** `payload_manifest.parts_per_cycle` (the catalog line's
+`PartsPerCycle`) is how many of the part one cycle of an assembly that consumes it uses, set by an engineer on the
+part in Core. An assembly's consume spot draws its counter step times it (`handleConsumeTick`,
 `handleABFallthrough`), resolved onto the claim when the Edge reads it from its catalog copy: one manifest line gives
 its ratio, several lines or no catalog row give 1. An assembly that uses 8 a cycle runs 100 cycles from that bin of
 800. A draw bigger than what is left takes the count below zero; nothing carries to the next cart. A press never
-reads the number: a produce spot adds its step as pieces. Guards: `TestClaimPiecesPerCycle_ResolvesFromTheCatalogManifest`,
+reads the number: a produce spot adds its step as parts. Guards: `TestClaimPiecesPerCycle_ResolvesFromTheCatalogManifest`,
 `TestConsume_DrawsPiecesPerCycleAtEveryConsumePath` (the cell counter, the A/B fall-through and a station counter), and
 `TestTickWalk_GoldenOverEveryClaimShape`, which holds every cell at pieces per cycle 1 to what it counted before.
 
@@ -180,16 +195,17 @@ reads the number: a produce spot adds its step as pieces. Guards: `TestClaimPiec
 held, and its release is multiplied where it lands; a "no cart" row counts the pieces the cart did not give, and its
 release draws them as they are (`TestConsume_ALedgerRowReleasesInItsOwnUnit`).
 
-**A kit counts cycles.** A payload of several manifest lines keeps the arithmetic it always had: its bin's UOP is
-cycles, and a line's pieces are the count times the line's parts per cycle. One integer cannot be pieces of two
-parts.
+**A kit counts kits.** A payload of several manifest lines counts whole kits: a cycle takes one, so its ratio is 1
+and its UOP is its count, and a line's pieces are the count times the line's parts per cycle (`protocol.LinePieces`).
+A 60/60/120 kit cart reads 60 UOP. One integer cannot be pieces of two parts, nor a kit with parts pulled off it.
 
-**Every reader that turns a count into pieces follows the same rule:** CMS postings
-(`material.BuildMovementTransactions`; `TestBuildMovement_OnePartPostsTheBinsCount`, and for a kit
-`TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart`), Core's inventory list and its export
-(`TestListInventory_QtyFollowsUOPNotTheManifest`), the Bins page and the payload form's readout, and the Edge's LOAD
+**Every reader that turns a count into pieces follows the same rule,** through `protocol/count.go` or
+`shared/count.js`: CMS postings (`material.BuildMovementTransactions`; `TestBuildMovement_OnePartPostsTheBinsCount`,
+and for a kit `TestBuildMovement_MultiPartTemplateProducesTwoRowsPerPart`), Core's inventory list and its export
+(`TestListInventory_QtyFollowsUOPNotTheManifest`; its SQL is held to `LinePieces` by
+`TestListInventory_AgreesWithTheCountExamples`), the Bins page and the payload form's readout, and the Edge's LOAD
 screens and the line counts a LOAD sends (`Engine.loadManifest`; `TestLoadBin_BuildsTheManifestFromTheCatalog`). The
-rule's one statement in code is `protocol.ManifestItem`'s.
+claim read's ratio is SQL, held to `UOPRatio` by `TestClaimPiecesPerCycle_AgreesWithTheCountExamples`.
 
 **Produce spots of one part share a step.** The produce spots of a style that run the same part on one counter share
 its step: a spot alone takes it all, and an A/B pair is one spot. A step that does not divide gives each spot the

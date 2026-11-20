@@ -27,9 +27,10 @@ function eq(got, want, label) {
 }
 
 // The model imports the window model (pure as well) for the acts the old
-// boards offered a part: both run in one vm, imports and exports dropped.
+// boards offered a part, and shared/count.js and count-words.js for a tile's
+// count: all run in one vm, imports and exports dropped.
 const ctx = vm.createContext({});
-['operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
+['../../../../shared/count.js', '../../../../shared/count-words.js', 'operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
         .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
 });
@@ -511,6 +512,19 @@ eq([NOBIN, FULLBIN('PART-A'), Object.assign(FULLBIN('PART-A'), { partial: true }
     ], 'cells: red only where a red card fixes it; an out row with no card says "none left" plainly; the tick only above 0; ' +
         'unknown last, a waiting row at an unknown count with them (changed: it read "null left")');
     eq(b.words.slice(0, 3), ['1 to load', 'C1 out', 'C2 out'], 'top line: every cell out, card or none');
+    // A served row's count at its part's ratio (the board's load templates):
+    // at 8 the UoP left with the parts in brackets, at 1 the count as it was.
+    const at8 = { 'PART-8': { uop_capacity: 800, items: [{ part_number: 'PART-8', parts_per_cycle: 8 }] },
+        'PART-1': { uop_capacity: 800, items: [{ part_number: 'PART-1', parts_per_cycle: 1 }] } };
+    const ratioCells = M.cellsRow({ nodes: [], load_templates: at8,
+        serves: [row('PART-8', 404, { cell: 'C8' }), row('PART-1', 404, { cell: 'C1' })] });
+    eq(ratioCells.tiles.map(t => t.rows[0].words), ['50 UoP left (404 parts)', '404 left'],
+        'cells: a count left reads its UoP at 8, as it was at 1');
+    const ratioPresses = M.pressesRow({ nodes: [], load_templates: at8, serves: [
+        row('PART-8', 404, { cell: 'P8', role: 'produce', capacity_uop: 800 }),
+        row('PART-1', 404, { cell: 'P1', role: 'produce', capacity_uop: 800 })] }, []);
+    eq(ratioPresses.all.map(p => p.words).sort(), ['404 of 800', '50 of 100 UoP (404 of 800 parts)'],
+        'presses: a count against its pack reads its UoP at 8, as it was at 1');
     // One cell with five rows.
     const hop = M.cellsRow({ nodes: [], serves: [1, 2, 3, 4, 5].map(i => row('PART-' + i, i * 10, { cell: 'CELL-H' })) });
     eq([hop.tiles.length, hop.tiles[0].rows.length, hop.tiles[0].hidden], [1, 4, 1], 'cells: at most four rows a tile, then "+N"');
@@ -1098,20 +1112,32 @@ WIDTHS.forEach(function (w) {
         'scale: the reason line in operator.css (its line, word, words and mark) is the one STEPS measures');
 }
 
-// ── A consume tile's cycles left (cyclesLeftWords) ──
-// The owner's example: 800 pieces at 8 a cycle is 100 cycles; rounded down;
-// never below 0; nothing for a press, a part at 1, a kit or a tile with no cart.
+// ── A node tile's count and pack (tileCount) ──
+// The owner's example: a pack of 800 at 8 a cycle reads 100; a bin pulled at
+// 404 reads 50 with its 404 parts under; press and assembly alike. At a ratio
+// of 1, a kit or a claim with no number the tile is as it was, nothing under.
 {
     const at8 = { role: 'consume', pieces_per_cycle: 8 };
-    eq(M.cyclesLeftWords(at8, 800, false), '100 cycles left', 'cycles: 800 pieces at 8 a cycle');
-    eq(M.cyclesLeftWords(at8, 799, false), '99 cycles left', 'cycles: rounded down');
-    eq(M.cyclesLeftWords(at8, 8, false), '1 cycle left', 'cycles: one cycle');
-    eq(M.cyclesLeftWords(at8, -3, false), '0 cycles left', 'cycles: a count below 0 is 0 cycles');
-    eq(M.cyclesLeftWords(at8, 800, true), '', 'cycles: no cart, no cycles');
-    eq(M.cyclesLeftWords({ role: 'produce', pieces_per_cycle: 8 }, 800, false), '', 'cycles: a press never says them');
-    eq(M.cyclesLeftWords({ role: 'consume', pieces_per_cycle: 1 }, 800, false), '', 'cycles: a part at 1 a cycle');
-    eq(M.cyclesLeftWords({ role: 'consume' }, 800, false), '', 'cycles: a claim with no number');
-    eq(M.cyclesLeftWords(null, 800, false), '', 'cycles: no claim');
+    eq(M.tileCount(at8, 800, 800, false), { count: 100, capacity: 100, parts: '800 parts' }, 'tile: a full pack at 8');
+    eq(M.tileCount(at8, 404, 800, false), { count: 50, capacity: 100, parts: '404 parts' }, 'tile: pulled at 404');
+    eq(M.tileCount({ role: 'produce', pieces_per_cycle: 8 }, 403, 800, false), { count: 50, capacity: 100, parts: '403 parts' },
+        'tile: a press tile reads the same way');
+    eq(M.tileCount(at8, -5, 800, false), { count: 0, capacity: 100, parts: '-5 parts' }, 'tile: below 0, never a lost part');
+    eq(M.tileCount(at8, 0, 800, true), { count: 0, capacity: 100, parts: '' }, 'tile: no cart, nothing under');
+    eq(M.tileCount({ role: 'consume', pieces_per_cycle: 1 }, 800, 800, false), { count: 800, capacity: 800, parts: '' },
+        'tile: a part at 1 a cycle is as it was');
+    eq(M.tileCount({ role: 'consume' }, 60, 60, false), { count: 60, capacity: 60, parts: '' }, 'tile: a claim with no number');
+    eq(M.tileCount(null, 7, 0, false), { count: 7, capacity: 0, parts: '' }, 'tile: no claim');
+    // The bin bound is another part, at 2 a cycle (the view's bin_ratio): its
+    // count reads at 2, the claim's pack at the claim's 8.
+    eq(M.tileCount(at8, 404, 800, false, 2), { count: 202, capacity: 100, parts: '404 parts' }, 'tile: a bin of another part');
+    // ratioFor: the seat's bin, a part of the claim's, another part.
+    const tile = { active_claim: { payload_code: 'P-8', pieces_per_cycle: 8 } };
+    eq(M.ratioFor(null, tile, ''), 8, 'ratio: the seat at the claim\'s part');
+    eq(M.ratioFor(null, Object.assign({ bin_ratio: 2 }, tile), ''), 2, 'ratio: the seat at its bin\'s part');
+    eq(M.ratioFor(null, Object.assign({ bin_ratio: 2 }, tile), 'P-8'), 8, 'ratio: a pile of the claim\'s part');
+    eq(M.ratioFor({ 'P-4': { items: [{ parts_per_cycle: 4 }] } }, tile, 'P-4'), 4, 'ratio: another part from the templates');
+    eq(M.ratioFor(null, tile, 'P-X'), 1, 'ratio: a part the board does not know reads as it always did');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

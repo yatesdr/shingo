@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xuri/excelize/v2"
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/domain"
 )
@@ -76,6 +77,11 @@ func (h *Handlers) apiInventoryLoop(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.jsonError(w, "inventory: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if ratios, rerr := h.engine.PayloadService().UOPRatios(); rerr != nil {
+		log.Printf("inventory: payload ratios: %v", rerr)
+	} else if len(ratios) > 0 {
+		view.UOPRatios = ratios
 	}
 	h.jsonOK(w, view)
 }
@@ -181,7 +187,7 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 	if deltaIntegrity == nil {
 		deltaIntegrity = []domain.DeltaIntegrity{}
 	}
-	h.jsonOK(w, map[string]any{
+	out := map[string]any{
 		"since":                since,
 		"open_bins":            openBins,
 		"negative_payloads":    payloads,
@@ -190,7 +196,14 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		"report_divergences":   divergences,
 		"hold_drop_runs":       holdDropRuns,
 		"declared_full_stamps": stamps,
-	})
+	}
+	// Each part's ratio above 1, so the page shows its counts in UoP with
+	// their parts beside them (owner, 2026-11-19). Absent at a ratio-1 plant:
+	// the answer is what it was.
+	if ratios := h.payloadRatios(); len(ratios) > 0 {
+		out["uop_ratios"] = ratios
+	}
+	h.jsonOK(w, out)
 }
 
 // apiSourceabilityEvents serves the persisted sourceability verdict-change
@@ -274,6 +287,12 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to load inventory", http.StatusInternalServerError)
 		return
 	}
+	ratios, err := h.engine.PayloadService().UOPRatios()
+	if err != nil {
+		// A failed read exports every count as it is, which is right at a
+		// ratio of 1 and says so in the log otherwise.
+		log.Printf("inventory export: payload ratios: %v", err)
+	}
 
 	f := excelize.NewFile()
 	// excelize.File holds a temp-file backing store; not closing it leaks one
@@ -317,7 +336,11 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 		f.SetCellValue(sheet, cell("J", rn), row.PayloadCode)
 		f.SetCellValue(sheet, cell("K", rn), row.PartNumber)
 		f.SetCellValue(sheet, cell("L", rn), row.Qty)
-		f.SetCellValue(sheet, cell("M", rn), row.UOPRemaining)
+		// UOP Remaining is the bin's count in UoP: count ÷ its payload's ratio,
+		// whole (owner, 2026-11-19; it was the count itself). Its parts are
+		// in Qty. At a ratio of 1, and for a kit, it is the count.
+		uopShown, _ := protocol.SplitUOP(row.UOPRemaining, ratios[row.PayloadCode])
+		f.SetCellValue(sheet, cell("M", rn), uopShown)
 		confirmed := ""
 		if row.Confirmed {
 			confirmed = "Yes"

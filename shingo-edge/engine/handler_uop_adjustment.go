@@ -196,9 +196,18 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		//
 		// The carrier left: the one verb clears the pointer, zeroes the count
 		// (the blanked tile) and records the departure through the lineside
-		// doorway, so its identity leaves with it (carrier_left.go).
-		if err := e.carrierLeft(node.ID, adj.CoreNodeName); err != nil {
+		// doorway, so its identity leaves with it (carrier_left.go). Under the
+		// count lock, and only while this bin is still the one bound: the check
+		// above read the seat before the lock, and a carrier landing since keeps
+		// its pointer and count (carrierLeftIfBound).
+		left, err := e.carrierLeftIfBound(node.ID, adj.CoreNodeName, adj.BinID)
+		if err != nil {
 			log.Printf("uop_adjustment: release active bin %d from node %s: %v", adj.BinID, adj.CoreNodeName, err)
+			return
+		}
+		if !left {
+			log.Printf("uop_adjustment: bin %d was no longer bound at node %s when its release was applied — the seat is left as it stands",
+				adj.BinID, adj.CoreNodeName)
 			return
 		}
 		log.Printf("uop_adjustment: released bin %d from node %s (moved in Core), tile blanked", adj.BinID, adj.CoreNodeName)

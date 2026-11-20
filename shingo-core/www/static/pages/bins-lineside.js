@@ -5,6 +5,7 @@
 // pile. Data: /api/buckets, with updated_at for staleness.
 
 import { escapeHtml } from '/static/shared/dom.js';
+import { UOP_WORD, countReading } from '/static/shared/count-words.js';
 import { apiGet } from '/static/app.js';
 import { formatTime, serverNow, timeAgo } from '/static/shared/clock.js';
 
@@ -38,11 +39,19 @@ function bucketRowsHtml(buckets) {
       + '<td><code>' + escapeHtml(b.node_name || '') + '</code></td>'
       + '<td><code>' + escapeHtml(b.payload_code || '') + '</code></td>'
       + '<td>' + stateCell + '</td>'
-      + '<td class="rh-num">' + num(b.qty) + '</td>'
+      + '<td class="rh-num">' + pileText(b) + '</td>'
       + '<td class="' + ageCls + '"' + (b.updated_at ? ' title="' + escapeHtml(formatTime(b.updated_at)) + '"' : '')
       + '>' + escapeHtml(ageText) + (stale ? ' · <b>stale</b>' : '') + '</td>'
       + '</tr>';
   }).join('');
+}
+
+// pileText is a pile's qty cell: its parts, and above a ratio of 1 (the
+// page's PAGE_UOP_RATIOS) the UoP they make, the parts small beside it.
+function pileText(b) {
+  var ratios = typeof PAGE_UOP_RATIOS === 'object' && PAGE_UOP_RATIOS ? PAGE_UOP_RATIOS : {};
+  var r = countReading(b.qty, ratios[b.payload_code]);
+  return r.split ? r.big + ' ' + UOP_WORD + ' <span class="text-muted bin-uop-parts">' + escapeHtml(r.small) + '</span>' : num(b.qty);
 }
 
 // staleCount is the head's figure: active piles untouched for 30 days.

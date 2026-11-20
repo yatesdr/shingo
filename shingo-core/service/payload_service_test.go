@@ -123,7 +123,7 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 		PartNumber:    "PART-1",
 		PartsPerCycle: 3,
 	}
-	testutil.MustNoErr(t, svc.CreateManifestItem(item, ""), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(item, "", false), "CreateManifestItem")
 	if item.ID == 0 {
 		t.Fatal("expected manifest item ID populated")
 	}
@@ -144,9 +144,9 @@ func TestPayloadService_UpdateManifestItem_PersistsChanges(t *testing.T) {
 	p := makePayload(t, svc, "PL-UMI", "", 10)
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", PartsPerCycle: 1}
-	testutil.MustNoErr(t, svc.CreateManifestItem(item, ""), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(item, "", false), "CreateManifestItem")
 
-	testutil.MustNoErr(t, svc.UpdateManifestItem(item.ID, "P-NEW", "", 9), "UpdateManifestItem")
+	testutil.MustNoErr(t, svc.UpdateManifestItem(item.ID, "P-NEW", "", 9, false), "UpdateManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 1 || rows[0].PartNumber != "P-NEW" || rows[0].PartsPerCycle != 9 {
 		t.Errorf("rows = %+v, want one P-NEW/9", rows)
@@ -160,8 +160,8 @@ func TestPayloadService_DeleteManifestItem_RemovesRow(t *testing.T) {
 	p := makePayload(t, svc, "PL-DMI", "", 10)
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P", PartsPerCycle: 1}
-	testutil.MustNoErr(t, svc.CreateManifestItem(item, ""), "CreateManifestItem")
-	testutil.MustNoErr(t, svc.DeleteManifestItem(item.ID), "DeleteManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(item, "", false), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.DeleteManifestItem(item.ID, false), "DeleteManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 0 {
 		t.Errorf("rows = %+v, want 0 after delete", rows)
@@ -175,7 +175,7 @@ func TestPayloadService_ReplaceManifest_SwapsList(t *testing.T) {
 	p := makePayload(t, svc, "PL-RPL", "", 10)
 
 	// Seed with one item, then replace with two.
-	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1}, ""), "seed CreateManifestItem")
+	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", PartsPerCycle: 1}, "", false), "seed CreateManifestItem")
 
 	newLines := []payloads.Line{
 		{PartNumber: "N1", PartsPerCycle: 4},
@@ -269,9 +269,9 @@ func TestPayloadService_PayloadsChangedHook(t *testing.T) {
 			return svc.UpdateWithSets(p, PayloadSets{BinTypeIDs: &[]int64{bt.ID}})
 		}},
 		{"set bin types", func() error { return svc.SetBinTypes(p.ID, nil) }},
-		{"create manifest item", func() error { item.PayloadID = p.ID; return svc.CreateManifestItem(item, "") }},
-		{"update manifest item", func() error { return svc.UpdateManifestItem(item.ID, "SYN-HOOK-PART", "", 2) }},
-		{"delete manifest item", func() error { return svc.DeleteManifestItem(item.ID) }},
+		{"create manifest item", func() error { item.PayloadID = p.ID; return svc.CreateManifestItem(item, "", false) }},
+		{"update manifest item", func() error { return svc.UpdateManifestItem(item.ID, "SYN-HOOK-PART", "", 2, false) }},
+		{"delete manifest item", func() error { return svc.DeleteManifestItem(item.ID, false) }},
 		{"replace manifest", func() error {
 			return svc.ReplaceManifest(p.ID, []payloads.Line{{PartNumber: "SYN-HOOK-PART", PartsPerCycle: 1}})
 		}},
@@ -398,7 +398,7 @@ func TestPayloadService_FloorCreate_Refusals(t *testing.T) {
 	testutil.MustNoErr(t, svc.CreateWithSets(desk, PayloadSets{
 		Manifest: &[]ManifestLine{{PartNumber: "SYN-FL-DESK", CATID: "SYN-C9", PartsPerCycle: 1}}}), "desktop part")
 	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: desk.ID,
-		PartNumber: "SYN-FL-LOOSE", PartsPerCycle: 1}, "SYN-C7"), "a part with a CATID and no payload of its own")
+		PartNumber: "SYN-FL-LOOSE", PartsPerCycle: 1}, "SYN-C7", false), "a part with a CATID and no payload of its own")
 	_, _, err := svc.CreateFromFloor("edge.a", req)
 	testutil.MustNoErr(t, err, "the floor part")
 

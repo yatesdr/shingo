@@ -81,8 +81,8 @@
         <tr><th>Closed</th><td class="tnum">
           {{if .ClosedAt}}{{formatTime .ClosedAt}}{{else}}<span class="de-na" title="still open — it has not closed">n/a</span>{{end}}
         </td></tr>
-        <tr><th>Level at open</th><td class="col-num tnum">{{.OpenedTotal}}</td></tr>
-        <tr><th>Threshold</th><td class="col-num tnum">{{template "de-cell" .Threshold}}</td></tr>
+        <tr><th>Level at open</th><td class="col-num tnum">{{.OpenedTotal}}{{with .OpenedTotalParts}} <span class="text-muted-xs">{{.}}</span>{{end}}</td></tr>
+        <tr><th>Threshold</th><td class="col-num tnum">{{template "de-cell" .Threshold}}{{with .ThresholdParts}} <span class="text-muted-xs">{{.}}</span>{{end}}</td></tr>
         <tr><th>Re-requests</th><td class="col-num tnum">{{.Rerequests}}</td></tr>
         <tr><th>Discretionary</th><td>{{if .Discretionary}}yes{{else}}no{{end}}</td></tr>
         {{/* "Process" and not "Process id", with no col-num and no tnum.
