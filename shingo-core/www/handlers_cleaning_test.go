@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/net/html"
 
 	"shingo/protocol/testutil"
 	"shingocore/store/scene"
@@ -200,8 +201,50 @@ func TestRobotsPage_TabsAndTheirDoors(t *testing.T) {
 		if m[1] != m[2] {
 			t.Errorf("tab data-tab %q switches to %q", m[1], m[2])
 		}
-		if !strings.Contains(string(page), `class="tab-panel`) || !strings.Contains(string(page), `id="tab-`+m[1]+`"`) {
-			t.Errorf("tab %q has no panel id=tab-%s", m[1], m[1])
+	}
+	// The panels must be SIBLINGS of the .tabs bar: switchTab (shared/dom.js)
+	// shows a panel by walking the bar's parent's children, so a panel nested
+	// anywhere else is a tab that blanks the page when clicked — every panel
+	// hides and none shows. The Device Config panel shipped outside the
+	// wrapper for one release (v0.17.0) because this test only checked the
+	// panel's id appears SOMEWHERE in the file; a string-contains check cannot
+	// see nesting, a parser can.
+	doc, err := html.Parse(strings.NewReader(string(page)))
+	testutil.MustNoErr(t, err, "parse robots.html")
+	var findBar func(n *html.Node) *html.Node
+	findBar = func(n *html.Node) *html.Node {
+		if n.Type == html.ElementNode {
+			for _, a := range n.Attr {
+				if a.Key == "class" && a.Val == "tabs" {
+					return n
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if r := findBar(c); r != nil {
+				return r
+			}
+		}
+		return nil
+	}
+	bar := findBar(doc)
+	if bar == nil || bar.Parent == nil {
+		t.Fatal("no .tabs bar with a parent in robots.html")
+	}
+	siblingIDs := map[string]bool{}
+	for c := bar.Parent.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode {
+			continue
+		}
+		for _, a := range c.Attr {
+			if a.Key == "id" {
+				siblingIDs[a.Val] = true
+			}
+		}
+	}
+	for _, m := range tabs {
+		if !siblingIDs["tab-"+m[1]] {
+			t.Errorf("tab %q's panel (id=tab-%s) is not a sibling of the .tabs bar — switchTab hides every panel and shows none", m[1], m[1])
 		}
 	}
 
