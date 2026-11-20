@@ -4,11 +4,14 @@ package dispatch
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
@@ -134,4 +137,87 @@ func TestPinDispatch_ForeignStationRefusal(t *testing.T) {
 		}
 	}
 	t.Errorf("no line %q; dbg lines: %q", wantLog, lines)
+}
+
+// TestPinDispatch_OwnershipBySender pins checkOwnership for the five kinds of
+// order whose station Core writes today, each born through its sender's door:
+// an Edge's retrieve from stn-aaaa1111 and the test page's Kafka retrieve from
+// core-test (both the Kafka intake, HandleOrderRequest, from an Edge-role
+// envelope); the orders page's Manual Order (the same intake, from the
+// Core-role envelope www apiManualOrderSubmit builds with core-operator); the
+// test page's direct complex order (HandleComplexOrderRequest from the
+// Edge-role envelope www dispatchComplex builds with core-direct); and a
+// Core-born order with no actor (the issue the bins page's Return button makes,
+// engine orderCarriedBinDown: no station, no station knowledge).
+//
+// Each row is which envelope senders may release, cancel, redirect or file a
+// receipt against the order. Today the rule is the sender's station equal to
+// the order's, so each actor owns its own orders and nothing else, and an Edge
+// envelope with a BLANK station owns the Core-born order: blank equals blank.
+// That last cell looks wrong (nothing should let an Edge command Core's own
+// recovery) and is pinned as it is. A Core-role sender owns everything.
+//
+// Red when an actor stops owning its own order (the comparison reading a
+// station the actor has left), when an Edge's uid owns an actor's order, or
+// when the blank sender comes to own more than the Core-born order, which is
+// what blanking the actors' station would do.
+func TestPinDispatch_OwnershipBySender(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storage, line, bp := testdb.SetupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	envFrom := func(role, station string) *protocol.Envelope {
+		return &protocol.Envelope{Src: protocol.Address{Role: role, Station: station},
+			Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"}}
+	}
+	retrieve := func(env *protocol.Envelope, uuid, origin, desc string) {
+		d.HandleOrderRequest(env, &protocol.OrderRequest{OrderUUID: uuid, OrderType: OrderTypeRetrieve,
+			PayloadCode: bp.Code, PayloadDesc: desc, Quantity: 1, DeliveryNode: line.Name, OriginClass: origin})
+	}
+	retrieve(envFrom(protocol.RoleEdge, "stn-aaaa1111"), "own-edge", "", "")
+	retrieve(envFrom(protocol.RoleCore, "core-operator"), "own-operator", protocol.OriginClassNoDemand, "")
+	retrieve(envFrom(protocol.RoleEdge, "core-test"), "own-test", "", "test order from shingo core")
+	d.HandleComplexOrderRequest(envFrom(protocol.RoleEdge, "core-direct"), &protocol.ComplexOrderRequest{
+		OrderUUID: "own-direct", PayloadCode: bp.Code, PayloadDesc: "test complex order", Quantity: 1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: storage.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		},
+	})
+	_, _, err := d.IssueOrder(Need{Type: OrderTypeMove, Ref: "own-core", Quantity: 1,
+		OriginClass: protocol.OriginClassNoDemand, Source: storage.Name, Delivery: line.Name}, plan.Plan{})
+	testutil.MustNoErr(t, err, "issue the Core-born order")
+
+	senders := []struct {
+		name string
+		env  *protocol.Envelope
+	}{
+		{"edge stn-aaaa1111", envFrom(protocol.RoleEdge, "stn-aaaa1111")},
+		{"edge core-operator", envFrom(protocol.RoleEdge, "core-operator")},
+		{"edge core-direct", envFrom(protocol.RoleEdge, "core-direct")},
+		{"edge core-test", envFrom(protocol.RoleEdge, "core-test")},
+		{"edge blank", envFrom(protocol.RoleEdge, "")},
+		{"core", envFrom(protocol.RoleCore, "core-operator")},
+	}
+	want := map[string][]string{
+		"own-edge":     {"edge stn-aaaa1111", "core"},
+		"own-operator": {"edge core-operator", "core"},
+		"own-direct":   {"edge core-direct", "core"},
+		"own-test":     {"edge core-test", "core"},
+		"own-core":     {"edge blank", "core"},
+	}
+	for _, uuid := range []string{"own-edge", "own-operator", "own-direct", "own-test", "own-core"} {
+		o, err := db.GetOrderByUUID(uuid)
+		testutil.MustNoErr(t, err, "read "+uuid+" (its door made no order)")
+		owners := []string{}
+		for _, s := range senders {
+			if d.checkOwnership(s.env, o) {
+				owners = append(owners, s.name)
+			}
+		}
+		if !reflect.DeepEqual(owners, want[uuid]) {
+			t.Errorf("%s is owned by %q, want %q", uuid, owners, want[uuid])
+		}
+	}
 }
