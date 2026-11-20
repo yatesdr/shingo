@@ -20,10 +20,10 @@ import { splitUOP } from '/static/shared/count.js';
 // casing writes UoP in UI text, and every existing label does; the owner's
 // brief writes UOP. One constant, so the choice is one edit.
 // OWNER-WORDS
-export const UOP_WORD = 'UoP';
+const UOP_WORD = 'UoP';
 
 // partsWords is a number of parts, said: "404 parts", "1 part".
-export function partsWords(n) {
+function partsWords(n) {
     // OWNER-WORDS
     return n + (n === 1 || n === -1 ? ' part' : ' parts');
 }

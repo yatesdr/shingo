@@ -21,9 +21,9 @@ function check(name, cond, detail) {
     console.log('  FAIL ' + name + (detail ? '\n       ' + detail : ''));
 }
 
-const load = realm(undefined, ['count.js', 'count-words.js']);
+const load = realm(undefined, ['count.js', 'count-words.js'], { 'count-words.js': ['partsWords'] });
 const { uopRatio, splitUOP, linePieces } = load('count.js');
-const { abovePackNote, countReading, typedNote, partsWords, UOP_WORD, countBoxLabel, countSaid } = load('count-words.js');
+const { abovePackNote, countReading, typedNote, partsWords, countBoxLabel, countSaid } = load('count-words.js');
 
 const EXAMPLES = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', '..', '..', 'protocol', 'testdata', 'count-examples.json'), 'utf8')).examples;
@@ -61,7 +61,7 @@ reads.forEach(function(c) {
     check(c[0] + ' at ' + c[1] + ' reads ' + c[2] + (c[3] ? ' with ' + c[3] : ' and nothing beside'),
         r.big === c[2] && r.small === c[3] && r.split === (c[1] > 1), JSON.stringify(r));
 });
-check('the unit word is one constant', UOP_WORD === 'UoP');
+check('the unit word is UoP (UOP_WORD)', countSaid(16, 8, '') === '2 UoP \u00b7 16 parts');
 check('one part is a part', partsWords(1) === '1 part' && partsWords(2) === '2 parts');
 
 // typedNote: the live line under a typed box.
