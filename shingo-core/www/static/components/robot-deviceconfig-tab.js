@@ -18,6 +18,11 @@
 // Pull: the browser loops robots 200 ms apart, one POST each (the
 // server also enforces the gap — it is a server property, not client
 // goodwill), then reloads the matrix once: the round-1 cut, no streaming.
+//
+// The tab's styles live in robots.html's page-local <style> block (the
+// Phase 6 convention) — NOT injected here: a JS-built stylesheet is the
+// one shape css_collision_drift_test.go cannot see, and the state colours
+// are --dc-* tokens in shared/tokens.css so dark theme comes free.
 import { escapeHtml } from '/static/shared/dom.js';
 import { send } from '/static/shared/http.js';
 import { plantDate } from '/static/components/plantclock.js';
@@ -121,7 +126,6 @@ function rollup(rows, vehicle) {
 function render() {
   const el = root();
   if (!el || !matrix) return;
-  injectStyles();
   const g = group();
   const robots = matrix.robots || [];
   const canEdit = el.dataset.canEdit === '1';
@@ -234,31 +238,4 @@ function mmddyy(ts) {
 function renderError(msg) {
   const el = root();
   if (el) el.innerHTML = '<div class="text-muted">Device Config unavailable: ' + escapeHtml(msg || 'no answer') + '</div>';
-}
-
-// One-time styles: sticky lead columns, the state colours, the toggle.
-// Colour notes: red/yellow/blue cell boxes per the UI spec; a dash in a red
-// box is an absent-compares-red, a value in a blue box a calibration diff.
-function injectStyles() {
-  if (document.getElementById('dc-styles')) return;
-  const s = document.createElement('style');
-  s.id = 'dc-styles';
-  s.textContent = `
-.dc-scroll { overflow-x: auto; max-height: 70vh; overflow-y: auto; border: 1px solid var(--line, #ccc); }
-.dc-table { border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
-.dc-table th, .dc-table td { padding: 2px 8px; border-bottom: 1px solid var(--line, #eee); text-align: left; }
-.dc-table thead th { position: sticky; top: 0; background: var(--panel, #fff); z-index: var(--z-sticky); }
-.dc-lead0 { position: sticky; left: 0; background: inherit; z-index: var(--z-raised); min-width: 9rem; }
-.dc-lead1 { position: sticky; left: 9rem; background: inherit; z-index: var(--z-raised); min-width: 8rem; }
-.dc-lead2 { position: sticky; left: 17rem; background: inherit; z-index: var(--z-raised); min-width: 12rem; }
-.dc-robot { min-width: 5.5rem; }
-.dc-date { font-weight: normal; font-size: 0.7rem; color: var(--muted, #888); }
-.dc-toggle { background: none; border: none; cursor: pointer; padding: 0; font: inherit; text-align: left; }
-.dc-sec .dc-lead0, .dc-sub .dc-lead1 { font-weight: 600; }
-.dc-cell.dc-red { background: #c4453c; color: #fff; }
-.dc-cell.dc-yellow { background: #e6c229; }
-.dc-cell.dc-blue { background: #8fbcd4; }
-.dc-hidden { display: none; }
-`;
-  document.head.appendChild(s);
 }

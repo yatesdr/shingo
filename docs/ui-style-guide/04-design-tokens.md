@@ -161,6 +161,11 @@ keeps the light value):
 | `--route-remaining` | `var(--text)` | `var(--text)` |
 | `--route-chip` | `var(--bg-dark)` | `#21262d` |
 | `--route-chip-ink` | `var(--text)` | `var(--text)` |
+| `--dc-differs` | `#c4453c` | — |
+| `--dc-differs-ink` | `#ffffff` | — |
+| `--dc-novalue` | `#e6c229` | — |
+| `--dc-calibration` | `#8fbcd4` | — |
+| `--dc-calibration-ink` | `#11161c` | — |
 
 <!-- /generated -->
 

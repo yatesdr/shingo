@@ -8,7 +8,9 @@
 // seerrds adapter talks to it.
 //
 // The parse target is a real robot's file, measured 2026-11-19 against
-// AMR/SJV-SW600.model (51 sections, 80 devices, 530 live leaves) and
+// AMR/SJV-SW600.model (51 sections, 80 devices, 714 live param rows under
+// the pinned leaf rule — fixture_test.go's census, which also records how
+// the brief's earlier 530 arises) and
 // re-measured live the same day: the #1500 response is a BARE model —
 // top-level keys exactly {model, deviceTypes}, no wrapper envelope
 // (work/deviceconfig-tab-2026-11-19/evidence). Same shape, same ten param

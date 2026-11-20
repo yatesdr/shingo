@@ -46,6 +46,12 @@ func Fingerprint(value string) string {
 // sees is the fingerprint, never the value; there is no reveal because
 // nothing real is kept.
 //
+// The in-place mutation is LOAD-BEARING, not an implementation detail: the
+// pull handler flattens Leaves from the SAME tree after Sanitize returns,
+// which is why the params column is clean without a second pass — a
+// sanitize-that-copied would leave the flattened rows holding plaintext.
+// Callers that need the original values must deep-copy before calling.
+//
 // The output is deterministic: typed structs marshal their fields in a
 // fixed order, and only value fields change.
 func Sanitize(m *ModelFile) ([]byte, error) {

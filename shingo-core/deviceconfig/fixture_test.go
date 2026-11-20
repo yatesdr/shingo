@@ -31,23 +31,27 @@ func fixture(t *testing.T) *ModelFile {
 // the rule's proof — 16 live leaves (4+3+3+6), not its 12 top-level params,
 // and it matches the brief's hand count exactly.
 //
-// The brief's earlier "530 leaves" was counted under an unpinned rule and
-// does not reproduce under the pinned one (the recount is 714 param rows;
-// deduped by (section, path) it is 511, so 530 was likely a third variant).
-// The number that matters is deterministic under the rule written down here
-// and in leaves.go: 51 sections, 80 subsections, 714 live param rows, 874
+// The brief's earlier "530 leaves" is not a rival count: it is EXACT under
+// the pre-pin rule (array params recursed, combo params FLAT — the selected
+// choice's subparams unwalked), and the pinned rule adds exactly those,
+// 714 - 530 = 184. The round-2 dedup disagreement (615 vs 513) was two
+// different keys: by (section, path) — CAN1's and CAN2's canPort collapsing
+// to one — the 714 rows are 513 distinct params, pinned below. One rule,
+// one story: 51 sections, 80 subsections, 714 live param rows, 874
 // rows including every subsection's name and enabled rows.
 func TestGoldenCensus(t *testing.T) {
 	m := fixture(t)
 	rows := Leaves(m)
 
 	sections, subs := map[string]bool{}, map[string]bool{}
-	paramRows, deviceRows := 0, 0
+	params, deviceRows := 0, 0
+	distinct := map[string]bool{}
 	for _, r := range rows {
 		sections[r.Section] = true
 		subs[r.Section+"/"+r.Subsection] = true
 		if r.Kind == KindParam {
-			paramRows++
+			params++
+			distinct[r.Section+"/"+r.Path] = true
 		} else {
 			deviceRows++
 		}
@@ -58,8 +62,11 @@ func TestGoldenCensus(t *testing.T) {
 	if len(subs) != 80 {
 		t.Errorf("subsections = %d, want 80", len(subs))
 	}
-	if paramRows != 714 {
-		t.Errorf("live param rows = %d, want 714 (the pinned-rule recount)", paramRows)
+	if params != 714 {
+		t.Errorf("live param rows = %d, want 714 (the pinned-rule recount)", params)
+	}
+	if len(distinct) != 513 {
+		t.Errorf("distinct (section, path) params = %d, want 513 (the comment's dedup number)", len(distinct))
 	}
 	if deviceRows != 160 { // 80 subsections × name + enabled
 		t.Errorf("name/enabled rows = %d, want 160", deviceRows)

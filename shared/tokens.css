@@ -482,6 +482,28 @@
   --route-remaining: var(--text);
   --route-chip: var(--bg-dark);
   --route-chip-ink: var(--text);
+
+  /* The Device Config matrix's cell states (Core's Robots page; the tab's
+   * styles live in robots.html's inline block). Three semantics, each a
+   * fill: red = differs from the fleet, yellow = no value from the pull,
+   * light blue = a device-specific calibration value. THEME-INVARIANT,
+   * defined once and NOT overridden in the dark block (--accent-solid's
+   * pattern): all three read as marks on every surface in both themes (on
+   * the dark card surface they measure red 3.4:1, yellow 9.7:1, blue
+   * 8.3:1), and red/blue cells carry the VALUE as text, so each ink is
+   * measured on its own fill and held everywhere — white on red 4.9:1,
+   * near-black on blue 8.9:1 light / 9.2:1 dark. Yellow has no ink because
+   * a yellow cell never carries text: the box IS the message ("nothing
+   * arrived"). The light values are the UI spec's originals kept verbatim;
+   * these tokens exist so the state colours are named and theme-checked,
+   * not so they move. Blue is its own semantic, NOT info — info is a
+   * callout hue and must stay distinct from the primary accent (see the
+   * header note). */
+  --dc-differs: #c4453c;
+  --dc-differs-ink: #ffffff;
+  --dc-novalue: #e6c229;
+  --dc-calibration: #8fbcd4;
+  --dc-calibration-ink: #11161c;
 }
 
 [data-theme="dark"] {

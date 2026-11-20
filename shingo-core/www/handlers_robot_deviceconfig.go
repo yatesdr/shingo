@@ -71,12 +71,16 @@ var (
 const deviceConfigRelayGap = 200 * time.Millisecond
 
 // waitRelayGap blocks until a relay call may start (the RoboKit request-gap
-// the brief's pacing rule demands), claiming the slot atomically.
+// the brief's pacing rule demands), claiming the slot atomically. A last
+// timestamp in the FUTURE (the clock stepped back, or NTP pulled it) is
+// claimed over, never slept out: the naive remainder would be gap + the
+// whole skew, stalling every pull until the clock catches up (round-2,
+// umber-lynx).
 func waitRelayGap() {
 	for {
 		now := time.Now().UnixNano()
 		last := deviceConfigLastRelayUnix.Load()
-		if now-last >= int64(deviceConfigRelayGap) {
+		if now-last >= int64(deviceConfigRelayGap) || last > now {
 			if deviceConfigLastRelayUnix.CompareAndSwap(last, now) {
 				return
 			}

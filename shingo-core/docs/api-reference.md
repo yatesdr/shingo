@@ -10,7 +10,7 @@ Base URL: `http://<host>:8083`
 
 <!-- generated: shingo-core/www/router.go routes -->
 
-248 routes (125 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
+250 routes (126 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
 
 ### Pages and forms
 
@@ -394,6 +394,8 @@ Base URL: `http://<host>:8083`
 | `POST` | `/api/robots/cleaning/opt-out` | `apiRobotCleaningOptOut` | login |
 | `POST` | `/api/robots/cleaning/setup` | `apiRobotCleaningSetup` | login |
 | `POST` | `/api/robots/control` | `apiRobotControl` | login |
+| `GET` | `/api/robots/device-config` | `apiRobotDeviceConfig` | public |
+| `POST` | `/api/robots/device-config/pull` | `apiRobotDeviceConfigPull` | login |
 | `GET` | `/api/robots/fleet` | `apiRobotsFleet` | public |
 | `POST` | `/api/robots/force-complete` | `apiRobotForceComplete` | login |
 | `GET` | `/api/robots/hours` | `apiRobotHours` | public |

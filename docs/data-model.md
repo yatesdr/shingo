@@ -434,7 +434,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 <!-- generated: shingo-core/store/schema/schema.snapshot.sql -->
 
-86 tables.
+87 tables.
 
 | Table | Columns | Primary key | References |
 |---|---|---|---|
@@ -509,6 +509,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`robot_confidence_daily`](#core-robot_confidence_daily) | 8 | `day`, `vehicle_id` |  |
 | [`robot_confidence_low`](#core-robot_confidence_low) | 16 |  |  |
 | [`robot_confidence_samples`](#core-robot_confidence_samples) | 16 |  |  |
+| [`robot_deviceconfig_pulls`](#core-robot_deviceconfig_pulls) | 6 | `id` |  |
 | [`robot_hours`](#core-robot_hours) | 9 | `hour`, `vehicle_id` |  |
 | [`robot_lidar_hours`](#core-robot_lidar_hours) | 11 | `hour`, `vehicle_id`, `lidar` |  |
 | [`scene_areas`](#core-scene_areas) | 16 | `id` | [`scene_diffs`](#core-scene_diffs), [`scene_map_versions`](#core-scene_map_versions), `scene_areas` |
@@ -1677,6 +1678,17 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `alarm_codes` | `integer[]` |  |  |  |
 
 - Partitioned: `RANGE (sampled_at)`
+
+#### Core: `robot_deviceconfig_pulls`
+
+| Column | Type | Not null | Default | Key |
+|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('robot_deviceconfig_pulls_id_seq')` | PK |
+| `vehicle_id` | `text` | yes |  |  |
+| `pulled_at` | `timestamp with time zone` | yes | `now()` |  |
+| `model_md5` | `text` | yes |  |  |
+| `params` | `jsonb` | yes |  |  |
+| `config` | `jsonb` | yes |  |  |
 
 #### Core: `robot_hours`
 

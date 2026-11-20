@@ -34,11 +34,10 @@ type Pull struct {
 }
 
 // SavePull appends one row. Append-only by design: no upsert, no conflict
-// target — history is the point.
+// target — history is the point. PulledAt is the caller's stamp verbatim
+// (both callers set it; a default here would silently date a pull at the
+// store's clock instead of the pull's).
 func SavePull(ctx context.Context, db *sql.DB, p Pull, config json.RawMessage) error {
-	if p.PulledAt.IsZero() {
-		p.PulledAt = time.Now()
-	}
 	_, err := db.ExecContext(ctx, `INSERT INTO robot_deviceconfig_pulls
 			(vehicle_id, pulled_at, model_md5, params, config)
 		VALUES ($1, $2, $3, $4, $5)`,
