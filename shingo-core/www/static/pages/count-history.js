@@ -16,6 +16,7 @@
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { countReading, countSaid } from '/static/shared/count-words.js';
 import { apiGet, timeAgoHTML } from '/static/app.js';
 import { formatClock, formatDuration, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
@@ -119,7 +120,7 @@ function renderLedgerExceptions() {
     const where = b.node_name ? ' at ' + escapeHtml(b.node_name) : '';
     return '<li><code>' + escapeHtml(b.label || ('bin ' + b.bin_id)) + '</code>'
       + (b.payload_code ? ' <span class="text-muted-xs">' + escapeHtml(b.payload_code) + '</span>' : '')
-      + where + ' counts <b>' + b.uop_remaining + '</b>' + escapeHtml(since) + '</li>';
+      + where + ' counts ' + boldCount(b.payload_code, b.uop_remaining, b.uop_remaining) + escapeHtml(since) + '</li>';
   }).join('');
 
   // Short. An earlier version explained overpacks and fork trucks in a
@@ -188,17 +189,20 @@ function renderDeltaIntegrity() {
 
     let uopCell = '';
     let dropCell = '';
+    const ratio = ratioOf(r.payload_code);
     if (r.drop_rows > 0) {
-      const tip = 'Reads ' + num(Math.abs(r.uop_lost)) + ' UoP '
+      const lost = countReading(Math.abs(r.uop_lost), ratio);
+      const tip = 'Reads ' + countSaid(Math.abs(r.uop_lost), ratio, num(Math.abs(r.uop_lost)) + ' UoP') + ' '
         + (below ? 'BELOW' : 'ABOVE') + ' reality. '
-        + 'Dropped credits ' + num(r.credits_dropped)
-        + ', dropped consumes ' + num(r.consumes_dropped)
+        // OWNER-WORDS: above a ratio of 1 the drops say they are parts.
+        + 'Dropped credits ' + num(r.credits_dropped) + (lost.split ? ' parts' : '')
+        + ', dropped consumes ' + num(r.consumes_dropped) + (lost.split ? ' parts' : '')
         + ', across ' + r.bins + ' bin' + (r.bins === 1 ? '' : 's') + '.'
-        + (r.uop_recovered ? ' Recovered ' + num(Math.abs(r.uop_recovered))
-          + ' refused UoP that landed with a later count, already taken off the figure.' : '')
+        + (r.uop_recovered ? ' Recovered ' + countSaid(Math.abs(r.uop_recovered), ratio, num(Math.abs(r.uop_recovered)) + ' refused UoP')
+          + (lost.split ? ' refused' : '') + ' that landed with a later count, already taken off the figure.' : '')
         + (causes.length ? ' Cause: ' + causes.join(', ') + '.' : '');
       uopCell = '<span class="di-uop" title="' + escapeHtml(tip) + '">'
-        + num(Math.abs(r.uop_lost))
+        + (lost.split ? num(lost.big) + ' <span class="text-muted-xs">' + escapeHtml(lost.small) + '</span>' : num(Math.abs(r.uop_lost)))
         + ' <span class="di-dir' + (below ? ' di-dir--below' : '') + '">' + dir + '</span></span>';
       dropCell = '<span class="di-drops">' + num(r.drop_rows) + '</span>';
     }
@@ -210,7 +214,7 @@ function renderDeltaIntegrity() {
     // whole design: the two numbers matching IS the finding.
     if (r.ledger_total < 0) {
       flags += '<span class="di-ledger" title="This payload\'s ledger total is negative.">'
-        + num(r.ledger_total) + '</span>';
+        + escapeHtml(countSaid(r.ledger_total, ratio, num(r.ledger_total))) + '</span>';
     }
     if (r.mixed_contents > 0) {
       // Deliberately no UoP figure here. Nothing was lost — the delta was
@@ -300,7 +304,8 @@ function renderReportDivergence() {
       + ' <span class="text-muted-xs">' + escapeHtml(d.payload_code || '') + '</span>'
       + (d.node ? ' at ' + escapeHtml(d.node) : '')
       + ' — ' + escapeHtml(DIVERGENCE_CLASS[d.class] || d.class)
-      + ': Edge <b>' + num(d.edge_count) + '</b>, Core <b>' + num(d.core_count) + '</b>'
+      + ': Edge ' + boldCount(d.payload_code, d.edge_count, num(d.edge_count))
+      + ', Core ' + boldCount(d.payload_code, d.core_count, num(d.core_count))
       + escapeHtml(epoch)
       + ' <span class="text-muted-xs">open ' + escapeHtml(openFor(d.opened_at))
     + ' (since ' + escapeHtml(formatTime(d.opened_at)) + ')</span>'
@@ -374,18 +379,18 @@ function renderHoldDrops() {
   });
   const runText = (r) => {
     const mins = Math.round((new Date(r.last) - new Date(r.first)) / 60000);
-    return escapeHtml(formatTime(r.first)) + (mins >= 1 ? ' for ' + mins + ' min' : '') + ' — <b>' + num(r.qty) + '</b>';
+    return escapeHtml(formatTime(r.first)) + (mins >= 1 ? ' for ' + mins + ' min' : '') + ' — ' + boldCount(r.payload_code, r.qty, num(r.qty));
   };
   const items = lines.map((l) => {
     const shown = l.runs.slice(0, HOLD_DROP_RUNS_SHOWN).map(runText);
     const rest = l.runs.slice(HOLD_DROP_RUNS_SHOWN);
     if (rest.length) {
       const restQty = rest.reduce((n, r) => n + (r.qty || 0), 0);
-      shown.push('and ' + rest.length + ' earlier — <b>' + num(restQty) + '</b>');
+      shown.push('and ' + rest.length + ' earlier — ' + boldCount(l.part, restQty, num(restQty)));
     }
     return '<li>'
       + escapeHtml(l.node || '(no node)')
-      + ' — <b>' + num(l.qty) + '</b> of <span class="text-muted-xs">' + escapeHtml(l.part || '(no part)') + '</span>'
+      + ' — ' + boldCount(l.part, l.qty, num(l.qty)) + ' of <span class="text-muted-xs">' + escapeHtml(l.part || '(no part)') + '</span>'
       + ' dropped: ' + escapeHtml(HOLD_DROP_REASON[l.reason] || l.reason || '')
       + '<div class="text-muted-xs">' + l.runs.length + ' run' + (l.runs.length === 1 ? '' : 's') + ': '
       + shown.join(' · ') + '</div>'
@@ -413,8 +418,9 @@ function renderDeclaredStamps() {
     + ' — <code>' + escapeHtml(st.bin_label || ('bin ' + st.bin_id)) + '</code>'
     + ' <span class="text-muted-xs">' + escapeHtml(st.payload_code || '') + '</span>'
     + (st.reason === 'no_pack'
-      ? ' counted <b>' + num(st.counted) + '</b>, kept: no pack for this part'
-      : ' counted <b>' + num(st.counted) + '</b> → its pack <b>' + num(st.declared) + '</b>')
+      ? ' counted ' + boldCount(st.payload_code, st.counted, num(st.counted)) + ', kept: no pack for this part'
+      : ' counted ' + boldCount(st.payload_code, st.counted, num(st.counted))
+        + ' → its pack ' + boldCount(st.payload_code, st.declared, num(st.declared)))
     + (st.actor ? ' by ' + escapeHtml(st.actor) : '')
     + '</li>').join('');
   host.innerHTML = '<div class="ledger-routine">'
@@ -474,6 +480,23 @@ async function showRejectedDeltas() {
 
 // ── formatting ─────────────────────────────────────────────────────────────
 function num(n) { return (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString(); }
+
+// ratioOf is a part's UOP ratio from the last answer (uop_ratios: only parts
+// above 1, absent at a ratio-1 plant), 1 for every other part.
+function ratioOf(code) {
+  return (ledgerExceptions && ledgerExceptions.uop_ratios && ledgerExceptions.uop_ratios[code]) || 1;
+}
+
+// boldCount is a count in a list line: bold, as the line always read (plain,
+// the line's own words for it), and above its part's ratio of 1 its whole UoP
+// bold with its parts small beside it (count-words.js countReading). A count
+// that is not there (null) stays plain.
+function boldCount(code, n, plain) {
+  const r = n == null || isNaN(n) ? { split: false } : countReading(n, ratioOf(code));
+  // OWNER-WORDS
+  return r.split ? '<b>' + num(r.big) + ' UoP</b> <span class="text-muted-xs">' + escapeHtml(r.small) + '</span>'
+    : '<b>' + plain + '</b>';
+}
 
 function refresh() { loadAll(); }
 

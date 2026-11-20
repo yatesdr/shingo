@@ -2,6 +2,7 @@ package www
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -79,11 +80,46 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		"CompatNodes":       compatNodes,
 		"PayloadBinTypes":   payloadBinTypes,
 		"FullCartTotes":     fullCartTotes(payloads, binTypes, payloadBinTypes),
+		"CapacityInUoP":     capacityInUoP(payloads, h.payloadRatios()),
 		"ContainmentState":  containmentState,
 		"UnroutedProducers": unroutedProducers,
 		"FloorMade":         floorMade,
 	}
 	h.render(w, r, "payloads.html", data)
+}
+
+// capacityShown is a payload's pack in the Payloads table above its ratio of
+// 1: the whole UoP a full bin makes, its parts said small beside it.
+type capacityShown struct {
+	Shown int
+	Parts string
+}
+
+// capacityInUoP is, per payload id, its pack as the table shows it above the
+// payload's ratio of 1 (ratios: PayloadService.UOPRatios, only parts above 1;
+// countShown). A payload at 1, a kit, and every payload at a ratio-1 plant has
+// no entry, and its cell shows the capacity as it always did. Pointers, for
+// the reason the containment map's are.
+func capacityInUoP(payloads []*domain.Payload, ratios map[string]int) map[int64]*capacityShown {
+	out := map[int64]*capacityShown{}
+	for _, p := range payloads {
+		if shown, parts := countShown(p.UOPCapacity, ratios[p.Code]); parts != "" {
+			out[p.ID] = &capacityShown{Shown: shown, Parts: parts}
+		}
+	}
+	return out
+}
+
+// payloadRatios is PayloadService.UOPRatios for a page that shows a count
+// beside its UoP: nil on a failed read, logged, so the page shows its counts
+// as they were.
+func (h *Handlers) payloadRatios() map[string]int {
+	ratios, err := h.engine.PayloadService().UOPRatios()
+	if err != nil {
+		log.Printf("payload ratios: %v", err)
+		return nil
+	}
+	return ratios
 }
 
 // fullCartTotes is, per payload, what a full cart holds in UOP by its tote

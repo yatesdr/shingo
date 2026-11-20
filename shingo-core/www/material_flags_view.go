@@ -246,6 +246,10 @@ type BindingRow struct {
 	// bins.uop_remaining is NOT NULL and every carrier has one.
 	Ledger     int
 	LedgerCell Cell
+	// LedgerParts is the ledger's parts, said small beside the cell above the
+	// part's ratio of 1, where the cell shows its whole UoP (showLedgersInUoP);
+	// "" at 1.
+	LedgerParts string
 
 	// Reading and Binloads are the two channels of the same classification: the
 	// printed name and the sized figure. Binloads is not-applicable on a settled
@@ -370,6 +374,23 @@ func BuildBindingRows(cs []domain.CarrierBinding, now time.Time, k config.Displa
 
 	sortBindings(out)
 	return out, s
+}
+
+// showLedgersInUoP restates each row's ledger above its part's ratio of 1
+// (ratios: PayloadService.UOPRatios, which carries only parts above 1): the
+// whole UoP in the cell, its parts said beside it (countShown). The reading,
+// the binloads and their titles stay in parts against the pack, which is in
+// parts too. Every other row, and every row at a ratio-1 plant, is as
+// BuildBindingRows made it.
+func showLedgersInUoP(rows []BindingRow, ratios map[string]int) {
+	for i := range rows {
+		shown, parts := countShown(rows[i].Ledger, ratios[rows[i].Payload])
+		if parts == "" {
+			continue
+		}
+		rows[i].LedgerCell.Text = FormatCount(shown)
+		rows[i].LedgerParts = parts
+	}
 }
 
 func buildBindingRow(c domain.CarrierBinding, age time.Duration, known bool, k config.DisplayConfig) BindingRow {

@@ -6,6 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"shingo/protocol"
 )
 
 // handlers_demand_episode_detail.go — origin-indexed forensics (Stage 5.12, N2).
@@ -89,6 +91,9 @@ func (h *Handlers) handleDemandEpisodeDetail(w http.ResponseWriter, r *http.Requ
 
 	detail := BuildEpisodeDetail(*origin, children, truncated, childErr, now, c)
 	detail.ChildrenLimit = childOrderLimit
+	if origin.Kind == protocol.EpisodeKindThreshold {
+		detail.showInUoP(*origin, h.payloadRatios()[origin.PayloadCode])
+	}
 
 	data["Detail"] = detail
 	h.render(w, r, "demand-episode.html", data)

@@ -2,6 +2,7 @@ import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { linePieces, splitUOP, uopRatio } from '/static/shared/count.js';
+import { countSaid } from '/static/shared/count-words.js';
 
 /* --- Manifest builder ---
  *
@@ -35,14 +36,12 @@ function uopCapacityFor(containerId) {
 // the pieces a full bin holds, its ratio times the capacity. The rows decide
 // which, so adding or removing one redraws them all (refreshFullBinCells).
 function renderFullBin(row, containerId) {
+  refreshUnitWords(containerId);
   var cell = row.querySelector('.mr-fullbin');
   if (!cell) return;
   var cap = uopCapacityFor(containerId);
-  // The form's lines as typed, the shape count.js reads.
   var rows = Array.prototype.slice.call(manifestRows(containerId));
-  var lines = rows.map(function(r) {
-    return { parts_per_cycle: parseInt(r.querySelector('.mr-per-cycle').value) || 0 };
-  });
+  var lines = formLines(containerId);
   var i = rows.indexOf(row);
   if (cap > 0 && lines.length === 1) {
     var ratio = uopRatio(lines);
@@ -55,6 +54,33 @@ function renderFullBin(row, containerId) {
 
 function manifestRows(containerId) {
   return document.querySelectorAll('#' + containerId + ' .plpart-row');
+}
+
+// formLines is the form's lines as typed, the shape count.js reads.
+function formLines(containerId) {
+  return Array.prototype.slice.call(manifestRows(containerId)).map(function(r) {
+    return { parts_per_cycle: parseInt(r.querySelector('.mr-per-cycle').value) || 0 };
+  });
+}
+
+// formRatio is the payload's UOP ratio as the form's lines stand
+// (count.js uopRatio): a part's pieces per assembly cycle, 1 for a kit.
+function formRatio(prefix) {
+  return uopRatio(formLines(prefix === 'plc' ? 'plc-manifest-rows' : 'ple-manifest-rows'));
+}
+
+// refreshUnitWords names the pack and the per-tote boxes by what they take
+// once the payload's ratio is above 1: parts, whose UoP the readouts show
+// beside them (data-parts, the template's OWNER-WORDS). At a ratio of 1 and
+// for a kit, where the two are the same, the boxes keep their own words
+// (data-plain). The tote hint is redrawn with them.
+function refreshUnitWords(containerId) {
+  var prefix = containerId === 'plc-manifest-rows' ? 'plc' : 'ple';
+  var parts = formRatio(prefix) > 1;
+  document.querySelectorAll('[data-unit-words="' + prefix + '"]').forEach(function(span) {
+    span.textContent = parts ? span.dataset.parts : span.dataset.plain;
+  });
+  refreshToteHint(prefix);
 }
 
 // renderCATIDNote is the drift-catcher, and it is the reason the CATID box is
@@ -201,8 +227,11 @@ function refreshToteHint(prefix) {
     document.querySelectorAll('#' + prefix + '-bin-types input[type=checkbox]:checked').forEach(function(cb) {
       var perLayer = parseInt(cb.dataset.totesPerLayer, 10);
       if (!perLayer) return;
+      var full = perTote * perLayer * layers;
+      // Above a ratio of 1 the product is parts: the UoP they make, then the
+      // parts (count-words.js countSaid); at 1, as it always read.
       lines.push(cb.dataset.code + ': ' + perTote + ' × ' + perLayer + ' × ' + layers +
-        ' = ' + (perTote * perLayer * layers) + ' UoP a full cart');
+        ' = ' + countSaid(full, formRatio(prefix), full + ' UoP') + ' a full cart');
     });
   }
   hint.textContent = lines.join(' · ');

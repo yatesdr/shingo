@@ -187,7 +187,7 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 	if deltaIntegrity == nil {
 		deltaIntegrity = []domain.DeltaIntegrity{}
 	}
-	h.jsonOK(w, map[string]any{
+	out := map[string]any{
 		"since":                since,
 		"open_bins":            openBins,
 		"negative_payloads":    payloads,
@@ -196,7 +196,14 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		"report_divergences":   divergences,
 		"hold_drop_runs":       holdDropRuns,
 		"declared_full_stamps": stamps,
-	})
+	}
+	// Each part's ratio above 1, so the page shows its counts in UoP with
+	// their parts beside them (owner, 2026-11-19). Absent at a ratio-1 plant:
+	// the answer is what it was.
+	if ratios := h.payloadRatios(); len(ratios) > 0 {
+		out["uop_ratios"] = ratios
+	}
+	h.jsonOK(w, out)
 }
 
 // apiSourceabilityEvents serves the persisted sourceability verdict-change
