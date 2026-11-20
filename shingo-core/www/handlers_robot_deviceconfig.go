@@ -49,6 +49,11 @@ func (h *Handlers) apiRobotDeviceConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	sort.Strings(extra)
 	vehicles = append(vehicles, extra...)
+	// Column order is the fleet's natural order — AMR-02 before AMR-10 — not
+	// the cache's iteration order, which handed the floor 1, 10, 04… on the
+	// first live sitting (2026-11-20). A plain sort would interleave AMR-10
+	// between AMR-01 and AMR-02; the trailing number compares numerically.
+	sort.Slice(vehicles, func(i, j int) bool { return vehicleLess(vehicles[i], vehicles[j]) })
 
 	// CanPull is the same type assertion the POST answers 501 with,
 	// surfaced to the page so its Pull button hides on a fleet (the
@@ -88,6 +93,35 @@ func waitRelayGap() {
 		}
 		time.Sleep(time.Duration(int64(deviceConfigRelayGap) - (now - last)))
 	}
+}
+
+// vehicleLess orders fleet ids for the matrix's columns: the non-numeric
+// prefix as a string, a trailing number numerically.
+func vehicleLess(a, b string) bool {
+	pa, na := splitTrailingNumber(a)
+	pb, nb := splitTrailingNumber(b)
+	if pa != pb {
+		return pa < pb
+	}
+	return na < nb
+}
+
+// splitTrailingNumber splits an id into its prefix and its trailing digits
+// ("AMR-04" -> "AMR-", 4); an id with no trailing digits keeps its whole
+// self as the prefix.
+func splitTrailingNumber(s string) (string, int) {
+	i := len(s)
+	for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+		i--
+	}
+	if i == len(s) {
+		return s, -1
+	}
+	n := 0
+	for _, d := range s[i:] {
+		n = n*10 + int(d-'0')
+	}
+	return s[:i], n
 }
 
 // apiRobotDeviceConfigPull is POST /api/robots/device-config/pull

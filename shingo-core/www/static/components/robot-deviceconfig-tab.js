@@ -150,7 +150,13 @@ function render() {
           : '')
       + '</div>'
       + '<div class="text-muted text-sm mb-1" id="dc-pull-status"></div>'
-      + '<div class="dc-legend text-muted text-sm mb-1">red = differs from fleet · yellow = no value from pull · light blue = device-specific (calibration) value · •••••••• = credential — compared, never stored or shown · click a section to expand/collapse</div>'
+      + '<div class="dc-legend">'
+      + '<div><span class="dc-cell dc-red">red</span> = differs from fleet</div>'
+      + '<div><span class="dc-cell dc-yellow">yellow</span> = no value from pull</div>'
+      + '<div><span class="dc-cell dc-blue">light blue</span> = device-specific (calibration) value</div>'
+      + '<div><span class="dc-cell">••••••••</span> = credential — compared, never stored or shown</div>'
+      + '<div>click a section to expand / collapse</div>'
+      + '</div>'
       + '<div class="dc-scroll" id="dc-scroll"></div>';
   }
   const head = '<table class="dc-table"><thead><tr>'

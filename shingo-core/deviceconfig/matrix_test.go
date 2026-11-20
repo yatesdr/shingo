@@ -12,13 +12,16 @@ import (
 // with its one-line reason. Synthetic pulls — the rules are the product;
 // the fixture proves the parse, these prove the comparison.
 
+// The synthetic leaves ride a RoboShop-parity section (DO): off-parity
+// sections never reach the matrix at all (TestMatrixParitySectionsOnly),
+// so a test-only section name would make every row here vanish.
 func leaf(sub, path, value string) Leaf {
-	return Leaf{Section: "S", Subsection: sub, Kind: KindParam, Path: path, Ident: path, Value: value}
+	return Leaf{Section: "DO", Subsection: sub, Kind: KindParam, Path: path, Ident: path, Value: value}
 }
 
 func pull(v string, ls ...Leaf) Pull {
 	return Pull{Vehicle: v, Leaves: append([]Leaf{
-		{Section: "S", Subsection: "d", Kind: KindName, Path: "name", Ident: "name", Value: v},
+		{Section: "DO", Subsection: "d", Kind: KindName, Path: "name", Ident: "name", Value: v},
 	}, ls...)}
 }
 
@@ -312,7 +315,7 @@ func TestNestedChoiceIdentityThreads(t *testing.T) {
 			ChildParams: []ChildParam{{Key: "x", Params: []Param{innerCombo}}},
 		}}
 		m := &ModelFile{Model: "T", DeviceTypes: []DeviceType{{
-			Name: "S", Devices: []Device{{Name: "d", DeviceParams: []Param{outer}}},
+			Name: "DO", Devices: []Device{{Name: "d", DeviceParams: []Param{outer}}},
 		}}}
 		return Pull{Vehicle: v, Leaves: Leaves(m)}
 	}

@@ -38,6 +38,27 @@ var ExcludedV1 = []Exclusion{
 	{Section: "chassis", Ident: "mode/omni: rollAngle"},
 }
 
+// paritySectionsV1 is the RoboShop-parity SECTION allow-list: the sections
+// the vendor's Device Config tree actually renders, as walked in the brief
+// (the other 33 of the model file's 51 — Gripper, arm, fork, mailsender,
+// empty container shells… — are file internals or hardware this robot does
+// not carry, and the floor ruled them out of the matrix on the first live
+// sitting, 2026-11-20). Rows outside the list are dropped at SERVE time
+// only — the pull stores the whole model, so a section joins the matrix by
+// being added here, with no re-pull. An allow-list (not a block-list)
+// deliberately: a heterogeneous robot's UNKNOWN section stays hidden until
+// someone rules it in, rather than spraying new rows the moment it arrives.
+var paritySectionsV1 = map[string]bool{
+	"CAN": true, "DI": true, "DISensor": true, "DO": true, "EMC": true,
+	"ESP32": true, "Manipulators": true, "Trigger": true, "battery": true,
+	"charger": true, "chassis": true, "controller": true, "jack": true,
+	"laser": true, "led": true, "motor": true, "pgv": true, "soundplayer": true,
+}
+
+func sectionShown(section string) bool {
+	return paritySectionsV1[section]
+}
+
 func excluded(section, ident string) bool {
 	for _, e := range ExcludedV1 {
 		if e.Section == section && e.Ident == ident {
@@ -213,13 +234,17 @@ func pulledVoters(vehicles []string, pulls map[string]Pull) []string {
 // deterministic) and collects the row union in document order of the FIRST
 // robot that has each row, one representative leaf per row (desc/type/
 // range come from it; they are vendor-static), and every robot's value per
-// row. The RoboShop-parity exclusions drop their rows here, so an excluded
-// row never reaches the matrix at all.
+// row. The RoboShop-parity filters drop their rows here, so an excluded
+// section or param never reaches the matrix at all — section first (every
+// row kind), then the per-ident exclusions (params).
 func unionRows(pulled []string, pulls map[string]Pull) (order []string, leafOf map[string]Leaf, values map[string]map[string]string) {
 	leafOf = map[string]Leaf{}
 	values = map[string]map[string]string{} // rowIdent -> vehicle -> value or absentToken
 	for _, v := range pulled {
 		for _, l := range pulls[v].Leaves {
+			if !sectionShown(l.Section) {
+				continue
+			}
 			if l.Kind == KindParam && excluded(l.Section, l.Ident) {
 				continue
 			}

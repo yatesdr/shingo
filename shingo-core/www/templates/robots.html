@@ -239,7 +239,11 @@
      sticky header. */}}
 <style>
 .dc-scroll { overflow: auto; max-height: 70vh; border: 1px solid var(--sub-2); }
-.dc-table { border-collapse: collapse; table-layout: fixed; font-size: var(--font-sm); white-space: nowrap; }
+/* border-separate, spacing 0: border-collapse breaks the sticky thead in
+   Chromium (the header scrolled away with the page on the first live
+   sitting) — separate with zero spacing draws the same single bottom
+   rules and the header stays put. */
+.dc-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: var(--font-sm); white-space: nowrap; }
 .dc-table th, .dc-table td { padding: 2px 8px; border-bottom: 1px solid var(--sub-1); text-align: left; background: var(--bg); overflow: hidden; text-overflow: ellipsis; }
 .dc-table thead th { position: sticky; top: 0; z-index: var(--z-sticky); }
 .dc-lead0 { position: sticky; left: 0; z-index: var(--z-raised); width: 9rem; }
@@ -249,6 +253,13 @@
 .dc-date { font-weight: var(--fw-normal); font-size: var(--font-xs); color: var(--text-muted); }
 .dc-toggle { background: none; border: none; cursor: pointer; padding: 0; font: inherit; color: inherit; text-align: left; }
 .dc-sec .dc-lead0, .dc-sub .dc-lead1 { font-weight: var(--fw-bold); }
+/* The legend: a boxed row per state, the state's own fill on its word —
+   the swatch IS the cell class it explains, so the legend can never drift
+   from the matrix's colours. */
+.dc-legend { border: 1px solid var(--sub-2); background: var(--bg); max-width: max-content; }
+.dc-legend > div { padding: 2px 8px; font-size: var(--font-sm); color: var(--text-muted); }
+.dc-legend > div + div { border-top: 1px solid var(--sub-1); }
+.dc-legend .dc-cell { padding: 0 6px; }
 .dc-cell.dc-red { background: var(--dc-differs); color: var(--dc-differs-ink); }
 .dc-cell.dc-yellow { background: var(--dc-novalue); }
 .dc-cell.dc-blue { background: var(--dc-calibration); color: var(--dc-calibration-ink); }

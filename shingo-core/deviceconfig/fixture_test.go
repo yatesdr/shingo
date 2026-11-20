@@ -28,6 +28,36 @@ func fixture(t *testing.T) *ModelFile {
 	return m
 }
 
+// TestMatrixParitySectionsOnly: the matrix carries ONLY the RoboShop-parity
+// sections — the fixture's 51 include 33 (Gripper, arm, fork, empty
+// container shells…) that RoboShop's Device Config does not render, and the
+// floor ruled them out of the matrix (2026-11-20). Storage keeps every
+// leaf (TestGoldenCensus still counts 714); this is the serve-time rule.
+func TestMatrixParitySectionsOnly(t *testing.T) {
+	rows := Leaves(fixture(t))
+	view := BuildMatrix([]string{"AMR-01"}, map[string]Pull{"AMR-01": {Vehicle: "AMR-01", Leaves: rows}})
+	saw := map[string]bool{}
+	for _, rv := range view.Rows {
+		if !sectionShown(rv.Section) {
+			t.Errorf("section %q reached the matrix — outside the parity allow-list", rv.Section)
+		}
+		saw[rv.Section] = true
+	}
+	if len(saw) != len(paritySectionsV1) {
+		t.Errorf("matrix shows %d sections, want all %d parity sections (the fixture carries each)", len(saw), len(paritySectionsV1))
+	}
+	// The fixture's own leaf set carries rows the parity rule must drop.
+	dropped := 0
+	for _, r := range rows {
+		if !sectionShown(r.Section) {
+			dropped++
+		}
+	}
+	if dropped == 0 {
+		t.Fatal("the fixture carries no off-parity rows — this test is proving nothing")
+	}
+}
+
 // TestGoldenCensus pins the live-leaf counting rule the brief ordered pinned
 // at build: LIVE LEAVES INCLUDE THE SELECTED CHOICE'S SUBPARAMS. Trigger is
 // the rule's proof — 16 live leaves (4+3+3+6), not its 12 top-level params,

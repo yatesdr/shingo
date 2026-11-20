@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -224,5 +226,17 @@ func TestDeviceConfigPull_ServerGap(t *testing.T) {
 	}
 	if gap := sim.calls[1].Sub(sim.calls[0]); gap < 190*time.Millisecond {
 		t.Errorf("relay starts %v apart, want ≥200 ms (10 ms scheduling slop allowed)", gap)
+	}
+}
+
+// TestVehicleColumnsNaturalOrder pins the matrix's column order: the fleet's
+// ids sort AMR-02 before AMR-10, which the cache's iteration order does not
+// give (the floor saw 1, 10, 04… on the first live sitting, 2026-11-20).
+func TestVehicleColumnsNaturalOrder(t *testing.T) {
+	got := []string{"AMR-10", "AMR-01", "AMR-04", "AMR-12", "AMR-09", "AMR-05", "AMR-02"}
+	sort.Slice(got, func(i, j int) bool { return vehicleLess(got[i], got[j]) })
+	want := []string{"AMR-01", "AMR-02", "AMR-04", "AMR-05", "AMR-09", "AMR-10", "AMR-12"}
+	if !slices.Equal(got, want) {
+		t.Errorf("vehicle order = %v, want %v", got, want)
 	}
 }
