@@ -25,7 +25,8 @@ Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on 
 - A new Core database is created in one step from a generated baseline; it lands whole or not at all, never half, and the next start boots it or creates it again
 - soakstat's handoff report names the station that counted each tick after a release; it put every tick under a blank station
 - Diagnostics' reconciliation table shows no node name under Station for a claim inside another order's dug lane; the node is named in the row's detail
-- A robot fault's email, and its fault-cleared email, name the order's station (or Core's door) again; the Station line was always missing
+- A robot fault's email, and its fault-cleared email, name the order's station (or Core's door that asked); the Station line never printed
+- The CMS posting card says "1 transaction has" and "12 transactions have"; its counted sentences used the singular verb for every count
 - Core's database names a station one way everywhere, by its uid; Core's own manual, direct and test orders say which door asked in a column of their own instead of standing in for a station
 - The robot map points in Core's records are named as the fleet's, apart from stations; the outbox says whom a message is for
 - The tables and columns nothing read or wrote are gone: downtime events, cell targets, and a dozen unused columns
@@ -33,6 +34,7 @@ Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on 
 - shingocore migrate down 185 puts the previous shape back for a rollback, before the previous binary goes back in
 - shingocore migrate check says, before a deploy, whether Core will start on the database and at which version it stands, and changes nothing
 - Core Health names any table, column, index or constraint that differs from the shape this build ships; it stops nothing
+- install-core.sh asks the new build whether it will start on the database before it stops Core, and stops there, with Core still running, when it will not; it keeps the new binary as shingocore.next, prints the rollback (stop, shingocore.next migrate down, then .previous back, start), and waits until Core answers its health page (up to 15 minutes while it migrates), not just until the service is up
 - The move takes Core's tables for its run: on a seeded test database up took about 0.2 s and down 0.2 s; a plant's time grows with its orders, telemetry and ledger rows
 
 ## v0.17.3 — 2026-11-21
