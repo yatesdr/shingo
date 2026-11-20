@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.17.1 — 2026-11-20
+
 Deploy: no migration. Core only; the Edges are unchanged and need no install.
 
 - The Robots page's Device Config tab no longer blanks the page when clicked: its panel sat outside the tab bar's wrapper, so the tab switcher hid every panel and showed none
