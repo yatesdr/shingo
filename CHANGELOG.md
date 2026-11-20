@@ -16,6 +16,14 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: Core v184. Core only; the Edges are unchanged and need no install.
+
+- The Robots page has a fourth tab, Device Config: every robot's device configuration side by side, the same screens RoboShop's Device Config tab shows (CAN ports, triggers, charger, motors, the controller's numbers), pulled from each robot through the fleet and stored on Core
+- Pull fleet asks each robot in turn, a fifth of a second apart, and the table's header carries each robot's pull date; a robot never pulled is a column of yellow, and a robot the fleet no longer lists keeps its column
+- A red cell is a value that differs from what most robots hold; when the fleet is split on a row, every valued cell on it is red; light blue is a value that is per-robot by design (the controller's calibration numbers), not a fault; yellow means no value arrived from that robot's pull
+- Password-type settings are compared like any other but never stored or shown: the table keeps a one-way fingerprint, a cell shows dots, and a hover says only whether the robot agrees with the fleet
+- The June silent-reset (a robot's charger input back at its default, found only once the robot misbehaved) is the fault this tab makes visible: one screen, the whole fleet, what differs from the fleet
+
 ## v0.16.0 — 2026-11-20
 
 Deploy: Edge v59 first, at every Edge of the plant; then Core v181–v183. No Core of this release at a plant with an Edge below v0.9.0: that Edge would make a second robot's order from Core's in_transit.
