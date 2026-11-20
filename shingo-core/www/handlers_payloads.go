@@ -202,6 +202,9 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 		CATID         string `json:"catid"`
 		PartsPerCycle int64  `json:"parts_per_cycle"`
 		Notes         string `json:"notes"`
+		// ConfirmRatioChange: the ratio change's warning was seen
+		// (service.RatioChangeUnseen), as on Edit Payload.
+		ConfirmRatioChange bool `json:"confirm_ratio_change"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -212,7 +215,7 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 		PartNumber:    req.PartNumber,
 		PartsPerCycle: req.PartsPerCycle,
 	}
-	if err := h.engine.PayloadService().CreateManifestItem(m, req.CATID); err != nil {
+	if err := h.engine.PayloadService().CreateManifestItem(m, req.CATID, req.ConfirmRatioChange); err != nil {
 		h.manifestWriteError(w, err)
 		return
 	}
@@ -222,16 +225,17 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 // apiUpdateManifestItem updates a manifest item on a payload template.
 func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID            int64  `json:"id"`
-		PartNumber    string `json:"part_number"`
-		CATID         string `json:"catid"`
-		PartsPerCycle int64  `json:"parts_per_cycle"`
+		ID                 int64  `json:"id"`
+		PartNumber         string `json:"part_number"`
+		CATID              string `json:"catid"`
+		PartsPerCycle      int64  `json:"parts_per_cycle"`
+		ConfirmRatioChange bool   `json:"confirm_ratio_change"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
-	if err := h.engine.PayloadService().UpdateManifestItem(req.ID, req.PartNumber, req.CATID, req.PartsPerCycle); err != nil {
+	if err := h.engine.PayloadService().UpdateManifestItem(req.ID, req.PartNumber, req.CATID, req.PartsPerCycle, req.ConfirmRatioChange); err != nil {
 		h.manifestWriteError(w, err)
 		return
 	}
@@ -241,13 +245,14 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 // apiDeleteManifestItem removes a manifest item from a payload template.
 func (h *Handlers) apiDeleteManifestItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID int64 `json:"id"`
+		ID                 int64 `json:"id"`
+		ConfirmRatioChange bool  `json:"confirm_ratio_change"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if err := h.engine.PayloadService().DeleteManifestItem(req.ID); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+	if err := h.engine.PayloadService().DeleteManifestItem(req.ID, req.ConfirmRatioChange); err != nil {
+		h.manifestWriteError(w, err)
 		return
 	}
 	h.jsonSuccess(w)

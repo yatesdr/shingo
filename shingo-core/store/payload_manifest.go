@@ -16,6 +16,12 @@ func (db *DB) DeletePayloadManifestItem(id int64) error {
 	return payloads.DeleteItem(db.DB, id)
 }
 
+// PayloadOfManifestItem is the payload a manifest line belongs to
+// (payloads.ItemPayload).
+func (db *DB) PayloadOfManifestItem(id int64) (int64, bool, error) {
+	return payloads.ItemPayload(db.DB, id)
+}
+
 func (db *DB) ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, error) {
 	return payloads.ListManifest(db.DB, payloadID)
 }

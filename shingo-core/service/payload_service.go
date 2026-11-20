@@ -459,36 +459,60 @@ func ValidateManifestLines(lines []payloads.Line) error {
 
 // CreateManifestItem inserts a manifest item on a payload template, minting or
 // matching the part it names. catid is the part's controls identity when the
-// caller is originating it; blank leaves a known part's alone.
-func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem, catid string) error {
+// caller is originating it; blank leaves a known part's alone. A line that
+// changes the ratio or makes the part a kit under standing counts is the
+// payload guards' (checkLines); seen says the ratio change's warning was seen.
+func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem, catid string, seen bool) error {
 	if err := ValidateManifestLines([]payloads.Line{{
 		PartNumber: item.PartNumber, PartsPerCycle: item.PartsPerCycle,
 	}}); err != nil {
+		return err
+	}
+	added := protocol.ManifestItem{PartNumber: item.PartNumber, PartsPerCycle: item.PartsPerCycle}
+	if err := s.checkLines(item.PayloadID, func(stored []*payloads.ManifestItem) []protocol.ManifestItem {
+		return append(storedLinesExcept(stored, 0, nil), added)
+	}, seen); err != nil {
 		return err
 	}
 	return s.payloadsWritten(s.db.CreatePayloadManifestItem(item, catid))
 }
 
 // UpdateManifestItem adjusts a manifest item's part, that part's cat id, and
-// its per-cycle ratio.
-func (s *PayloadService) UpdateManifestItem(id int64, partNumber, catid string, partsPerCycle int64) error {
+// its per-cycle ratio, through the payload guards (lineGuard).
+func (s *PayloadService) UpdateManifestItem(id int64, partNumber, catid string, partsPerCycle int64, seen bool) error {
 	if err := ValidateManifestLines([]payloads.Line{{
 		PartNumber: partNumber, PartsPerCycle: partsPerCycle,
 	}}); err != nil {
 		return err
 	}
+	if err := s.lineGuard(id, &protocol.ManifestItem{PartNumber: partNumber, PartsPerCycle: partsPerCycle}, seen); err != nil {
+		return err
+	}
 	return s.payloadsWritten(s.db.UpdatePayloadManifestItem(id, partNumber, catid, partsPerCycle))
 }
 
-// DeleteManifestItem removes a manifest item from a payload template.
-func (s *PayloadService) DeleteManifestItem(id int64) error {
+// DeleteManifestItem removes a manifest item from a payload template, through
+// the payload guards (lineGuard): a kit left with one line, or a part's only
+// line removed, under standing counts.
+func (s *PayloadService) DeleteManifestItem(id int64, seen bool) error {
+	if err := s.lineGuard(id, nil, seen); err != nil {
+		return err
+	}
 	return s.payloadsWritten(s.db.DeletePayloadManifestItem(id))
 }
 
 // ReplaceManifest swaps out a payload template's whole manifest in one pass,
-// validating every line and minting or matching each line's part.
+// validating every line and minting or matching each line's part. Its caller
+// is the importer, which has no warning to show: a ratio change or a kit flip
+// under standing counts is refused (checkLines, never seen), and the engineer
+// makes it on Edit Payload, where the warning is.
 func (s *PayloadService) ReplaceManifest(payloadID int64, lines []payloads.Line) error {
 	if err := ValidateManifestLines(lines); err != nil {
+		return err
+	}
+	if err := s.checkLines(payloadID, func([]*payloads.ManifestItem) []protocol.ManifestItem {
+		return protocolLinesOf(lines)
+	}, false); err != nil {
 		return err
 	}
 	return s.payloadsWritten(s.db.ReplacePayloadManifest(payloadID, lines))

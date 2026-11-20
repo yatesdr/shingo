@@ -119,37 +119,45 @@ func countUnitGuard(code string, before, after []protocol.ManifestItem, holders 
 	return nil, c
 }
 
-// checkCountUnit runs countUnitGuard for a save that states a manifest: the
-// stored lines against the stated ones, and the holders read only when the
-// line count's kind or the ratio would change.
+// checkCountUnit runs the payload guards for a save that states a manifest
+// (Edit Payload): the stored lines against the stated ones (checkLines).
 func (s *PayloadService) checkCountUnit(p *payloads.Payload, sets PayloadSets, seen bool) error {
 	if sets.Manifest == nil {
 		return nil
 	}
-	stored, err := s.db.ListPayloadManifest(p.ID)
+	return s.checkLines(p.ID, func([]*payloads.ManifestItem) []protocol.ManifestItem {
+		return protocolLinesOf(*sets.Manifest)
+	}, seen)
+}
+
+// checkLines is the payload guards for any write to a payload's manifest
+// lines: every door that sets them asks it (Edit Payload, a line added, edited
+// or deleted, the importer's replace), so a ratio cannot change, nor a part
+// become a kit, under standing counts by a door the guard does not sit on.
+// after is the lines the write leaves, from the stored ones. The holders are
+// read only when the kind of manifest (one line or several) or the ratio would
+// change. seen says the engineer has seen the ratio change's warning.
+func (s *PayloadService) checkLines(payloadID int64, after func([]*payloads.ManifestItem) []protocol.ManifestItem, seen bool) error {
+	stored, err := s.db.ListPayloadManifest(payloadID)
 	if err != nil {
-		return fmt.Errorf("read %s's manifest: %w", p.Code, err)
+		return fmt.Errorf("read payload %d's manifest: %w", payloadID, err)
 	}
-	before := domain.ProtocolLines(stored)
-	var after []protocol.ManifestItem
-	for _, l := range *sets.Manifest {
-		after = append(after, protocol.ManifestItem{PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle})
-	}
+	before, next := domain.ProtocolLines(stored), after(stored)
 	// A part at 1 a cycle and a kit both read at ratio 1, so the flip is asked
 	// on its own: the holders are read for either.
-	if !kitFlip(before, after) && protocol.UOPRatio(before) == protocol.UOPRatio(after) {
+	if !kitFlip(before, next) && protocol.UOPRatio(before) == protocol.UOPRatio(next) {
 		return nil
 	}
-	code := p.Code
-	if b, err := s.db.GetPayload(p.ID); err == nil && b != nil {
-		code = b.Code
+	p, err := s.db.GetPayload(payloadID)
+	if err != nil {
+		return fmt.Errorf("read payload %d: %w", payloadID, err)
 	}
-	holders, bins, piles, err := s.db.PayloadCountHolders(code, 10)
+	holders, bins, piles, err := s.db.PayloadCountHolders(p.Code, 10)
 	if err != nil {
 		// A failed read must not become a silent allow.
-		return fmt.Errorf("cannot read which bins and piles of %s hold a count: %w", code, err)
+		return fmt.Errorf("cannot read which bins and piles of %s hold a count: %w", p.Code, err)
 	}
-	refuse, change := countUnitGuard(code, before, after, holders, bins, piles)
+	refuse, change := countUnitGuard(p.Code, before, next, holders, bins, piles)
 	if refuse != nil {
 		return refuse
 	}
@@ -157,4 +165,43 @@ func (s *PayloadService) checkCountUnit(p *payloads.Payload, sets PayloadSets, s
 		return &RatioChangeUnseen{Change: *change}
 	}
 	return nil
+}
+
+// protocolLinesOf is a stated manifest's lines as the ratio reads them.
+func protocolLinesOf(lines []ManifestLine) []protocol.ManifestItem {
+	out := make([]protocol.ManifestItem, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, protocol.ManifestItem{PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle})
+	}
+	return out
+}
+
+// storedLinesExcept is the stored lines as the ratio reads them, with the line
+// id replaced by with (nil: left out).
+func storedLinesExcept(stored []*payloads.ManifestItem, id int64, with *protocol.ManifestItem) []protocol.ManifestItem {
+	var out []protocol.ManifestItem
+	for _, l := range stored {
+		if l.ID != id {
+			out = append(out, protocol.ManifestItem{PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle})
+		} else if with != nil {
+			out = append(out, *with)
+		}
+	}
+	return out
+}
+
+// lineGuard is checkLines for a door that names a line by its id: the line's
+// payload, then the stored lines with the line edited (with) or deleted (nil).
+// A line that is not there is left to the write, which answers it.
+func (s *PayloadService) lineGuard(id int64, with *protocol.ManifestItem, seen bool) error {
+	payloadID, ok, err := s.db.PayloadOfManifestItem(id)
+	if err != nil {
+		return fmt.Errorf("read manifest line %d: %w", id, err)
+	}
+	if !ok {
+		return nil
+	}
+	return s.checkLines(payloadID, func(stored []*payloads.ManifestItem) []protocol.ManifestItem {
+		return storedLinesExcept(stored, id, with)
+	}, seen)
 }

@@ -349,3 +349,74 @@ func TestPayloadRatioChangeWarnsThenSaves(t *testing.T) {
 		t.Errorf("a part at 1 a cycle to a kit with a count standing: %d %v; want 409 naming RATIO-BIN, nothing written", code, out)
 	}
 }
+
+// TestManifestLineDoorsAskThePayloadGuards: every door that writes a
+// payload's manifest lines asks the payload guards, not Edit Payload's alone.
+// A line's edit and a line's delete that change the ratio under a counted bin
+// answer 409 with the warning and write nothing, then save on
+// confirm_ratio_change; a line added that makes the part a kit is refused,
+// confirmed or not; the importer's replace has no warning to show and refuses
+// a ratio change outright.
+func TestManifestLineDoorsAskThePayloadGuards(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	p := &payloads.Payload{Code: "DOOR-A", Description: "d", UOPCapacity: 800}
+	testutil.MustNoErr(t, db.CreatePayload(p), "seed payload")
+	line := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "DOOR-A", PartsPerCycle: 8}
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(line, ""), "seed line")
+	bt := &bins.BinType{Code: "DOOR-BT"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "seed bin type")
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "DOOR-BIN", Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(bin), "seed bin")
+	if _, err := db.Exec(`UPDATE bins SET payload_code = $1, uop_remaining = 800 WHERE id = $2`, p.Code, bin.ID); err != nil {
+		t.Fatalf("seed count: %v", err)
+	}
+	lines := func() []int64 {
+		ls, err := db.ListPayloadManifest(p.ID)
+		testutil.MustNoErr(t, err, "read lines")
+		var out []int64
+		for _, l := range ls {
+			out = append(out, l.PartsPerCycle)
+		}
+		return out
+	}
+	call := func(door http.HandlerFunc, path string, body map[string]any) (int, map[string]any) {
+		rec := postJSON(t, door, path, body)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	edit := map[string]any{"id": line.ID, "part_number": "DOOR-A", "parts_per_cycle": 4}
+	if code, out := call(h.apiUpdateManifestItem, "/api/payloads/manifest/update", edit); code != http.StatusConflict ||
+		out["ratio_change"] == nil || fmt.Sprint(lines()) != "[8]" {
+		t.Fatalf("a line's edit 8 -> 4, unconfirmed: %d %v, lines %v; want 409 with the warning, [8]", code, out, lines())
+	}
+	edit["confirm_ratio_change"] = true
+	if code, out := call(h.apiUpdateManifestItem, "/api/payloads/manifest/update", edit); code != http.StatusOK || fmt.Sprint(lines()) != "[4]" {
+		t.Fatalf("a line's edit 8 -> 4, confirmed: %d %v, lines %v; want 200, [4]", code, out, lines())
+	}
+	add := map[string]any{"payload_id": p.ID, "part_number": "DOOR-B", "parts_per_cycle": 1, "confirm_ratio_change": true}
+	if code, out := call(h.apiCreateManifestItem, "/api/payloads/manifest/create", add); code != http.StatusConflict ||
+		!strings.Contains(fmt.Sprint(out["error"]), "DOOR-BIN") || fmt.Sprint(lines()) != "[4]" {
+		t.Errorf("a line added (a kit) under a count: %d %v, lines %v; want 409 naming DOOR-BIN, [4]", code, out, lines())
+	}
+	del := map[string]any{"id": line.ID}
+	if code, out := call(h.apiDeleteManifestItem, "/api/payloads/manifest/delete", del); code != http.StatusConflict ||
+		out["ratio_change"] == nil || fmt.Sprint(lines()) != "[4]" {
+		t.Errorf("the only line deleted (4 -> 1), unconfirmed: %d %v, lines %v; want 409 with the warning, [4]", code, out, lines())
+	}
+	refused := h.engine.PayloadService().ReplaceManifest(p.ID, []payloads.Line{{PartNumber: "DOOR-A", PartsPerCycle: 2}})
+	var unseen *service.RatioChangeUnseen
+	if !errors.As(refused, &unseen) || fmt.Sprint(lines()) != "[4]" {
+		t.Errorf("the importer's replace 4 -> 2 under a count: %v, lines %v; want RatioChangeUnseen, [4]", refused, lines())
+	}
+	del["confirm_ratio_change"] = true
+	if code, out := call(h.apiDeleteManifestItem, "/api/payloads/manifest/delete", del); code != http.StatusOK || len(lines()) != 0 {
+		t.Errorf("the only line deleted, confirmed: %d %v, lines %v; want 200, none", code, out, lines())
+	}
+	b, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	if b.UOPRemaining != 800 {
+		t.Errorf("the bin's count after every door = %d, want 800: no count moves", b.UOPRemaining)
+	}
+}
