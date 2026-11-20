@@ -58,3 +58,35 @@ func TestSchemaDrift_NamesAHandDroppedIndexAnAddedColumnAndAMissingTable(t *test
 		t.Fatalf("the boot's drift report:\n  got  %q\n  want %q", got, want)
 	}
 }
+
+// TestV185_AHandDroppedIndexIsDriftNotARerun: v185's verify asserts only what
+// a re-run of v185 restores, so an index dropped by hand after it ran does not
+// make the next boot re-run it (which would take every table's lock and still
+// not bring the index back, every boot). The boot's drift report names it.
+func TestV185_AHandDroppedIndexIsDriftNotARerun(t *testing.T) {
+	t.Parallel()
+	raw, cfg := testdb.OpenWithConfig(t)
+	var before string
+	if err := raw.QueryRow(`SELECT applied_at::text FROM schema_migrations WHERE version = 185`).Scan(&before); err != nil {
+		t.Fatalf("read v185's row: %v", err)
+	}
+	if _, err := raw.Exec(`DROP INDEX idx_mission_telemetry_station_uid`); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var after string
+	if err := raw.QueryRow(`SELECT applied_at::text FROM schema_migrations WHERE version = 185`).Scan(&after); err != nil {
+		t.Fatalf("read v185's row after the boot: %v", err)
+	}
+	if after != before {
+		t.Errorf("the boot re-ran v185 over a dropped index (applied_at %s -> %s): its verify asserts what a re-run cannot restore", before, after)
+	}
+	want := "schema drift: index idx_mission_telemetry_station_uid is missing (this build ships it)"
+	if got := db.DriftAtBoot(); !slices.Equal(got, []string{want}) {
+		t.Errorf("the boot's drift report %q, want only %q", got, want)
+	}
+}
