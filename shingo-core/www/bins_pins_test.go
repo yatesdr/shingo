@@ -643,14 +643,13 @@ func TestPinBins_Rows(t *testing.T) {
 	}
 }
 
-// TestPinBins_RecordCount pins the cycle-count door (the wizard posts
-// record_count through /api/bins/action, bins.js:654-675):
+// TestPinBins_RecordCount pins the record_count door (the bin pop-up's Record
+// Count posts it through /api/bins/action; the cycle-count wizard that also
+// posted it was removed on the owner's ruling, 2026-11-19):
 //   - typed: the typed value is stored, the audit says expected -> typed;
-//   - stale: the page loaded at 100, the count then moved to 80, and the wizard
-//     posts the page-load 100 (what ccConfirm sends, bins.js:656). TODAY the
-//     server takes it: stored 100, expected read fresh (80), a +20 discrepancy
-//     note, 200 ok. The fix is client-side (step 2 re-reads the bin), so the
-//     server answer is predicted unchanged;
+//   - stale: the page loaded at 100, the count then moved to 80, and a client
+//     posts the page-load 100. The server takes it: stored 100, expected read
+//     fresh (80), a +20 discrepancy note, 200 ok;
 //   - refused: a bin with no payload is a 400 with the reason; nothing stored.
 func TestPinBins_RecordCount(t *testing.T) {
 	t.Parallel()
