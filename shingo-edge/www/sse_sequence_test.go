@@ -387,9 +387,17 @@ func TestSSE_StreamTouchesItsStation(t *testing.T) {
 	if _, ok := nextFrame(t, plain, "connected", 2*time.Second); !ok {
 		t.Fatal("no connected frame")
 	}
-	mu.Lock()
-	got := append([]int64(nil), touched...)
-	mu.Unlock()
+	// The handler touches after it flushes a heartbeat, so the second one can
+	// arrive here before its touch lands: wait for the touch, not the frame.
+	var got []int64
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		mu.Lock()
+		got = append([]int64(nil), touched...)
+		mu.Unlock()
+		if len(got) >= 3 || time.Now().After(deadline) {
+			break
+		}
+	}
 	if len(got) < 3 {
 		t.Fatalf("touched %v: want station 7 on connect and on each of two heartbeats", got)
 	}
