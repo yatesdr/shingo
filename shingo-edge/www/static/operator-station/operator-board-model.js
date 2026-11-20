@@ -21,20 +21,34 @@
 'use strict';
 
 import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus, leavesAsDemand, windowRole } from './operator-window-state.js';
-import { splitUOP } from '/static/shared/count.js';
+import { countReading } from '/static/shared/count-words.js';
+import { uopRatio } from '/static/shared/count.js';
 
-// cyclesLeftWords is what a consume tile says of a part an assembly uses more
-// than one of a cycle: the tile's count is pieces, so it says the cycles they
-// make too, the whole UOP of the count at the claim's pieces per cycle (the
-// Edge's NodeClaim.PiecesPerCycle; count.js splitUOP), never below 0. '' everywhere
-// else: a produce tile (a press never reads the number), a part at 1 a cycle,
-// a tile with no cart.
-export function cyclesLeftWords(claim, count, noCarrier) {
+// ratioFor is a part's UOP ratio as the board knows it: the tile's claim's for
+// its own part (NodeClaim.PiecesPerCycle; code '' means the claim's), else the
+// part's load template on a loader board (templates: the view's load_templates,
+// count.js uopRatio), else 1, which shows a count as it always was. A pile of a
+// part that is neither the tile's claim's nor on the board's templates reads
+// in parts only.
+export function ratioFor(templates, entry, code) {
+    const claim = entry && entry.active_claim;
+    if (claim && (!code || code === claim.payload_code)) return Number(claim.pieces_per_cycle) || 1;
+    const t = templates && templates[code];
+    return t ? uopRatio(t.items) : 1;
+}
+
+// tileCount is what a node tile shows of its count and its pack, press and
+// assembly alike (owner, 2026-11-19: UOP big, the parts small beside it). Above
+// a ratio of 1 (the claim's part's, NodeClaim.PiecesPerCycle) the count and the
+// pack read in UoP where they stood, and the parts the bin holds go under them:
+// 404 of a pack of 800 at 8 a cycle reads 50 / 100 with "404 parts" under. At a
+// ratio of 1, or a claim with no number, the count and the pack as they are and
+// nothing under: the tile as it always was. A tile with no cart says nothing
+// under (count-words.js countReading).
+export function tileCount(claim, count, capacity, noCarrier) {
     const ratio = claim ? Number(claim.pieces_per_cycle) || 1 : 1;
-    if (!claim || claim.role !== 'consume' || noCarrier || ratio <= 1) return '';
-    const cycles = Math.max(0, splitUOP(count, ratio).uop);
-    // OWNER-WORDS
-    return cycles === 1 ? '1 cycle left' : cycles + ' cycles left';
+    const c = countReading(count, ratio);
+    return { count: c.big, capacity: countReading(capacity, ratio).big, parts: noCarrier ? '' : c.small };
 }
 
 // loaderOf is a tile's loader, or null on every tile that is not a Core

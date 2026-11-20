@@ -370,9 +370,17 @@ body {
     margin-top: -2px;
 }
 
-/* A consume tile's cycles left, for a part used more than one a cycle
-   (cyclesLeftWords): under the count, as quiet as the capacity. */
-.os-node-cycles {
+/* The parts beside a count shown in UoP, for a part used more than one a
+   cycle (count-words.js countReading): as quiet as a capacity. */
+.os-count-parts {
+    font-size: 0.8em;
+    font-weight: 400;
+    color: var(--os-text-muted);
+}
+
+/* A tile's parts, under its count in UoP, for a part used more than one a
+   cycle (tileCount): as quiet as the capacity. */
+.os-node-parts {
     font-size: 16px;
     font-weight: 600;
     color: rgba(255,255,255,0.8);

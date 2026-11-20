@@ -27,10 +27,10 @@ function eq(got, want, label) {
 }
 
 // The model imports the window model (pure as well) for the acts the old
-// boards offered a part, and shared/count.js for a tile's cycles left: all run
-// in one vm, imports and exports dropped.
+// boards offered a part, and shared/count.js and count-words.js for a tile's
+// count: all run in one vm, imports and exports dropped.
 const ctx = vm.createContext({});
-['../../../../shared/count.js', 'operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
+['../../../../shared/count.js', '../../../../shared/count-words.js', 'operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
         .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
 });
@@ -1099,20 +1099,22 @@ WIDTHS.forEach(function (w) {
         'scale: the reason line in operator.css (its line, word, words and mark) is the one STEPS measures');
 }
 
-// ── A consume tile's cycles left (cyclesLeftWords) ──
-// The owner's example: 800 pieces at 8 a cycle is 100 cycles; rounded down;
-// never below 0; nothing for a press, a part at 1, a kit or a tile with no cart.
+// ── A node tile's count and pack (tileCount) ──
+// The owner's example: a pack of 800 at 8 a cycle reads 100; a bin pulled at
+// 404 reads 50 with its 404 parts under; press and assembly alike. At a ratio
+// of 1, a kit or a claim with no number the tile is as it was, nothing under.
 {
     const at8 = { role: 'consume', pieces_per_cycle: 8 };
-    eq(M.cyclesLeftWords(at8, 800, false), '100 cycles left', 'cycles: 800 pieces at 8 a cycle');
-    eq(M.cyclesLeftWords(at8, 799, false), '99 cycles left', 'cycles: rounded down');
-    eq(M.cyclesLeftWords(at8, 8, false), '1 cycle left', 'cycles: one cycle');
-    eq(M.cyclesLeftWords(at8, -3, false), '0 cycles left', 'cycles: a count below 0 is 0 cycles');
-    eq(M.cyclesLeftWords(at8, 800, true), '', 'cycles: no cart, no cycles');
-    eq(M.cyclesLeftWords({ role: 'produce', pieces_per_cycle: 8 }, 800, false), '', 'cycles: a press never says them');
-    eq(M.cyclesLeftWords({ role: 'consume', pieces_per_cycle: 1 }, 800, false), '', 'cycles: a part at 1 a cycle');
-    eq(M.cyclesLeftWords({ role: 'consume' }, 800, false), '', 'cycles: a claim with no number');
-    eq(M.cyclesLeftWords(null, 800, false), '', 'cycles: no claim');
+    eq(M.tileCount(at8, 800, 800, false), { count: 100, capacity: 100, parts: '800 parts' }, 'tile: a full pack at 8');
+    eq(M.tileCount(at8, 404, 800, false), { count: 50, capacity: 100, parts: '404 parts' }, 'tile: pulled at 404');
+    eq(M.tileCount({ role: 'produce', pieces_per_cycle: 8 }, 403, 800, false), { count: 50, capacity: 100, parts: '403 parts' },
+        'tile: a press tile reads the same way');
+    eq(M.tileCount(at8, -5, 800, false), { count: 0, capacity: 100, parts: '-5 parts' }, 'tile: below 0, never a lost part');
+    eq(M.tileCount(at8, 0, 800, true), { count: 0, capacity: 100, parts: '' }, 'tile: no cart, nothing under');
+    eq(M.tileCount({ role: 'consume', pieces_per_cycle: 1 }, 800, 800, false), { count: 800, capacity: 800, parts: '' },
+        'tile: a part at 1 a cycle is as it was');
+    eq(M.tileCount({ role: 'consume' }, 60, 60, false), { count: 60, capacity: 60, parts: '' }, 'tile: a claim with no number');
+    eq(M.tileCount(null, 7, 0, false), { count: 7, capacity: 0, parts: '' }, 'tile: no claim');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

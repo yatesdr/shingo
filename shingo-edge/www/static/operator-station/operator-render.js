@@ -6,7 +6,7 @@ import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, tileRole, takesBare, stageTwoOn, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
-import { windowWords, cyclesLeftWords } from './operator-board-model.js';
+import { windowWords, tileCount } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
@@ -1069,20 +1069,20 @@ function createNodeButton(entry) {
         // field Core reads as a physical measurement (SwitchNode); saying what
         // is true is the replacement for inventing a number.
         const noCarrier = claim && runtime.active_bin_id == null;
+        // The count and the pack in UoP above a ratio of 1, the parts under
+        // them; at 1 the tile as it always was (tileCount).
+        const shown = tileCount(claim, remaining, capacity, noCarrier);
         btn.appendChild(el('span', {
             className: 'os-node-remaining',
-            textContent: claim ? (noCarrier ? 'NO BIN' : String(remaining)) : '--'
+            textContent: claim ? (noCarrier ? 'NO BIN' : String(shown.count)) : '--'
         }));
         if (claim && capacity > 0 && !noCarrier) {
             btn.appendChild(el('span', {
                 className: 'os-node-capacity',
-                textContent: '/ ' + capacity
+                textContent: '/ ' + shown.capacity
             }));
         }
-        // An assembly that uses more than one of its part a cycle: the count
-        // is pieces, and the cycles they make are said under it.
-        const cycles = cyclesLeftWords(claim, remaining, noCarrier);
-        if (cycles) btn.appendChild(el('span', { className: 'os-node-cycles', textContent: cycles }));
+        if (shown.parts) btn.appendChild(el('span', { className: 'os-node-parts', textContent: shown.parts }));
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));

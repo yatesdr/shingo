@@ -49,6 +49,7 @@ function extractFn(src, name) {
 // lift the two pure functions out and give them the escape they import.
 const src = fs.readFileSync(path.join(SRC_DIR, 'operator-release.js'), 'utf8');
 const ctx = vm.createContext({ esc: (s) => String(s) });
+require('./lend-count.js')(ctx);
 vm.runInContext(
     extractFn(src, 'isChangeoverRelease') + '\n' +
     extractFn(src, 'releasePromptStep1HTML') + '\n' +

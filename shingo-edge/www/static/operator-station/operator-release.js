@@ -1,7 +1,8 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // the prompt puts payload codes inside attributes.
 import { esc } from '/static/shared/esc.js';
-import { abovePackNote } from '/static/shared/count-words.js';
+import { abovePackNote, countReading, countSaid, typedNote } from '/static/shared/count-words.js';
+import { ratioFor } from './operator-board-model.js';
 import { postAction } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
 import { openKeypad } from './operator-keypad.js';
@@ -171,11 +172,16 @@ function releaseFullPromptHTML(entry) {
     const counted = rt && rt.remaining_uop_cached != null ? rt.remaining_uop_cached : 0;
     const claim = entry && entry.active_claim;
     const pack = claim && claim.uop_capacity ? claim.uop_capacity : 0;
+    const ratio = ratioFor(null, entry, '');
+    const c = countReading(counted, ratio), p = countReading(pack, ratio);
+    // OWNER-WORDS: above a ratio of 1 the UoP, the parts in brackets.
+    const countedWords = c.split ? c.big + ' of ' + p.big + ' UoP (' + counted + ' of ' + pack + ' parts)' : counted + ' of ' + pack;
+    const packWords = p.split ? p.big + ' UoP (' + pack + ' parts)' : String(pack);
     let html = '';
     html += '<div class="modal-header">';
     html += '<div class="modal-node-name">Release</div>';
-    html += '<div class="modal-payload">Counted ' + esc(String(counted)) + ' of ' + esc(String(pack)) + '</div>';
-    html += '<div class="modal-payload">RELEASE FULL books it as ' + esc(String(pack)) + ' and logs the count.</div>';
+    html += '<div class="modal-payload">Counted ' + esc(countedWords) + '</div>';
+    html += '<div class="modal-payload">RELEASE FULL books it as ' + esc(packWords) + ' and logs the count.</div>';
     html += '</div>';
     html += '<div class="modal-actions">';
     html += '<button type="button" class="os-action-btn release-empty" data-action="release-short-partial">RELEASE PARTIAL</button>';
@@ -334,7 +340,7 @@ function releasePromptStep1HTML(state) {
             const picked = qty > 0;
             html += '<button type="button" class="os-action-btn os-release-part-btn' +
                 (picked ? ' picked' : '') + '" data-action="release-pick:' + esc(code) + '">' +
-                esc(code) + ' (' + qty + ')</button>';
+                esc(code) + ' (' + esc(countSaid(qty, ratioFor(null, state.entry, code), String(qty))) + ')</button>';
         });
         html += '</div>';
         html += '<button type="button" class="os-action-btn request"' +
@@ -352,7 +358,8 @@ function releasePromptStep1HTML(state) {
         html += '<div class="os-release-partial-count">';
         html += '<div class="os-release-primary-label">Bin returning to supermarket with:</div>';
         html += '<button type="button" class="os-release-qty-display"' +
-            ' data-action="release-partial-edit">' + partialCount + ' UoP</button>';
+            ' data-action="release-partial-edit">' +
+            esc(countSaid(partialCount, ratioFor(null, state.entry, ''), partialCount + ' UoP')) + '</button>';
         html += '</div>';
     }
 
@@ -401,8 +408,10 @@ function renderReleasePromptUnderpackConfirm() {
 
     html += '<div class="os-release-prompt">';
     html += '<div class="os-release-primary-label">';
-    html += 'System shows <strong>' + esc(String(remainingUOP)) + ' UoP</strong> remaining.<br>';
-    html += 'This will record <strong>' + esc(String(remainingUOP)) + ' units</strong> as missing inventory.';
+    const shows = countReading(remainingUOP, ratioFor(null, state.entry, ''));
+    // OWNER-WORDS: above a ratio of 1, the UoP and the parts it records.
+    html += 'System shows <strong>' + esc(shows.split ? shows.big + ' UoP (' + shows.small + ')' : remainingUOP + ' UoP') + '</strong> remaining.<br>';
+    html += 'This will record <strong>' + esc(shows.split ? shows.small : remainingUOP + ' units') + '</strong> as missing inventory.';
     html += '</div>';
     html += '</div>';
 
@@ -436,6 +445,9 @@ function renderReleasePromptStep2(code) {
     html += '<div class="os-release-prompt">';
     html += '<button type="button" class="os-release-qty-display" data-action="release-qty-edit:' +
         esc(code) + '">' + qty + '</button>';
+    // The pile is typed in parts; above a ratio of 1, the UoP it makes under it.
+    const pileNote = typedNote(qty, ratioFor(null, state.entry, code), 0);
+    if (pileNote) html += '<div class="os-count-parts">' + esc(pileNote.text) + '</div>';
     if (showWarn) {
         html += '<div class="os-release-softcap-warn">';
         html += 'Typo check: this is more than 2\u00D7 the configured lineside soft cap (' +

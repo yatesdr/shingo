@@ -23,7 +23,7 @@ function check(name, cond, detail) {
 
 const load = realm(undefined, ['count.js', 'count-words.js']);
 const { uopRatio, splitUOP, linePieces } = load('count.js');
-const { abovePackNote } = load('count-words.js');
+const { abovePackNote, countReading, typedNote, partsWords, UOP_WORD } = load('count-words.js');
 
 const EXAMPLES = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', '..', '..', 'protocol', 'testdata', 'count-examples.json'), 'utf8')).examples;
@@ -49,6 +49,36 @@ check('404 of 800 is not noted', abovePackNote(404, 800) === null);
 check('0 of 800 is not noted', abovePackNote(0, 800) === null);
 check('an unknown pack says nothing', abovePackNote(803, 0) === null);
 check('a box not yet a number says nothing', abovePackNote(NaN, 800) === null);
+
+// countReading: UOP big and the parts small above a ratio of 1; the count
+// itself and nothing beside it at 1, so a ratio-1 screen reads as it did.
+const reads = [
+    [800, 8, 100, '800 parts'], [404, 8, 50, '404 parts'], [803, 8, 100, '803 parts'], [-5, 8, 0, '-5 parts'],
+    [1500, 5, 300, '1500 parts'], [1, 8, 0, '1 part'], [800, 1, 800, ''], [60, 1, 60, ''], [12, 0, 12, ''],
+];
+reads.forEach(function(c) {
+    const r = countReading(c[0], c[1]);
+    check(c[0] + ' at ' + c[1] + ' reads ' + c[2] + (c[3] ? ' with ' + c[3] : ' and nothing beside'),
+        r.big === c[2] && r.small === c[3] && r.split === (c[1] > 1), JSON.stringify(r));
+});
+check('the unit word is one constant', UOP_WORD === 'UoP');
+check('one part is a part', partsWords(1) === '1 part' && partsWords(2) === '2 parts');
+
+// typedNote: the live line under a typed box.
+const notes = [
+    [800, 8, 800, '= 100 UoP', ''],
+    [404, 8, 800, '= 50 UoP + 4 parts', ''],
+    [803, 8, 800, '= 100 UoP + 3 parts. Above the pack of 800. Saved as typed.', 'warn'],
+    [1500, 5, 1500, '= 300 UoP', ''],
+    [803, 1, 800, 'Above the pack of 800. Saved as typed.', 'warn'],
+];
+notes.forEach(function(c) {
+    const n = typedNote(c[0], c[1], c[2]);
+    check('typing ' + c[0] + ' at ' + c[1] + ': "' + c[3] + '"', n && n.text === c[3] && n.tone === c[4], JSON.stringify(n));
+});
+check('typing 404 at ratio 1 under the pack says nothing', typedNote(404, 1, 800) === null);
+check('typing 0 at 8 says it makes 0', (typedNote(0, 8, 800) || {}).text === '= 0 UoP');
+check('a box that is not a number says nothing', typedNote(NaN, 8, 800) === null);
 
 if (failures > 0) {
     console.log(failures + ' failure(s)');
