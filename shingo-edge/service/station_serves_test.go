@@ -582,3 +582,20 @@ func TestStampBinRatios(t *testing.T) {
 		t.Errorf("UOPRatio = %d and %d, want 2 (the bin's part) and 8 (the claim's)", tiles[0].UOPRatio(), tiles[1].UOPRatio())
 	}
 }
+
+// TestClaimRatios: the composer read's uop_ratios carries each claimed part
+// that reads above 1, once, and nothing when every part reads at 1, so a
+// ratio-1 plant's read is the one it was.
+func TestClaimRatios(t *testing.T) {
+	t.Parallel()
+	got := claimRatios(map[int64][]domain.NodeClaim{
+		1: {{PayloadCode: "P-8", PiecesPerCycle: 8}, {PayloadCode: "P-1", PiecesPerCycle: 1}, {PiecesPerCycle: 4}},
+		2: {{PayloadCode: "P-8", PiecesPerCycle: 8}, {PayloadCode: "P-2", PiecesPerCycle: 2}},
+	})
+	if len(got) != 2 || got["P-8"] != 8 || got["P-2"] != 2 {
+		t.Errorf("claimRatios = %v, want P-8 at 8 and P-2 at 2 only", got)
+	}
+	if got := claimRatios(map[int64][]domain.NodeClaim{1: {{PayloadCode: "P-1", PiecesPerCycle: 1}, {PayloadCode: "K", PiecesPerCycle: 0}}}); got != nil {
+		t.Errorf("every part at 1: %v, want nil (uop_ratios omitted)", got)
+	}
+}

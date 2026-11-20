@@ -15,6 +15,8 @@
 // changeover a wrong part offers (catidStartChangeover).
 
 import { esc } from '/static/shared/esc.js';
+import { typedNote } from '/static/shared/count-words.js';
+import { uopRatio } from '/static/shared/count.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
 // THE ONE OVERLAY STACK (style guide §10). Every sheet, popover and question
 // this page puts up is an entry on it — see pageSheet, showSheet and showPop.
@@ -3547,6 +3549,18 @@ function openReorderPop(btn, node) {
     placePopover(pop, btn);
     const input = pop.querySelector('[data-f="rp"]');
     if (input) input.focus();
+    // THE POINT'S LIVE UoP LINE (uopWords) is the pop's note line, above a
+    // ratio of 1 only; at 1 the note line is left as it was.
+    const note = pop.querySelector('[data-rpnote]');
+    const ratio = placeRatio({ node: node });
+    const live = () => {
+        note.className = 'pd-dim';
+        note.textContent = uopWords(String(input.value || '').replace(/[^0-9]/g, ''), ratio);
+    };
+    if (ratio > 1 && input && note) {
+        live();
+        input.addEventListener('input', live);
+    }
     pop.onclick = e => {
         const b = e.target.closest && e.target.closest('[data-rp]');
         if (e.stopPropagation) e.stopPropagation();
@@ -5265,11 +5279,52 @@ function setPlace(el) {
 
 // setNumber is a number field for key; row is the setting whose row it sits
 // in, kept listed while it is typed into (strict pack's tolerance, the
-// reorder row's point).
+// reorder row's point). A count setting carries its live UoP line (uopLine).
 function setNumber(key, p, d, row) {
     const v = advValue(key, d);
     return '<input class="pd-inp pd-setnum" type="text" inputmode="numeric" data-setnum="' + key + '"' + setData(row || key, p) +
-        ' value="' + esc(v ? String(v) : '') + '" placeholder="—" aria-label="' + esc(W(SET_COPY[key] ? SET_COPY[key][0] : key)) + '">';
+        ' value="' + esc(v ? String(v) : '') + '" placeholder="—" aria-label="' + esc(W(SET_COPY[key] ? SET_COPY[key][0] : key)) + '">' +
+        uopLine(key, v, placeRatio(p));
+}
+
+// COUNT_SETTINGS are the settings typed as a count of the position's part, in
+// parts, as the count they are held against is (owner, 2026-11-19): each shows
+// the UoP it makes as typed, above a ratio of 1 only.
+const COUNT_SETTINGS = ['reorder_point', 'lineside_soft_threshold', 'hold_limit'];
+
+// placeRatio is the UoP ratio of the part at a place: the row's part's, as the
+// composer read sends a claimed part's above 1 (uop_ratios), else Core's
+// catalog as the Edge mirrors it, once the page has read it (count.js uopRatio
+// over its manifest: a part the draft names that no claim does yet); 1 for a
+// recipe group (no part), a row with no part, or a part neither knows, which
+// shows the boxes as they always were. Nothing is read for it.
+function placeRatio(p) {
+    const code = rowPart(p);
+    if (!code) return 1;
+    const sent = S.composer && S.composer.uop_ratios && S.composer.uop_ratios[code];
+    if (sent) return sent;
+    const row = S.payloadCatalog ? S.payloadCatalog.find(c => c.code === code) : null;
+    return row ? uopRatio(row.manifest) : 1;
+}
+
+// uopLine is a count setting's live line under its box, "= 50 UoP + 4 parts"
+// (count-words.js typedNote), kept current as it is typed (setUOPLine). At a
+// ratio of 1 there is none, so the row is the one it was.
+function uopLine(key, v, ratio) {
+    if (!(ratio > 1) || COUNT_SETTINGS.indexOf(key) < 0) return '';
+    return ' <small class="pd-dim" data-uopnote="' + key + '">' + esc(uopWords(v, ratio)) + '</small>';
+}
+
+function uopWords(v, ratio) {
+    const n = Number(v) ? typedNote(Number(v), ratio, 0) : null;
+    return n ? n.text : '';
+}
+
+// setUOPLine redraws the live line beside a count box (uopLine) as it is
+// typed; a box without one (ratio 1, or not a count) has nothing to redraw.
+function setUOPLine(el, digits, ratio) {
+    const note = el.nextElementSibling;
+    if (note && note.dataset && note.dataset.uopnote !== undefined) note.textContent = uopWords(digits, ratio);
 }
 
 function setChip(key, p, v, label) {
@@ -5568,6 +5623,7 @@ function onSetNumber(e) {
     const digits = String(el.value || '').replace(/[^0-9]/g, '');
     const p = setPlace(el);
     keepRow(el.dataset.key, p);
+    setUOPLine(el, digits, placeRatio(p));
     setWrite(p, el.dataset.setnum, digits ? Number(digits) : 0, true);
 }
 
