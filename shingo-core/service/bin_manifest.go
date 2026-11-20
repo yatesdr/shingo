@@ -536,10 +536,11 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 	if err != nil {
 		return "", 0, fmt.Errorf("marshal manifest: %w", err)
 	}
-	if uopOverride != nil && *uopOverride < 0 {
-		return "", 0, fmt.Errorf("uop override %d is negative", *uopOverride)
+	uop, err := standardPackUOP(p.UOPCapacity, uopOverride)
+	if err != nil {
+		return "", 0, err
 	}
-	return string(manifestJSON), standardPackUOP(p.UOPCapacity, uopOverride), nil
+	return string(manifestJSON), uop, nil
 }
 
 // SetForProduction sets a bin's manifest and UOP from a payload template,
@@ -1084,6 +1085,11 @@ var ErrUnknownPayload = errors.New("unknown payload")
 // called back to be finished.
 var ErrCountRequired = errors.New("a load here must say how many it holds")
 
+// ErrNegativeCount refuses a declared count below zero at a load (owner,
+// 2026-11-19: a person can never type a negative). The system's own counting
+// may still take a bin below zero; a declaration may not.
+var ErrNegativeCount = errors.New("a count is 0 or more")
+
 // LoadAtLine is the bin-load telemetry door's write: an operator's LOAD at a
 // loader window, relayed by the Edge, with the parts it named (manifestJSON) and
 // the count it declared, if any.
@@ -1180,7 +1186,11 @@ func (s *BinManifestService) lineLoad(binID int64, payloadCode string, declared 
 		v := int(*declared)
 		d = &v
 	}
-	return standardPackUOP(p.UOPCapacity, d), atHome, nil
+	uop, err := standardPackUOP(p.UOPCapacity, d)
+	if err != nil {
+		return 0, false, err
+	}
+	return uop, atHome, nil
 }
 
 // ReplaceAtLine is the LOAD that replaces a tote (protocol.LoadExpectReplace):
@@ -1330,14 +1340,20 @@ func LoadRefusalFor(b *domain.Bin, claimant *domain.Order) string {
 
 // standardPackUOP is the one statement of the standard-pack rule: absence of a
 // declared count means a full bin, and a full bin is the payload's
-// uop_capacity, in the bin's own count (pieces, for a bin of one part:
-// protocol.ManifestItem). A declared count is honoured as given, including
-// zero — "I counted none" is an answer, not a missing one.
-func standardPackUOP(capacity int, declared *int) int {
-	if declared != nil {
-		return *declared
+// uop_capacity, in the bin's own count (protocol.ManifestItem). A declared
+// count is honoured as given, including zero — "I counted none" is an answer,
+// not a missing one — and a declared negative is refused (owner, 2026-11-19: a
+// person can never type a negative). Every door that declares a count to a
+// template load reaches it: Bins › Load Payload, bin.load and the ingest's
+// no-manifest path. Pinned by TestStandardPackUOP.
+func standardPackUOP(capacity int, declared *int) (int, error) {
+	if declared == nil {
+		return capacity, nil
 	}
-	return capacity
+	if *declared < 0 {
+		return 0, fmt.Errorf("%w: %d", ErrNegativeCount, *declared)
+	}
+	return *declared, nil
 }
 
 // RecordProducedBinFromTemplate is RecordProducedBin for the no-manifest ingest

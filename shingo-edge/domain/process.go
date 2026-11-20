@@ -1017,6 +1017,17 @@ func HoldLimitRefusal(n int) string {
 	return fmt.Sprintf("Most held off the cart is a number of parts, 0 or more; %d is out of range", n)
 }
 
+// NegativeCountRefusal is the sentence for a count setting typed below zero:
+// the reorder point and the lineside soft threshold, each compared with a
+// seat's or a pile's count (owner, 2026-11-19: a person can never type a
+// negative). "" when n is 0 or more. Pinned by TestValidateNodeClaim_NegativeCountSettings.
+func NegativeCountRefusal(label string, n int) string {
+	if n >= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is a count, 0 or more; %d is out of range", label, n)
+}
+
 // StrictPackApplies is the gate for the strict arm: the claim carries
 // strict_pack, is a produce claim, and has a pack (UOPCapacity, resolved from
 // the catalog on every read; the claim's uop_capacity column is dead and a

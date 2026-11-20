@@ -102,5 +102,16 @@ func parseReleaseRequest(r *http.Request) (releaseRequest, error) {
 		log.Printf("release: called_by empty, defaulting to operator_station (url=%s)", r.URL.Path)
 		req.CalledBy = "operator_station"
 	}
+	// A TYPED COUNT IS NEVER NEGATIVE (owner, 2026-11-19): the bin count a
+	// person types on a partial release, and each part's lineside pile. The
+	// floor keypad has no sign; this is the door's own refusal.
+	if req.PartialCount != nil && *req.PartialCount < 0 {
+		return req, fmt.Errorf("partial_count must be 0 or more (got %d)", *req.PartialCount)
+	}
+	for part, qty := range req.QtyByPart {
+		if qty < 0 {
+			return req, fmt.Errorf("the lineside count for %s must be 0 or more (got %d)", part, qty)
+		}
+	}
 	return req, nil
 }

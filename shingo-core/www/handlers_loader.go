@@ -2,6 +2,7 @@ package www
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -201,6 +202,10 @@ func (h *Handlers) apiSetLoaderPayload(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "loader_id and payload_code are required", http.StatusBadRequest)
 		return
 	}
+	if msg := thresholdRefusal(req.UOPThreshold); msg != "" {
+		h.jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
 	by := service.ThresholdBy{Actor: h.getUsername(r), Source: req.Source}
 	if err := h.engine.LoaderService().SetPayload(req.LoaderID, req.PayloadCode, req.UOPThreshold, by); err != nil {
 		h.jsonError(w, "set payload: "+err.Error(), http.StatusInternalServerError)
@@ -309,6 +314,10 @@ func (h *Handlers) apiSetLoaderHome(w http.ResponseWriter, r *http.Request) {
 	// home_kind is optional too: absent → home (the store normalises it).
 	if req.LoaderID == 0 || req.PositionNodeID == 0 {
 		h.jsonError(w, "loader_id and position_node_id are required", http.StatusBadRequest)
+		return
+	}
+	if msg := thresholdRefusal(req.UOPThreshold); msg != "" {
+		h.jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
 	by := service.ThresholdBy{Actor: h.getUsername(r), Source: req.Source}
@@ -489,4 +498,16 @@ func (h *Handlers) apiCalculateThreshold(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.jsonOK(w, res)
+}
+
+// thresholdRefusal is the refill threshold's own refusal at both doors that
+// set one (set-payload, set-home): a count, 0 or more (owner, 2026-11-19: a
+// person can never type a negative). "" when n is 0 or more. Inventory's box
+// refuses a negative before it posts; this is the door's own check, which had
+// none. Pinned by TestThresholdRefusal.
+func thresholdRefusal(n int) string {
+	if n >= 0 {
+		return ""
+	}
+	return fmt.Sprintf("A refill threshold is a count, 0 or more; %d is out of range", n)
 }
