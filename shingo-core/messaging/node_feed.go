@@ -420,12 +420,7 @@ func (s *CoreDataService) CatalogRow(code string) (protocol.CatalogPayloadInfo, 
 func catalogRows(ps []*payloads.Payload, catids map[int64]string, lines map[int64][]*payloads.ManifestItem) []protocol.CatalogPayloadInfo {
 	infos := make([]protocol.CatalogPayloadInfo, len(ps))
 	for i, p := range ps {
-		var manifest []protocol.ManifestItem
-		for _, l := range lines[p.ID] {
-			manifest = append(manifest, protocol.ManifestItem{
-				PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle, Description: l.Description,
-			})
-		}
+		manifest := domain.ProtocolLines(lines[p.ID])
 		infos[i] = protocol.CatalogPayloadInfo{
 			ID: p.ID, Name: p.Code, Code: p.Code,
 			Description: p.Description,

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/cms"
 	"shingocore/store/nodes"
@@ -474,13 +476,13 @@ func postablePerUnit(s Store, payloadCode string) (map[string]int64, error) {
 			"part number CMS books against. Enter the part on the payloads page",
 			payloadCode, len(unresolved), strings.Join(unresolved, ", "))
 	}
+	// Each line's pieces in one unit of the bin's count, by the count rule
+	// (protocol.LinePieces): 1 for a payload of one line, which counts its
+	// part's pieces; the line's ratio for a kit, which counts kits.
+	lines := domain.ProtocolLines(template)
 	perUnit := make(map[string]int64, len(template))
-	if len(template) == 1 {
-		perUnit[template[0].PartNumber] = 1
-		return perUnit, nil
-	}
-	for _, it := range template {
-		perUnit[it.PartNumber] = it.PartsPerCycle
+	for i, it := range template {
+		perUnit[it.PartNumber] = protocol.LinePieces(lines, i, 1)
 	}
 	return perUnit, nil
 }

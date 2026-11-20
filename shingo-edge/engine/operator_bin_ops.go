@@ -331,12 +331,8 @@ func (e *Engine) loadManifest(payloadCode string, uopCount *int64, sent []protoc
 	lines := entry.TemplateLines()
 	out := make([]protocol.IngestManifestItem, len(lines))
 	for i, l := range lines {
-		perUnit := l.PartsPerCycle
-		if len(lines) == 1 {
-			perUnit = 1
-		}
 		out[i] = protocol.IngestManifestItem{
-			PartNumber: l.PartNumber, Quantity: perUnit * *uopCount, Description: l.Description,
+			PartNumber: l.PartNumber, Quantity: protocol.LinePieces(lines, i, *uopCount), Description: l.Description,
 		}
 	}
 	return out, nil

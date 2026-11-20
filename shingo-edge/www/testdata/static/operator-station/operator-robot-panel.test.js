@@ -404,7 +404,7 @@ function bootPage(opts) {
     ctx.formatClock = iso => String(iso);
     ctx.showLostConnectionBanner = () => {};
     ctx.clearLostConnectionBanner = () => {};
-    ['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
+    ['../../../../shared/esc.js', '../../../../shared/count.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
         'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js',
         'operator-release.js', 'operator-modal.js', 'operator-render.js'].forEach(n => loadModule(n));
     loadModule('operator-robot-panel.js', true);

@@ -27,14 +27,16 @@ const D = require('./dom.js');
 // left on screen.
 const { makeRealm } = require(path.join(__dirname, '..', '..', '..', '..', 'shared', 'testdata', 'helper-pins-harness', 'world.js'));
 
-// shared/count-words.js, real: the words a typed count box shows are the
-// page's, not a stub's.
-const COUNT_WORDS = (() => {
+// shared/count-words.js and count.js, real: the words a typed count box shows
+// and a line's pieces are the page's, not a stub's.
+function sharedModule(name) {
     const ctx = require('vm').createContext({});
-    require('vm').runInContext(fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'shared', 'count-words.js'), 'utf8')
+    require('vm').runInContext(fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'shared', name), 'utf8')
         .replace(/^export (?=function )/mg, ''), ctx);
     return ctx;
-})();
+}
+const COUNT_WORDS = sharedModule('count-words.js');
+const COUNT = sharedModule('count.js');
 
 const fx = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const goldens = {};
@@ -102,6 +104,7 @@ function lender(rec, doc, extra) {
         relevantNotices() { return []; }, routeStripHTML() { return ''; }, routeTimelineHTML() { return ''; },
         openNodeModal() { rec.modals.push('openNodeModal'); },
         abovePackNote: COUNT_WORDS.abovePackNote,
+        linePieces: COUNT.linePieces,
     };
     return (n) => (extra && n in extra ? extra[n] : stubs[n]);
 }

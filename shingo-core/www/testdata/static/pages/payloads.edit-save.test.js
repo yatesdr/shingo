@@ -111,6 +111,14 @@ function deferred() {
 }
 function okJSON(data) { return { ok: true, status: 200, json: () => Promise.resolve(data), text: () => Promise.resolve(JSON.stringify(data)) }; }
 
+// COUNT is shared/count.js, real: a line's readout is its arithmetic.
+const COUNT = (() => {
+    const c = vm.createContext({});
+    vm.runInContext(fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count.js'), 'utf8')
+        .replace(/^export (?=function )/mg, ''), c);
+    return c;
+})();
+
 function load(gets) {
     let src = fs.readFileSync(path.join(SRC_DIR, 'payloads.js'), 'utf8');
     src = src.replace(/^import .*$/mg, '');
@@ -135,6 +143,7 @@ function load(gets) {
         api() {},
         el() { return fakeEl(); },
         escapeHtml: (s) => String(s == null ? '' : s),
+        uopRatio: COUNT.uopRatio, splitUOP: COUNT.splitUOP, linePieces: COUNT.linePieces,
         hideModal() {},
         showModal() {},
         removeParentElement() {},

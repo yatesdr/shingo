@@ -155,6 +155,7 @@ const HELPERS = [
     block(EDGE, /function sseTriggerTypes\(/, 'sseTriggerTypes'),
     unModule(read(path.join(JS, 'ask-act.js'))),
     unModule(read(path.join(SHARED, 'count-words.js'))),
+    unModule(read(path.join(SHARED, 'count.js'))),
     FAKE_PICKER,
     ADAPTERS,
 ].join('\n');

@@ -41,6 +41,14 @@ function extractFn(src, name) {
     throw new Error('unclosed function ' + name);
 }
 
+// COUNT is shared/count.js, real: the line counts are its linePieces.
+const COUNT = (() => {
+    const c = vm.createContext({});
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', '..', '..', 'shared', 'count.js'), 'utf8')
+        .replace(/^export (?=function )/mg, ''), c);
+    return c;
+})();
+
 // defaults opens the modal on a part whose manifest read answers data, and
 // returns each line's default count, keyed by part number.
 async function defaults(data) {
@@ -53,6 +61,7 @@ async function defaults(data) {
             createElement: () => ({ style: {}, innerHTML: '' }),
         },
         rbPicker: { value: () => 'SYN-PL-A' },
+        linePieces: COUNT.linePieces,
         api: { get: async () => data },
         escapeHtml: (s) => String(s == null ? '' : s),
         encodeURIComponent, console, Promise,

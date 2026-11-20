@@ -273,7 +273,7 @@ function loadModule(name) {
     Object.assign(ctx, out.exported);
     mods[name] = out.fns;
 }
-['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
+['../../../../shared/esc.js', '../../../../shared/count.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
     'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js', 'operator-modal.js',
     'operator-render.js',
 ].forEach(loadModule);

@@ -27,9 +27,10 @@ function eq(got, want, label) {
 }
 
 // The model imports the window model (pure as well) for the acts the old
-// boards offered a part: both run in one vm, imports and exports dropped.
+// boards offered a part, and shared/count.js for a tile's cycles left: all run
+// in one vm, imports and exports dropped.
 const ctx = vm.createContext({});
-['operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
+['../../../../shared/count.js', 'operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(SRC_DIR, f), 'utf8')
         .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
 });

@@ -2,6 +2,7 @@ import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { abovePackNote } from '/static/shared/count-words.js';
+import { linePieces } from '/static/shared/count.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
@@ -398,15 +399,13 @@ function renderContents(data) {
 
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
     // The count is derived, not stored, from uop_remaining and the template
-    // line, by protocol.ManifestItem's count rule (a template of one line
+    // line, by the count rule (count.js linePieces: a template of one line
     // shows the bin's count as it stands). A part the template no longer
     // lists shows "—" rather than 0, because "we cannot count this" and "there
     // are none" are different things to tell someone standing at the bin.
     var template = data.template_manifest || [];
-    var perUnit = {};
-    template.forEach(function(t) {
-      perUnit[t.part_number] = template.length === 1 ? 1 : t.parts_per_cycle;
-    });
+    var lineOf = {};
+    template.forEach(function(t, i) { lineOf[t.part_number] = i; });
     var uop = (b && b.uop_remaining) || 0;
     // Either key: lines are written as part_number, and bins loaded before that
     // change carry catid. Same fallback the Go reader and the inventory query
@@ -414,8 +413,8 @@ function renderContents(data) {
     html += h`<table class="table-compact"><thead><tr><th>Part number</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
       data.manifest.items.map(function(item) {
         var part = item.part_number || item.catid;
-        var per = perUnit[part];
-        var qty = per == null ? '—' : String(uop * per);
+        var line = lineOf[part];
+        var qty = line == null ? '—' : String(linePieces(template, line, uop));
         return h`<tr><td><code>${part}</code></td><td>${qty}</td><td>${item.notes || ''}</td></tr>`;
       })
     }</tbody></table>`;

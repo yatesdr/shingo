@@ -259,13 +259,15 @@ function extractFn(src, name) {
 function loadContents() {
     const bins = fs.readFileSync(path.join(SRC_DIR, 'bins.js'), 'utf8');
     const dom = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'dom.js'), 'utf8');
+    const count = fs.readFileSync(path.join(SRC_DIR, '..', '..', '..', '..', 'shared', 'count.js'), 'utf8');
     const els = {};
     const ctx = {
         escapeHtml, PAGE_AUTH: false,
         document: { getElementById: (id) => (els[id] = els[id] || { innerHTML: '' }) },
     };
     vm.createContext(ctx);
-    vm.runInContext(extractFn(dom, 'h') + '\n' + extractFn(bins, 'renderContents') +
+    vm.runInContext(extractFn(dom, 'h') + '\n' + extractFn(count, 'linePieces').replace(/^export /, '') + '\n' +
+        extractFn(bins, 'renderContents') +
         '\nthis.renderContents = renderContents;', ctx);
     // qtys draws the answer and returns each row's part and Qty cell.
     return function qtys(data) {

@@ -1,4 +1,6 @@
-// count.test.js — the words a typed count box shows (shared/count-words.js).
+// count.test.js — a bin's count in the browser: the arithmetic (shared/count.js,
+// over protocol/testdata/count-examples.json, the file TestCountExamples reads
+// for the Go copy) and the words a typed count box shows (count-words.js).
 //
 // The owner's rule (2026-11-19): a count above the pack is accepted where a
 // person types one, with a visible note. The note is said above the pack and
@@ -8,6 +10,8 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { realm } = require('./shared-modules.js');
 
 let failures = 0;
@@ -17,8 +21,25 @@ function check(name, cond, detail) {
     console.log('  FAIL ' + name + (detail ? '\n       ' + detail : ''));
 }
 
-const load = realm(undefined, ['count-words.js']);
+const load = realm(undefined, ['count.js', 'count-words.js']);
+const { uopRatio, splitUOP, linePieces } = load('count.js');
 const { abovePackNote } = load('count-words.js');
+
+const EXAMPLES = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'protocol', 'testdata', 'count-examples.json'), 'utf8')).examples;
+check('the worked examples are there to check', EXAMPLES.length > 0);
+EXAMPLES.forEach(function(ex) {
+    check(ex.name + ': ratio ' + ex.ratio, uopRatio(ex.lines) === ex.ratio, 'got ' + uopRatio(ex.lines));
+    const s = splitUOP(ex.count, ex.ratio);
+    check(ex.name + ': ' + ex.uop + ' UOP, ' + ex.parts + ' parts', s.uop === ex.uop && s.parts === ex.parts,
+        'got ' + JSON.stringify(s));
+    check(ex.name + ': no part lost', s.uop * Math.max(ex.ratio, 1) + s.parts === ex.count);
+    ex.line_pieces.forEach(function(want, i) {
+        const got = linePieces(ex.lines, i, ex.count);
+        check(ex.name + ': line ' + i + ' holds ' + want, got === want, 'got ' + got);
+    });
+    check(ex.name + ': a line past the template is 0', linePieces(ex.lines, ex.lines.length, ex.count) === 0);
+});
 
 const over = abovePackNote(803, 800);
 check('803 of a pack of 800 is noted, as a warning',

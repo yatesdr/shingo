@@ -1,5 +1,6 @@
 import { esc } from '/static/shared/esc.js';
 import { abovePackNote } from '/static/shared/count-words.js';
+import { linePieces } from '/static/shared/count.js';
 import { postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
 import { findNodeByID, getView } from './operator-state.js';
@@ -126,19 +127,20 @@ function applyTemplate(data) {
     // The template the catalog holds, shown so the operator can check the bin
     // matches it; the ratios are the catalog's and are not editable here.
     //
-    // What is held is the TEMPLATE: per part, how many of it one unit of the
-    // UoP count is (per_unit), by protocol.ManifestItem's count rule — 1 for a
-    // template of one line, whose bin counts pieces, so a press's screen never
-    // shows a count scaled by an assembly's pieces per cycle. The count a line
-    // shows is per_unit times the UoP count the operator sets, derived at
-    // render, because the operator can change UoP after the template opens.
-    // LOAD sends the part and the count, and the Edge builds the bin's
-    // manifest from the same catalog copy by the same rule (engine
-    // loadManifest).
-    loadBinState.manifest = items.map(function(item) {
+    // What is held is the TEMPLATE (its lines), and each line shows its
+    // pieces in the count the operator sets, by the count rule (count.js
+    // linePieces): the count itself for a template of one line, whose bin
+    // counts pieces, so a press's screen never shows a count scaled by an
+    // assembly's pieces per cycle; the count times the line's ratio for a kit.
+    // Derived at render, because the operator can change the count after the
+    // template opens. LOAD sends the part and the count, and the Edge builds
+    // the bin's manifest from the same catalog copy by the same rule (engine
+    // loadManifest, protocol.LinePieces).
+    loadBinState.lines = items;
+    loadBinState.manifest = items.map(function(item, i) {
         return {
             part_number: item.part_number,
-            per_unit: items.length === 1 ? 1 : (item.parts_per_cycle || 0),
+            line: i,
             description: item.description || '',
         };
     });
@@ -236,7 +238,7 @@ function renderRows() {
                     : '') +
             '</div>' +
             '<div style="min-width:60px;text-align:right;color:#cfd;font-size:18px;font-weight:600">' +
-                (item.per_unit * state.uopCount) + '</div>';
+                linePieces(state.lines, item.line, state.uopCount) + '</div>';
         rows.appendChild(row);
     });
 }

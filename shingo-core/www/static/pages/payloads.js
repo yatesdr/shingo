@@ -1,6 +1,7 @@
 import { delegateActions, el, escapeHtml } from '/static/shared/dom.js';
 import { hideModal, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { linePieces, splitUOP, uopRatio } from '/static/shared/count.js';
 
 /* --- Manifest builder ---
  *
@@ -36,14 +37,20 @@ function uopCapacityFor(containerId) {
 function renderFullBin(row, containerId) {
   var cell = row.querySelector('.mr-fullbin');
   if (!cell) return;
-  var per = parseInt(row.querySelector('.mr-per-cycle').value) || 0;
   var cap = uopCapacityFor(containerId);
-  if (cap > 0 && manifestRows(containerId).length === 1) {
+  // The form's lines as typed, the shape count.js reads.
+  var rows = Array.prototype.slice.call(manifestRows(containerId));
+  var lines = rows.map(function(r) {
+    return { parts_per_cycle: parseInt(r.querySelector('.mr-per-cycle').value) || 0 };
+  });
+  var i = rows.indexOf(row);
+  if (cap > 0 && lines.length === 1) {
+    var ratio = uopRatio(lines);
     // OWNER-WORDS
-    cell.textContent = per > 1 ? '= ' + Math.floor(cap / per) + ' cycles / bin' : '';
+    cell.textContent = ratio > 1 ? '= ' + splitUOP(cap, ratio).uop + ' cycles / bin' : '';
     return;
   }
-  cell.textContent = cap > 0 ? '= ' + (per * cap) + ' / bin' : '';
+  cell.textContent = cap > 0 ? '= ' + linePieces(lines, i, cap) + ' / bin' : '';
 }
 
 function manifestRows(containerId) {
