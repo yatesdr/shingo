@@ -17,6 +17,7 @@ import (
 var zLayerOrder = []string{
 	"--z-raised",
 	"--z-sticky",
+	"--z-sticky-over",
 	"--z-tooltip",
 	"--z-dropdown",
 	"--z-chrome",
