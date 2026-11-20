@@ -147,7 +147,7 @@ func TestListLinesideBuckets_StateIsTheStoredColumn(t *testing.T) {
 // seat holds at most one row per state (lineside_buckets_node_payload_state_key,
 // the conflict target of the level wire's upsert in uop/applier.go). An active
 // and a stranded row at one seat both land, so each refusal is its own
-// constraint's. It is the runtime half of store's TestV131_PileMirrorShape;
+// constraint's. It is the runtime half of store's deleted TestV131_PileMirrorShape;
 // the columns that test found gone are the committed snapshot's to show.
 func TestLinesideBuckets_ThePileIsKeyedByItsSeatAndOneOfTwoStates(t *testing.T) {
 	t.Parallel()

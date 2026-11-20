@@ -1,210 +1,57 @@
-package schema
+package schema_test
 
 import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"shingocore/store"
 )
 
-// migrationOnlyTables are the tables a numbered migration creates, which the
-// baseline DDL therefore does not declare.
+// The baseline (baseline.sql) is what a new database is born on, and the
+// snapshot (schema.snapshot.sql) is what a fresh boot of this build ships. Both
+// are generated, by different commands (make schema-baseline, then make
+// schema-snapshot), so either can be committed stale against the other. The
+// docker tests regenerate each; this one reads the two committed files and
+// needs no container, so a stale pair fails the plain gate.
 //
-// THIS IS NOT A LIST OF BUGS, and the difference matters because it is easy to
-// read it as one. A missing CREATE TABLE does not make a fresh install diverge
-// from a migrated one: migrate() applies the baseline AND then runs every
-// versioned migration, on every open, so both kinds of database end up with
-// these tables either way. TestSchemaConvergesAcrossVintages proves that
-// property directly, by upgrading an old database and diffing it against a new
-// one.
-//
-// The baseline was frozen at a point in time; everything since arrived as a
-// migration. That is the normal shape of this schema, not an accident that
-// happened seventeen times.
-//
-// What the list is for is the NEXT table. Adding one to a migration is fine;
-// adding one without noticing which half of the schema it landed in is how a
-// reader ends up consulting the constants file and getting an incomplete
-// answer. Failing here makes that a decision instead of a side effect.
-var migrationOnlyTables = map[string]string{
-	"schema_migrations":           "the migration runner's own bookkeeping — it has to exist before a migration can record itself",
-	"bin_loader_home_bin_types":   "added by v75 — what each loader window can physically take",
-	"bin_loader_homes":            "added by a numbered migration after the baseline was frozen",
-	"bin_loader_quotas":           "added by v75 — a loader's declared carrier mix",
-	"bin_loader_payloads":         "added by a numbered migration after the baseline was frozen",
-	"bin_loaders":                 "added by a numbered migration after the baseline was frozen",
-	"bin_uop_ledger":              "added by a numbered migration after the baseline was frozen",
-	"cell_config":                 "added by a numbered migration after the baseline was frozen",
-	"cms_postings":                "added by v102 — one row per POST to the CMS middleware. Separate from cms_transactions because a transaction is a local fact (a bin crossed a boundary) and a posting is a claim about a remote system (whether it knows). Their lifecycles do not line up: one posting carries many transactions, and a posting can be retried while the transactions it carries never change",
-	"demand_origins":              "added by a numbered migration after the baseline was frozen",
-	"carrier_families":            "added by v172 — the physical cart a bin type is one setting of",
-	"kanban_families":             "added by v172 — the pool of each family a kanban owns",
-	"kanbans":                     "added by v169 — one row per kanban: its station and strict",
-	"kanban_levels":               "added by v90 as node_maintain_levels, renamed by v169 — how many empty carriers of each type a kanban is to hold, and the type's own overflow. Separate from bin_loader_quotas on purpose: a quota is a preference bounded by never-2N, a level is the number Core keeps",
-	"kanban_layer_levels":         "added by v161 as node_maintain_layer_levels, renamed by v169 — per kanban, carrier type and height in layers, how many carts the kanban wants standing that high. A height of 1 or more is communication, summed against nothing; the row at 0 (v164) is tops & bottoms, a cap of its own beside the type's stack level in kanban_levels",
-	"kanban_supports":             "added by v90 as node_maintain_supports, renamed by v169 — which process nodes a kanban serves; the resolved node set, because a claim is Edge-local and Core cannot read one",
-	"kanban_sources":              "added by v169 — the groups a kanban's keeper may pull from, in rank order",
-	"edge_cells":                  "added by a numbered migration after the baseline was frozen",
-	"edge_lineside_reports":       "added by a numbered migration after the baseline was frozen",
-	"lineside_drain_ledger":       "added by v120 — one row per applied lineside drain. A drain is consumption at a node from a pile, not a bin event, so bin_uop_ledger cannot take it (bin_id is NOT NULL) and the bucket row deletes at qty 0; this is where the history survives",
-	"order_bins":                  "added by a numbered migration after the baseline was frozen",
-	"order_intake_refusals":       "added by v115 — the pair legs Core refused at intake. A refused request leaves no order row, so the partner naming one could not tell refused from not-received-yet; the pair rule reads this when the partner's row is absent",
-	"parts":                       "added by v107 — a part under both of the names it is known by, the part number CMS books against and the cat id a cell's PLC declares. It is a table rather than two columns on payload_manifest because a cat id belongs to the PART, not to the line that mentions it, and because a foreign key from the line is the one guard that cannot be forgotten at a door",
-	"process_styles":              "added by a numbered migration after the baseline was frozen",
-	"process_positions":           "added by v152 — the seats a process binds at that no claim names (loader windows and homes, FG drains), mirrored from plant.claims for addressing only",
-	"reservations":                "added by a numbered migration after the baseline was frozen",
-	"robot_confidence_daily":      "added by v77 — the permanent per-robot residual roll-up",
-	"robot_confidence_low":        "added by v77 — the long-retention low-confidence forensic trail",
-	"robot_confidence_samples":    "added by v77 — raw localization-confidence samples, daily partitions",
-	"lane_confidence_daily":       "added by v80 — the permanent per-LANE roll-up, replacing segment_confidence_daily (which v80 drops: its rows were at the directed-segment granularity, which is half a lane)",
-	"lane_robot_confidence_daily": "added by v83 — the permanent per-lane-per-robot grain the map filters by AMR; lane_confidence_daily merges its robots irreversibly, so this carries the intersection",
-	"scene_diffs":                 "added by v81 — one row per OBSERVED map edit; the join that relates an RDS /scene edit to a robot .smap edit made in the same sitting",
-	"scene_lane_versions":         "added by v81 — per-lane geometry versions, what lane_confidence_daily.version_id points at",
-	"scene_map_versions":          "added by v81 — the archived .smap blob, gzipped, scan cloud in its own column",
-	"scene_areas":                 "added by v81 — declared map areas, temporally versioned, parsed from the robot .smap",
-	"scene_reflectors":            "added by v81 — reflector positions, temporally versioned; identity IS the position",
-	"area_confidence_daily":       "added by v82 — the per-ZONE roll-up. One reading can be in several zones (SEER areas overlap), so its samples column does not sum to the plant total",
-	"plant_claims_reports":        "added by v143 — per process, the station whose plant-claims report the mirror holds and the digest it carried; read back onto each station's heartbeat ack",
-	"plant_confidence_daily":      "added by v82 — the plant-day record for counts that have no lane to hang on: orphans, unkeyable, unversioned, unattributed",
-	"sourceability_events":        "added by a numbered migration after the baseline was frozen",
-	"tte_samples":                 "added by v118 — the per-line time-to-empty the sourceability pass computes on every full pass and used to discard. Written only by the two-minute full recompute, self-pruning at 45 days",
-	"style_claims":                "added by a numbered migration after the baseline was frozen",
-	"supply_refusals":             "added by a numbered migration after the baseline was frozen",
-	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_ledger that must run while the raw rows still exist",
-	"cleaning_mission_setup":      "added by v158 — the one air-knife mission set up on the Robots page's Cleaning tab (floor data, never yaml); read by the cleaning loop every tick and by the tab",
-	"cleaning_missions":           "added by v158 — one row per pinned cleaning order sent to the fleet, the only record of it (no Core orders row is ever written); read by the cleaning loop (open rows, last dispatch per robot) and the Cleaning tab's history",
-	"cleaning_opt_outs":           "added by v158 — a row per robot never to clean; read by the cleaning loop's guard and the robot pop-up's switch",
-	"robot_hours":                 "added by v158 — the 2-second robot poll kept as totals per robot per UTC hour, permanent; read by the Robots page's Fleet tab and the cleaning trial (robot-days, km)",
-	"robot_alarm_onsets":          "added by v158 — alarm onsets per robot per hour per code, permanent; read by the Fleet tab and the cleaning trial (54901 per robot-day and per km), past RDS's five-week alarm retention",
-	"robot_lidar_hours":           "added by v158 — one laser frame per parked robot per hour reduced per lidar, 90-day retention; read per robot against itself by the cleaning trial's before/after time join",
-	"bin_uop_delta_daily":         "added by v94 — the permanent daily roll-up of the raw delta stream (owner decision D3: growth accepted). Migration-created for the same reason as v93: the backfill must run while the raw rows still exist",
-	"robot_deviceconfig_pulls":    "added by v184 — one append-only row per robot per Device Config pull (params = the flattened matrix rows, config = the sanitized whole model, model_md5 = raw-bytes provenance); read by the Robots page's Device Config tab (latest row per robot) and, later, the between-pull diff",
-}
-
-// TestBaselineDDL_DeclaresEveryTable pins which half of the schema each table
-// lives in: declared in the baseline DDL, or named above as migration-created.
-//
-// The snapshot is the authority for what actually ships — it is generated by
-// running the real migrate path against an empty database. A table in the
-// snapshot that is in neither the baseline nor the list above is one nobody
-// decided about.
-func TestBaselineDDL_DeclaresEveryTable(t *testing.T) {
-	t.Parallel()
-	declared := ddlTables(t)
-	shipped := snapshotTables(t)
-
-	if len(shipped) == 0 {
-		t.Fatal("parsed zero tables out of the snapshot; the parser is broken, not the schema")
-	}
-
-	var missing []string
-	for _, tbl := range shipped {
-		if declared[tbl] {
-			continue
-		}
-		if _, ok := migrationOnlyTables[tbl]; ok {
-			continue
-		}
-		missing = append(missing, tbl)
-	}
-	if len(missing) > 0 {
-		t.Errorf("tables in the shipped schema that are in neither the baseline DDL nor migrationOnlyTables: %s\n"+
-			"Say which half it belongs to: add the CREATE TABLE to postgres_ddl.go, or add the table to migrationOnlyTables naming what creates it.\n"+
-			"Either is fine. Not choosing is what this test is here to catch.",
-			strings.Join(missing, ", "))
-	}
-
-	// The allowlist decays too: an entry naming a table that the baseline has
-	// since declared is a claim about the past.
-	for tbl := range migrationOnlyTables {
-		if declared[tbl] {
-			t.Errorf("migrationOnlyTables names %q, but the baseline DDL now declares it — drop the entry", tbl)
-		}
-	}
-
-	// AND IT DECAYS THE OTHER WAY, which is the direction that actually bit.
-	//
-	// An entry naming a table that no longer SHIPS is the same stale claim
-	// wearing the opposite sign, and the check above cannot see it: it only
-	// asks whether the baseline has taken the table over, never whether the
-	// table still exists. segment_confidence_daily sat in this list describing
-	// "the permanent per-segment roll-up" for the whole of the localization
-	// branch, while v80 dropped it — the list read as a decision about a table
-	// nobody could load.
-	//
-	// This is the third guard on this schema found reading the wrong property,
-	// and it is here because the fix for the other two would not have caught
-	// this one either.
-	shipping := make(map[string]bool, len(shipped))
-	for _, tbl := range shipped {
-		shipping[tbl] = true
-	}
-	for tbl := range migrationOnlyTables {
-		if tbl == "schema_migrations" {
-			continue // the runner's own bookkeeping; created outside the dump path
-		}
-		if !shipping[tbl] {
-			t.Errorf("migrationOnlyTables names %q, but no such table is in the shipped schema — "+
-				"a migration dropped it and the entry outlived it. Drop the entry.", tbl)
-		}
-	}
-
-	// THE FOURTH GUARD, added with v92: a table the BASELINE declares that no
-	// longer ships. This is the direction that made v92's baseline edit
-	// load-bearing — production_log was declared in postgres_ddl.go while a
-	// migration dropped it, and neither check above can see that pair, because
-	// neither ever asks the baseline about a table the snapshot has lost.
-	//
-	// The mechanics are the v24/v85 trap: schema.Apply runs the baseline on
-	// every startup AHEAD of the versioned migrations, so a baseline CREATE for
-	// a dropped table re-creates it every boot, the drop migration's
-	// post-condition fails every boot, and the self-heal re-runs the drop every
-	// boot. A DROP migration therefore must remove the baseline CREATE in the
-	// same change, and this check is what makes forgetting it a test failure
-	// instead of a journal line nobody reads.
-	for tbl := range declared {
-		if !shipping[tbl] {
-			t.Errorf("baseline DDL declares %q, but no such table is in the shipped schema — "+
-				"a migration dropped it and left the baseline CREATE behind. That CREATE "+
-				"re-creates the table on every boot (schema.Apply runs the baseline first), "+
-				"so the drop's post-condition fails forever. Remove the CREATE from "+
-				"postgres_ddl.go in the same change as the drop.", tbl)
-		}
-	}
-}
+// It is the DDL-totality test of the replaying schema, rewritten for one home.
+// That test asked which half of the schema each table lived in, the baseline
+// DDL or a numbered migration, because both ran on every boot and a table the
+// baseline still declared after a migration dropped it came back every boot.
+// The squash at v183 left one half: the baseline creates every table, and a
+// later migration's table reaches the baseline when it is regenerated. What is
+// left to decide is that the two files agree.
 
 var (
-	ddlTableRe      = regexp.MustCompile(`(?m)^CREATE TABLE IF NOT EXISTS\s+(\w+)`)
-	snapshotTableRe = regexp.MustCompile(`(?m)^CREATE TABLE public\.(\w+)`)
+	createTableRe = regexp.MustCompile(`(?m)^CREATE TABLE public\.(\w+)`)
+	partitionRe   = regexp.MustCompile(`(?m)^.*(PARTITION OF |ATTACH PARTITION ).*$`)
+	sessionRe     = regexp.MustCompile(`(?m)^(SET |SELECT pg_catalog\.set_config\(|\\(un)?restrict ).*$`)
+	migrationRe   = regexp.MustCompile(`(?m)^INSERT INTO public\.schema_migrations VALUES \((\d+), now\(\)\);$`)
 )
 
-// ddlTables returns the table names declared in the baseline DDL constant.
-func ddlTables(t *testing.T) map[string]bool {
-	t.Helper()
-	out := map[string]bool{}
-	for _, m := range ddlTableRe.FindAllStringSubmatch(postgresDDL, -1) {
-		out[m[1]] = true
-	}
-	if len(out) == 0 {
-		t.Fatal("parsed zero tables out of postgresDDL; the parser is broken, not the constant")
-	}
-	return out
-}
+const regen = "run `make schema-baseline` (go run ./cmd/schemabaseline), then `make schema-snapshot`, and commit both"
 
-// snapshotTables returns the table names in the committed schema snapshot,
-// sorted, excluding partitions of declaratively partitioned tables (those are
-// created per-range by the partition machinery, not declared).
-func snapshotTables(t *testing.T) []string {
+func readFile(t *testing.T, path string) string {
 	t.Helper()
-	const path = "schema.snapshot.sql"
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
+	return strings.ReplaceAll(string(b), "\r\n", "\n")
+}
+
+func tables(t *testing.T, what, sql string) []string {
+	t.Helper()
 	seen := map[string]bool{}
-	for _, m := range snapshotTableRe.FindAllStringSubmatch(string(b), -1) {
+	for _, m := range createTableRe.FindAllStringSubmatch(sql, -1) {
 		seen[m[1]] = true
+	}
+	if len(seen) == 0 {
+		t.Fatalf("parsed zero tables out of %s; the parser is broken, not the schema", what)
 	}
 	out := make([]string, 0, len(seen))
 	for name := range seen {
@@ -212,4 +59,86 @@ func snapshotTables(t *testing.T) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestBaseline_CreatesEveryShippedTable: the baseline creates exactly the
+// tables the snapshot ships, carries no partition (partitions are made at
+// runtime, by store/heartbeat and store/robotconfidence), sets no session
+// setting (one would outlive the baseline on the pool connection that ran it),
+// and records every version of the retired chain.
+func TestBaseline_CreatesEveryShippedTable(t *testing.T) {
+	t.Parallel()
+	baseline := readFile(t, "baseline.sql")
+	snapshot := readFile(t, "schema.snapshot.sql")
+
+	born := map[string]bool{}
+	for _, tbl := range tables(t, "baseline.sql", baseline) {
+		born[tbl] = true
+	}
+	shipped := map[string]bool{}
+	for _, tbl := range tables(t, "schema.snapshot.sql", snapshot) {
+		shipped[tbl] = true
+		if !born[tbl] {
+			t.Errorf("the snapshot ships table %q and the baseline does not create it: a database born on the baseline "+
+				"lacks it until a migration adds it. The baseline is stale: %s.", tbl, regen)
+		}
+	}
+	for tbl := range born {
+		if !shipped[tbl] {
+			t.Errorf("the baseline creates table %q and the snapshot does not ship it: a new database would carry "+
+				"a table no upgraded one has. The baseline is stale: %s.", tbl, regen)
+		}
+	}
+
+	for _, line := range partitionRe.FindAllString(baseline, -1) {
+		t.Errorf("the baseline carries a partition, which runtime code creates and a new database must not be "+
+			"born with: %s. Regenerate it (%s); the generator refuses a dump that has one.", line, regen)
+	}
+	for _, line := range sessionRe.FindAllString(baseline, -1) {
+		t.Errorf("the baseline changes a session setting, which would outlive it on the pool connection that "+
+			"ran it: %s. Regenerate it (%s); the generator strips these.", line, regen)
+	}
+
+	recorded := map[int]bool{}
+	for _, m := range migrationRe.FindAllStringSubmatch(baseline, -1) {
+		v, _ := strconv.Atoi(m[1])
+		recorded[v] = true
+	}
+	for v := 1; v <= store.RetiredChain; v++ {
+		if !recorded[v] {
+			t.Errorf("the baseline does not record schema_migrations v%d, so a database born on it is refused at its "+
+				"next boot as missing it. Regenerate it: %s.", v, regen)
+		}
+	}
+}
+
+// TestBaselineParsers_MatchTheShapesInUse pins the parsers against the real
+// shapes: a regex that quietly stops matching turns the checks above into
+// no-ops that always pass.
+func TestBaselineParsers_MatchTheShapesInUse(t *testing.T) {
+	t.Parallel()
+	baseline := readFile(t, "baseline.sql")
+	if n := len(createTableRe.FindAllString(baseline, -1)); n < 50 {
+		t.Errorf("the table regex matched %d tables in the baseline; it has far more, so the regex has drifted", n)
+	}
+	if n := len(migrationRe.FindAllString(baseline, -1)); n < store.RetiredChain {
+		t.Errorf("the schema_migrations regex matched %d rows; the baseline records %d, so the regex has drifted", n, store.RetiredChain)
+	}
+	for _, line := range []string{
+		"CREATE TABLE public.cell_part_events_2026_06 PARTITION OF public.cell_part_events",
+		"ALTER TABLE ONLY public.cell_part_events ATTACH PARTITION public.cell_part_events_2026_06 FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');",
+	} {
+		if !partitionRe.MatchString(line) {
+			t.Errorf("the partition regex does not match %q", line)
+		}
+	}
+	for _, line := range []string{
+		"SET statement_timeout = 0;",
+		"SELECT pg_catalog.set_config('search_path', '', false);",
+		`\restrict abc123`,
+	} {
+		if !sessionRe.MatchString(line) {
+			t.Errorf("the session-setting regex does not match %q", line)
+		}
+	}
 }

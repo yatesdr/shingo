@@ -74,13 +74,15 @@ clean-testcontainers:
 test-all:
 	bash ../scripts/gate.sh docker ; rc=$$? ; $(MAKE) -s clean-testcontainers ; test $$rc -eq 0
 
-# Regenerate the committed schema snapshot: boot an empty Postgres, run the
-# FULL migrate path, pg_dump --schema-only, write store/schema/schema.snapshot.sql.
+# Regenerate the committed schema snapshot: boot an empty Postgres, run this
+# build's store.Open (born on the embedded baseline, then the migrations above
+# the retired chain), pg_dump --schema-only, write
+# store/schema/schema.snapshot.sql. Run schema-baseline first when the baseline
+# is stale.
 #
-# The snapshot exists because no other file in this repo IS the schema — the
-# real shape is the baseline DDL plus migrateRenames plus
-# migrateAddBaselineColumns plus every versioned migration plus how old the
-# database is. With the snapshot committed, a shape change is a readable diff.
+# The snapshot exists so a shape change is a readable diff: the baseline
+# carries rows and comments, and a migration above it says what it changes, not
+# what the schema is.
 #
 # Requires Docker. pg_dump runs inside the container, so no Postgres client
 # tools are needed on the host. TestSchemaSnapshotIsCurrent fails with this

@@ -132,7 +132,7 @@ func TestCMSTransactionService_ListAll_SpansNodes(t *testing.T) {
 // "never queued" finding first, so the card is shown to carry that finding
 // before its absence is asserted. Read as unposted work, the history would
 // head the card forever with no acknowledge path. It replaces store's
-// TestV102_HopkinsvilleDayOneCardIsNotRed, which never ran a migration.
+// deleted TestV102_HopkinsvilleDayOneCardIsNotRed, which never ran a migration.
 func TestCMSPostingService_HistoryThatPredatesTheFeedIsHealthy(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

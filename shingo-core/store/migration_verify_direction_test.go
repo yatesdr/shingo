@@ -25,6 +25,10 @@ import (
 // idempotent DDL rather than skipping it. Swapping those to the absence helpers
 // would invert a correct check. The lint keys on the parameter type, which is
 // what actually distinguishes the two.
+//
+// Since the squash at v184 migrations.go carries only the migrations above the
+// retired chain, and until the first of them (v185) it has no verify predicate
+// to read: the lint then reads none and finds none, which is the true answer.
 func TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers(t *testing.T) {
 	t.Parallel()
 

@@ -235,11 +235,13 @@ fleet.Backend         -- used by dispatch, engine
 
 ### Database
 
-The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. The
-baseline schema is `store/schema/postgres_ddl.go`; versioned migrations in
-`store/migrations.go` run automatically on startup. The schema as a migrated
-database actually has it is committed as `store/schema/schema.snapshot.sql`
-(`TestSchemaSnapshotIsCurrent` fails when it goes stale); every table and
+The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. A new
+database is born on the generated baseline `store/schema/baseline.sql`, and a
+database missing a version of the retired chain (v1 to v184) is refused, naming
+the release that applies it; migrations above it, in `store/migrations.go`, run
+automatically on startup. The schema a fresh boot ships is committed as
+`store/schema/schema.snapshot.sql` (`TestSchemaSnapshotIsCurrent` fails when it
+goes stale); every table and
 column is in [Data Model](../../docs/data-model.md).
 
 ### sendToEdge Helper

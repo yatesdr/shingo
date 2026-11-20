@@ -149,18 +149,18 @@ func checkGoSite(t *testing.T, g goSite) {
 	}
 }
 
-// checkIndexSite: the open-key index predicate (v59, migration history, not
-// rewritten) is the unsettled slot. The door that names that slot in its ON
+// checkIndexSite: the open-key index predicate (v59's, as the shipped schema
+// carries it: store/schema/schema.snapshot.sql) is the unsettled slot. The door that names that slot in its ON
 // CONFLICT must name it through DemandUnsettledSQL, and the helper's spelling
 // must be the index's.
 func checkIndexSite(t *testing.T) {
 	t.Helper()
-	mig, err := os.ReadFile("migrations.go")
+	snap, err := os.ReadFile(filepath.FromSlash("schema/schema.snapshot.sql"))
 	if err != nil {
-		t.Fatalf("read migrations.go: %v", err)
+		t.Fatalf("read schema/schema.snapshot.sql: %v", err)
 	}
-	if !strings.Contains(string(mig), "ON demand_origins(episode_key) WHERE closed_at IS NULL") {
-		t.Error("v59's open-key index predicate is not `closed_at IS NULL`: repoint DemandUnsettledSQL and this census")
+	if !strings.Contains(string(snap), "CREATE UNIQUE INDEX idx_demand_origins_open_key ON public.demand_origins USING btree (episode_key) WHERE (closed_at IS NULL);") {
+		t.Error("the shipped open-key index predicate is not `closed_at IS NULL`: repoint DemandUnsettledSQL and this census")
 	}
 	h, err := os.ReadFile(filepath.FromSlash("internal/helpers/demand_tense.go"))
 	if err != nil {
@@ -205,8 +205,8 @@ func TestDemandTense_NoQueryDecidesTenseOutsideTheHelpers(t *testing.T) {
 }
 
 // tenseExempt are the files allowed to spell the predicates: the two helper
-// files that ARE the spelling, and the migration history, which is never
-// rewritten (v59's index DDL among it).
+// files that ARE the spelling, and the migrations, which are never rewritten
+// once shipped.
 var tenseExempt = map[string]bool{
 	"store/internal/helpers/demand_tense.go": true,
 	"domain/demand_tense.go":                 true,

@@ -4,44 +4,56 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"shingocore/store"
 )
 
-// Vintage is one historical baseline to build an "aged" database from.
-//
-// Sourced from GIT, not from a plant: no plant access, nothing to keep in
-// sync, and it re-runs in CI. Pinned by commit SHA rather than tag because a
-// SHA cannot move, and because the shape changes worth straddling all landed
-// after the last tag.
+// Vintage is one way a plant's database was made, rebuilt for the
+// convergence test from git: by the code the plant ran, not by a copy of a
+// plant. No plant access, nothing to keep in sync, and it re-runs in CI.
 type Vintage struct {
-	// Rev is the git revision to read the baseline out of.
-	Rev string
-	// Why says what shape change this vintage sits on the far side of. A
-	// convergence failure is only diagnosable if you know what the vintage was
-	// chosen to prove.
+	// Name labels the subtest.
+	Name string
+	// DDLRev, when set, is the git revision whose baseline DDL the database is
+	// born on (BaselineFromGit), applied raw before any release boots it.
+	DDLRev string
+	// BuiltBy, when set, is the release whose own store.Open makes the
+	// database (BuildRelease), on an empty database or on DDLRev's.
+	BuiltBy string
+	// Why says what the vintage stands for. A convergence failure is only
+	// diagnosable if you know what the vintage was chosen to prove.
 	Why string
 }
 
-// Vintages are the pinned baselines the convergence test builds.
-//
-// Each straddles a shape change that reached a fresh database through the
-// baseline CREATE TABLE — which is precisely the change a plant database does
-// NOT get from the baseline, because CREATE TABLE IF NOT EXISTS no-ops on a
-// table that already exists.
+// Vintages are the databases the convergence test brings up with this build.
+// Each one not at the retired chain's head is refused first, by design, and
+// walked up by store.RetiredChainRelease, the release that carries the chain.
 var Vintages = []Vintage{
 	{
-		Rev: "06da8cdf^",
-		Why: "before queue_code/queue_cause entered the baseline (06da8cdf, 2026-07-19) — " +
-			"both are in migrateAddBaselineColumns, so this vintage proves that list carries them",
+		Name:    "built-by-v0.11.0",
+		BuiltBy: "v0.11.0",
+		Why:     "a database built by v0.11.0 (schema v178, 2026-11-17), as a plant on that release has",
 	},
 	{
-		Rev: "2342a216^",
-		Why: "before lineside_buckets.core_node_name entered the baseline (2342a216, 2026-05-21) — " +
-			"the v21 rename, and the reason that column is in migrateAddBaselineColumns",
+		Name:    "built-by-v0.13.2",
+		BuiltBy: "v0.13.2",
+		Why:     "a database built by v0.13.2 (schema v180, 2026-11-18), as a plant on that release has",
 	},
 	{
-		Rev: "v0.0.14",
-		Why: "the oldest tagged release still readable (2026-03-21) — predates lineside_buckets " +
-			"entirely and lives at the pre-Phase-6.0a path, so it exercises the deepest upgrade we can build",
+		Name:    "built-by-v0.16.0",
+		BuiltBy: "v0.16.0",
+		Why:     "a database built by v0.16.0 (schema v183, 2026-11-20), as both plants had when the chain retired",
+	},
+	{
+		Name:    "built-by-" + store.RetiredChainRelease,
+		BuiltBy: store.RetiredChainRelease,
+		Why:     "a database built by the retired chain's own release: the replay's end state, which this build boots as it stands",
+	},
+	{
+		Name:   "born-on-v0.0.14-ddl",
+		DDLRev: "v0.0.14",
+		Why: "born on the oldest tagged baseline DDL still readable (v0.0.14, 2026-03-21, at the pre-Phase-6.0a path), " +
+			"no chain run on it, then walked up by " + store.RetiredChainRelease + "'s replay: the deepest upgrade there is",
 	},
 }
 

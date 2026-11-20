@@ -68,7 +68,7 @@ func TestHandoverIDWrite_TheYesRefusesAnEndedRow(t *testing.T) {
 // sent before the record (NULL) stays NULL through an append, so it is read by
 // its block names for its whole life, until a create of a new vendor order
 // records every block it sends. Moved whole from store's
-// TestBlockRecord_TheCreateReplacesAndTheAppendMerges, which sat in
+// deleted TestBlockRecord_TheCreateReplacesAndTheAppendMerges, which sat in
 // migration_v179_block_record_test.go and ran no migration.
 func TestBlockRecord_TheYesReplacesAndTheAppendMerges(t *testing.T) {
 	db := testdb.Open(t)

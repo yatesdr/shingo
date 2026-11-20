@@ -791,7 +791,7 @@ func TestBinType_CRUD(t *testing.T) {
 // of one coded by the type's code; a bare marker takes its carrier's family; a
 // code that already names a family makes a family of its own rather than
 // joining that one by its code alone. It is the runtime half of store's
-// TestMigrate_V172_TheFamilies and TestMigrate_V172_FamiliesAndThePool, whose
+// deleted TestMigrate_V172_TheFamilies and deleted TestMigrate_V172_FamiliesAndThePool, whose
 // grouping of the types that predated the families went with the chain.
 func TestCreateType_ATypeWithNoFamilyTakesAFamilyOfOne(t *testing.T) {
 	t.Parallel()

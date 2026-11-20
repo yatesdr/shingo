@@ -97,7 +97,7 @@ version is [the rule](#the-rule) at the bottom.
 
 - One outbox table, dequeued by `ORDER BY id` on a `BIGSERIAL`
   (`ListPendingOutbox` in `shingo-core/store/messaging/messaging.go`; the table is in
-  `shingo-core/store/schema/postgres_ddl.go`). `station_id` and `msg_type` are stored but appear in no
+  `shingo-core/store/schema/schema.snapshot.sql`). `station_id` and `msg_type` are stored but appear in no
   `ORDER BY`, no partition, and no priority.
 - One drainer goroutine (`outbox.Drainer`), publishing the batch in a single loop, called inline so passes
   never overlap.

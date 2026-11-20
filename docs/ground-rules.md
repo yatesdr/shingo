@@ -61,8 +61,10 @@ These are the rules the codebase's comments cite.
   The sweeps are listed in [sweeps-and-monitors.md](sweeps-and-monitors.md).
 - **A check must know whether it had the input to check.** A killed run, a skipped test and a pattern that matched
   nothing must not read as a pass. Guard (for the repo-wide text rules): `TestEveryRuleHasACaseThatFires`.
-- **A new table gets exactly one home:** declared in the baseline DDL or, for a table only a migration creates, in
-  that migration alone and named in `migrationOnlyTables`. Guard: `TestBaselineDDL_DeclaresEveryTable`.
+- **The schema has one home: the generated baseline, and a migration above it.** A new database is born on
+  `shingo-core/store/schema/baseline.sql`, generated (`make schema-baseline`) and never edited; every change is a
+  numbered migration above the retired chain (v184), after which the baseline is regenerated. Guards:
+  `TestBaselineIsCurrent`, `TestBaseline_CreatesEveryShippedTable`, `TestSchemaConvergesAcrossVintages`.
 
 ## The gate
 

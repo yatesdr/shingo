@@ -59,12 +59,16 @@ Because `shingocore` is the database **owner**, it has full privileges to create
 
 When ShinGo Core connects to an empty database, it:
 
-1. Creates all tables (`CREATE TABLE IF NOT EXISTS`)
-2. Creates indexes
-3. Seeds the synthetic node types `LANE` and `NGRP` (`migrateNodeTypes` in `store/migrations.go`)
-4. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin` in `www/auth.go`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
+1. Applies the baseline, `store/schema/baseline.sql`, in one transaction: every table, index and constraint, the
+   seed rows (the synthetic node types `LANE` and `NGRP`, the `_TRANSIT` node, the default load sequence) and
+   `schema_migrations` v1 to v184. A start that fails part-way leaves the database empty, and the next start
+   applies it again.
+2. Runs the migrations above v184 in `store/migrations.go`.
+3. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin` in `www/auth.go`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
 
-On subsequent startups, migrations are idempotent and safe to re-run.
+On subsequent startups only the migrations above v184 that the database lacks run. Core refuses to start on a
+database missing any of v1 to v184 (an install older than v0.17.1: start v0.17.1 on it once first), and on tables
+restored without their `schema_migrations` rows (restore the whole dump).
 
 ### Why ownership matters
 

@@ -265,7 +265,7 @@ func TestUpdateStatus_RefusesTerminal(t *testing.T) {
 // every write of `dispatched` to naming the fleet's job. A vendorless
 // `dispatched` write is refused by the rule, whichever writer sends it, and one
 // naming its job lands. It is the runtime half of store's
-// TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows; the rows
+// deleted TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows; the rows
 // already breaking the rule when v183 added it NOT VALID stay at the plants,
 // and TestListTrackedVendorOrderIDs below holds one by dropping the rule.
 func TestOrders_ADispatchedRowNamesItsJob(t *testing.T) {

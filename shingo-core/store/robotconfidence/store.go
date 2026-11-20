@@ -598,8 +598,9 @@ type LaneDaily struct {
 // LaneRobotDaily is one lane's day for ONE robot — the grain the map's
 // ?robot= filter reads. Same columns and population as LaneDaily, minus the
 // across-robot rollups (robots / robots_seen: there is only one) and plus
-// VehicleID in the key. See v83LaneRobotConfidenceDaily for why this table
-// exists alongside lane_confidence_daily rather than replacing it.
+// VehicleID in the key. It exists alongside lane_confidence_daily rather than
+// replacing it because that table merges its robots irreversibly (the table
+// comment on lane_robot_confidence_daily; v83 added it).
 type LaneRobotDaily struct {
 	Day       time.Time
 	Area      string

@@ -176,7 +176,7 @@ func TestTerminalizeOrder_ConcurrentTerminalizers(t *testing.T) {
 // TestRetireReshuffleRestoreOrders_CancelsAStrayAndItsChild: the boot sweep
 // (engine_lifecycle.go) cancels a non-terminal reshuffle_restore parent and its
 // non-terminal child through the terminal chokepoint, and a second run finds
-// nothing. It replaces store's TestRetireReshuffleRestore_CancelsStray, which
+// nothing. It replaces store's deleted TestRetireReshuffleRestore_CancelsStray, which
 // sat in migrations_retire_test.go and ran no migration; the engine's tell pin
 // (TestStatusTellPin_RowsPerTypedWriter/RetireReshuffleRestoreOrders) asserts
 // the stations are told.
@@ -211,7 +211,7 @@ func TestRetireReshuffleRestoreOrders_CancelsAStrayAndItsChild(t *testing.T) {
 
 // TestRetireReshuffleRestoreOrders_LeavesACleanDatabaseAlone: with no
 // reshuffle_restore order, the sweep cancels nothing and the live order beside
-// it stays live. It replaces store's TestRetireReshuffleRestore_NoOpClean.
+// it stays live. It replaces store's deleted TestRetireReshuffleRestore_NoOpClean.
 func TestRetireReshuffleRestoreOrders_LeavesACleanDatabaseAlone(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

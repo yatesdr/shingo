@@ -28,11 +28,11 @@ import (
 // day is the UTC calendar day; the caller (the daily ticker) passes yesterday.
 //
 // THE WINDOW IS WHOLE-STREAM, NOT DAY-SCOPED. epoch_seq counts bump ops from
-// the beginning of the bin's audit history, same as the v94 backfill and
-// NextBinUOPEpochSeq — a bin whose boundary happened last week carries that
+// the beginning of the bin's audit history, as NextBinUOPEpochSeq does (and as
+// the v94 backfill did) — a bin whose boundary happened last week carries that
 // epoch into today's roll-up. Scoping the window to the day would reset every
-// multi-day epoch to 0, disagreeing with both the backfill and the exceptions
-// ledger; only the OUTER predicate restricts to the day being rolled up.
+// multi-day epoch to 0, disagreeing with the exceptions ledger; only the OUTER
+// predicate restricts to the day being rolled up.
 func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	bumps := pgBumpOpsArraySQL()
 	res, err := db.Exec(`INSERT INTO bin_uop_delta_daily
@@ -74,13 +74,12 @@ func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	return n, nil
 }
 
-// pgBumpOpsArraySQL returns EpochBumpOps as a quoted Postgres array literal —
-// the same 8-line spelling store/migrations.go carries for its v93/v94
-// backfills (audit cannot import store; store imports audit). The job's
-// statement is the migration's v94 backfill verbatim apart from the day filter
-// (outside the window) and the ON CONFLICT arm, and the lockstep is pinned by
-// the docker test that runs both against the same seeded stream and requires
-// equal rows.
+// pgBumpOpsArraySQL returns EpochBumpOps as a quoted Postgres array literal.
+// The job's statement was written from the v94 backfill, apart from the day
+// filter (outside the window) and the ON CONFLICT arm. The backfill went with
+// the retired chain at the squash (v184), and with it the lockstep its docker
+// test claimed; the roll-up's grain, epoch carry and per-day idempotency are
+// pinned on the job alone (store/audit/bin_uop_purge_test.go).
 func pgBumpOpsArraySQL() string {
 	parts := make([]string, len(EpochBumpOps))
 	for i, op := range EpochBumpOps {
@@ -106,11 +105,11 @@ func pgBumpOpsArraySQL() string {
 // stream is 30 days (binsOccupancyDaily), so the window is 3× the deepest
 // read.
 //
-// ORDERING INVARIANT: this must not run until the v93 and v94 backfills have
-// (they run in their migrations, so any binary that carries this purge also
-// carries them — the invariant is enforced by shipping order, not by a guard
-// here). Purging raw deltas destroys the only source the backfills derive
-// from; after them, it destroys nothing the owner named durable.
+// ORDERING: it must not run before the v93 and v94 backfills have, since
+// purging raw deltas destroys the only source they derive from. Both are in
+// the retired chain, which every database this build starts on has applied
+// (store.migrate refuses one missing a version of it), so after them it
+// destroys nothing the owner named durable.
 func PurgeOldBinUOPDelta(db *sql.DB, keepDays int, now time.Time) (int64, error) {
 	cutoff := now.UTC().AddDate(0, 0, -keepDays)
 	res, err := db.Exec(`DELETE FROM bin_uop_ledger

@@ -82,9 +82,11 @@ const (
 	// bsNotOrder: the station is not an order's: an Edge's envelope or report,
 	// a kanban, a registry row, an RDS map point, a filter's parameter.
 	bsNotOrder
-	// bsHistory: migration-chain or baseline DDL text, which runs against the
-	// schema, not against an order.
-	bsHistory
+	// (A third kind, bsHistory, named the branches in migration-chain and
+	// baseline DDL text: v66, v72 and its verify, the kanban migration's census
+	// and the baseline's partial unique index on edge_registry.station_uid. They
+	// went with the chain at the squash (v184); a migration above it that
+	// branches on a blank station names its kind again.)
 )
 
 // bsSite is one declaration's branches. An order site says what each kind of
@@ -99,7 +101,6 @@ type bsSite struct {
 }
 
 func notOrder(forms, why string) bsSite { return bsSite{forms: forms, kind: bsNotOrder, why: why} }
-func history(forms, why string) bsSite  { return bsSite{forms: forms, kind: bsHistory, why: why} }
 
 // bsNobody is what a send to an actor's name reaches.
 const bsNobody = "an outbox row to core-* that no Edge reads"
@@ -170,9 +171,9 @@ var blankStationSites = map[string]bsSite{
 		split:  "an aware actor's order returns (\"\", true): order.delivered is broadcast (Engine.handleOrderDelivered) and its lift writes a blank station (BinService.Lift)"},
 	"service:BinService.Lift": {forms: `station == "" ×2`, kind: bsOrder,
 		edge:   "the lifted ledger row's station is the uid, a repeated pickup reads the generation, and bin_picked_up goes to the station (the notice's station is materialStation's)",
-		actors: "aware: the lifted row's station is core-* (the rows v184 blanks) and bin_picked_up goes to core-*, " + bsNobody + "; unaware: blank station, no notice",
+		actors: "aware: the lifted row's station is core-* (the rows v185 blanks) and bin_picked_up goes to core-*, " + bsNobody + "; unaware: blank station, no notice",
 		none:   "the projects_to Edge, or blank and no notice",
-		split:  "an aware actor's lifted row has a blank station and no notice is sent: what v184 makes of the old rows"},
+		split:  "an aware actor's lifted row has a blank station and no notice is sent: what v185 makes of the old rows"},
 	"service:landingStations": {forms: `StationID == "" ×1, station == station ×1`, kind: bsOrder,
 		edge:   "the one claiming station, or with none the order's material station",
 		actors: "aware: on a node no station claims, the landing goes to core-*, " + bsNobody + "; unaware: its material station is blank, so on an unclaimed node the plant arm: every Edge",
@@ -346,13 +347,6 @@ var blankStationSites = map[string]bsSite{
 	"www:Handlers.apiListLoaders":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.edge_station_uid)"),
 	"www:Handlers.apiStations":                            notOrder(`StationID == "" ×1`, "edge_registry rows with no station id are skipped; the order stations come from ListDistinctStations"),
 	"www:robotsAtNodes":                                   notOrder(`alias == "" ×1`, "an RDS map point (robot CurrentStation)"),
-
-	// ── Migration history and the baseline DDL ────────────────────────────
-	"store:v66EdgeIdentity":          history(`SQL station = '' ×2`, "v66's edge_registry backfill and its partial unique index"),
-	"store:v72StationCoreOperator":   history(`Core actor name ×6`, "v72's rename of core-spot to core-operator in orders, mission_telemetry and cell_config"),
-	"store:noCoreSpotLeft":           history(`Core actor name ×3`, "v72's verify"),
-	"store:KanbanMigrationCensusSQL": history(`SQL station = '' ×2`, "the kanban migration's census of kanban stations"),
-	"store/schema:postgresDDL":       history(`SQL station = '' ×1`, "the baseline DDL's partial unique index on edge_registry.station_uid"),
 }
 
 // TestCensus_BlankStationSites holds blankStationSites to the tree: every

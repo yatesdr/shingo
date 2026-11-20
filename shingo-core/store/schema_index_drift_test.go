@@ -3,64 +3,37 @@ package store
 import (
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
 
-// The baseline DDL must not index a column that a migration adds.
+// Every index a fresh boot ships is one a new database is born with, and the
+// other way round.
 //
-// WHY THIS EXISTS. The baseline in store/schema/postgres_ddl.go is applied on
-// EVERY boot, before migrations run, and CREATE TABLE IF NOT EXISTS is a no-op
-// on a database that already has the table. So putting a new column in the
-// baseline CREATE TABLE is harmless — an existing database simply does not get
-// it there — but putting an INDEX over that column in the baseline is not: on
-// any existing database the index statement runs before the migration that
-// adds the column, and the whole schema apply fails. Core does not start.
+// WHAT THIS USED TO GUARD, AND WHY THAT HAZARD IS GONE. The replaying schema
+// applied its baseline DDL on every boot, before the migrations, and CREATE
+// TABLE IF NOT EXISTS added no column to a table that already existed. So a
+// baseline CREATE INDEX over a column a migration added ran, on every existing
+// database, before that migration, and failed the whole schema apply: Core did
+// not start. That happened deploying migration 55 to the houseserver sim on
+// 2026-07-25, with every test green, because every test built a fresh
+// database. This file read the upgrade order (the baseline DDL against
+// migrations.go and the pre-baseline column list) to catch it.
 //
-//	open database: migrate: schema apply:
-//	ERROR: column "code" does not exist (SQLSTATE 42703)
-//
-// That is exactly what happened deploying migration 55 to the houseserver sim
-// on 2026-07-25.
-//
-// EVERY OTHER TEST PASSED. Each spins up a FRESH database, where the baseline
-// CREATE TABLE does include the column and the index is fine. Only the upgrade
-// path breaks — which is every real deployment and no test. That asymmetry is
-// the entire reason this file exists: it is the one check that reads the
-// upgrade order rather than the end state.
-//
-// THE REPO ALREADY HAS THE ESCAPE HATCH. migrateAddBaselineColumns() runs
-// BEFORE the baseline apply and exists for precisely this: "columns the
-// baseline DDL assumes-present (e.g. via a CREATE INDEX on the column) but
-// which are not added by any versioned migration." So a baseline index over a
-// migration-added column is safe when — and only when — that column is also in
-// that pre-baseline list.
-//
-// Migration 55's code/ref were not, which is why the boot failed. Two fixes
-// were available: move the index into the migration (what ef0078ac did —
-// simpler, and the convention) or add the columns to the pre-baseline list.
-// This check enforces "one or the other", not a preference between them.
+// Since the squash at v184 the baseline meets only a database with no tables
+// (store.migrate), so no baseline statement ever runs ahead of a migration on
+// an old database. What can still go wrong is the baseline going stale against
+// the snapshot: a migration above the retired chain that adds an index, with
+// the snapshot regenerated and the baseline not, gives new databases a
+// different index set from upgraded ones. The docker tests regenerate each
+// file; this reads the two committed files and needs no container.
 
 var (
-	// CREATE INDEX ... ON <table> (<cols or expression>)
-	baselineIndexRe = regexp.MustCompile(`(?is)CREATE\s+(?:UNIQUE\s+)?INDEX[^;]*?\sON\s+([a-z_][a-z0-9_]*)\s*\(([^;]*?)\)\s*(?:WHERE[^;]*)?;`)
-	// ALTER TABLE <table> ADD COLUMN [IF NOT EXISTS] <column>
-	addColumnRe = regexp.MustCompile(`(?is)ALTER\s+TABLE\s+([a-z_][a-z0-9_]*)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
-	// An entry in migrateAddBaselineColumns' adds list: {"table", "column", `...`}
-	preBaselineRe = regexp.MustCompile(`\{"([a-z_][a-z0-9_]*)",\s*"([a-z_][a-z0-9_]*)",\s*` + "`")
-	// A bare identifier, to pull column names out of an index's column list or
-	// expression (e.g. `(ref->>'payload')` yields ref and payload).
-	identRe = regexp.MustCompile(`[a-z_][a-z0-9_]*`)
+	// CREATE [UNIQUE] INDEX <name> ON [ONLY] public.<table> ... ; as pg_dump
+	// writes it, one line per statement.
+	dumpIndexRe = regexp.MustCompile(`(?m)^CREATE (?:UNIQUE )?INDEX (\w+) ON (?:ONLY )?public\.\w+ .*;$`)
 )
-
-// sqlKeywords appear inside index expressions and are not column names.
-var sqlKeywords = map[string]bool{
-	"asc": true, "desc": true, "nulls": true, "first": true, "last": true,
-	"text": true, "jsonb": true, "int": true, "bigint": true, "boolean": true,
-	"timestamptz": true, "coalesce": true, "lower": true, "upper": true,
-	"date_trunc": true, "gin": true, "gist": true, "btree": true, "using": true,
-	"varchar": true, "numeric": true, "double": true, "precision": true,
-}
 
 func mustReadSource(t *testing.T, path string) string {
 	t.Helper()
@@ -68,142 +41,62 @@ func mustReadSource(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	return string(b)
+	return strings.ReplaceAll(string(b), "\r\n", "\n")
 }
 
-func TestBaselineDDL_DoesNotIndexMigrationAddedColumns(t *testing.T) {
-	ddl := mustReadSource(t, "schema/postgres_ddl.go")
-	migrations := mustReadSource(t, "migrations.go")
+// dumpIndexes maps each index's name to its whole statement.
+func dumpIndexes(sql string) map[string]string {
+	out := map[string]string{}
+	for _, m := range dumpIndexRe.FindAllStringSubmatch(sql, -1) {
+		out[m[1]] = m[0]
+	}
+	return out
+}
 
-	// Every column any migration adds, keyed table -> column.
-	added := map[string]map[string]bool{}
-	for _, m := range addColumnRe.FindAllStringSubmatch(migrations, -1) {
-		table, col := strings.ToLower(m[1]), strings.ToLower(m[2])
-		if added[table] == nil {
-			added[table] = map[string]bool{}
-		}
-		added[table][col] = true
+func TestBaseline_CreatesEveryShippedIndex(t *testing.T) {
+	t.Parallel()
+	born := dumpIndexes(mustReadSource(t, "schema/baseline.sql"))
+	shipped := dumpIndexes(mustReadSource(t, "schema/schema.snapshot.sql"))
+	if len(shipped) == 0 || len(born) == 0 {
+		t.Fatalf("parsed %d indexes from the snapshot and %d from the baseline; a parser that matches nothing "+
+			"is worse than no test", len(shipped), len(born))
 	}
-	if len(added) == 0 {
-		t.Fatal("parsed no ADD COLUMN statements from migrations.go — the regex has drifted, " +
-			"and a test that silently matches nothing is worse than no test")
-	}
-
-	// Columns migrateAddBaselineColumns adds AHEAD of the baseline apply. An
-	// index over one of these is safe: the column is guaranteed present by the
-	// time the baseline runs, on old and new databases alike.
-	preBaseline := map[string]map[string]bool{}
-	for _, m := range preBaselineRe.FindAllStringSubmatch(migrations, -1) {
-		table, col := strings.ToLower(m[1]), strings.ToLower(m[2])
-		if preBaseline[table] == nil {
-			preBaseline[table] = map[string]bool{}
-		}
-		preBaseline[table][col] = true
-	}
-	if len(preBaseline) == 0 {
-		t.Fatal("parsed no entries from migrateAddBaselineColumns — the regex has drifted, and " +
-			"every legitimate pre-baseline column would now report as a violation")
-	}
-
-	// Every column the baseline indexes, keyed the same way.
-	var violations []string
-	for _, m := range baselineIndexRe.FindAllStringSubmatch(ddl, -1) {
-		table := strings.ToLower(m[1])
-		cols := added[table]
-		if cols == nil {
-			continue
-		}
-		for _, ident := range identRe.FindAllString(strings.ToLower(m[2]), -1) {
-			if sqlKeywords[ident] {
-				continue
-			}
-			if cols[ident] && !preBaseline[table][ident] {
-				violations = append(violations,
-					"baseline indexes "+table+"("+ident+"), added by a migration and NOT in "+
-						"migrateAddBaselineColumns")
-			}
+	const regen = "Regenerate the baseline: `make schema-baseline` (go run ./cmd/schemabaseline), then `make schema-snapshot`."
+	var problems []string
+	for name, stmt := range shipped {
+		switch b, ok := born[name]; {
+		case !ok:
+			problems = append(problems, "the snapshot ships "+name+" and the baseline does not create it")
+		case b != stmt:
+			problems = append(problems, "the baseline creates "+name+" differently:\n    baseline: "+b+"\n    snapshot: "+stmt)
 		}
 	}
-
-	if len(violations) > 0 {
-		t.Fatalf("baseline DDL indexes migration-added columns — Core will FAIL TO BOOT on any "+
-			"EXISTING database, because the baseline is applied before migrations run and "+
-			"CREATE TABLE IF NOT EXISTS does not add a column to a table that already exists:"+
-			"\n  %s\n\n"+
-			"Two fixes, either is fine:\n"+
-			"  1. Move the CREATE INDEX into the migration that adds the column. Fresh installs "+
-			"still get it — schema_migrations gates on version, so the migration runs on a new "+
-			"database even when the baseline already satisfies its verify.\n"+
-			"  2. Add the column to migrateAddBaselineColumns, which runs ahead of the baseline "+
-			"for exactly this reason.\n\n"+
-			"No other test catches this: they all run against FRESH databases, where the "+
-			"baseline CREATE TABLE includes the column and the index is fine. Only the upgrade "+
-			"path breaks, which is every real deployment.",
-			strings.Join(violations, "\n  "))
+	for name := range born {
+		if _, ok := shipped[name]; !ok {
+			problems = append(problems, "the baseline creates "+name+" and the snapshot does not ship it")
+		}
+	}
+	sort.Strings(problems)
+	if len(problems) > 0 {
+		t.Fatalf("a database born on the baseline would not carry the indexes a fresh boot ships:\n  %s\n\n%s",
+			strings.Join(problems, "\n  "), regen)
 	}
 }
 
-// The parsers are the load-bearing part — a regex that quietly stops matching
-// turns the check above into a no-op that always passes. These pin both
-// against the real shapes this repo uses.
+// The parser is the load-bearing part: a regex that quietly stops matching
+// turns the check above into a no-op that always passes.
 func TestSchemaDriftParsers_MatchTheShapesInUse(t *testing.T) {
-	ddl := mustReadSource(t, "schema/postgres_ddl.go")
-	if n := len(baselineIndexRe.FindAllStringSubmatch(ddl, -1)); n < 10 {
-		t.Errorf("baseline index regex matched %d indexes; the DDL has far more, so it has drifted", n)
+	t.Parallel()
+	if n := len(dumpIndexes(mustReadSource(t, "schema/schema.snapshot.sql"))); n < 50 {
+		t.Errorf("the index regex matched %d indexes in the snapshot; it has far more, so it has drifted", n)
 	}
-
-	migrations := mustReadSource(t, "migrations.go")
-	if n := len(addColumnRe.FindAllStringSubmatch(migrations, -1)); n < 10 {
-		t.Errorf("ADD COLUMN regex matched %d statements; migrations.go has far more, so it has drifted", n)
-	}
-
-	// The exact statement that caused the 2026-07-25 boot failure must be
-	// recognised by both halves, or the check would not have caught it.
-	sample := `CREATE INDEX IF NOT EXISTS idx_order_history_code
-		ON order_history(code, created_at) WHERE code IS NOT NULL;`
-	m := baselineIndexRe.FindStringSubmatch(sample)
-	if m == nil || strings.ToLower(m[1]) != "order_history" {
-		t.Fatalf("index regex did not parse the statement that broke the boot: %#v", m)
-	}
-	cols := identRe.FindAllString(strings.ToLower(m[2]), -1)
-	if !contains(cols, "code") {
-		t.Errorf("index column list %v did not yield 'code'", cols)
-	}
-
-	addSample := `ALTER TABLE order_history ADD COLUMN IF NOT EXISTS code TEXT`
-	am := addColumnRe.FindStringSubmatch(addSample)
-	if am == nil || strings.ToLower(am[2]) != "code" {
-		t.Fatalf("ADD COLUMN regex did not parse the matching migration statement: %#v", am)
-	}
-
-	// The pre-baseline list is the exemption; failing to parse it would report
-	// every legitimate entry as a violation.
-	preSample := "{\"bins\", \"payload_code\", `ALTER TABLE bins ADD COLUMN IF NOT EXISTS payload_code TEXT`},"
-	pm := preBaselineRe.FindStringSubmatch(preSample)
-	if pm == nil || strings.ToLower(pm[1]) != "bins" || strings.ToLower(pm[2]) != "payload_code" {
-		t.Fatalf("pre-baseline regex did not parse an adds-list entry: %#v", pm)
-	}
-	if n := len(preBaselineRe.FindAllStringSubmatch(migrations, -1)); n < 5 {
-		t.Errorf("pre-baseline regex matched %d entries; migrateAddBaselineColumns has more", n)
-	}
-
-	// And an expression index must yield the columns inside it, or a
-	// `(ref->>'payload')` index over a migration-added `ref` slips through.
-	exprSample := `CREATE INDEX IF NOT EXISTS idx_x ON order_history((ref->>'payload')) WHERE ref IS NOT NULL;`
-	em := baselineIndexRe.FindStringSubmatch(exprSample)
-	if em == nil {
-		t.Fatal("index regex did not parse an expression index")
-	}
-	if !contains(identRe.FindAllString(strings.ToLower(em[2]), -1), "ref") {
-		t.Errorf("expression index did not yield 'ref' from %q", em[2])
-	}
-}
-
-func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
+	for _, sample := range []string{
+		"CREATE INDEX idx_order_history_code ON public.order_history USING btree (code, created_at) WHERE (code IS NOT NULL);",
+		"CREATE UNIQUE INDEX edge_registry_station_uid_key ON public.edge_registry USING btree (station_uid) WHERE (station_uid <> ''::text);",
+		"CREATE INDEX idx_cell_part_events_cell_time ON ONLY public.cell_part_events USING btree (cell_id, recorded_at);",
+	} {
+		if len(dumpIndexes(sample)) != 1 {
+			t.Errorf("the index regex did not parse %q", sample)
 		}
 	}
-	return false
 }

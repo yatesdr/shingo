@@ -342,7 +342,7 @@ func TestCreateItem_AssignsID(t *testing.T) {
 // DEFAULT. The old default was 0, which counts nothing while looking
 // configured. The one writer (insertManifestLine) names the column, so this
 // pins the default for any INSERT that does not, read back through
-// ListManifest. It replaces store's TestV99_DefaultBecomesOne, which reached
+// ListManifest. It replaces store's deleted TestV99_DefaultBecomesOne, which reached
 // the same default by rewinding v99.
 func TestManifestLine_NoStatedRatioIsOnePerCycle(t *testing.T) {
 	t.Parallel()

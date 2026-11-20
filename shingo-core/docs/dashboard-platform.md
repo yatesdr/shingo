@@ -112,8 +112,7 @@ work and belongs in the query.
 
 ### Backend
 
-- **`store/schema/postgres_ddl.go`** — `dashboards` baseline table (fresh DBs).
-- **`store/migrations.go`** — `v27` creates `dashboards` on existing DBs (idempotent, verified by `TableExists`).
+- **`store/schema/baseline.sql`** — the `dashboards` table, as a new database is born with it (v27 created it on databases of its day).
 - **`store/dashboards/dashboards.go`** — CRUD on `*sql.DB`. JSON-backed columns keep the schema flat; `marshalInput` validates config JSON at write time.
 - **`store/orders/orders.go`** — `ListActiveBoardFiltered(stations)`: the board query with a positional-placeholder `IN (...)` station filter. Empty = unscoped.
 - **`service/dashboard_service.go`** — `DashboardService`: CRUD wrapper + input normalization (trim name, default `kind`, de-dup stations).
@@ -201,8 +200,7 @@ nothing but the host ties it to Core.
 
 | File                                          | Role                                   |
 |-----------------------------------------------|----------------------------------------|
-| `store/schema/postgres_ddl.go`                | `dashboards` baseline DDL              |
-| `store/migrations.go`                         | v27 migration                          |
+| `store/schema/baseline.sql`                   | `dashboards` table (generated baseline) |
 | `store/dashboards/dashboards.go`              | dashboard CRUD persistence             |
 | `store/dashboards_test.go`                    | CRUD + normalization test (`docker`)   |
 | `store/orders/orders.go`                      | `ListActiveBoardFiltered` station scope |

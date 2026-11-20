@@ -531,7 +531,7 @@ func TestPostingHealth_CountsUnpostedTransactions(t *testing.T) {
 // CMS feed existed. It is not work the subscriber failed to enqueue, so the
 // health count leaves it out and the sender's queue never lists it; a fresh
 // row beside it still counts, so the count is not passing by counting nothing.
-// It is the runtime half of store's TestV102_BackfillsLegacyRowsWithZero,
+// It is the runtime half of store's deleted TestV102_BackfillsLegacyRowsWithZero,
 // whose backfill (NULL to 0 at the migration) went with the chain; the 0 rows
 // it wrote stay in every plant database.
 func TestPostingHealth_ARowThatPredatesTheFeedIsNotUnposted(t *testing.T) {

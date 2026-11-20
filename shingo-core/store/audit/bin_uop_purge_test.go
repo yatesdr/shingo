@@ -127,7 +127,7 @@ func seedRollupDelta(t *testing.T, db *sql.DB, binID int64, before, after int, p
 // bin, epoch, payload, reason, actor); ticks, consumed and added summed;
 // first, last and min taken in order; crossings counted; epoch 0 and epoch 1
 // of one day not folded together; a second day's rows split by reason. It is
-// the runtime half of store's TestV94_BackfillAggregatesAtTheReviewedGrain,
+// the runtime half of store's deleted TestV94_BackfillAggregatesAtTheReviewedGrain,
 // run through the job over the same two-day history:
 //
 //	day D, epoch 0 (before any bump):     100 → 90  consume_tick
@@ -185,7 +185,7 @@ func TestRollupBinUOPDeltaDay_AggregatesAtTheReviewedGrain(t *testing.T) {
 // bin's whole stream, not the day, so day 2's only delta, which follows the
 // day-1 bump, lands in epoch 1. A day-scoped window would number it 0,
 // disagreeing with NextBinUOPEpochSeq. It replaces store's
-// TestV94_RollupJobMatchesBackfill, whose body it keeps; the backfill that
+// deleted TestV94_RollupJobMatchesBackfill, whose body it keeps; the backfill that
 // test's name compared against is gone with the chain.
 func TestRollupBinUOPDeltaDay_TheEpochCarriesAcrossDays(t *testing.T) {
 	t.Parallel()
@@ -238,7 +238,7 @@ func TestRollupBinUOPDeltaDay_TheEpochCarriesAcrossDays(t *testing.T) {
 // TestRollupBinUOPDeltaDay_IsIdempotentPerDay re-runs the job over an
 // unchanged day and requires the same single row set: ON CONFLICT DO UPDATE,
 // not a second copy and not a sum of two runs. It replaces store's
-// TestV94_RollupJobIsIdempotentPerDay.
+// deleted TestV94_RollupJobIsIdempotentPerDay.
 func TestRollupBinUOPDeltaDay_IsIdempotentPerDay(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

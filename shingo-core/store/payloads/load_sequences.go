@@ -17,7 +17,8 @@ type LoadSequence struct {
 	TaskNames []string
 	// LiftAt is the index in TaskNames of the name that lifts the cart: the
 	// one block of the expansion the block subscriber records as the pickup.
-	// Kept inside TaskNames by a CHECK (migration 179, which filled it).
+	// Kept inside TaskNames by a CHECK (load_sequences_lift_at_in_task_names; v179
+	// added the column and the CHECK and filled the seed's).
 	LiftAt    int
 	UpdatedAt time.Time
 }

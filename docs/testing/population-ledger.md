@@ -1486,27 +1486,27 @@ No assertion read any of the twelve.
 - citations rewritten: `docs/uop-architecture.md` names the replacement; the replacement's own comment names the retired test
 - verified at: the commit that adds this row
 
-### DEAD — `TestMigrationList_Shape`
-- test: `TestMigrationList_Shape` · pkg `shingocore/store` · run `-run '^TestMigrationList_Shape$'` · `shingo-core/store/migration_list_shape_test.go:15` @ `e06b29b0` · tags `none`
-- code: DEAD (the squash deletes the chain this walks; it checked `migrationList()`'s order and `LatestMigrationVersion` against the last entry, a property of the list, not of any row)
-- assertion map: the list strictly increasing and `LatestMigrationVersion()` its last entry → nothing in this row. After the squash the list holds only post-tip migrations (v184 up) and `LatestMigrationVersion` still feeds `CoreSchemaVersion` and the release tool, so the post-tip list needs the same order check where the schema change keeps it
-- mutation: none to run: a structure check over the list the squash rewrites
+### STALE — `TestBaselineDDL_DeclaresEveryTable`
+- test: `TestBaselineDDL_DeclaresEveryTable` · pkg `shingocore/store/schema` · run `-run '^TestBaselineDDL_DeclaresEveryTable$'` · `shingo-core/store/schema/ddl_totality_test.go:91` @ `e06b29b0` · tags `none`
+- code: STALE (rewritten as `TestBaseline_CreatesEveryShippedTable`, same file, now package `schema_test`). It asked which half of the replaying schema each shipped table lived in, the baseline DDL constant or a migration named in `migrationOnlyTables`, and that the constant declared no table the snapshot had lost. The squash at v183 deletes the constant and leaves one half: the generated baseline creates every table.
+- assertion map: every snapshot table is in the baseline DDL or `migrationOnlyTables` → every snapshot table is created by `store/schema/baseline.sql` (`ddl_totality_test.go:80-84`); the allowlist names no table the baseline declares, and none the snapshot lost → the allowlist is gone with its half; the baseline DDL declares no table the snapshot lost → the baseline creates no table the snapshot does not ship (`:85-90`). Added: the baseline carries no partition (`:92-95`) and no session setting (`:96-99`), and records schema_migrations v1..`store.RetiredChain` (`:101-111`). The allowlist's table notes are carried as `COMMENT ON TABLE` in `store/schema/comments.sql`.
+- mutation: the committed baseline's `CREATE TABLE public.dashboards (` renamed `dashboards_x`, and `SET statement_timeout = 0;` put above its first statement · rewritten red: `go test -count=1 -run 'TestBaseline_CreatesEveryShippedTable' ./store/schema/` → `the snapshot ships table "dashboards" and the baseline does not create it`, `the baseline creates table "dashboards_x" and the snapshot does not ship it`, `the baseline changes a session setting ... SET statement_timeout = 0;`, `--- FAIL` (`build\lane-schema\c4-totality-drift-red.log`)
 - coverage Δ: not measured (no before/after profile was taken)
-- citations rewritten: none
+- citations rewritten: `docs/ground-rules.md` (the one-home rule, now the generated baseline's)
 - verified at: the commit that adds this row
 
-### DEAD — `TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers`
-- test: `TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers` · pkg `shingocore/store` · run `-run '^TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers$'` · `shingo-core/store/migration_verify_direction_test.go:28` @ `e06b29b0` · tags `none`
-- code: DEAD (a source lint over `migrations.go`'s verify predicates, which the squash deletes with the chain; no rows)
-- assertion map: no verify predicate negates an Exists helper → nothing in this row. v184 carries a Verify, so the lint belongs over whatever verify predicates the post-tip list keeps
-- mutation: none to run: a source lint over the file the squash rewrites
+### STALE — `TestBaselineDDL_DoesNotIndexMigrationAddedColumns`
+- test: `TestBaselineDDL_DoesNotIndexMigrationAddedColumns` · pkg `shingocore/store` · run `-run '^TestBaselineDDL_DoesNotIndexMigrationAddedColumns$'` · `shingo-core/store/schema_index_drift_test.go:74` @ `e06b29b0` · tags `none`
+- code: STALE (rewritten as `TestBaseline_CreatesEveryShippedIndex`, same file). It read the upgrade order: a baseline `CREATE INDEX` over a column a migration adds, not in `migrateAddBaselineColumns`, failed every boot of an existing database. Since the squash at v183 the baseline meets only a database with no tables, so that hazard has no path; what can still drift is the baseline against the snapshot.
+- assertion map: no baseline index names a migration-added column outside the pre-baseline list → every index the snapshot ships is created by the baseline with the same statement, and the baseline creates no other (`schema_index_drift_test.go:57-83`). `TestSchemaDriftParsers_MatchTheShapesInUse` keeps its name and now pins the one parser against the snapshot's count and three real statement shapes (a partial, a unique partial, an `ON ONLY` parent index).
+- mutation: the committed baseline's `idx_bins_status` built over `label` instead of `status` · rewritten red: `go test -count=1 -run 'TestBaseline_CreatesEveryShippedIndex' ./store/` → `the baseline creates idx_bins_status differently: baseline: ... (label); snapshot: ... (status)`, `--- FAIL` (`build\lane-schema\c4-totality-drift-red.log`)
 - coverage Δ: not measured (no before/after profile was taken)
-- citations rewritten: `shingo-core/store/schema/schema.go` names this test and is not rewritten here
+- citations rewritten: `docs/ui-style-guide/24-drift-detection.md` (generated block, `make docs-gen`)
 - verified at: the commit that adds this row
 
 ### DEAD — `TestV72_RenamesTheOperatorStationEverywhere`
 - test: `TestV72_RenamesTheOperatorStationEverywhere` · pkg `shingocore/store` · run `-run '^TestV72_RenamesTheOperatorStationEverywhere$'` · `shingo-core/store/migration_v72_station_test.go:60` @ `e06b29b0` · tags `docker`
-- code: DEAD (v72, the rewrite of the old operator station across four tables, goes with the chain in the squash at v183)
+- code: DEAD (v72, the rewrite of the old operator station across four tables, goes with the chain in the squash)
 - assertion map: the old station's rows moved in orders, mission_telemetry, cell_config and dashboards, the array rewritten in place → nothing: a rewrite of rows from before v72, and nothing outside tests and `migrations.go` writes the old value (grep of `core-spot`: none)
 - mutation: none to run: the test re-runs v72 through the self-heal, and the squash deletes v72 and the self-heal
 - coverage Δ: not measured (no before/after profile was taken)

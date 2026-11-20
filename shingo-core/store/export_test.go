@@ -2,11 +2,10 @@ package store
 
 import "database/sql"
 
-// MigrateForTest re-exports the unexported migrate() so tests in package
-// store_test can force a second migration pass (the self-heal) — e.g. to prove a
-// retired table is not resurrected. It compiles only into the test binary and is
-// not part of the production API.
-func (db *DB) MigrateForTest() error { return db.migrate() }
+// ApplyBaselineForTest runs applyBaseline, the one Exec store.migrate births a
+// new database with, on any text: the atomicity test hands it the baseline
+// with a failing statement after it. It compiles only into the test binary.
+func ApplyBaselineForTest(db *DB, baseline string) error { return applyBaseline(db.DB, baseline) }
 
 // StealSoftHoldsForTest runs a dig child's steal of a bin's soft holds in its
 // own transaction (LOCKS.md §3: its lock order against a terminalize).

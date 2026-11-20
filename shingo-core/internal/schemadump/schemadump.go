@@ -2,24 +2,22 @@
 // container and dumps it, so the shape can be committed as a file and
 // compared.
 //
-// WHY THIS EXISTS. There is no file in this repository you can open to learn
-// what the database looks like. The real shape is postgres_ddl.go plus
-// migrateRenames() plus migrateAddBaselineColumns() plus every versioned
-// migration plus HOW OLD THAT PARTICULAR DATABASE IS.
+// WHY THIS EXISTS. A database's shape depends on how it was made, and Core's
+// databases are made two ways: a new one is born on the baseline
+// (store/schema/baseline.sql), and a plant's was built by the releases it ran,
+// whose replay this tree no longer carries. The baseline is generated here
+// (GenerateBaseline: the retired chain's own release, built from git and
+// booted, then dumped), and the tests rebuild plant-shaped databases with the
+// releases' own binaries (BuildRelease) and assert each one, brought up by
+// this build, has the shape of one born on the baseline. Anything that only
+// works on a new database fails on the machine of whoever wrote it, instead of
+// at a plant.
 //
-// That last term is the one that bites. schema.Apply runs CREATE ... IF NOT
-// EXISTS, which does NOTHING to a table that already exists — so a column
-// added to a baseline CREATE TABLE reaches a fresh database instantly and a
-// plant database never. migrateAddBaselineColumns exists to patch that, and
-// it is a hand-kanban list whose own comment states the rule with nothing
-// enforcing it. It has failed twice: the misplaced code/ref index (worked on a
-// fresh DB, absent at the plant) and the five long-inert baseline indexes an
-// old dump trips.
-//
-// So this package builds the schema BOTH ways — today's baseline, and an old
-// baseline pulled out of git — and the tests assert they converge. Anything
-// that only works on a fresh database fails on the machine of whoever wrote
-// it, instead of at a plant.
+// Until the squash at v184 the shape was the baseline DDL replayed on every
+// boot plus the pre-baseline renames and column adds plus every versioned
+// migration plus how old the database was; a column added to the baseline
+// CREATE TABLE reached a new database and never a plant one. That cost two
+// plant deploys, and is what this package was first built to catch.
 package schemadump
 
 import (
@@ -150,9 +148,9 @@ func (i *Instance) createDatabase(prefix string) (string, error) {
 	return name, nil
 }
 
-// BuildFresh creates an empty database and runs the FULL production migrate
-// path against it — renames, pre-baseline column adds, today's baseline, then
-// every versioned migration. This is what a brand-new plant gets.
+// BuildFresh creates an empty database and runs this build's store.Open on it:
+// the database is born on the baseline, then the migrations above the retired
+// chain run. This is what a brand-new plant gets.
 func (i *Instance) BuildFresh(_ context.Context) (string, error) {
 	name, err := i.createDatabase("fresh")
 	if err != nil {
@@ -176,41 +174,27 @@ func (i *Instance) Reboot(_ context.Context, dbName string) error {
 	return db.Close()
 }
 
-// BuildAged creates an empty database, applies an OLD baseline DDL to it, and
-// then runs the full production migrate path — which is exactly what happens
-// when a plant that was installed at that vintage takes an upgrade.
-//
-// The old baseline is applied raw, without the current migrateRenames /
-// migrateAddBaselineColumns running first, because at that vintage those steps
-// either did not exist or had different contents. What the upgrade path
-// actually has to survive is "this shape, then today's code", and that is what
-// this builds.
-func (i *Instance) BuildAged(_ context.Context, baselineSQL string) (string, error) {
-	if strings.TrimSpace(baselineSQL) == "" {
-		return "", fmt.Errorf("empty baseline DDL")
-	}
-	name, err := i.createDatabase("aged")
-	if err != nil {
-		return "", err
-	}
-	aged, err := sql.Open("pgx", fmt.Sprintf(
-		"host=%s port=%d dbname=%s user=%s password=%s sslmode=disable",
-		i.host, i.port, name, pgUser, pgPass))
-	if err != nil {
-		return "", fmt.Errorf("connect to %s: %w", name, err)
-	}
-	_, execErr := aged.Exec(baselineSQL)
-	aged.Close()
-	if execErr != nil {
-		return "", fmt.Errorf("apply old baseline to %s: %w", name, execErr)
-	}
+// CreateDatabase makes an empty database with a unique name on this instance.
+func (i *Instance) CreateDatabase(prefix string) (string, error) { return i.createDatabase(prefix) }
 
-	db, err := store.Open(i.dbConfig(name))
-	if err != nil {
-		return "", fmt.Errorf("migrate aged database: %w", err)
+// ApplyRaw runs sqlText on dbName as one statement, over a plain connection
+// with none of Core's session settings: an old baseline DDL, applied the way
+// that release's first boot applied it.
+func (i *Instance) ApplyRaw(ctx context.Context, dbName, sqlText string) error {
+	if strings.TrimSpace(sqlText) == "" {
+		return fmt.Errorf("empty SQL for %s", dbName)
 	}
-	db.Close()
-	return name, nil
+	db, err := sql.Open("pgx", fmt.Sprintf(
+		"host=%s port=%d dbname=%s user=%s password=%s sslmode=disable",
+		i.host, i.port, dbName, pgUser, pgPass))
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", dbName, err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, sqlText); err != nil {
+		return fmt.Errorf("apply to %s: %w", dbName, err)
+	}
+	return nil
 }
 
 // dumpFile is where pg_dump writes inside the container before we copy it out.
@@ -410,4 +394,49 @@ func canonicalStatement(stmt string) string {
 	}
 	sort.Strings(body)
 	return lines[0] + "\n" + strings.Join(body, "\n") + "\n" + lines[last]
+}
+
+var (
+	partitionOfRe = regexp.MustCompile(`^CREATE TABLE public\.(\w+) PARTITION OF `)
+	attachRe      = regexp.MustCompile(`ATTACH PARTITION public\.(\w+)`)
+)
+
+// ExcludePartitions drops from a normalized dump every statement that names a
+// partition child: its CREATE TABLE ... PARTITION OF, its ATTACH, and its
+// indexes and constraints. Children are made by the code that writes them, at
+// runtime (store/heartbeat, store/robotconfidence), never by a boot, so two
+// databases of one shape differ in them by what they last wrote. The parent
+// stays. A dump with no child comes back unchanged.
+func ExcludePartitions(dump string) string {
+	stmts := splitStatements(dump)
+	children := map[string]bool{}
+	for _, s := range stmts {
+		if m := partitionOfRe.FindStringSubmatch(s); m != nil {
+			children[m[1]] = true
+		}
+		for _, m := range attachRe.FindAllStringSubmatch(s, -1) {
+			children[m[1]] = true
+		}
+	}
+	if len(children) == 0 {
+		return dump
+	}
+	var kept []string
+	for _, s := range stmts {
+		if !namesAny(s, children) {
+			kept = append(kept, s)
+		}
+	}
+	return strings.Join(kept, "\n\n") + "\n"
+}
+
+var qualifiedNameRe = regexp.MustCompile(`public\.(\w+)`)
+
+func namesAny(stmt string, names map[string]bool) bool {
+	for _, m := range qualifiedNameRe.FindAllStringSubmatch(stmt, -1) {
+		if names[m[1]] {
+			return true
+		}
+	}
+	return false
 }

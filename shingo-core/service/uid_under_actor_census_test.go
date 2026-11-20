@@ -238,15 +238,17 @@ var uidUnderActorWriters = map[string]uaWriter{
 	"internal/testdb:SeedAudit INSERT INTO bin_uop_ledger":            {n: 1, table: uaLedger, actor: uaFixture, reading: "a test seed; no production path imports internal/testdb"},
 }
 
-// uaHistory is every INSERT into the three tables in the migration chain,
-// which parseCoreSource leaves out, by function: rows already on a plant's
-// disk, which a move keyed by op and kind also moves.
-var uaHistory = map[string]int{
-	"v93BinUOPException":  3, // negative_crossing (each crossing row's own op and actor), the two drop kinds, boundary
-	"v94BinUOPDeltaDaily": 1,
-}
+// uaHistory is every INSERT into the three tables in the migrations above the
+// retired chain, which parseCoreSource leaves out, by function: rows a
+// migration writes on a plant's disk, which a move keyed by op and kind also
+// moves. None writes one today. Until the squash at v184 the chain held four
+// (read at e06b29b0): v93BinUOPException's backfill, three (negative_crossing,
+// each crossing row's own op and actor; the two drop kinds; boundary), and
+// v94BinUOPDeltaDaily's, one. Their rows are on the plants' disks still, and
+// the lists below cover their ops and kinds.
+var uaHistory = map[string]int{}
 
-// The lists the clean model's move reads (v184 asserts its own equal these).
+// The lists the clean model's move reads (v185 asserts its own equal these).
 
 // UIDUnderActorLedgerOps are the bin_uop_ledger ops whose actor is a station uid.
 var UIDUnderActorLedgerOps = []string{"after_lift", "bin_uop_delta", "edge_rollback", "payload_bound_first_delta",

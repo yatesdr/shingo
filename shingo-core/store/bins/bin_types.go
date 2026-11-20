@@ -53,7 +53,7 @@ func ScanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 // CreateType inserts a new bin type and sets bt.ID on success. Bare and BareOf
 // are not written: bare is generated from bare_of, and bare_of has one writer,
 // EnsureBareMarkerTx. A type with no family stated takes a family of one, in the same
-// statement (the insert trigger, store.v172Families).
+// statement (the insert trigger bin_types_family_of_one, which v172 added).
 func CreateType(db *sql.DB, bt *BinType) error {
 	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in, length_in, required_robot_group, totes_per_layer, family_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0)) RETURNING id`,

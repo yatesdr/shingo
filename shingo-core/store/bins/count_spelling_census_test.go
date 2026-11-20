@@ -61,9 +61,7 @@ var countOtherQuestions = map[string]string{
 }
 
 // toteOtherQuestions compare totes per layer with 0 or nil to ask something else.
-var toteOtherQuestions = map[string]string{
-	"shingo-core/store/schema/postgres_ddl.go:postgresDDL": "the CHECK (totes_per_layer > 0) that makes every `<= 0` arm dead: the schema, not a reader",
-}
+var toteOtherQuestions = map[string]string{}
 
 // TestRule7_CountedToNothingHasOneSpelling is ground rule 7's census.
 func TestRule7_CountedToNothingHasOneSpelling(t *testing.T) {

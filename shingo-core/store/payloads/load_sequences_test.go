@@ -93,7 +93,7 @@ func TestLoadSequences_Seeded(t *testing.T) {
 // task_names (4 on a four-name sequence, and -1) while a legal one lands. No Go
 // code writes this table; an engineer edits it by hand, so the CHECK is the
 // guard. It is the runtime half of store's
-// TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad,
+// deleted TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad,
 // whose backfill of lift_at by the name rule went with the chain.
 func TestLoadSequences_TheSeedLiftsAtItsLoadAndTheCheckHoldsTheIndex(t *testing.T) {
 	t.Parallel()

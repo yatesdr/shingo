@@ -59,11 +59,12 @@ type DB struct {
 // deploy-night hazard on DEPLOY-WATCH-LIST-2026-07-27 W-2e, reproduced.
 //
 // It matters at startup, because startup is where this database takes ACCESS
-// EXCLUSIVE. migrateAddBaselineColumns ALTERs `orders` five times on the pool,
-// schema.Apply builds indexes, and migrations 55/59/61 each take ACCESS
-// EXCLUSIVE on `orders` or `order_history`. Any one of them meeting an open
-// transaction on those tables waits, aborts, fails migrate(), and Core does not
-// start.
+// EXCLUSIVE: every migration runs at boot, and an ALTER of `orders` or
+// `order_history` meeting an open transaction on that table waits, aborts,
+// fails migrate(), and Core does not start. (Until the squash at v184 every
+// boot took those locks: the pre-baseline column adds ALTERed `orders` on the
+// pool and the replayed baseline built indexes, ahead of migrations such as
+// 55, 59 and 61.)
 //
 // TWO THINGS CHANGE, and the second is the bigger one:
 //
@@ -95,10 +96,11 @@ type DB struct {
 // that used to commit stops committing.
 //
 // IT APPLIES TO EVERY SESSION, not only the migration ones, deliberately. The
-// DDL runs on pool connections (schema.Apply takes *sql.DB; the runner in
-// protocol/migrate takes any connection db.Begin hands it), so a per-session SET would have to
-// bound a connection nobody chooses. A session default in the startup packet
-// covers every statement wherever it runs, which is the property being bought.
+// DDL runs on pool connections (the baseline's one Exec takes *sql.DB; the
+// runner in protocol/migrate takes any connection db.Begin hands it), so a
+// per-session SET would have to bound a connection nobody chooses. A session
+// default in the startup packet covers every statement wherever it runs, which
+// is the property being bought.
 const (
 	connectTimeoutSeconds   = 5
 	statementTimeoutSeconds = 30

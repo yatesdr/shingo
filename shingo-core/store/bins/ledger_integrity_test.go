@@ -161,7 +161,7 @@ func TestOpenNegativeBins_EmptyWhenHealthy(t *testing.T) {
 // bin_uop_exception dates the negative bin after the raw bin_uop_ledger row it
 // came from is gone, which is what the table is for (the raw row is what the
 // 90-day purge deletes). It replaces store's
-// TestV93_OpenNegativeBinsReadsTheExceptionTable, which sat in a migration
+// deleted TestV93_OpenNegativeBinsReadsTheExceptionTable, which sat in a migration
 // test file but asserted nothing about the migration.
 func TestOpenNegativeBins_DatesTheBinByItsExceptionRow(t *testing.T) {
 	db := testdb.Open(t)

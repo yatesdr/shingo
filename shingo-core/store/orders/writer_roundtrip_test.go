@@ -275,9 +275,9 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 // spoken for, and it reads back what the hand writes there; block_actions is
 // '{}', empty and not NULL, since NULL means an order sent before the record,
 // read by block names for life. It is the runtime half of store's
-// TestOrderMigration_V181_EveryOrderStartsAtOne,
-// TestOrderMigration_V182_NoOrderIsAsking and
-// TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad,
+// deleted TestOrderMigration_V181_EveryOrderStartsAtOne,
+// deleted TestOrderMigration_V182_NoOrderIsAsking and
+// deleted TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad,
 // whose backfills of the orders written before each column went with the
 // chain.
 func TestWriter_BornByTheColumnDefaults(t *testing.T) {

@@ -1,11 +1,14 @@
 // Command schemasnapshot writes the committed schema snapshot.
 //
-// It boots an empty Postgres, runs the FULL production migrate path against
-// it, dumps the result with pg_dump --schema-only, and writes it to
-// store/schema/schema.snapshot.sql.
+// It boots an empty Postgres, runs this build's store.Open against it (the
+// database is born on the embedded baseline, then the migrations above the
+// retired chain run), dumps the result with pg_dump --schema-only, and writes
+// it to store/schema/schema.snapshot.sql. Regenerate the baseline first when it
+// is stale (make schema-baseline): this command reads the one this binary
+// embeds.
 //
 // The point of the committed file is that every future shape change appears as
-// a readable diff in review, instead of requiring a reviewer to simulate fifty
+// a readable diff in review, instead of requiring a reviewer to simulate the
 // migrations in their head. TestSchemaSnapshotIsCurrent keeps it honest.
 //
 // Run via `make schema-snapshot` from the shingo-core module root. Requires

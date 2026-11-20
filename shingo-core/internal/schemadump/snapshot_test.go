@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shingocore/internal/schemadump"
+	"shingocore/store"
 )
 
 // moduleRoot is shingo-core/, two levels up from internal/schemadump.
@@ -109,25 +110,29 @@ func TestSchemaSnapshotIsCurrent(t *testing.T) {
 
 // TestSchemaConvergesAcrossVintages is the one that catches the bug class.
 //
-// It builds the database two ways and asserts the results are IDENTICAL:
+// It builds databases the ways the plants' were built and asserts that each
+// one, brought up by this build, has the SAME SHAPE as a database born on the
+// baseline:
 //
-//	fresh — today's baseline + all migrations
-//	aged  — an OLD baseline (from git) + all migrations
+//	fresh   — an empty database, born on the baseline (store.migrate)
+//	vintage — a database made by a released binary built from git
+//	          (schemadump.BuildRelease): that release's own store.Open, the
+//	          code the plant ran; or born on an old baseline DDL
 //
-// schema.Apply runs CREATE ... IF NOT EXISTS, which does nothing to a table
-// that already exists. So a column added to a baseline CREATE TABLE reaches a
-// fresh database instantly and a plant database NEVER, and every test in this
-// repository builds a fresh database. That asymmetry has cost us twice: the
-// misplaced code/ref index (worked on a fresh DB, absent at the plant) and the
-// five long-inert baseline indexes an old dump trips.
+// This build refuses a vintage below the retired chain, by design: the test
+// asserts that refusal, and that it wrote nothing, then walks the vintage up
+// with store.RetiredChainRelease, the release that carries the chain, and
+// boots this build again. That is the upgrade a plant on an older release
+// makes.
 //
-// With this test, anything that only works on a fresh database fails on the
-// machine of whoever wrote it.
+// Shapes are compared by Normalize + Canonical, partition children excluded
+// (ExcludePartitions): column ORDER legitimately differs (a fresh database
+// gets a column where its CREATE TABLE put it, an upgraded one where the ALTER
+// appended it), and runtime partitions are made by the code that writes them.
 //
 // A vintage that fails for a reason you cannot explain is a FINDING, not an
-// obstacle — it means the upgrade path from that vintage genuinely does not
-// converge, and a plant at that vintage would get a different database from a
-// new one.
+// obstacle: the upgrade path from that vintage does not converge, and a plant
+// at that vintage would get a different database from a new one.
 func TestSchemaConvergesAcrossVintages(t *testing.T) {
 	t.Parallel()
 	root := moduleRoot(t)
@@ -145,41 +150,94 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump fresh database: %v", err)
 	}
+	freshShape := schemadump.Canonical(schemadump.ExcludePartitions(fresh))
 
 	for _, v := range schemadump.Vintages {
-		t.Run(strings.NewReplacer("^", "-parent", "/", "-", ".", "_").Replace(v.Rev), func(t *testing.T) {
+		t.Run(v.Name, func(t *testing.T) {
 			t.Parallel()
 			// Own context, not the parent's: the parent function returns (and
 			// defers cancel) as soon as these subtests are SCHEDULED, which
-			// would cancel every dump still queued behind t.Parallel().
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			// would cancel every build still queued behind t.Parallel().
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
-			baseline, err := schemadump.BaselineFromGit(root, v.Rev)
+			name, err := inst.CreateDatabase("vintage")
 			if err != nil {
-				t.Fatalf("read baseline at %s: %v\n(%s)", v.Rev, err, v.Why)
+				t.Fatal(err)
 			}
-			agedDB, err := inst.BuildAged(ctx, baseline)
+			if v.DDLRev != "" {
+				ddl, err := schemadump.BaselineFromGit(root, v.DDLRev)
+				if err != nil {
+					t.Fatalf("read the baseline DDL at %s: %v\n(%s)", v.DDLRev, err, v.Why)
+				}
+				if err := inst.ApplyRaw(ctx, name, ddl); err != nil {
+					t.Fatalf("apply %s's baseline DDL: %v\n(%s)", v.DDLRev, err, v.Why)
+				}
+			}
+			if v.BuiltBy != "" {
+				bootRelease(ctx, t, inst, root, v.BuiltBy, name, v.Why)
+			}
+			if v.BuiltBy != store.RetiredChainRelease {
+				assertRefusedWritingNothing(ctx, t, inst, name, v)
+				bootRelease(ctx, t, inst, root, store.RetiredChainRelease, name, v.Why)
+			}
+			if err := inst.Reboot(ctx, name); err != nil {
+				t.Fatalf("this build's boot of the vintage: %v\n(%s)", err, v.Why)
+			}
+			aged, err := inst.Dump(ctx, name)
 			if err != nil {
-				t.Fatalf("upgrade a %s database to today: %v\n(%s)", v.Rev, err, v.Why)
+				t.Fatalf("dump the vintage: %v", err)
 			}
-			aged, err := inst.Dump(ctx, agedDB)
-			if err != nil {
-				t.Fatalf("dump aged database: %v", err)
-			}
-			// Canonical, not literal: column ORDER legitimately differs
-			// (a fresh database gets the column where the baseline CREATE
-			// TABLE puts it; an upgraded one gets it appended by an ALTER)
-			// and order is not part of the shape. See schemadump.Canonical.
-			if schemadump.Canonical(aged) == schemadump.Canonical(fresh) {
+			agedShape := schemadump.Canonical(schemadump.ExcludePartitions(aged))
+			if agedShape == freshShape {
 				return
 			}
-			t.Fatalf("a database created at %s and upgraded to today does NOT match a fresh one.\n"+
+			t.Fatalf("a database %s and brought up by this build does NOT match one born on the baseline.\n"+
 				"vintage: %s\n\n"+
 				"This is the shape that has already broken two plant deploys: the upgrade path\n"+
 				"produces a different database from the one every test builds.\n\n%s",
-				v.Rev, v.Why, shapeDiff(schemadump.Canonical(fresh), schemadump.Canonical(aged)))
+				v.Name, v.Why, shapeDiff(freshShape, agedShape))
 		})
+	}
+}
+
+// bootRelease builds rev (once per test binary) and boots it on dbName.
+func bootRelease(ctx context.Context, t *testing.T, inst *schemadump.Instance, root, rev, dbName, why string) {
+	t.Helper()
+	rel, err := schemadump.BuildRelease(ctx, root, rev, releaseWork)
+	if err != nil {
+		t.Fatalf("build %s: %v\n(%s)", rev, err, why)
+	}
+	if _, err := inst.BootRelease(ctx, rel, dbName); err != nil {
+		t.Fatalf("boot by %s: %v\n(%s)", rev, err, why)
+	}
+}
+
+// assertRefusedWritingNothing boots this build on a vintage below the retired
+// chain and requires the refusal, by its words, and the schema and rows unchanged.
+func assertRefusedWritingNothing(ctx context.Context, t *testing.T, inst *schemadump.Instance, dbName string, v schemadump.Vintage) {
+	t.Helper()
+	before, err := inst.DumpWithRowsForTest(ctx, dbName)
+	if err != nil {
+		t.Fatalf("dump before the refused boot: %v", err)
+	}
+	want := "start " + store.RetiredChainRelease + " on this database first"
+	if v.BuiltBy == "" {
+		want = "Core tables present but no schema_migrations: restore the whole dump"
+	}
+	err = inst.Reboot(ctx, dbName)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("this build's boot of the vintage before %s: err %v, want the refusal saying %q\n(%s)",
+			store.RetiredChainRelease, err, want, v.Why)
+	}
+	t.Logf("refused as it should be: %v", err)
+	after, err := inst.DumpWithRowsForTest(ctx, dbName)
+	if err != nil {
+		t.Fatalf("dump after the refused boot: %v", err)
+	}
+	if after != before {
+		t.Fatalf("the refused boot changed the database (a refusal writes nothing):\n%s",
+			firstDiff(before, after, "before", "after"))
 	}
 }
 
