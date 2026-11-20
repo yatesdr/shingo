@@ -95,7 +95,7 @@
                 {{end}}
                 {{if eq .Status "staged"}}
                     {{if .StagedExpireAt}}<span class="text-muted orders-subtext" data-until="{{.StagedExpireAt.Format "2006-01-02T15:04:05Z07:00"}}" data-past="Expired"></span>{{end}}
-                    <button class="btn btn-sm btn-primary" data-action="releaseOrder:{{.ID}}">Release</button>
+                    <button class="btn btn-sm btn-primary" data-action="releaseOrder:{{.ID}}" data-payload-code="{{.PayloadCode}}">Release</button>
                 {{end}}
                 {{if eq .Status "pending"}}
                     <button class="btn btn-sm btn-primary" data-action="submitOrder:{{.ID}}">Submit</button>

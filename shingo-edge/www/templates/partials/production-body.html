@@ -107,7 +107,7 @@
                             {{end}}
                             {{else}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
-                            <button class="btn btn-sm" data-action="releaseNodeWithPrompt:{{.Node.ID}}" title="Send current bin to outbound staging (prompts for remaining parts)">Release</button>
+                            <button class="btn btn-sm" data-action="releaseNodeWithPrompt:{{.Node.ID}}" data-uop-capacity="{{if .ActiveClaim}}{{.ActiveClaim.UOPCapacity}}{{end}}" title="Send current bin to outbound staging (prompts for remaining parts)">Release</button>
                             {{end}}
                         {{end}}
                         {{if .Runtime}}{{if .Runtime.ActiveOrderID}}

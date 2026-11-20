@@ -1,6 +1,7 @@
 import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { abovePackNote } from '/static/shared/count-words.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
@@ -560,7 +561,9 @@ async function renderActions(data) {
   // Record Count
   html += '<div class="action-group"><h4>Record Count</h4>';
   html += '<div class="inline-form">';
-  html += '<div class="form-group"><label>Actual UoP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"></div>';
+  html += '<div class="form-group"><label>Actual UoP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"' +
+    ' data-pack="' + (b.uop_capacity || 0) + '" data-action-input="showCountNote">' +
+    '<small id="bd-count-note" class="text-muted" style="display:block" hidden></small></div>';
   html += '<div class="form-group"><label>Counter</label><input type="text" id="bd-count-actor" placeholder="Name" style="width:150px"></div>';
   html += '<button class="btn btn-sm" data-action="recordCount">Record</button>';
   html += '</div></div>';
@@ -670,6 +673,11 @@ function runBinAction(action, params, reset) {
       // A done action can carry a warning (a move onto a line whose parts
       // take another carrier type): shown, never a refusal.
       if (resp && resp.warning) toast(resp.warning, 'warning');
+      // A typed count above the pack is taken as typed, and said (owner,
+      // 2026-11-19): the same sentence as every other typed box.
+      var over = (action === 'load_payload' || action === 'record_count') && resp && resp.bin
+        ? abovePackNote(resp.bin.uop_remaining, resp.bin.uop_capacity) : null;
+      if (over) toast(over.text, 'warning');
       if (!resp || !resp.bin) { refreshBinRow(id); return; }
       clearFields(reset || []);
       paintBinRow(resp);
@@ -763,8 +771,24 @@ async function askRobotToSetDown(binId, robot) {
     .catch(function(e) { toast(e.error || e, 'error'); });
 }
 
+// showCountNote is Record Count's live line under the box: the above-pack
+// note while the typed count is over the bin's pack.
+function showCountNote(input) {
+  var note = document.getElementById('bd-count-note');
+  if (!note || !input) return;
+  var over = abovePackNote(parseInt(input.value, 10), Number(input.dataset.pack) || 0);
+  note.textContent = over ? over.text : '';
+  note.hidden = !over;
+}
+
 function recordCount() {
-  var uop = parseInt(document.getElementById('bd-count-uop').value) || 0;
+  // A blank box is not a count: it used to record 0 (parseInt || 0), an
+  // empty bin nobody counted. A typed 0 is an empty bin; a negative is
+  // refused here and at the door (owner, 2026-11-19).
+  var raw = document.getElementById('bd-count-uop').value.trim();
+  var uop = parseInt(raw, 10);
+  if (raw === '' || isNaN(uop)) { toast('Type the count: 0 for an empty bin', 'info'); return; }
+  if (uop < 0) { toast('Count must be 0 or more', 'info'); return; }
   var actor = document.getElementById('bd-count-actor').value.trim();
   runBinAction('record_count', { actual_uop: uop, actor: actor }, ['bd-count-uop', 'bd-count-actor']);
 }
@@ -1552,6 +1576,7 @@ delegateActions(document.body, {
     openEditBTModal,
     previewBinLabels,
     recordCount,
+    showCountNote,
     requestMove,
     switchTab: showBinTab,
     showFamilyTab,

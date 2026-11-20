@@ -1,6 +1,7 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // the prompt puts payload codes inside attributes.
 import { esc } from '/static/shared/esc.js';
+import { abovePackNote } from '/static/shared/count-words.js';
 import { postAction } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
 import { openKeypad } from './operator-keypad.js';
@@ -513,8 +514,11 @@ async function handleReleasePromptAction(evt) {
     // override that Core records to bin_uop_audit.
     if (action === 'release-partial-edit') {
         const current = state.partialCount != null ? state.partialCount : 0;
+        const claim = state.entry && state.entry.active_claim;
+        const pack = claim && claim.uop_capacity ? claim.uop_capacity : 0;
         openKeypad(0, current, {
             title: 'Bin remaining (UoP)',
+            note: function(qty) { return abovePackNote(qty, pack); },
             onOk: function(_nodeID, qty) {
                 state.partialCount = qty > 0 ? qty : 0;
                 renderReleasePromptStep1();

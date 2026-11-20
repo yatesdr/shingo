@@ -3,6 +3,7 @@ import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm, hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
+import { abovePackNote } from '/static/shared/count-words.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
@@ -21,7 +22,8 @@ import { postAct } from '/static/js/ask-act.js';
 // may be stale or zeroed (e.g. by a prior release-click on the slot).
 // Empty/0 → bin released as empty (manifest cleared); positive integer
 // → manifest preserved with that count.
-async function releaseNodeWithPrompt(nodeID) {
+async function releaseNodeWithPrompt(nodeID, el) {
+    var pack = el && el.dataset ? Number(el.dataset.uopCapacity) || 0 : 0;
     var input = await prompt(
         'How many parts remain in this bin?\n\n' +
         'Enter 0 (or leave blank) to release as EMPTY (manifest cleared).\n' +
@@ -39,9 +41,10 @@ async function releaseNodeWithPrompt(nodeID) {
     try {
         await api.post('/api/process-nodes/' + nodeID + '/release-empty',
             { partial_count: partial });
-        toast(partial > 0
+        var over = abovePackNote(partial, pack);
+        toast((partial > 0
             ? 'Released — partial (' + partial + ' parts preserved)'
-            : 'Released — empty (manifest cleared)', 'success');
+            : 'Released — empty (manifest cleared)') + (over ? ' ' + over.text : ''), over ? 'warning' : 'success');
     } catch(e) {
         toast('Error: ' + e.message, 'error');
     }
@@ -188,8 +191,21 @@ async function onLoadPayloadChanged() {
         var uopRow = document.createElement('div');
         uopRow.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.75rem;padding:0.5rem;border:2px solid var(--primary, #4a9);border-radius:4px';
         uopRow.innerHTML = '<div style="font-weight:600">UoP Count</div>' +
-            '<input type="number" id="rb-uop-count" class="form-input" value="' + uopCapacity + '" style="text-align:center;font-weight:600">';
+            '<input type="number" id="rb-uop-count" class="form-input" min="0" step="1" value="' + uopCapacity + '" style="text-align:center;font-weight:600">' +
+            '<div id="rb-uop-note" class="form-hint" style="grid-column:1 / -1;text-align:right" hidden></div>';
         rows.appendChild(uopRow);
+        // The note under the count: above the pack is taken as typed, and said.
+        var uopInput = document.getElementById('rb-uop-count');
+        var uopNote = document.getElementById('rb-uop-note');
+        if (uopInput && uopNote) {
+            var showUopNote = function() {
+                var over = abovePackNote(parseInt(uopInput.value, 10), uopCapacity);
+                uopNote.textContent = over ? over.text : '';
+                uopNote.hidden = !over;
+            };
+            uopInput.addEventListener('input', showUopNote);
+            showUopNote();
+        }
         // The input is a COUNT — how many of the part are in the carrier. The
         // default is a full bin of it by protocol.ManifestItem's count rule: a
         // template of one line counts pieces, so its default is the standard
@@ -239,6 +255,7 @@ async function submitLoadBin() {
         if (uopRaw !== '') {
             var uopCount = parseInt(uopRaw, 10);
             if (isNaN(uopCount)) { toast('UoP count must be a number', 'warning'); return; }
+            if (uopCount < 0) { toast('The count must be 0 or more', 'warning'); return; }
             body.uop_count = uopCount;
         }
         var answer = await postAct('/api/process-nodes/' + nodeID + '/load-bin', body);

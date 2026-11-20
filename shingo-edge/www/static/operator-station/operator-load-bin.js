@@ -1,4 +1,5 @@
 import { esc } from '/static/shared/esc.js';
+import { abovePackNote } from '/static/shared/count-words.js';
 import { postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
 import { findNodeByID, getView } from './operator-state.js';
@@ -120,7 +121,8 @@ function viewTemplate(code) {
 function applyTemplate(data) {
     const rows = document.getElementById('load-bin-rows');
     const items = data.items || [];
-    loadBinState.uopCount = loadBinState.typedCount ? 0 : (data.uop_capacity || 0);
+    loadBinState.pack = data.uop_capacity || 0;
+    loadBinState.uopCount = loadBinState.typedCount ? 0 : loadBinState.pack;
     // The template the catalog holds, shown so the operator can check the bin
     // matches it; the ratios are the catalog's and are not editable here.
     //
@@ -244,6 +246,7 @@ function openUopKeypad() {
     if (!state || state.submitting) return;
     openKeypad(0, state.uopCount, {
         title: 'UoP Count',
+        note: function(qty) { return abovePackNote(qty, state.pack); },
         onOk: function(_nodeID, qty) {
             state.uopCount = qty > 0 ? qty : 0;
             renderRows();

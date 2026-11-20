@@ -823,7 +823,7 @@ function unloadAct(tile, lit) {
     // count of it riding along (bin.held_uop, which does not tick while held).
     if (bin.held_since) {
         return { kind: 'unload-held', node: tile.node.id, heldFor: bin.held_for || '', count: bin.held_uop || 0,
-            stageTwo: takesBare(tile) };
+            stageTwo: takesBare(tile), pack: bin.uop_capacity || 0 };
     }
     return {
         kind: 'unload', node: tile.node.id, carriers: carriersOf(tile),

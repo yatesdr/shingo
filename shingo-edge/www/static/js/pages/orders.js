@@ -3,6 +3,7 @@ import { onSSE } from '/static/shared/bus.js';
 import { delegateActions } from '/static/shared/dom.js';
 import { confirm, prompt } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
+import { abovePackNote } from '/static/shared/count-words.js';
 
 // Order actions that need JSON bodies or confirm dialogs.
 // HX-Trigger-based refresh is htmx's; #orders-content's sse: triggers are
@@ -30,7 +31,7 @@ async function submitOrder(orderID) {
     } catch (e) { toast('Error: ' + e.message, 'error'); }
 }
 
-async function releaseOrder(orderID) {
+async function releaseOrder(orderID, el) {
     // Prompt the operator for the remaining-parts count on the bin being
     // released. The number drives the disposition:
     //
@@ -72,14 +73,28 @@ async function releaseOrder(orderID) {
         : { disposition: 'capture_lineside', qty_by_part: {}, called_by: 'admin-ui' };
     try {
         await postRelease(body);
-        toast(partial > 0
+        const over = partial > 0 ? abovePackNote(partial, await packOf(el && el.dataset ? el.dataset.payloadCode : '')) : null;
+        toast((partial > 0
             ? 'Order released — partial (' + partial + ' parts preserved)'
-            : 'Order released — empty (manifest cleared)', 'success');
+            : 'Order released — empty (manifest cleared)') + (over ? ' ' + over.text : ''), over ? 'warning' : 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e.message, 'error'); }
 
     async function postRelease(b) {
         await api.post('/api/orders/' + orderID + '/release', b);
+    }
+}
+
+// packOf is the payload's pack from the Edge's catalog copy, 0 when the code
+// is blank or the read fails: the above-pack note is said when it is known
+// and never stands in the release's way.
+async function packOf(code) {
+    if (!code) return 0;
+    try {
+        const data = await api.get('/api/payload/' + encodeURIComponent(code) + '/manifest');
+        return (data && data.uop_capacity) || 0;
+    } catch (e) {
+        return 0;
     }
 }
 

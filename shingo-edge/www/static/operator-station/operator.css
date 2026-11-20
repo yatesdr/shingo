@@ -869,6 +869,16 @@ body {
     margin-bottom: 12px;
 }
 
+/* The keypad's live note under the number: what the typed count makes, or
+   that it is above the pack (openKeypad's opts.note). */
+.os-keypad-note {
+    font-size: 16px;
+    color: var(--os-text-muted);
+    text-align: right;
+    margin: -4px 0 12px;
+}
+.os-keypad-note[data-tone="warn"] { color: #f5c26b; font-weight: 700; }
+
 .os-keypad-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
