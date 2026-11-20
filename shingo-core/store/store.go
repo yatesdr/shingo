@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,9 @@ type DB struct {
 	// tells is where an order's station tell is queued (SetStationTells);
 	// nil queues none. Atomic: test engines share one DB in parallel.
 	tells atomic.Pointer[stationTells]
+	// driftAtBoot is the drift report Open took after migrating (SchemaDrift):
+	// written once, before Open returns, and read by the Core Health strip.
+	driftAtBoot []string
 }
 
 // Timeout bounds for the Postgres driver. Without these, pgx/libpq
@@ -275,6 +279,16 @@ func Open(cfg *config.DatabaseConfig) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	drift, err := db.SchemaDrift()
+	if err != nil {
+		// The report refuses nothing, and a report it could not take is said once
+		// and is not a reason to stop.
+		drift = []string{"schema drift: not checked: " + err.Error()}
+	}
+	for _, line := range drift {
+		log.Printf("store: %s", line)
+	}
+	db.driftAtBoot = drift
 	return db, nil
 }
 

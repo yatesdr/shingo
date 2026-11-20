@@ -188,6 +188,9 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dump the vintage: %v", err)
 			}
+			if drift, err := inst.DriftAfterBootForTest(name); err != nil || len(drift) != 0 {
+				t.Errorf("the boot's drift report on the vintage (err %v):\n  %s", err, strings.Join(drift, "\n  "))
+			}
 			agedShape := schemadump.Canonical(schemadump.ExcludePartitions(aged))
 			if agedShape == freshShape {
 				return

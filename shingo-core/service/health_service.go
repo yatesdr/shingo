@@ -51,3 +51,13 @@ func (s *HealthService) PoolStats() (sql.DBStats, bool) {
 	}
 	return s.db.DB.Stats(), true
 }
+
+// SchemaDrift is the drift report store.Open took at boot: one sentence per
+// object where the live schema differs from the one this build ships. Empty
+// when they agree, and when there is no DB handle (test fixtures).
+func (s *HealthService) SchemaDrift() []string {
+	if s.db == nil {
+		return nil
+	}
+	return s.db.DriftAtBoot()
+}

@@ -1,6 +1,7 @@
 package www
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -232,5 +233,30 @@ func TestExpiredDropGauge_CounterGoingBackwardsRebaselines(t *testing.T) {
 	expiredDropsSinceBaseline(500, base)
 	if got := expiredDropsSinceBaseline(3, base.Add(expiredDropWindow)); got != 0 {
 		t.Errorf("a backwards counter reported %d, want 0 rather than a negative", got)
+	}
+}
+
+// TestDeriveReasons_SchemaDriftNamesEachObject: each object the boot's drift
+// report names is a reason of its own, so the strip says which; past
+// maxDriftReasons the rest are counted and the log carries them.
+func TestDeriveReasons_SchemaDriftNamesEachObject(t *testing.T) {
+	var c CoreHealth
+	for i := range maxDriftReasons + 2 {
+		c.SchemaDrift = append(c.SchemaDrift, fmt.Sprintf("schema drift: index idx_%d is missing (this build ships it)", i))
+	}
+	got := deriveReasons(c, nil)
+	if len(got) != maxDriftReasons+1 {
+		t.Fatalf("reasons %q, want %d named and one count", got, maxDriftReasons)
+	}
+	for i := range maxDriftReasons {
+		if got[i] != c.SchemaDrift[i] {
+			t.Errorf("reason %d = %q, want %q", i, got[i], c.SchemaDrift[i])
+		}
+	}
+	if want := "schema drift: 2 more (see the log)"; got[maxDriftReasons] != want {
+		t.Errorf("last reason %q, want %q", got[maxDriftReasons], want)
+	}
+	if r := deriveReasons(CoreHealth{}, nil); len(r) != 0 {
+		t.Errorf("no drift gave reasons %q", r)
 	}
 }

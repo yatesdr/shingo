@@ -235,6 +235,12 @@ type CoreHealth struct {
 	ExpiredDropsRecent int64 `json:"expired_drops_recent"`
 	ExpiredDropsTotal  int64 `json:"expired_drops_total"`
 
+	// SchemaDrift is the boot's drift report: each object where the live schema
+	// differs from the one this build ships (store.DB.SchemaDrift). Since the
+	// squash a boot repairs nothing, so a hand-dropped index stays dropped; this
+	// is where it is seen. It refuses nothing.
+	SchemaDrift []string `json:"schema_drift,omitempty"`
+
 	// Already computed by the reconciliation loop; surfaced rather than
 	// recomputed.
 	DeadLetters int `json:"dead_letters"`
@@ -289,6 +295,9 @@ type CoreHealth struct {
 }
 
 const (
+	// maxDriftReasons is how many drifted objects the strip names one by one.
+	maxDriftReasons = 5
+
 	verdictOK       = "ok"
 	verdictDegraded = "degraded"
 )
@@ -345,6 +354,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 	}
 
 	c.FaultedNow, c.FaultedNotice, c.FaultedHalfGrace, c.FaultNoticeAfterSeconds, c.FaultHalfGraceSeconds = h.faultedGauge()
+	c.SchemaDrift = h.engine.HealthService().SchemaDrift()
 
 	if !depsOK {
 		c.DepsDown = depReasons
@@ -374,6 +384,15 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 	var reasons []string
 	reasons = append(reasons, c.Frozen...)
 	reasons = append(reasons, depsDown...)
+	// Each drifted object is a reason of its own, so the strip names it; past a
+	// handful the rest are counted, and the log carries them all.
+	for i, d := range c.SchemaDrift {
+		if i == maxDriftReasons {
+			reasons = append(reasons, fmt.Sprintf("schema drift: %d more (see the log)", len(c.SchemaDrift)-maxDriftReasons))
+			break
+		}
+		reasons = append(reasons, d)
+	}
 
 	// A wait means a request QUEUED for a connection: the pool is the
 	// bottleneck, not the database. RECENT waits — the lifetime total this is
