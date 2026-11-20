@@ -46,6 +46,25 @@ func resolveProcessFromQuery(r *http.Request, processes []domain.Process) *domai
 func templateFuncs() template.FuncMap {
 	funcs := template.FuncMap{
 		"join": strings.Join,
+		// uopShown and uopParts are a count as a page shows it above a ratio
+		// of 1 (owner, 2026-11-19): the whole UoP (protocol.SplitUOP) and the
+		// parts said beside it. uopParts is "" at a ratio of 1, where a page
+		// shows the count as it always did. Twins: count-words.js
+		// countReading and partsWords.
+		"uopShown": func(count, ratio int) int {
+			u, _ := protocol.SplitUOP(count, ratio)
+			return u
+		},
+		"uopParts": func(count, ratio int) string {
+			if ratio <= 1 {
+				return ""
+			}
+			// OWNER-WORDS
+			if count == 1 || count == -1 {
+				return strconv.Itoa(count) + " part"
+			}
+			return strconv.Itoa(count) + " parts"
+		},
 		"truncate": func(s string, n int) string {
 			if len(s) <= n {
 				return s

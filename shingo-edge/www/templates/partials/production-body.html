@@ -66,8 +66,8 @@
                                 {{else}}--{{end}}
                             {{else}}
                                 {{if .Runtime}}
-                                    <strong>{{.Runtime.RemainingUOPCached}}</strong>
-                                    {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}
+                                    {{if uopParts .Runtime.RemainingUOPCached .ActiveClaim.PiecesPerCycle}}<strong>{{uopShown .Runtime.RemainingUOPCached .ActiveClaim.PiecesPerCycle}}</strong> / {{uopShown .ActiveClaim.UOPCapacity .ActiveClaim.PiecesPerCycle}} <span class="text-muted">{{uopParts .Runtime.RemainingUOPCached .ActiveClaim.PiecesPerCycle}}</span>{{else}}<strong>{{.Runtime.RemainingUOPCached}}</strong>
+                                    {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}{{end}}
                                 {{else}}--{{end}}
                             {{end}}
                         {{else}}--{{end}}
