@@ -18,7 +18,7 @@ binary is built from has changed since the last tag, the section opens with
 
 Deploy: no migration. Core only; the Edges are unchanged and need no install.
 
-- And the next round from the same sitting: the column headers now stay put scrolling down (border-collapse breaks the sticky header in Chromium); the robot columns are in the fleet's own order, AMR-02 before AMR-10, instead of the cache's; and the legend is a boxed list, one state per row, each word shown in its own colour
+- And the next round from the same sitting: the column headers now stay put scrolling down (border-collapse breaks the sticky header in Chromium); the robot columns are in the fleet's own order, AMR-02 before AMR-10, instead of the cache's; the legend is a boxed list, one state per row, each word shown in its own colour; and the robot headers no longer paint over the frozen Subsection/Parameter headers when scrolled under them (the corner cells sit one layer above the sticky rung the robot headers share)
 - The matrix carries only the sections RoboShop's own Device Config renders — the walked set of 18 (CAN, DI, DO, triggers, charger, motors, controller, and the rest). The model file's other 33 (Gripper, arm, fork, roller, mail senders, empty container shells…) stay stored in every pull but never reach the page; a section joins the matrix only by being added to the parity list, so a mixed fleet's unknown section cannot spray new rows on its own
 
 ## v0.17.1 — 2026-11-20

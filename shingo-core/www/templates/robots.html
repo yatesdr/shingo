@@ -246,6 +246,11 @@
 .dc-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: var(--font-sm); white-space: nowrap; }
 .dc-table th, .dc-table td { padding: 2px 8px; border-bottom: 1px solid var(--sub-1); text-align: left; background: var(--bg); overflow: hidden; text-overflow: ellipsis; }
 .dc-table thead th { position: sticky; top: 0; z-index: var(--z-sticky); }
+/* The CORNER cells need one above the sticky rung: the robot headers share
+   it, and at equal z the later-in-DOM robot headers painted over the frozen
+   Subsection/Parameter headers when scrolled under them (the body's frozen
+   cells never had the problem — nothing else in a body row is sticky). */
+.dc-table thead .dc-lead0, .dc-table thead .dc-lead1, .dc-table thead .dc-lead2 { z-index: calc(var(--z-sticky) + 1); }
 .dc-lead0 { position: sticky; left: 0; z-index: var(--z-raised); width: 9rem; }
 .dc-lead1 { position: sticky; left: 9rem; z-index: var(--z-raised); width: 8rem; }
 .dc-lead2 { position: sticky; left: 17rem; z-index: var(--z-raised); width: 13rem; }
