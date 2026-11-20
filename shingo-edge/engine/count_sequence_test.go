@@ -42,8 +42,8 @@ package engine
 //     reads Core's count, a release declared what it said.
 //
 // REPRODUCE A FAILURE with SHINGO_COUNT_SEQ_SEED=<seed> (the base seed; the
-// sequence names its own) and -run TestCount_ConservesPartsOverSequences/seed=<n>.
-// The failure prints the whole event list.
+// sequence names its own) and the rerun command the failure prints, which
+// names the sequence's subtest. The failure prints the whole event list.
 //
 // NOT MODELLED, and why (each is named in the generator, not silently left
 // out): PULL PARTS LINESIDE (a release with chips) is off while
