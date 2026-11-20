@@ -1,0 +1,108 @@
+## OrderRequest
+empty: {"order_uuid":"","order_type":"","quantity":0}
+full:  {"order_uuid":"OrderUUID","order_type":"OrderType","payload_code":"PayloadCode","payload_desc":"PayloadDesc","quantity":803,"delivery_node":"DeliveryNode","source_node":"SourceNode","priority":803,"process_node":"ProcessNode","retrieve_empty":true,"remaining_uop":803,"skip_auto_confirm":true,"origin_id":"OriginID","origin_class":"OriginClass","bin_id":803,"quality_hold_by":"QualityHoldBy"}
+
+## OrderDelivered
+empty: {"order_uuid":"","delivered_at":"0001-01-01T00:00:00Z"}
+full:  {"order_uuid":"OrderUUID","delivered_at":"2026-11-19T12:00:00Z","staged_expire_at":"2026-11-19T12:00:00Z","bin_id":803,"uop_remaining":803,"delta_epoch":803,"bin_payload_code":"BinPayloadCode","delivery_node":"DeliveryNode","bin_dest_node":"BinDestNode","landing_sent":true}
+
+## ComplexOrderRequest
+empty: {"order_uuid":"","quantity":0,"steps":null}
+full:  {"order_uuid":"OrderUUID","payload_code":"PayloadCode","payload_desc":"PayloadDesc","quantity":803,"priority":803,"process_node":"ProcessNode","steps":[{"action":"Action","node":"Node","empty":true,"payload_code":"PayloadCode","bin_id":803,"wait_kind":"WaitKind","purpose":"Purpose","exclusive_slot":true}],"sibling_order_uuid":"SiblingOrderUUID","key_route":["KeyRoute"],"key_task":"KeyTask","remaining_uop":803,"origin_id":"OriginID","origin_class":"OriginClass"}
+
+## UOPDisposition
+empty: {"kind":""}
+full:  {"kind":"Kind","count":803,"captures":{"key":803},"count_suggested":803,"captures_suggested":{"key":803}}
+
+## OrderRelease
+empty: {"order_uuid":""}
+full:  {"order_uuid":"OrderUUID","remaining_uop":803,"disposition":{"kind":"Kind","count":803,"captures":{"key":803},"count_suggested":803,"captures_suggested":{"key":803}},"called_by":"CalledBy","station_wait":803,"as_of":{"bin_id":803,"epoch":803,"as_of_seq":803,"as_of_net":803,"as_of_at":"2026-11-19T12:00:00Z"}}
+
+## ReleaseFence
+empty: {"bin_id":0,"epoch":0,"as_of_seq":0,"as_of_net":0,"as_of_at":"0001-01-01T00:00:00Z"}
+full:  {"bin_id":803,"epoch":803,"as_of_seq":803,"as_of_net":803,"as_of_at":"2026-11-19T12:00:00Z"}
+
+## OrderIngestRequest
+empty: {"order_uuid":"","payload_code":"","bin_label":"","source_node":"","quantity":0}
+full:  {"order_uuid":"OrderUUID","payload_code":"PayloadCode","bin_label":"BinLabel","bin_id":803,"bin_epoch":803,"source_node":"SourceNode","quantity":803,"manifest":[{"part_number":"PartNumber","quantity":803,"description":"Description"}],"produced_at":"ProducedAt","declared_qty":803,"called_by":"CalledBy","order_id":"OrderID"}
+
+## IngestManifestItem
+empty: {"part_number":"","quantity":0}
+full:  {"part_number":"PartNumber","quantity":803,"description":"Description"}
+
+## CatalogPayloadInfo
+empty: {"id":0,"name":"","code":"","description":"","uop_capacity":0}
+full:  {"id":803,"name":"Name","code":"Code","description":"Description","uop_capacity":803,"catid":"CATID","manifest":[{"part_number":"PartNumber","parts_per_cycle":803,"description":"Description"}]}
+
+## BinUOPDelta
+empty: {"station":"","bin_id":0,"payload_code":"","delta":0,"reason":"","sequence_id":0,"epoch":0,"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z"}
+full:  {"station":"Station","bin_id":803,"payload_code":"PayloadCode","delta":803,"reason":"Reason","sequence_id":803,"epoch":803,"window_start":"2026-11-19T12:00:00Z","window_end":"2026-11-19T12:00:00Z","net":803}
+
+## LinesideBucketLevel
+empty: {"core_node_name":"","payload_code":"","state":"","qty":0,"drained":0,"sequence_id":0,"window_end":"0001-01-01T00:00:00Z"}
+full:  {"core_node_name":"CoreNodeName","payload_code":"PayloadCode","state":"State","qty":803,"drained":803,"sequence_id":803,"window_end":"2026-11-19T12:00:00Z"}
+
+## UOPAdjustment
+empty: {"bin_id":0,"core_node_name":"","new_remaining":0,"actor":"","adjusted_at":"0001-01-01T00:00:00Z"}
+full:  {"bin_id":803,"core_node_name":"CoreNodeName","new_remaining":803,"actor":"Actor","adjusted_at":"2026-11-19T12:00:00Z","released":true,"bound":true,"epoch":803,"as_of_net":803,"as_of_seq":803,"as_of_station":"AsOfStation","payload_code":"PayloadCode","payload_known":true}
+
+## PlantClaim
+empty: {"core_node_name":"","role":"","swap_mode":"","payload_code":"","allowed_payload_codes":null,"uop_capacity":0,"reorder_point":0}
+full:  {"core_node_name":"CoreNodeName","role":"Role","swap_mode":"SwapMode","payload_code":"PayloadCode","containment_destination":"ContainmentDestination","partial_destination":"PartialDestination","allowed_payload_codes":["AllowedPayloadCodes"],"uop_capacity":803,"reorder_point":803,"inbound_source":"InboundSource","outbound_destination":"OutboundDestination","paired_core_node":"PairedCoreNode","second_paired_core_node":"SecondPairedCoreNode"}
+
+## ContainmentBin
+empty: {"node":"","bin_id":0,"label":"","payload_code":"","uop":0}
+full:  {"node":"Node","bin_id":803,"label":"Label","payload_code":"PayloadCode","uop":803}
+
+## NodeBinsRow
+empty: {"node":"","state":"","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false}
+full:  {"node":"Node","state":"State","members":["Members"],"occupied":true,"bins":803,"bin_id":803,"bin_label":"BinLabel","bin_type_code":"BinTypeCode","bare":true,"payload_code":"PayloadCode","manifest":"Manifest","manifest_confirmed":true,"epoch":803,"stocked":true,"partial":true,"totes_on_cart":803,"totes_per_layer":803,"uop_capacity":803,"held_since":"HeldSince","held_for":"HeldFor","held_uop":803,"display_uop":803,"inbound":[{"order_uuid":"OrderUUID","bin_type":"BinType","payload":"Payload","from":"From"}]}
+
+## NodeBinInfo
+empty: {"node_name":"","uop_remaining":0,"delta_epoch":0,"manifest_confirmed":false,"occupied":false}
+full:  {"node_name":"NodeName","bin_id":803,"bin_label":"BinLabel","bin_type_code":"BinTypeCode","bare":true,"payload_code":"PayloadCode","uop_remaining":803,"delta_epoch":803,"manifest":"Manifest","manifest_confirmed":true,"occupied":true,"held_since":"HeldSince","held_for":"HeldFor","uop_capacity":803,"totes_on_cart":803,"totes_per_layer":803}
+
+## BinLoadItem
+empty: {"part_number":"","quantity":0,"description":""}
+full:  {"part_number":"PartNumber","quantity":803,"description":"Description"}
+
+## BinLoadRequest
+empty: {"node_name":"","payload_code":"","manifest":null}
+full:  {"node_name":"NodeName","bin_id":803,"epoch":803,"expect":"Expect","payload_code":"PayloadCode","uop_count":803,"manifest":[{"part_number":"PartNumber","quantity":803,"description":"Description"}]}
+
+## BinLoadResponse
+empty: {"bin_id":0,"bin_label":"","delta_epoch":0,"payload_code":"","status":"","uop_remaining":0}
+full:  {"bin_id":803,"bin_label":"BinLabel","delta_epoch":803,"detail":"Detail","error":"Error","payload_code":"PayloadCode","rows":[{"node":"Node","state":"State","members":["Members"],"occupied":true,"bins":803,"bin_id":803,"bin_label":"BinLabel","bin_type_code":"BinTypeCode","bare":true,"payload_code":"PayloadCode","manifest":"Manifest","manifest_confirmed":true,"epoch":803,"stocked":true,"partial":true,"totes_on_cart":803,"totes_per_layer":803,"uop_capacity":803,"held_since":"HeldSince","held_for":"HeldFor","held_uop":803,"display_uop":803,"inbound":[{"order_uuid":"","payload":"","from":""}]}],"status":"Status","uop_remaining":803}
+
+## BinCountRequest
+empty: {"node_name":"","actual_uop":0,"actor":""}
+full:  {"node_name":"NodeName","bin_id":803,"epoch":803,"actual_uop":803,"actor":"Actor"}
+
+## BinCountResponse
+empty: {"as_of_net":null,"as_of_seq":null,"as_of_station":"","bin_id":0,"bin_label":"","delta_epoch":0,"discrepancy":false,"expected":0,"status":"","uop_remaining":0,"warning":""}
+full:  {"as_of_net":803,"as_of_seq":803,"as_of_station":"AsOfStation","bin_id":803,"bin_label":"BinLabel","delta_epoch":803,"detail":"Detail","discrepancy":true,"epoch_refresh":{"bin_id":803,"core_node_name":"CoreNodeName","epoch":803},"error":"Error","expected":803,"rows":[{"node":"Node","state":"State","members":["Members"],"occupied":true,"bins":803,"bin_id":803,"bin_label":"BinLabel","bin_type_code":"BinTypeCode","bare":true,"payload_code":"PayloadCode","manifest":"Manifest","manifest_confirmed":true,"epoch":803,"stocked":true,"partial":true,"totes_on_cart":803,"totes_per_layer":803,"uop_capacity":803,"held_since":"HeldSince","held_for":"HeldFor","held_uop":803,"display_uop":803,"inbound":[{"order_uuid":"","payload":"","from":""}]}],"status":"Status","uop_remaining":803,"warning":"Warning"}
+
+## BinClearResponse
+empty: {"bin_id":0,"bin_label":"","cleared_bin_type_code":"","cleared_payload_code":"","cleared_uop":0,"delta_epoch":0,"status":""}
+full:  {"bin_id":803,"bin_label":"BinLabel","cleared_bin_type_code":"ClearedBinTypeCode","cleared_payload_code":"ClearedPayloadCode","cleared_uop":803,"delta_epoch":803,"detail":"Detail","error":"Error","rows":[{"node":"Node","state":"State","members":["Members"],"occupied":true,"bins":803,"bin_id":803,"bin_label":"BinLabel","bin_type_code":"BinTypeCode","bare":true,"payload_code":"PayloadCode","manifest":"Manifest","manifest_confirmed":true,"epoch":803,"stocked":true,"partial":true,"totes_on_cart":803,"totes_per_layer":803,"uop_capacity":803,"held_since":"HeldSince","held_for":"HeldFor","held_uop":803,"display_uop":803,"inbound":[{"order_uuid":"","payload":"","from":""}]}],"status":"Status"}
+
+## HeldPartial
+empty: {"bin_id":0,"bin_label":"","node_name":"","uop_remaining":0,"held_since":""}
+full:  {"bin_id":803,"bin_label":"BinLabel","node_name":"NodeName","uop_remaining":803,"held_since":"HeldSince"}
+
+## PartCreateRequest
+empty: {"process_id":0,"part_number":"","standard_pack":0,"bin_type_code":""}
+full:  {"process_id":803,"part_number":"PartNumber","standard_pack":803,"bin_type_code":"BinTypeCode","catid":"CATID","tote_layers":803,"uop_per_tote":803}
+
+## HoldDropped
+empty: {"node":"","payload_code":"","qty":0,"reason":"","occurred_at":"0001-01-01T00:00:00Z"}
+full:  {"node":"Node","payload_code":"PayloadCode","qty":803,"reason":"Reason","called_by":"CalledBy","occurred_at":"2026-11-19T12:00:00Z","order_id":"OrderID"}
+
+## LinesideLevelEntry
+empty: {"core_node_name":"","payload_code":"","bin_count":0,"bin_uop":0,"bucket_qty":0}
+full:  {"core_node_name":"CoreNodeName","payload_code":"PayloadCode","bin_count":803,"bin_uop":803,"bucket_qty":803,"bin_id":803,"bin_epoch":803,"flushed_seq":803}
+
+## ManifestItem
+empty: {"part_number":"","parts_per_cycle":0,"description":""}
+full:  {"part_number":"PartNumber","parts_per_cycle":803,"description":"Description"}
+
