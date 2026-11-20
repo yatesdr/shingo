@@ -163,15 +163,18 @@ func verdict(h *FeedHealth) (bool, string) {
 			"produce a posting — the boundary nodes have not been tagged"
 	case h.UnresolvableInflight > 0:
 		return false, countOf(h.UnresolvableInflight, "posting") +
-			" went out and was never acknowledged with a transaction id. Nothing can resolve " +
+			" went out and " + plural(h.UnresolvableInflight, "was", "were") +
+			" never acknowledged with a transaction id. Nothing can resolve " +
 			"that automatically; someone has to check the middleware for it"
 	case h.Unposted > 0:
-		return false, countOf(h.Unposted, "transaction") +
-			" has been recorded but never queued for posting — the subscriber is failing to enqueue"
+		return false, countOf(h.Unposted, "transaction") + " " + plural(h.Unposted, "has", "have") +
+			" been recorded but never queued for posting — the subscriber is failing to enqueue"
 	case h.FailedRecent > 0:
-		return false, countOf(h.FailedRecent, "posting") + " ran out of attempts and is waiting for a person"
+		return false, countOf(h.FailedRecent, "posting") + " ran out of attempts and " +
+			plural(h.FailedRecent, "is", "are") + " waiting for a person"
 	case h.RejectedRecent > 0:
-		return false, countOf(h.RejectedRecent, "posting") + " was refused by the middleware and will not be retried"
+		return false, countOf(h.RejectedRecent, "posting") + " " + plural(h.RejectedRecent, "was", "were") +
+			" refused by the middleware and will not be retried"
 	case h.OldestPendingAgeSeconds > agedPendingSeconds:
 		return false, "the oldest pending posting has been waiting " +
 			forSeconds(h.OldestPendingAgeSeconds) + " — the queue is not draining"

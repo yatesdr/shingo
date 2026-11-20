@@ -156,6 +156,35 @@ func TestVerdict_NamesTheWorstProblemFirst(t *testing.T) {
 	}
 }
 
+// TestVerdict_VerbAgreesWithTheCount pins the counted sentences' grammar: one
+// thing "has"/"was"/"is", twelve "have"/"were"/"are". The card read "12
+// transactions has been recorded" before.
+func TestVerdict_VerbAgreesWithTheCount(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		set       func(h *FeedHealth, n int)
+		one, many string
+	}{
+		{func(h *FeedHealth, n int) { h.UnresolvableInflight = n },
+			"1 posting went out and was never", "12 postings went out and were never"},
+		{func(h *FeedHealth, n int) { h.Unposted = n },
+			"1 transaction has been recorded", "12 transactions have been recorded"},
+		{func(h *FeedHealth, n int) { h.Failed, h.FailedRecent = n, n },
+			"1 posting ran out of attempts and is waiting", "12 postings ran out of attempts and are waiting"},
+		{func(h *FeedHealth, n int) { h.Rejected, h.RejectedRecent = n, n },
+			"1 posting was refused", "12 postings were refused"},
+	}
+	for _, tc := range cases {
+		for n, want := range map[int]string{1: tc.one, 12: tc.many} {
+			h := health(func(h *FeedHealth) { tc.set(h, n) })
+			h.Verdict()
+			if !strings.Contains(h.Why, want) {
+				t.Errorf("why = %q, want it to say %q", h.Why, want)
+			}
+		}
+	}
+}
+
 // TestVerdict_TerminalFindingsAreWindowed is the fix for a verdict that could
 // never return to green.
 //
