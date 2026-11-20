@@ -1536,7 +1536,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     await keypad.onOk(0, 0);
     await confirmLoad();
     const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
-    eq([posts(), toasts.slice(-1)], [[], ['Set UoP Count first']], 'LOAD: a count of 0 posts nothing');
+    eq([posts(), toasts.slice(-1)], [[], ['Type the count first: a LOAD needs 1 or more']], 'LOAD: a count of 0 posts nothing');
     ctx.openKeypad = realKeypad;
 }
 

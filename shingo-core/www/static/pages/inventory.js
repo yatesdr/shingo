@@ -20,7 +20,7 @@ import { apiGet, apiPost } from '/static/app.js';
 import { formatClock, formatTime, serverNow } from '/static/shared/clock.js';
 import { onSSE } from '/static/shared/bus.js';
 import { createLiveSchedule } from '/static/pages/live-schedule.js';
-import { countReading } from '/static/shared/count-words.js';
+import { countReading, typedNote } from '/static/shared/count-words.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let view = null;          // the last /api/inventory/loop answer
@@ -233,7 +233,8 @@ function thresholdCell(r) {
   const value = authenticated
     ? '<input type="number" min="0" step="1" class="loop-thr-input tnum" value="' + r.threshold + '" data-orig="'
       + r.threshold + '" data-key="' + key + '" title="' + escapeHtml(title) + '" aria-label="UoP threshold for '
-      + escapeHtml(r.payload_code) + ' at ' + escapeHtml(r.node) + '" data-action-keydown="thrKey" data-action-input="thrInput">'
+      + escapeHtml(r.payload_code) + ' at ' + escapeHtml(r.node) + '" data-action-keydown="thrKey" data-action-input="thrInput"'
+      + ' data-payload="' + escapeHtml(r.payload_code) + '">' + thrNoteHtml(r.payload_code, r.threshold)
     : '<span class="tnum" title="' + escapeHtml(title) + '">' + num(r.threshold) + '</span>';
   return '<div class="loop-thr">' + chip + value + '</div>';
 }
@@ -374,6 +375,19 @@ function rowByKey(key) { return ((view && view.rows) || []).find((r) => r.key ==
 function thrInput(el) {
   const tr = el.closest('tr');
   if (tr) tr.classList.toggle('loop-row--dirty', el.value !== el.dataset.orig);
+  const note = el.parentNode && el.parentNode.querySelector('.loop-thr-note');
+  if (note) {
+    const said = typedNote(parseInt(el.value, 10), ratioOf(el.dataset.payload), 0);
+    note.textContent = said ? said.text : '';
+  }
+}
+
+// thrNoteHtml is the line under a threshold box: the UoP the typed parts make,
+// above the part's ratio of 1; '' at 1, where the box is as it was.
+function thrNoteHtml(code, n) {
+  if (ratioOf(code) <= 1) return '';
+  const said = typedNote(n, ratioOf(code), 0);
+  return '<span class="loop-thr-note text-muted">' + escapeHtml(said ? said.text : '') + '</span>';
 }
 
 function thrKey(el, ev) {

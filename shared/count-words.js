@@ -48,6 +48,14 @@ export function countSaid(count, ratio, plain) {
     return r.split ? r.big + ' ' + UOP_WORD + ' \u00b7 ' + r.small : plain;
 }
 
+// countBoxLabel is the label of a box a person types a bin's count into:
+// above a ratio of 1 it names the parts the box takes ("Count (parts)"); at 1
+// it is the box's own label (plain), unchanged.
+export function countBoxLabel(ratio, plain) {
+    // OWNER-WORDS
+    return Math.trunc(Number(ratio) || 0) > 1 ? 'Count (parts)' : plain;
+}
+
 // abovePackNote is the note for a typed count above the payload's pack, or
 // null when the count is at or under it or the pack is unknown (0). It answers
 // {text, tone} in the shape the floor keypad's opts.note takes.

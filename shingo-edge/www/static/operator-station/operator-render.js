@@ -1,12 +1,12 @@
 import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
 import { formatClock } from '/static/shared/clock.js';
-import { abovePackNote } from '/static/shared/count-words.js';
+import { typedNote } from '/static/shared/count-words.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, tileRole, takesBare, stageTwoOn, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, heightWords, isLit, clearHighlight } from './operator-board-model.js';
-import { windowWords, tileCount } from './operator-board-model.js';
+import { windowWords, tileCount, ratioFor } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
@@ -284,7 +284,7 @@ const boardActs = {
         switch (a.kind) {
         case 'load': openLoadBinRef(a.node, a.codes, 0); break;
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit, a.cart); break;
-        case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo, a.pack); break;
+        case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count, a.stageTwo, a.pack, a.part); break;
         case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit, a.stageTwo, a.cart); break;
         case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot, a.partial); break;
         case 'modal': openModalRef(a.node); break;
@@ -359,7 +359,7 @@ export function renderGrid() {
 // motions the person makes before the tap; the cart is then a dressed empty
 // the line may fetch. COUNT is a small secondary beside it, the one correction
 // for a lost count. At any other unloader window: COUNT and UNLOAD.
-function confirmUnloadHeld(nodeID, line, count, stageTwo, pack) {
+function confirmUnloadHeld(nodeID, line, count, stageTwo, pack, part) {
     var overlay = el('div', { className: 'os-co-picker-overlay' });
     var panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Partial, held for ' + (line || 'its line') }));
@@ -372,9 +372,11 @@ function confirmUnloadHeld(nodeID, line, count, stageTwo, pack) {
         textContent: 'COUNT' });
     countBtn.addEventListener('click', function() {
         overlay.remove();
+        const ratio = ratioFor((getView() || {}).load_templates, null, part);
         openKeypad(nodeID, count || 0, {
-            title: 'Count on this carrier',
-            note: function(qty) { return abovePackNote(qty, pack); },
+            // OWNER-WORDS: above a ratio of 1 the box takes parts.
+            title: ratio > 1 ? 'Count on this carrier (parts)' : 'Count on this carrier',
+            note: function(qty) { return typedNote(qty, ratio, pack); },
             onOk: function(_n, qty) {
                 return postAction('/api/process-nodes/' + nodeID + '/record-count', { actual_uop: qty }, loadViewRef);
             },
@@ -1097,7 +1099,7 @@ function createNodeButton(entry) {
             const bs = entry.bin_state;
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
-            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.held_uop, takesBare(entry), bs.uop_capacity); return; }
+            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.held_uop, takesBare(entry), bs.uop_capacity, bs.payload_code); return; }
             // The panel lights what the window should go back as (clearHighlight).
             const lit = loader.leaves_bare ? null : clearHighlight(entry, getView().serves);
             if (fullPresent) confirmUnloadSwap(entry.node.id, carriersOf(entry),

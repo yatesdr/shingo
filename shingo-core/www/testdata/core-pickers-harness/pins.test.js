@@ -109,6 +109,8 @@ function lender(rec, doc, extra) {
         linePieces: COUNT.linePieces,
         countReading: COUNT.countReading,
         uopRatio: COUNT.uopRatio,
+        countBoxLabel: COUNT.countBoxLabel,
+        typedNote: COUNT.typedNote,
     };
     return (n) => (extra && n in extra ? extra[n] : stubs[n]);
 }

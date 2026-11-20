@@ -1,7 +1,7 @@
 import { debounce, delegateActions, el, escapeHtml, h, switchTab } from '/static/shared/dom.js';
 import { confirm as uiConfirm, hideModal, prompt as uiPrompt, showModal } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
-import { abovePackNote } from '/static/shared/count-words.js';
+import { abovePackNote, countBoxLabel, typedNote } from '/static/shared/count-words.js';
 import { linePieces, uopRatio } from '/static/shared/count.js';
 import { apiGet, apiPost, openFromQuery, timeAgoHTML } from '/static/app.js';
 import { onSSE } from '/static/shared/bus.js';
@@ -438,7 +438,8 @@ function renderContents(data) {
     if (held) html += '<p class="text-muted mb-1" id="bd-load-held">' + escapeHtml(held) + '</p>';
     html += '<div class="inline-form">';
     html += '<div class="form-group"><label>Payload</label><div id="bd-load-payload" class="bd-picker"></div></div>';
-    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off + '></div>';
+    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off +
+      ' data-action-input="showLoadNote"><small id="bd-load-note" class="text-muted" style="display:block" hidden></small></div>';
     html += held ? '<button class="btn btn-primary btn-sm" disabled>Load</button>'
       : '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
     html += '</div></div>';
@@ -553,8 +554,9 @@ async function renderActions(data) {
   // Record Count
   html += '<div class="action-group"><h4>Record Count</h4>';
   html += '<div class="inline-form">';
-  html += '<div class="form-group"><label>Actual UoP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"' +
-    ' data-pack="' + (b.uop_capacity || 0) + '" data-action-input="showCountNote">' +
+  var countRatio = uopRatio(data.template_manifest);
+  html += '<div class="form-group"><label>' + escapeHtml(countBoxLabel(countRatio, 'Actual UoP')) + '</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"' +
+    ' data-pack="' + (b.uop_capacity || 0) + '" data-ratio="' + countRatio + '" data-action-input="showCountNote">' +
     '<small id="bd-count-note" class="text-muted" style="display:block" hidden></small></div>';
   html += '<div class="form-group"><label>Counter</label><input type="text" id="bd-count-actor" placeholder="Name" style="width:150px"></div>';
   html += '<button class="btn btn-sm" data-action="recordCount">Record</button>';
@@ -768,9 +770,22 @@ async function askRobotToSetDown(binId, robot) {
 function showCountNote(input) {
   var note = document.getElementById('bd-count-note');
   if (!note || !input) return;
-  var over = abovePackNote(parseInt(input.value, 10), Number(input.dataset.pack) || 0);
-  note.textContent = over ? over.text : '';
-  note.hidden = !over;
+  var said = typedNote(parseInt(input.value, 10), Number(input.dataset.ratio) || 1, Number(input.dataset.pack) || 0);
+  note.textContent = said ? said.text : '';
+  note.hidden = !said;
+}
+
+// showLoadNote is Load Payload's live line under the count: the UoP it makes
+// for the part picked (PAGE_UOP_RATIOS) and the above-pack note.
+function showLoadNote(input) {
+  var note = document.getElementById('bd-load-note');
+  if (!note || !input) return;
+  var code = BD_PICKERS['bd-load-payload'] ? BD_PICKERS['bd-load-payload'].value() : '';
+  var ratios = typeof PAGE_UOP_RATIOS === 'object' && PAGE_UOP_RATIOS ? PAGE_UOP_RATIOS : {};
+  var p = (PAGE_PAYLOADS || []).find(function(x) { return x.code === code; });
+  var said = input.value.trim() === '' ? null : typedNote(parseInt(input.value, 10), ratios[code], p ? p.uop_capacity : 0);
+  note.textContent = said ? said.text : '';
+  note.hidden = !said;
 }
 
 function recordCount() {
@@ -1343,6 +1358,7 @@ delegateActions(document.body, {
     previewBinLabels,
     recordCount,
     showCountNote,
+    showLoadNote,
     requestMove,
     switchTab: showBinTab,
     showFamilyTab,

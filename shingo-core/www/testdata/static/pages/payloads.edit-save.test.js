@@ -268,7 +268,7 @@ async function main() {
         };
         const one = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 2 }]);
         same('one line at 2 per assembly cycle: the cycles a full bin feeds, not 40 x 2 per bin',
-            readouts(one.doc), ['= 20 cycles / bin']);
+            readouts(one.doc), ['= 20 UoP a full bin']);
         const unit = await open([{ part_number: 'SYN-PL-A', catid: '', parts_per_cycle: 1 }]);
         same('one line at 1: the pack says it all', readouts(unit.doc), ['']);
         const kit = await open([
@@ -278,7 +278,7 @@ async function main() {
             readouts(kit.doc), ['= 80 / bin', '= 40 / bin']);
         kit.ctx.removeManifestRow(rowsOf(kit.doc)[1].querySelector('.btn'));
         same("the kit's second line removed: the line left is a part alone, and redraws",
-            readouts(kit.doc), ['= 20 cycles / bin']);
+            readouts(kit.doc), ['= 20 UoP a full bin']);
     }
 
     if (failures) {

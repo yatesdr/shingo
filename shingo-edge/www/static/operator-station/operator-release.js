@@ -1,7 +1,7 @@
 // esc is the one escape for markup built by concatenation, quotes included:
 // the prompt puts payload codes inside attributes.
 import { esc } from '/static/shared/esc.js';
-import { abovePackNote, countReading, countSaid, typedNote } from '/static/shared/count-words.js';
+import { countReading, countSaid, typedNote } from '/static/shared/count-words.js';
 import { ratioFor } from './operator-board-model.js';
 import { postAction } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
@@ -427,6 +427,13 @@ function renderReleasePromptUnderpackConfirm() {
     });
 }
 
+// pileTitle is the title over a part's lineside pile as a person types it:
+// above a ratio of 1 it says the pile is parts.
+function pileTitle(ratio, code) {
+    // OWNER-WORDS
+    return (ratio > 1 ? 'Lineside parts: ' : 'Lineside qty: ') + code;
+}
+
 function renderReleasePromptStep2(code) {
     const state = releasePromptState;
     if (!state) return;
@@ -438,7 +445,7 @@ function renderReleasePromptStep2(code) {
 
     let html = '';
     html += '<div class="modal-header">';
-    html += '<div class="modal-node-name">Lineside qty: ' + esc(code) + '</div>';
+    html += '<div class="modal-node-name">' + esc(pileTitle(ratioFor(null, state.entry, code), code)) + '</div>';
     html += '<div class="modal-payload">Tap the number to change it.</div>';
     html += '</div>';
 
@@ -507,8 +514,10 @@ async function handleReleasePromptAction(evt) {
     if (action.startsWith('release-qty-edit:')) {
         const code = action.slice('release-qty-edit:'.length);
         const current = state.selected[code] || 0;
+        const ratio = ratioFor(null, state.entry, code);
         openKeypad(0, current, {
-            title: 'Lineside qty: ' + code,
+            title: pileTitle(ratio, code),
+            note: function(qty) { return typedNote(qty, ratio, 0); },
             onOk: function(_nodeID, qty) {
                 // Always store a numeric qty so the chip's "(N)" suffix
                 // stays consistent — pre-population now seeds every chip
@@ -528,9 +537,11 @@ async function handleReleasePromptAction(evt) {
         const current = state.partialCount != null ? state.partialCount : 0;
         const claim = state.entry && state.entry.active_claim;
         const pack = claim && claim.uop_capacity ? claim.uop_capacity : 0;
+        const ratio = ratioFor(null, state.entry, '');
         openKeypad(0, current, {
-            title: 'Bin remaining (UoP)',
-            note: function(qty) { return abovePackNote(qty, pack); },
+            // OWNER-WORDS: above a ratio of 1 the box takes parts.
+            title: ratio > 1 ? 'Bin remaining (parts)' : 'Bin remaining (UoP)',
+            note: function(qty) { return typedNote(qty, ratio, pack); },
             onOk: function(_nodeID, qty) {
                 state.partialCount = qty > 0 ? qty : 0;
                 renderReleasePromptStep1();

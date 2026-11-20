@@ -3,7 +3,8 @@ import { onSSE } from '/static/shared/bus.js';
 import { delegateActions } from '/static/shared/dom.js';
 import { confirm, prompt } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
-import { abovePackNote } from '/static/shared/count-words.js';
+import { typedNote } from '/static/shared/count-words.js';
+import { uopRatio } from '/static/shared/count.js';
 
 // Order actions that need JSON bodies or confirm dialogs.
 // HX-Trigger-based refresh is htmx's; #orders-content's sse: triggers are
@@ -73,10 +74,12 @@ async function releaseOrder(orderID, el) {
         : { disposition: 'capture_lineside', qty_by_part: {}, called_by: 'admin-ui' };
     try {
         await postRelease(body);
-        const over = partial > 0 ? abovePackNote(partial, await packOf(el && el.dataset ? el.dataset.payloadCode : '')) : null;
+        // The UoP the parts make above a ratio of 1, and the above-pack note.
+        const t = partial > 0 ? await templateOf(el && el.dataset ? el.dataset.payloadCode : '') : null;
+        const note = t ? typedNote(partial, t.ratio, t.pack) : null;
         toast((partial > 0
             ? 'Order released — partial (' + partial + ' parts preserved)'
-            : 'Order released — empty (manifest cleared)') + (over ? ' ' + over.text : ''), over ? 'warning' : 'success');
+            : 'Order released — empty (manifest cleared)') + (note ? ' ' + note.text : ''), note && note.tone ? 'warning' : 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e.message, 'error'); }
 
@@ -85,16 +88,16 @@ async function releaseOrder(orderID, el) {
     }
 }
 
-// packOf is the payload's pack from the Edge's catalog copy, 0 when the code
-// is blank or the read fails: the above-pack note is said when it is known
-// and never stands in the release's way.
-async function packOf(code) {
-    if (!code) return 0;
+// templateOf is the payload's pack and UOP ratio from the Edge's catalog copy,
+// null when the code is blank or the read fails: the toast's notes are said
+// when they are known and never stand in the release's way.
+async function templateOf(code) {
+    if (!code) return null;
     try {
         const data = await api.get('/api/payload/' + encodeURIComponent(code) + '/manifest');
-        return (data && data.uop_capacity) || 0;
+        return { pack: (data && data.uop_capacity) || 0, ratio: uopRatio(data && data.items) };
     } catch (e) {
-        return 0;
+        return null;
     }
 }
 

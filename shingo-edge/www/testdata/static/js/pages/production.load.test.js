@@ -44,8 +44,10 @@ function extractFn(src, name) {
 // COUNT is shared/count.js, real: the line counts are its linePieces.
 const COUNT = (() => {
     const c = vm.createContext({});
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', '..', '..', 'shared', 'count.js'), 'utf8')
-        .replace(/^export (?=function )/mg, ''), c);
+    for (const f of ['count.js', 'count-words.js']) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', '..', '..', 'shared', f), 'utf8')
+            .replace(/^import\s[^;]*;[ \t]*$/mg, '').replace(/^export const /mg, 'var ').replace(/^export (?=function )/mg, ''), c);
+    }
     return c;
 })();
 
@@ -61,7 +63,7 @@ async function defaults(data) {
             createElement: () => ({ style: {}, innerHTML: '' }),
         },
         rbPicker: { value: () => 'SYN-PL-A' },
-        linePieces: COUNT.linePieces,
+        linePieces: COUNT.linePieces, uopRatio: COUNT.uopRatio, countBoxLabel: COUNT.countBoxLabel, typedNote: COUNT.typedNote,
         api: { get: async () => data },
         escapeHtml: (s) => String(s == null ? '' : s),
         encodeURIComponent, console, Promise,

@@ -47,7 +47,7 @@ function renderFullBin(row, containerId) {
   if (cap > 0 && lines.length === 1) {
     var ratio = uopRatio(lines);
     // OWNER-WORDS
-    cell.textContent = ratio > 1 ? '= ' + splitUOP(cap, ratio).uop + ' cycles / bin' : '';
+    cell.textContent = ratio > 1 ? '= ' + splitUOP(cap, ratio).uop + ' UoP a full bin' : '';
     return;
   }
   cell.textContent = cap > 0 ? '= ' + linePieces(lines, i, cap) + ' / bin' : '';

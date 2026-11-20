@@ -44,7 +44,7 @@ function lift(kind, name) {
 
 const NAMES = ['num', 'dur', 'timeToEmpty', 'timeLeft', 'worstFirst', 'foldedBodyHtml', 'offHomeTitle', 'thrTitle',
     'doubtHtml', 'hl', 'help', 'posHeadHtml', 'thrHeadHtml', 'thresholdCell', 'meterHtml', 'coming', 'posRowHtml', 'posBodyHtml',
-    'lineHeadHtml', 'lineRowHtml', 'lineBodyHtml', 'matches', 'ratioOf', 'counted', 'inBinPack'];
+    'lineHeadHtml', 'lineRowHtml', 'lineBodyHtml', 'matches', 'ratioOf', 'counted', 'inBinPack', 'thrNoteHtml'];
 
 function load(authenticated) {
     const ctx = {

@@ -23,7 +23,7 @@ function check(name, cond, detail) {
 
 const load = realm(undefined, ['count.js', 'count-words.js']);
 const { uopRatio, splitUOP, linePieces } = load('count.js');
-const { abovePackNote, countReading, typedNote, partsWords, UOP_WORD } = load('count-words.js');
+const { abovePackNote, countReading, typedNote, partsWords, UOP_WORD, countBoxLabel, countSaid } = load('count-words.js');
 
 const EXAMPLES = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', '..', '..', 'protocol', 'testdata', 'count-examples.json'), 'utf8')).examples;
@@ -79,6 +79,10 @@ notes.forEach(function(c) {
 check('typing 404 at ratio 1 under the pack says nothing', typedNote(404, 1, 800) === null);
 check('typing 0 at 8 says it makes 0', (typedNote(0, 8, 800) || {}).text === '= 0 UoP');
 check('a box that is not a number says nothing', typedNote(NaN, 8, 800) === null);
+check('a count box above ratio 1 names its parts', countBoxLabel(8, 'UoP Count') === 'Count (parts)');
+check('a count box at ratio 1 keeps its label', countBoxLabel(1, 'UoP Count') === 'UoP Count');
+check('a count said at 8', countSaid(404, 8, '404 UoP') === '50 UoP · 404 parts');
+check('a count said at 1 is the plain words', countSaid(404, 1, '404 UoP') === '404 UoP');
 
 if (failures > 0) {
     console.log(failures + ' failure(s)');

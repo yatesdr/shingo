@@ -3,8 +3,8 @@ import { onSSE } from '/static/shared/bus.js';
 import { delegateActions, escapeHtml } from '/static/shared/dom.js';
 import { confirm, hideModal, prompt, showModal } from '/static/shared/layer.js';
 import { nodePicker, nodeSource, nodeWhy } from '/static/shared/node-picker.js';
-import { abovePackNote } from '/static/shared/count-words.js';
-import { linePieces } from '/static/shared/count.js';
+import { countBoxLabel, typedNote } from '/static/shared/count-words.js';
+import { linePieces, uopRatio } from '/static/shared/count.js';
 import { partPicker, partSource } from '/static/shared/part-picker.js';
 import { toast } from '/static/shared/notice.js';
 import { postAct } from '/static/js/ask-act.js';
@@ -25,6 +25,7 @@ import { postAct } from '/static/js/ask-act.js';
 // → manifest preserved with that count.
 async function releaseNodeWithPrompt(nodeID, el) {
     var pack = el && el.dataset ? Number(el.dataset.uopCapacity) || 0 : 0;
+    var ratio = el && el.dataset ? Number(el.dataset.uopRatio) || 1 : 1;
     var input = await prompt(
         'How many parts remain in this bin?\n\n' +
         'Enter 0 (or leave blank) to release as EMPTY (manifest cleared).\n' +
@@ -42,10 +43,11 @@ async function releaseNodeWithPrompt(nodeID, el) {
     try {
         await api.post('/api/process-nodes/' + nodeID + '/release-empty',
             { partial_count: partial });
-        var over = abovePackNote(partial, pack);
+        // The UoP the parts make above a ratio of 1, and the above-pack note.
+        var note = partial > 0 ? typedNote(partial, ratio, pack) : null;
         toast((partial > 0
             ? 'Released — partial (' + partial + ' parts preserved)'
-            : 'Released — empty (manifest cleared)') + (over ? ' ' + over.text : ''), over ? 'warning' : 'success');
+            : 'Released — empty (manifest cleared)') + (note ? ' ' + note.text : ''), note && note.tone ? 'warning' : 'success');
     } catch(e) {
         toast('Error: ' + e.message, 'error');
     }
@@ -191,7 +193,8 @@ async function onLoadPayloadChanged() {
         }
         var uopRow = document.createElement('div');
         uopRow.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.75rem;padding:0.5rem;border:2px solid var(--primary, #4a9);border-radius:4px';
-        uopRow.innerHTML = '<div style="font-weight:600">UoP Count</div>' +
+        var ratio = uopRatio(items);
+        uopRow.innerHTML = '<div style="font-weight:600">' + escapeHtml(countBoxLabel(ratio, 'UoP Count')) + '</div>' +
             '<input type="number" id="rb-uop-count" class="form-input" min="0" step="1" value="' + uopCapacity + '" style="text-align:center;font-weight:600">' +
             '<div id="rb-uop-note" class="form-hint" style="grid-column:1 / -1;text-align:right" hidden></div>';
         rows.appendChild(uopRow);
@@ -200,9 +203,9 @@ async function onLoadPayloadChanged() {
         var uopNote = document.getElementById('rb-uop-note');
         if (uopInput && uopNote) {
             var showUopNote = function() {
-                var over = abovePackNote(parseInt(uopInput.value, 10), uopCapacity);
-                uopNote.textContent = over ? over.text : '';
-                uopNote.hidden = !over;
+                var note = typedNote(parseInt(uopInput.value, 10), ratio, uopCapacity);
+                uopNote.textContent = note ? note.text : '';
+                uopNote.hidden = !note;
             };
             uopInput.addEventListener('input', showUopNote);
             showUopNote();
