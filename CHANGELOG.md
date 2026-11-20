@@ -29,6 +29,11 @@ Deploy: no migration. Core and each Edge, in either order.
 - Count boxes take parts and, above one a cycle, show the UoP they make as you type
 - The inventory export's UOP Remaining is the count's UoP; Qty keeps the parts
 - The threshold calculator's cycle is one assembly cycle, and its answer is in parts
+- Changing a part's parts a cycle while its bins or piles hold a count shows what each will read, and saves on OK; nothing stored moves
+- A part cannot change between one line and a kit while any bin or pile of it holds a count
+- A seat draws and shows its count at the ratio of the part in its bin, not its claim's part
+- The Processes page's reorder point, lineside soft threshold and hold limit show the UoP they make as you type
+- The loader board, unloader windows, Production's manual swap row, lineside piles and held partials read in UoP too, as do Core's node inventory, Count history, dashboard anomalies, Material flags, demand episodes and Payloads table
 - A LOAD of 0 says "Type the count first: a LOAD needs 1 or more"
 
 ## v0.15.0 — 2026-11-19
