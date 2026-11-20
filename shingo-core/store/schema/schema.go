@@ -16,8 +16,8 @@
 // constant that every boot replayed ahead of the versioned chain (Apply), and
 // the predicates below served the chain's steps. The constant and Apply went
 // with the chain; the predicates stay for the verify of each migration above
-// it (store.migration), whose post-conditions they read. Since the squash they
-// have no caller until the first such migration (v185) is written.
+// it (store.migration), whose post-conditions they read: v185Verify is the
+// first.
 //
 // The predicates accept the Querier interface so they work equally well with
 // *sql.DB (the connection pool) and *sql.Tx (an in-flight transaction).
