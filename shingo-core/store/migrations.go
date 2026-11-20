@@ -83,6 +83,13 @@ func (db *DB) migrate() error {
 	return migrate.Run(db.DB, migrate.Postgres, 0, wrapped)
 }
 
+// A Refusal is migrate's refusal of a database it will not bring up: the
+// database is fine to read, and Core would not start on it. Any other error
+// from the same check is a failure to read it (CheckDatabase's two exits).
+type Refusal struct{ msg string }
+
+func (r *Refusal) Error() string { return r.msg }
+
 // checkRetiredChain reads the two facts migrate decides on and returns whether
 // the database is new, or the refusal. It only reads.
 func checkRetiredChain(q *sql.DB) (fresh bool, err error) {
@@ -95,8 +102,8 @@ func checkRetiredChain(q *sql.DB) (fresh bool, err error) {
 	}
 	if !hasMigrations {
 		if tables > 0 {
-			return false, fmt.Errorf("Core tables present but no schema_migrations: restore the whole dump "+
-				"(schema public holds %d tables and no schema_migrations; Core changed nothing)", tables)
+			return false, &Refusal{fmt.Sprintf("Core tables present but no schema_migrations: restore the whole dump "+
+				"(schema public holds %d tables and no schema_migrations; Core changed nothing)", tables)}
 		}
 		return true, nil
 	}
@@ -118,9 +125,9 @@ func checkRetiredChain(q *sql.DB) (fresh bool, err error) {
 		return false, fmt.Errorf("read schema_migrations: %w", err)
 	}
 	if len(missing) > 0 {
-		return false, fmt.Errorf("schema_migrations is missing %s of v1–v%d, which this build no longer carries: "+
+		return false, &Refusal{fmt.Sprintf("schema_migrations is missing %s of v1–v%d, which this build no longer carries: "+
 			"start %s on this database first (it applies them), then this release; Core changed nothing",
-			formatVersions(missing), RetiredChain, RetiredChainRelease)
+			formatVersions(missing), RetiredChain, RetiredChainRelease)}
 	}
 	return false, nil
 }
@@ -211,6 +218,30 @@ var latestMigrationVersion = func() int {
 // build records. It is derived from the migration list and RetiredChain (not a
 // hand-maintained constant), so it can never drift from them.
 func LatestMigrationVersion() int { return latestMigrationVersion }
+
+// CheckDatabase is `shingocore migrate check`: what a boot of this build would
+// do to the database cfg names, found without writing anything (no
+// schema_migrations is created either). cur is the newest version recorded, 0
+// for an empty database that would be born on the baseline; target is
+// LatestMigrationVersion. A *Refusal is the refusal migrate would give; any
+// other error is a failure to reach or read the database.
+func CheckDatabase(cfg *config.DatabaseConfig) (cur, target int, err error) {
+	db, err := OpenWithoutMigrate(cfg)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer db.Close()
+	fresh, err := checkRetiredChain(db.DB)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !fresh {
+		if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&cur); err != nil {
+			return 0, 0, fmt.Errorf("read schema_migrations: %w", err)
+		}
+	}
+	return cur, LatestMigrationVersion(), nil
+}
 
 // MigrateDown is `shingocore migrate down N`: the down step of version N,
 // which this build carries for its newest migration only, run on the database

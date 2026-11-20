@@ -92,7 +92,7 @@ func parseFlags() coreFlags {
 
 func printUsage() {
 	fmt.Println("Usage: shingocore [options]")
-	fmt.Println("       shingocore migrate [-config PATH] down N   (shingocore migrate -help)")
+	fmt.Println("       shingocore migrate [-config PATH] check | down N   (shingocore migrate -help)")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --config PATH         config file path (default: shingocore.yaml)")
