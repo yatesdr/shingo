@@ -131,3 +131,35 @@ func ChaseEndedAsk(db *sql.DB, id int64, askedVendorOrderID string) (bool, error
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+// OpenAsk is an ask open on an order row: the order, the status it rests in,
+// its station, and the job Core asked the fleet for.
+type OpenAsk struct {
+	OrderID   int64
+	Status    protocol.Status
+	StationID string
+	Asked     string
+}
+
+// ListOpenAsks is every order row with an ask open, live or ended, by id. At
+// boot each one is a create a previous Core did not live to answer
+// (engine.ReconciliationService.TakeBootAsks).
+func ListOpenAsks(db *sql.DB) ([]OpenAsk, error) {
+	rows, err := db.Query(`SELECT id, status, COALESCE(station_id, ''), asked_vendor_order_id
+		FROM orders WHERE asked_vendor_order_id <> '' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OpenAsk
+	for rows.Next() {
+		var a OpenAsk
+		var status string
+		if err := rows.Scan(&a.OrderID, &status, &a.StationID, &a.Asked); err != nil {
+			return nil, err
+		}
+		a.Status = protocol.Status(status)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

@@ -28,6 +28,11 @@ import (
 // stop channel and halts each subsystem that owns a goroutine.
 
 func (e *Engine) Start() {
+	// Every ask open now was left by a Core that died inside a create: nothing
+	// in this process can have opened one yet (the doors subscribe after Start,
+	// the scanner starts below). Named first (reconciliation_boot_asks.go).
+	e.reconciliation.TakeBootAsks()
+
 	// Create emitter adapters
 	de := &dispatchEmitter{bus: e.Events, engine: e}
 	pe := &pollerEmitter{bus: e.Events, audit: e.auditOrderNote}

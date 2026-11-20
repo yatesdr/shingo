@@ -1350,6 +1350,12 @@ func (db *DB) ClearOrderAsk(id int64, askedVendorOrderID string) (bool, error) {
 	return orders.ClearAsk(db.DB, id, askedVendorOrderID)
 }
 
+// ListOpenAsks is every order with an ask open, live or ended: see
+// orders.ListOpenAsks.
+func (db *DB) ListOpenAsks() ([]orders.OpenAsk, error) {
+	return orders.ListOpenAsks(db.DB)
+}
+
 // ChaseEndedOrderAsk names an ended order's asked job for the terminate chase:
 // see orders.ChaseEndedAsk.
 func (db *DB) ChaseEndedOrderAsk(id int64, askedVendorOrderID string) (bool, error) {

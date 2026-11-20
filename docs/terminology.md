@@ -168,6 +168,10 @@ spoken for whatever its status says: it is not acquiring, not at rest, and no st
 ending. Each question has one spelling that reads the ask beside the status (`domain/order_ask.go`,
 `store/internal/helpers/order_ask.go`); the raw status lists are banned elsewhere in Core by lint.
 
+An ask open at boot was left by a Core that died inside the create. Boot names it: on a live order it is the
+anomaly `ask_open_at_boot`, naming the asked id, while the order keeps its holds and is not asked again; on an
+ended order the job goes to the terminate chase, so no ended order carries an ask (`engine/reconciliation_boot_asks.go`).
+
 ### Sourcing
 
 Two meanings, only one live. As an **order status**, `sourcing` is never entered: no transition leads to it, and the
