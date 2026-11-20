@@ -855,11 +855,12 @@ func fireFaultedRecovered(s *LifecycleService, ord *orders.Order, ev Event) erro
 // carrying just a vendor code would otherwise record why and lose where.
 func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID string, ref protocol.TermRef, reason string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusFaulted, Event{
-		Actor:   "fleet",
-		Reason:  reason,
-		RobotID: robotID,
-		Ref:     ref,
-		Tell:    tell,
+		Actor:     "fleet",
+		StationID: ord.Requester(),
+		Reason:    reason,
+		RobotID:   robotID,
+		Ref:       ref,
+		Tell:      tell,
 	})
 }
 
@@ -878,11 +879,12 @@ func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID string, ref pr
 // place that reason survives once the order is moving again.
 func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID string, ref protocol.TermRef, reason string, tell protocol.OrderUpdate) error {
 	return s.transition(ord, StatusInTransit, Event{
-		Actor:   "fleet",
-		Reason:  reason,
-		RobotID: robotID,
-		Ref:     ref,
-		Tell:    tell,
+		Actor:     "fleet",
+		StationID: ord.Requester(),
+		Reason:    reason,
+		RobotID:   robotID,
+		Ref:       ref,
+		Tell:      tell,
 	})
 }
 

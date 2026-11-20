@@ -600,6 +600,11 @@ func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
 		if emitter.faulted[0].reason != "obstacle detected" {
 			t.Errorf("from=%s: faulted reason = %q, want %q", from, emitter.faulted[0].reason, "obstacle detected")
 		}
+		// The fault email names the order's requester; it read blank when MarkFaulted
+		// left the event's station unset.
+		if emitter.faulted[0].stationID != "edge.test" {
+			t.Errorf("from=%s: faulted station = %q, want the order's requester %q", from, emitter.faulted[0].stationID, "edge.test")
+		}
 	}
 }
 
@@ -623,6 +628,9 @@ func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 	}
 	if emitter.faultedRecovered[0].robotID != "robot-42" {
 		t.Errorf("robotID = %q, want %q", emitter.faultedRecovered[0].robotID, "robot-42")
+	}
+	if emitter.faultedRecovered[0].stationID != "edge.test" {
+		t.Errorf("recovered station = %q, want the order's requester %q", emitter.faultedRecovered[0].stationID, "edge.test")
 	}
 }
 

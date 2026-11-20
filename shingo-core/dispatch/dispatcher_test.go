@@ -58,12 +58,14 @@ type emitCompleted struct {
 	orderID int64
 }
 type emitFaulted struct {
-	orderID int64
-	reason  string
+	orderID   int64
+	stationID string
+	reason    string
 }
 type emitFaultedRecovered struct {
-	orderID int64
-	robotID string
+	orderID   int64
+	stationID string
+	robotID   string
 }
 type emitProjected struct {
 	stationID  string
@@ -91,11 +93,11 @@ func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string, _ *int64) {
 func (m *mockEmitter) EmitOrderResumed(orderID int64, _, _ string) {
 	m.resumed = append(m.resumed, orderID)
 }
-func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
-	m.faulted = append(m.faulted, emitFaulted{orderID, reason})
+func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, stationID, reason string) {
+	m.faulted = append(m.faulted, emitFaulted{orderID, stationID, reason})
 }
-func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, _, robotID string) {
-	m.faultedRecovered = append(m.faultedRecovered, emitFaultedRecovered{orderID, robotID})
+func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, stationID, robotID string) {
+	m.faultedRecovered = append(m.faultedRecovered, emitFaultedRecovered{orderID, stationID, robotID})
 }
 func (m *mockEmitter) EmitBinHeld(int64) {}
 func (m *mockEmitter) ProjectOrder(stationID string, p protocol.OrderProjection) {
