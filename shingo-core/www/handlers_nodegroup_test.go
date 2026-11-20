@@ -175,6 +175,18 @@ func captureOrderFailed(t *testing.T, bus *engine.EventBus) func() []engine.Orde
 	}
 }
 
+// waitForScannerPass runs one fulfillment pass of the test's own. The pass
+// takes the scanner's lock, so it returns only after a pass already running
+// has finished, with everything that pass announced.
+func waitForScannerPass(t *testing.T, h *Handlers) {
+	t.Helper()
+	eng, ok := h.engine.(*engine.Engine)
+	if !ok {
+		t.Fatal("precondition: the handlers' engine is not *engine.Engine")
+	}
+	eng.RunFulfillmentScan()
+}
+
 // captureNodeUpdated mirrors captureOrderFailed for EventNodeUpdated.
 func captureNodeUpdated(t *testing.T, bus *engine.EventBus) func() []engine.NodeUpdatedEvent {
 	t.Helper()
@@ -515,6 +527,13 @@ func TestApiReparentNode_ForceFailsBlockedOrdersEmitsEvents(t *testing.T) {
 	// ended first (the scanner, woken by the first order's failure, can end
 	// the fixture's payload-less second order as structural) was announced by
 	// that door, and announcing it again told the station a second failure.
+	//
+	// THE COUNT WAITS FOR THAT DOOR. The scanner announces inside its pass,
+	// after its write, so the handler can find the order already failed, skip
+	// it and answer before the announcement is out. A pass of the test's own
+	// waits on the scanner's lock behind that pass, so every ending has been
+	// announced when the count is read.
+	waitForScannerPass(t, h)
 	seen := map[int64][]engine.OrderFailedEvent{}
 	for _, e := range failedSnap() {
 		seen[e.OrderID] = append(seen[e.OrderID], e)
@@ -642,6 +661,13 @@ func TestApiDeleteNodeGroup_ForceFailsBlockedOrdersThenDeletes(t *testing.T) {
 	// ended first (the scanner, woken by the first order's failure, can end
 	// the fixture's payload-less second order as structural) was announced by
 	// that door, and announcing it again told the station a second failure.
+	//
+	// THE COUNT WAITS FOR THAT DOOR. The scanner announces inside its pass,
+	// after its write, so the handler can find the order already failed, skip
+	// it and answer before the announcement is out. A pass of the test's own
+	// waits on the scanner's lock behind that pass, so every ending has been
+	// announced when the count is read.
+	waitForScannerPass(t, h)
 	seen := map[int64][]engine.OrderFailedEvent{}
 	for _, e := range failedSnap() {
 		seen[e.OrderID] = append(seen[e.OrderID], e)
