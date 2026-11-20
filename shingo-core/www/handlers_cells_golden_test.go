@@ -144,3 +144,40 @@ func TestCellsAPI_Golden(t *testing.T) {
 		t.Errorf("cells API changed. got:\n%s", b)
 	}
 }
+
+// TestCellState_TargetIsTheStreamMedianWithNoTargetRow pins the target cycle a
+// cell's state reads when nothing configures one: heartbeat.EstimateTarget, the
+// median per-part gap of the stream. cell_targets has never had a writer, so
+// this is the only branch HeartbeatService.resolveTarget has ever taken; the
+// table and its reader go in v184, and this must read the same across that.
+//
+// Red when the state's target is anything but the stream's median: a target
+// read from somewhere else, a zero, or a different estimate.
+func TestCellState_TargetIsTheStreamMedianWithNoTargetRow(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForPages(t)
+	t0 := time.Date(2026, 1, 16, 8, 0, 0, 0, time.UTC)
+	if err := db.EnsureHeartbeatPartitions(t0); err != nil {
+		t.Fatalf("partitions: %v", err)
+	}
+	// One part a fire; gaps of 20, 20, 30 and 20 s, so the median is 20 s.
+	var evs []heartbeat.PartEvent
+	for i, sec := range []int{0, 20, 40, 70, 90} {
+		evs = append(evs, heartbeat.PartEvent{CellID: "stn-target", RecordedAt: t0.Add(time.Duration(sec) * time.Second),
+			EdgeSnapshotID: int64(i + 1), CountValue: int64(100 + i), Delta: 1, ProcessID: 7, StyleID: 3})
+	}
+	if _, rejected := db.InsertCellPartEvents(evs); len(rejected) != 0 {
+		t.Fatalf("seed ticks: rejected %+v", rejected)
+	}
+	want := heartbeat.EstimateTarget(evs)
+	if want != 20*time.Second {
+		t.Fatalf("fixture: the stream's median is %v, want 20s", want)
+	}
+	s, err := h.engine.HeartbeatService().ResolveCellState("stn-target", t0.Add(95*time.Second))
+	if err != nil {
+		t.Fatalf("ResolveCellState: %v", err)
+	}
+	if got := time.Duration(s.Primary.TargetCycleMS) * time.Millisecond; got != want {
+		t.Errorf("target cycle = %v, want the stream's median %v", got, want)
+	}
+}
