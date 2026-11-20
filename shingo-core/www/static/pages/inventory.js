@@ -458,11 +458,15 @@ function openCalc(key) {
     + calcRows().map((o) => '<option value="' + escapeHtml(o.key) + '"' + (o.key === key ? ' selected' : '') + '>'
       + escapeHtml(o.payload_code + ' at ' + o.node) + '</option>').join('') + '</select></label>';
   const days = (view && view.lead_days) || 14;
-  const cyc = r.cycle_seconds != null ? (Math.round(r.cycle_seconds * 10) / 10) : '';
+  // The cycle is one assembly cycle: the running rate's seconds per part times
+  // the part's ratio. Core turns the answer into parts (inParts).
+  const ratio = ratioOf(r.payload_code);
+  const cyc = r.cycle_seconds != null ? (Math.round(r.cycle_seconds * ratio * 10) / 10) : '';
   const field = (label, val) => '<tr><th>' + escapeHtml(label) + '</th><td class="loop-r tnum">' + val + '</td></tr>';
   const body = document.getElementById('loop-calc-body');
   body.innerHTML = pick + '<table class="loop-calc-table"><tbody>'
-    + '<tr><th>Cycle (s)</th><td class="loop-r"><input type="number" min="0" step="0.1" id="calc-cycle" class="tnum" value="' + cyc + '"></td></tr>'
+    // OWNER-WORDS: above a ratio of 1 the box says which cycle it is.
+    + '<tr><th>' + (ratio > 1 ? 'Assembly cycle (s)' : 'Cycle (s)') + '</th><td class="loop-r"><input type="number" min="0" step="0.1" id="calc-cycle" class="tnum" value="' + cyc + '"></td></tr>'
     + field('L1 queue', secs(i.l1_queue_seconds))
     + field('L1 transit', secs(i.l1_transit_seconds))
     + field('L2 load (median)', secs(i.l2_load_seconds))

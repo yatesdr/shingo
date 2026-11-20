@@ -25,8 +25,10 @@ import (
 	"math"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -133,7 +135,7 @@ func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateR
 		in.MarketToCellSeconds = v
 	}
 
-	out := CalculateThresholds(in)
+	out := inParts(CalculateThresholds(in), s.payloadRatio(req.PayloadCode))
 
 	dateRangeDays := max(int(req.DateRange.End.Sub(req.DateRange.Start).Hours()/24), 1)
 	samplesL1, _ := orders.CountCompletedOrdersInWindow(db, "retrieve_empty", "confirmed", req.PayloadCode, req.DateRange)
@@ -156,6 +158,34 @@ func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateR
 		SamplesRetrieve: samplesRetrieve,
 		DateRangeDays:   dateRangeDays,
 	}, nil
+}
+
+// inParts converts the formula's answer to parts, once (owner, 2026-11-19: a
+// threshold is typed and stored in parts). The modal's cycle is one assembly
+// cycle (the page prefills it at the running rate's seconds per part × the
+// ratio), so the formula counts assembly cycles, UoP, and a part used ratio a
+// cycle needs ratio times as many. At a ratio of 1 the answer is as it was.
+// Pinned by TestInParts.
+func inParts(out ThresholdCalculatorOutputs, ratio int) ThresholdCalculatorOutputs {
+	if ratio > 1 {
+		out.L1Threshold *= ratio
+		out.CellReorder *= ratio
+	}
+	return out
+}
+
+// payloadRatio is a payload's UOP ratio (protocol.UOPRatio over its manifest
+// lines), 1 when it cannot be read.
+func (s *ThresholdCalculatorService) payloadRatio(code string) int {
+	p, err := s.db.GetPayloadByCode(code)
+	if err != nil || p == nil {
+		return 1
+	}
+	lines, err := s.db.ListPayloadManifest(p.ID)
+	if err != nil {
+		return 1
+	}
+	return protocol.UOPRatio(domain.ProtocolLines(lines))
 }
 
 // CalculateDays is the handler-facing entrypoint: builds a days-lookback window

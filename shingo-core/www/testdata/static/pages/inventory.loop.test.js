@@ -303,7 +303,7 @@ console.log('inventory: the calculator, from the ⓘ only');
         };
         vm.createContext(ctx2);
         const names = ['timeToEmpty', 'timeLeft', 'worstFirst', 'rowByKey', 'saveThreshold', 'calcRows', 'openCalcPicker', 'secs',
-            'openCalc', 'calcOutHtml', 'confirmCalc', 'closeCalc'];
+            'openCalc', 'calcOutHtml', 'confirmCalc', 'closeCalc', 'ratioOf'];
         const fns = names.map((n) => lift('function', n) || lift('async function', n));
         const missing = names.filter((n, i) => !fns[i]);
         if (missing.length) return { missing };
