@@ -97,7 +97,9 @@ var v185Want = []struct {
 // hold_dropped with detail; floor_create audit rows; a registry with a blank
 // uid, a fold collision and a both-blank row; a partition), boots this build,
 // and reads every row back: each lands per the move rules, no station_uid
-// holds an actor, and the CHECKs refuse a bad insert.
+// holds an actor, and the CHECKs refuse a bad insert. Then migrate down 185:
+// every row as it was but the documented losses, the v184 shape exactly, and
+// v0.17.1 boots it twice with every one of its verifies holding.
 func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 	t.Parallel()
 	root := moduleRoot(t)
@@ -109,6 +111,9 @@ func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 	if err := inst.ApplyRaw(ctx, name, v185Seed); err != nil {
 		t.Fatalf("seed the v184 rows: %v", err)
 	}
+	seeded := openTest(t, inst, name)
+	original := v184Rows(t, seeded)
+	seeded.Close()
 	t0 := time.Now()
 	if err := inst.Reboot(ctx, name); err != nil {
 		t.Fatalf("this build's boot (v185): %v", err)
@@ -146,6 +151,80 @@ func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 		t.Fatalf("schema_migrations ends at v%d (err %v), want v185", head, err)
 	}
 
+	// Down: every row as it was at v184 but the documented losses, the v184
+	// shape, and v0.17.1 boots it twice with every one of its verifies holding.
+	t0 = time.Now()
+	if err := store.MigrateDown(inst.DBConfigForTest(name), 185); err != nil {
+		t.Fatalf("migrate down 185: %v", err)
+	}
+	t.Logf("v185 down on the seeded database: %v", time.Since(t0).Round(time.Millisecond))
+	downed := v184Rows(t, db)
+	for table, want := range original {
+		if got := downed[table]; got != want {
+			t.Errorf("%s after down:\n got  %s\n want %s", table, got, want)
+		}
+	}
+	shape, err := inst.Dump(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := v184Database(ctx, t, inst, root)
+	refShape, err := inst.Dump(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b := schemadump.Canonical(schemadump.ExcludePartitions(shape)), schemadump.Canonical(schemadump.ExcludePartitions(refShape)); a != b {
+		t.Errorf("the database down 185 left is not the v184 shape:\n%s", shapeDiff(b, a))
+	}
+	rel, err := schemadump.BuildRelease(ctx, root, store.RetiredChainRelease, releaseWork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for boot := 1; boot <= 2; boot++ {
+		out, err := inst.BootRelease(ctx, rel, name)
+		if err != nil {
+			t.Fatalf("%s boot %d after down: %v", store.RetiredChainRelease, boot, err)
+		}
+		if strings.Contains(out, "post-condition fails") {
+			t.Errorf("%s boot %d after down re-ran a migration whose verify failed:\n%s", store.RetiredChainRelease, boot, out)
+		}
+	}
+}
+
+// v184Rows reads the seeded tables on their v184 names, one string per table,
+// with the documented losses of a round trip through v185 masked: the rows the
+// registry fold deleted (ids 4 and 5) and the uid it gave row 2, row 3's
+// station_id where it was not its uid (down fills the column from station_uid),
+// and audit_log.new_value's spelling (compared as jsonb).
+func v184Rows(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for table, q := range map[string]string{
+		"orders":              `SELECT id || ':' || station_id || ':' || projects_to FROM orders ORDER BY id`,
+		"mission_telemetry":   `SELECT order_id || ':' || station_id FROM mission_telemetry ORDER BY order_id`,
+		"bin_uop_ledger":      `SELECT id || ':' || op || ':' || station || ':' || actor FROM bin_uop_ledger ORDER BY id`,
+		"bin_uop_exception":   `SELECT id || ':' || kind || ':' || op || ':' || actor || ':' || COALESCE(detail::text, '') FROM bin_uop_exception ORDER BY id`,
+		"audit_log":           `SELECT id || ':' || (new_value::jsonb)::text FROM audit_log ORDER BY id`,
+		"edge_registry":       `SELECT id || ':' || CASE id WHEN 2 THEN '(folded)' WHEN 3 THEN '(selector restored as the uid)' ELSE station_id || ':' || station_uid END FROM edge_registry WHERE id NOT IN (4, 5) ORDER BY id`,
+		"bin_uop_delta_daily": `SELECT actor FROM bin_uop_delta_daily`,
+		"cell_part_events":    `SELECT cell_id FROM cell_part_events UNION ALL (SELECT indexname FROM pg_indexes WHERE tablename = 'cell_part_events_2026_06' ORDER BY indexname)`,
+	} {
+		rows, err := db.Query(q)
+		if err != nil {
+			t.Fatalf("read %s: %v", table, err)
+		}
+		var got []string
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, s)
+		}
+		rows.Close()
+		out[table] = strings.Join(got, " | ")
+	}
+	return out
 }
 
 func assertV185Rows(t *testing.T, db *sql.DB) {

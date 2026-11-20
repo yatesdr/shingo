@@ -92,6 +92,7 @@ func parseFlags() coreFlags {
 
 func printUsage() {
 	fmt.Println("Usage: shingocore [options]")
+	fmt.Println("       shingocore migrate [-config PATH] down N   (shingocore migrate -help)")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --config PATH         config file path (default: shingocore.yaml)")
@@ -304,6 +305,9 @@ func main() {
 	// set by the systemd unit.
 
 	// ── Flags & config ──────────────────────────────────────────────────
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(runMigrate(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	flags := parseFlags()
 
 	// Build stamp first, before anything that can fatal. Deliberately not

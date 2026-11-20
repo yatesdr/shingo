@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"shingo/protocol/migrate"
+	"shingocore/config"
 	"shingocore/store/schema"
 )
 
@@ -210,3 +211,18 @@ var latestMigrationVersion = func() int {
 // build records. It is derived from the migration list and RetiredChain (not a
 // hand-maintained constant), so it can never drift from them.
 func LatestMigrationVersion() int { return latestMigrationVersion }
+
+// MigrateDown is `shingocore migrate down N`: the down step of version N,
+// which this build carries for its newest migration only, run on the database
+// cfg names without migrating it first.
+func MigrateDown(cfg *config.DatabaseConfig, version int) error {
+	if version != 185 {
+		return fmt.Errorf("migrate down %d: this build carries the down step of v185 only", version)
+	}
+	db, err := OpenWithoutMigrate(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.migrateDown185()
+}

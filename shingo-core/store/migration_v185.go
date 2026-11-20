@@ -582,3 +582,142 @@ func v185Verify(q schema.Querier) bool {
 	}
 	return ok
 }
+
+// migrateDown185 puts the v184 shape back, generated from v185Ops and
+// comments.sql: the comments up applied removed, the constraints dropped,
+// every rename back, every move inverted, the added columns dropped, the dropped columns and tables restored as v184 declared
+// them (every default, NOT NULL, key and sequence; edge_registry.station_id
+// filled from station_uid), and schema_migrations' row for 185 deleted. One
+// transaction, under SET LOCAL statement_timeout = 0 and every table's lock
+// first, as up. It refuses unless 185 is the newest version recorded.
+//
+// What does not come back: the rows the registry fold deleted (logged by up),
+// the values of the dropped columns (they come back as their defaults; no
+// writer wrote them), audit_log.new_value's original spelling (jsonb
+// re-serialises it), the uid the fold gave a blank row, a station_id that was
+// not its row's uid (it comes back as the uid), and a partition index name
+// set by hand.
+func (db *DB) migrateDown185() error {
+	var latest int
+	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&latest); err != nil {
+		return fmt.Errorf("migrate down 185: read schema_migrations: %w", err)
+	}
+	if latest != 185 {
+		return fmt.Errorf("migrate down 185: the newest version recorded is v%d; down 185 runs only on a database whose newest is v185", latest)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := v185Down(tx); err != nil {
+		return fmt.Errorf("migrate down 185: %w", err)
+	}
+	return tx.Commit()
+}
+
+func v185Down(tx *sql.Tx) error {
+	if err := v185Exec(tx, "statement_timeout", `SET LOCAL statement_timeout = 0`); err != nil {
+		return err
+	}
+	var present []string
+	for _, t := range v185Tables() {
+		if schema.TableExists(tx, t) {
+			present = append(present, t)
+		}
+	}
+	if err := v185Lock(tx, present); err != nil {
+		return err
+	}
+	// The comments up applied go first, while every object has the name they
+	// were written under: a v184 database carried none.
+	if err := v185Exec(tx, "comments off", v185CommentsOff(schema.Comments)); err != nil {
+		return err
+	}
+	for i := len(v185Ops.checks) - 1; i >= 0; i-- {
+		c := v185Ops.checks[i]
+		if err := v185Exec(tx, "drop constraint "+c.name,
+			fmt.Sprintf(`ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s`, c.table, c.name)); err != nil {
+			return err
+		}
+	}
+	if err := v185Exec(tx, "restore the partial uid index",
+		`CREATE UNIQUE INDEX edge_registry_station_uid_key ON public.edge_registry USING btree (station_uid) WHERE (station_uid <> ''::text)`); err != nil {
+		return err
+	}
+	for i := len(v185Ops.renames) - 1; i >= 0; i-- {
+		r := v185Ops.renames[i]
+		if err := v185Exec(tx, "rename back "+r.table+"."+r.to,
+			fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN %s TO %s`, r.table, r.to, r.from)); err != nil {
+			return err
+		}
+	}
+	for i := len(v185Ops.relabels) - 1; i >= 0; i-- {
+		r := v185Ops.relabels[i]
+		if err := v185Relabel1(tx, r.table, r.to, r.from, r.constraint); err != nil {
+			return err
+		}
+	}
+	for _, p := range v185PartitionTokens {
+		if err := v185RelabelChildren(tx, p.parent, p.before, p.now); err != nil {
+			return err
+		}
+	}
+	for i := len(v185Moves) - 1; i >= 0; i-- {
+		m := v185Moves[i]
+		if err := v185Exec(tx, "invert: "+m.name, m.down); err != nil {
+			return err
+		}
+	}
+	for i := len(v185Ops.adds) - 1; i >= 0; i-- {
+		a := v185Ops.adds[i]
+		if err := v185Exec(tx, "drop "+a.table+"."+a.column,
+			fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, a.table, a.column)); err != nil {
+			return err
+		}
+	}
+	for _, q := range []string{
+		`ALTER TABLE edge_registry ADD COLUMN station_id text`,
+		`UPDATE edge_registry SET station_id = station_uid`,
+		`ALTER TABLE edge_registry ALTER COLUMN station_id SET NOT NULL`,
+		`ALTER TABLE ONLY public.edge_registry ADD CONSTRAINT edge_registry_station_id_key UNIQUE (station_id)`,
+	} {
+		if err := v185Exec(tx, "restore edge_registry.station_id", q); err != nil {
+			return err
+		}
+	}
+	for _, d := range v185Ops.drops {
+		if err := v185Exec(tx, "restore "+d.table+"."+d.column,
+			fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, d.table, d.column, d.restore)); err != nil {
+			return err
+		}
+		for _, q := range d.after {
+			if err := v185Exec(tx, "restore "+d.table+"."+d.column, q); err != nil {
+				return err
+			}
+		}
+	}
+	for _, d := range v185Ops.dropTables {
+		for _, q := range d.restore {
+			if err := v185Exec(tx, "restore "+d.table, q); err != nil {
+				return err
+			}
+		}
+	}
+	return v185Exec(tx, "unrecord", `DELETE FROM schema_migrations WHERE version = 185`)
+}
+
+// v185CommentsOff is comments.sql inverted: each COMMENT ON <object> IS '...'
+// becomes COMMENT ON <object> IS NULL.
+func v185CommentsOff(comments string) string {
+	var out []string
+	for _, line := range strings.Split(comments, "\n") {
+		if !strings.HasPrefix(line, "COMMENT ON ") {
+			continue
+		}
+		if obj, _, ok := strings.Cut(line, " IS '"); ok {
+			out = append(out, obj+" IS NULL;")
+		}
+	}
+	return strings.Join(out, "\n")
+}

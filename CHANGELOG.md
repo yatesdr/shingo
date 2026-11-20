@@ -28,6 +28,7 @@ Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on 
 - The robot map points in Core's records are named as the fleet's, apart from stations; the outbox says whom a message is for
 - The tables and columns nothing read or wrote are gone: downtime events, cell targets, and a dozen unused columns
 - A registry row with no uid takes the one its station id held; a row that would collide with another Edge's, or has no id at all, is removed and named in the log
+- shingocore migrate down 185 puts the previous shape back for a rollback, before the previous binary goes back in
 - The move takes Core's tables for its run: on a seeded test database up took about 0.2 s and down 0.2 s; a plant's time grows with its orders, telemetry and ledger rows
 
 ## v0.17.3 — 2026-11-21
