@@ -245,10 +245,8 @@ func TestCensus_FleetTransportCreateIsNotADoor(t *testing.T) {
 // TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent names every statement
 // that writes orders.block_actions, and every caller of the ones that do: the
 // record is written by the fleet's yes to the create and by the append's claim,
-// from the blocks those two hand the fleet, and nowhere else. NameFleetOrder,
-// the create's vendor write before the yes wrote the job, is kept for fixtures
-// that name a running order; nothing in Core calls it. A new writer could record
-// a block the fleet was never sent, or forget one it was.
+// from the blocks those two hand the fleet, and nowhere else. A new writer could
+// record a block the fleet was never sent, or forget one it was.
 func TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent(t *testing.T) {
 	t.Parallel()
 	sources := scanCoreSources(t)
@@ -277,21 +275,19 @@ func TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent(t *testing.T) {
 	}
 	slices.Sort(writers)
 	sameSites(t, "the statements that write orders.block_actions", writers, map[string]string{
-		"store/orders/ask.go:FleetYesTx":        "the fleet's yes to the create, the blocks the create sent",
-		"store/orders/orders.go:ClaimAppend":    "the append's compare-and-set, merging the segment's blocks",
-		"store/orders/orders.go:NameFleetOrder": "a vendor write naming a running order, for fixtures; nothing in Core calls it",
+		"store/orders/ask.go:FleetYesTx":     "the fleet's yes to the create, the blocks the create sent",
+		"store/orders/orders.go:ClaimAppend": "the append's compare-and-set, merging the segment's blocks",
 	}, "A new writer of block_actions records blocks somewhere other than where they are sent. "+
 		"Record them in the fleet's yes (FleetYesTx) or the append (ClaimAppend).")
 
 	callers := only(sources, "dispatch/", "engine/", "store/", "fleet/", "www/", "service/", "fulfillment/")
 	sameSites(t, "the callers of the block record's writers",
-		callSites(t, callers, "FleetYesTx", "FleetYes", "NameFleetOrder", "ClaimAppend"),
+		callSites(t, callers, "FleetYesTx", "FleetYes", "ClaimAppend"),
 		map[string]string{
 			"dispatch/complex_release.go:appendSegment": "the one fleet append, with the segment it sends",
 			"dispatch/lifecycle.go:Dispatch":            "the fleet's yes, with the blocks the create sent (handoverToFleet's)",
 			"store/orders.go:ClaimAppend":               "the store delegate",
 			"store/orders.go:FleetYes":                  "the yes on a transaction of its own",
-			"store/orders.go:NameFleetOrder":            "the store delegate",
 		}, "The block record is written from the blocks the fleet is handed, at the create and the append.")
 }
 

@@ -265,12 +265,20 @@ func TestStepsDone_ARestartThatReplaysFinishedBlocksCountsNothing(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	vendor, url := newStubVendor(t)
-	o := &orders.Order{EdgeUUID: "replay-1", StationID: "line-1", OrderType: "complex", Status: protocol.StatusInTransit,
+	o := &orders.Order{EdgeUUID: "replay-1", StationID: "line-1", OrderType: "complex", Status: protocol.StatusPending,
 		Quantity: 1, SourceNode: "SMN_A", DeliveryNode: "ALN_C", StepsJSON: replayPlan}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
-	// Named as the create names it: the vendor order and the record of its blocks.
-	testutil.MustNoErr(t, db.NameFleetOrder(o.ID, "v-replay-1", "RUNNING", "AMR-01",
-		map[string]string{"v-replay-1-b1": protocol.ActionPickup, "v-replay-1-b2": protocol.ActionDropoff}), "vendor order")
+	// Named as the create names it: the fleet's yes writes the vendor order and
+	// the record of its blocks; then the robot is running it, in transit.
+	testdb.SeedAsk(t, db, o.ID, protocol.StatusPending, "v-replay-1")
+	_, moved, err := db.FleetYes(o.ID, protocol.StatusPending, "v-replay-1", "AMR-01",
+		map[string]string{"v-replay-1-b1": protocol.ActionPickup, "v-replay-1-b2": protocol.ActionDropoff},
+		"vendor order v-replay-1 created", store.HistoryReason{}, protocol.OrderUpdate{})
+	if err != nil || !moved {
+		t.Fatalf("the fleet's yes: moved=%v err=%v", moved, err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "v-replay-1", "RUNNING", "AMR-01"), "the robot running it")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(protocol.StatusInTransit), "in transit"), "in transit")
 	vendor.hold("v-replay-1", rds.StateRunning, 0,
 		rds.Block{BlockID: "v-replay-1-b1", Location: "SMN_A", BinTask: "JackLoad"},
 		rds.Block{BlockID: "v-replay-1-b2", Location: "SLN_B", BinTask: "JackUnload"})

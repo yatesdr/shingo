@@ -1450,12 +1450,6 @@ func (db *DB) robotWrite(write func(*sql.Tx) (orders.Told, bool, error)) error {
 	return tx.Commit()
 }
 
-// NameFleetOrder is orders.NameFleetOrder: the create's write of the vendor
-// order and the record of the blocks it was sent.
-func (db *DB) NameFleetOrder(id int64, vendorOrderID, vendorState, robotID string, actions map[string]string) error {
-	return orders.NameFleetOrder(db.DB, id, vendorOrderID, vendorState, robotID, actions)
-}
-
 // OrderRobotsByUUID is orders.RobotsByUUID: the station and robot of each
 // order among uuids the fleet holds on a robot, for the live robot feed.
 func (db *DB) OrderRobotsByUUID(uuids []string) ([]orders.OrderRobot, error) {

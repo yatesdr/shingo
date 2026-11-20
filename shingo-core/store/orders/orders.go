@@ -637,8 +637,8 @@ func AdvanceStepsDone(db *sql.DB, id int64, n int) error {
 // record would read its earlier blocks as unknown). An append the fleet then
 // refuses leaves its entries behind; a retry re-cuts the same ids
 // (dispatch.mintBlockID) and writes them again, and a block never sent never
-// finishes. One of the two writers of block_actions, with NameFleetOrder
-// (TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent).
+// finishes. One of the two writers of block_actions, with the fleet's yes
+// (FleetYesTx; TestCensus_TheBlockRecordIsWrittenWhereBlocksAreSent).
 func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string, actions map[string]string) (bool, error) {
 	raw, err := blockActionsJSON(actions)
 	if err != nil {
@@ -653,22 +653,6 @@ func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string, actions 
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
-}
-
-// NameFleetOrder is the create's write once the fleet has taken the order: the
-// vendor order's identifiers, as UpdateVendor writes them, and the record of the
-// blocks it was sent, block id -> action, in block_actions. The record is
-// replaced, not merged: every block of the vendor order named here was sent now.
-// One of the two writers of block_actions, with ClaimAppend.
-func NameFleetOrder(db *sql.DB, id int64, vendorOrderID, vendorState, robotID string, actions map[string]string) error {
-	raw, err := blockActionsJSON(actions)
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, block_actions=$6::jsonb,
-		updated_at=$5 WHERE id=$4`,
-		vendorOrderID, vendorState, robotID, id, clock.Now().UTC(), raw)
-	return err
 }
 
 // blockActionsJSON is a block record as block_actions stores it: a JSON object,
