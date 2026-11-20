@@ -1485,3 +1485,570 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken); the replacement runs the same fixture through the same function
 - citations rewritten: `docs/uop-architecture.md` names the replacement; the replacement's own comment names the retired test
 - verified at: the commit that adds this row
+
+### DEAD — `TestMigrationList_Shape`
+- test: `TestMigrationList_Shape` · pkg `shingocore/store` · run `-run '^TestMigrationList_Shape$'` · `shingo-core/store/migration_list_shape_test.go:15` @ `e06b29b0` · tags `none`
+- code: DEAD (the squash deletes the chain this walks; it checked `migrationList()`'s order and `LatestMigrationVersion` against the last entry, a property of the list, not of any row)
+- assertion map: the list strictly increasing and `LatestMigrationVersion()` its last entry → nothing in this row. After the squash the list holds only post-tip migrations (v184 up) and `LatestMigrationVersion` still feeds `CoreSchemaVersion` and the release tool, so the post-tip list needs the same order check where the schema change keeps it
+- mutation: none to run: a structure check over the list the squash rewrites
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers`
+- test: `TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers` · pkg `shingocore/store` · run `-run '^TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers$'` · `shingo-core/store/migration_verify_direction_test.go:28` @ `e06b29b0` · tags `none`
+- code: DEAD (a source lint over `migrations.go`'s verify predicates, which the squash deletes with the chain; no rows)
+- assertion map: no verify predicate negates an Exists helper → nothing in this row. v184 carries a Verify, so the lint belongs over whatever verify predicates the post-tip list keeps
+- mutation: none to run: a source lint over the file the squash rewrites
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/store/schema/schema.go` names this test and is not rewritten here
+- verified at: the commit that adds this row
+
+### DEAD — `TestV72_RenamesTheOperatorStationEverywhere`
+- test: `TestV72_RenamesTheOperatorStationEverywhere` · pkg `shingocore/store` · run `-run '^TestV72_RenamesTheOperatorStationEverywhere$'` · `shingo-core/store/migration_v72_station_test.go:60` @ `e06b29b0` · tags `docker`
+- code: DEAD (v72, the rewrite of the old operator station across four tables, goes with the chain in the squash at v183)
+- assertion map: the old station's rows moved in orders, mission_telemetry, cell_config and dashboards, the array rewritten in place → nothing: a rewrite of rows from before v72, and nothing outside tests and `migrations.go` writes the old value (grep of `core-spot`: none)
+- mutation: none to run: the test re-runs v72 through the self-heal, and the squash deletes v72 and the self-heal
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV72_IsSafeToRunTwice`
+- test: `TestV72_IsSafeToRunTwice` · pkg `shingocore/store` · run `-run '^TestV72_IsSafeToRunTwice$'` · `shingo-core/store/migration_v72_station_test.go:106` @ `e06b29b0` · tags `docker`
+- code: DEAD (v72's idempotence under the per-boot self-heal; the squash removes both)
+- assertion map: three re-runs leave no old rows → nothing
+- mutation: none to run: as `TestV72_RenamesTheOperatorStationEverywhere`'s row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV81_EpisodesBecomeProduceOrConsume`
+- test: `TestV81_EpisodesBecomeProduceOrConsume` · pkg `shingocore/store` · run `-run '^TestV81_EpisodesBecomeProduceOrConsume$'` · `shingo-core/store/migration_v81_episode_role_test.go:75` @ `e06b29b0` · tags `docker`
+- code: DEAD (v81, the rewrite of cell episodes from supply/evacuate to consume/produce, goes with the chain)
+- assertion map: key and direction rewritten together, other kinds untouched → nothing: a rewrite of rows from before v81
+- mutation: none to run: the test re-runs v81 through the self-heal, which the squash removes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV81_IsSafeToRunTwice`
+- test: `TestV81_IsSafeToRunTwice` · pkg `shingocore/store` · run `-run '^TestV81_IsSafeToRunTwice$'` · `shingo-core/store/migration_v81_episode_role_test.go:143` @ `e06b29b0` · tags `docker`
+- code: DEAD (v81's idempotence under the self-heal)
+- assertion map: three re-runs leave key and direction right → nothing
+- mutation: none to run: as `TestV81_EpisodesBecomeProduceOrConsume`'s row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV93_BackfillDerivesCrossingsDropsAndBoundaries`
+- test: `TestV93_BackfillDerivesCrossingsDropsAndBoundaries` · pkg `shingocore/store` · run `-run '^TestV93_BackfillDerivesCrossingsDropsAndBoundaries$'` · `shingo-core/store/migration_v93_exception_test.go:49` @ `e06b29b0` · tags `docker`
+- code: DEAD (v93's one-time backfill of bin_uop_exception from bin_uop_ledger goes with the chain)
+- assertion map: crossings, drops and boundaries derived from history → nothing: the backfill's rows stay in every plant database and the live writers of exception rows are pinned in `uop` and `store/audit`
+- mutation: none to run: the test deletes v93's `schema_migrations` row and re-opens; the squash deletes v93 and refuses a database with a hole in 1..183
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV93_IdempotentOnReapply`
+- test: `TestV93_IdempotentOnReapply` · pkg `shingocore/store` · run `-run '^TestV93_IdempotentOnReapply$'` · `shingo-core/store/migration_v93_exception_test.go:139` @ `e06b29b0` · tags `docker`
+- code: DEAD (v93's truncate-then-backfill on a re-run)
+- assertion map: two applies write one row → nothing
+- mutation: none to run: as `TestV93_BackfillDerivesCrossingsDropsAndBoundaries`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV93BackfillOpsMatchEpochBumpOps`
+- test: `TestV93BackfillOpsMatchEpochBumpOps` · pkg `shingocore/store` · run `-run '^TestV93BackfillOpsMatchEpochBumpOps$'` · `shingo-core/store/migration_v93_exception_test.go:189` @ `e06b29b0` · tags `docker`
+- code: DEAD (it pins `store.BumpOpsForBackfill`, v93's copy of the bump-op set, which goes with `migrations.go`)
+- assertion map: the backfill's set equals `audit.EpochBumpOps` adjusted for the ops born or retired since → nothing: the audit set itself stays pinned to the bump call sites by `TestEpochBumpOpsCoversEveryBumpSite` (`shingo-core/store/audit/epoch_bump_ops_test.go:33`)
+- mutation: none to run: the set it compares is deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestV93_OpenNegativeBinsReadsTheExceptionTable`
+- test: `TestV93_OpenNegativeBinsReadsTheExceptionTable` · pkg `shingocore/store` · run `-run '^TestV93_OpenNegativeBinsReadsTheExceptionTable$'` · `shingo-core/store/migration_v93_exception_test.go:223` @ `e06b29b0` · tags `docker`
+- code: STALE (it ran no migration; moved to the reader's package and renamed)
+- assertion map: every assertion kept → `TestOpenNegativeBins_DatesTheBinByItsExceptionRow` (`shingo-core/store/bins/ledger_integrity_test.go:166`): the bin is listed after its raw row is purged, and `NegativeSince` is the exception row's `occurred_at`. The raw row is seeded with `testdb.SeedAudit` instead of a local copy of it
+- mutation: `bins.OpenNegativeBins` reads another exception kind (`e.kind = 'negative_crossingX'`) · survivor red at `27f5fb2e`: `ledger_integrity_test.go:194: NegativeSince = <nil>, want the exception row's occurred_at ...` (`data-model-attack-2026-11-19/build/lane-relocate/02-red-bins-exception-kind.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV94_BackfillAggregatesAtTheReviewedGrain`
+- test: `TestV94_BackfillAggregatesAtTheReviewedGrain` · pkg `shingocore/store` · run `-run '^TestV94_BackfillAggregatesAtTheReviewedGrain$'` · `shingo-core/store/migration_v94_daily_test.go:46` @ `e06b29b0` · tags `docker`
+- code: DEAD (v94's backfill of bin_uop_delta_daily goes with the chain; the grain it pinned is the daily job's, and is pinned on the job)
+- assertion map: the five rows of the two-day history, every column, actor in the grain → `TestRollupBinUOPDeltaDay_AggregatesAtTheReviewedGrain` (`shingo-core/store/audit/bin_uop_purge_test.go:140`): the same history rolled up by `audit.RollupBinUOPDeltaDay` day by day, with the rows each day writes counted and every row compared whole (the old test compared three rows whole, two in part, and the actor on bin 1 only)
+- mutation: on `audit.RollupBinUOPDeltaDay` at `27f5fb2e`, survivor red each time: `min(w.after_uop)` → `min(w.before_uop)` (rows 0-4, `lane-relocate/03-red-audit-min-of-before.log`); the epoch window scoped to the day (rows 3-4 in epoch 0, `lane-relocate/04-red-audit-day-scoped-window.log`); reason taken out of the grain (`day-2 rollup wrote 1 rows, want 2`, `lane-relocate/05-red-audit-reason-out-of-grain.log`), all under `data-model-attack-2026-11-19/build/`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestV94_RollupJobMatchesBackfill`
+- test: `TestV94_RollupJobMatchesBackfill` · pkg `shingocore/store` · run `-run '^TestV94_RollupJobMatchesBackfill$'` · `shingo-core/store/migration_v94_daily_test.go:155` @ `e06b29b0` · tags `docker`
+- code: STALE (its body never ran the backfill it was named for; moved to the job's package and renamed)
+- assertion map: every assertion kept → `TestRollupBinUOPDeltaDay_TheEpochCarriesAcrossDays` (`shingo-core/store/audit/bin_uop_purge_test.go:190`): 2 rows then 1, day 2 in epoch 1, the epoch-1 row's six values
+- mutation: the epoch window scoped to the day · survivor red at `27f5fb2e`: `bin_uop_purge_test.go:223: day-2 delta landed in epoch 0, want 1` (`data-model-attack-2026-11-19/build/lane-relocate/04-red-audit-day-scoped-window.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none (the comment on `pgBumpOpsArraySQL` in `store/audit/bin_uop_daily.go` still describes a lockstep test against the backfill; production comments are outside this change)
+- verified at: the commit that adds this row
+
+### STALE — `TestV94_RollupJobIsIdempotentPerDay`
+- test: `TestV94_RollupJobIsIdempotentPerDay` · pkg `shingocore/store` · run `-run '^TestV94_RollupJobIsIdempotentPerDay$'` · `shingo-core/store/migration_v94_daily_test.go:212` @ `e06b29b0` · tags `docker`
+- code: STALE (it ran no migration; moved to the job's package and renamed)
+- assertion map: every assertion kept → `TestRollupBinUOPDeltaDay_IsIdempotentPerDay` (`shingo-core/store/audit/bin_uop_purge_test.go:242`)
+- mutation: the upsert accumulates (`ticks = bin_uop_delta_daily.ticks + EXCLUDED.ticks`) · survivor red at `27f5fb2e`: `after two rollups: rows=1 ticks=4 consumed=25, want 1/2/25` (`data-model-attack-2026-11-19/build/lane-relocate/06-red-audit-upsert-accumulates.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV99_PreservesEveryStoredValue`
+- test: `TestV99_PreservesEveryStoredValue` · pkg `shingocore/store` · run `-run '^TestV99_PreservesEveryStoredValue$'` · `shingo-core/store/migration_v99_parts_per_cycle_test.go:76` @ `e06b29b0` · tags `docker`
+- code: DEAD (v99's rename of payload_manifest.quantity goes with the chain)
+- assertion map: six stored ratios unchanged across the rename → nothing: a property of the rename
+- mutation: none to run: the test rewinds the column and re-runs v99, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestV99_DefaultBecomesOne`
+- test: `TestV99_DefaultBecomesOne` · pkg `shingocore/store` · run `-run '^TestV99_DefaultBecomesOne$'` · `shingo-core/store/migration_v99_parts_per_cycle_test.go:113` @ `e06b29b0` · tags `docker`
+- code: STALE (its assertion is the column's DEFAULT, reached by rewinding v99; the survivor inserts on the migrated schema)
+- assertion map: a line inserted without a ratio reads 1 → `TestManifestLine_NoStatedRatioIsOnePerCycle` (`shingo-core/store/payloads/payloads_test.go:347`), read back through `payloads.ListManifest` instead of raw SQL. The one writer (`insertManifestLine`) names the column, so no live writer relies on the default today
+- mutation: the column's DEFAULT set to 0 inside the survivor, as a baseline that lost it would read · red at `27f5fb2e`: `payloads_test.go:366: parts_per_cycle = 0, want 1` (`data-model-attack-2026-11-19/build/lane-relocate/21-red-payloads-default-zero.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV99_IsIdempotent`
+- test: `TestV99_IsIdempotent` · pkg `shingocore/store` · run `-run '^TestV99_IsIdempotent$'` · `shingo-core/store/migration_v99_parts_per_cycle_test.go:142` @ `e06b29b0` · tags `docker`
+- code: DEAD (v99's rename guard under the self-heal)
+- assertion map: two applies keep the value → nothing
+- mutation: none to run: as `TestV99_PreservesEveryStoredValue`'s row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV100_ATaggedNodeStillWalksAsABoundary`
+- test: `TestV100_ATaggedNodeStillWalksAsABoundary` · pkg `shingocore/store` · run `-run '^TestV100_ATaggedNodeStillWalksAsABoundary$'` · `shingo-core/store/migration_v100_cms_storeroom_test.go:30` @ `e06b29b0` · tags `docker`
+- code: DEAD (v100's delete of the retired key, checked from the positive side, goes with the chain)
+- assertion map: v100 deletes no more than its key → nothing; the walk from a slot to its tagged synthetic root and that root's storeroom code → `TestFindCMSBoundary_LogsAtSyntheticRoot` (`shingo-core/engine/cms_transactions_test.go:92`), the same tree and the same three assertions, on the base already
+- mutation: none to run: the test deletes v100's `schema_migrations` row and re-opens; the survivor named is unchanged
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestNodePropertyKeyAbsent_DoesNotReportAFailedQueryAsSuccess`
+- test: `TestNodePropertyKeyAbsent_DoesNotReportAFailedQueryAsSuccess` · pkg `shingocore/store` · run `-run '^TestNodePropertyKeyAbsent_DoesNotReportAFailedQueryAsSuccess$'` · `shingo-core/store/migration_v100_cms_storeroom_test.go:87` @ `e06b29b0` · tags `docker`
+- code: DEAD (its subject, `schema.NodePropertyKeyAbsent`, is called only by the v100 and v169 verifies, which go with the chain)
+- assertion map: true for an absent key, false for a present one, false on a failed query → nothing in this row; if the squash keeps the function, the pin belongs beside it in `store/schema`'s tests
+- mutation: none to run: its only callers are deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV100_RemovesTheRetiredBoundaryProperty`
+- test: `TestV100_RemovesTheRetiredBoundaryProperty` · pkg `shingocore/store` · run `-run '^TestV100_RemovesTheRetiredBoundaryProperty$'` · `shingo-core/store/migration_v100_cms_storeroom_test.go:124` @ `e06b29b0` · tags `docker`
+- code: DEAD (v100's keyed delete)
+- assertion map: the retired key gone and `cms_storeroom` kept → nothing
+- mutation: none to run: as `TestV100_ATaggedNodeStillWalksAsABoundary`'s row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestV102_HopkinsvilleDayOneCardIsNotRed`
+- test: `TestV102_HopkinsvilleDayOneCardIsNotRed` · pkg `shingocore/store` · run `-run '^TestV102_HopkinsvilleDayOneCardIsNotRed$'` · `shingo-core/store/migration_v102_posting_backfill_test.go:41` @ `e06b29b0` · tags `docker`
+- code: STRENGTHEN (it ran no migration; moved to the card's package and renamed)
+- assertion map: both assertions kept → `TestCMSPostingService_HistoryThatPredatesTheFeedIsHealthy` (`shingo-core/service/cms_transaction_service_test.go:136`). Added: with the same history unqueued (NULL) the card reads unhealthy with the never-queued finding, so the absence of that wording cannot pass by the wording changing
+- mutation: `cms.PostingHealth` counts `posting_id = 0` as unposted · survivor red at `27f5fb2e`: `cms_transaction_service_test.go:174: the card reports the plant's history as unqueued work: "12 transactions has been recorded but never queued for posting ..."` (`data-model-attack-2026-11-19/build/lane-relocate/11-red-cms-health-counts-zero.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV102_BackfillsLegacyRowsWithZero`
+- test: `TestV102_BackfillsLegacyRowsWithZero` · pkg `shingocore/store` · run `-run '^TestV102_BackfillsLegacyRowsWithZero$'` · `shingo-core/store/migration_v102_posting_backfill_test.go:108` @ `e06b29b0` · tags `docker`
+- code: DEAD (v102's backfill of NULL to 0 goes with the chain; the 0 rows it wrote stay at the plants, and their reading is pinned)
+- assertion map: posting_id 0 after v102 → nothing; `PostingHealth` leaves a 0 row out of unposted → `TestPostingHealth_ARowThatPredatesTheFeedIsNotUnposted` (`shingo-core/store/cms/postings_test.go:537`), with a fresh row beside it so the count is 1, not 0, and the sender's queue (`ListUnpostedOlderThan`) leaving the 0 row out too
+- mutation: on `store/cms` at `27f5fb2e`, survivor red each time: the health count reads `posting_id IS NULL OR posting_id = 0` (`postings_test.go:555: unposted = 2, want 1`, `lane-relocate/11-red-cms-health-counts-zero.log`); the queue reads the same (`postings_test.go:566: the sender's queue = [1 2], want only the fresh row 2`, `lane-relocate/12-red-cms-queue-lists-zero.log`), both under `data-model-attack-2026-11-19/build/`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DUP — `TestV102_BackfillDoesNotClaimNewWork`
+- test: `TestV102_BackfillDoesNotClaimNewWork` · pkg `shingocore/store` · run `-run '^TestV102_BackfillDoesNotClaimNewWork$'` · `shingo-core/store/migration_v102_posting_backfill_test.go:168` @ `e06b29b0` · tags `docker`
+- code: DUP (of `TestPostingHealth_CountsUnpostedTransactions`; it ran no migration)
+- assertion map: a fresh transaction counts as unposted → `TestPostingHealth_CountsUnpostedTransactions` (`shingo-core/store/cms/postings_test.go:498`, two fresh rows count 2); a fresh row arrives NULL → `TestTransactions_StoreroomAndRobotRoundTrip` (`:332`)
+- mutation: the health count made to count nothing (`... WHERE posting_id IS NULL AND false`) · both red at `27f5fb2e`: old `migration_v102_posting_backfill_test.go:185: unposted_transaction_count = 0, want 1`; survivor `postings_test.go:513: unposted = 0, want 2` (`data-model-attack-2026-11-19/build/lane-relocate/28-dup-v102-new-work-both-arms.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV108_MovesTheCATIDToThePartAndLeavesTheGuardAlone`
+- test: `TestV108_MovesTheCATIDToThePartAndLeavesTheGuardAlone` · pkg `shingocore/store` · run `-run '^TestV108_MovesTheCATIDToThePartAndLeavesTheGuardAlone$'` · `shingo-core/store/migration_v108_manifest_identity_test.go:53` @ `e06b29b0` · tags `docker`
+- code: DEAD (it drives `store.RunManifestIdentityCorrection`, v108's body, which goes with `migrations.go`)
+- assertion map: the line re-pointed at the payload code, its cat id moved to the part → nothing; the guard's derived value for a line linked to a part is the part's cat id → `TestPayloadCATIDs` (`shingo-core/store/payloads/catids_test.go:25`)
+- mutation: none to run: the correction it calls is deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV108_LeavesAKitAloneAndStillDerivesItsCATIDs`
+- test: `TestV108_LeavesAKitAloneAndStillDerivesItsCATIDs` · pkg `shingocore/store` · run `-run '^TestV108_LeavesAKitAloneAndStillDerivesItsCATIDs$'` · `shingo-core/store/migration_v108_manifest_identity_test.go:96` @ `e06b29b0` · tags `docker`
+- code: DEAD (v108's correction leaving a kit's lines)
+- assertion map: the kit's lines not re-pointed → nothing; a line with no part behind it still derives its own value → `TestPayloadCATIDs_ReadsAnUnrepointedLine` (`shingo-core/store/payloads/catids_test.go:83`)
+- mutation: none to run: the correction it calls is deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV108_DoesNotRefuseItsOwnSeedDeletion`
+- test: `TestV108_DoesNotRefuseItsOwnSeedDeletion` · pkg `shingocore/store` · run `-run '^TestV108_DoesNotRefuseItsOwnSeedDeletion$'` · `shingo-core/store/migration_v108_manifest_identity_test.go:138` @ `e06b29b0` · tags `docker`
+- code: DEAD (v108's verify exempting its own seed deletion)
+- assertion map: the correction runs over the seed row and a neighbour → nothing: the correction and its verify are deleted
+- mutation: none to run: the correction it calls is deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV108_RefusesWhenTheGuardWouldChange`
+- test: `TestV108_RefusesWhenTheGuardWouldChange` · pkg `shingocore/store` · run `-run '^TestV108_RefusesWhenTheGuardWouldChange$'` · `shingo-core/store/migration_v108_manifest_identity_test.go:185` @ `e06b29b0` · tags `docker`
+- code: DEAD (v108's verify refusing a changed derived set)
+- assertion map: the transaction refused and left as it was → nothing
+- mutation: none to run: the correction it calls is deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV119_BackfillPromotesReasonFromMetadata`
+- test: `TestV119_BackfillPromotesReasonFromMetadata` · pkg `shingocore/store` · run `-run '^TestV119_BackfillPromotesReasonFromMetadata$'` · `shingo-core/store/migration_v119_reason_test.go:37` @ `e06b29b0` · tags `docker`
+- code: DEAD (v119's 7-day backfill of bin_uop_ledger.reason goes with the chain)
+- assertion map: which rows carry the reason after the backfill → nothing
+- mutation: none to run: the test deletes v119's `schema_migrations` row and re-opens; the squash deletes v119 and refuses a hole in 1..183
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV128_TickKeyOnCellPartEvents`
+- test: `TestV128_TickKeyOnCellPartEvents` · pkg `shingocore/store` · run `-run '^TestV128_TickKeyOnCellPartEvents$'` · `shingo-core/store/migration_v128_test.go:34` @ `e06b29b0` · tags `docker`
+- code: DEAD (the chain's end-state shape: the index present, the side table and a column gone; it asserts no row)
+- assertion map: the unique index's runtime effect, a redelivered tick is one row → `TestProductionTick_SameTickTwiceIsOneRow` (`shingo-core/messaging/production_tick_docker_test.go:147`); the shape → the committed snapshot (`store/schema/schema.snapshot.sql`, compared by `TestSchemaSnapshotIsCurrent`)
+- mutation: none to run: it reads the catalog, and the runtime survivor named is on the base, unchanged
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV128_ToleratesADuplicateTick`
+- test: `TestV128_ToleratesADuplicateTick` · pkg `shingocore/store` · run `-run '^TestV128_ToleratesADuplicateTick$'` · `shingo-core/store/migration_v128_test.go:53` @ `e06b29b0` · tags `docker`
+- code: DEAD (v128 collapsing duplicates before it builds the index)
+- assertion map: a duplicate group collapsed to one row and the index built → nothing
+- mutation: none to run: the test drops the index and re-runs v128, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV131_PileMirrorShape`
+- test: `TestV131_PileMirrorShape` · pkg `shingocore/store` · run `-run '^TestV131_PileMirrorShape$'` · `shingo-core/store/migration_v131_test.go:38` @ `e06b29b0` · tags `docker`
+- code: DEAD (the chain's end-state shape of lineside_buckets and the drain ledger; its runtime half moved)
+- assertion map: the state CHECK refusing `inactive` → `TestLinesideBuckets_ThePileIsKeyedByItsSeatAndOneOfTwoStates` (`shingo-core/store/inventory/buckets_test.go:152`), now naming the constraint, with `active` and `stranded` landing at the seat; the key (core_node_name, payload_code, state) → the same test, a second row per seat and state refused by the key's name, and as the level upsert's conflict target `TestBucketLevel_OneNodeOneRowAcrossStations` and `TestBucketLevel_ActiveAndStrandedRowsAreIndependent` (`shingo-core/uop/bucket_level_test.go:156`, `:134`); the dropped columns → the committed snapshot
+- mutation: both constraints dropped inside the survivor · red at `27f5fb2e`: `buckets_test.go:164: state inactive: <nil>, want the state CHECK's refusal`, `buckets_test.go:172: a second active row at one seat: <nil>, want the seat key's refusal` (`data-model-attack-2026-11-19/build/lane-relocate/23-red-buckets-constraints-dropped.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV131_TruncatesAndReshapesAPlantDatabase`
+- test: `TestV131_TruncatesAndReshapesAPlantDatabase` · pkg `shingocore/store` · run `-run '^TestV131_TruncatesAndReshapesAPlantDatabase$'` · `shingo-core/store/migration_v131_test.go:61` @ `e06b29b0` · tags `docker`
+- code: DEAD (v131 over the pre-v131 shape)
+- assertion map: truncation, reshaping, dedup rows and episode closes → nothing
+- mutation: none to run: the test rewinds the tables and re-runs v131, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestLoaderMigration_FedDirectlyBackfillMatchesBlankInbound`
+- test: `TestLoaderMigration_FedDirectlyBackfillMatchesBlankInbound` · pkg `shingocore/store` · run `-run '^TestLoaderMigration_FedDirectlyBackfillMatchesBlankInbound$'` · `shingo-core/store/migration_v136_fed_directly_test.go:19` @ `e06b29b0` · tags `docker`
+- code: DEAD (v136's backfill of fed_directly)
+- assertion map: fed_directly equals a blank inbound for loaders written before the column → nothing
+- mutation: none to run: the test drops the column and re-runs v136, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV138_QualityHoldStatusBecomesFlagged`
+- test: `TestV138_QualityHoldStatusBecomesFlagged` · pkg `shingocore/store` · run `-run '^TestV138_QualityHoldStatusBecomesFlagged$'` · `shingo-core/store/migration_v138_quality_hold_status_test.go:16` @ `e06b29b0` · tags `docker`
+- code: DEAD (v138's rewrite of the retired status)
+- assertion map: the old status flagged, other statuses and the containment marker untouched → nothing
+- mutation: none to run: the test deletes v138's `schema_migrations` row and re-opens
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV142_VendorTimesReadAsSeconds`
+- test: `TestV142_VendorTimesReadAsSeconds` · pkg `shingocore/store` · run `-run '^TestV142_VendorTimesReadAsSeconds$'` · `shingo-core/store/migration_v142_vendor_seconds_test.go:18` @ `e06b29b0` · tags `docker`
+- code: DEAD (v142's correction of stamps stored in the wrong unit)
+- assertion map: the wrong-unit row corrected, the others untouched, twice → nothing
+- mutation: none to run: the test deletes v142's `schema_migrations` row and re-opens
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV144_ProcessStylesStationID`
+- test: `TestV144_ProcessStylesStationID` · pkg `shingocore/store` · run `-run '^TestV144_ProcessStylesStationID$'` · `shingo-core/store/migration_v144_test.go:17` @ `e06b29b0` · tags `docker`
+- code: DEAD (a row written before v144 reads NULL)
+- assertion map: the pre-v144 row reads NULL → nothing: the live writer names the column (`store/plantclaims/plantclaims.go:156`)
+- mutation: none to run: the test drops the column and re-runs v144, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV145_OrdersStationUnaware`
+- test: `TestV145_OrdersStationUnaware` · pkg `shingocore/store` · run `-run '^TestV145_OrdersStationUnaware$'` · `shingo-core/store/migration_v145_test.go:15` @ `e06b29b0` · tags `docker`
+- code: DEAD (an order written before v145 reads false)
+- assertion map: the pre-v145 order reads station_unaware false → nothing: the one orders INSERT names the column (`store/orders/orders.go:258`) and `TestWriter_RoundTripsEveryFieldItWrites` (`shingo-core/store/orders/writer_roundtrip_test.go:54`) round-trips it; the default serves only rows from before the column
+- mutation: none to run: the test drops the column and re-runs v145, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV146_OrdersProjectsTo`
+- test: `TestV146_OrdersProjectsTo` · pkg `shingocore/store` · run `-run '^TestV146_OrdersProjectsTo$'` · `shingo-core/store/migration_v146_test.go:16` @ `e06b29b0` · tags `docker`
+- code: DEAD (an order written before v146 reads blank)
+- assertion map: the pre-v146 order projects to nobody → nothing: the INSERT names the column, round-tripped by `TestWriter_RoundTripsEveryFieldItWrites` (`shingo-core/store/orders/writer_roundtrip_test.go:54`)
+- mutation: none to run: the test drops the column and re-runs v146, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV147_OrdersPlan`
+- test: `TestV147_OrdersPlan` · pkg `shingocore/store` · run `-run '^TestV147_OrdersPlan$'` · `shingo-core/store/migration_v147_test.go:15` @ `e06b29b0` · tags `docker`
+- code: DEAD (an order written before v147 reads no plan)
+- assertion map: the pre-v147 order carries no plan → nothing: the INSERT names the column, round-tripped by `TestWriter_RoundTripsEveryFieldItWrites` (`shingo-core/store/orders/writer_roundtrip_test.go:54`)
+- mutation: none to run: the test drops the column and re-runs v147, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV148_SourcingBecomesQueuedWithACause`
+- test: `TestV148_SourcingBecomesQueuedWithACause` · pkg `shingocore/store` · run `-run '^TestV148_SourcingBecomesQueuedWithACause$'` · `shingo-core/store/migration_v148_test.go:16` @ `e06b29b0` · tags `docker`
+- code: DEAD (v148's rewrite of sourcing orders)
+- assertion map: queued with a cause, history untouched, twice → nothing
+- mutation: none to run: the test deletes v148's `schema_migrations` row and re-opens
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_LinesideReportCarriesNoCarrierColumns`
+- test: `TestMigrate_LinesideReportCarriesNoCarrierColumns` · pkg `shingocore/store` · run `-run '^TestMigrate_LinesideReportCarriesNoCarrierColumns$'` · `shingo-core/store/migration_v149_test.go:18` @ `e06b29b0` · tags `docker`
+- code: DEAD (the chain's end-state shape of edge_lineside_reports, guarding a re-add on boot that the squash's removal of the per-boot replay takes away)
+- assertion map: the seat and reported_at present → `TestUpsertEdgeLinesideReport_LatestWins` (`shingo-core/store/edge_lineside_reports_docker_test.go:60`), which reads all four back through the upsert; the six absent columns → the committed snapshot
+- mutation: none to run: it reads the catalog, and the survivor named is on the base, unchanged
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV173_AnOrdersCartsBecomeRowsPerLift`
+- test: `TestV173_AnOrdersCartsBecomeRowsPerLift` · pkg `shingocore/store` · run `-run '^TestV173_AnOrdersCartsBecomeRowsPerLift$'` · `shingo-core/store/migration_v173_test.go:49` @ `e06b29b0` · tags `docker`
+- code: DEAD (v173 and v174's conversion of orders.bin_id to rows per lift, its census and deferral, go with `order_carts_migration.go`)
+- assertion map: the rows per case, the census lines, v174 deferred then completed → nothing; the writers' cart rows are pinned by the order-carts pins (`shingo-core/store/order_carts_pins_docker_test.go`, `shingo-core/engine/order_carts_pins_docker_test.go`)
+- mutation: none to run: the test ages the tables and re-runs v173, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestLoaderMigration_V176_EveryLoaderKeepsTheClear`
+- test: `TestLoaderMigration_V176_EveryLoaderKeepsTheClear` · pkg `shingocore/store` · run `-run '^TestLoaderMigration_V176_EveryLoaderKeepsTheClear$'` · `shingo-core/store/migration_v176_no_clear_partials_test.go:20` @ `e06b29b0` · tags `docker`
+- code: DEAD (v176's column over loaders written before it)
+- assertion map: every older loader reads no_clear_partials false → nothing
+- mutation: none to run: the test drops the column and re-runs v176, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_V177_DepthOnlyInLanes`
+- test: `TestMigrate_V177_DepthOnlyInLanes` · pkg `shingocore/store` · run `-run '^TestMigrate_V177_DepthOnlyInLanes$'` · `shingo-core/store/migration_v177_depth_only_in_lanes_test.go:21` @ `e06b29b0` · tags `docker`
+- code: DEAD (v177's clearing of depths a removed lane left behind)
+- assertion map: the depth per case, twice → nothing; the rule the node writes hold is pinned by the node writers' tests
+- mutation: none to run: the test deletes v177's `schema_migrations` row and re-opens
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestLoaderMigration_V178_EveryLoaderPicksNoEdge`
+- test: `TestLoaderMigration_V178_EveryLoaderPicksNoEdge` · pkg `shingocore/store` · run `-run '^TestLoaderMigration_V178_EveryLoaderPicksNoEdge$'` · `shingo-core/store/migration_v178_edge_station_uid_test.go:20` @ `e06b29b0` · tags `docker`
+- code: DEAD (v178's column over loaders written before it)
+- assertion map: every older loader reads a blank edge_station_uid → nothing
+- mutation: none to run: the test drops the column and re-runs v178, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad`
+- test: `TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad` · pkg `shingocore/store` · run `-run '^TestBlockRecordMigration_V179_OldOrdersStayNullAndTheSeedLiftsAtItsLoad$'` · `shingo-core/store/migration_v179_block_record_test.go:23` @ `e06b29b0` · tags `docker`
+- code: DEAD (v179 over orders and sequences written before it; its runtime half moved)
+- assertion map: an older order reads NULL, and the name rule's fill of the other sequences → nothing; an order born now reads `{}`, empty and not NULL → `TestWriter_BornByTheColumnDefaults` (`shingo-core/store/orders/writer_roundtrip_test.go:283`); the seed lifts at 2 and the CHECK refuses 4 and -1 → `TestLoadSequences_TheSeedLiftsAtItsLoadAndTheCheckHoldsTheIndex` (`shingo-core/store/payloads/load_sequences_test.go:98`), read through `GetLoadSequence`, the refusals now naming the constraint and a legal 3 landing
+- mutation: inside the survivors at `27f5fb2e`, red each time: block_actions' DEFAULT dropped (`writer_roundtrip_test.go:301: an order born now reads BlockActions map[], want empty and not nil`, `lane-relocate/24-red-orders-defaults-changed.log`); the CHECK dropped and the seed moved to 1 (`load_sequences_test.go:114`, `:120` twice, `lane-relocate/22-red-loadseq-check-dropped-seed-moved.log`), both under `data-model-attack-2026-11-19/build/`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestBlockRecord_TheCreateReplacesAndTheAppendMerges`
+- test: `TestBlockRecord_TheCreateReplacesAndTheAppendMerges` · pkg `shingocore/store` · run `-run '^TestBlockRecord_TheCreateReplacesAndTheAppendMerges$'` · `shingo-core/store/migration_v179_block_record_test.go:87` @ `e06b29b0` · tags `docker`
+- code: STALE (it ran no migration; moved to the fleet's-yes writers' file and renamed)
+- assertion map: every assertion kept → `TestBlockRecord_TheYesReplacesAndTheAppendMerges` (`shingo-core/store/handover_id_write_pins_docker_test.go:73`)
+- mutation: at `27f5fb2e`, survivor red each time: `ClaimAppend` replaces instead of merging (`handover_id_write_pins_docker_test.go:108: after the append (owed true) the record is map[V-live-b3:dropoff V-live-b4:], want the create's two and the segment's two`, `lane-relocate/15-red-claimappend-replaces.log`); `FleetYesTx` records nothing (`:98: after the create the record is map[], want the two blocks it sent`, `lane-relocate/16-red-fleetyes-records-nothing.log`), both under `data-model-attack-2026-11-19/build/`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCarrierKeysMigration_V180_EveryFamilyStartsBlank`
+- test: `TestCarrierKeysMigration_V180_EveryFamilyStartsBlank` · pkg `shingocore/store` · run `-run '^TestCarrierKeysMigration_V180_EveryFamilyStartsBlank$'` · `shingo-core/store/migration_v180_carrier_keys_test.go:32` @ `e06b29b0` · tags `docker`
+- code: DEAD (v180's columns over families that existed)
+- assertion map: an older family reads both keys blank → nothing; a family made now reads blank keys → `TestCarrierFamilyKeys_GoWithTheFamily` (`shingo-core/store/bins/bins_test.go:886`), the type made again under the same code
+- mutation: none to run: the test drops the columns and re-runs v180, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestCarrierFamilyKeys_SetReadsBackOnEveryTypeOfTheFamily`
+- test: `TestCarrierFamilyKeys_SetReadsBackOnEveryTypeOfTheFamily` · pkg `shingocore/store` · run `-run '^TestCarrierFamilyKeys_SetReadsBackOnEveryTypeOfTheFamily$'` · `shingo-core/store/migration_v180_carrier_keys_test.go:61` @ `e06b29b0` · tags `docker`
+- code: STALE (it ran no migration; moved under the same name to `store/bins`, the package that owns the functions)
+- assertion map: every assertion kept → `TestCarrierFamilyKeys_SetReadsBackOnEveryTypeOfTheFamily` (`shingo-core/store/bins/bins_test.go:858`), calling `bins.CreateType`, `ListFamilies` and `SetFamilyKeys`, which the store's wrappers (`store/bin_types.go`) call one to one
+- mutation: `bins.SetFamilyKeys` misses a gone family (`n == 0` → `n < 0`) · survivor red at `27f5fb2e`: `bins_test.go:877: setting a family that does not exist: <nil>, want ErrNoSuchFamily` (`data-model-attack-2026-11-19/build/lane-relocate/13-red-bins-setkeys-no-such-family.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestCarrierFamilyKeys_GoWithTheFamily`
+- test: `TestCarrierFamilyKeys_GoWithTheFamily` · pkg `shingocore/store` · run `-run '^TestCarrierFamilyKeys_GoWithTheFamily$'` · `shingo-core/store/migration_v180_carrier_keys_test.go:88` @ `e06b29b0` · tags `docker`
+- code: STALE (it ran no migration; moved under the same name to `store/bins`)
+- assertion map: every assertion kept → `TestCarrierFamilyKeys_GoWithTheFamily` (`shingo-core/store/bins/bins_test.go:886`)
+- mutation: `bins.DeleteType` and `bins.SetTypeFamily` keep the emptied family (`AND false`) · survivor red at `27f5fb2e`: `bins_test.go:905`, `:909`, `:918` (`data-model-attack-2026-11-19/build/lane-relocate/14-red-bins-family-outlives-its-types.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOrderMigration_V181_EveryOrderStartsAtOne`
+- test: `TestOrderMigration_V181_EveryOrderStartsAtOne` · pkg `shingocore/store` · run `-run '^TestOrderMigration_V181_EveryOrderStartsAtOne$'` · `shingo-core/store/migration_v181_order_version_test.go:19` @ `e06b29b0` · tags `docker`
+- code: DEAD (v181's column over orders written before it; its runtime half moved)
+- assertion map: older orders read version 1 → nothing; an order born now reads 1, the column's DEFAULT, since Create does not name it → `TestWriter_BornByTheColumnDefaults` (`shingo-core/store/orders/writer_roundtrip_test.go:283`)
+- mutation: version's DEFAULT set to 2 inside the survivor · red at `27f5fb2e`: `writer_roundtrip_test.go:295: an order born now reads version 2, want 1` (`data-model-attack-2026-11-19/build/lane-relocate/24-red-orders-defaults-changed.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOrderMigration_V182_NoOrderIsAsking`
+- test: `TestOrderMigration_V182_NoOrderIsAsking` · pkg `shingocore/store` · run `-run '^TestOrderMigration_V182_NoOrderIsAsking$'` · `shingo-core/store/migration_v182_order_ask_test.go:20` @ `e06b29b0` · tags `docker`
+- code: DEAD (v182's column over orders written before it; its runtime half moved)
+- assertion map: older orders read a blank ask → nothing; an order born now reads blank, and reads back a written ask → `TestWriter_BornByTheColumnDefaults` (`shingo-core/store/orders/writer_roundtrip_test.go:283`)
+- mutation: the ask's DEFAULT set to `sg-born` inside the survivor · red at `27f5fb2e`: `writer_roundtrip_test.go:298: an order born now reads ask "sg-born", want blank` (`data-model-attack-2026-11-19/build/lane-relocate/24-red-orders-defaults-changed.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows`
+- test: `TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows` · pkg `shingocore/store` · run `-run '^TestOrderMigration_V183_TheRuleRefusesANewBreakAndKeepsTheOldRows$'` · `shingo-core/store/migration_v183_dispatched_names_its_job_test.go:23` @ `e06b29b0` · tags `docker`
+- code: DEAD (v183 adding the rule NOT VALID over rows already breaking it; its runtime half moved)
+- assertion map: the old row kept and the rule present after v183 → nothing (such rows stay at the plants; `TestListTrackedVendorOrderIDs` holds one by dropping the rule); a new vendorless `dispatched` write refused by the rule's name, and one naming its job landing → `TestOrders_ADispatchedRowNamesItsJob` (`shingo-core/store/orders/orders_test.go:271`), which also reads the landed row back
+- mutation: the rule dropped inside the survivor · red at `27f5fb2e`: ``orders_test.go:284: a vendorless `dispatched` write = <nil>, want the rule's refusal`` (`data-model-attack-2026-11-19/build/lane-relocate/25-red-orders-rule-dropped.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_PendingRestocksRetired`
+- test: `TestMigrate_PendingRestocksRetired` · pkg `shingocore/store` · run `-run '^TestMigrate_PendingRestocksRetired$'` · `shingo-core/store/migrations_retire_test.go:211` @ `e06b29b0` · tags `docker`
+- code: DEAD (v70's drop, read as the chain's end state)
+- assertion map: pending_restocks absent → the committed snapshot
+- mutation: none to run: it reads the catalog
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_CorrectionsRetired`
+- test: `TestMigrate_CorrectionsRetired` · pkg `shingocore/store` · run `-run '^TestMigrate_CorrectionsRetired$'` · `shingo-core/store/migrations_retire_test.go:227` @ `e06b29b0` · tags `docker`
+- code: DEAD (v104's drop surviving a second pass of the replaying baseline, which the squash removes)
+- assertion map: corrections absent, and absent after a re-migrate → the committed snapshot; the second pass it guarded goes with the per-boot replay
+- mutation: none to run: it calls `MigrateForTest` for the replay the squash removes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_RetiredTableNotResurrected`
+- test: `TestMigrate_RetiredTableNotResurrected` · pkg `shingocore/store` · run `-run '^TestMigrate_RetiredTableNotResurrected$'` · `shingo-core/store/migrations_retire_test.go:245` @ `e06b29b0` · tags `docker`
+- code: DEAD (the self-heal dropping a stray retired table)
+- assertion map: a stray pending_restocks dropped by a migration pass → nothing: the pass is gone
+- mutation: none to run: it calls `MigrateForTest` for the self-heal the squash removes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestRetireReshuffleRestore_CancelsStray`
+- test: `TestRetireReshuffleRestore_CancelsStray` · pkg `shingocore/store` · run `-run '^TestRetireReshuffleRestore_CancelsStray$'` · `shingo-core/store/migrations_retire_test.go:261` @ `e06b29b0` · tags `docker`
+- code: STRENGTHEN (it ran no migration; moved to the terminal chokepoint's file and renamed)
+- assertion map: every assertion kept → `TestRetireReshuffleRestoreOrders_CancelsAStrayAndItsChild` (`shingo-core/store/orders_terminalize_test.go:183`). Added: the child read back as cancelled (the old test read the parent only). The stations told: `TestStatusTellPin_RowsPerTypedWriter/RetireReshuffleRestoreOrders` (`shingo-core/engine/status_tell_pin_test.go:571`)
+- mutation: the sweep skips every child (`if true || protocol.IsTerminal(c.Status)`) · survivor red at `27f5fb2e`: `orders_terminalize_test.go:198: cancelled = 1, want 2 (parent + child)` (`data-model-attack-2026-11-19/build/lane-relocate/17-red-retire-skips-children.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestRetireReshuffleRestore_NoOpClean`
+- test: `TestRetireReshuffleRestore_NoOpClean` · pkg `shingocore/store` · run `-run '^TestRetireReshuffleRestore_NoOpClean$'` · `shingo-core/store/migrations_retire_test.go:295` @ `e06b29b0` · tags `docker`
+- code: STRENGTHEN (it ran no migration; moved and renamed)
+- assertion map: the count kept → `TestRetireReshuffleRestoreOrders_LeavesACleanDatabaseAlone` (`shingo-core/store/orders_terminalize_test.go:215`). Added: the live order beside it read back at its status
+- mutation: the sweep selects every other order type (`order_type<>$1`) · survivor red at `27f5fb2e`: `orders_terminalize_test.go:222: cancelled = 1 on a clean DB, want 0` (`data-model-attack-2026-11-19/build/lane-relocate/18-red-retire-wrong-type.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_NoMigrationOscillatesOnEveryBoot`
+- test: `TestMigrate_NoMigrationOscillatesOnEveryBoot` · pkg `shingocore/store` · run `-run '^TestMigrate_NoMigrationOscillatesOnEveryBoot$'` · `shingo-core/store/migrations_retire_test.go:332` @ `e06b29b0` · tags `docker`
+- code: DEAD (the self-heal's verify set over a migrated database; the squash removes the per-boot self-heal)
+- assertion map: no migration fails its post-condition on a second pass → nothing: the post-tip migrations' Verify and the boot's drift report replace it
+- mutation: none to run: `MigrationsFailingTheirPostCondition` walks the chain the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_StageTwoProduces`
+- test: `TestMigrate_StageTwoProduces` · pkg `shingocore/store` · run `-run '^TestMigrate_StageTwoProduces$'` · `shingo-core/store/migrations_stage_two_test.go:17` @ `e06b29b0` · tags `docker`
+- code: DEAD (v168's UPDATE and its self-heal on the next boot)
+- assertion map: a stage 2 the store wrote consume made produce, partials and push off, by a re-migrate → nothing; the live door makes stage 2 produce → `TestCreateTwoStage_LinksStagesWithNoPlacement` (`shingo-core/service/loader_two_stage_docker_test.go:52`), and a produce loader refuses auto push at the door → `TestCreateLoader_TakesUnloaderSettingsAtCreate` (`:170`). A stage 2 written consume is no longer put right at boot; every binary from v168 on writes it produce
+- mutation: none to run: it calls `MigrateForTest` for the self-heal the squash removes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_Kanbans_ThePivot`
+- test: `TestMigrate_Kanbans_ThePivot` · pkg `shingocore/store` · run `-run '^TestMigrate_Kanbans_ThePivot$'` · `shingo-core/store/kanban_migration_docker_test.go:70` @ `e06b29b0` · tags `docker`
+- code: DEAD (v169's pivot of node properties into kanbans and its census go with `kanban_migration.go`)
+- assertion map: the census lines, each property's column, a second pass changing nothing → nothing
+- mutation: none to run: the test ages the schema and re-runs v169, which the squash deletes
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_V171_TheEpisodeKindIsKanban`
+- test: `TestMigrate_V171_TheEpisodeKindIsKanban` · pkg `shingocore/store` · run `-run '^TestMigrate_V171_TheEpisodeKindIsKanban$'` · `shingo-core/store/kanban_migration_docker_test.go:244` @ `e06b29b0` · tags `docker`
+- code: DEAD (v171's rewrite of the episode kind)
+- assertion map: old-word rows read kanban, others untouched, twice → nothing
+- mutation: none to run: the test deletes v171's `schema_migrations` row and re-migrates
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_V172_TheFamilies`
+- test: `TestMigrate_V172_TheFamilies` · pkg `shingocore/store` · run `-run '^TestMigrate_V172_TheFamilies$'` · `shingo-core/store/kanban_migration_docker_test.go:281` @ `e06b29b0` · tags `docker`
+- code: DEAD (v172's grouping of the types that predated families, and its census, go with `kanban_family_migration.go`; its runtime half moved)
+- assertion map: the footprint families, the marker's, the code collision and the episode keys of the older types → nothing; a type inserted after with none stated takes a family of one coded by its code (the `bin_types_family_of_one` trigger) → `TestCreateType_ATypeWithNoFamilyTakesAFamilyOfOne` (`shingo-core/store/bins/bins_test.go:796`), which also pins the trigger's other branches: a bare marker takes its carrier's family, a code that names a family makes its own
+- mutation: inside the survivor at `27f5fb2e`, red each time: the trigger dropped (`bins_test.go:819: insert type FAM-PLAIN: ERROR: null value in column "family_id" ...`, `lane-relocate/26-red-bintypes-trigger-dropped.log`); the collision branch removed (`bins_test.go:848: a type coded as an existing family is of family 3 (FAM-TAKEN) ...`, `lane-relocate/27-red-bintypes-collision-branch-removed.log`), both under `data-model-attack-2026-11-19/build/`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_V172_FamiliesAndThePool`
+- test: `TestMigrate_V172_FamiliesAndThePool` · pkg `shingocore/store` · run `-run '^TestMigrate_V172_FamiliesAndThePool$'` · `shingo-core/store/kanban_family_migration_docker_test.go:34` @ `e06b29b0` · tags `docker`
+- code: DEAD (v172 over the pre-family shape, and its census; its runtime half moved)
+- assertion map: the families of the older types, the open episode's key, the census's near-footprint line → nothing; a type inserted with none stated takes a family of one, in the insert → `TestCreateType_ATypeWithNoFamilyTakesAFamilyOfOne` (`shingo-core/store/bins/bins_test.go:796`)
+- mutation: as `TestMigrate_V172_TheFamilies`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
