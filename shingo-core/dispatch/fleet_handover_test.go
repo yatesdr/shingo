@@ -23,8 +23,8 @@ import (
 // too, which is the whole point of putting the count on the backend.
 //
 // MUTATION: drop the ask CAS's guard (orders.TakeAskTx matching on its id
-// alone, without `status=$2 AND asked_vendor_order_id=''`) and the loser takes
-// the ask again and creates: this fails with two creates.
+// alone, without its status and no-ask-open conditions) and the loser takes the
+// ask again and creates: this fails with two creates.
 func TestHandover_CASLoserNeverCallsTheFleet(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
