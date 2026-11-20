@@ -1407,7 +1407,7 @@ type CatalogPayloadInfo struct {
 	Name        string `json:"name"`         // the payload template's name
 	Code        string `json:"code"`         // the unique payload code
 	Description string `json:"description"`  // a human-readable description
-	UOPCapacity int    `json:"uop_capacity"` // the standard pack: the pieces a full bin of a part alone holds (a kit: cycles)
+	UOPCapacity int    `json:"uop_capacity"` // the standard pack, in the bin's count: parts for a part alone, kits for a kit
 	// CATID is the payload's part identity from its Core manifest: the
 	// DISTINCT part numbers, comma-joined (a single-part payload sends one
 	// value; a multi-part kit sends the full list). The edge splits it back

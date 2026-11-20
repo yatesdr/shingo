@@ -344,11 +344,13 @@ type NodeClaim struct {
 	SwapMode     protocol.SwapMode  `json:"swap_mode"`
 	PayloadCode  string             `json:"payload_code"`
 	UOPCapacity  int                `json:"uop_capacity"`
-	// PiecesPerCycle is how many pieces of its part one counted cycle of this
-	// spot uses: the part's manifest ratio in Core, resolved on every claim
-	// read from the catalog copy (capacity.PiecesPerCycleSQL), never stored.
-	// 1 when the part has no ratio, is a kit, or is not in the catalog. Only a
-	// consume draw reads it (ConsumeDraw); a produce spot never does.
+	// PiecesPerCycle is the claim's part's UOP ratio (protocol.UOPRatio): how
+	// many of the part one counted cycle of this spot uses, the part's manifest
+	// ratio in Core, resolved on every claim read from the catalog copy
+	// (capacity.PiecesPerCycleSQL), never stored. 1 when the part is a kit, has
+	// no ratio, or is not in the catalog. Two readers: a consume draw
+	// (ConsumeDraw; a produce spot never draws) and the floor's tiles, which
+	// read pieces_per_cycle to show a count's UOP.
 	PiecesPerCycle int `json:"pieces_per_cycle"`
 	// ReorderPoint has role-dependent semantics, and DemandLevel below is
 	// the one place that resolves them. Read that method, not this field,

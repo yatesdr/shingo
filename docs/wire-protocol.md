@@ -1167,7 +1167,7 @@ Core returns the payload catalog. Used by edge to populate payload code dropdown
 | `name` | string |  | the payload template's name |
 | `code` | string |  | the unique payload code |
 | `description` | string |  | a human-readable description |
-| `uop_capacity` | integer |  | the standard pack: the pieces a full bin of a part alone holds (a kit: cycles) |
+| `uop_capacity` | integer |  | the standard pack, in the bin's count: parts for a part alone, kits for a kit |
 | `catid` | string | omitempty | CATID is the payload's part identity from its Core manifest: the DISTINCT part numbers, comma-joined (a single-part payload sends one value; a multi-part kit sends the full list). The edge splits it back into the style's part-identity SET — membership semantics, so a multi-part payload contributes every part it carries rather than nothing. Empty when the payload's manifest carries no part numbers. |
 | `manifest` | [`ManifestItem`](#manifestitem)[] | omitempty | Manifest is the payload's manifest TEMPLATE: its lines in Core's order (payload_manifest by id), each a part and its per-cycle ratio. Absent when the payload has no lines, so a row without a template encodes, and digests, exactly as it did before the lines rode the catalog (TestCatalogDigest_ManifestLines). The Edge's load modal reads it from its catalog copy instead of asking Core per tap. CATID is derivable from the same rows and is still sent as its own field. |
 
