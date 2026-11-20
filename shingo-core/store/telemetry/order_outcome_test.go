@@ -28,7 +28,7 @@ func TestOrderOutcomeWhere_Structure(t *testing.T) {
 	where, args = orderOutcomeWhere("o", Filter{StationID: "S", Since: &since, Until: &until})
 	for _, want := range []string{
 		"o.status IN (",
-		"o.station_id=$1",
+		"o.station_uid=$1",
 		"COALESCE(o.completed_at, o.updated_at) >= $2",
 		"COALESCE(o.completed_at, o.updated_at) <= $3",
 	} {

@@ -39,7 +39,7 @@ func seedEpisode(t *testing.T, db *store.DB, originID string, opened time.Time) 
 		Direction:   "supply",
 		Trigger:     "autoreorder",
 		TriggerRef:  "claim-77",
-		StationID:   "edge1.line1",
+		StationUID:  "edge1.line1",
 		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    opened,
@@ -52,7 +52,7 @@ func seedChild(t *testing.T, db *store.DB, originID, uuid string) *orders.Order 
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "edge1.line1",
+		StationUID:   "edge1.line1",
 		OrderType:    "move",
 		Status:       protocol.StatusPending,
 		Quantity:     1,

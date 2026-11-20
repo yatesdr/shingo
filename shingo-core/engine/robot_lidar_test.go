@@ -82,7 +82,7 @@ func TestLidarRows(t *testing.T) {
 		{Lidar: "laser", UseForLoc: true, Beams: 360, Valid: 358, RSSIMedValid: &med, NearValid: 2},
 		{Lidar: "laser2", Beams: 359},
 	})
-	if len(rows) != 2 || rows[0].Hour != h || rows[0].Station != "PP57" || !rows[0].UseForLoc ||
+	if len(rows) != 2 || rows[0].Hour != h || rows[0].RDSStation != "PP57" || !rows[0].UseForLoc ||
 		rows[0].Valid != 358 || *rows[0].RSSIMedValid != med || rows[0].NearValid != 2 ||
 		rows[1].Lidar != "laser2" || rows[1].RSSIMedValid != nil {
 		t.Errorf("rows = %+v", rows)

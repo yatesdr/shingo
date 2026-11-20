@@ -27,10 +27,10 @@ import (
 // applies the rule (service.landingStations), so the landing and the
 // announcements share one spelling on both sides.
 var LifecycleAddressSQL = helpers.NodeNotASeatSQL + `,
-	COALESCE((SELECT string_agg(cs.station_id, ',' ORDER BY cs.station_id)
+	COALESCE((SELECT string_agg(cs.station_uid, ',' ORDER BY cs.station_uid)
 	            FROM nodes an, LATERAL (` + plantclaims.ClaimingStationsSQL("an.name") + `) cs
 	           WHERE an.id = bins.node_id), ''),
-	COALESCE((SELECT string_agg(er.station_id, ',' ORDER BY er.station_id) ` + plantclaims.LastArmEdgesSQL + `), '')`
+	COALESCE((SELECT string_agg(er.station_uid, ',' ORDER BY er.station_uid) ` + plantclaims.LastArmEdgesSQL + `), '')`
 
 // LifecycleAddress is what LifecycleAddressSQL read: where a lifecycle
 // announcement for the bin may go.

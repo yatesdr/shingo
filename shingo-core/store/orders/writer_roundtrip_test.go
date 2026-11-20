@@ -73,8 +73,11 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	remainingUOP := 37
 	namedBin := int64(424242) // no foreign key: any id round-trips
 	probe := map[string]any{
-		"EdgeUUID":         "roundtrip-edge-uuid",
-		"StationID":        "roundtrip-station",
+		"EdgeUUID":   "roundtrip-edge-uuid",
+		"StationUID": "roundtrip-station",
+		// A Core actor beside a station is no shape a door writes (SplitRequester
+		// gives one or the other); the probe only needs both columns to round-trip.
+		"RequestedBy":      "core-test",
 		"OrderType":        protocol.OrderType("move"),
 		"Status":           protocol.Status("queued"),
 		"Quantity":         int64(9),
@@ -109,7 +112,7 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"StationUnaware": true,
 		// Blank is the default and projects to nobody; a named station is what
 		// a stage-2 pull writes (v146).
-		"ProjectsTo": "roundtrip-projected-station",
+		"ProjectsToStationUID": "roundtrip-projected-station",
 		// A birth fact on one door: a carried-bin recovery is pinned to the robot
 		// whose deck the bin rides, in the INSERT.
 		"RobotID": "roundtrip-robot",

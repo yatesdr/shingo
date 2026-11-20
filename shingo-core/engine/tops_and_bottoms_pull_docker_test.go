@@ -184,7 +184,7 @@ func TestSendBackMove_TheCountAtTheLift(t *testing.T) {
 			db := testDB(t)
 			c := newToteCell(t, db, newTestEngine(t, db, simulator.New()), k.prefix)
 			k.front(t, c)
-			move := testdb.Holding(&orders.Order{EdgeUUID: k.prefix + "-sendback", StationID: "line-1",
+			move := testdb.Holding(&orders.Order{EdgeUUID: k.prefix + "-sendback", StationUID: "line-1",
 				OrderType: dispatch.OrderTypeMove, SourceIntent: dispatch.SourceIntentLocal, Status: "in_transit",
 				Quantity: 1, SourceNode: c.out.Name, DeliveryNode: k.prefix + "-DEST",
 				NamedBinID: &c.outside}, c.outside)

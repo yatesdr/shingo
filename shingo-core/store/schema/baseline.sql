@@ -1,6 +1,6 @@
--- Core's schema at v184 with its seed rows: GENERATED, never edited by hand.
+-- Core's schema at v185 with its seed rows: GENERATED, never edited by hand.
 -- cmd/schemabaseline boots v0.17.1's chain (v1..v184) on an empty database, runs this
--- tree's migrations above it, applies store/schema/comments.sql, and dumps the result with
+-- tree's migrations above it (which apply store/schema/comments.sql), and dumps the result with
 -- pg_dump --inserts. Regenerate: make schema-baseline (go run ./cmd/schemabaseline), then make schema-snapshot.
 -- store.migrate applies it, as one statement, to a database with no tables.
 
@@ -101,7 +101,6 @@ CREATE TABLE public.bin_loader_homes (
     loader_id bigint NOT NULL,
     position_node_id bigint NOT NULL,
     payload_code text NOT NULL,
-    min_stock integer DEFAULT 0 NOT NULL,
     uop_threshold integer DEFAULT 0 NOT NULL,
     sort_order integer DEFAULT 0 NOT NULL,
     home_kind text DEFAULT 'home'::text NOT NULL,
@@ -111,7 +110,6 @@ CREATE TABLE public.bin_loader_homes (
 CREATE TABLE public.bin_loader_payloads (
     loader_id bigint NOT NULL,
     payload_code text NOT NULL,
-    min_stock integer DEFAULT 0 NOT NULL,
     uop_threshold integer DEFAULT 0 NOT NULL
 );
 
@@ -149,7 +147,7 @@ CREATE TABLE public.bin_loaders (
     drains_leftover boolean DEFAULT false NOT NULL,
     drains_unverified boolean DEFAULT false NOT NULL,
     no_clear_partials boolean DEFAULT false NOT NULL,
-    edge_station_uid text DEFAULT ''::text NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
     CONSTRAINT bin_loaders_layout_check CHECK ((layout = ANY (ARRAY['shared_window'::text, 'dedicated_positions'::text]))),
     CONSTRAINT bin_loaders_replenishment_check CHECK ((replenishment = ANY (ARRAY['operator'::text, 'threshold'::text]))),
     CONSTRAINT bin_loaders_role_check CHECK ((role = ANY (ARRAY['produce'::text, 'consume'::text])))
@@ -210,7 +208,7 @@ CREATE TABLE public.bin_uop_delta_daily (
     epoch_seq bigint NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
     reason text DEFAULT ''::text NOT NULL,
-    actor text DEFAULT ''::text NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
     ticks integer NOT NULL,
     consumed integer NOT NULL,
     added integer NOT NULL,
@@ -235,10 +233,13 @@ CREATE TABLE public.bin_uop_exception (
     deepest_uop integer,
     recovered_at timestamp with time zone,
     op text NOT NULL,
-    detail jsonb
+    detail jsonb,
+    station_uid text DEFAULT ''::text NOT NULL
 );
 
 COMMENT ON TABLE public.bin_uop_exception IS 'The permanent exceptions ledger (v93): no retention, ever.';
+
+COMMENT ON COLUMN public.bin_uop_exception.station_uid IS 'The Edge whose report the exception is about, for the kinds a station writes (negative_crossing on bin_uop_delta, stale_epoch, payload_mismatch, edge_rollback, boundary on edge_rollback, report_divergence, hold_dropped). Until v185 that uid was in actor, or in hold_dropped''s detail; actor holds only a who.';
 
 CREATE SEQUENCE public.bin_uop_exception_id_seq
     START WITH 1
@@ -262,11 +263,13 @@ CREATE TABLE public.bin_uop_ledger (
     metadata jsonb,
     applied_at timestamp with time zone DEFAULT now() NOT NULL,
     node_id bigint,
-    station text DEFAULT ''::text NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
     detail jsonb,
     loader_id bigint,
     reason text DEFAULT ''::text NOT NULL
 );
+
+COMMENT ON COLUMN public.bin_uop_ledger.station_uid IS 'The Edge a row is about. For a station-reported op (bin_uop_delta and the drops and rebinds beside it) the who is that Edge, so actor is blank; for a lifted row it is the order''s station, and actor holds a Core actor when the order was one''s.';
 
 CREATE SEQUENCE public.bin_uop_ledger_id_seq
     START WITH 1
@@ -336,7 +339,6 @@ ALTER SEQUENCE public.bins_id_seq OWNED BY public.bins.id;
 CREATE TABLE public.carrier_families (
     id bigint NOT NULL,
     code text NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lift_bintask text DEFAULT ''::text NOT NULL,
@@ -355,17 +357,19 @@ CREATE SEQUENCE public.carrier_families_id_seq
 ALTER SEQUENCE public.carrier_families_id_seq OWNED BY public.carrier_families.id;
 
 CREATE TABLE public.cell_config (
-    cell_id text NOT NULL,
-    station text NOT NULL,
+    cell_label text NOT NULL,
+    station_uid text NOT NULL,
     primary_process_id bigint NOT NULL,
     sub_process_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
     display_name text DEFAULT ''::text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+COMMENT ON COLUMN public.cell_config.cell_label IS 'The operator''s label for the cell (cell_id until v185), the key.';
+
 CREATE TABLE public.cell_part_events (
     id bigint NOT NULL,
-    cell_id text NOT NULL,
+    station_uid text NOT NULL,
     recorded_at timestamp with time zone NOT NULL,
     edge_snapshot_id bigint NOT NULL,
     count_value bigint DEFAULT 0 NOT NULL,
@@ -376,7 +380,7 @@ CREATE TABLE public.cell_part_events (
 )
 PARTITION BY RANGE (recorded_at);
 
-COMMENT ON TABLE public.cell_part_events IS 'One row per PLC counter tick, projected from production.ticks (and production.tick from older Edges). Partitioned monthly by recorded_at: store/heartbeat creates the current and next month''s partitions at boot and drops partitions older than the retention window nightly. The dedup key is the unique index uq_cell_part_events_tick (v128). cell_id is the envelope''s station, the cell identity the /api/cells endpoints key on.';
+COMMENT ON TABLE public.cell_part_events IS 'One row per PLC counter tick, projected from production.ticks (and production.tick from older Edges). Partitioned monthly by recorded_at: store/heartbeat creates the current and next month''s partitions at boot and drops partitions older than the retention window nightly. The dedup key is the unique index uq_cell_part_events_tick (v128). station_uid is the sending Edge''s uid, the envelope''s station (cell_id until v185).';
 
 CREATE SEQUENCE public.cell_part_events_id_seq
     START WITH 1
@@ -386,16 +390,6 @@ CREATE SEQUENCE public.cell_part_events_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.cell_part_events_id_seq OWNED BY public.cell_part_events.id;
-
-CREATE TABLE public.cell_targets (
-    cell_id text NOT NULL,
-    payload_code text DEFAULT ''::text NOT NULL,
-    target_cycle_ms bigint DEFAULT 0 NOT NULL,
-    owner text DEFAULT ''::text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-COMMENT ON TABLE public.cell_targets IS 'Admin-editable target cycle time per cell and payload, for the live-state and loss-accounting math. Falls back to a rolling estimate when no row exists.';
 
 CREATE TABLE public.cleaning_mission_setup (
     id smallint DEFAULT 1 NOT NULL,
@@ -527,8 +521,7 @@ CREATE TABLE public.demand_origins (
     direction text DEFAULT ''::text NOT NULL,
     trigger_kind text DEFAULT ''::text NOT NULL,
     trigger_ref text DEFAULT ''::text NOT NULL,
-    parent_origin_id uuid,
-    station_id text DEFAULT ''::text NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
     process_id text DEFAULT ''::text NOT NULL,
     core_node_name text DEFAULT ''::text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
@@ -538,7 +531,6 @@ CREATE TABLE public.demand_origins (
     revision bigint DEFAULT 1 NOT NULL,
     expected_orders integer,
     expected_reason text DEFAULT ''::text NOT NULL,
-    uop_delivered integer DEFAULT 0 NOT NULL,
     rerequest_count integer DEFAULT 0 NOT NULL,
     signal_count integer DEFAULT 0 NOT NULL,
     discretionary boolean DEFAULT false NOT NULL,
@@ -554,7 +546,7 @@ CREATE TABLE public.demand_origins (
 
 CREATE TABLE public.demand_registry (
     id bigint NOT NULL,
-    station_id text NOT NULL,
+    station_uid text NOT NULL,
     core_node_name text NOT NULL,
     role text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
@@ -575,37 +567,8 @@ CREATE SEQUENCE public.demand_registry_id_seq
 
 ALTER SEQUENCE public.demand_registry_id_seq OWNED BY public.demand_registry.id;
 
-CREATE TABLE public.downtime_event_dedup (
-    station text NOT NULL,
-    edge_event_id bigint NOT NULL,
-    applied_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE public.downtime_events (
-    id bigint NOT NULL,
-    station text NOT NULL,
-    plc_name text NOT NULL,
-    reason text DEFAULT ''::text NOT NULL,
-    started_at timestamp with time zone NOT NULL,
-    ended_at timestamp with time zone,
-    duration_ms bigint DEFAULT 0 NOT NULL,
-    edge_event_id bigint DEFAULT 0 NOT NULL
-)
-PARTITION BY RANGE (started_at);
-
-COMMENT ON TABLE public.downtime_events IS 'Persisted downtime start and end events from the sim''s clustered-random downtime model: explicit start/end pairs for OEE availability, in place of gap analysis over cell_part_events. Partitioned monthly by started_at, as cell_part_events is. Dedup on (station, edge_event_id) through downtime_event_dedup.';
-
-CREATE SEQUENCE public.downtime_events_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.downtime_events_id_seq OWNED BY public.downtime_events.id;
-
 CREATE TABLE public.edge_cells (
-    station text NOT NULL,
+    station_uid text NOT NULL,
     cell_label text NOT NULL,
     bindings jsonb DEFAULT '[]'::jsonb NOT NULL,
     first_seen timestamp with time zone DEFAULT now() NOT NULL,
@@ -614,7 +577,7 @@ CREATE TABLE public.edge_cells (
 );
 
 CREATE TABLE public.edge_lineside_reports (
-    station text NOT NULL,
+    station_uid text NOT NULL,
     core_node_name text NOT NULL,
     payload_code text NOT NULL,
     reported_at timestamp with time zone NOT NULL,
@@ -625,7 +588,6 @@ CREATE TABLE public.edge_registry (
     id bigint NOT NULL,
     station_uid text DEFAULT ''::text NOT NULL,
     display_name text DEFAULT ''::text NOT NULL,
-    station_id text NOT NULL,
     hostname text DEFAULT ''::text NOT NULL,
     version text DEFAULT ''::text NOT NULL,
     registered_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -645,22 +607,23 @@ CREATE TABLE public.edge_registry (
     tick_pending bigint,
     tick_oldest_unsent_age_ms bigint,
     tick_reported_at timestamp with time zone,
-    tick_rejected bigint DEFAULT 0 NOT NULL
+    tick_rejected bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT edge_registry_station_uid_nonblank CHECK ((station_uid <> ''::text))
 );
 
-COMMENT ON TABLE public.edge_registry IS 'The identity table. station_uid is what Core correlates all history to; display_name is the operator''s label; station_id is the transport routing selector (Address.Station), whose value is the station_uid. Core mints the uid rather than the Pi because a Core-issued token is re-issuable: replace the hardware for an existing station and hand the new Pi the existing uid, and history does not move because identity did not move. Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm''s persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.';
+COMMENT ON TABLE public.edge_registry IS 'The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope''s Address.Station carries. display_name is the operator''s label. Core mints the uid rather than the Pi because a Core-issued token is re-issuable: replace the hardware for an existing station and hand the new Pi the existing uid, and history does not move because identity did not move. Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm''s persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.';
 
 COMMENT ON COLUMN public.edge_registry.station_uid IS 'What Core correlates all history to. Core mints it at enrollment and it never changes. Opaque on purpose: the moment an identifier is legible it acquires an editor.';
 
 COMMENT ON COLUMN public.edge_registry.display_name IS 'The operator''s label (PLANT / EDGE-2). Operator-owned, freely mutable, and it never crosses the wire as an identifier.';
-
-COMMENT ON COLUMN public.edge_registry.station_id IS 'The transport routing selector, Address.Station. Its value is the station_uid; the column survives because every station-keyed row in this database already carries that string.';
 
 COMMENT ON COLUMN public.edge_registry.claimed_at IS 'NULL until a human has said what this station is. It is not status: Register writes status = active on every register, so anything recorded there is erased by the next heartbeat''s worth of traffic. The question has anybody acknowledged this box has to survive registration, so it gets its own column and only moves one way. NULL is a real and expected state: an unconfigured Pi mints its own uid and comes up working. What it cannot do is claim to be an existing station: a minted uid is random, so it always makes its own row and can never take over another one.';
 
 COMMENT ON COLUMN public.edge_registry.schema_version IS 'The applied schema_migrations version the edge''s register payload last reported (protocol.EdgeRegister.SchemaVersion; v137), written only from the wire, never by a human. NULL means no register has carried one.';
 
 COMMENT ON COLUMN public.edge_registry.clock_offset_ms IS 'The edge''s clock minus Core''s, as its last heartbeat implied it: the envelope''s ts minus Core''s clock on receipt, the broker''s delay included (v154). Written by the heartbeat''s UPDATE; NULL until a heartbeat carried a ts.';
+
+COMMENT ON CONSTRAINT edge_registry_station_uid_nonblank ON public.edge_registry IS 'Every row has its uid. Until v185 a row could exist with none (a heartbeat from a legacy Edge not yet enrolled), and the uid key was partial; v185 folded each blank uid from the row''s station_id, whose value was the uid, and deleted the rows that could take none.';
 
 CREATE SEQUENCE public.edge_registry_id_seq
     START WITH 1
@@ -674,13 +637,12 @@ ALTER SEQUENCE public.edge_registry_id_seq OWNED BY public.edge_registry.id;
 CREATE TABLE public.inbox (
     msg_id text NOT NULL,
     msg_type text DEFAULT ''::text NOT NULL,
-    station_id text DEFAULT ''::text NOT NULL,
     processed_at timestamp with time zone DEFAULT now() NOT NULL,
     reply_outbox_id bigint
 );
 
 CREATE TABLE public.inventory_delta_dedup (
-    station text NOT NULL,
+    station_uid text NOT NULL,
     scope_kind text NOT NULL,
     scope_key text NOT NULL,
     epoch bigint DEFAULT 0 NOT NULL,
@@ -690,7 +652,7 @@ CREATE TABLE public.inventory_delta_dedup (
     applied_window_end timestamp with time zone
 );
 
-COMMENT ON TABLE public.inventory_delta_dedup IS 'At-most-once dedup for inventory delta envelopes. Distinct from inbox dedup, which gates order-message processing: this gates the count change the envelope carries. last_seq is the highest SequenceID Core has applied for the (station, scope_kind, scope_key) tuple; epoch is the bin''s delta_epoch when the delta was emitted (bucket-scope deltas carry 0). A bucket''s row is not cleared when the pile empties, and must not be: since v126 (applied_net) an absent row applies the station''s whole running net. The admin delete resets the row instead of deleting it (store/inventory/inventory.go).';
+COMMENT ON TABLE public.inventory_delta_dedup IS 'At-most-once dedup for inventory delta envelopes. Distinct from inbox dedup, which gates order-message processing: this gates the count change the envelope carries. last_seq is the highest SequenceID Core has applied for the (station_uid, scope_kind, scope_key) tuple; epoch is the bin''s delta_epoch when the delta was emitted (bucket-scope deltas carry 0). A bucket''s row is not cleared when the pile empties, and must not be: since v126 (applied_net) an absent row applies the station''s whole running net. The admin delete resets the row instead of deleting it (store/inventory/inventory.go).';
 
 CREATE TABLE public.kanban_families (
     kanban_node_id bigint NOT NULL,
@@ -745,7 +707,7 @@ COMMENT ON TABLE public.kanban_supports IS 'Which process nodes a kanban serves 
 
 CREATE TABLE public.kanbans (
     node_id bigint NOT NULL,
-    station_id text,
+    station_uid text,
     strict boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
@@ -802,7 +764,7 @@ COMMENT ON TABLE public.lane_robot_confidence_daily IS 'The permanent per-lane, 
 
 CREATE TABLE public.lineside_buckets (
     id bigint NOT NULL,
-    station text NOT NULL,
+    station_uid text NOT NULL,
     core_node_name text NOT NULL,
     payload_code text NOT NULL,
     qty integer NOT NULL,
@@ -815,7 +777,7 @@ CREATE TABLE public.lineside_buckets (
 
 COMMENT ON TABLE public.lineside_buckets IS 'Core''s mirror of the Edge''s bucket model: parts at a node, by payload. core_node_name is the canonical node name, not the Edge''s process_nodes.id: the two int64 namespaces share a type and mean different things at each end, and reading the Edge''s id as Core''s produced cross-plant attribution bugs. It resolves to nodes.id through GetNodeByName. The station left the key at v65: which node holds the parts is the fact, which Pi reported it is not. The key is (core_node_name, payload_code, state), state active or stranded (v131).';
 
-COMMENT ON COLUMN public.lineside_buckets.station IS 'Attribute data, not identity: the station that last reported this pile. Never a predicate (v65).';
+COMMENT ON COLUMN public.lineside_buckets.station_uid IS 'Attribute data, not identity: the station that last reported this pile. Never a predicate (v65).';
 
 COMMENT ON COLUMN public.lineside_buckets.payload_code IS 'The payload this pile''s parts belong to, filled by the Edge at capture from the order context. Empty means unknown (an orphan whose claim was deleted before the capture resolved a payload) and is excluded from SystemUOPForPayload: a conservative undercount, never an overcount.';
 
@@ -871,7 +833,7 @@ CREATE TABLE public.mission_events (
     robot_y double precision,
     robot_angle double precision,
     robot_battery double precision,
-    robot_station text DEFAULT ''::text NOT NULL,
+    rds_station text DEFAULT ''::text NOT NULL,
     blocks_json jsonb DEFAULT '[]'::jsonb NOT NULL,
     errors_json jsonb DEFAULT '[]'::jsonb NOT NULL,
     detail text DEFAULT ''::text NOT NULL,
@@ -879,6 +841,8 @@ CREATE TABLE public.mission_events (
 );
 
 COMMENT ON TABLE public.mission_events IS 'Raw vendor observations, one row per transition: what the fleet reported, in what order, with the robot where. Fed by the RDS status poller, so new_state holds vendor states (RUNNING, WAITING, FINISHED: SEER''s vocabulary), not Core''s order statuses. The one exception is BLOCK_FINISHED, Core''s own per-leg marker, deliberately not a vendor state so a reader filtering on real states does not pick it up. Not the source for canonical timing: two clocks meet here, and order_history is the one written by Core''s own state machine. Same subject as mission_telemetry at a different grain, answering a different question: do not merge them, and do not grow this into a leg table beyond the per-block rows it carries.';
+
+COMMENT ON COLUMN public.mission_events.rds_station IS 'The RDS map point the robot reported standing at: a fleet name, not a station.';
 
 CREATE SEQUENCE public.mission_events_id_seq
     START WITH 1
@@ -894,7 +858,7 @@ CREATE TABLE public.mission_telemetry (
     order_id bigint NOT NULL,
     vendor_order_id text DEFAULT ''::text NOT NULL,
     robot_id text DEFAULT ''::text NOT NULL,
-    station_id text DEFAULT ''::text NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
     order_type text DEFAULT ''::text NOT NULL,
     source_node text DEFAULT ''::text NOT NULL,
     delivery_node text DEFAULT ''::text NOT NULL,
@@ -910,12 +874,17 @@ CREATE TABLE public.mission_telemetry (
     warnings_json jsonb DEFAULT '[]'::jsonb NOT NULL,
     notices_json jsonb DEFAULT '[]'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    robot_alarms_json jsonb
+    robot_alarms_json jsonb,
+    requested_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT mission_telemetry_requested_by_known CHECK ((requested_by = ANY (ARRAY[''::text, 'core-operator'::text, 'core-direct'::text, 'core-test'::text]))),
+    CONSTRAINT mission_telemetry_station_uid_not_actor CHECK ((station_uid <> ALL (ARRAY['core-operator'::text, 'core-direct'::text, 'core-test'::text])))
 );
 
 COMMENT ON TABLE public.mission_telemetry IS 'What the robots did, one row per mission: what the fleet actually carried out, not what happened to the orders. Written only when an order reaches a vendor terminal (finalizeMissionTelemetry, gated on fleet.IsTerminalState), so most terminal orders have no row here. That survivorship is correct for the question this table answers, since every skip and most cancels never reached a robot, and wrong for any question about order outcomes, which belong to orders and order_history. Reading failure counts from here was a real bug (see GetFailures).';
 
 COMMENT ON COLUMN public.mission_telemetry.duration_ms IS 'Lead time (created to terminal, queue included). Execution time, what the robot actually spent with faulted dwell excluded, is computed on read from order_history (store/telemetry/execution.go).';
+
+COMMENT ON COLUMN public.mission_telemetry.requested_by IS 'The order''s requested_by, as orders carries it.';
 
 CREATE SEQUENCE public.mission_telemetry_id_seq
     START WITH 1
@@ -962,7 +931,7 @@ ALTER SEQUENCE public.node_properties_id_seq OWNED BY public.node_properties.id;
 
 CREATE TABLE public.node_stations (
     node_id bigint NOT NULL,
-    station_id text NOT NULL,
+    station_uid text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -1060,7 +1029,6 @@ ALTER SEQUENCE public.order_history_id_seq OWNED BY public.order_history.id;
 
 CREATE TABLE public.order_intake_refusals (
     edge_uuid text NOT NULL,
-    station_id text DEFAULT ''::text NOT NULL,
     error_code text NOT NULL,
     detail text DEFAULT ''::text NOT NULL,
     refused_at timestamp with time zone DEFAULT now() NOT NULL
@@ -1071,7 +1039,7 @@ COMMENT ON TABLE public.order_intake_refusals IS 'The pair legs Core refused at 
 CREATE TABLE public.orders (
     id bigint NOT NULL,
     edge_uuid text NOT NULL,
-    station_id text DEFAULT ''::text NOT NULL,
+    station_uid text DEFAULT ''::text NOT NULL,
     order_type text DEFAULT 'retrieve'::text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
     quantity bigint DEFAULT 1 NOT NULL,
@@ -1106,7 +1074,7 @@ CREATE TABLE public.orders (
     origin_class text DEFAULT ''::text NOT NULL,
     open_for_children boolean DEFAULT false NOT NULL,
     station_unaware boolean DEFAULT false NOT NULL,
-    projects_to text DEFAULT ''::text NOT NULL,
+    projects_to_station_uid text DEFAULT ''::text NOT NULL,
     plan text DEFAULT ''::text NOT NULL,
     orphan_aged_at timestamp with time zone,
     destination_resolved_at timestamp with time zone,
@@ -1116,8 +1084,13 @@ CREATE TABLE public.orders (
     steps_done integer DEFAULT 0 NOT NULL,
     block_actions jsonb DEFAULT '{}'::jsonb,
     version bigint DEFAULT 1 NOT NULL,
-    asked_vendor_order_id text DEFAULT ''::text NOT NULL
+    asked_vendor_order_id text DEFAULT ''::text NOT NULL,
+    requested_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT orders_requested_by_known CHECK ((requested_by = ANY (ARRAY[''::text, 'core-operator'::text, 'core-direct'::text, 'core-test'::text]))),
+    CONSTRAINT orders_station_uid_not_actor CHECK ((station_uid <> ALL (ARRAY['core-operator'::text, 'core-direct'::text, 'core-test'::text])))
 );
+
+COMMENT ON COLUMN public.orders.station_uid IS 'The station that sent the order or is its owner: an Edge''s uid, or blank for an order no station asked for (since v185, Core''s actors are in requested_by, and a CHECK keeps them out of this column).';
 
 COMMENT ON COLUMN public.orders.origin_id IS 'The demand this order was created to serve. See origin_class.';
 
@@ -1127,7 +1100,7 @@ COMMENT ON COLUMN public.orders.open_for_children IS 'Sealedness, on the compoun
 
 COMMENT ON COLUMN public.orders.station_unaware IS 'The station named on the order has no row for it: it did not send the order and the order does not project there. Its station is sent nothing about it. Named for the exception; false is every order but a Core-born one that does not project (v145).';
 
-COMMENT ON COLUMN public.orders.projects_to IS 'The station a station-unaware order''s delivered and picked_up notices go to; blank is nobody. Unread for a station-known order (v146).';
+COMMENT ON COLUMN public.orders.projects_to_station_uid IS 'The station a station-unaware order''s delivered and picked_up notices go to; blank is nobody. Unread for a station-known order (v146).';
 
 COMMENT ON COLUMN public.orders.plan IS 'The planner''s pick at birth, as JSON: the bin, its node and the bin row as the pick saw it. Acquiring reads it instead of picking again, and picks only when it no longer stands. Blank is no pick (v147).';
 
@@ -1149,6 +1122,8 @@ COMMENT ON COLUMN public.orders.version IS 'One counter for everything the order
 
 COMMENT ON COLUMN public.orders.asked_vendor_order_id IS 'The vendor order id Core is asking the fleet to create, from the hand that takes the order''s holds until the fleet answers; blank when Core is not asking (v182). Core-only, never on the wire. An open ask is spoken for whatever the status says.';
 
+COMMENT ON COLUMN public.orders.requested_by IS 'Which Core door made an order no station asked for: core-operator (the manual and spot doors), core-direct (the direct doors), core-test (the test doors), or blank (a station''s order, or one Core made itself, such as a recovery or a cancel-return). Until v185 the three were written into the station column.';
+
 CREATE SEQUENCE public.orders_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1163,11 +1138,13 @@ CREATE TABLE public.outbox (
     topic text NOT NULL,
     payload bytea NOT NULL,
     msg_type text DEFAULT ''::text NOT NULL,
-    station_id text DEFAULT ''::text NOT NULL,
+    dst_station text DEFAULT ''::text NOT NULL,
     retries integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     sent_at timestamp with time zone
 );
+
+COMMENT ON COLUMN public.outbox.dst_station IS 'The addressee: a station''s uid, * for every station, or core-test. Not a station uid column (outbox.station_id until v185).';
 
 CREATE SEQUENCE public.outbox_id_seq
     START WITH 1
@@ -1273,7 +1250,7 @@ ALTER SEQUENCE public.payloads_id_seq OWNED BY public.payloads.id;
 
 CREATE TABLE public.plant_claims_reports (
     process_id text NOT NULL,
-    station_id text NOT NULL,
+    station_uid text NOT NULL,
     digest text NOT NULL,
     received_at timestamp with time zone NOT NULL
 );
@@ -1312,7 +1289,7 @@ CREATE TABLE public.process_styles (
     config_gen bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     is_active boolean DEFAULT false NOT NULL,
-    station_id text
+    station_uid text
 );
 
 CREATE TABLE public.recovery_actions (
@@ -1341,7 +1318,6 @@ CREATE TABLE public.reservations (
     state text DEFAULT 'pending'::text NOT NULL,
     reserved_by text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    expires_at timestamp with time zone,
     resource_kind text DEFAULT 'bin'::text NOT NULL,
     node_id bigint,
     mode text,
@@ -1391,8 +1367,8 @@ CREATE TABLE public.robot_confidence_low (
     x double precision NOT NULL,
     y double precision NOT NULL,
     angle double precision NOT NULL,
-    station text DEFAULT ''::text NOT NULL,
-    last_station text DEFAULT ''::text NOT NULL,
+    rds_station text DEFAULT ''::text NOT NULL,
+    last_rds_station text DEFAULT ''::text NOT NULL,
     order_id bigint DEFAULT 0 NOT NULL,
     on_task boolean DEFAULT false NOT NULL,
     blocked boolean DEFAULT false NOT NULL,
@@ -1422,8 +1398,8 @@ CREATE TABLE public.robot_confidence_samples (
     x double precision NOT NULL,
     y double precision NOT NULL,
     angle double precision NOT NULL,
-    station text DEFAULT ''::text NOT NULL,
-    last_station text DEFAULT ''::text NOT NULL,
+    rds_station text DEFAULT ''::text NOT NULL,
+    last_rds_station text DEFAULT ''::text NOT NULL,
     order_id bigint DEFAULT 0 NOT NULL,
     on_task boolean DEFAULT false NOT NULL,
     blocked boolean DEFAULT false NOT NULL,
@@ -1435,6 +1411,10 @@ CREATE TABLE public.robot_confidence_samples (
 PARTITION BY RANGE (sampled_at);
 
 COMMENT ON TABLE public.robot_confidence_samples IS 'Raw localization-confidence samples, daily partitions (v77).';
+
+COMMENT ON COLUMN public.robot_confidence_samples.rds_station IS 'The RDS map point the robot reported at the sample: a fleet name, not a station.';
+
+COMMENT ON COLUMN public.robot_confidence_samples.last_rds_station IS 'The RDS map point the robot last stood at: a fleet name, not a station.';
 
 CREATE SEQUENCE public.robot_confidence_samples_id_seq
     START WITH 1
@@ -1483,7 +1463,7 @@ CREATE TABLE public.robot_lidar_hours (
     hour timestamp with time zone NOT NULL,
     vehicle_id text NOT NULL,
     lidar text NOT NULL,
-    station text NOT NULL,
+    rds_station text NOT NULL,
     use_for_loc boolean NOT NULL,
     beams integer NOT NULL,
     valid integer NOT NULL,
@@ -1535,8 +1515,7 @@ CREATE TABLE public.scene_diffs (
     objects_changed integer DEFAULT 0 NOT NULL,
     objects_removed integer DEFAULT 0 NOT NULL,
     median_delta_m double precision,
-    max_delta_m double precision,
-    renames jsonb
+    max_delta_m double precision
 );
 
 COMMENT ON TABLE public.scene_diffs IS 'One row per observed map edit (v81): the join that relates an RDS /scene edit to a robot .smap edit made in the same sitting.';
@@ -1663,7 +1642,6 @@ CREATE TABLE public.scene_reflectors (
     y double precision NOT NULL,
     width double precision,
     shape_hash text NOT NULL,
-    supersedes_id bigint,
     diff_id bigint NOT NULL,
     map_version_id bigint,
     valid_from timestamp with time zone NOT NULL,
@@ -1736,7 +1714,6 @@ CREATE TABLE public.supply_refusals (
     id bigint NOT NULL,
     loader_node text NOT NULL,
     payload_code text NOT NULL,
-    station_id text DEFAULT ''::text NOT NULL,
     refused_at timestamp with time zone NOT NULL,
     refused_by text DEFAULT ''::text NOT NULL,
     ack_at timestamp with time zone,
@@ -1832,8 +1809,6 @@ ALTER TABLE ONLY public.cms_transactions ALTER COLUMN id SET DEFAULT nextval('pu
 ALTER TABLE ONLY public.dashboards ALTER COLUMN id SET DEFAULT nextval('public.dashboards_id_seq'::regclass);
 
 ALTER TABLE ONLY public.demand_registry ALTER COLUMN id SET DEFAULT nextval('public.demand_registry_id_seq'::regclass);
-
-ALTER TABLE ONLY public.downtime_events ALTER COLUMN id SET DEFAULT nextval('public.downtime_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.edge_registry ALTER COLUMN id SET DEFAULT nextval('public.edge_registry_id_seq'::regclass);
 
@@ -2088,6 +2063,7 @@ INSERT INTO public.schema_migrations VALUES (181, now());
 INSERT INTO public.schema_migrations VALUES (182, now());
 INSERT INTO public.schema_migrations VALUES (183, now());
 INSERT INTO public.schema_migrations VALUES (184, now());
+INSERT INTO public.schema_migrations VALUES (185, now());
 
 SELECT pg_catalog.setval('public.admin_users_id_seq', 1, false);
 
@@ -2118,8 +2094,6 @@ SELECT pg_catalog.setval('public.cms_transactions_id_seq', 1, false);
 SELECT pg_catalog.setval('public.dashboards_id_seq', 1, false);
 
 SELECT pg_catalog.setval('public.demand_registry_id_seq', 1, false);
-
-SELECT pg_catalog.setval('public.downtime_events_id_seq', 1, false);
 
 SELECT pg_catalog.setval('public.edge_registry_id_seq', 1, false);
 
@@ -2220,7 +2194,7 @@ ALTER TABLE ONLY public.bin_types
     ADD CONSTRAINT bin_types_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.bin_uop_delta_daily
-    ADD CONSTRAINT bin_uop_delta_daily_pkey PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, actor);
+    ADD CONSTRAINT bin_uop_delta_daily_pkey PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, station_uid);
 
 ALTER TABLE ONLY public.bin_uop_exception
     ADD CONSTRAINT bin_uop_exception_pkey PRIMARY KEY (id);
@@ -2238,10 +2212,7 @@ ALTER TABLE ONLY public.carrier_families
     ADD CONSTRAINT carrier_families_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.cell_config
-    ADD CONSTRAINT cell_config_pkey PRIMARY KEY (cell_id);
-
-ALTER TABLE ONLY public.cell_targets
-    ADD CONSTRAINT cell_targets_pkey PRIMARY KEY (cell_id, payload_code);
+    ADD CONSTRAINT cell_config_pkey PRIMARY KEY (cell_label);
 
 ALTER TABLE ONLY public.cleaning_mission_setup
     ADD CONSTRAINT cleaning_mission_setup_pkey PRIMARY KEY (id);
@@ -2268,28 +2239,25 @@ ALTER TABLE ONLY public.demand_registry
     ADD CONSTRAINT demand_registry_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.demand_registry
-    ADD CONSTRAINT demand_registry_station_id_core_node_name_payload_code_key UNIQUE (station_id, core_node_name, payload_code);
-
-ALTER TABLE ONLY public.downtime_event_dedup
-    ADD CONSTRAINT downtime_event_dedup_pkey PRIMARY KEY (station, edge_event_id);
+    ADD CONSTRAINT demand_registry_station_uid_core_node_name_payload_code_key UNIQUE (station_uid, core_node_name, payload_code);
 
 ALTER TABLE ONLY public.edge_cells
-    ADD CONSTRAINT edge_cells_pkey PRIMARY KEY (station, cell_label);
+    ADD CONSTRAINT edge_cells_pkey PRIMARY KEY (station_uid, cell_label);
 
 ALTER TABLE ONLY public.edge_lineside_reports
-    ADD CONSTRAINT edge_lineside_reports_pkey PRIMARY KEY (station, core_node_name, payload_code);
+    ADD CONSTRAINT edge_lineside_reports_pkey PRIMARY KEY (station_uid, core_node_name, payload_code);
 
 ALTER TABLE ONLY public.edge_registry
     ADD CONSTRAINT edge_registry_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.edge_registry
-    ADD CONSTRAINT edge_registry_station_id_key UNIQUE (station_id);
+    ADD CONSTRAINT edge_registry_station_uid_key UNIQUE (station_uid);
 
 ALTER TABLE ONLY public.inbox
     ADD CONSTRAINT inbox_pkey PRIMARY KEY (msg_id);
 
 ALTER TABLE ONLY public.inventory_delta_dedup
-    ADD CONSTRAINT inventory_delta_dedup_pkey PRIMARY KEY (station, scope_kind, scope_key, epoch);
+    ADD CONSTRAINT inventory_delta_dedup_pkey PRIMARY KEY (station_uid, scope_kind, scope_key, epoch);
 
 ALTER TABLE ONLY public.kanban_families
     ADD CONSTRAINT kanban_families_pkey PRIMARY KEY (kanban_node_id, family_id);
@@ -2352,7 +2320,7 @@ ALTER TABLE ONLY public.node_properties
     ADD CONSTRAINT node_properties_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.node_stations
-    ADD CONSTRAINT node_stations_pkey PRIMARY KEY (node_id, station_id);
+    ADD CONSTRAINT node_stations_pkey PRIMARY KEY (node_id, station_uid);
 
 ALTER TABLE ONLY public.node_types
     ADD CONSTRAINT node_types_code_key UNIQUE (code);
@@ -2483,11 +2451,7 @@ ALTER TABLE ONLY public.test_commands
 ALTER TABLE ONLY public.tte_samples
     ADD CONSTRAINT tte_samples_pkey PRIMARY KEY (id);
 
-CREATE INDEX cell_config_station_idx ON public.cell_config USING btree (station);
-
-CREATE UNIQUE INDEX edge_registry_station_uid_key ON public.edge_registry USING btree (station_uid) WHERE (station_uid <> ''::text);
-
-COMMENT ON INDEX public.edge_registry_station_uid_key IS 'Partial, because a row can exist with no uid yet: a heartbeat from a legacy Edge that has not been enrolled. A plain UNIQUE would collapse every such row onto one another under the empty string, many edges silently sharing one identity, the failure the identity change exists to end.';
+CREATE INDEX cell_config_station_uid_idx ON public.cell_config USING btree (station_uid);
 
 CREATE INDEX idx_area_confidence_daily_area ON public.area_confidence_daily USING btree (area_name, day DESC);
 
@@ -2525,7 +2489,7 @@ CREATE INDEX idx_bins_type ON public.bins USING btree (bin_type_id);
 
 CREATE INDEX idx_bins_undeclared_carrier ON public.bins USING btree (id) WHERE (undeclared_carrier_at IS NOT NULL);
 
-CREATE INDEX idx_cell_part_events_cell_time ON ONLY public.cell_part_events USING btree (cell_id, recorded_at);
+CREATE INDEX idx_cell_part_events_station_uid_time ON ONLY public.cell_part_events USING btree (station_uid, recorded_at);
 
 CREATE INDEX idx_cleaning_missions_time ON public.cleaning_missions USING btree (dispatched_at);
 
@@ -2549,9 +2513,7 @@ CREATE INDEX idx_demand_origins_opened_at ON public.demand_origins USING btree (
 
 CREATE INDEX idx_demand_registry_payload ON public.demand_registry USING btree (payload_code);
 
-CREATE INDEX idx_downtime_events_station_time ON ONLY public.downtime_events USING btree (station, started_at);
-
-CREATE INDEX idx_edge_cells_station ON public.edge_cells USING btree (station);
+CREATE INDEX idx_edge_cells_station_uid ON public.edge_cells USING btree (station_uid);
 
 CREATE INDEX idx_inbox_processed_at ON public.inbox USING btree (processed_at);
 
@@ -2567,11 +2529,11 @@ CREATE INDEX idx_mission_telemetry_completed ON public.mission_telemetry USING b
 
 CREATE INDEX idx_mission_telemetry_robot ON public.mission_telemetry USING btree (robot_id);
 
-CREATE INDEX idx_mission_telemetry_station ON public.mission_telemetry USING btree (station_id);
+CREATE INDEX idx_mission_telemetry_station_uid ON public.mission_telemetry USING btree (station_uid);
 
 CREATE INDEX idx_node_properties_key ON public.node_properties USING btree (key);
 
-CREATE INDEX idx_node_stations_station ON public.node_stations USING btree (station_id);
+CREATE INDEX idx_node_stations_station_uid ON public.node_stations USING btree (station_uid);
 
 CREATE INDEX idx_nodes_claimed_by ON public.nodes USING btree (claimed_by) WHERE (claimed_by IS NOT NULL);
 
@@ -2677,7 +2639,7 @@ CREATE UNIQUE INDEX order_bins_drop ON public.order_bins USING btree (order_id, 
 
 CREATE UNIQUE INDEX order_bins_pick ON public.order_bins USING btree (order_id, pick_step);
 
-CREATE UNIQUE INDEX uq_cell_part_events_tick ON ONLY public.cell_part_events USING btree (cell_id, edge_snapshot_id, recorded_at);
+CREATE UNIQUE INDEX uq_cell_part_events_tick ON ONLY public.cell_part_events USING btree (station_uid, edge_snapshot_id, recorded_at);
 
 CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btree (bin_id) WHERE ((resource_kind = 'bin'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 
@@ -2855,6 +2817,3 @@ ALTER TABLE ONLY public.scene_reflectors
 
 ALTER TABLE ONLY public.scene_reflectors
     ADD CONSTRAINT scene_reflectors_map_version_id_fkey FOREIGN KEY (map_version_id) REFERENCES public.scene_map_versions(id);
-
-ALTER TABLE ONLY public.scene_reflectors
-    ADD CONSTRAINT scene_reflectors_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES public.scene_reflectors(id);

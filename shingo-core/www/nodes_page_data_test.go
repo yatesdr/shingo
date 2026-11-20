@@ -66,7 +66,7 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 			{ID: 10, Code: "BT-A"},
 			{ID: 11, Code: "BT-B"},
 		},
-		edges: []registry.Edge{{StationID: "edge-a"}},
+		edges: []registry.Edge{{StationUID: "edge-a"}},
 	}
 
 	pd, err := getNodesPageData(stub)

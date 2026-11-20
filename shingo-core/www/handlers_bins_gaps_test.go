@@ -250,7 +250,7 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 	// Seed a claim via an existing order (C1.5: dispatched, since a hard claim
 	// is a committed robot's; the row names the fleet's job).
 	priorOrder := testdb.CreateOrder(t, db, testdb.FleetHas("sg-xport-prior-1"), func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType = "xport-prior-1", "line-1", "move"
+		o.EdgeUUID, o.StationUID, o.OrderType = "xport-prior-1", "line-1", "move"
 	})
 	testdb.ClaimBinForTest(t, db, bin.ID, priorOrder.ID)
 

@@ -328,7 +328,7 @@ func (d *Dispatcher) windowStation(w *nodes.Node) string {
 		return sts[0]
 	}
 	if edges, err := d.db.ListEdges(); err == nil && len(edges) == 1 {
-		return edges[0].StationID
+		return edges[0].StationUID
 	}
 	return ""
 }

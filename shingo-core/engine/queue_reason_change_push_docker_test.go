@@ -50,7 +50,7 @@ func TestQueueReason_AChangedCauseIsPushedOnce(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	o := &orders.Order{EdgeUUID: "qrc-refill", StationID: "edge.test", OrderType: "retrieve",
+	o := &orders.Order{EdgeUUID: "qrc-refill", StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusQueued, Quantity: 1, PayloadCode: "QRC-P", DeliveryNode: "QRC-SPOT"}
 	testutil.MustNoErr(t, db.CreateOrder(o), "a queued refill")
 	d := eng.dispatcher
@@ -168,7 +168,7 @@ func TestQueueReason_EachIntakePathSendsOneMessage(t *testing.T) {
 		// tells the station its sentence; only what the scan sends is counted.
 		eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("qr-vis-shape", sd, grp))
 		shape := testdb.RequireOrder(t, db, "qr-vis-shape")
-		o := &orders.Order{EdgeUUID: "qr-vis", StationID: shape.StationID, OrderType: shape.OrderType,
+		o := &orders.Order{EdgeUUID: "qr-vis", StationUID: shape.StationUID, OrderType: shape.OrderType,
 			Status: protocol.StatusQueued, Quantity: 1, PayloadCode: shape.PayloadCode,
 			SourceNode: shape.SourceNode, DeliveryNode: shape.DeliveryNode, StepsJSON: shape.StepsJSON,
 			Coordinated: true}

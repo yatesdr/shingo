@@ -131,7 +131,7 @@ func (s *ReconciliationService) bootAskAnomalies() ([]*reconciliation.Anomaly, e
 			Severity:    "critical",
 			Issue:       "ask_open_at_boot",
 			OrderID:     &id,
-			StationID:   a.StationID,
+			StationUID:  a.Requester,
 			OrderStatus: string(a.Status),
 			Detail: fmt.Sprintf("Core asked the fleet for job %s and stopped before the answer, so it does not "+
 				"know whether the fleet has it. The order keeps its holds and is not asked again. Check the "+

@@ -121,7 +121,7 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// Dig 1 (lane A) plans first and takes the only shuffle slot.
-	orderA := &orders.Order{EdgeUUID: "dig-a", StationID: "line-1", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode(t, db, "1SHUF-LINE-A").Name}
+	orderA := &orders.Order{EdgeUUID: "dig-a", StationUID: "line-1", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode(t, db, "1SHUF-LINE-A").Name}
 	testutil.MustNoErr(t, db.CreateOrder(orderA), "create order A")
 	_, peA := d.planner.planBuriedReshuffle(orderA, &BuriedError{Bin: targetA, Slot: slotsA[1], LaneID: laneA.ID})
 	if peA != nil {
@@ -147,7 +147,7 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 	// Dig 2 (lane B) plans while dig A's blocker is in flight to SHUF-1. Its leg
 	// must NOT take that slot. Nothing physically occupies SHUF-1 yet -- that is
 	// exactly the trap.
-	orderB := &orders.Order{EdgeUUID: "dig-b", StationID: "line-1", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode(t, db, "1SHUF-LINE-B").Name}
+	orderB := &orders.Order{EdgeUUID: "dig-b", StationUID: "line-1", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode(t, db, "1SHUF-LINE-B").Name}
 	testutil.MustNoErr(t, db.CreateOrder(orderB), "create order B")
 	_, peB := d.planner.planBuriedReshuffle(orderB, &BuriedError{Bin: targetB, Slot: slotsB[1], LaneID: laneB.ID})
 	if peB != nil {

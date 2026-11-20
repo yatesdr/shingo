@@ -31,7 +31,7 @@ func TestHandleEdgeHeartbeat_FeedsByEdgeVersion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testdb.Open(t)
-			_, err := db.EnrollEdge(st, "", st)
+			_, err := db.EnrollEdge(st, "")
 			testutil.MustNoErr(t, err, "enroll")
 			resp := &feedsPinResponder{}
 			svc := NewCoreDataService(db, resp, service.EpochAnnounce{})

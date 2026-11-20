@@ -39,13 +39,13 @@ func TestAdvanceCompound_RefusesASecondDispatchOfOneChild(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	parent := &orders.Order{
-		EdgeUUID: "exactly-once-parent", StationID: "line-1",
+		EdgeUUID: "exactly-once-parent", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	child := &orders.Order{
-		EdgeUUID: "exactly-once-child", StationID: "line-1",
+		EdgeUUID: "exactly-once-child", StationUID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		ParentOrderID: &parent.ID, Sequence: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,

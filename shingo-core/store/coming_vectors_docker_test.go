@@ -51,7 +51,7 @@ func TestComingVectors_CoreAgreesOverStoredRows(t *testing.T) {
 		}
 		// A live leg is one the fleet has: born pending (the INSERT binds no
 		// vendor id), then `dispatched` naming its job in one write.
-		o := &orders.Order{EdgeUUID: fmt.Sprintf("cv-%d", i), StationID: "line-1", OrderType: protocol.OrderType(c.OrderType),
+		o := &orders.Order{EdgeUUID: fmt.Sprintf("cv-%d", i), StationUID: "line-1", OrderType: protocol.OrderType(c.OrderType),
 			Status: protocol.StatusPending, Quantity: 1, DeliveryNode: delivery, StepsJSON: raw}
 		testutil.MustNoErr(t, db.CreateOrder(o), c.Name)
 		testdb.SeedDispatched(t, db, o.ID, fmt.Sprintf("sg-cv-%d", i))

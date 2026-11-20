@@ -18,9 +18,9 @@ type KanbanChange struct {
 	NodeID int64
 	// EnsureRow makes the group's kanbans row if it has none. With no row and no
 	// EnsureRow the group stays plain, and only PlainOverflow is read.
-	EnsureRow bool
-	Station   *string
-	Strict    *bool
+	EnsureRow  bool
+	StationUID *string
+	Strict     *bool
 	// PlainOverflow is a plain group's overflow_destination property.
 	PlainOverflow *string
 	Levels        []KanbanLevelChange
@@ -212,20 +212,20 @@ func (s kanbanSave) nodeName(id int64) (string, error) {
 // save that changes none of them writes nothing.
 func (s kanbanSave) applyScalars(k nodes.Kanban, c KanbanChange) error {
 	next := k
-	if c.Station != nil {
-		next.StationID = strings.TrimSpace(*c.Station)
+	if c.StationUID != nil {
+		next.StationUID = strings.TrimSpace(*c.StationUID)
 	}
 	if c.Strict != nil {
 		next.Strict = *c.Strict
 	}
-	if next.StationID == k.StationID && next.Strict == k.Strict {
+	if next.StationUID == k.StationUID && next.Strict == k.Strict {
 		return nil
 	}
 	if err := nodes.SetKanbanScalars(s.tx, next); err != nil {
 		return err
 	}
 	for _, r := range []struct{ action, before, after string }{
-		{"kanban:station", k.StationID, next.StationID},
+		{"kanban:station", k.StationUID, next.StationUID},
 		{"kanban:strict", onOff(k.Strict), onOff(next.Strict)},
 	} {
 		if err := s.audit(r.action, r.before, r.after); err != nil {

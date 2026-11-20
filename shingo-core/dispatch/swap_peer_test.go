@@ -47,7 +47,7 @@ func mkSwapLegWithSteps(t *testing.T, db *store.DB, uuid, sibUUID string, status
 	j, err := json.Marshal(steps)
 	testutil.MustNoErr(t, err, "marshal steps "+uuid)
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "ST", OrderType: OrderTypeComplex, Status: status,
+		EdgeUUID: uuid, StationUID: "ST", OrderType: OrderTypeComplex, Status: status,
 		Quantity: 1, PayloadCode: payload,
 		ProcessNode: lineName, DeliveryNode: deliveryName, SiblingOrderUUID: sibUUID,
 		StepsJSON: string(j),
@@ -388,7 +388,7 @@ func TestSwapPeerPin_LegsWithNoProcessNode_EveryTerminalIsADeath(t *testing.T) {
 			{Action: protocol.ActionWait, WaitKind: WaitKindVacate}, {Action: protocol.ActionDropoff, Node: to}}
 		j, err := json.Marshal(steps)
 		testutil.MustNoErr(t, err, "marshal "+uuid)
-		o := &orders.Order{EdgeUUID: uuid, StationID: "ST", OrderType: OrderTypeMove, Status: status, Quantity: 1,
+		o := &orders.Order{EdgeUUID: uuid, StationUID: "ST", OrderType: OrderTypeMove, Status: status, Quantity: 1,
 			SourceNode: from, DeliveryNode: to, SiblingOrderUUID: sib, StepsJSON: string(j)}
 		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
 		return o

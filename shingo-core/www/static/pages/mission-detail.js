@@ -346,7 +346,7 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
     var html = '<div class="mission-summary-grid">';
     html += field('Order ID', 'Shingo order ID', '<a href="/orders?open=' + o.id + '">' + o.id + '</a>');
     html += field('Type', 'Transport order type', escapeHtml(o.order_type || ''));
-    html += field('Station', 'Edge station that requested this order', escapeHtml(o.station_id || ''));
+    html += field('Station', 'Edge station that requested this order', escapeHtml(o.station_uid || o.requested_by || ''));
     html += field('Robot', 'Robot vehicle ID assigned by the fleet',
       robot ? escapeHtml(robot) : '<span class="text-muted">not assigned</span>');
     html += field('Route', 'The order\'s planned steps, source to delivery', formatRoute(o));
@@ -439,7 +439,7 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
           + clockCell(ev.created_at)
           + '<td>' + what + '</td>'
           + '<td>' + escapeHtml(ev.robot_id || '') + '</td>'
-          + '<td>' + escapeHtml(ev.robot_station || '') + '</td>'
+          + '<td>' + escapeHtml(ev.rds_station || '') + '</td>'
           + '<td class="tnum">' + position(ev) + '</td>'
           + '<td class="col-num tnum">' + (ev.robot_battery != null ? Math.round(ev.robot_battery) + '%' : '') + '</td>'
           + '</tr>';

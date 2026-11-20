@@ -30,7 +30,7 @@ func levelService(db *store.DB) *uop.InventoryDeltaService {
 // the station that last sent its level, and whether it exists.
 func pileRow(t *testing.T, db *store.DB, node, payload string, state protocol.LinesideBucketState) (qty int, station string, ok bool) {
 	t.Helper()
-	err := db.QueryRow(`SELECT qty, station FROM lineside_buckets
+	err := db.QueryRow(`SELECT qty, station_uid FROM lineside_buckets
 		WHERE core_node_name=$1 AND payload_code=$2 AND state=$3`, node, payload, string(state)).Scan(&qty, &station)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, "", false

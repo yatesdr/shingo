@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // STRANDED ORDERS: the jam check, and the first thing a run report says.
@@ -170,7 +171,7 @@ func readActive(db *sql.DB, now any) (*runEnd, error) {
 		     h AS (SELECT order_id, MIN(created_at) AS first_at, MAX(created_at) AS last_at
 		           FROM order_history GROUP BY order_id)
 		SELECT o.id, COALESCE(o.parent_order_id, 0), o.order_type, o.status, o.source_node, o.delivery_node,
-		       o.station_id, o.payload_code, o.robot_id, o.vendor_state,
+		       `+orders.RequesterSQL("o")+`, o.payload_code, o.robot_id, o.vendor_state,
 		       COALESCE(o.queue_cause, ''), o.queue_reason, o.steps_json, o.wait_index,
 		       o.edge_uuid, COALESCE(o.sibling_order_uuid, ''), o.asked_vendor_order_id,
 		       COALESCE((SELECT b.payload_code FROM order_bins ob JOIN bins b ON b.id = ob.bin_id

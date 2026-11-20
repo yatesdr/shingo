@@ -36,7 +36,7 @@ func TestPlantClaims_ALoaderPositionResolvesToItsStation(t *testing.T) {
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 	const a, b = "edge-pos-a.line", "edge-pos-b.line"
 	for _, st := range []string{a, b} {
-		_, err := db.Exec(`INSERT INTO edge_registry (station_id, schema_version) VALUES ($1, $2)`,
+		_, err := db.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)`,
 			st, protocol.EdgeSchemaBinLanded)
 		testutil.MustNoErr(t, err, "register "+st)
 	}
@@ -83,7 +83,7 @@ func TestPlantClaims_ALoaderPositionMovesItsRegistryRowsToItsStation(t *testing.
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 	const a, b = "edge-own-a.line", "edge-own-b.line"
 	for _, st := range []string{a, b} {
-		_, err := db.Exec(`INSERT INTO edge_registry (station_id, schema_version) VALUES ($1, $2)`,
+		_, err := db.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)`,
 			st, protocol.EdgeSchemaBinLanded)
 		testutil.MustNoErr(t, err, "register "+st)
 	}
@@ -96,7 +96,7 @@ func TestPlantClaims_ALoaderPositionMovesItsRegistryRowsToItsStation(t *testing.
 	testutil.MustNoErr(t, db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: nodeID, PayloadCode: "P-M", UOPThreshold: 10}), "home")
 	rows := func(st string) int {
 		var n int
-		testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_id = $1 AND core_node_name = 'OWN-M-W'`, st).Scan(&n), "rows")
+		testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_uid = $1 AND core_node_name = 'OWN-M-W'`, st).Scan(&n), "rows")
 		return n
 	}
 	for _, st := range []string{a, b} {

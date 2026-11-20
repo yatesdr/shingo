@@ -52,7 +52,7 @@ func TestProductionTicks_BatchProjectsSynchronously(t *testing.T) {
 		t.Errorf("emits after a mixed batch = %+v, want one more for id 14", em)
 	}
 	var rows int
-	if err := h.db.QueryRow(`SELECT count(*) FROM cell_part_events WHERE cell_id='stn-a'`).Scan(&rows); err != nil {
+	if err := h.db.QueryRow(`SELECT count(*) FROM cell_part_events WHERE station_uid='stn-a'`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 4 {

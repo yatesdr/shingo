@@ -17,6 +17,7 @@ import (
 	"shingocore/material"
 	"shingocore/notify"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -335,8 +336,10 @@ func (e *Engine) backfillETAsForInTransitOrders() {
 	if e.etaCache == nil {
 		return
 	}
-	const q = `
-SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node,
+	// The order's requester: its station, or the Core actor that asked (each was
+	// sent its update before v185 split the actors out of the station column).
+	q := `
+SELECT o.id, o.edge_uuid, ` + orders.RequesterSQL("o") + `, o.source_node, o.delivery_node,
        (SELECT MAX(created_at) FROM order_history
             WHERE order_id = o.id AND status = 'in_transit') AS last_in_transit_at
 FROM orders o

@@ -158,10 +158,10 @@ func TestLidarHours_InsertReplacePrune(t *testing.T) {
 	old := now.Add(-91 * 24 * time.Hour)
 
 	rows := []robothours.LidarHour{
-		{Hour: now, VehicleID: "AMR-01", Lidar: "laser", Station: "PP57", UseForLoc: true, Beams: 360, Valid: 358,
+		{Hour: now, VehicleID: "AMR-01", Lidar: "laser", RDSStation: "PP57", UseForLoc: true, Beams: 360, Valid: 358,
 			RSSIMedValid: fptr(30.06), RSSIP25Valid: fptr(29.06), RSSIP75Valid: fptr(31.06), NearValid: 0},
-		{Hour: now, VehicleID: "AMR-01", Lidar: "laser2", Station: "PP57", Beams: 359, Valid: 0},
-		{Hour: old, VehicleID: "AMR-01", Lidar: "laser", Station: "PP57", Beams: 360, Valid: 300},
+		{Hour: now, VehicleID: "AMR-01", Lidar: "laser2", RDSStation: "PP57", Beams: 359, Valid: 0},
+		{Hour: old, VehicleID: "AMR-01", Lidar: "laser", RDSStation: "PP57", Beams: 360, Valid: 300},
 	}
 	if err := robothours.InsertLidarHours(db.DB, rows); err != nil {
 		t.Fatal(err)

@@ -33,7 +33,7 @@ import (
 //	   the node name up to its first '_', with the node type's code after a '/'
 //	   where Core has one.
 //	b. stale-epoch drops per station: bin_uop_exception kind stale_epoch, whose
-//	   actor is the counting station (kept forever, unlike the ledger).
+//	   station_uid is the counting station (kept forever, unlike the ledger).
 //	c. releases whose after_uop differs from before_uop, per op.
 //	d. epoch refreshes per target node, and how many named _TRANSIT (a carrier
 //	   riding a robot, where no station models it).
@@ -175,11 +175,11 @@ func outboxByNode(db *sql.DB, msgType string, bound bool) ([]nodeCount, error) {
 // mirror names) and, per station, the nodes Core's mirror says it models.
 func claimsMirror(db *sql.DB) ([]string, map[string]map[string]bool, error) {
 	rows, err := db.Query(`
-		SELECT ps.station_id, sc.core_node_name FROM style_claims sc
+		SELECT ps.station_uid, sc.core_node_name FROM style_claims sc
 		  JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-		  WHERE ps.station_id IS NOT NULL AND ps.station_id <> ''
-		UNION SELECT station_id, core_node_name FROM demand_registry
-		UNION SELECT station_id, '' FROM edge_registry WHERE station_id <> ''`)
+		  WHERE ps.station_uid IS NOT NULL AND ps.station_uid <> ''
+		UNION SELECT station_uid, core_node_name FROM demand_registry
+		UNION SELECT station_uid, '' FROM edge_registry WHERE station_uid <> ''`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -209,9 +209,9 @@ func claimsMirror(db *sql.DB) ([]string, map[string]map[string]bool, error) {
 // they carried (the applier's detail.delta).
 func staleEpochDrops(db *sql.DB) ([]staleDrops, error) {
 	rows, err := db.Query(`
-		SELECT actor, COUNT(*), COALESCE(SUM(ABS((detail->>'delta')::numeric)), 0)::bigint
+		SELECT station_uid, COUNT(*), COALESCE(SUM(ABS((detail->>'delta')::numeric)), 0)::bigint
 		FROM bin_uop_exception WHERE kind = $1
-		GROUP BY actor ORDER BY actor`, audit.ExcStaleEpoch)
+		GROUP BY station_uid ORDER BY station_uid`, audit.ExcStaleEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -289,9 +289,8 @@ func labelledAtZero(db *sql.DB) ([]nodeCount, error) {
 // after it (ledger id order) and before the bin's next generation starts. One
 // statement; rows are (release, counting station, ticks, units), plus one row
 // per release with no tick (station NULL) so the releases are all counted.
-// The counting station is the tick row's actor: the delta writer
-// (uop/applier.go, op bin_uop_delta) puts the station there and leaves the
-// ledger's station column blank.
+// The counting station is the tick row's station_uid, where the delta writer
+// (uop/applier.go, op bin_uop_delta) puts it.
 func ticksAfterReleases(db *sql.DB) (ticksAfterRelease, error) {
 	next := sqlStrings(append(append([]string{}, audit.EpochBumpOps...), audit.OpManifestConfirmed))
 	rows, err := db.Query(`
@@ -300,11 +299,11 @@ func ticksAfterReleases(db *sql.DB) (ticksAfterRelease, error) {
 			       (SELECT MIN(x.id) FROM bin_uop_ledger x
 			         WHERE x.bin_id = l.bin_id AND x.id > l.id AND x.op IN (` + next + `)) AS next_id
 			FROM bin_uop_ledger l WHERE l.op IN (` + sqlStrings(handoffReleaseOps) + `))
-		SELECT r.id, r.bin_id, t.actor, COUNT(t.id), COALESCE(SUM(ABS(t.after_uop - COALESCE(t.before_uop, t.after_uop))), 0)
+		SELECT r.id, r.bin_id, t.station_uid, COUNT(t.id), COALESCE(SUM(ABS(t.after_uop - COALESCE(t.before_uop, t.after_uop))), 0)
 		FROM rel r LEFT JOIN bin_uop_ledger t
 		  ON t.bin_id = r.bin_id AND t.id > r.id AND (r.next_id IS NULL OR t.id < r.next_id)
 		 AND t.reason = 'consume_tick'
-		GROUP BY r.id, r.bin_id, t.actor`)
+		GROUP BY r.id, r.bin_id, t.station_uid`)
 	if err != nil {
 		return ticksAfterRelease{}, err
 	}

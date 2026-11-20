@@ -161,7 +161,7 @@ func TestPressIndex3_R2RebindsTheCarrierItSetOnThePress(t *testing.T) {
 		`{"action":"pickup","node":"` + rear.Name + `"},` +
 		`{"action":"dropoff","node":"` + mid.Name + `"}]`
 	r2 := &orders.Order{
-		EdgeUUID: "pi3-r2", StationID: "line-1", OrderType: dispatch.OrderTypeComplex,
+		EdgeUUID: "pi3-r2", StationUID: "line-1", OrderType: dispatch.OrderTypeComplex,
 		Status: dispatch.StatusInTransit, Quantity: 1, PayloadCode: sd.Payload.Code,
 		ProcessNode: press.Name, DeliveryNode: mid.Name, Coordinated: true, StepsJSON: r2Steps,
 		// bin_id names the REAR carrier on purpose. R2 holds two carriers and has

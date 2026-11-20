@@ -178,7 +178,7 @@ func TestOpenNegativeBins_DatesTheBinByItsExceptionRow(t *testing.T) {
 	testdb.SeedAudit(t, db, b.ID, 4, -13, "bin_uop_delta", "PART-E", crossed)
 	before, after := 4, -13
 	testutil.MustNoErr(t, audit.AppendBinUOPException(db.DB, audit.ExcNegativeCrossing, b.ID,
-		"PART-E", "test", nil, crossed, &before, &after, &after, nil, "bin_uop_delta", nil), "seed exception")
+		"PART-E", "test", "", nil, crossed, &before, &after, &after, nil, "bin_uop_delta", nil), "seed exception")
 
 	// The purge happens: the raw row goes, the exception row stays.
 	_, err = db.DB.Exec(`DELETE FROM bin_uop_ledger WHERE bin_id = $1`, b.ID)

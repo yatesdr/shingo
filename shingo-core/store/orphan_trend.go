@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // orphan_trend.go — Stage 5.7's reads: the orphan rate over time, and the
@@ -104,16 +105,18 @@ func (db *DB) OrphanRateBuckets(since time.Time, bucket time.Duration) ([]Orphan
 // Bounded by station count, which is the plant's cell count. Unlike
 // ListOrphanFindings this is safe to render whole.
 func (db *DB) SummarizeOrphansBySite() ([]OrphanSite, error) {
+	// Grouped by the requester, the value station_id held before v185: a Core
+	// actor's orphans (the Kafka test tab's, say) stay under its name.
 	rows, err := db.Query(`
-		SELECT station_id,
+		SELECT `+helpers.RequesterSQL("")+` AS st,
 		       COUNT(*) FILTER (WHERE orphan_aged_at IS NULL)     AS live,
 		       COUNT(*) FILTER (WHERE orphan_aged_at IS NOT NULL) AS aged,
 		       COUNT(*)                                           AS total,
 		       MIN(created_at) FILTER (WHERE orphan_aged_at IS NULL) AS oldest_live
 		  FROM orders
 		 WHERE origin_class = $1
-		 GROUP BY station_id
-		 ORDER BY live DESC, total DESC, station_id`, protocol.OriginClassOrphan)
+		 GROUP BY st
+		 ORDER BY live DESC, total DESC, st`, protocol.OriginClassOrphan)
 	if err != nil {
 		return nil, fmt.Errorf("summarize orphans by site: %w", err)
 	}

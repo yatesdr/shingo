@@ -259,7 +259,7 @@ func TestKanbanSurplus_ReTypeEndToEnd(t *testing.T) {
 		t.Fatalf("the send-out is %s: %s", back.Status, back.QueueReason)
 	}
 	r.sim.DriveSimpleLifecycle(back.VendorOrderID)
-	r.eng.Dispatcher().HandleOrderReceipt(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: back.StationID}},
+	r.eng.Dispatcher().HandleOrderReceipt(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: back.StationUID}},
 		&protocol.OrderReceipt{OrderUUID: back.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1})
 	if s := st(); s.Resident != 1 || s.Coming != 0 {
 		t.Errorf("home: %+v, want one resident totes, nothing coming", s)
@@ -507,7 +507,7 @@ func TestKanbanSurplus_CoverMovingAwayDrivesIt(t *testing.T) {
 		t.Helper()
 		id := fmt.Sprintf("c0c0c0c0-0000-4000-8000-%012d", r.k.ID)
 		testutil.MustNoErr(t, r.db.UpsertDemandOrigin(store.DemandOrigin{OriginID: id, Revision: 1, EpisodeKey: "co|" + id,
-			Kind: protocol.EpisodeKindChangeover, StationID: "sp-edge", ProcessID: process, CoreNodeName: support,
+			Kind: protocol.EpisodeKindChangeover, StationUID: "sp-edge", ProcessID: process, CoreNodeName: support,
 			PayloadCode: part, OpenedAt: time.Now().UTC()}), "open the changeover")
 	}
 	setup := func(t *testing.T, name string) (*surplusRig, string) {
@@ -611,7 +611,7 @@ func TestKanbanSurplus_R2Shape(t *testing.T) {
 
 	id := "c0c0c0c0-0000-4000-8000-000000000221"
 	testutil.MustNoErr(t, r.db.UpsertDemandOrigin(store.DemandOrigin{OriginID: id, Revision: 1, EpisodeKey: "co|" + id,
-		Kind: protocol.EpisodeKindChangeover, StationID: "sp-edge", ProcessID: "SPR2", CoreNodeName: "SP-K-SUPPORT",
+		Kind: protocol.EpisodeKindChangeover, StationUID: "sp-edge", ProcessID: "SPR2", CoreNodeName: "SP-K-SUPPORT",
 		PayloadCode: "SPR2-T", OpenedAt: time.Now().UTC()}), "open the changeover")
 	m := r.tick(t)
 	tt := mntState(t, m, "SP-K", "SP-TOTES")

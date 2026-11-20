@@ -27,7 +27,6 @@ import (
 // accepted, outranks any refusal on record.
 type IntakeRefusal struct {
 	EdgeUUID  string
-	StationID string
 	ErrorCode string
 	Detail    string
 	RefusedAt time.Time
@@ -35,16 +34,15 @@ type IntakeRefusal struct {
 
 // RecordIntakeRefusal stores a refusal. A repeat refusal of the same uuid
 // replaces the earlier one, so the partner's failure quotes the latest reason.
-func RecordIntakeRefusal(db *sql.DB, edgeUUID, stationID, code, detail string) error {
+func RecordIntakeRefusal(db *sql.DB, edgeUUID, code, detail string) error {
 	_, err := db.Exec(`
-		INSERT INTO order_intake_refusals (edge_uuid, station_id, error_code, detail, refused_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO order_intake_refusals (edge_uuid, error_code, detail, refused_at)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (edge_uuid) DO UPDATE SET
-			station_id = EXCLUDED.station_id,
 			error_code = EXCLUDED.error_code,
 			detail     = EXCLUDED.detail,
 			refused_at = EXCLUDED.refused_at`,
-		edgeUUID, stationID, code, detail, clock.Now().UTC())
+		edgeUUID, code, detail, clock.Now().UTC())
 	return err
 }
 
@@ -53,9 +51,9 @@ func RecordIntakeRefusal(db *sql.DB, edgeUUID, stationID, code, detail string) e
 func GetIntakeRefusal(db *sql.DB, edgeUUID string) (*IntakeRefusal, error) {
 	r := &IntakeRefusal{}
 	err := db.QueryRow(`
-		SELECT edge_uuid, station_id, error_code, detail, refused_at
+		SELECT edge_uuid, error_code, detail, refused_at
 		FROM order_intake_refusals WHERE edge_uuid = $1`, edgeUUID).
-		Scan(&r.EdgeUUID, &r.StationID, &r.ErrorCode, &r.Detail, &r.RefusedAt)
+		Scan(&r.EdgeUUID, &r.ErrorCode, &r.Detail, &r.RefusedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

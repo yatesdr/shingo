@@ -29,7 +29,7 @@ func TestCoverage_CellConfig(t *testing.T) {
 
 	// Insert a composite cell.
 	cfg := heartbeat.CellConfig{
-		CellID: "SNF2", Station: "plant-a.line-1", DisplayName: "Assembly NF 2",
+		CellLabel: "SNF2", StationUID: "plant-a.line-1", DisplayName: "Assembly NF 2",
 		PrimaryProcessID: 100, SubProcessIDs: []int64{200, 300},
 	}
 	if err := heartbeat.UpsertCellConfig(db.DB, cfg); err != nil {
@@ -40,7 +40,7 @@ func TestCoverage_CellConfig(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetCellConfig: ok=%v err=%v", ok, err)
 	}
-	if got.PrimaryProcessID != 100 || got.DisplayName != "Assembly NF 2" || got.Station != "plant-a.line-1" {
+	if got.PrimaryProcessID != 100 || got.DisplayName != "Assembly NF 2" || got.StationUID != "plant-a.line-1" {
 		t.Errorf("GetCellConfig fields = %+v", got)
 	}
 	if len(got.SubProcessIDs) != 2 || got.SubProcessIDs[0] != 200 || got.SubProcessIDs[1] != 300 {
@@ -75,9 +75,9 @@ func TestCoverage_CellConfig(t *testing.T) {
 		t.Fatalf("EnsurePartitions: %v", err)
 	}
 	ticks := []heartbeat.PartEvent{
-		{CellID: "plant-a.line-1", ProcessID: 100, StyleID: 7, RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 1},
-		{CellID: "plant-a.line-1", ProcessID: 100, StyleID: 7, RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 2},
-		{CellID: "plant-a.line-1", ProcessID: 200, StyleID: 9, RecordedAt: now.Add(-90 * time.Second), EdgeSnapshotID: 3, Delta: 1, CountValue: 1},
+		{StationUID: "plant-a.line-1", ProcessID: 100, StyleID: 7, RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 1},
+		{StationUID: "plant-a.line-1", ProcessID: 100, StyleID: 7, RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 2},
+		{StationUID: "plant-a.line-1", ProcessID: 200, StyleID: 9, RecordedAt: now.Add(-90 * time.Second), EdgeSnapshotID: 3, Delta: 1, CountValue: 1},
 	}
 	if _, rej := heartbeat.InsertPartEvents(db.DB, ticks); rej != nil {
 		t.Fatalf("InsertPartEvents rejected %v", rej)

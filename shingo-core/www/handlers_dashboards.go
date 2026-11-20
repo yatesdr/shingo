@@ -242,8 +242,9 @@ func (h *Handlers) apiDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiStations returns the selectable station IDs for dashboard area scoping.
-// The board filter matches orders.station_id exactly, so the list is built
-// from values that can actually match: the distinct stations seen on orders,
+// The board filter matches an order's requester exactly (station_uid, or a Core
+// actor in requested_by), so the list is built from values that can actually
+// match: the distinct requesters seen on orders,
 // plus registered edges (station ID, and station.line composites for each
 // registered line — so a fresh line is offerable before its first order).
 // The dashboards admin renders these as checkboxes instead of a free-text
@@ -267,10 +268,10 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 	// composition was wrong for every plant, always. The field is retired.
 	edges, eErr := h.engine.NodeService().ListEdges()
 	for _, e := range edges {
-		if e.StationID == "" {
+		if e.StationUID == "" {
 			continue
 		}
-		set[e.StationID] = true
+		set[e.StationUID] = true
 	}
 	if oErr != nil && eErr != nil {
 		h.jsonError(w, oErr.Error(), http.StatusInternalServerError)
@@ -280,9 +281,9 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 	//
 	// Every consumer of this list is a picker or a filter, and each one sends a
 	// value back: dashboards.stations_json stores the selected ids,
-	// cell_config.station stores the typed one, and the missions/overview
+	// cell_config.station_uid stores the typed one, and the missions/overview
 	// filters put theirs in a query string that is matched against
-	// orders.station_id exactly. So the option carries both — the caller binds
+	// an order's requester exactly. So the option carries both — the caller binds
 	// `id` to the value it will submit and `label` to the text a person reads.
 	// Collapsing them back into one string is how a display name ends up in a
 	// stored column, which is the failure the whole display-name split exists

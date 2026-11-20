@@ -22,9 +22,9 @@ type RegistryEdge struct {
 	// the wire. Everything that made a rename dangerous lived in the fact that
 	// this and StationUID used to be one column.
 	DisplayName string `json:"display_name"`
-	// StationID is the transport routing selector — protocol.Address.Station.
-	// Its value IS StationUID.
-	StationID     string     `json:"station_id"`
+	// The transport routing selector (protocol.Address.Station) is StationUID
+	// itself; edge_registry.station_id, which only ever repeated it, is gone
+	// (v185).
 	Hostname      string     `json:"hostname"`
 	Version       string     `json:"version"`
 	RegisteredAt  time.Time  `json:"registered_at"`

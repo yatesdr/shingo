@@ -50,7 +50,7 @@ func TestOriginStamp_SurvivesTheRoundTrip(t *testing.T) {
 	db := testDB(t)
 
 	attached := &orders.Order{
-		EdgeUUID: "uuid-origin-rt-attached", StationID: "line-1",
+		EdgeUUID: "uuid-origin-rt-attached", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusPending,
 		OriginID: testOriginID, OriginClass: protocol.OriginClassAttached,
 	}
@@ -63,7 +63,7 @@ func TestOriginStamp_SurvivesTheRoundTrip(t *testing.T) {
 	// "" — origin_id is a UUID column that rejects the empty string outright,
 	// and the partial index idx_orders_origin_id keys on IS NOT NULL.
 	noDemand := &orders.Order{
-		EdgeUUID: "uuid-origin-rt-nodemand", StationID: "line-1",
+		EdgeUUID: "uuid-origin-rt-nodemand", StationUID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending,
 		OriginClass: protocol.OriginClassNoDemand,
 	}
@@ -170,7 +170,7 @@ func TestOriginPropagation_ReshuffleChildrenInheritFromTheBuriedParent(t *testin
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent := &orders.Order{
 		EdgeUUID:    "uuid-buried-origin",
-		StationID:   "line-1",
+		StationUID:  "line-1",
 		OrderType:   OrderTypeComplex,
 		Status:      StatusQueued,
 		Quantity:    1,
@@ -216,14 +216,14 @@ func TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID(t *testing.T)
 
 	// A decoy sharing the station and payload, holding a DIFFERENT origin.
 	decoy := &orders.Order{
-		EdgeUUID: "uuid-compound-decoy", StationID: "line-1",
+		EdgeUUID: "uuid-compound-decoy", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusQueued,
 		OriginID: testOriginIDAlt, OriginClass: protocol.OriginClassAttached,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(decoy), "create decoy")
 
 	parent := &orders.Order{
-		EdgeUUID: "uuid-compound-origin", StationID: "line-1",
+		EdgeUUID: "uuid-compound-origin", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusQueued,
 		OriginID: testOriginID, OriginClass: protocol.OriginClassAttached,
 	}
@@ -265,7 +265,7 @@ func TestOriginPropagation_CompoundChildrenInheritNoDemandToo(t *testing.T) {
 	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
 	parent := &orders.Order{
-		EdgeUUID: "uuid-compound-nodemand", StationID: "line-1",
+		EdgeUUID: "uuid-compound-nodemand", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusQueued,
 		OriginClass: protocol.OriginClassNoDemand,
 	}
@@ -325,7 +325,7 @@ func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
 	decoy := &orders.Order{
-		EdgeUUID: "uuid-dig-seam-decoy", StationID: "line-1",
+		EdgeUUID: "uuid-dig-seam-decoy", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusQueued,
 		OriginID: testOriginIDAlt, OriginClass: protocol.OriginClassAttached,
 	}
@@ -335,7 +335,7 @@ func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	// status not at all — that is its caller's job — so the seam can be entered
 	// against a parent in any state, which is what makes it the seam.
 	parent := &orders.Order{
-		EdgeUUID: "uuid-dig-seam-origin", StationID: "line-1",
+		EdgeUUID: "uuid-dig-seam-origin", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusReshuffling,
 		OriginID: testOriginID, OriginClass: protocol.OriginClassAttached,
 	}

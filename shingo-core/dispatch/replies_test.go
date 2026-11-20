@@ -33,8 +33,8 @@ func TestReplySender_SendAck(t *testing.T) {
 	if msg.MsgType != "order.ack" {
 		t.Errorf("event_type = %q, want %q", msg.MsgType, "order.ack")
 	}
-	if msg.StationID != "line-1" {
-		t.Errorf("station_id = %q, want %q", msg.StationID, "line-1")
+	if msg.DstStation != "line-1" {
+		t.Errorf("dst_station = %q, want %q", msg.DstStation, "line-1")
 	}
 
 	var replyEnv protocol.Envelope
@@ -149,7 +149,7 @@ func TestReplySender_SendReply_EnvelopeConstruction(t *testing.T) {
 	if msg.MsgType != "order.custom" {
 		t.Errorf("event_type = %q, want %q", msg.MsgType, "order.custom")
 	}
-	if msg.StationID != "edge-station" {
-		t.Errorf("station_id = %q, want %q", msg.StationID, "edge-station")
+	if msg.DstStation != "edge-station" {
+		t.Errorf("dst_station = %q, want %q", msg.DstStation, "edge-station")
 	}
 }

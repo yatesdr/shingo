@@ -26,7 +26,7 @@ func TestSourcingFeed_TheHeartbeatSendsTheStationItsSnapshot(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	const st = "ST-SRC-SNAP"
-	_, err := db.EnrollEdge(st, "", st)
+	_, err := db.EnrollEdge(st, "")
 	testutil.MustNoErr(t, err, "enroll edge")
 
 	resp := &feedsPinResponder{}
@@ -92,7 +92,7 @@ func TestSourcingFeed_TheHeartbeatSendsTheStationItsSnapshot(t *testing.T) {
 }
 
 // TestHandlePlantClaims_RecordsThePublishingStation: the plant.claims ingest
-// records the envelope's station against the process (process_styles.station_id,
+// records the envelope's station against the process (process_styles.station_uid,
 // owner ruling 2026-09-25), and a second station publishing the same process
 // becomes the recorded one — the last writer.
 func TestHandlePlantClaims_RecordsThePublishingStation(t *testing.T) {

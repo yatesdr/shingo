@@ -272,7 +272,7 @@ func TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	const st = "stn-eph-test"
-	_, err := db.EnrollEdge(st, "", st)
+	_, err := db.EnrollEdge(st, "")
 	testutil.MustNoErr(t, err, "enroll edge")
 
 	named := func(wire bool, verified string) (reg *protocol.EdgeRegistered, hb *protocol.EdgeHeartbeatAck) {

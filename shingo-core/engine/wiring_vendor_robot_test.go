@@ -77,7 +77,7 @@ func TestVendorStatus_RobotID_FirstAssignment(t *testing.T) {
 	outbox, _ := db.ListPendingOutbox(50)
 	var foundWaybillWithRobot bool
 	for _, msg := range outbox {
-		if msg.MsgType != protocol.TypeOrderWaybill || msg.StationID != order.StationID {
+		if msg.MsgType != protocol.TypeOrderWaybill || msg.DstStation != order.StationUID {
 			continue
 		}
 		var env protocol.Envelope
@@ -284,7 +284,7 @@ func TestVendorStatus_RobotID_EveryUpdateCarriesTheRobot(t *testing.T) {
 	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-99")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 	delivered := testdb.AssertOrderStatus(t, db, "rid-order-1", "delivered")
-	if _, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(delivered, delivered.StationID, "confirmed", 1); err != nil {
+	if _, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(delivered, delivered.StationUID, "confirmed", 1); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
 
@@ -385,7 +385,7 @@ func TestSimpleDispatch_EmitsAckAndWaybill(t *testing.T) {
 		if msg.MsgType != protocol.TypeOrderAck && msg.MsgType != protocol.TypeOrderWaybill {
 			continue
 		}
-		if msg.StationID != order.StationID {
+		if msg.DstStation != order.StationUID {
 			continue
 		}
 		var env protocol.Envelope

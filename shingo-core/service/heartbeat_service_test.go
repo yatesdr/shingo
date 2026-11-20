@@ -16,11 +16,11 @@ func TestDeriveCellConfig(t *testing.T) {
 		{"process_id": 10, "style_id": 14, "plc_name": "PRESS-1", "tag_name": "T1"},
 		{"process_id": 20, "style_id": 14, "plc_name": "PRESS-1", "tag_name": "T2"},
 	})
-	cfg, ok := deriveCellConfig(store.EdgeCell{Station: "SNF2", CellLabel: "PRESS-1", Bindings: bindings})
+	cfg, ok := deriveCellConfig(store.EdgeCell{StationUID: "SNF2", CellLabel: "PRESS-1", Bindings: bindings})
 	if !ok {
 		t.Fatal("expected a derived cell")
 	}
-	if cfg.CellID != "PRESS-1" || cfg.Station != "SNF2" || cfg.DisplayName != "PRESS-1" {
+	if cfg.CellLabel != "PRESS-1" || cfg.StationUID != "SNF2" || cfg.DisplayName != "PRESS-1" {
 		t.Errorf("identity wrong: %+v", cfg)
 	}
 	if cfg.PrimaryProcessID != 10 {

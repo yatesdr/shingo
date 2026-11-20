@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingocore/domain"
 )
 
 // --- Kafka Test Orders ---
@@ -52,7 +53,7 @@ func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	cfg := h.engine.AppConfig()
 	orderUUID := uuid.New().String()
 
-	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-test"}
+	src := protocol.Address{Role: protocol.RoleEdge, Station: domain.RequesterTest}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
 
 	orderReq := &protocol.OrderRequest{
@@ -109,7 +110,7 @@ func (h *Handlers) apiTestOrderCancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.engine.AppConfig()
-	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-test"}
+	src := protocol.Address{Role: protocol.RoleEdge, Station: domain.RequesterTest}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
 
 	cancelReq := &protocol.OrderCancel{
@@ -158,7 +159,7 @@ func (h *Handlers) apiTestOrderReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := h.engine.AppConfig()
-	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-test"}
+	src := protocol.Address{Role: protocol.RoleEdge, Station: domain.RequesterTest}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
 
 	receiptReq := &protocol.OrderReceipt{
@@ -246,7 +247,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 	}
 
 	cfg := h.engine.AppConfig()
-	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-test"}
+	src := protocol.Address{Role: protocol.RoleEdge, Station: domain.RequesterTest}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
 
 	var results []map[string]any

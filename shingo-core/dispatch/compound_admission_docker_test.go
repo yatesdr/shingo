@@ -67,7 +67,7 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-parent"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = protocol.StatusReshuffling
 	})
 	// The parent owns the source lane's dig — its own legs must still pass.
@@ -76,7 +76,7 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 	}
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-child"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = protocol.OrderTypeMove
 		o.Status = StatusPending
 		o.ParentOrderID = &parent.ID
@@ -109,7 +109,7 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 
 	parent2 := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-parent2"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = protocol.StatusReshuffling
 	})
 	// parent2 owns its own source dig, exactly as parent did — so the source lane
@@ -125,7 +125,7 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 
 	child2 := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-child2"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = protocol.OrderTypeMove
 		o.Status = StatusPending
 		o.ParentOrderID = &parent2.ID
@@ -179,7 +179,7 @@ func TestCompound_ChildStillPassesItsOwnParentsDig(t *testing.T) {
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-own-parent"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = protocol.StatusReshuffling
 	})
 	if err := reservations.AcquireLanes(db.DB, parent.ID, reservations.ModeDig, "test", laneID); err != nil {
@@ -187,7 +187,7 @@ func TestCompound_ChildStillPassesItsOwnParentsDig(t *testing.T) {
 	}
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-own-child"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = protocol.OrderTypeMove
 		o.Status = StatusPending
 		o.ParentOrderID = &parent.ID

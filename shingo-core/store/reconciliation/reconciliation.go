@@ -192,7 +192,7 @@ type Anomaly struct {
 	RecommendedAction string     `json:"recommended_action,omitempty"`
 	OrderID           *int64     `json:"order_id,omitempty"`
 	BinID             *int64     `json:"bin_id,omitempty"`
-	StationID         string     `json:"station_id,omitempty"`
+	StationUID        string     `json:"station_uid,omitempty"`
 	OrderStatus       string     `json:"order_status,omitempty"`
 	BinStatus         string     `json:"bin_status,omitempty"`
 	Detail            string     `json:"detail,omitempty"`
@@ -608,10 +608,10 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 func listStaleEdgeAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	var anomalies []*Anomaly
 	rows, err := db.Query(`
-		SELECT station_id, last_heartbeat
+		SELECT station_uid, last_heartbeat
 		FROM edge_registry
 		WHERE status='stale'
-		ORDER BY station_id`)
+		ORDER BY station_uid`)
 	if err != nil {
 		return nil, err
 	}
@@ -627,7 +627,7 @@ func listStaleEdgeAnomalies(db *sql.DB) ([]*Anomaly, error) {
 			Severity:          "degraded",
 			Issue:             "edge_marked_stale",
 			RecommendedAction: "request_reregistration",
-			StationID:         stationID,
+			StationUID:        stationID,
 			ObservedAt:        observedAt,
 		})
 	}
@@ -1089,7 +1089,7 @@ func listClaimsInsideForeignDugLanes(db *sql.DB) ([]*Anomaly, error) {
 			RecommendedAction: "release_the_dig_lane",
 			OrderID:           &holder,
 			BinID:             binID,
-			StationID:         nodeName,
+			StationUID:        nodeName,
 			Detail: fmt.Sprintf("order %d holds a %s at %s, inside lane %s which order %d's dig holds. "+
 				"Neither can proceed: the dig waits for this %s to move, and the dig's own lock is "+
 				"what refuses order %d entry. Release order %d's lane. NOTE: reservations.acquire "+

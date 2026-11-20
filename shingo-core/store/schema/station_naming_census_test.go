@@ -83,61 +83,12 @@ const (
 // snapshot, as table.column, with the column it becomes ("table.column",
 // nameDropped or nameTableDropped), and every end-state uid column the
 // snapshot lacks that no rename makes (nameAdded).
-var knownNamingViolations = map[string]string{
-	"bin_loaders.edge_station_uid":          "bin_loaders.station_uid", // one station role: the bare name
-	"bin_uop_delta_daily.actor":             "bin_uop_delta_daily.station_uid",
-	"bin_uop_exception.station_uid":         nameAdded, // the uid out of actor, and hold_dropped's detail station
-	"bin_uop_ledger.station":                "bin_uop_ledger.station_uid",
-	"cell_config.station":                   "cell_config.station_uid",
-	"cell_part_events.cell_id":              "cell_part_events.station_uid",
-	"demand_origins.station_id":             "demand_origins.station_uid",
-	"demand_registry.station_id":            "demand_registry.station_uid",
-	"downtime_event_dedup.station":          nameTableDropped,
-	"downtime_events.station":               nameTableDropped,
-	"edge_cells.station":                    "edge_cells.station_uid",
-	"edge_lineside_reports.station":         "edge_lineside_reports.station_uid",
-	"edge_registry.station_id":              nameDropped, // folded into station_uid first
-	"inbox.station_id":                      nameDropped,
-	"inventory_delta_dedup.station":         "inventory_delta_dedup.station_uid",
-	"kanbans.station_id":                    "kanbans.station_uid",
-	"lineside_buckets.station":              "lineside_buckets.station_uid",
-	"mission_events.robot_station":          "mission_events.rds_station",
-	"mission_telemetry.station_id":          "mission_telemetry.station_uid",
-	"node_stations.station_id":              "node_stations.station_uid",
-	"order_intake_refusals.station_id":      nameDropped, // the reader search: GetIntakeRefusal scans it into a field nothing reads
-	"orders.projects_to":                    "orders.projects_to_station_uid",
-	"orders.station_id":                     "orders.station_uid",
-	"outbox.station_id":                     "outbox.dst_station",
-	"plant_claims_reports.station_id":       "plant_claims_reports.station_uid",
-	"process_styles.station_id":             "process_styles.station_uid",
-	"robot_confidence_low.last_station":     "robot_confidence_low.last_rds_station",
-	"robot_confidence_low.station":          "robot_confidence_low.rds_station",
-	"robot_confidence_samples.last_station": "robot_confidence_samples.last_rds_station",
-	"robot_confidence_samples.station":      "robot_confidence_samples.rds_station",
-	"robot_lidar_hours.station":             "robot_lidar_hours.rds_station",
-	"supply_refusals.station_id":            nameDropped,
-}
+var knownNamingViolations = map[string]string{}
 
 // knownStationIndexNames is every index or constraint that covers a column
 // in knownNamingViolations, or whose name breaks the column rule, as
 // "table.name" with the columns it covers.
-var knownStationIndexNames = map[string]string{
-	"bin_uop_delta_daily.bin_uop_delta_daily_pkey":                               "day, bin_id, epoch_seq, payload_code, reason, actor",
-	"cell_config.cell_config_station_idx":                                        "station",
-	"cell_part_events.idx_cell_part_events_cell_time":                            "cell_id, recorded_at",
-	"cell_part_events.uq_cell_part_events_tick":                                  "cell_id, edge_snapshot_id, recorded_at",
-	"demand_registry.demand_registry_station_id_core_node_name_payload_code_key": "station_id, core_node_name, payload_code",
-	"downtime_event_dedup.downtime_event_dedup_pkey":                             "station, edge_event_id",
-	"downtime_events.idx_downtime_events_station_time":                           "station, started_at",
-	"edge_cells.edge_cells_pkey":                                                 "station, cell_label",
-	"edge_cells.idx_edge_cells_station":                                          "station",
-	"edge_lineside_reports.edge_lineside_reports_pkey":                           "station, core_node_name, payload_code",
-	"edge_registry.edge_registry_station_id_key":                                 "station_id",
-	"inventory_delta_dedup.inventory_delta_dedup_pkey":                           "station, scope_kind, scope_key, epoch",
-	"mission_telemetry.idx_mission_telemetry_station":                            "station_id",
-	"node_stations.idx_node_stations_station":                                    "station_id",
-	"node_stations.node_stations_pkey":                                           "node_id, station_id",
-}
+var knownStationIndexNames = map[string]string{}
 
 func TestStationNaming_TheSnapshotFollowsTheRule(t *testing.T) {
 	t.Parallel()

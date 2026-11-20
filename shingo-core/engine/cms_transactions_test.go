@@ -305,7 +305,7 @@ func TestOrdinaryDelivery_StampsRobotAndOrder(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "mover-1",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "delivered",
 		SourceNode:   srcRoot.Name + "." + srcSlot.Name,

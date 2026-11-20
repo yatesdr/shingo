@@ -25,8 +25,9 @@ import (
 // disagrees with Core's replica. One row is one episode: occurred_at is when it
 // opened, recovered_at when a later report from the same station no longer
 // showed it. op carries the class (the ReportDivergence* constants in the
-// service), actor the station, bin_id the carrier (NULL for a bucket), and
-// detail the key and the two sides as first seen.
+// service), station_uid the station (actor is blank: the station says who),
+// bin_id the carrier (NULL for a bucket), and detail the key and the two sides
+// as first seen.
 const ExcReportDivergence = "report_divergence"
 
 // LinesideReportCarrier is one row the comparison needs from the report: a
@@ -115,7 +116,7 @@ func (db *DB) LinesideCoreSide(station string, carriers []LinesideReportCarrier,
 			UNION
 			SELECT e.core_node_name
 			FROM edge_lineside_reports e
-			WHERE e.station = $1
+			WHERE e.station_uid = $1
 			  AND EXISTS (
 				SELECT 1 FROM style_claims sc
 				JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
@@ -134,7 +135,7 @@ func (db *DB) LinesideCoreSide(station string, carriers []LinesideReportCarrier,
 		FROM counted c
 		LEFT JOIN r ON r.bin_id = c.id
 		LEFT JOIN inventory_delta_dedup d
-		       ON d.station = $1 AND d.scope_kind = $4 AND d.scope_key = c.id::text AND d.epoch = r.epoch
+		       ON d.station_uid = $1 AND d.scope_kind = $4 AND d.scope_key = c.id::text AND d.epoch = r.epoch
 		WHERE r.bin_id IS NOT NULL OR COALESCE(c.at_seat, false)
 		UNION ALL
 		SELECT 'bucket', 0, lb.core_node_name, lb.payload_code, 0, SUM(lb.qty)::int, false, 0
@@ -199,7 +200,7 @@ type reportDivergenceDetail struct {
 // (kind, occurred_at) WHERE recovered_at IS NULL.
 func (db *DB) OpenReportDivergenceKeys(station string) (map[string]int64, error) {
 	rows, err := db.Query(`SELECT id, COALESCE(detail->>'key', '') FROM bin_uop_exception
-		WHERE kind = $1 AND recovered_at IS NULL AND actor = $2`, ExcReportDivergence, station)
+		WHERE kind = $1 AND recovered_at IS NULL AND station_uid = $2`, ExcReportDivergence, station)
 	if err != nil {
 		return nil, fmt.Errorf("open report divergences %s: %w", station, err)
 	}
@@ -241,8 +242,8 @@ func (db *DB) RecordReportDivergences(station string, open []ReportDivergence, c
 			bin = *d.BinID
 		}
 		if _, err := tx.Exec(`INSERT INTO bin_uop_exception
-			(kind, bin_id, payload_code, actor, occurred_at, op, detail)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			(kind, bin_id, payload_code, actor, station_uid, occurred_at, op, detail)
+			VALUES ($1, $2, $3, '', $4, $5, $6, $7)`,
 			ExcReportDivergence, bin, d.Payload, station, at.UTC(), d.Class, det); err != nil {
 			return fmt.Errorf("open report divergence %s %s: %w", station, d.Key, err)
 		}
@@ -281,7 +282,7 @@ type OpenReportDivergence struct {
 // ListOpenReportDivergences returns every open report_divergence episode,
 // oldest first. Blank on a good day.
 func (db *DB) ListOpenReportDivergences() ([]OpenReportDivergence, error) {
-	rows, err := db.Query(`SELECT e.id, e.op, e.actor, e.bin_id, COALESCE(b.label, ''), e.payload_code,
+	rows, err := db.Query(`SELECT e.id, e.op, e.station_uid, e.bin_id, COALESCE(b.label, ''), e.payload_code,
 		       e.occurred_at, COALESCE(e.detail, '{}'::jsonb)
 		FROM bin_uop_exception e
 		LEFT JOIN bins b ON b.id = e.bin_id

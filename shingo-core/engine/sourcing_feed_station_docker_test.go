@@ -17,7 +17,7 @@ import (
 )
 
 // feedRow is one sourcing report as it left Core: the station it was addressed
-// to (the outbox row's station_id — "*" is protocol.StationBroadcast), whether
+// to (the outbox row's dst_station — "*" is protocol.StationBroadcast), whether
 // it was a snapshot, and the processes it carried.
 type feedRow struct {
 	station   string
@@ -30,7 +30,7 @@ type feedRow struct {
 // Edge would receive, addressed as it would be addressed.
 func sourcingFeed(t *testing.T, db *store.DB, since int64) []feedRow {
 	t.Helper()
-	rows, err := db.DB.Query(`SELECT station_id, payload FROM outbox WHERE id > $1 ORDER BY id`, since)
+	rows, err := db.DB.Query(`SELECT dst_station, payload FROM outbox WHERE id > $1 ORDER BY id`, since)
 	testutil.MustNoErr(t, err, "read the outbox")
 	defer rows.Close()
 	var out []feedRow
@@ -102,7 +102,7 @@ func feedString(feed []feedRow) string {
 }
 
 // TestSourcingFeed_EachStationGetsItsOwnProcesses is the per-station feed
-// (Stage A2, the Pi diet; the mapping is process_styles.station_id by owner
+// (Stage A2, the Pi diet; the mapping is process_styles.station_uid by owner
 // ruling 2026-09-25). It replaced a characterisation pinned at the base
 // (3e9c09b6): every full pass sent a snapshot of the WHOLE plant to every
 // station ("*") — PRESS-B's verdicts written on PRESS-A's Pi, where nothing

@@ -63,7 +63,7 @@ func (e *CATIDTakenError) Error() string {
 // type by Core's code). It is the audit row's new_value, and a repeat is a
 // submit whose record equals the stored one.
 type floorSubmit struct {
-	Station string `json:"station"`
+	StationUID string `json:"station_uid"`
 	protocol.PartCreateRequest
 }
 
@@ -113,7 +113,7 @@ func (s *PayloadService) CreateFromFloor(station string, req protocol.PartCreate
 	if err := s.checkSets(sets); err != nil {
 		return nil, false, err
 	}
-	submit := floorSubmit{Station: station, PartCreateRequest: protocol.PartCreateRequest{
+	submit := floorSubmit{StationUID: station, PartCreateRequest: protocol.PartCreateRequest{
 		ProcessID: req.ProcessID, PartNumber: p.Code, StandardPack: p.UOPCapacity, BinTypeCode: bt.Code,
 		CATID: catid, ToteLayers: p.ToteLayers, UOPPerTote: p.UOPPerTote,
 	}}
@@ -217,7 +217,7 @@ func (s *PayloadService) FloorMade() (map[int64]*FloorMade, error) {
 			continue
 		}
 		if _, seen := out[e.EntityID]; !seen {
-			out[e.EntityID] = &FloorMade{Station: made.Station, ProcessID: made.ProcessID, At: e.CreatedAt}
+			out[e.EntityID] = &FloorMade{Station: made.StationUID, ProcessID: made.ProcessID, At: e.CreatedAt}
 		}
 	}
 	return out, nil

@@ -420,13 +420,13 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		// bin_uop_delta rows.
 		if err := audit.AppendBinUOPOverride(tx, d.BinID, before, before,
 			audit.OpStaleEpochDropped, "service/inventory_delta_service.go:staleEpoch",
-			nil, d.PayloadCode, station, metadata); err != nil {
+			nil, d.PayloadCode, "", station, metadata); err != nil {
 			return err
 		}
 		// The permanent exceptions ledger (v93) — this drop is one of the
 		// four durable kinds. Same transaction, same metadata blob.
 		if err := audit.AppendBinUOPException(tx, audit.ExcStaleEpoch, d.BinID,
-			d.PayloadCode, station, nil, clock.Now().UTC(), &before, &before, nil,
+			d.PayloadCode, "", station, nil, clock.Now().UTC(), &before, &before, nil,
 			nil, audit.OpStaleEpochDropped, metadata); err != nil {
 			return err
 		}
@@ -547,7 +547,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 			}
 			if err := audit.AppendBinUOPOverride(tx, d.BinID, valueBefore, valueBefore,
 				audit.OpPayloadBoundFirstDelta, "service/inventory_delta_service.go:firstDeltaBind",
-				nil, d.PayloadCode, station, metadata); err != nil {
+				nil, d.PayloadCode, "", station, metadata); err != nil {
 				return err
 			}
 		} else {
@@ -567,7 +567,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 			}
 			if err := audit.AppendBinUOPOverride(tx, d.BinID, valueBefore, valueBefore,
 				audit.OpPayloadReboundWithInventory, "service/inventory_delta_service.go:reboundWithInventory",
-				nil, d.PayloadCode, station, metadata); err != nil {
+				nil, d.PayloadCode, "", station, metadata); err != nil {
 				return err
 			}
 			log.Printf("BinUOPDelta payload REBOUND with inventory bin=%d %q→%q units_aboard=%d seq=%d — counting continues; bin flagged for cycle count",
@@ -668,7 +668,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		binNodeID = liftedFrom
 	}
 	if _, err := tx.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id, reason)
+		(bin_id, before_uop, after_uop, op, source, payload_code, station_uid, metadata, node_id, reason)
 		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6, $7, $8)`,
 		d.BinID, valueBefore, valueBefore+eff,
 		d.PayloadCode, station, string(metadata), binNodeID, string(d.Reason),
@@ -686,7 +686,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	switch {
 	case valueBefore >= 0 && newValue < 0:
 		if err := audit.AppendBinUOPException(tx, audit.ExcNegativeCrossing, d.BinID,
-			d.PayloadCode, station, nil, clock.Now().UTC(), &valueBefore, &newValue, nil,
+			d.PayloadCode, "", station, nil, clock.Now().UTC(), &valueBefore, &newValue, nil,
 			nil, "bin_uop_delta", metadata); err != nil {
 			return err
 		}
@@ -785,14 +785,14 @@ func (s *InventoryDeltaService) recordRejectedDelta(station string, d *protocol.
 	}
 	if err := audit.AppendBinUOPOverride(s.db.DB, d.BinID, valueBefore, valueBefore,
 		audit.OpPayloadMismatchDropped, "service/inventory_delta_service.go:payloadMismatch",
-		nil, d.PayloadCode, station, metadata); err != nil {
+		nil, d.PayloadCode, "", station, metadata); err != nil {
 		log.Printf("audit rejected delta bin=%d: %v", d.BinID, err)
 	}
 	// The permanent exceptions ledger (v93), same best-effort contract as the
 	// row above: on s.db outside the rolled-back tx, and a failed write logs
 	// rather than masks the reject.
 	if err := audit.AppendBinUOPException(s.db.DB, audit.ExcPayloadMismatch, d.BinID,
-		d.PayloadCode, station, nil, clock.Now().UTC(), &valueBefore, &valueBefore, nil,
+		d.PayloadCode, "", station, nil, clock.Now().UTC(), &valueBefore, &valueBefore, nil,
 		nil, audit.OpPayloadMismatchDropped, metadata); err != nil {
 		log.Printf("audit rejected-delta exception bin=%d: %v", d.BinID, err)
 	}
@@ -1046,10 +1046,10 @@ func (s *InventoryDeltaService) validateBucketLevel(station string, l *protocol.
 func setBucketLevel(tx *sql.Tx, station string, l *protocol.LinesideBucketLevel) error {
 	var err error
 	if l.Qty > 0 {
-		_, err = tx.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+		_, err = tx.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (core_node_name, payload_code, state)
-			DO UPDATE SET qty = EXCLUDED.qty, station = EXCLUDED.station, updated_at = NOW()`,
+			DO UPDATE SET qty = EXCLUDED.qty, station_uid = EXCLUDED.station_uid, updated_at = NOW()`,
 			station, l.CoreNodeName, l.PayloadCode, string(l.State), l.Qty)
 	} else {
 		_, err = tx.Exec(`DELETE FROM lineside_buckets
@@ -1149,7 +1149,7 @@ func readBinScope(tx *sql.Tx, station, scopeKey string, d *protocol.BinUOPDelta)
 		       COALESCE((SELECT n.name FROM nodes n WHERE n.id = b.node_id), '')
 		FROM bins b
 		LEFT JOIN inventory_delta_dedup dd
-		  ON dd.station=$2 AND dd.scope_kind=$3 AND dd.scope_key=$4 AND dd.epoch=$5
+		  ON dd.station_uid=$2 AND dd.scope_kind=$3 AND dd.scope_key=$4 AND dd.epoch=$5
 		WHERE b.id=$1
 		FOR UPDATE OF b`,
 		d.BinID, station, invDeltaScopeBin, scopeKey, d.Epoch).Scan(&epoch, &lastSeq, &cur.appliedNet, &cur.appliedWindowEnd, &cur.liftedAt, &cur.binCount, &cur.node)
@@ -1222,7 +1222,7 @@ func (s *InventoryDeltaService) refuseAfterLift(tx *sql.Tx, station string, d *p
 		return fmt.Errorf("marshal after-lift metadata bin=%d: %w", d.BinID, err)
 	}
 	if err := audit.AppendBinUOPOverride(tx, d.BinID, cur.binCount, cur.binCount,
-		audit.OpAfterLift, "uop/applier.go:afterLift", nil, d.PayloadCode, station, metadata); err != nil {
+		audit.OpAfterLift, "uop/applier.go:afterLift", nil, d.PayloadCode, "", station, metadata); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1264,7 +1264,7 @@ func (s *InventoryDeltaService) recordEdgeRollback(tx *sql.Tx, station string, d
 	if err := tx.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, d.BinID).Scan(&count); err != nil {
 		return fmt.Errorf("read bin %d for edge-rollback exception: %w", d.BinID, err)
 	}
-	if err := audit.AppendBinUOPException(tx, audit.ExcEdgeRollback, d.BinID, d.PayloadCode, station, nil,
+	if err := audit.AppendBinUOPException(tx, audit.ExcEdgeRollback, d.BinID, d.PayloadCode, "", station, nil,
 		clock.Now().UTC(), &count, &count, nil, nil, audit.OpEdgeRollback, detail); err != nil {
 		return err
 	}
@@ -1315,9 +1315,9 @@ func nullNet(net *int64) sql.NullInt64 {
 // below it carried is carried by the message that passed it.
 func claimDeltaSequence(tx *sql.Tx, station, scopeKind, scopeKey string, epoch, seq int64, net *int64, windowEnd time.Time) (bool, error) {
 	res, err := tx.Exec(`
-		INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, applied_net, applied_window_end, updated_at)
+		INSERT INTO inventory_delta_dedup (station_uid, scope_kind, scope_key, epoch, last_seq, applied_net, applied_window_end, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-		ON CONFLICT (station, scope_kind, scope_key, epoch)
+		ON CONFLICT (station_uid, scope_kind, scope_key, epoch)
 		DO UPDATE SET last_seq = EXCLUDED.last_seq,
 			applied_net = COALESCE(EXCLUDED.applied_net, inventory_delta_dedup.applied_net),
 			applied_window_end = GREATEST(EXCLUDED.applied_window_end, inventory_delta_dedup.applied_window_end),
@@ -1353,11 +1353,11 @@ func claimBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, window
 	err := tx.QueryRow(`
 		WITH prior AS (
 			SELECT last_seq, applied_window_end FROM inventory_delta_dedup
-			WHERE station=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=0
+			WHERE station_uid=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=0
 		), up AS (
-			INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, applied_window_end, updated_at)
+			INSERT INTO inventory_delta_dedup (station_uid, scope_kind, scope_key, epoch, last_seq, applied_window_end, updated_at)
 			VALUES ($1, $2, $3, 0, $4, $5, NOW())
-			ON CONFLICT (station, scope_kind, scope_key, epoch)
+			ON CONFLICT (station_uid, scope_kind, scope_key, epoch)
 			DO UPDATE SET last_seq = EXCLUDED.last_seq,
 				applied_window_end = GREATEST(EXCLUDED.applied_window_end, inventory_delta_dedup.applied_window_end),
 				updated_at = NOW()
@@ -1386,7 +1386,7 @@ func claimBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, window
 func reanchorBucketSequence(tx *sql.Tx, station, scopeKey string, seq int64, windowEnd time.Time) error {
 	if _, err := tx.Exec(`UPDATE inventory_delta_dedup
 		SET last_seq = $4, applied_window_end = $5, updated_at = NOW()
-		WHERE station=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=0`,
+		WHERE station_uid=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=0`,
 		station, invDeltaScopeBucketLevel, scopeKey, seq, nullWindowEnd(windowEnd)); err != nil {
 		return fmt.Errorf("re-anchor dedup station=%s scope=%s/%s seq=%d: %w",
 			station, invDeltaScopeBucketLevel, scopeKey, seq, err)

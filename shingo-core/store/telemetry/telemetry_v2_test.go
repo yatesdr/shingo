@@ -17,7 +17,7 @@ import (
 func seedTerminalOrder(t *testing.T, db *store.DB, uuid, station, status string) {
 	t.Helper()
 	if _, err := db.DB.Exec(
-		`INSERT INTO orders (edge_uuid, station_id, status) VALUES ($1, $2, $3)`,
+		`INSERT INTO orders (edge_uuid, station_uid, status) VALUES ($1, $2, $3)`,
 		uuid, station, status); err != nil {
 		t.Fatalf("seed order %s (%s): %v", uuid, status, err)
 	}
@@ -47,12 +47,12 @@ func TestCoverage_GetStatsV2(t *testing.T) {
 
 	// Durations come from mission_telemetry. duration_ms>0: 1000,2000,3000,1500,500 → avg 1600.
 	mtRows := []*telemetry.Mission{
-		{OrderID: 3001, StationID: "V2", TerminalState: "FINISHED", DurationMS: 1000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 3002, StationID: "V2", TerminalState: "FINISHED", DurationMS: 2000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 3003, StationID: "V2", TerminalState: "delivered", DurationMS: 3000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 3004, StationID: "V2", TerminalState: "FAILED", DurationMS: 1500, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 3005, StationID: "V2", TerminalState: "STOPPED", DurationMS: 500, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 3006, StationID: "V2", TerminalState: "SKIPPED", DurationMS: 0, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 3001, StationUID: "V2", TerminalState: "FINISHED", DurationMS: 1000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 3002, StationUID: "V2", TerminalState: "FINISHED", DurationMS: 2000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 3003, StationUID: "V2", TerminalState: "delivered", DurationMS: 3000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 3004, StationUID: "V2", TerminalState: "FAILED", DurationMS: 1500, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 3005, StationUID: "V2", TerminalState: "STOPPED", DurationMS: 500, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 3006, StationUID: "V2", TerminalState: "SKIPPED", DurationMS: 0, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 	}
 	for _, r := range mtRows {
 		if err := telemetry.UpsertMission(db.DB, r); err != nil {
@@ -109,7 +109,7 @@ func TestCoverage_GetStatsV2_EmptyPopulation(t *testing.T) {
 func seedCompletedOrder(t *testing.T, db *store.DB, uuid, station, status string, at time.Time) {
 	t.Helper()
 	if _, err := db.DB.Exec(
-		`INSERT INTO orders (edge_uuid, station_id, status, completed_at, updated_at) VALUES ($1, $2, $3, $4, $4)`,
+		`INSERT INTO orders (edge_uuid, station_uid, status, completed_at, updated_at) VALUES ($1, $2, $3, $4, $4)`,
 		uuid, station, status, at.UTC()); err != nil {
 		t.Fatalf("seed order %s: %v", uuid, err)
 	}

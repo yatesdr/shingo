@@ -45,7 +45,7 @@ func (s *CoreDataService) HandleSupplyRefusal(env *protocol.Envelope, st *protoc
 			env.Src.Station)
 		return
 	}
-	if err := s.db.ApplySupplyRefusal(*st, env.Src.Station); err != nil {
+	if err := s.db.ApplySupplyRefusal(*st); err != nil {
 		log.Printf("core_handler: apply supply refusal %s/%s action=%s from %s: %v — NOT broadcast, "+
 			"because a refusal every operator saw and no record contains is worse than one nobody saw",
 			st.LoaderNode, st.PayloadCode, st.Action, env.Src.Station, err)

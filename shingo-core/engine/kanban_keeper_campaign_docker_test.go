@@ -338,7 +338,7 @@ func TestCampaign_S4_DigChildDoesNotInflateAsked(t *testing.T) {
 	}
 	parent := roots[0]
 	child := &orders.Order{
-		EdgeUUID: "cmp-s4-dig-child", StationID: "test-core",
+		EdgeUUID: "cmp-s4-dig-child", StationUID: "test-core",
 		OrderType: protocol.OrderTypeMove, Status: protocol.StatusQueued,
 		Quantity: 1, OriginID: origin, ParentOrderID: &parent.ID,
 	}

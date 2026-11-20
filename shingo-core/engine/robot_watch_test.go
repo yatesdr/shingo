@@ -130,10 +130,10 @@ func TestBuildRobotPositions_OwnedOrdersOnAPolledRobot(t *testing.T) {
 		{station: "edge.b", uuids: []string{"u-mine"}},
 	}
 	rows := []orders.OrderRobot{
-		{UUID: "u-mine", StationID: "edge.a", RobotID: "AMR-01"},
-		{UUID: "u-theirs", StationID: "edge.c", RobotID: "AMR-02"},
-		{UUID: "u-absent", StationID: "edge.a", RobotID: "AMR-09"},
-		{UUID: "u-down", StationID: "edge.a", RobotID: "AMR-03"},
+		{UUID: "u-mine", StationUID: "edge.a", RobotID: "AMR-01"},
+		{UUID: "u-theirs", StationUID: "edge.c", RobotID: "AMR-02"},
+		{UUID: "u-absent", StationUID: "edge.a", RobotID: "AMR-09"},
+		{UUID: "u-down", StationUID: "edge.a", RobotID: "AMR-03"},
 	}
 	robots := []fleet.RobotStatus{
 		{VehicleID: "AMR-01", Connected: true, X: 12.5, Y: -3.25, Angle: 1.5708, Moving: true, Path: []string{"LM7", "LM31", "AP32"}},

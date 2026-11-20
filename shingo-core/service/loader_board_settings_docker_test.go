@@ -130,7 +130,7 @@ func TestLoaderService_EdgeStationUID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewLoaderService(db, nil)
-	_, err := db.EnrollEdge("stn-esu-press", "PRESS EDGE", "stn-esu-press")
+	_, err := db.EnrollEdge("stn-esu-press", "PRESS EDGE")
 	testutil.MustNoErr(t, err, "enroll the Edge")
 	id, err := svc.Create("ESU-STATION", loaders.RoleProduce, loaders.LayoutSharedWindow,
 		loaders.ReplenishmentOperator, "", "", false)
@@ -139,7 +139,7 @@ func TestLoaderService_EdgeStationUID(t *testing.T) {
 		t.Helper()
 		got, err := db.GetLoader(id)
 		testutil.MustNoErr(t, err, "read the loader")
-		return got.EdgeStationUID
+		return got.StationUID
 	}
 	synced := func() string {
 		t.Helper()
@@ -158,12 +158,12 @@ func TestLoaderService_EdgeStationUID(t *testing.T) {
 	}
 
 	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", BoardHidesIdle: true,
-		EdgeStationUID: "  stn-esu-press "}), "pick the enrolled Edge")
+		StationUID: "  stn-esu-press "}), "pick the enrolled Edge")
 	if stored() != "stn-esu-press" || synced() != "stn-esu-press" {
 		t.Fatalf("picked: stored %q, synced %q; want stn-esu-press, trimmed", stored(), synced())
 	}
 
-	err = svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", EdgeStationUID: "stn-esu-nobody"})
+	err = svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", StationUID: "stn-esu-nobody"})
 	if !errors.Is(err, ErrUnknownEdge) {
 		t.Fatalf("a uid with no Edge: err = %v, want ErrUnknownEdge so the door answers 400", err)
 	}
@@ -183,11 +183,11 @@ func TestLoaderService_EdgeStationUID(t *testing.T) {
 	// save of another setting that sends it back is not refused.
 	cur, err := db.GetLoader(id)
 	testutil.MustNoErr(t, err, "read for the direct write")
-	cur.EdgeStationUID = "stn-esu-gone"
+	cur.StationUID = "stn-esu-gone"
 	testutil.MustNoErr(t, db.UpdateLoader(*cur), "store a uid the registry does not hold")
 	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "ESU-STATION", BoardShowsAllParts: true,
-		EdgeStationUID: "stn-esu-gone"}), "save another setting with the stored uid sent back")
-	if got, err := db.GetLoader(id); err != nil || got.EdgeStationUID != "stn-esu-gone" || !got.BoardShowsAllParts {
+		StationUID: "stn-esu-gone"}), "save another setting with the stored uid sent back")
+	if got, err := db.GetLoader(id); err != nil || got.StationUID != "stn-esu-gone" || !got.BoardShowsAllParts {
 		t.Errorf("after the save: %+v (%v); want the stored uid kept beside the new setting", got, err)
 	}
 }

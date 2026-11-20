@@ -176,9 +176,9 @@ type BucketRow struct {
 	NodeName  string `json:"node_name"`
 	Zone      string `json:"zone"`
 
-	// Station is the station that last sent this row's level; attribute data,
+	// StationUID is the station that last sent this row's level; attribute data,
 	// not identity.
-	Station     string `json:"station"`
+	StationUID  string `json:"station"`
 	PayloadCode string `json:"payload_code"`
 	Qty         int    `json:"qty"`
 	State       string `json:"state"`
@@ -205,7 +205,7 @@ SELECT
     CASE WHEN lane_type.code = 'LANE' THEN COALESCE(lane.name, '') ELSE '' END AS lane_name,
     COALESCE(n.name, b.core_node_name) AS node_name,
     COALESCE(n.zone, '') AS zone,
-    b.station, b.payload_code, b.state,
+    b.station_uid, b.payload_code, b.state,
     b.qty, b.updated_at
 FROM lineside_buckets b
 LEFT JOIN nodes n ON n.name = b.core_node_name
@@ -216,7 +216,7 @@ LEFT JOIN nodes grp ON grp.id = COALESCE(
     n.parent_id
 )
 LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
-ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.payload_code, b.state
+ORDER BY group_name, b.station_uid, COALESCE(n.depth, 0), node_name, b.payload_code, b.state
 `
 
 // ListLinesideBuckets returns every lineside_buckets row joined to the
@@ -236,7 +236,7 @@ func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
 		if err := rows.Scan(
 			&r.ID,
 			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
-			&r.Station, &r.PayloadCode, &r.State, &r.Qty, &r.UpdatedAt,
+			&r.StationUID, &r.PayloadCode, &r.State, &r.Qty, &r.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
 		}

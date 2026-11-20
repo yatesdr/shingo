@@ -243,10 +243,10 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 
 	// Create two orders that will race to claim. A claim is taken inside the
 	// hand, so each rests `pending` with its ask open (C1.5).
-	order1 := &orders.Order{EdgeUUID: "race-1", StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE1-IN"}
+	order1 := &orders.Order{EdgeUUID: "race-1", StationUID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE1-IN"}
 	testutil.MustNoErr(t, db.CreateOrder(order1), "create order1")
 	testdb.SeedAsk(t, db, order1.ID, protocol.StatusPending, "sg-race-1")
-	order2 := &orders.Order{EdgeUUID: "race-2", StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE1-IN"}
+	order2 := &orders.Order{EdgeUUID: "race-2", StationUID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE1-IN"}
 	testutil.MustNoErr(t, db.CreateOrder(order2), "create order2")
 	testdb.SeedAsk(t, db, order2.ID, protocol.StatusPending, "sg-race-2")
 
@@ -678,7 +678,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	// claim a bin for the order at creation time.
 	order := &orders.Order{
 		EdgeUUID:     "uuid-fallback-clear",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusStaged,
 		Quantity:     1,
@@ -747,7 +747,7 @@ func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T
 
 	order := &orders.Order{
 		EdgeUUID:     "uuid-drop-full",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,
@@ -856,7 +856,7 @@ func TestHandleOrderRelease_BinIDNilFallbackPrefersClaim(t *testing.T) {
 	// bin has moved to _TRANSIT mid-flight before the operator's release.
 	order := &orders.Order{
 		EdgeUUID:     "uuid-claim-fb",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusStaged,
 		Quantity:     1,
@@ -905,7 +905,7 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "uuid-fallback-partial",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusStaged,
 		Quantity:     1,
@@ -1055,7 +1055,7 @@ func TestHandleOrderRelease_InTransitPastAStationWaitIsANoOp(t *testing.T) {
 	// to the second.
 	order := &orders.Order{
 		EdgeUUID:     "uuid-multi-wait",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusInTransit,
 		Quantity:     1,

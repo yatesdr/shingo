@@ -33,7 +33,7 @@ func TestHandover_CASLoserNeverCallsTheFleet(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	o := &orders.Order{
-		EdgeUUID: "HANDOVER-race", StationID: "line-1",
+		EdgeUUID: "HANDOVER-race", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
 	}
@@ -92,7 +92,7 @@ func TestHandover_UnclaimableOrderNeverReachesTheFleet(t *testing.T) {
 	// `delivered` does not transition to `dispatched` — an illegal edge, not a
 	// concurrent one, so it exercises the arm that used to proceed.
 	o := &orders.Order{
-		EdgeUUID: "HANDOVER-unclaimable", StationID: "line-1",
+		EdgeUUID: "HANDOVER-unclaimable", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: protocol.StatusDelivered, Quantity: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
 	}
@@ -127,7 +127,7 @@ func TestHandover_CreateFailureClosesTheAskAndLeavesTheOrderWhereItRests(t *test
 	d, _ := newTestDispatcher(t, db, backend)
 
 	o := &orders.Order{
-		EdgeUUID: "HANDOVER-createfail", StationID: "line-1",
+		EdgeUUID: "HANDOVER-createfail", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
 	}
@@ -178,7 +178,7 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	o := &orders.Order{
-		EdgeUUID: "HANDOVER-idfail", StationID: "line-1",
+		EdgeUUID: "HANDOVER-idfail", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
 	}
@@ -230,7 +230,7 @@ func TestHandover_RequestShapesUnchanged(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	o := &orders.Order{
-		EdgeUUID: "HANDOVER-shape", StationID: "line-1",
+		EdgeUUID: "HANDOVER-shape", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
 	}

@@ -40,17 +40,17 @@ import (
 func legWithNodeNames(t *testing.T, db *store.DB, prefix, sourceNode, deliveryNode string) (parent, child *orders.Order) {
 	t.Helper()
 	parent = &orders.Order{
-		EdgeUUID:  prefix + "-parent",
-		StationID: "line-1",
-		OrderType: OrderTypeRetrieve,
-		Status:    StatusReshuffling,
-		Quantity:  1,
+		EdgeUUID:   prefix + "-parent",
+		StationUID: "line-1",
+		OrderType:  OrderTypeRetrieve,
+		Status:     StatusReshuffling,
+		Quantity:   1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create the dig parent")
 
 	child = &orders.Order{
 		EdgeUUID:      prefix + "-leg-1",
-		StationID:     parent.StationID,
+		StationUID:    parent.StationUID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		Quantity:      1,

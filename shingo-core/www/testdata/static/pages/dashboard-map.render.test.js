@@ -362,7 +362,7 @@ function paint(m) { m.frame(m.clock.t); }
 function order(id, status, robot, src, dst, carrying) {
     return {
         order_id: id, robot_id: robot, source_node: src, delivery_node: dst, status: status,
-        carrying: !!carrying, payload_code: '', station_id: '', created_at: '', current_station: '',
+        carrying: !!carrying, payload_code: '', station_uid: '', created_at: '', current_station: '',
     };
 }
 

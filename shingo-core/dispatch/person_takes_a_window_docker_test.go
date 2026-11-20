@@ -32,7 +32,7 @@ func windowHeldBy(t *testing.T, prefix string, confirmed bool) (*store.DB, *node
 	drop := &nodes.Node{Name: prefix + "-DROP", Enabled: true, NodeTypeID: storage.NodeTypeID}
 	testutil.MustNoErr(t, db.CreateNode(drop), "the move's drop")
 	cart := testdb.CreateBinAtNode(t, db, bp.Code, storage.ID, prefix+"-CART")
-	holder := &orders.Order{EdgeUUID: strings.ToLower(prefix) + "-ask", StationID: "line-1",
+	holder := &orders.Order{EdgeUUID: strings.ToLower(prefix) + "-ask", StationUID: "line-1",
 		OrderType: OrderTypeRetrieveEmpty, Status: StatusQueued, Quantity: 1, DeliveryNode: drop.Name,
 		OriginClass: protocol.OriginClassNoDemand}
 	if confirmed {

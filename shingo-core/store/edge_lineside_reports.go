@@ -17,7 +17,7 @@ import (
 // report_divergence episode. The table keeps the latest report per seat, and
 // which seats a station has reported is the seat set that comparison checks.
 type EdgeLinesideReport struct {
-	Station      string
+	StationUID   string
 	CoreNodeName string
 	PayloadCode  string
 	ReportedAt   time.Time
@@ -51,19 +51,19 @@ type EdgeLinesideReport struct {
 func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err error) {
 	res, err := db.Exec(`
 		INSERT INTO edge_lineside_reports
-			(station, core_node_name, payload_code, reported_at, updated_at)
+			(station_uid, core_node_name, payload_code, reported_at, updated_at)
 		VALUES ($1,$2,$3,$4, NOW())
-		ON CONFLICT (station, core_node_name, payload_code) DO UPDATE SET
+		ON CONFLICT (station_uid, core_node_name, payload_code) DO UPDATE SET
 			reported_at = EXCLUDED.reported_at,
 			updated_at  = NOW()
 		WHERE edge_lineside_reports.reported_at < EXCLUDED.reported_at`,
-		r.Station, r.CoreNodeName, r.PayloadCode, r.ReportedAt)
+		r.StationUID, r.CoreNodeName, r.PayloadCode, r.ReportedAt)
 	if err != nil {
-		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
+		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.StationUID, r.CoreNodeName, r.PayloadCode, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: rows affected: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
+		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: rows affected: %w", r.StationUID, r.CoreNodeName, r.PayloadCode, err)
 	}
 	return n > 0, nil
 }
@@ -74,7 +74,7 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err er
 // empty report must not close what a current report found.
 func (db *DB) LatestLinesideReportAt(station string) (time.Time, bool, error) {
 	var at *time.Time
-	if err := db.QueryRow(`SELECT MAX(reported_at) FROM edge_lineside_reports WHERE station = $1`,
+	if err := db.QueryRow(`SELECT MAX(reported_at) FROM edge_lineside_reports WHERE station_uid = $1`,
 		station).Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("latest lineside report %s: %w", station, err)
 	}

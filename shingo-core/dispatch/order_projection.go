@@ -32,7 +32,7 @@ func ProjectionFor(o *orders.Order) protocol.OrderProjection {
 		OrderUUID:    o.EdgeUUID,
 		OrderType:    o.OrderType, //nolint:forbidigo // projected onto the wire, not branched on — see the doc comment
 		Status:       string(o.Status),
-		StationID:    o.StationID,
+		StationID:    o.Requester(),
 		Quantity:     int64(o.Quantity),
 		SourceNode:   o.SourceNode,
 		DeliveryNode: o.DeliveryNode,

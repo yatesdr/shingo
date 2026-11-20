@@ -1180,7 +1180,7 @@ func TestPlannerGolden_Doors(t *testing.T) {
 			need: map[string]any{"door": "level keeper", "group": "SYN_PRESS_EMPTIES",
 				"setup": "BIN-PEB-01..03 moved out to PLN_005, PLN_006 and SLN_010: STANDARD stands 3 of the 6 it wants, its family 7 of its pool of 8"},
 			run: func(g *goldenPlant) {
-				if k, err := g.db.GetKanban(g.node("SYN_PRESS_EMPTIES").ID); err != nil || k == nil || k.StationID == "" {
+				if k, err := g.db.GetKanban(g.node("SYN_PRESS_EMPTIES").ID); err != nil || k == nil || k.StationUID == "" {
 					g.t.Fatalf("fixture: the demo seeds SYN_PRESS_EMPTIES as a kanban with a station; got %+v (%v)", k, err)
 				}
 				for _, m := range [][2]string{{"BIN-PEB-01", "PLN_005"}, {"BIN-PEB-02", "PLN_006"}, {"BIN-PEB-03", "SLN_010"}} {

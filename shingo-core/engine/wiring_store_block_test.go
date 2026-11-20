@@ -36,7 +36,7 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 	// empty → deliver empty to lineNode.
 	ord := &orders.Order{
 		EdgeUUID:     "store-block-1",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		SourceNode:   lineNode.Name,
@@ -159,7 +159,7 @@ func TestHandleStoreBlockCompleted_StagingDropResolvesThroughItsRow(t *testing.T
 	lineNode := sd.LineNode
 
 	ord := &orders.Order{
-		EdgeUUID: "staging-drop-1", StationID: "line-1",
+		EdgeUUID: "staging-drop-1", StationUID: "line-1",
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		PayloadDesc: "swap",
@@ -206,7 +206,7 @@ func TestHandleStoreBlockCompleted_ASingleCartSetsDownThroughItsRow(t *testing.T
 	lineNode := sd.LineNode
 
 	ord := &orders.Order{
-		EdgeUUID: "single-bin-1", StationID: "line-1",
+		EdgeUUID: "single-bin-1", StationUID: "line-1",
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"` + staging.Name + `"}]`,
@@ -242,7 +242,7 @@ func TestHandleStoreBlockCompleted_SkipsFinalDelivery(t *testing.T) {
 
 	ord := &orders.Order{
 		EdgeUUID:     "store-block-2",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		SourceNode:   lineNode.Name,
@@ -303,7 +303,7 @@ func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
 	lineNode := sd.LineNode
 
 	ord := &orders.Order{
-		EdgeUUID: "round-trip-1", StationID: "line-1",
+		EdgeUUID: "round-trip-1", StationUID: "line-1",
 		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		PayloadDesc: "swap",
@@ -490,7 +490,7 @@ func TestHandleStoreBlockCompleted_IntermediateDropoffCarriesRealFromNode(t *tes
 
 	ord := &orders.Order{
 		EdgeUUID:     "store-from-1",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		SourceNode:   lineNode.Name,
@@ -559,7 +559,7 @@ func TestHandleStoreBlockCompleted_AContainedPartAtAnInteriorDropIsHeld(t *testi
 	testutil.MustNoErr(t, db.SetPayloadContainment(sd.Payload.Code, "alert", "tester", true), "contain the part")
 
 	ord := &orders.Order{
-		EdgeUUID: "contained-interior", StationID: "line-1", OrderType: dispatch.OrderTypeComplex,
+		EdgeUUID: "contained-interior", StationUID: "line-1", OrderType: dispatch.OrderTypeComplex,
 		Status: dispatch.StatusInTransit, SourceNode: line.Name, DeliveryNode: "BACK-CH", ProcessNode: line.Name,
 		PayloadCode: sd.Payload.Code,
 		StepsJSON: `[{"action":"pickup","node":"` + line.Name + `"},{"action":"dropoff","node":"` + hold.Name +

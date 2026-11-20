@@ -51,7 +51,7 @@ func TestBucketLevel_RestoredEdgeAppliesAndReanchors(t *testing.T) {
 	var lastSeq int64
 	var windowEnd time.Time
 	testutil.MustNoErr(t, db.QueryRow(`SELECT last_seq, applied_window_end FROM inventory_delta_dedup
-		WHERE station=$1 AND scope_kind=$2`, station, protocol.InvDeltaScopeBucketLevel).Scan(&lastSeq, &windowEnd), "dedup row")
+		WHERE station_uid=$1 AND scope_kind=$2`, station, protocol.InvDeltaScopeBucketLevel).Scan(&lastSeq, &windowEnd), "dedup row")
 	if lastSeq != 2 || !windowEnd.Equal(restoredAt.Truncate(time.Microsecond)) {
 		t.Errorf("dedup = seq %d window %v, want seq 2 window %v (re-anchored)", lastSeq, windowEnd, restoredAt)
 	}

@@ -26,7 +26,7 @@ import (
 // the tests read it directly.
 func reportRows(t *testing.T, db *store.DB, payload string) []store.EdgeLinesideReport {
 	t.Helper()
-	rows, err := db.Query(`SELECT station, core_node_name, payload_code, reported_at
+	rows, err := db.Query(`SELECT station_uid, core_node_name, payload_code, reported_at
 		FROM edge_lineside_reports WHERE payload_code = $1`, payload)
 	if err != nil {
 		t.Fatalf("list reports for %s: %v", payload, err)
@@ -35,7 +35,7 @@ func reportRows(t *testing.T, db *store.DB, payload string) []store.EdgeLineside
 	var out []store.EdgeLinesideReport
 	for rows.Next() {
 		var r store.EdgeLinesideReport
-		if err := rows.Scan(&r.Station, &r.CoreNodeName, &r.PayloadCode, &r.ReportedAt); err != nil {
+		if err := rows.Scan(&r.StationUID, &r.CoreNodeName, &r.PayloadCode, &r.ReportedAt); err != nil {
 			t.Fatalf("scan report row: %v", err)
 		}
 		out = append(out, r)
@@ -49,7 +49,7 @@ func reportRows(t *testing.T, db *store.DB, payload string) []store.EdgeLineside
 func linesideRow(t *testing.T, db *store.DB, station, node, payload string) store.EdgeLinesideReport {
 	t.Helper()
 	for _, r := range reportRows(t, db, payload) {
-		if r.Station == station && r.CoreNodeName == node {
+		if r.StationUID == station && r.CoreNodeName == node {
 			return r
 		}
 	}
@@ -74,7 +74,7 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 	write := func(at time.Time) bool {
 		t.Helper()
 		moved, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-			Station:      station,
+			StationUID:   station,
 			CoreNodeName: node,
 			PayloadCode:  payload,
 			ReportedAt:   at,
@@ -136,7 +136,7 @@ func TestPurgeStaleLinesideReports(t *testing.T) {
 	write := func(node string, age time.Duration) {
 		t.Helper()
 		if _, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-			Station:      station,
+			StationUID:   station,
 			CoreNodeName: node,
 			PayloadCode:  payload,
 			ReportedAt:   now.Add(-age),
@@ -154,7 +154,7 @@ func TestPurgeStaleLinesideReports(t *testing.T) {
 
 	survived := map[string]bool{}
 	for _, r := range reportRows(t, db, payload) {
-		if r.Station == station {
+		if r.StationUID == station {
 			survived[r.CoreNodeName] = true
 		}
 	}

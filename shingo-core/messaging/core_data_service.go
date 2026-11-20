@@ -280,7 +280,7 @@ func (s *CoreDataService) HandleProductionTicks(env *protocol.Envelope, p *proto
 	events := make([]heartbeat.PartEvent, len(p.Ticks))
 	for i, t := range p.Ticks {
 		events[i] = heartbeat.PartEvent{
-			CellID:         station,
+			StationUID:     station,
 			RecordedAt:     t.RecordedAt,
 			EdgeSnapshotID: t.EdgeSnapshotID,
 			CountValue:     t.CountValue,
@@ -315,7 +315,7 @@ func (s *CoreDataService) projectTicks(station string, events []heartbeat.PartEv
 		return
 	}
 	for _, e := range inserted {
-		s.cellTickEmitter(e.CellID, e.ProcessID, e.StyleID, e.RecordedAt)
+		s.cellTickEmitter(e.StationUID, e.ProcessID, e.StyleID, e.RecordedAt)
 	}
 }
 
@@ -645,7 +645,7 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 		if err == nil && order != nil {
 			snap.Found = true
 			snap.Status = string(order.Status)
-			snap.StationID = order.StationID
+			snap.StationID = order.Requester()
 			snap.SourceNode = order.SourceNode
 			snap.DeliveryNode = order.DeliveryNode
 			snap.VendorOrderID = order.VendorOrderID
@@ -790,7 +790,7 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 	}
 
 	// The publishing station is recorded with the process (process_styles.
-	// station_id): it is where the sourceability feed sends this process's
+	// station_uid): it is where the sourceability feed sends this process's
 	// verdicts. A process is a plant name and belongs to one station; two
 	// stations publishing one is a configuration mistake, named here, and the
 	// last writer is what the mirror keeps — the same thing it did with the
@@ -834,7 +834,7 @@ func (s *CoreDataService) rederiveLoaderOwners() {
 	}
 	if edges, err := s.db.ListEdges(); err == nil {
 		for _, e := range edges {
-			stations[e.StationID] = true
+			stations[e.StationUID] = true
 		}
 	}
 	for st := range stations {

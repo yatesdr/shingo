@@ -44,7 +44,7 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 	// A person at a Core door: a bin move naming THIS bin, holding it softly,
 	// stamped the way the door stamps it.
 	byHand := &orders.Order{
-		EdgeUUID: "uuid-hand-placed-move", StationID: "line-1",
+		EdgeUUID: "uuid-hand-placed-move", StationUID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		SourceNode:   slots[0].Name,
 		NamedBinID:   &blocker.ID,
@@ -62,7 +62,7 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 	// question here; whether it can take it is the ranked take's
 	// (ranked_take_docker_test.go).
 	parent := &orders.Order{
-		EdgeUUID: "uuid-hand-placed-dig", StationID: "line-1",
+		EdgeUUID: "uuid-hand-placed-dig", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusReshuffling,
 		Priority: 1,
 	}

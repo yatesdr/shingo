@@ -59,7 +59,7 @@ func TestCellsAPI_Golden(t *testing.T) {
 	if err := db.EnsureHeartbeatPartitions(t0); err != nil {
 		t.Fatalf("partitions: %v", err)
 	}
-	if err := db.UpsertCellConfig(heartbeat.CellConfig{CellID: "cell-cfg", Station: "stn-p7",
+	if err := db.UpsertCellConfig(heartbeat.CellConfig{CellLabel: "cell-cfg", StationUID: "stn-p7",
 		DisplayName: "Cell P7", PrimaryProcessID: 7, SubProcessIDs: []int64{9}}); err != nil {
 		t.Fatalf("cell config: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestCellsAPI_Golden(t *testing.T) {
 		{5, 9, 1, ""}, {50, 9, 2, ""}, {95, 9, 1, ""},
 	}
 	for i, e := range evs {
-		if _, err := db.Exec(`INSERT INTO cell_part_events (cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id)
+		if _, err := db.Exec(`INSERT INTO cell_part_events (station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id)
 			VALUES ('stn-p7', $1, $2, $3, $4, $5, $6, 3)`,
 			t0.Add(time.Duration(e.sec)*time.Second), i+1, 100+i, e.delta, e.anomaly, e.pid); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -149,7 +149,7 @@ func TestCellsAPI_Golden(t *testing.T) {
 // cell's state reads when nothing configures one: heartbeat.EstimateTarget, the
 // median per-part gap of the stream. cell_targets never had a writer, so this
 // was the only answer its reader ever let through; the table and the reader go
-// in v184, and this must read the same across that.
+// in v185, and this must read the same across that.
 //
 // Red when the state's target is anything but the stream's median: a target
 // read from somewhere else, a zero, or a different estimate.
@@ -163,7 +163,7 @@ func TestCellState_TargetIsTheStreamMedianWithNoTargetRow(t *testing.T) {
 	// One part a fire; gaps of 20, 20, 30 and 20 s, so the median is 20 s.
 	var evs []heartbeat.PartEvent
 	for i, sec := range []int{0, 20, 40, 70, 90} {
-		evs = append(evs, heartbeat.PartEvent{CellID: "stn-target", RecordedAt: t0.Add(time.Duration(sec) * time.Second),
+		evs = append(evs, heartbeat.PartEvent{StationUID: "stn-target", RecordedAt: t0.Add(time.Duration(sec) * time.Second),
 			EdgeSnapshotID: int64(i + 1), CountValue: int64(100 + i), Delta: 1, ProcessID: 7, StyleID: 3})
 	}
 	if _, rejected := db.InsertCellPartEvents(evs); len(rejected) != 0 {

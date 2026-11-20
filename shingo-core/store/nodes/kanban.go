@@ -160,8 +160,8 @@ func ReplaceSources(x Execer, kanbanNodeID int64, sourceNodeIDs []int64) error {
 // NULL.
 func SetKanbanScalars(x Execer, k Kanban) error {
 	if _, err := x.Exec(`UPDATE kanbans
-		SET station_id=NULLIF($2::text,''), strict=$3, updated_at=NOW()
-		WHERE node_id=$1`, k.NodeID, k.StationID, k.Strict); err != nil {
+		SET station_uid=NULLIF($2::text,''), strict=$3, updated_at=NOW()
+		WHERE node_id=$1`, k.NodeID, k.StationUID, k.Strict); err != nil {
 		return fmt.Errorf("set kanban %d: %w", k.NodeID, err)
 	}
 	return nil
@@ -171,18 +171,18 @@ func SetKanbanScalars(x Execer, k Kanban) error {
 // them because the keeper's skip of a kanban with no station needs it.
 type Kanban struct {
 	NodeID      int64
-	StationID   string
+	StationUID  string
 	Strict      bool
 	HasSupports bool
 }
 
-const kanbanSelect = `SELECT k.node_id, COALESCE(k.station_id, ''), k.strict,
+const kanbanSelect = `SELECT k.node_id, COALESCE(k.station_uid, ''), k.strict,
 		EXISTS (SELECT 1 FROM kanban_supports s WHERE s.kanban_node_id = k.node_id)
 	  FROM kanbans k`
 
 func scanKanban(row interface{ Scan(dest ...any) error }) (Kanban, error) {
 	var k Kanban
-	err := row.Scan(&k.NodeID, &k.StationID, &k.Strict, &k.HasSupports)
+	err := row.Scan(&k.NodeID, &k.StationUID, &k.Strict, &k.HasSupports)
 	return k, err
 }
 

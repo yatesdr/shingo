@@ -162,7 +162,7 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "uuid-reg15-fb-partial",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusStaged,
 		Quantity:     1,

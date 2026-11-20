@@ -247,11 +247,11 @@ func (d *Dispatcher) IssueClearTx(tx *sql.Tx, j ClearJob) (*ClearIssue, error) {
 // the station's act (Person): the cart a move of its parent's, at its turn.
 func clearLeg(parent *orders.Order, seq int, bin *bins.Bin, from, to, desc string) Need {
 	return Need{
-		Type: OrderTypeMove, Station: parent.StationID, Ref: uuid.New().String(), Quantity: 1,
+		Type: OrderTypeMove, Station: parent.StationUID, RequestedBy: parent.RequestedBy, Ref: uuid.New().String(), Quantity: 1,
 		PayloadCode: bin.PayloadCode, Desc: desc, Source: from, Delivery: to, StationKnows: true,
 		OriginID: parent.OriginID, OriginClass: parent.OriginClass,
 		Leg:  &Leg{Parent: parent.ID, Sequence: seq},
-		Cart: bin.ID, By: Person(parent.StationID),
+		Cart: bin.ID, By: Person(parent.Requester()),
 	}
 }
 
@@ -270,10 +270,10 @@ func (d *Dispatcher) AfterClearIssue(b *ClearIssue, home string, emptyBin int64)
 
 // projectClear pushes one of the clear's rows to its station.
 func (d *Dispatcher) projectClear(o *orders.Order) {
-	if o == nil || o.StationID == "" {
+	if o == nil || o.Requester() == "" {
 		return
 	}
-	d.emitter.ProjectOrder(o.StationID, ProjectionFor(o))
+	d.emitter.ProjectOrder(o.Requester(), ProjectionFor(o))
 }
 
 // ClearFacts is what choose needs, read back from the parent and the
@@ -612,10 +612,10 @@ func (d *Dispatcher) EndClear(parent *orders.Order, why string) {
 		cancel, kept = live, nil
 	}
 	for _, c := range cancel {
-		d.lifecycle.CancelOrder(c, parent.StationID, "clear ended: "+why, CancelCause{})
+		d.lifecycle.CancelOrder(c, parent.Requester(), "clear ended: "+why, CancelCause{})
 	}
 	if len(kept) == 0 {
-		d.lifecycle.CancelOrder(parent, parent.StationID, why, CancelCause{})
+		d.lifecycle.CancelOrder(parent, parent.Requester(), why, CancelCause{})
 	}
 	log.Printf("dispatch: clear %d ended: %s", parent.ID, why)
 }
@@ -811,7 +811,7 @@ func (d *Dispatcher) clearChapterEnd(parent *orders.Order, children []*orders.Or
 	if p != nil {
 		why = fmt.Sprintf("the partial's move ended %s", p.Status)
 	}
-	d.lifecycle.CancelOrder(parent, parent.StationID, why, CancelCause{})
+	d.lifecycle.CancelOrder(parent, parent.Requester(), why, CancelCause{})
 	return nil
 }
 
@@ -958,7 +958,7 @@ func (d *Dispatcher) tradeSecondLegRefused(parentOrderID int64, leg *orders.Orde
 	}
 	log.Printf("dispatch: clear %d: the fleet refused trade leg %d's create while its partner %d is with the fleet: %v — ending the trade",
 		parentOrderID, leg.ID, sib.ID, cause)
-	d.lifecycle.CancelOrder(leg, leg.StationID,
+	d.lifecycle.CancelOrder(leg, leg.Requester(),
 		fmt.Sprintf("the fleet refused this trade leg (%v) after its partner order %d was sent; the trade ends", cause, sib.ID),
 		CancelCause{Code: protocol.TermPeerTerminal})
 	d.endTradeLeg(parent, leg.ID, SwapTerminalCancelled)

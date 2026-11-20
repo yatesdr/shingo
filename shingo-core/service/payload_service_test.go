@@ -355,7 +355,7 @@ func TestPayloadService_FloorCreate_OneCommit(t *testing.T) {
 	}
 	var made map[string]any
 	testutil.MustNoErr(t, json.Unmarshal([]byte(entries[0].NewValue), &made), "decode the record")
-	want := map[string]any{"station": "edge.a", "process_id": float64(17), "part_number": "SYN-FL-1",
+	want := map[string]any{"station_uid": "edge.a", "process_id": float64(17), "part_number": "SYN-FL-1",
 		"standard_pack": float64(800), "bin_type_code": "SYN-FL-BT", "catid": "SYN-C1"}
 	if !reflect.DeepEqual(made, want) {
 		t.Errorf("recorded submit = %v, want %v", made, want)
@@ -478,7 +478,7 @@ func TestPayloadService_FloorCreate_ConcurrentSubmitIsARepeat(t *testing.T) {
 	}{{"edge.a", "SYN-FL-RACE-1", true}, {"edge.b", "SYN-FL-RACE-2", false}} {
 		r := req
 		r.PartNumber, r.CATID = c.code, ""
-		record, err := json.Marshal(floorSubmit{Station: "edge.a", PartCreateRequest: protocol.PartCreateRequest{
+		record, err := json.Marshal(floorSubmit{StationUID: "edge.a", PartCreateRequest: protocol.PartCreateRequest{
 			ProcessID: r.ProcessID, PartNumber: c.code, StandardPack: r.StandardPack, BinTypeCode: r.BinTypeCode}})
 		testutil.MustNoErr(t, err, "record")
 		tx, err := db.Begin()
@@ -526,7 +526,7 @@ func TestPayloadService_FloorCreate_ConcurrentSubmitIsARepeat(t *testing.T) {
 // TestPayloadService_FloorCreate_PinRepeatIsTheAskingStations pins what
 // floorRepeat returns on a retried floor create, and the station the payloads
 // page names as the part's maker (FloorMade), both read back from the audit
-// row the create wrote (its {"station": ...} record). The station is the
+// row the create wrote (its {"station_uid": ...} record). The station is the
 // asking Edge's (www Doors.partCreate passes the ask's station): a retry from
 // it is a repeat of the same part and writes nothing, before and after
 // another station's identical submit is refused. Floor creates come only from

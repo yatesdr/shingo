@@ -48,7 +48,7 @@ func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 	// that gate is deleted and the sibling link now decides pair membership
 	// instead, so the fixture's intent is unchanged and its reason has moved.)
 	order := &orders.Order{
-		EdgeUUID: "coord-occ-line", StationID: "line-1", OrderType: OrderTypeComplex,
+		EdgeUUID: "coord-occ-line", StationUID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: storageNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + storageNode.Name + `"},{"action":"dropoff","node":"` + lineNode.Name + `"}]`,
@@ -94,7 +94,7 @@ func TestDeadlockGate_PlainRetrieveToOccupiedLine_Gated(t *testing.T) {
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	order := &orders.Order{
-		EdgeUUID: "plain-ret-occ-line", StationID: "line-1", OrderType: OrderTypeRetrieve,
+		EdgeUUID: "plain-ret-occ-line", StationUID: "line-1", OrderType: OrderTypeRetrieve,
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")

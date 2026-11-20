@@ -115,14 +115,14 @@ func TestDemandEpisodesPageRendersTheCauseColumn(t *testing.T) {
 		BuildEpisodeRow(domain.DemandEpisode{
 			DemandOrigin: domain.DemandOrigin{
 				OriginID: "o1", EpisodeKey: "k1", Kind: "cell", Direction: "supply",
-				StationID: "S1", PayloadCode: "PANEL-A",
+				StationUID: "S1", PayloadCode: "PANEL-A",
 				OpenedAt: now.Add(-70 * time.Minute), ExpectedOrders: &expected,
 			}, Children: 2}, now, disp()),
 		// A zero-order episode: the page's worst case.
 		BuildEpisodeRow(domain.DemandEpisode{
 			DemandOrigin: domain.DemandOrigin{
 				OriginID: "o2", EpisodeKey: "k2", Kind: "threshold",
-				StationID: "S2", OpenedAt: now.Add(-10 * time.Minute),
+				StationUID: "S2", OpenedAt: now.Add(-10 * time.Minute),
 				ExpectedOrders: &expected,
 			}, Children: 0}, now, disp()),
 	}
@@ -177,7 +177,7 @@ func TestMaterialFlagsPageRenders(t *testing.T) {
 	thin := 1
 	flagRows := []EpisodeRow{
 		BuildEpisodeRow(domain.DemandEpisode{DemandOrigin: domain.DemandOrigin{
-			OriginID: "o1", EpisodeKey: "k1", Kind: "cell", StationID: "S1",
+			OriginID: "o1", EpisodeKey: "k1", Kind: "cell", StationUID: "S1",
 			PayloadCode: "PANEL-A", OpenedAt: now.Add(-3 * time.Hour),
 			ExpectedOrders: &thin,
 		}, Children: 3}, now, c),

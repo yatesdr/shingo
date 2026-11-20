@@ -36,7 +36,7 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	testutil.MustNoErr(t, db.ConfirmBinManifest(src.ID, ""), "confirm manifest")
 
 	order := &orders.Order{
-		EdgeUUID: "ret-diff-1", StationID: "ST", OrderType: OrderTypeRetrieve, Status: StatusPending,
+		EdgeUUID: "ret-diff-1", StationUID: "ST", OrderType: OrderTypeRetrieve, Status: StatusPending,
 		Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -119,7 +119,7 @@ func TestStage1_RetrievePlanDifferential_GatedNoPlan(t *testing.T) {
 	testutil.MustNoErr(t, db.ConfirmBinManifest(src.ID, ""), "confirm manifest")
 
 	order := &orders.Order{
-		EdgeUUID: "ret-diff-2", StationID: "ST", OrderType: OrderTypeRetrieve, Status: StatusPending,
+		EdgeUUID: "ret-diff-2", StationUID: "ST", OrderType: OrderTypeRetrieve, Status: StatusPending,
 		Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")

@@ -268,7 +268,7 @@ func (e *Engine) onWindowPullOrderCompleted(ev OrderCompletedEvent) {
 		// auto-confirm gets by running after MarkDelivered returns
 		// (wiring_vendor_status.go).
 		e.stage2.spawn(func() {
-			if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, receipt, 0); err != nil {
+			if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.Requester(), receipt, 0); err != nil {
 				e.logFn("engine: confirm landed window pull %d: %v", order.ID, err)
 			}
 		})

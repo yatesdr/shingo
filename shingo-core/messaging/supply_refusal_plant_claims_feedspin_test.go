@@ -90,11 +90,13 @@ func TestFeedsPin_HandleSupplyRefusal(t *testing.T) {
 				t.Errorf("open rows = %d, want %d", n, tc.wantStored)
 			}
 			if n == 1 {
-				var station, by string
-				testutil.MustNoErr(t, db.QueryRow(`SELECT station_id, refused_by FROM supply_refusals
-					WHERE loader_node = 'LN-1' AND payload_code = 'PC-A'`).Scan(&station, &by), "read refusal row")
-				if station != st || by != "op-1" {
-					t.Errorf("stored row station %q refused_by %q, want %q / op-1 — the station comes from the envelope", station, by, st)
+				// The row keeps no station: supply_refusals.station_id was written and
+				// never read, and v185 drops it.
+				var by string
+				testutil.MustNoErr(t, db.QueryRow(`SELECT refused_by FROM supply_refusals
+					WHERE loader_node = 'LN-1' AND payload_code = 'PC-A'`).Scan(&by), "read refusal row")
+				if by != "op-1" {
+					t.Errorf("stored row refused_by %q, want op-1", by)
 				}
 			}
 		})
@@ -212,7 +214,7 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 // reportRows is plant_claims_reports as "process@station", sorted by process.
 func reportRows(t *testing.T, db *store.DB) []string {
 	t.Helper()
-	rows, err := db.Query(`SELECT process_id, station_id FROM plant_claims_reports ORDER BY process_id`)
+	rows, err := db.Query(`SELECT process_id, station_uid FROM plant_claims_reports ORDER BY process_id`)
 	testutil.MustNoErr(t, err, "read plant_claims_reports")
 	defer rows.Close()
 	out := []string{}

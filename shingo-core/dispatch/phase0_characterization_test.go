@@ -45,7 +45,7 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 
 	// A dummy order exists only so we have a valid orderID to steal the bin with.
 	stealer := &orders.Order{
-		EdgeUUID: "char-race-stealer", StationID: "x",
+		EdgeUUID: "char-race-stealer", StationUID: "x",
 		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
 		DeliveryNode: lineNode.Name,
 	}
@@ -114,7 +114,7 @@ func TestPhase0_DispositionTriad_NoSourceBin_Complex(t *testing.T) {
 	stepsJSON, _ := json.Marshal(steps)
 	order := &orders.Order{
 		EdgeUUID:     "char-no-source-bin",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,
@@ -313,7 +313,7 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 		stepsJSON, _ := json.Marshal(steps)
 		order := &orders.Order{
 			EdgeUUID:     "char-status-complex",
-			StationID:    "line-1",
+			StationUID:   "line-1",
 			OrderType:    OrderTypeComplex,
 			Status:       StatusQueued,
 			Quantity:     1,

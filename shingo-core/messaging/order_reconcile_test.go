@@ -54,12 +54,12 @@ func TestOrderReconcile_OffersOrdersTheEdgeDidNotAskAbout(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 
 	known := &orders.Order{
-		EdgeUUID: "rc-known", StationID: "edge.rc", OrderType: dispatch.OrderTypeRetrieve,
+		EdgeUUID: "rc-known", StationUID: "edge.rc", OrderType: dispatch.OrderTypeRetrieve,
 		Status: dispatch.StatusQueued, Quantity: 1, DeliveryNode: node.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(known), "create the order the edge knows")
 	unknown := &orders.Order{
-		EdgeUUID: "rc-unknown", StationID: "edge.rc", OrderType: dispatch.OrderTypeRetrieveEmpty,
+		EdgeUUID: "rc-unknown", StationUID: "edge.rc", OrderType: dispatch.OrderTypeRetrieveEmpty,
 		Status: dispatch.StatusQueued, Quantity: 1, DeliveryNode: node.Name, SourceNode: "EMPTY-MARKET",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(unknown), "create the order the edge lost")
@@ -102,12 +102,12 @@ func TestOrderReconcile_NeverOffersAnotherStationsOrders(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 
 	mine := &orders.Order{
-		EdgeUUID: "rc2-mine", StationID: "edge.mine", OrderType: dispatch.OrderTypeRetrieve,
+		EdgeUUID: "rc2-mine", StationUID: "edge.mine", OrderType: dispatch.OrderTypeRetrieve,
 		Status: dispatch.StatusQueued, Quantity: 1, DeliveryNode: node.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(mine), "create own order")
 	theirs := &orders.Order{
-		EdgeUUID: "rc2-theirs", StationID: "edge.theirs", OrderType: dispatch.OrderTypeRetrieve,
+		EdgeUUID: "rc2-theirs", StationUID: "edge.theirs", OrderType: dispatch.OrderTypeRetrieve,
 		Status: dispatch.StatusQueued, Quantity: 1, DeliveryNode: node.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(theirs), "create another station's order")
@@ -137,7 +137,7 @@ func TestOrderReconcile_AnEdgeWithNoOrdersStillGetsHealed(t *testing.T) {
 	node := &nodes.Node{Name: "RC3-W1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	o := &orders.Order{
-		EdgeUUID: "rc3-orphan", StationID: "edge.wiped", OrderType: dispatch.OrderTypeRetrieveEmpty,
+		EdgeUUID: "rc3-orphan", StationUID: "edge.wiped", OrderType: dispatch.OrderTypeRetrieveEmpty,
 		Status: dispatch.StatusQueued, Quantity: 1, DeliveryNode: node.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
@@ -162,7 +162,7 @@ func TestOrderReconcile_TerminalOrdersAreNotOffered(t *testing.T) {
 	node := &nodes.Node{Name: "RC4-W1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	done := &orders.Order{
-		EdgeUUID: "rc4-done", StationID: "edge.rc4", OrderType: dispatch.OrderTypeRetrieve,
+		EdgeUUID: "rc4-done", StationUID: "edge.rc4", OrderType: dispatch.OrderTypeRetrieve,
 		Status: dispatch.StatusConfirmed, Quantity: 1, DeliveryNode: node.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(done), "create finished order")

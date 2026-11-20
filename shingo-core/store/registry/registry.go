@@ -143,34 +143,29 @@ func NewStationUID() (string, error) {
 // still holding it. That single property, and not opacity or length or
 // collision resistance, is why the uid is minted here.
 //
-// stationID (the routing address) is set to the uid. They are the same value
-// by design — Address.Station is a transport selector whose value IS the
-// identity — and they are separate columns because every station-keyed row in
-// this database already carries the string, so the day they diverge is a
-// migration rather than a rename.
+// The routing address is the uid itself: Address.Station is a transport
+// selector whose value IS the identity. (edge_registry.station_id held a copy
+// of it until v185 dropped the column.)
 // ENROLLING IS ITSELF THE ACKNOWLEDGEMENT, so claimed_at is set here. An
 // operator calling this has already answered "what is this station?" — that is
 // what the display name they passed IS. Leaving it NULL would list every
 // deliberately-created station as unclaimed, which would make the unclaimed
 // state mean nothing within a day of anyone using it.
-func Enroll(db *sql.DB, uid, displayName, stationID string) (*Edge, error) {
+func Enroll(db *sql.DB, uid, displayName string) (*Edge, error) {
 	if uid == "" {
 		return nil, errors.New("registry: enroll requires a station uid")
 	}
-	if stationID == "" {
-		stationID = uid
-	}
 	if displayName == "" {
-		displayName = stationID
+		displayName = uid
 	}
 	var e Edge
 	err := db.QueryRow(`
-		INSERT INTO edge_registry (station_uid, display_name, station_id, registered_at, status, claimed_at)
-		VALUES ($1, $2, $3, NOW(), 'enrolled', NOW())
+		INSERT INTO edge_registry (station_uid, display_name, registered_at, status, claimed_at)
+		VALUES ($1, $2, NOW(), 'enrolled', NOW())
 		ON CONFLICT DO NOTHING
-		RETURNING id, station_uid, display_name, station_id, registered_at, status
-	`, uid, displayName, stationID).Scan(
-		&e.ID, &e.StationUID, &e.DisplayName, &e.StationID, &e.RegisteredAt, &e.Status)
+		RETURNING id, station_uid, display_name, registered_at, status
+	`, uid, displayName).Scan(
+		&e.ID, &e.StationUID, &e.DisplayName, &e.RegisteredAt, &e.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrAlreadyEnrolled
 	}
@@ -215,13 +210,13 @@ func Introduce(db *sql.DB, uid, hostname, version string) (*Edge, error) {
 	}
 	var e Edge
 	err := db.QueryRow(`
-		INSERT INTO edge_registry (station_uid, display_name, station_id, hostname, version,
+		INSERT INTO edge_registry (station_uid, display_name, hostname, version,
 		                           registered_at, status, bound_hostname, claimed_at)
-		VALUES ($1, '', $1, $2, $3, NOW(), 'active', $2, NULL)
+		VALUES ($1, '', $2, $3, NOW(), 'active', $2, NULL)
 		ON CONFLICT DO NOTHING
-		RETURNING id, station_uid, display_name, station_id, registered_at, status
+		RETURNING id, station_uid, display_name, registered_at, status
 	`, uid, hostname, version).Scan(
-		&e.ID, &e.StationUID, &e.DisplayName, &e.StationID, &e.RegisteredAt, &e.Status)
+		&e.ID, &e.StationUID, &e.DisplayName, &e.RegisteredAt, &e.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Raced with another register for the same uid. Not an error: the row
 		// exists, which is all the caller needed.
@@ -494,7 +489,7 @@ type TickLag struct {
 	OldestUnsentAgeMS *int64
 }
 
-const edgeColumns = `id, station_uid, display_name, station_id, hostname, version,
+const edgeColumns = `id, station_uid, display_name, hostname, version,
 	       registered_at, last_heartbeat, status,
 	       bound_hostname, bound_instance, prev_instance, bound_at, claimed_at,
 	       conflict_hostname, conflict_count, conflict_at,
@@ -504,7 +499,7 @@ const edgeColumns = `id, station_uid, display_name, station_id, hostname, versio
 
 func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 	var e Edge
-	err := sc.Scan(&e.ID, &e.StationUID, &e.DisplayName, &e.StationID, &e.Hostname, &e.Version,
+	err := sc.Scan(&e.ID, &e.StationUID, &e.DisplayName, &e.Hostname, &e.Version,
 		&e.RegisteredAt, &e.LastHeartbeat, &e.Status,
 		&e.BoundHostname, &e.BoundInstance, &e.PrevInstance, &e.BoundAt, &e.ClaimedAt,
 		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt,

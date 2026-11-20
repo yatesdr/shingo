@@ -63,7 +63,7 @@ func TestRekey_MidPlanLaneIsFound(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "rekey-mid"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Coordinated = true
 		// What extractEndpoints would write: FIRST and LAST actionable node.
 		// Both are lines. Neither is in the lane. That is the whole point.

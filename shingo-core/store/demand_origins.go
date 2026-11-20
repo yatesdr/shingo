@@ -84,7 +84,7 @@ const (
 // accumulated on Core from its own signals. Listing it in the SET clause would
 // zero Core's own fact on every Edge message — silently, and only for episodes
 // that get more than one. (uop_delivered, the other Core-owned column this
-// clause protected, never had a writer and v184 drops it; see
+// clause protected, never had a writer and v185 drops it; see
 // domain.DemandOrigin for what that means for Stage 5.3.)
 //
 // A BLANK PAYLOAD OR NODE SAYS NOTHING: it keeps what an earlier revision said. An
@@ -99,7 +99,7 @@ func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 	_, err := db.Exec(`
 		INSERT INTO demand_origins (
 		    origin_id, revision, episode_key, kind, direction, trigger_kind,
-		    trigger_ref, station_id, process_id, core_node_name, payload_code,
+		    trigger_ref, station_uid, process_id, core_node_name, payload_code,
 		    opened_at, opened_total, threshold, expected_orders,
 		    expected_reason, rerequest_count, discretionary, closed_at, close_reason,
 		    closed_by
@@ -111,7 +111,7 @@ func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 		    direction        = EXCLUDED.direction,
 		    trigger_kind     = EXCLUDED.trigger_kind,
 		    trigger_ref      = EXCLUDED.trigger_ref,
-		    station_id       = EXCLUDED.station_id,
+		    station_uid       = EXCLUDED.station_uid,
 		    process_id       = EXCLUDED.process_id,
 		    core_node_name   = COALESCE(NULLIF(EXCLUDED.core_node_name, ''), demand_origins.core_node_name),
 		    payload_code     = COALESCE(NULLIF(EXCLUDED.payload_code, ''), demand_origins.payload_code),
@@ -127,7 +127,7 @@ func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 		    closed_by        = EXCLUDED.closed_by
 		WHERE demand_origins.revision < EXCLUDED.revision`,
 		o.OriginID, o.Revision, o.EpisodeKey, o.Kind, o.Direction, o.Trigger,
-		o.TriggerRef, o.StationID, o.ProcessID, o.CoreNodeName, o.PayloadCode,
+		o.TriggerRef, o.StationUID, o.ProcessID, o.CoreNodeName, o.PayloadCode,
 		o.OpenedAt, o.OpenedTotal, o.Threshold, expected,
 		o.ExpectedUnknownReason, o.RerequestCount, o.Discretionary,
 		o.ClosedAt, o.CloseReason, nullIfEmpty(o.ClosedBy))
@@ -249,7 +249,7 @@ func (db *DB) OpenCoreEpisode(o DemandOrigin) (string, error) {
 	var id string
 	err := db.QueryRow(`
 		INSERT INTO demand_origins (
-		    origin_id, revision, episode_key, kind, trigger_ref, station_id,
+		    origin_id, revision, episode_key, kind, trigger_ref, station_uid,
 		    core_node_name, payload_code, opened_at, opened_total, threshold,
 		    expected_orders, expected_reason, signal_count
 		) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)
@@ -257,7 +257,7 @@ func (db *DB) OpenCoreEpisode(o DemandOrigin) (string, error) {
 		    opened_at       = EXCLUDED.opened_at,
 		    opened_total    = EXCLUDED.opened_total,
 		    threshold       = EXCLUDED.threshold,
-		    station_id      = EXCLUDED.station_id,
+		    station_uid      = EXCLUDED.station_uid,
 		    trigger_ref     = EXCLUDED.trigger_ref,
 		    core_node_name  = EXCLUDED.core_node_name,
 		    payload_code    = EXCLUDED.payload_code,
@@ -265,7 +265,7 @@ func (db *DB) OpenCoreEpisode(o DemandOrigin) (string, error) {
 		    expected_reason = EXCLUDED.expected_reason
 		  WHERE `+helpers.DemandForecastSQL("demand_origins")+`
 		RETURNING origin_id`,
-		o.OriginID, o.EpisodeKey, o.Kind, o.TriggerRef, o.StationID,
+		o.OriginID, o.EpisodeKey, o.Kind, o.TriggerRef, o.StationUID,
 		o.CoreNodeName, o.PayloadCode, o.OpenedAt, o.OpenedTotal, o.Threshold,
 		expected, o.ExpectedUnknownReason).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -377,7 +377,7 @@ type OpenEpisodeState struct {
 	OriginID   string
 	EpisodeKey string
 	Kind       string
-	StationID  string
+	StationUID string
 	OpenedAt   time.Time
 
 	// Children is COUNT(orders WHERE origin_id = this). Zero is the input to
@@ -419,11 +419,11 @@ type OpenEpisodeState struct {
 // partial index on exactly this lookup.
 func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 	rows, err := db.Query(`
-		SELECT o.origin_id, o.episode_key, o.kind, o.station_id, o.opened_at,
+		SELECT o.origin_id, o.episode_key, o.kind, o.station_uid, o.opened_at,
 		       (SELECT COUNT(*) FROM orders c WHERE c.origin_id = o.origin_id),
 		       e.last_heartbeat
 		  FROM demand_origins o
-		  LEFT JOIN edge_registry e ON e.station_id = o.station_id
+		  LEFT JOIN edge_registry e ON e.station_uid = o.station_uid
 		 WHERE ` + helpers.DemandOpenSQL("o") + `
 		 ORDER BY o.opened_at`)
 	if err != nil {
@@ -434,7 +434,7 @@ func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 	var out []OpenEpisodeState
 	for rows.Next() {
 		var s OpenEpisodeState
-		if err := rows.Scan(&s.OriginID, &s.EpisodeKey, &s.Kind, &s.StationID,
+		if err := rows.Scan(&s.OriginID, &s.EpisodeKey, &s.Kind, &s.StationUID,
 			&s.OpenedAt, &s.Children, &s.EdgeLastSeen); err != nil {
 			return nil, fmt.Errorf("scan open episode state: %w", err)
 		}
@@ -488,7 +488,7 @@ func (db *DB) AgeOutOrphanOrders(createdBefore, agedAt time.Time) (int64, error)
 // OrphanFinding is one order that should have carried an origin and didn't.
 type OrphanFinding struct {
 	EdgeUUID  string
-	StationID string
+	Requester string
 	CreatedAt time.Time
 
 	// AgedAt is when the sweep stopped asking about this one. NIL MEANS IT IS
@@ -512,7 +512,7 @@ type OrphanFinding struct {
 // a LIMIT here would hide it behind a page boundary.
 func (db *DB) ListOrphanFindings() ([]OrphanFinding, error) {
 	rows, err := db.Query(`
-		SELECT edge_uuid, station_id, created_at, orphan_aged_at
+		SELECT edge_uuid, `+helpers.RequesterSQL("")+`, created_at, orphan_aged_at
 		  FROM orders
 		 WHERE origin_class = $1
 		 ORDER BY orphan_aged_at NULLS FIRST, created_at`, protocol.OriginClassOrphan)
@@ -524,7 +524,7 @@ func (db *DB) ListOrphanFindings() ([]OrphanFinding, error) {
 	var out []OrphanFinding
 	for rows.Next() {
 		var f OrphanFinding
-		if err := rows.Scan(&f.EdgeUUID, &f.StationID, &f.CreatedAt, &f.AgedAt); err != nil {
+		if err := rows.Scan(&f.EdgeUUID, &f.Requester, &f.CreatedAt, &f.AgedAt); err != nil {
 			return nil, fmt.Errorf("scan orphan finding: %w", err)
 		}
 		out = append(out, f)
@@ -549,7 +549,7 @@ func (db *DB) ListOrphanFindings() ([]OrphanFinding, error) {
 // and a restart is indistinguishable from an ordinary tick.
 func (db *DB) ListOpenEpisodesOfKind(kind string) ([]DemandOrigin, error) {
 	rows, err := db.Query(`
-		SELECT origin_id, revision, episode_key, station_id, core_node_name,
+		SELECT origin_id, revision, episode_key, station_uid, core_node_name,
 		       payload_code, opened_at, opened_total, threshold
 		  FROM demand_origins
 		 WHERE kind = $1 AND `+helpers.DemandOpenSQL(""), kind)
@@ -561,7 +561,7 @@ func (db *DB) ListOpenEpisodesOfKind(kind string) ([]DemandOrigin, error) {
 	var out []DemandOrigin
 	for rows.Next() {
 		var o DemandOrigin
-		if err := rows.Scan(&o.OriginID, &o.Revision, &o.EpisodeKey, &o.StationID,
+		if err := rows.Scan(&o.OriginID, &o.Revision, &o.EpisodeKey, &o.StationUID,
 			&o.CoreNodeName, &o.PayloadCode, &o.OpenedAt, &o.OpenedTotal, &o.Threshold); err != nil {
 			return nil, fmt.Errorf("scan open %s episode: %w", kind, err)
 		}
@@ -593,7 +593,7 @@ func (db *DB) ListOpenKeeperEpisodes() ([]KeeperEpisode, error) {
 	live := `o.status NOT IN (` + protocol.TerminalStatusSQLList() + `)`
 	parked := live + ` AND COALESCE(o.queue_cause, '') <> ''`
 	rows, err := db.Query(`
-		SELECT d.origin_id, d.revision, d.episode_key, d.station_id, d.core_node_name,
+		SELECT d.origin_id, d.revision, d.episode_key, d.station_uid, d.core_node_name,
 		       d.payload_code, d.opened_at, d.opened_total, d.threshold,
 		       COUNT(o.id) FILTER (WHERE `+live+` AND o.parent_order_id IS NULL),
 		       COALESCE((array_agg(o.queue_cause ORDER BY o.created_at, o.id) FILTER (WHERE `+parked+`))[1], ''),
@@ -610,7 +610,7 @@ func (db *DB) ListOpenKeeperEpisodes() ([]KeeperEpisode, error) {
 	var out []KeeperEpisode
 	for rows.Next() {
 		var e KeeperEpisode
-		if err := rows.Scan(&e.OriginID, &e.Revision, &e.EpisodeKey, &e.StationID,
+		if err := rows.Scan(&e.OriginID, &e.Revision, &e.EpisodeKey, &e.StationUID,
 			&e.CoreNodeName, &e.PayloadCode, &e.OpenedAt, &e.OpenedTotal, &e.Threshold,
 			&e.Asked, &e.OldestCause, &e.OldestReason, &e.OldestAt); err != nil {
 			return nil, fmt.Errorf("scan open keeper episode: %w", err)
@@ -702,13 +702,13 @@ func (db *DB) GetDemandOrigin(originID string) (*DemandOrigin, error) {
 	)
 	err := db.QueryRow(`
 		SELECT origin_id, revision, episode_key, kind, direction, trigger_kind,
-		       trigger_ref, station_id, process_id, core_node_name, payload_code,
+		       trigger_ref, station_uid, process_id, core_node_name, payload_code,
 		       opened_at, opened_total, threshold, expected_orders,
 		       expected_reason, rerequest_count, discretionary, closed_at,
 		       close_reason, closed_by
 		  FROM demand_origins WHERE origin_id = $1`, originID).Scan(
 		&o.OriginID, &o.Revision, &o.EpisodeKey, &o.Kind, &o.Direction, &o.Trigger,
-		&o.TriggerRef, &o.StationID, &o.ProcessID, &o.CoreNodeName, &o.PayloadCode,
+		&o.TriggerRef, &o.StationUID, &o.ProcessID, &o.CoreNodeName, &o.PayloadCode,
 		&openedAt, &o.OpenedTotal, &o.Threshold, &expected,
 		&o.ExpectedUnknownReason, &o.RerequestCount, &o.Discretionary,
 		&closedAt, &o.CloseReason, &closedBy)
@@ -763,7 +763,7 @@ func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandE
 	}
 	rows, err := db.Query(`
 		SELECT o.origin_id, o.revision, o.episode_key, o.kind, o.direction,
-		       o.trigger_kind, o.trigger_ref, o.station_id, o.process_id,
+		       o.trigger_kind, o.trigger_ref, o.station_uid, o.process_id,
 		       o.core_node_name, o.payload_code, o.opened_at, o.opened_total,
 		       o.threshold, o.expected_orders, o.expected_reason,
 		       o.rerequest_count, o.discretionary, o.closed_at, o.close_reason,
@@ -791,7 +791,7 @@ func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandE
 		// did not say" — and a scan into a plain int or string would destroy that
 		// here, before any renderer could tell the two apart.
 		if err := rows.Scan(&e.OriginID, &e.Revision, &e.EpisodeKey, &e.Kind,
-			&e.Direction, &e.Trigger, &e.TriggerRef, &e.StationID, &e.ProcessID,
+			&e.Direction, &e.Trigger, &e.TriggerRef, &e.StationUID, &e.ProcessID,
 			&e.CoreNodeName, &e.PayloadCode, &openedAt, &e.OpenedTotal,
 			&e.Threshold, &e.ExpectedOrders, &e.ExpectedUnknownReason,
 			&e.RerequestCount, &e.Discretionary, &closedAt, &e.CloseReason,

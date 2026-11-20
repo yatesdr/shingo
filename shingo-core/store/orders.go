@@ -1501,8 +1501,8 @@ func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 
 // RecordIntakeRefusal stores Core's refusal of one leg of a pair at intake. See
 // orders.IntakeRefusal.
-func (db *DB) RecordIntakeRefusal(edgeUUID, stationID, code, detail string) error {
-	return orders.RecordIntakeRefusal(db.DB, edgeUUID, stationID, code, detail)
+func (db *DB) RecordIntakeRefusal(edgeUUID, code, detail string) error {
+	return orders.RecordIntakeRefusal(db.DB, edgeUUID, code, detail)
 }
 
 // GetIntakeRefusal returns the refusal on record for a uuid, or nil.

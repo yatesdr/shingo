@@ -70,7 +70,7 @@ func TestKanbanPin_TheUpsertKeepsPayloadAndNodeABlankRevisionOmits(t *testing.T)
 	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
 	base := store.DemandOrigin{
 		OriginID: "aaaaaaaa-0000-0000-0000-00000000c0de", EpisodeKey: "changeover|KP.LINE|42", Kind: protocol.EpisodeKindChangeover,
-		StationID: "KP.LINE", ProcessID: "42", OpenedAt: opened,
+		StationUID: "KP.LINE", ProcessID: "42", OpenedAt: opened,
 	}
 	apply := func(rev int64, payload, node string) *store.DemandOrigin {
 		t.Helper()

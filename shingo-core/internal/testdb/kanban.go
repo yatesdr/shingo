@@ -11,7 +11,7 @@ import (
 // absent. Blank clears it.
 func KanbanStation(t testing.TB, db *store.DB, nodeID int64, station string) {
 	t.Helper()
-	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, Station: &station})
+	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, StationUID: &station})
 }
 
 // KanbanStrict seeds a kanban's strict switch through the one write.
@@ -40,7 +40,7 @@ func KanbanKeeper(t testing.TB, db *store.DB, nodeID int64, station string) {
 		t.Fatalf("kanban keeper %s: supported position: %v", g.Name, err)
 	}
 	supports := []int64{pos.ID}
-	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, Station: &station, Supports: &supports})
+	saveKanban(t, db, store.KanbanChange{NodeID: nodeID, EnsureRow: true, StationUID: &station, Supports: &supports})
 }
 
 // KanbanSources sets a kanban's sources, in rank order, its row made if absent; none

@@ -15,7 +15,7 @@ import (
 // PartEvent is one projected PLC counter tick (a cell_part_events row).
 type PartEvent struct {
 	ID             int64     `json:"id"`
-	CellID         string    `json:"cell_id"`
+	StationUID     string    `json:"cell_id"`
 	RecordedAt     time.Time `json:"recorded_at"`
 	EdgeSnapshotID int64     `json:"edge_snapshot_id"`
 	CountValue     int64     `json:"count_value"`
@@ -143,7 +143,7 @@ func perPartGap(gap time.Duration, delta int64) time.Duration {
 
 // EstimateTarget derives a cell's target cycle from its recent stream; it is
 // the only target there is (§8 #11 planned an admin-set one, cell_targets, which
-// never had a writer and is gone since v184). Uses
+// never had a writer and is gone since v185). Uses
 // the MEDIAN per-part gap — the gap before a fire, divided by the parts it
 // carried — which is robust to the long stop gaps in the stream (a healthy
 // 22.5s cell with occasional stops still medians ≈ 22.5s). A gap that ended in

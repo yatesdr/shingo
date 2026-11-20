@@ -54,7 +54,7 @@ func TestPinNodes_UpdateWithoutZoneKeepsIt(t *testing.T) {
 // in_transit again at t0+40s, delivered at t0+dur.
 func pinSeedMissionOrder(t *testing.T, db *store.DB, station, robot string, t0 time.Time, dur time.Duration) {
 	t.Helper()
-	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.StationID = station })
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.StationUID = station })
 	_, err := db.Exec(`UPDATE orders SET robot_id = $1 WHERE id = $2`, robot, o.ID)
 	testutil.MustNoErr(t, err, "robot")
 	for _, r := range []struct {

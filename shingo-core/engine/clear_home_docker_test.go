@@ -257,7 +257,7 @@ func TestClearHome_SpotArm(t *testing.T) {
 		t.Errorf("partial's move says %q, want it to name %s", partial.QueueReason, r.e.Label)
 	}
 	var pushed int
-	testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE station_id=$1 AND msg_type=$2`,
+	testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE dst_station=$1 AND msg_type=$2`,
 		clearStation, "data."+protocol.SubjectOrderProjected).Scan(&pushed), "outbox")
 	if pushed != 3 {
 		t.Errorf("%d projections pushed to the station, want 3 (parent, partial's move, empty's move)", pushed)
@@ -617,7 +617,7 @@ func TestClearHome_PullCancelledBeforeLift_RerunsToSpot(t *testing.T) {
 
 	testutil.MustNoErr(t, r.db.DeleteBin(r.xBin.ID), "a spot opens")
 	pull := testdb.RequireOrder(t, r.db, "chc-pull")
-	r.d.Lifecycle().CancelOrder(pull, pull.StationID, "operator cancelled", dispatch.CancelCause{})
+	r.d.Lifecycle().CancelOrder(pull, pull.StationUID, "operator cancelled", dispatch.CancelCause{})
 	r.eng.after.settle()
 
 	_, empties := r.children(t, parent.ID)
@@ -683,7 +683,7 @@ func TestClearHome_ParentCancelled(t *testing.T) {
 		t.Fatalf("tap: %+v", ans.Body)
 	}
 	parent := r.parent(t)
-	r.d.CancelOrderWithCascade(parent, parent.StationID, "operator cancelled", dispatch.CancelCause{})
+	r.d.CancelOrderWithCascade(parent, parent.StationUID, "operator cancelled", dispatch.CancelCause{})
 	partial, empties := r.children(t, parent.ID)
 	for _, c := range append(empties, partial) {
 		if got := r.reload(t, c.ID); got.Status != protocol.StatusCancelled {
@@ -710,7 +710,7 @@ func TestClearHome_SpotRobotFault(t *testing.T) {
 	parent := r.parent(t)
 	partial, empties := r.children(t, parent.ID)
 	first := r.reload(t, empties[0].ID)
-	testutil.MustNoErr(t, r.d.Lifecycle().Fail(first, first.StationID, "robot_fault", "the robot faulted"), "fail the empty's move")
+	testutil.MustNoErr(t, r.d.Lifecycle().Fail(first, first.StationUID, "robot_fault", "the robot faulted"), "fail the empty's move")
 	r.eng.after.settle()
 
 	if got := r.reload(t, partial.ID); protocol.IsTerminal(got.Status) {
@@ -872,7 +872,7 @@ func TestClearPin_RerunNeverTouchesACommittedPartial(t *testing.T) {
 	testutil.MustNoErr(t, r.db.UpdateOrderVendor(partial.ID, "sg-committed-partial", "RUNNING", "AMR-01"),
 		"the partial's move is with the fleet")
 	first := r.reload(t, empties[0].ID)
-	testutil.MustNoErr(t, r.d.Lifecycle().Fail(first, first.StationID, "robot_fault", "the robot faulted"), "fail the empty's move")
+	testutil.MustNoErr(t, r.d.Lifecycle().Fail(first, first.StationUID, "robot_fault", "the robot faulted"), "fail the empty's move")
 	r.eng.after.settle()
 	if n := r.d.RerunClears(); n != 0 {
 		t.Errorf("the floor re-ran %d clears with the partial's move committed, want 0", n)

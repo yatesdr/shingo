@@ -209,7 +209,7 @@ func TestStage2Pull_WindowWithInboundOrBinIsNotFree(t *testing.T) {
 	// dispatched, not pending; a pending order is the scanner's, and this one,
 	// with no payload, fails on the first pass and frees the window.)
 	testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType = "s2f-inbound", "test-station", dispatch.OrderTypeMove
+		o.EdgeUUID, o.StationUID, o.OrderType = "s2f-inbound", "test-station", dispatch.OrderTypeMove
 		o.Quantity, o.DeliveryNode = 1, p.windows[1].Name
 	}, testdb.FleetHas("sg-s2f-inbound"))
 	eng := newTestEngine(t, db, simulator.New())
@@ -268,12 +268,12 @@ func TestStage2Pull_FiresOnPickupOnArrivalAndAtStartup(t *testing.T) {
 		time.Sleep(300 * time.Millisecond) // the startup sweep finds no cart
 		f.cart(t, f.slots[0].ID, f.marker, 0)
 		arrived := &orders.Order{
-			EdgeUUID: "s2t3-u2", StationID: "test-station", OrderType: dispatch.OrderTypeMove,
+			EdgeUUID: "s2t3-u2", StationUID: "test-station", OrderType: dispatch.OrderTypeMove,
 			Status: dispatch.StatusConfirmed, Quantity: 1, DeliveryNode: f.slots[0].Name,
 		}
 		testutil.MustNoErr(t, db.CreateOrder(arrived), "stage 1's U2")
 		eng.Events.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-			OrderID: arrived.ID, EdgeUUID: arrived.EdgeUUID, StationID: arrived.StationID,
+			OrderID: arrived.ID, EdgeUUID: arrived.EdgeUUID, StationID: arrived.StationUID,
 		}})
 		if got := awaitMoves(t, db, 1); len(got) != 1 {
 			t.Errorf("a cart arriving in the wait group made %d moves, want 1", len(got))
@@ -494,7 +494,7 @@ func TestStage2Pull_NeverTakesAStrangersHold(t *testing.T) {
 	f := newS2Fixture(t, db, "S2T", 1)
 	p := f.pair(t, "S2T", 1)
 	cart := f.cart(t, f.slots[0].ID, f.marker, time.Hour)
-	stranger := testdb.Holding(&orders.Order{EdgeUUID: "s2t-stranger", StationID: "test", OrderType: "retrieve",
+	stranger := testdb.Holding(&orders.Order{EdgeUUID: "s2t-stranger", StationUID: "test", OrderType: "retrieve",
 		Status: "queued", Quantity: 1}, cart.ID)
 	testutil.MustNoErr(t, db.CreateOrder(stranger), "the stranger")
 	_, err := db.Exec(fmt.Sprintf(`

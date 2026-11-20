@@ -17,7 +17,7 @@ func mkPlainOrder(t *testing.T, db interface {
 }, uuid string, otype protocol.OrderType, payload, destName string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "ST", OrderType: otype, Status: StatusQueued,
+		EdgeUUID: uuid, StationUID: "ST", OrderType: otype, Status: StatusQueued,
 		Quantity: 1, PayloadCode: payload, DeliveryNode: destName,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create plain order")

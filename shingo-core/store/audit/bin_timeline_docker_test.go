@@ -21,7 +21,7 @@ func TestListBinUOPByBin_ReadsTheDetailItWasWrittenWith(t *testing.T) {
 	const binID = 902
 	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, binID, nil, 0, audit.OpTotesDeclared, "test", nil, "", "operator",
 		audit.BinUOPContext{Detail: json.RawMessage(`{"layers":0,"totes_to":0}`)}), "a row with detail")
-	testutil.MustNoErr(t, audit.AppendBinUOPOverride(db.DB, binID, 10, 8, "override", "test", nil, "", "operator",
+	testutil.MustNoErr(t, audit.AppendBinUOPOverride(db.DB, binID, 10, 8, "override", "test", nil, "", "operator", "",
 		[]byte(`{"kind":"count"}`)), "a row with metadata")
 	rows, err := audit.ListBinUOPByBin(db.DB, binID, 10, 0)
 	testutil.MustNoErr(t, err, "the timeline")

@@ -53,10 +53,10 @@ func outboxMark(t *testing.T, db *store.DB) int64 {
 // tellsAfter lists, oldest first, every outbox row after mark whose payload
 // names the order (order_uuid), sent or not, as "msg_type status station". The
 // status is the one an order.update carries and is blank on every other message;
-// the station is the row's own station_id, the one the drainer routes on.
+// the station is the row's own dst_station, the address Core queued it for.
 func tellsAfter(t *testing.T, db *store.DB, edgeUUID string, mark int64) []string {
 	t.Helper()
-	rows, err := db.DB.Query(`SELECT msg_type, station_id, payload FROM outbox WHERE id > $1 ORDER BY id`, mark)
+	rows, err := db.DB.Query(`SELECT msg_type, dst_station, payload FROM outbox WHERE id > $1 ORDER BY id`, mark)
 	testutil.MustNoErr(t, err, "read outbox")
 	defer rows.Close()
 	var out []string
@@ -153,8 +153,8 @@ func pinRetrieve(t *testing.T, uuid string) (*store.DB, *Engine, *simulator.Simu
 		Quantity:     1,
 	})
 	order := testdb.RequireOrderStatus(t, db, uuid, dispatch.StatusDispatched)
-	if order.StationID != pinStation {
-		t.Fatalf("the retrieve belongs to station %q, want %q — the station column below assumes it", order.StationID, pinStation)
+	if order.StationUID != pinStation {
+		t.Fatalf("the retrieve belongs to station %q, want %q — the station column below assumes it", order.StationUID, pinStation)
 	}
 	return db, eng, sim, order, before
 }
@@ -164,7 +164,7 @@ func tellPinOrder(t *testing.T, db *store.DB, uuid string, status protocol.Statu
 	t.Helper()
 	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = pinStation
+		o.StationUID = pinStation
 		o.Status = status
 	}}, opts...)...)
 }
@@ -276,7 +276,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		sim.DriveState(order.VendorOrderID, "FINISHED")
 		delivered := testdb.RequireOrderStatus(t, db, order.EdgeUUID, dispatch.StatusDelivered)
 		mark := outboxMark(t, db)
-		ok, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(delivered, delivered.StationID, "confirmed", 1)
+		ok, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(delivered, delivered.StationUID, "confirmed", 1)
 		testutil.MustNoErr(t, err, "confirm receipt")
 		if !ok {
 			t.Fatal("ConfirmReceipt reported the order already completed")
@@ -298,7 +298,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db, eng, _, order, before := pinRetrieve(t, "tell-cancel")
 		mark := outboxMark(t, db)
-		eng.Dispatcher().Lifecycle().CancelOrder(order, order.StationID, "pin: cancelled", dispatch.CancelCause{})
+		eng.Dispatcher().Lifecycle().CancelOrder(order, order.StationUID, "pin: cancelled", dispatch.CancelCause{})
 		eng.after.settle()
 		testdb.RequireOrderStatus(t, db, order.EdgeUUID, dispatch.StatusCancelled)
 		requireTells(t, db, order.EdgeUUID, mark,
@@ -313,7 +313,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		t.Parallel()
 		db, eng, _, order, before := pinRetrieve(t, "tell-fail")
 		mark := outboxMark(t, db)
-		testutil.MustNoErr(t, eng.Dispatcher().Lifecycle().Fail(order, order.StationID, "pin_failed", "pin: failed"), "fail")
+		testutil.MustNoErr(t, eng.Dispatcher().Lifecycle().Fail(order, order.StationUID, "pin_failed", "pin: failed"), "fail")
 		eng.after.settle()
 		testdb.RequireOrderStatus(t, db, order.EdgeUUID, dispatch.StatusFailed)
 		requireTells(t, db, order.EdgeUUID, mark,
@@ -462,7 +462,7 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 		eng := newTestEngine(t, db, simulator.New())
 		eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("tell-restart-shape", sd, grp))
 		shape := testdb.RequireOrder(t, db, "tell-restart-shape")
-		parent := &orders.Order{EdgeUUID: "tell-restart", StationID: shape.StationID, OrderType: shape.OrderType,
+		parent := &orders.Order{EdgeUUID: "tell-restart", StationUID: shape.StationUID, OrderType: shape.OrderType,
 			Status: protocol.StatusReshuffling, Quantity: 1, PayloadCode: shape.PayloadCode,
 			SourceNode: shape.SourceNode, DeliveryNode: shape.DeliveryNode, StepsJSON: shape.StepsJSON,
 			Coordinated: true}
@@ -507,9 +507,9 @@ func TestStatusTellPin_RowsPerTypedWriter(t *testing.T) {
 			},
 		})
 		parked := testdb.RequireOrderStatus(t, db, "tell-coordinated", dispatch.StatusQueued)
-		if !parked.Coordinated || parked.StationID != pinStation {
+		if !parked.Coordinated || parked.StationUID != pinStation {
 			t.Fatalf("the complex order is coordinated=%v on station %q, want a coordinated order on %q",
-				parked.Coordinated, parked.StationID, pinStation)
+				parked.Coordinated, parked.StationUID, pinStation)
 		}
 		mark := outboxMark(t, db)
 		testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "TELLCO-BIN")

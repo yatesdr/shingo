@@ -52,7 +52,7 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 	// Seed an order that reached confirmed status without completed_at.
 	order := &orders.Order{
 		EdgeUUID:     "recovery-reapply-1",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "in_transit", // claimed live, then confirmed below: an ended order takes no new hold
 		SourceNode:   storageNode.Name,
@@ -147,7 +147,7 @@ func TestReapplyOrderCompletion_SkipsCMSBuildForReplay(t *testing.T) {
 	// Now the replay of that same move.
 	order := &orders.Order{
 		EdgeUUID:     "recovery-reapply-replay",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "in_transit", // claimed live, then confirmed below: an ended order takes no new hold
 		SourceNode:   srcRoot.Name + "." + srcSlot.Name,
@@ -184,7 +184,7 @@ func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 	now := time.Now()
 	order := &orders.Order{
 		EdgeUUID:     "recovery-reapply-done",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "confirmed",
 		SourceNode:   storageNode.Name,
@@ -229,7 +229,7 @@ func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "recovery-no-bin",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "confirmed",
 		DeliveryNode: "LINE1-IN",
@@ -258,10 +258,10 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RELEASE-TERM")
 	order := &orders.Order{
-		EdgeUUID:  "recovery-release-1",
-		StationID: "line-1",
-		OrderType: "retrieve",
-		Status:    "in_transit", // claimed live, then cancelled below: an ended order takes no new hold
+		EdgeUUID:   "recovery-release-1",
+		StationUID: "line-1",
+		OrderType:  "retrieve",
+		Status:     "in_transit", // claimed live, then cancelled below: an ended order takes no new hold
 	}
 	order.HoldFromBirth(bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -297,7 +297,7 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 	// Non-terminal: the fleet has it, and its claim is live.
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "active-claim"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = "retrieve"
 		o.HoldFromBirth(bin.ID)
 	}, testdb.FleetHas("sg-active-claim"))
@@ -423,10 +423,10 @@ func TestCancelStuckOrder_RejectsTerminal(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{
-		EdgeUUID:  "stuck-terminal",
-		StationID: "line-1",
-		OrderType: "retrieve",
-		Status:    "confirmed",
+		EdgeUUID:   "stuck-terminal",
+		StationUID: "line-1",
+		OrderType:  "retrieve",
+		Status:     "confirmed",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
@@ -551,7 +551,7 @@ func TestReissueTerminate_Success(t *testing.T) {
 
 	// Manually fail the order to simulate grace-expiry terminal transition
 	got, _ := db.GetOrder(res.OrderID)
-	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().Fail(got, got.StationID, "grace_timeout", "test grace expiry"), "fail order")
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().Fail(got, got.StationUID, "grace_timeout", "test grace expiry"), "fail order")
 
 	testutil.MustNoErr(t, eng.ReissueTerminate(res.OrderID, "op-retry"), "ReissueTerminate")
 

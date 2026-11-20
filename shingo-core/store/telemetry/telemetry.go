@@ -24,6 +24,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Event, Mission, Filter, and Stats are the telemetry data types. The
@@ -82,11 +83,11 @@ func InsertEvent(db *sql.DB, e *Event) error {
 	// order_history INSERTs.
 	_, err := db.Exec(`INSERT INTO mission_events
 		(order_id, vendor_order_id, old_state, new_state, robot_id,
-		 robot_x, robot_y, robot_angle, robot_battery, robot_station,
+		 robot_x, robot_y, robot_angle, robot_battery, rds_station,
 		 blocks_json, errors_json, detail, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		e.OrderID, e.VendorOrderID, e.OldState, e.NewState, e.RobotID,
-		e.RobotX, e.RobotY, e.RobotAngle, e.RobotBattery, e.RobotStation,
+		e.RobotX, e.RobotY, e.RobotAngle, e.RobotBattery, e.RDSStation,
 		e.BlocksJSON, e.ErrorsJSON, e.Detail, clock.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("insert mission event: %w", err)
@@ -97,7 +98,7 @@ func InsertEvent(db *sql.DB, e *Event) error {
 // ListEvents returns all mission-event rows for the given order.
 func ListEvents(db *sql.DB, orderID int64) ([]*Event, error) {
 	rows, err := db.Query(`SELECT id, order_id, vendor_order_id, old_state, new_state,
-		robot_id, robot_x, robot_y, robot_angle, robot_battery, robot_station,
+		robot_id, robot_x, robot_y, robot_angle, robot_battery, rds_station,
 		blocks_json, errors_json, detail, created_at
 		FROM mission_events WHERE order_id=$1 ORDER BY created_at`, orderID)
 	if err != nil {
@@ -109,7 +110,7 @@ func ListEvents(db *sql.DB, orderID int64) ([]*Event, error) {
 	for rows.Next() {
 		e := &Event{}
 		err := rows.Scan(&e.ID, &e.OrderID, &e.VendorOrderID, &e.OldState, &e.NewState,
-			&e.RobotID, &e.RobotX, &e.RobotY, &e.RobotAngle, &e.RobotBattery, &e.RobotStation,
+			&e.RobotID, &e.RobotX, &e.RobotY, &e.RobotAngle, &e.RobotBattery, &e.RDSStation,
 			&e.BlocksJSON, &e.ErrorsJSON, &e.Detail, &e.CreatedAt)
 		if err != nil {
 			return nil, err
@@ -134,12 +135,12 @@ func UpsertMission(db *sql.DB, t *Mission) error {
 	// months apart, so a telemetry row lands in a different year from the order
 	// it describes and every duration computed across the pair is nonsense.
 	_, err := db.Exec(`INSERT INTO mission_telemetry
-		(order_id, vendor_order_id, robot_id, station_id, order_type,
+		(order_id, vendor_order_id, robot_id, station_uid, order_type,
 		 source_node, delivery_node, terminal_state,
 		 vendor_created, vendor_completed, core_created, core_completed,
 		 duration_ms, vendor_duration_ms,
-		 blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		 blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at, requested_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		ON CONFLICT (order_id) DO UPDATE SET
 		 robot_id=EXCLUDED.robot_id, terminal_state=EXCLUDED.terminal_state,
 		 vendor_created=EXCLUDED.vendor_created, vendor_completed=EXCLUDED.vendor_completed,
@@ -148,11 +149,11 @@ func UpsertMission(db *sql.DB, t *Mission) error {
 		 blocks_json=EXCLUDED.blocks_json, errors_json=EXCLUDED.errors_json,
 		 warnings_json=EXCLUDED.warnings_json, notices_json=EXCLUDED.notices_json,
 		 robot_alarms_json=EXCLUDED.robot_alarms_json`,
-		t.OrderID, t.VendorOrderID, t.RobotID, t.StationID, t.OrderType,
+		t.OrderID, t.VendorOrderID, t.RobotID, t.StationUID, t.OrderType,
 		t.SourceNode, t.DeliveryNode, t.TerminalState,
 		t.VendorCreated, t.VendorCompleted, t.CoreCreated, t.CoreCompleted,
 		t.DurationMS, t.VendorDurationMS,
-		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON, robotAlarms, clock.Now().UTC())
+		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON, robotAlarms, clock.Now().UTC(), t.RequestedBy)
 	if err != nil {
 		return fmt.Errorf("upsert mission telemetry: %w", err)
 	}
@@ -161,7 +162,7 @@ func UpsertMission(db *sql.DB, t *Mission) error {
 
 // GetMission returns the mission_telemetry summary for an order.
 func GetMission(db *sql.DB, orderID int64) (*Mission, error) {
-	row := db.QueryRow(`SELECT id, order_id, vendor_order_id, robot_id, station_id, order_type,
+	row := db.QueryRow(`SELECT id, order_id, vendor_order_id, robot_id, station_uid, requested_by, order_type,
 		source_node, delivery_node, terminal_state,
 		vendor_created, vendor_completed, core_created, core_completed,
 		duration_ms, vendor_duration_ms,
@@ -180,7 +181,7 @@ func GetMission(db *sql.DB, orderID int64) (*Mission, error) {
 func scanMission(row interface{ Scan(...any) error }) (*Mission, error) {
 	t := &Mission{}
 	var robotAlarms sql.NullString
-	err := row.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationID, &t.OrderType,
+	err := row.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationUID, &t.RequestedBy, &t.OrderType,
 		&t.SourceNode, &t.DeliveryNode, &t.TerminalState,
 		&t.VendorCreated, &t.VendorCompleted, &t.CoreCreated, &t.CoreCompleted,
 		&t.DurationMS, &t.VendorDurationMS,
@@ -212,7 +213,7 @@ type ListRow struct {
 }
 
 // missionListCols is the mission_telemetry column list scanMission reads.
-const missionListCols = `id, order_id, vendor_order_id, robot_id, station_id, order_type,
+const missionListCols = `id, order_id, vendor_order_id, robot_id, station_uid, requested_by, order_type,
 		source_node, delivery_node, terminal_state,
 		vendor_created, vendor_completed, core_created, core_completed,
 		duration_ms, vendor_duration_ms,
@@ -256,7 +257,7 @@ func ListMissions(db *sql.DB, f Filter) ([]*ListRow, int, error) {
 	if live != "" {
 		query += `
 		UNION ALL
-		SELECT 0, o.id, o.vendor_order_id, o.robot_id, o.station_id, o.order_type,
+		SELECT 0, o.id, o.vendor_order_id, o.robot_id, o.station_uid, o.requested_by, o.order_type,
 		       o.source_node, o.delivery_node, '',
 		       NULL::timestamptz, NULL::timestamptz, o.created_at, NULL::timestamptz,
 		       0::bigint, 0::bigint,
@@ -265,7 +266,7 @@ func ListMissions(db *sql.DB, f Filter) ([]*ListRow, int, error) {
 		  FROM orders o` + live
 	}
 	query += fmt.Sprintf(`
-		ORDER BY 13 DESC NULLS FIRST, 12 DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+		ORDER BY 14 DESC NULLS FIRST, 13 DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 	args = append(args, limit, f.Offset)
 
 	rows, err := db.Query(query, args...)
@@ -279,7 +280,7 @@ func ListMissions(db *sql.DB, f Filter) ([]*ListRow, int, error) {
 		r := &ListRow{}
 		var robotAlarms sql.NullString
 		t := &r.Mission
-		if err := rows.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationID, &t.OrderType,
+		if err := rows.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationUID, &t.RequestedBy, &t.OrderType,
 			&t.SourceNode, &t.DeliveryNode, &t.TerminalState,
 			&t.VendorCreated, &t.VendorCompleted, &t.CoreCreated, &t.CoreCompleted,
 			&t.DurationMS, &t.VendorDurationMS,
@@ -311,7 +312,7 @@ func buildLiveWhere(f Filter, n int) (string, []any) {
 	var args []any
 	if f.StationID != "" {
 		n++
-		conds = append(conds, fmt.Sprintf("o.station_id=$%d", n))
+		conds = append(conds, fmt.Sprintf("o.%s=$%d", helpers.RequesterColumn(f.StationID), n))
 		args = append(args, f.StationID)
 	}
 	if f.RobotID != "" {
@@ -429,7 +430,7 @@ func buildWhere(f Filter) (string, []any) {
 	}
 
 	if f.StationID != "" {
-		add("station_id=$%d", f.StationID)
+		add(helpers.RequesterColumn(f.StationID)+"=$%d", f.StationID)
 	}
 	if f.RobotID != "" {
 		add("robot_id=$%d", f.RobotID)

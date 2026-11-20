@@ -85,7 +85,7 @@ func TestQuestionSet_PlainEntryDoesNotAskReachability(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "qs-plain-reach"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = deep.Name
 		o.HoldFromBirth(wanted.ID)
 	})
@@ -183,7 +183,7 @@ func TestQuestionSet_GateStagedRetrieveAsksOccupancy(t *testing.T) {
 
 	retrieve := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "qs-retr-occ"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = shallow.Name
 		o.HoldFromBirth(wanted.ID)
 	})
@@ -217,7 +217,7 @@ func TestQuestionSet_GateStagedRetrieveAsksDigAndReachability(t *testing.T) {
 
 	buried := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "qs-retr-buried"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = deep.Name
 		o.HoldFromBirth(wanted.ID)
 	})

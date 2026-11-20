@@ -141,7 +141,7 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 	// The complex order goes in first and is executing.
 	testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "COLL-A-CPLX-BIN")
 	cplx := &orders.Order{
-		EdgeUUID: "coll-a-complex", StationID: "line-1", OrderType: OrderTypeComplex,
+		EdgeUUID: "coll-a-complex", StationUID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: srcNode.Name, DeliveryNode: mouth.Name, ProcessNode: srcNode.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + srcNode.Name + `"},` +
@@ -225,7 +225,7 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 
 	testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "COLL-B-CPLX-BIN")
 	cplx := &orders.Order{
-		EdgeUUID: "coll-b-complex", StationID: "line-1", OrderType: OrderTypeComplex,
+		EdgeUUID: "coll-b-complex", StationUID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: srcNode.Name, DeliveryNode: mouth.Name, ProcessNode: srcNode.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + srcNode.Name + `"},` +

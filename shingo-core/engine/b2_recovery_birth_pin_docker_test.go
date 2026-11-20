@@ -63,7 +63,7 @@ func TestB2Pin_RecoveryBirth(t *testing.T) {
 	}
 	var b birth
 	testutil.MustNoErr(t, db.DB.QueryRow(`
-		SELECT order_type, status, COALESCE(station_id,''), COALESCE(source_node,''), COALESCE(delivery_node,''),
+		SELECT order_type, status, COALESCE(station_uid,''), COALESCE(source_node,''), COALESCE(delivery_node,''),
 		       COALESCE(payload_code,''), COALESCE(source_intent,''), COALESCE(origin_class,''),
 		       COALESCE(origin_id::text,''), born_cart, quantity, COALESCE(steps_json,''), destination_resolved_at IS NOT NULL
 		FROM golden_births WHERE id = $1`, order.ID).Scan(&b.orderType, &b.status, &b.station, &b.source, &b.delivery,

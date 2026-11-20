@@ -33,18 +33,18 @@ var partitionedTables = map[string]bool{TableSamples: true, TableLow: true}
 // forgets it fails loudly instead of recording a healthy pose that was never
 // observed.
 type Sample struct {
-	VehicleID   string
-	SampledAt   time.Time
-	Confidence  float64
-	X           float64
-	Y           float64
-	Angle       float64
-	Station     string
-	LastStation string
-	OrderID     int64
-	OnTask      bool
-	Blocked     bool
-	RelocStatus int
+	VehicleID      string
+	SampledAt      time.Time
+	Confidence     float64
+	X              float64
+	Y              float64
+	Angle          float64
+	RDSStation     string
+	LastRDSStation string
+	OrderID        int64
+	OnTask         bool
+	Blocked        bool
+	RelocStatus    int
 	// AreaIDs is the robot's advanced-area membership at sample time. It is
 	// what separates "this zone has no localization" from "this robot is
 	// lost" — a Confidence of -0.0 inside a known area is the vendor saying
@@ -87,7 +87,7 @@ type Sample struct {
 }
 
 const insertSampleSQL = `INSERT INTO %s
-	(vehicle_id, sampled_at, confidence, x, y, angle, station, last_station, order_id, on_task, blocked, reloc_status, area_ids, map_md5, alarm_codes)
+	(vehicle_id, sampled_at, confidence, x, y, angle, rds_station, last_rds_station, order_id, on_task, blocked, reloc_status, area_ids, map_md5, alarm_codes)
 	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
 
 // InsertBatch writes one poll tick's worth of samples in a single
@@ -136,7 +136,7 @@ func InsertBatch(db *sql.DB, samples []Sample, lowThreshold float64) error {
 			alarms = []int32{}
 		}
 		if _, err := rawStmt.Exec(s.VehicleID, s.SampledAt, s.Confidence, s.X, s.Y, s.Angle,
-			s.Station, s.LastStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs,
+			s.RDSStation, s.LastRDSStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs,
 			s.MapMD5, alarms); err != nil {
 			return fmt.Errorf("robot confidence: insert sample: %w", err)
 		}
@@ -151,7 +151,7 @@ func InsertBatch(db *sql.DB, samples []Sample, lowThreshold float64) error {
 			defer lowStmt.Close()
 		}
 		if _, err := lowStmt.Exec(s.VehicleID, s.SampledAt, s.Confidence, s.X, s.Y, s.Angle,
-			s.Station, s.LastStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs,
+			s.RDSStation, s.LastRDSStation, s.OrderID, s.OnTask, s.Blocked, s.RelocStatus, areaIDs,
 			s.MapMD5, alarms); err != nil {
 			return fmt.Errorf("robot confidence: insert low: %w", err)
 		}

@@ -99,7 +99,7 @@ func TestPayloadForDispatch_ReadsTheBinOnlyForABlankNeed(t *testing.T) {
 	mk := func(uuid, payload, intent string) *orders.Order {
 		bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-"+uuid)
 		o := &orders.Order{
-			EdgeUUID: uuid, StationID: "test-station", OrderType: protocol.OrderTypeMove,
+			EdgeUUID: uuid, StationUID: "test-station", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusPending, Quantity: 1, SourceNode: storageNode.Name,
 			DeliveryNode: lineNode.Name, PayloadCode: payload, SourceIntent: intent,
 			OriginClass: protocol.OriginClassNoDemand,

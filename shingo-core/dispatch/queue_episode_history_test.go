@@ -48,7 +48,7 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 	nodeA := &nodes.Node{Name: "QEH-A", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(nodeA), "node A")
 	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "QEH-BIN-A")
-	other := &orders.Order{EdgeUUID: "qeh-other", StationID: "s", OrderType: OrderTypeRetrieve,
+	other := &orders.Order{EdgeUUID: "qeh-other", StationUID: "s", OrderType: OrderTypeRetrieve,
 		Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create the holding order")
 	testdb.SeedDispatched(t, db, other.ID, "sg-qeh-other") // the fleet has it, holding its bin
@@ -113,7 +113,7 @@ func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 	testdb.SetupTestData(t, db)
 
 	o := &orders.Order{
-		EdgeUUID: "qeh-two-waits", StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+		EdgeUUID: "qeh-two-waits", StationUID: "line-1", OrderType: protocol.OrderTypeRetrieve,
 		Status: StatusQueued, Quantity: 1, DeliveryNode: "LINE1-IN",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
@@ -154,7 +154,7 @@ func TestPark_ASameCauseWrittenAgainAddsNoRow(t *testing.T) {
 	testdb.SetupTestData(t, db)
 
 	o := &orders.Order{
-		EdgeUUID: "park-no-chatter", StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+		EdgeUUID: "park-no-chatter", StationUID: "line-1", OrderType: protocol.OrderTypeRetrieve,
 		Status: StatusQueued, Quantity: 1, DeliveryNode: "LINE1-IN",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")

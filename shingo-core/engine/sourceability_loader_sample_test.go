@@ -67,7 +67,7 @@ func TestLoaderSample_ThresholdEpisodeAtALoaderNodeIsScoreable(t *testing.T) {
 		0), "seed mirror")
 
 	_, err := db.SyncDemandRegistry("ST-LS", []demands.RegistryEntry{{
-		StationID: "ST-LS", CoreNodeName: loaderNode, Role: protocol.ClaimRoleConsume,
+		StationUID: "ST-LS", CoreNodeName: loaderNode, Role: protocol.ClaimRoleConsume,
 		PayloadCode: payload, ReplenishUOPThreshold: 5,
 	}})
 	testutil.MustNoErr(t, err, "seed monitored binding")

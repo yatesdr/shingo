@@ -37,7 +37,7 @@ func TestDemandReconciler_ChildlessChangeoverEpisodeCloses(t *testing.T) {
 		Revision:   1,
 		EpisodeKey: protocol.ChangeoverEpisodeKey(station, 42),
 		Kind:       protocol.EpisodeKindChangeover,
-		StationID:  station,
+		StationUID: station,
 		OpenedAt:   time.Now().UTC().Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("upsert changeover episode: %v", err)

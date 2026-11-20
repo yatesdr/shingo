@@ -227,12 +227,12 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 		var out []string
 		for _, r := range rows {
 			var rec struct {
-				Station   string `json:"station"`
-				ProcessID int64  `json:"process_id"`
-				Part      string `json:"part_number"`
+				StationUID string `json:"station_uid"`
+				ProcessID  int64  `json:"process_id"`
+				Part       string `json:"part_number"`
 			}
 			mustNil(t, json.Unmarshal([]byte(r.NewValue), &rec), "the audit row's record")
-			if r.EntityID != part.ID || r.Actor != edgeStation || rec.Station != edgeStation ||
+			if r.EntityID != part.ID || r.Actor != edgeStation || rec.StationUID != edgeStation ||
 				rec.ProcessID != processID || rec.Part != newPart {
 				t.Errorf("audit row %+v (record %+v), want part %d made by %s for process %d",
 					r, rec, part.ID, edgeStation, processID)

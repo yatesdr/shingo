@@ -269,7 +269,7 @@ func consumeFixture(t *testing.T, db *store.DB, prefix string, c loadervectors.C
 		}
 		if w.InboundFull != "" {
 			testutil.MustNoErr(t, db.CreateOrder(&orders.Order{
-				EdgeUUID: n.Name + "-INBOUND", StationID: "edge.line1", OrderType: OrderTypeRetrieve,
+				EdgeUUID: n.Name + "-INBOUND", StationUID: "edge.line1", OrderType: OrderTypeRetrieve,
 				Status: StatusPending, Quantity: 1, SourceNode: market.Name, DeliveryNode: n.Name,
 				PayloadCode: w.InboundFull, SourceIntent: SourceIntentForType(OrderTypeRetrieve),
 			}), "the full inbound to "+w.Node)

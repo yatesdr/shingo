@@ -300,7 +300,7 @@ type LidarHour struct {
 	Hour         time.Time
 	VehicleID    string
 	Lidar        string
-	Station      string
+	RDSStation   string
 	UseForLoc    bool
 	Beams        int
 	Valid        int
@@ -324,15 +324,15 @@ func InsertLidarHours(db *sql.DB, rows []LidarHour) error {
 		n := len(args)
 		vals = append(vals, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10, n+11))
-		args = append(args, r.Hour.UTC(), r.VehicleID, r.Lidar, r.Station, r.UseForLoc, r.Beams, r.Valid,
+		args = append(args, r.Hour.UTC(), r.VehicleID, r.Lidar, r.RDSStation, r.UseForLoc, r.Beams, r.Valid,
 			r.RSSIMedValid, r.RSSIP25Valid, r.RSSIP75Valid, r.NearValid)
 	}
 	_, err := db.Exec(`INSERT INTO robot_lidar_hours
-			(hour, vehicle_id, lidar, station, use_for_loc, beams, valid,
+			(hour, vehicle_id, lidar, rds_station, use_for_loc, beams, valid,
 			 rssi_med_valid, rssi_p25_valid, rssi_p75_valid, near_valid)
 		VALUES `+strings.Join(vals, ",")+`
 		ON CONFLICT (hour, vehicle_id, lidar) DO UPDATE SET
-			station = EXCLUDED.station, use_for_loc = EXCLUDED.use_for_loc,
+			rds_station = EXCLUDED.rds_station, use_for_loc = EXCLUDED.use_for_loc,
 			beams = EXCLUDED.beams, valid = EXCLUDED.valid,
 			rssi_med_valid = EXCLUDED.rssi_med_valid, rssi_p25_valid = EXCLUDED.rssi_p25_valid,
 			rssi_p75_valid = EXCLUDED.rssi_p75_valid, near_valid = EXCLUDED.near_valid`, args...)

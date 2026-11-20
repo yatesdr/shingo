@@ -255,7 +255,7 @@ func (r *kanbanRig) walk() {
 		moved := false
 		for _, o := range r.live() {
 			if o.Status == protocol.StatusDelivered {
-				r.eng.Dispatcher().HandleOrderReceipt(rigEnvelope(o.StationID),
+				r.eng.Dispatcher().HandleOrderReceipt(rigEnvelope(o.StationUID),
 					&protocol.OrderReceipt{OrderUUID: o.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1})
 				moved = true
 				continue

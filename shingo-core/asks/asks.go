@@ -44,7 +44,7 @@ type Door func(station string, body json.RawMessage) Result
 
 // Store is what the replay needs of Core's database.
 type Store interface {
-	RecordInboundMessage(msgID, msgType, stationID string) (bool, error)
+	RecordInboundMessage(msgID, msgType string) (bool, error)
 	RecordInboundReply(msgID string, outboxID int64) error
 	InboundReply(msgID string) (int64, bool, error)
 	ReplayOutbox(id int64) (bool, error)
@@ -134,7 +134,7 @@ func (s *Server) Handle(env *protocol.Envelope, ask *protocol.EdgeAsk) {
 // never recorded (Core stopped between the act and the answer) is acted on
 // again, and the door's own checks refuse what it can tell was done.
 func (s *Server) replayed(env *protocol.Envelope) bool {
-	inserted, err := s.db.RecordInboundMessage(env.ID, protocol.SubjectEdgeAsk, env.Src.Station)
+	inserted, err := s.db.RecordInboundMessage(env.ID, protocol.SubjectEdgeAsk)
 	if err != nil {
 		log.Printf("asks: record ask %s from %s: %v — answering it", env.ID, env.Src.Station, err)
 		return false

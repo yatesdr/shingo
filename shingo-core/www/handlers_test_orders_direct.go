@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/engine"
 )
 
@@ -35,7 +36,7 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		Selection:    engine.BinSelectionAuto,
 		SourceNodeID: req.FromNodeID,
 		DestNodeID:   req.ToNodeID,
-		StationID:    "core-direct",
+		RequestedBy:  domain.RequesterDirect,
 		Priority:     req.Priority,
 		Desc:         "direct test order from shingo core",
 	})
@@ -81,7 +82,7 @@ func (h *Handlers) apiDirectOrderReceipt(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ok, err := h.engine.Dispatcher().Lifecycle().ConfirmReceipt(order, order.StationID, req.ReceiptType, req.FinalCount)
+	ok, err := h.engine.Dispatcher().Lifecycle().ConfirmReceipt(order, order.Requester(), req.ReceiptType, req.FinalCount)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -95,7 +96,7 @@ func (h *Handlers) apiDirectOrderReceipt(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handlers) apiDirectOrdersList(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.engine.OrderService().ListOrdersByStation("core-direct", 50)
+	orders, err := h.engine.OrderService().ListOrdersByStation(domain.RequesterDirect, 50)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -117,7 +118,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 		req.CycleMode = protocol.SwapModeSequential
 	}
 
-	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-direct"}
+	src := protocol.Address{Role: protocol.RoleEdge, Station: domain.RequesterDirect}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: h.engine.AppConfig().Messaging.StationID}
 
 	var results []map[string]any
@@ -237,7 +238,7 @@ func (h *Handlers) apiDirectOrderRelease(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-direct"}
+	src := protocol.Address{Role: protocol.RoleEdge, Station: domain.RequesterDirect}
 	dst := protocol.Address{Role: protocol.RoleCore, Station: h.engine.AppConfig().Messaging.StationID}
 
 	releaseReq := &protocol.OrderRelease{

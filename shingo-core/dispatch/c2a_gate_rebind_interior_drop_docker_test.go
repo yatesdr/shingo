@@ -93,7 +93,7 @@ func TestC2aPin_AGateRebindOfAnInteriorDropKeepsTheOrdersDestination(t *testing.
 			}
 			claim(f.press2, "the press")
 
-			d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID),
+			d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationUID),
 				&protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
 
 			// The gate's release, by whichever trigger: the evaluator is the one
@@ -155,7 +155,7 @@ func TestC2aPin_ARedirectOverlayNeverReAimsTheSwapsReturnAtItsLaneDrop(t *testin
 	db, d, backend := f.db, f.d, f.backend
 	atStation, err := db.GetOrder(f.swap.ID)
 	testutil.MustNoErr(t, err, "reload the swap")
-	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID),
+	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationUID),
 		&protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
 	d.EvaluateLaneReleases(f.laneD)
 

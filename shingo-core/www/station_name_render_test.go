@@ -95,7 +95,7 @@ func TestStationRename_HistoricalOrderRendersNewName_StoredRowUntouched(t *testi
 
 	// A finished order from months ago. It stores the KEY, which is the whole
 	// premise: the label was never written here to begin with.
-	historical := &domain.Order{ID: 4711, EdgeUUID: "e-4711", StationID: uid}
+	historical := &domain.Order{ID: 4711, EdgeUUID: "e-4711", StationUID: uid}
 	data := map[string]any{"Page": "orders", "Orders": []*domain.Order{historical}}
 
 	namer := &fakeNamer{byUID: map[string]string{uid: before}}
@@ -121,13 +121,13 @@ func TestStationRename_HistoricalOrderRendersNewName_StoredRowUntouched(t *testi
 	// changed; the record did not. A denormalising implementation — one that
 	// wrote display_name onto the order to avoid a lookup — would have had to
 	// mutate this field to change the render.
-	if historical.StationID != uid {
+	if historical.StationUID != uid {
 		t.Fatalf("the order row's StationID changed to %q — renaming must NEVER "+
 			"touch a stored station value; that is the v66 regression this split exists to prevent",
-			historical.StationID)
+			historical.StationUID)
 	}
-	if strings.Contains(historical.StationID, after) || strings.Contains(historical.StationID, before) {
-		t.Fatalf("a display name leaked into the stored StationID: %q", historical.StationID)
+	if strings.Contains(historical.StationUID, after) || strings.Contains(historical.StationUID, before) {
+		t.Fatalf("a display name leaked into the stored StationID: %q", historical.StationUID)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestStationName_FallsBackToTheRawIdentity(t *testing.T) {
 
 	for _, station := range []string{"core-operator", "core-direct", "core-test", "*", "stn-never-enrolled"} {
 		t.Run(station, func(t *testing.T) {
-			order := &domain.Order{ID: 1, EdgeUUID: "e-1", StationID: station}
+			order := &domain.Order{ID: 1, EdgeUUID: "e-1", StationUID: station}
 			out := renderPageWithNamer(t, "orders.html", namer,
 				map[string]any{"Page": "orders", "Orders": []*domain.Order{order}})
 			if !strings.Contains(out, station) {
@@ -195,7 +195,7 @@ func TestStationName_IsUidFormatAgnostic(t *testing.T) {
 	namer := &fakeNamer{byUID: cases}
 
 	for uid, want := range cases {
-		order := &domain.Order{ID: 1, EdgeUUID: "e-1", StationID: uid}
+		order := &domain.Order{ID: 1, EdgeUUID: "e-1", StationUID: uid}
 		out := renderPageWithNamer(t, "orders.html", namer,
 			map[string]any{"Page": "orders", "Orders": []*domain.Order{order}})
 		if !strings.Contains(out, want) {

@@ -45,10 +45,10 @@ func TestCompoundChild_IdentityIsMintedNotDerived(t *testing.T) {
 	// and the scanner both re-enter compound creation for a parent that already
 	// has children, and the derived name collided every time.
 	parent := &orders.Order{
-		EdgeUUID:  "uuid-child-identity-parent",
-		StationID: "line-1",
-		OrderType: OrderTypeReshuffleRestore,
-		Status:    StatusPending,
+		EdgeUUID:   "uuid-child-identity-parent",
+		StationUID: "line-1",
+		OrderType:  OrderTypeReshuffleRestore,
+		Status:     StatusPending,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 

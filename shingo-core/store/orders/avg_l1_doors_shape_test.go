@@ -36,7 +36,7 @@ func TestAvgL1QueueSeconds_TheDoorsShape(t *testing.T) {
 	win := orders.LeadTimeRange{Start: base.Add(-time.Hour), End: base.Add(2 * time.Hour)}
 	const delta, wait = 3, 20
 
-	o := &domain.Order{EdgeUUID: "door-shape", StationID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
+	o := &domain.Order{EdgeUUID: "door-shape", StationUID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
 		Status: protocol.StatusPending, Quantity: 1, PayloadCode: "PART-A", DeliveryNode: "D", SourceNode: "S"}
 	testutil.MustNoErr(t, orders.Create(db, o), "create")
 	var id int64

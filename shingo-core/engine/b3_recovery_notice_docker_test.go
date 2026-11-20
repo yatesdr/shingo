@@ -34,7 +34,7 @@ func recoveryDelivered(t *testing.T, eng *Engine, db *store.DB, orderID int64) m
 	o, err := db.GetOrder(orderID)
 	testutil.MustNoErr(t, err, "reload recovery")
 	eng.handleOrderDelivered(o)
-	rows, err := db.DB.Query(`SELECT COALESCE(station_id, '') FROM outbox WHERE id > $1 AND msg_type = $2`,
+	rows, err := db.DB.Query(`SELECT COALESCE(dst_station, '') FROM outbox WHERE id > $1 AND msg_type = $2`,
 		mark, protocol.TypeOrderDelivered)
 	testutil.MustNoErr(t, err, "read notices")
 	defer rows.Close()
@@ -79,7 +79,7 @@ func recoverInto(t *testing.T, eng *Engine, db *store.DB, binID int64, want *nod
 	if !o.StationUnaware {
 		t.Errorf("recovery row station_unaware=false, want true: no Edge asked for it")
 	}
-	return o.ProjectsTo, recoveryDelivered(t, eng, db, order.ID)
+	return o.ProjectsToStationUID, recoveryDelivered(t, eng, db, order.ID)
 }
 
 // TestB3D3_RecoveryToALineTellsThatLine: a recovery whose bin lands on a
@@ -93,7 +93,7 @@ func TestB3D3_RecoveryToALineTellsThatLine(t *testing.T) {
 	child, binID := declaredChildFor(t, eng, db, "B3RL", false)
 	projects, got := recoverInto(t, eng, db, binID, child)
 	if projects != "edge.test" {
-		t.Errorf("recovery projects_to = %q, want edge.test (the line's station hears its material notices)", projects)
+		t.Errorf("recovery projects_to_station_uid = %q, want edge.test (the line's station hears its material notices)", projects)
 	}
 	if len(got) != 1 || got["edge.test"] != 1 {
 		t.Errorf("order.delivered notices by station = %v, want exactly one, to edge.test", got)
@@ -111,7 +111,7 @@ func TestB3D3_RecoveryToStorageTellsNoOne(t *testing.T) {
 	child, binID := declaredChildFor(t, eng, db, "B3RS", true)
 	projects, got := recoverInto(t, eng, db, binID, child)
 	if projects != "" || len(got) != 0 {
-		t.Errorf("recovery projects_to = %q, notices = %v; want none", projects, got)
+		t.Errorf("recovery projects_to_station_uid = %q, notices = %v; want none", projects, got)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestB3D3_RecoveryNoOrderNamed_TellsTheStationThatClaimsIt(t *testing.T) {
 	t.Parallel()
 	projects, got := twoEdgePark(t, "B3RC", true)
 	if projects != "edge.b" {
-		t.Errorf("recovery projects_to = %q, want edge.b (the station whose process claims the node)", projects)
+		t.Errorf("recovery projects_to_station_uid = %q, want edge.b (the station whose process claims the node)", projects)
 	}
 	if len(got) != 1 || got["edge.b"] != 1 {
 		t.Errorf("order.delivered notices by station = %v, want exactly one, to edge.b", got)
@@ -158,6 +158,6 @@ func TestB3D3_RecoveryNoOrderNamed_NoClaim_TellsNoOne(t *testing.T) {
 	t.Parallel()
 	projects, got := twoEdgePark(t, "B3RN", false)
 	if projects != "" || len(got) != 0 {
-		t.Errorf("recovery projects_to = %q, notices = %v; want none", projects, got)
+		t.Errorf("recovery projects_to_station_uid = %q, notices = %v; want none", projects, got)
 	}
 }

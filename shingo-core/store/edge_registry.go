@@ -14,8 +14,8 @@ import (
 // EnrollEdge mints a station: a Core-owned uid plus an operator-owned display
 // name. INSERT-only — see registry.Enroll for why minting and updating are
 // separate functions rather than one upsert.
-func (db *DB) EnrollEdge(uid, displayName, stationID string) (*registry.Edge, error) {
-	return registry.Enroll(db.DB, uid, displayName, stationID)
+func (db *DB) EnrollEdge(uid, displayName string) (*registry.Edge, error) {
+	return registry.Enroll(db.DB, uid, displayName)
 }
 
 // RegisterEdge records that an enrolled station is up and reports a binding

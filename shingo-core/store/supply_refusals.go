@@ -25,17 +25,17 @@ import (
 // line those are different boxes writing the same card. Because each action
 // touches a disjoint set of columns, they merge without a revision counter and
 // without either being able to erase the other.
-func (db *DB) ApplySupplyRefusal(st protocol.SupplyRefusalState, stationID string) error {
+func (db *DB) ApplySupplyRefusal(st protocol.SupplyRefusalState) error {
 	switch st.Action {
 	case protocol.SupplyRefusalOpened:
 		// Idempotent on the OPEN row. A second press is the same statement said
 		// twice — it must not mint a second row and must not restart the clock,
 		// because the timestamp is what the cell was told.
 		_, err := db.Exec(`
-			INSERT INTO supply_refusals (loader_node, payload_code, station_id, refused_at, refused_by)
-			VALUES ($1,$2,$3,$4,$5)
+			INSERT INTO supply_refusals (loader_node, payload_code, refused_at, refused_by)
+			VALUES ($1,$2,$3,$4)
 			ON CONFLICT (loader_node, payload_code) WHERE closed_at IS NULL DO NOTHING`,
-			st.LoaderNode, st.PayloadCode, stationID, st.RefusedAt, st.RefusedBy)
+			st.LoaderNode, st.PayloadCode, st.RefusedAt, st.RefusedBy)
 		if err != nil {
 			return fmt.Errorf("apply supply refusal opened %s/%s: %w", st.LoaderNode, st.PayloadCode, err)
 		}

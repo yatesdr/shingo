@@ -24,7 +24,7 @@ func TestReleaseOrphanedClaims_ReleasesSlotClaims(t *testing.T) {
 	if err := nodes.Create(sdb, slot); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	order := &orders.Order{EdgeUUID: "recon-terminal", StationID: "edge.1", OrderType: "complex", Status: "queued", Quantity: 1}
+	order := &orders.Order{EdgeUUID: "recon-terminal", StationUID: "edge.1", OrderType: "complex", Status: "queued", Quantity: 1}
 	if err := orders.Create(sdb, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}

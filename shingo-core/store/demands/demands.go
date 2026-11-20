@@ -27,7 +27,7 @@ import (
 // pair" — Edge falls back to legacy bin-count behavior.
 type RegistryEntry struct {
 	ID           int64  `json:"id"`
-	StationID    string `json:"station_id"`
+	StationUID   string `json:"station_uid"`
 	CoreNodeName string `json:"core_node_name"`
 	// LoaderID is the owning loader's surrogate (the identity cutover). Set from the
 	// aggregate at re-derive time; 0/NULL for legacy ClaimSync rows. The threshold
@@ -49,12 +49,12 @@ type RegistryEntry struct {
 // the SELECT list in one place — and the scan order in the helpers
 // below. Adding a new column without updating both will break the
 // positional Scan().
-const registrySelectCols = `id, station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id, updated_at`
+const registrySelectCols = `id, station_uid, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id, updated_at`
 
 func scanRegistryEntry(row interface{ Scan(...any) error }) (RegistryEntry, error) {
 	var e RegistryEntry
 	var loaderID sql.NullInt64
-	err := row.Scan(&e.ID, &e.StationID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest, &e.ReplenishUOPThreshold, &loaderID, &e.UpdatedAt)
+	err := row.Scan(&e.ID, &e.StationUID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest, &e.ReplenishUOPThreshold, &loaderID, &e.UpdatedAt)
 	if loaderID.Valid {
 		e.LoaderID = loaderID.Int64
 	}
@@ -127,7 +127,7 @@ func SyncDerivedRegistry(db *sql.DB, stationID string, entries []RegistryEntry, 
 		return SyncOutcome{PriorRows: priorRows, Refused: true}, nil
 	}
 
-	if _, err := tx.Exec(`DELETE FROM demand_registry WHERE station_id = $1`, stationID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM demand_registry WHERE station_uid = $1`, stationID); err != nil {
 		return SyncOutcome{}, err
 	}
 
@@ -147,7 +147,7 @@ func SyncDerivedRegistry(db *sql.DB, stationID string, entries []RegistryEntry, 
 		if e.LoaderID > 0 {
 			lid = e.LoaderID // NULL for legacy ClaimSync rows; the loader token rides this
 		}
-		if _, err := tx.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		if _, err := tx.Exec(`INSERT INTO demand_registry (station_uid, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold, loader_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			stationID, e.CoreNodeName, e.Role, e.PayloadCode, e.OutboundDest, e.ReplenishUOPThreshold, lid); err != nil {
 			return SyncOutcome{}, err
 		}
@@ -179,7 +179,7 @@ func priorKey(node, payload string) string { return node + "\x00" + payload }
 // snapshotThresholds reads a station's existing thresholds for change
 // detection, keyed by priorKey, and counts its rows.
 func snapshotThresholds(tx *sql.Tx, stationID string) (map[string]int, int, error) {
-	rows, err := tx.Query(`SELECT core_node_name, payload_code, replenish_uop_threshold FROM demand_registry WHERE station_id = $1`, stationID)
+	rows, err := tx.Query(`SELECT core_node_name, payload_code, replenish_uop_threshold FROM demand_registry WHERE station_uid = $1`, stationID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -260,7 +260,7 @@ func ListThresholds(db *sql.DB) ([]RegistryEntry, error) {
 		FROM demand_registry r
 		LEFT JOIN bin_loaders l ON l.id = r.loader_id
 		WHERE r.replenish_uop_threshold > 0
-		ORDER BY r.station_id, r.core_node_name, r.payload_code`)
+		ORDER BY r.station_uid, r.core_node_name, r.payload_code`)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func ListThresholds(db *sql.DB) ([]RegistryEntry, error) {
 	for rows.Next() {
 		var e RegistryEntry
 		var loaderID sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.StationID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest,
+		if err := rows.Scan(&e.ID, &e.StationUID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest,
 			&e.ReplenishUOPThreshold, &loaderID, &e.UpdatedAt, &e.InboundSource); err != nil {
 			return nil, err
 		}
@@ -294,7 +294,7 @@ func prefixed(alias, cols string) string {
 // ListRegistry returns every demand_registry entry.
 func ListRegistry(db *sql.DB) ([]RegistryEntry, error) {
 	rows, err := db.Query(`SELECT ` + registrySelectCols + `
-		FROM demand_registry ORDER BY station_id, core_node_name, payload_code`)
+		FROM demand_registry ORDER BY station_uid, core_node_name, payload_code`)
 	if err != nil {
 		return nil, err
 	}

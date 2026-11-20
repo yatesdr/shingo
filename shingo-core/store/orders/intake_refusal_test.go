@@ -23,14 +23,14 @@ func TestIntakeRefusal_RecordsAndReplaces(t *testing.T) {
 		t.Fatalf("an unrefused uuid read as (%+v, %v), want (nil, nil)", r, err)
 	}
 
-	testutil.MustNoErr(t, orders.RecordIntakeRefusal(d.DB, "ir-leg", "ST1", "resolution_failed", "node X not found"), "record")
+	testutil.MustNoErr(t, orders.RecordIntakeRefusal(d.DB, "ir-leg", "resolution_failed", "node X not found"), "record")
 	r, err := orders.GetIntakeRefusal(d.DB, "ir-leg")
 	testutil.MustNoErr(t, err, "read refusal")
-	if r == nil || r.ErrorCode != "resolution_failed" || r.Detail != "node X not found" || r.StationID != "ST1" {
+	if r == nil || r.ErrorCode != "resolution_failed" || r.Detail != "node X not found" {
 		t.Fatalf("refusal read back as %+v", r)
 	}
 
-	testutil.MustNoErr(t, orders.RecordIntakeRefusal(d.DB, "ir-leg", "ST1", "invalid_steps", "no steps"), "re-record")
+	testutil.MustNoErr(t, orders.RecordIntakeRefusal(d.DB, "ir-leg", "invalid_steps", "no steps"), "re-record")
 	r, err = orders.GetIntakeRefusal(d.DB, "ir-leg")
 	testutil.MustNoErr(t, err, "read refusal after a repeat")
 	if r == nil || r.ErrorCode != "invalid_steps" || r.Detail != "no steps" {

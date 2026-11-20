@@ -330,7 +330,7 @@ func New(c Config) *Engine {
 	// so Edge actually sees the transition (pre-fix the direct DB write
 	// stranded Edge at delivered indefinitely).
 	e.reconciliation.confirmDelivered = func(order *orders.Order) error {
-		_, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, "auto_confirm_timeout", 0)
+		_, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.Requester(), "auto_confirm_timeout", 0)
 		return err
 	}
 	// advanceCompound re-drives a compound (reshuffle) parent stranded in

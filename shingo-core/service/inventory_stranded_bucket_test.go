@@ -16,7 +16,7 @@ import (
 func insertLinesideBucket(t *testing.T, db *store.DB, node string, state protocol.LinesideBucketState, payload string, qty int) {
 	t.Helper()
 	if _, err := db.Exec(
-		`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+		`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		 VALUES ($1,$2,$3,$4,$5)`,
 		"test-station", node, payload, string(state), qty,
 	); err != nil {

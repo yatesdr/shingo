@@ -215,7 +215,7 @@ func (c mtCell) mtLeg(uuid string, b *bins.Bin) *orders.Order {
 	c.t.Helper()
 	steps := []resolvedStep{rlWait(c.press.Name, WaitKindStation), vsPick(c.press.Name), vsDrop(c.out.Name)}
 	o := testdb.CreateOrder(c.t, c.db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, StatusStaged
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, StatusStaged
 		o.ProcessNode, o.DeliveryNode, o.StepsJSON = c.press.Name, c.out.Name, string(mustJSON(c.t, steps))
 	})
 	testutil.MustNoErr(c.t, c.db.UpdateOrderVendor(o.ID, "V-"+uuid, "WAITING", ""), "vendor")

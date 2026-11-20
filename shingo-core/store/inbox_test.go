@@ -12,7 +12,7 @@ func TestRecordInboundMessage(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
-	first, err := db.RecordInboundMessage("msg-1", "order.redirect", "edge.1")
+	first, err := db.RecordInboundMessage("msg-1", "order.redirect")
 	if err != nil {
 		t.Fatalf("record first message: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestRecordInboundMessage(t *testing.T) {
 		t.Fatalf("expected first record to be new")
 	}
 
-	second, err := db.RecordInboundMessage("msg-1", "order.redirect", "edge.1")
+	second, err := db.RecordInboundMessage("msg-1", "order.redirect")
 	if err != nil {
 		t.Fatalf("record duplicate message: %v", err)
 	}

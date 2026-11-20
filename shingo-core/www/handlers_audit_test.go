@@ -90,7 +90,7 @@ func TestApiAuditEnrichmentColumns(t *testing.T) {
 	v := 12
 	if err := audit.AppendBinUOP(db.DB, bin.ID, &v, 6,
 		audit.OpSetForProduction, "test", nil, sd.Payload.Code, "OP-ENRICH",
-		audit.BinUOPContext{NodeID: &nodeID, LoaderID: &loaderID, Station: "ST-ENRICH"}); err != nil {
+		audit.BinUOPContext{NodeID: &nodeID, LoaderID: &loaderID, StationUID: "ST-ENRICH"}); err != nil {
 		t.Fatalf("seed enriched audit: %v", err)
 	}
 
@@ -112,7 +112,7 @@ func TestApiAuditEnrichmentColumns(t *testing.T) {
 	if r.LoaderID == nil || *r.LoaderID != loaderID {
 		t.Errorf("LoaderID = %v, want %d", r.LoaderID, loaderID)
 	}
-	if r.Station != "ST-ENRICH" {
-		t.Errorf("Station = %q, want ST-ENRICH", r.Station)
+	if r.StationUID != "ST-ENRICH" {
+		t.Errorf("Station = %q, want ST-ENRICH", r.StationUID)
 	}
 }

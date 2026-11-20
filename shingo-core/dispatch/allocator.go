@@ -573,7 +573,7 @@ func (a *Allocator) dependentSource(order *orders.Order, step resolvedStep) (src
 	if a.finder == nil || order.ProcessNode == "" {
 		return "", ""
 	}
-	src, kind, err := a.db.FedInboundSource(order.StationID, order.ProcessNode, step.Node, order.OriginID)
+	src, kind, err := a.db.FedInboundSource(order.StationUID, order.ProcessNode, step.Node, order.OriginID)
 	if err != nil {
 		a.dbg("reserve: order %d vacant pickup at %s: read its claim's inbound source: %v", order.ID, step.Node, err)
 		return "", ""

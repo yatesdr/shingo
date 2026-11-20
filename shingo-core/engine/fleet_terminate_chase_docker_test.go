@@ -40,7 +40,7 @@ func TestTerminateChase(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	o := &orders.Order{
-		EdgeUUID: "chase-1", StationID: "line-1", OrderType: "retrieve",
+		EdgeUUID: "chase-1", StationUID: "line-1", OrderType: "retrieve",
 		Status: protocol.StatusInTransit, Quantity: 1, PayloadCode: sd.Payload.Code,
 		DeliveryNode: sd.LineNode.Name,
 	}

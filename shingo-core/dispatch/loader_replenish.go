@@ -688,7 +688,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	}
 	order := &orders.Order{
 		EdgeUUID:     spec.UUIDPrefix + uuid.New().String(),
-		StationID:    spec.StationID,
+		StationUID:   spec.StationID,
 		OrderType:    spec.OrderType,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -735,7 +735,8 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 		}
 		_, err = d.lifecycle.issue(order, Need{
 			Type:            spec.OrderType,
-			Station:         order.StationID,
+			Station:         order.StationUID,
+			RequestedBy:     order.RequestedBy,
 			Ref:             order.EdgeUUID,
 			Quantity:        order.Quantity,
 			Desc:            order.PayloadDesc,
@@ -758,7 +759,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// own values: the part and the window. Without it a Core ask reached the
 	// bins feed only at dispatch, so a watched window showed nothing inbound
 	// while its ask queued. Pinned by TestPinCoreAsk_TheAskIsReceivedAtBirth.
-	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, order.StationID, spec.OrderType, spec.PayloadCode, order.DeliveryNode)
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, order.Requester(), spec.OrderType, spec.PayloadCode, order.DeliveryNode)
 	// THE case the projection exists for. Nobody on the Edge asked for this
 	// order, so nobody there has a row for it; without the projection the
 	// operator watches a robot arrive at a window with nothing on the board to

@@ -60,11 +60,11 @@ func clearPartialChild(t *testing.T, db *store.DB, prefix string, home *nodes.No
 	src := &nodes.Node{Name: prefix + "-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(src), "partial's node")
 	p := testdb.CreateBinAtNode(t, db, prefix+"-P", src.ID, prefix+"-PBIN")
-	parent := &orders.Order{EdgeUUID: prefix + "-parent", StationID: "edge.ccr", OrderType: protocol.OrderTypeMove,
+	parent := &orders.Order{EdgeUUID: prefix + "-parent", StationUID: "edge.ccr", OrderType: protocol.OrderTypeMove,
 		Status: protocol.StatusReshuffling, Quantity: 1, SourceNode: home.Name, DeliveryNode: home.Name}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "parent")
 	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{Order: testdb.Holding(&orders.Order{
-		EdgeUUID: prefix + "-p", StationID: "edge.ccr", OrderType: protocol.OrderTypeMove,
+		EdgeUUID: prefix + "-p", StationUID: "edge.ccr", OrderType: protocol.OrderTypeMove,
 		Status: protocol.StatusPending, Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2,
 		SourceNode: src.Name, DeliveryNode: home.Name, SourceIntent: "local"}, p.ID)}}, nil)
 	testutil.MustNoErr(t, err, "partial's child")

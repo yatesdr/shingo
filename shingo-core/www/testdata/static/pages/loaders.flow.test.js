@@ -825,7 +825,7 @@ await (async function settingsSaveThroughTheApi() {
 // right after the station name: the blank first, then every Edge Core knows
 // (GET /api/edges, read signed in only), by its display name or its uid marked
 // unclaimed; a stored uid Core no longer lists stays, selected. A change sends
-// edge_station_uid, every other save sends the stored uid back (a full-row
+// station_uid, every other save sends the stored uid back (a full-row
 // write), and a pair's one pick saves both stages. Read-only, the card names
 // the Edge in one line.
 await (async function edgePick() {
@@ -843,7 +843,7 @@ await (async function edgePick() {
         return html.slice(at, html.indexOf('</select>', at)).match(/<option[^>]*>[^<]*<\/option>/g) || [];
     };
     const draw = function (l) { return h.ctx.settingsHtml({ loader: l, homes: [], payloads: [], window_bin_types: {} }, null); };
-    const picked = draw(loader({ edge_station_uid: 'stn-a' }));
+    const picked = draw(loader({ station_uid: 'stn-a' }));
     check('edge pick: the blank first, then each Edge by its name, or its uid marked unclaimed',
         JSON.stringify(optionsOf(picked)) === JSON.stringify([
             '<option value="">No Edge picked</option>',
@@ -858,25 +858,25 @@ await (async function edgePick() {
         picked.indexOf('</select><div class="form-hint">' + help + '</div>') > picked.indexOf('data-field="edgeStationUID"'));
     check('edge pick: nothing stored, the blank is selected',
         optionsOf(draw(loader()))[0] === '<option value="" selected>No Edge picked</option>');
-    const gone = optionsOf(draw(loader({ edge_station_uid: 'stn-gone' })));
+    const gone = optionsOf(draw(loader({ station_uid: 'stn-gone' })));
     check('edge pick: a stored uid Core no longer lists shows as itself, selected, not blanked',
         gone.length === 4 && gone[0] === '<option value="">No Edge picked</option>' &&
         gone[3] === '<option value="stn-gone" selected>stn-gone</option>', JSON.stringify(gone));
 
     const body = h.ctx.settingUpdate(loader({ replenishment: 'operator' }), 'edgeStationUID', 'stn-b');
-    check('a pick sends edge_station_uid and leaves the rest alone',
-        body.edge_station_uid === 'stn-b' && body.replenishment === 'operator' && body.name === 'LDR-A');
-    check('picking the blank sends edge_station_uid:""',
-        h.ctx.settingUpdate(loader({ edge_station_uid: 'stn-a' }), 'edgeStationUID', '').edge_station_uid === '');
-    const stored = loader({ edge_station_uid: 'stn-a' });
+    check('a pick sends station_uid and leaves the rest alone',
+        body.station_uid === 'stn-b' && body.replenishment === 'operator' && body.name === 'LDR-A');
+    check('picking the blank sends station_uid:""',
+        h.ctx.settingUpdate(loader({ station_uid: 'stn-a' }), 'edgeStationUID', '').station_uid === '');
+    const stored = loader({ station_uid: 'stn-a' });
     check('every other save sends the stored uid back: a tick, a rename, a slot, the wait group',
-        h.ctx.settingUpdate(stored, 'boardHidesIdle', true).edge_station_uid === 'stn-a' &&
-        h.ctx.settingUpdate(stored, 'name', 'LDR-B').edge_station_uid === 'stn-a' &&
-        h.ctx.placeUpdate(stored, 'outbound', 'EMPTIES').edge_station_uid === 'stn-a' &&
-        h.ctx.waitGroupUpdates(unloader({ id: 7, edge_station_uid: 'stn-a' }), unloader({ id: 8, edge_station_uid: 'stn-a' }), 'WAIT-G')
-            .every(function (b) { return b.edge_station_uid === 'stn-a'; }));
+        h.ctx.settingUpdate(stored, 'boardHidesIdle', true).station_uid === 'stn-a' &&
+        h.ctx.settingUpdate(stored, 'name', 'LDR-B').station_uid === 'stn-a' &&
+        h.ctx.placeUpdate(stored, 'outbound', 'EMPTIES').station_uid === 'stn-a' &&
+        h.ctx.waitGroupUpdates(unloader({ id: 7, station_uid: 'stn-a' }), unloader({ id: 8, station_uid: 'stn-a' }), 'WAIT-G')
+            .every(function (b) { return b.station_uid === 'stn-a'; }));
     check('a row that never named one sends the key, blank',
-        h.ctx.loaderPayload(h.ctx.formStateFromLoader(loader())).edge_station_uid === '');
+        h.ctx.loaderPayload(h.ctx.formStateFromLoader(loader())).station_uid === '');
 
     const pickEl = function (lid, uid) {
         const el = makeEl('', 'select');
@@ -889,16 +889,16 @@ await (async function edgePick() {
     await h.ctx.saveStationSetting(pickEl(21, 'stn-a'));
     check('a change saves at once: one update with the uid, the rest as stored',
         h.posts.length === 1 && h.posts[0].url === '/api/loader/update' && h.posts[0].body.id === 21 &&
-        h.posts[0].body.edge_station_uid === 'stn-a' && h.posts[0].body.funnel_windows === true, JSON.stringify(h.posts));
+        h.posts[0].body.station_uid === 'stn-a' && h.posts[0].body.funnel_windows === true, JSON.stringify(h.posts));
     const tick = makeEl('', 'input');
     tick.type = 'checkbox';
     tick.checked = true;
     tick.setAttribute('data-loader-id', '21');
     tick.setAttribute('data-field', 'boardHidesIdle');
-    h.set('loaderData = ' + JSON.stringify([{ loader: loader({ edge_station_uid: 'stn-a' }), homes: [], payloads: [] }]));
+    h.set('loaderData = ' + JSON.stringify([{ loader: loader({ station_uid: 'stn-a' }), homes: [], payloads: [] }]));
     await h.ctx.saveStationSetting(tick);
     check('another setting saved through the page sends the stored uid back',
-        h.posts.length === 2 && h.posts[1].body.board_hides_idle === true && h.posts[1].body.edge_station_uid === 'stn-a');
+        h.posts.length === 2 && h.posts[1].body.board_hides_idle === true && h.posts[1].body.station_uid === 'stn-a');
 
     const hp = load({ auth: true });
     const [one, two] = pair({ funnel_windows: true }, { outbound_dest: 'EMPTIES' });
@@ -909,7 +909,7 @@ await (async function edgePick() {
     await hp.ctx.saveStationSetting(pickEl(7, 'stn-a'));
     check('a pair: the one pick saves both stages, stage 1 then stage 2, nothing else moving',
         hp.posts.length === 2 && hp.posts[0].body.id === 7 && hp.posts[1].body.id === 8 &&
-        hp.posts.every(function (p) { return p.url === '/api/loader/update' && p.body.edge_station_uid === 'stn-a'; }) &&
+        hp.posts.every(function (p) { return p.url === '/api/loader/update' && p.body.station_uid === 'stn-a'; }) &&
         hp.posts[0].body.funnel_windows === true && hp.posts[1].body.outbound_dest === 'EMPTIES' &&
         hp.posts[1].body.name === 'PAIR-A · stage 2', JSON.stringify(hp.posts));
 
@@ -927,11 +927,11 @@ await (async function edgePick() {
         return hh.ctx.gridHtml([{ loader: l, edge_display_name: name, homes: [], payloads: [] }]);
     };
     check('read-only: one line, the Edge by its name',
-        card(hr, loader({ edge_station_uid: 'stn-a' }), 'EDGE A').indexOf('>Edge: EDGE A</span>') >= 0);
+        card(hr, loader({ station_uid: 'stn-a' }), 'EDGE A').indexOf('>Edge: EDGE A</span>') >= 0);
     check('read-only: an Edge Core holds no name for is named by its uid',
-        card(hr, loader({ edge_station_uid: 'stn-b' }), '').indexOf('>Edge: stn-b</span>') >= 0);
+        card(hr, loader({ station_uid: 'stn-b' }), '').indexOf('>Edge: stn-b</span>') >= 0);
     check('read-only: no Edge picked, no line', card(hr, loader(), '').indexOf('Edge: ') < 0);
-    check('signed in: the card carries no Edge line', card(ha, loader({ edge_station_uid: 'stn-a' }), 'EDGE A').indexOf('Edge: ') < 0);
+    check('signed in: the card carries no Edge line', card(ha, loader({ station_uid: 'stn-a' }), 'EDGE A').indexOf('Edge: ') < 0);
 })();
 
 // The four drain boxes (W14). Beside Accept partials on a single unloader where

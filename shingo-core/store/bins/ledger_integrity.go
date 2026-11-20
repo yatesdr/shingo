@@ -224,7 +224,9 @@ func NegativeExcursions(db *sql.DB, since time.Time, releaseWindow time.Duration
 	const q = `
 WITH crossings AS (
     SELECT a.id, a.bin_id, a.applied_at, a.before_uop, a.after_uop,
-           a.op, a.source, a.actor, COALESCE(a.metadata::text,'') AS metadata,
+           a.op, a.source,
+           -- The who, or for a station's own count (actor blank since v185) its station.
+           COALESCE(NULLIF(a.actor, ''), a.station_uid) AS actor, COALESCE(a.metadata::text,'') AS metadata,
            a.payload_code
     FROM bin_uop_ledger a
     WHERE a.applied_at >= $1

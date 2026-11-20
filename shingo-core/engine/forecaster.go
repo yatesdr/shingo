@@ -184,7 +184,7 @@ func forecastPlaces(in sourceability.Inputs, stations map[string]string, binding
 			}
 			seen[key] = true
 			p := forecastPlace{birth: domain.ForecastBirth{
-				EpisodeKey: key, Kind: "cell", Direction: c.Role, StationID: stations[c.ProcessID],
+				EpisodeKey: key, Kind: "cell", Direction: c.Role, StationUID: stations[c.ProcessID],
 				ProcessID: c.ProcessID, CoreNodeName: c.CoreNodeName, PayloadCode: c.PayloadCode,
 				Threshold: level,
 			}}
@@ -215,7 +215,7 @@ func forecastPlaces(in sourceability.Inputs, stations map[string]string, binding
 		seen[key] = true
 		out = append(out, forecastPlace{
 			birth: domain.ForecastBirth{
-				EpisodeKey: key, Kind: "threshold", StationID: b.StationID, CoreNodeName: b.CoreNodeName,
+				EpisodeKey: key, Kind: "threshold", StationUID: b.StationUID, CoreNodeName: b.CoreNodeName,
 				PayloadCode: b.PayloadCode, Threshold: b.ReplenishUOPThreshold,
 				NeedAt: projectNeedAt(totals[b.PayloadCode], b.ReplenishUOPThreshold, in.RatePerSec[b.PayloadCode], now),
 			},

@@ -135,7 +135,7 @@ func TestSingleRobotSwap_LineDropoffAnnouncesTheRebind(t *testing.T) {
 
 	ord := &orders.Order{
 		EdgeUUID:     "single-robot-rebind",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		Coordinated:  true,
@@ -227,7 +227,7 @@ func TestSingleRobotSwap_LineRebindIsSilentlyDisarmedByATrailingTransitBin(t *te
 
 	ord := &orders.Order{
 		EdgeUUID:     "single-robot-rebind-disarmed",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		Coordinated:  true,
@@ -308,7 +308,7 @@ func TestSingleRobotSwap_UnresolvedLineRebindRaisesAnAlarm(t *testing.T) {
 
 	ord := &orders.Order{
 		EdgeUUID:     "single-robot-rebind-alarm",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		Coordinated:  true,
@@ -376,7 +376,7 @@ func TestStoreBlockDecline_AtAStagingSlotStaysQuiet(t *testing.T) {
 
 	ord := &orders.Order{
 		EdgeUUID:     "staging-decline-quiet",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusInTransit,
 		SourceNode:   market.Name,

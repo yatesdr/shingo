@@ -95,7 +95,7 @@ func openThresholdEpisodes(t *testing.T, db *store.DB) []store.DemandOrigin {
 func episodesForPayload(t *testing.T, db *store.DB, payload string) []episodeRow {
 	t.Helper()
 	rows, err := db.Query(`
-		SELECT origin_id, station_id, COALESCE(close_reason, ''), COALESCE(closed_by, ''), closed_at IS NULL
+		SELECT origin_id, station_uid, COALESCE(close_reason, ''), COALESCE(closed_by, ''), closed_at IS NULL
 		  FROM demand_origins
 		 WHERE payload_code = $1
 		 ORDER BY opened_at, origin_id`, payload)
@@ -277,7 +277,7 @@ func TestThresholdEpisode_WithdrawingOneStationLeavesAnotherStationsBindingAlone
 	stillOpen := openThresholdEpisodes(t, db)
 	survivors := 0
 	for _, o := range stillOpen {
-		if o.StationID == survivor.stationID {
+		if o.StationUID == survivor.stationID {
 			survivors++
 		}
 	}

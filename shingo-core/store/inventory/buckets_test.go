@@ -34,7 +34,7 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	}
 
 	// Seed three buckets across two stations.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		VALUES
 		  ('STATION-B', $1, 'PAY-2', 'active', 22),
 		  ('STATION-A', $1, 'PAY-1', 'active', 11),
@@ -54,7 +54,7 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	// Pin field mapping on the first row by station name.
 	byKey := map[string]inventory.BucketRow{}
 	for _, r := range rows {
-		byKey[r.Station+"|"+r.PayloadCode] = r
+		byKey[r.StationUID+"|"+r.PayloadCode] = r
 	}
 	r1, ok := byKey["STATION-A|PAY-1"]
 	if !ok {
@@ -73,11 +73,11 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	// Ordering: cell → station → node → part. With nodes that have
 	// no parent hierarchy the cell is empty, so the sort falls
 	// through to station first. STATION-A rows come before STATION-B.
-	if rows[0].Station != "STATION-A" {
-		t.Errorf("rows[0].Station = %q, want STATION-A (cell→station→node sort)", rows[0].Station)
+	if rows[0].StationUID != "STATION-A" {
+		t.Errorf("rows[0].Station = %q, want STATION-A (cell→station→node sort)", rows[0].StationUID)
 	}
-	if rows[2].Station != "STATION-B" {
-		t.Errorf("rows[2].Station = %q, want STATION-B (cell→station→node sort)", rows[2].Station)
+	if rows[2].StationUID != "STATION-B" {
+		t.Errorf("rows[2].Station = %q, want STATION-B (cell→station→node sort)", rows[2].StationUID)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestListLinesideBuckets_StateIsTheStoredColumn(t *testing.T) {
 		t.Fatalf("seed plant claims: %v", err)
 	}
 
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		VALUES
 		  ('ST', $1, 'PAY-ACTIVE', 'active', 100),
 		  ('ST', $1, 'PAY-OLD', 'active', 250),
@@ -153,7 +153,7 @@ func TestLinesideBuckets_ThePileIsKeyedByItsSeatAndOneOfTwoStates(t *testing.T) 
 	t.Parallel()
 	db := testdb.Open(t)
 	insert := func(state string) error {
-		_, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+		_, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 			VALUES ('ST', 'BKT-KEY-NODE', 'PAY-KEY', $1, 1)`, state)
 		return err
 	}
@@ -207,7 +207,7 @@ func TestCountHolders(t *testing.T) {
 			t.Fatalf("seed bin %s: %v", b.label, err)
 		}
 	}
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty) VALUES
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty) VALUES
 		('STN', 'ALN_1', 'HOLD-A', 'active', 24), ('STN', 'ALN_2', 'HOLD-A', 'stranded', 7), ('STN', 'ALN_3', 'HOLD-B', 'active', 3)`); err != nil {
 		t.Fatalf("seed piles: %v", err)
 	}

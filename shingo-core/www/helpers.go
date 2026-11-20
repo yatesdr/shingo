@@ -233,7 +233,7 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		// stationName renders the operator's label for a station identity.
 		//
 		// USE THIS FOR AN EDGE STATION AND NOTHING ELSE. A SEER fleet station
-		// (mission_events.robot_station, mission-detail.html's "Station"
+		// (mission_events.rds_station, mission-detail.html's "Station"
 		// column) is a different namespace that must never be looked up here.
 		// Core's own order sources — core-operator, core-direct, core-test — and
 		// the '*' broadcast address have no registry row and fall through to

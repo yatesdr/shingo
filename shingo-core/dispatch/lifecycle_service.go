@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/dispatch/binresolver"
+	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/service"
 	"shingocore/store"
@@ -131,9 +132,15 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// Intake site 1 of 3 for the demand grain. Stamped from the envelope here,
 	// where the sender's statement is in hand; never inferred later from a NULL.
 	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
+	// THE SENDER IS SPLIT ONCE, HERE: a Core actor's name (a Core page's
+	// envelope) is the order's requested_by and leaves its station blank;
+	// anything else is the station's uid. Everything after reads the two
+	// fields, or Requester for who asked.
+	stationUID, requestedBy := domain.SplitRequester(stationID)
 	order := &orders.Order{
 		EdgeUUID:        p.OrderUUID,
-		StationID:       stationID,
+		StationUID:      stationUID,
+		RequestedBy:     requestedBy,
 		OrderType:       orderType,
 		Status:          StatusPending,
 		Quantity:        quantity,
@@ -202,7 +209,8 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		}
 		need := Need{
 			Type:            orderType,
-			Station:         order.StationID,
+			Station:         order.StationUID,
+			RequestedBy:     order.RequestedBy,
 			Ref:             order.EdgeUUID,
 			Quantity:        order.Quantity,
 			Priority:        order.Priority,
@@ -279,7 +287,9 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	return order, payloadCode, nil
 }
 
-// projectOrder pushes an order's row down to the station that owns it.
+// projectOrder pushes an order's row down to the station that owns it: its
+// requester, so a Core actor's order is projected to the actor's name, as it
+// was when the actor sat in the station column (a row no Edge reads).
 //
 // SCOPE IS DEFINED BY admission (admit), on purpose. Every order admitted through that
 // body projects, and nothing else does — compound children and complex orders
@@ -288,10 +298,10 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 // than to a list means a new door that wants projection gets it by routing
 // through admission, which is where it belongs anyway.
 func (s *LifecycleService) projectOrder(order *orders.Order) {
-	if order == nil || order.StationID == "" {
+	if order == nil || order.Requester() == "" {
 		return
 	}
-	s.emitter.ProjectOrder(order.StationID, ProjectionFor(order))
+	s.emitter.ProjectOrder(order.Requester(), ProjectionFor(order))
 }
 
 // admit is the wire-free middle of order intake: validate the payload, resolve a
@@ -416,7 +426,7 @@ func (s *LifecycleService) failTakenForCart(taken Taken, by *orders.Order, cart 
 			continue
 		}
 		detail := fmt.Sprintf("bin %s was taken by order #%d (a station's move)", cart.Label, by.ID)
-		if err := s.Fail(o, o.StationID, "bin_taken", detail); err != nil {
+		if err := s.Fail(o, o.Requester(), "bin_taken", detail); err != nil {
 			log.Printf("dispatch: order %d lost bin %s to order %d and could not be ended: %v", o.ID, cart.Label, by.ID, err)
 		}
 	}

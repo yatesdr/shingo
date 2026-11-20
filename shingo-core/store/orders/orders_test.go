@@ -28,7 +28,7 @@ import (
 func newPendingOrder(uuid string) *domain.Order {
 	return &domain.Order{
 		EdgeUUID:     uuid,
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "pending",
 		Quantity:     1,
@@ -458,7 +458,7 @@ func TestListFiltered(t *testing.T) {
 	mk := func(uuid, status, station string) int64 {
 		o := newPendingOrder(uuid)
 		o.Status = protocol.Status(status)
-		o.StationID = station
+		o.StationUID = station
 		createAt(t, d, o, "sg-"+uuid)
 		return o.ID
 	}
@@ -491,8 +491,8 @@ func TestListFiltered(t *testing.T) {
 		t.Errorf("station=line-1 len = %d, want 3", len(st1))
 	}
 	for _, o := range st1 {
-		if o.StationID != "line-1" {
-			t.Errorf("StationID = %q, want line-1", o.StationID)
+		if o.StationUID != "line-1" {
+			t.Errorf("StationID = %q, want line-1", o.StationUID)
 		}
 	}
 
@@ -549,9 +549,9 @@ func TestChildOrders(t *testing.T) {
 	testutil.MustNoErr(t, orders.Create(db, parent), "Create parent")
 
 	children := []*domain.Order{
-		{EdgeUUID: "c1", StationID: "line-1", OrderType: "retrieve", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 1},
-		{EdgeUUID: "c2", StationID: "line-1", OrderType: "store", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2},
-		{EdgeUUID: "c3", StationID: "line-1", OrderType: "move", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 3},
+		{EdgeUUID: "c1", StationUID: "line-1", OrderType: "retrieve", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 1},
+		{EdgeUUID: "c2", StationUID: "line-1", OrderType: "store", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2},
+		{EdgeUUID: "c3", StationUID: "line-1", OrderType: "move", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 3},
 	}
 	for _, c := range children {
 		if err := orders.Create(db, c); err != nil {
@@ -636,7 +636,7 @@ func TestListByStation(t *testing.T) {
 
 	mk := func(uuid, station string) {
 		o := newPendingOrder(uuid)
-		o.StationID = station
+		o.StationUID = station
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
 		}
@@ -653,8 +653,8 @@ func TestListByStation(t *testing.T) {
 		t.Errorf("station=line-1 len = %d, want 2", len(got))
 	}
 	for _, o := range got {
-		if o.StationID != "line-1" {
-			t.Errorf("StationID = %q, want line-1", o.StationID)
+		if o.StationUID != "line-1" {
+			t.Errorf("StationID = %q, want line-1", o.StationUID)
 		}
 	}
 
@@ -1235,7 +1235,7 @@ func TestRobotsByUUID_OrdersTheFleetHoldsOnARobot(t *testing.T) {
 	mk := func(uuid, station string, status protocol.Status, robot string) {
 		t.Helper()
 		o := newPendingOrder(uuid)
-		o.StationID, o.Status = station, status
+		o.StationUID, o.Status = station, status
 		// A `dispatched` order names its job in the write that makes it so: the
 		// one the vendor write below names, or its own when it has no robot.
 		job := "sg-" + uuid
@@ -1262,9 +1262,9 @@ func TestRobotsByUUID_OrdersTheFleetHoldsOnARobot(t *testing.T) {
 		byUUID[r.UUID] = r
 	}
 	want := map[string]orders.OrderRobot{
-		"u-live":  {UUID: "u-live", StationID: "edge.a", RobotID: "AMR-01"},
-		"u-other": {UUID: "u-other", StationID: "edge.b", RobotID: "AMR-02"},
-		"u-fault": {UUID: "u-fault", StationID: "edge.a", RobotID: "AMR-05"},
+		"u-live":  {UUID: "u-live", StationUID: "edge.a", RobotID: "AMR-01"},
+		"u-other": {UUID: "u-other", StationUID: "edge.b", RobotID: "AMR-02"},
+		"u-fault": {UUID: "u-fault", StationUID: "edge.a", RobotID: "AMR-05"},
 	}
 	if len(byUUID) != len(want) {
 		t.Errorf("read %+v, want exactly %v", got, want)

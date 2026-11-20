@@ -68,7 +68,7 @@ func InsertPartEvents(db *sql.DB, events []PartEvent) (inserted []PartEvent, rej
 func insertPartEventRows(db *sql.DB, events []PartEvent) ([]PartEvent, error) {
 	var q strings.Builder
 	q.WriteString(`INSERT INTO cell_part_events
-		(cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id) VALUES `)
+		(station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id) VALUES `)
 	args := make([]any, 0, len(events)*partEventCols)
 	for i, e := range events {
 		if i > 0 {
@@ -76,10 +76,10 @@ func insertPartEventRows(db *sql.DB, events []PartEvent) ([]PartEvent, error) {
 		}
 		n := i * partEventCols
 		fmt.Fprintf(&q, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)", n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8)
-		args = append(args, e.CellID, e.RecordedAt, e.EdgeSnapshotID, e.CountValue, e.Delta, e.Anomaly, e.ProcessID, e.StyleID)
+		args = append(args, e.StationUID, e.RecordedAt, e.EdgeSnapshotID, e.CountValue, e.Delta, e.Anomaly, e.ProcessID, e.StyleID)
 	}
-	q.WriteString(` ON CONFLICT (cell_id, edge_snapshot_id, recorded_at) DO NOTHING
-		RETURNING id, cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id`)
+	q.WriteString(` ON CONFLICT (station_uid, edge_snapshot_id, recorded_at) DO NOTHING
+		RETURNING id, station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id`)
 	rows, err := db.Query(q.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("insert cell_part_events: %w", err)
@@ -88,7 +88,7 @@ func insertPartEventRows(db *sql.DB, events []PartEvent) ([]PartEvent, error) {
 	var out []PartEvent
 	for rows.Next() {
 		var e PartEvent
-		if err := rows.Scan(&e.ID, &e.CellID, &e.RecordedAt, &e.EdgeSnapshotID,
+		if err := rows.Scan(&e.ID, &e.StationUID, &e.RecordedAt, &e.EdgeSnapshotID,
 			&e.CountValue, &e.Delta, &e.Anomaly, &e.ProcessID, &e.StyleID); err != nil {
 			return nil, err
 		}
@@ -101,9 +101,9 @@ func insertPartEventRows(db *sql.DB, events []PartEvent) ([]PartEvent, error) {
 // analytical queries and the run/stop strip (composite index (cell_id, recorded_at)).
 func ListEvents(db *sql.DB, cellID string, since, until time.Time) ([]PartEvent, error) {
 	rows, err := db.Query(
-		`SELECT id, cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
+		`SELECT id, station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
 		 FROM cell_part_events
-		 WHERE cell_id=$1 AND recorded_at >= $2 AND recorded_at <= $3
+		 WHERE station_uid=$1 AND recorded_at >= $2 AND recorded_at <= $3
 		 ORDER BY recorded_at`, cellID, since, until)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func ListEvents(db *sql.DB, cellID string, since, until time.Time) ([]PartEvent,
 	var out []PartEvent
 	for rows.Next() {
 		var e PartEvent
-		if err := rows.Scan(&e.ID, &e.CellID, &e.RecordedAt, &e.EdgeSnapshotID,
+		if err := rows.Scan(&e.ID, &e.StationUID, &e.RecordedAt, &e.EdgeSnapshotID,
 			&e.CountValue, &e.Delta, &e.Anomaly, &e.ProcessID, &e.StyleID); err != nil {
 			return nil, err
 		}

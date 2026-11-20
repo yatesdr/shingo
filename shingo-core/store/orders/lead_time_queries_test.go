@@ -34,7 +34,7 @@ func TestLeadTimeHelpers_Fidelity(t *testing.T) {
 	}
 	seed := func(uuid, orderType, payload string, evs []ev) {
 		o := &domain.Order{
-			EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderType(orderType), Status: "pending",
+			EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderType(orderType), Status: "pending",
 			Quantity: 1, PayloadCode: payload, DeliveryNode: "D", SourceNode: "S",
 		}
 		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
@@ -108,7 +108,7 @@ func TestLeadTimesByPayload_RateIsTheRunningRate(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
-	_, err := db.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, replenish_uop_threshold)
+	_, err := db.Exec(`INSERT INTO demand_registry (station_uid, core_node_name, role, payload_code, replenish_uop_threshold)
 		VALUES ('line-1', 'SMN_R1', 'consume', 'PART-R', 100)`)
 	testutil.MustNoErr(t, err, "seed registry")
 	sample := func(ago time.Duration, rate float64) {

@@ -49,7 +49,7 @@ func namingOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status
 	if status == protocol.StatusDispatched {
 		born = protocol.StatusPending
 	}
-	o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex", Status: born, Quantity: 1,
+	o := &orders.Order{EdgeUUID: uuid, StationUID: "edge.1", OrderType: "complex", Status: born, Quantity: 1,
 		DeliveryNode: slot.Name}
 	if err := orders.Create(db.DB, o); err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)

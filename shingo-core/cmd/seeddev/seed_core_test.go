@@ -243,7 +243,7 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	if err != nil || k == nil {
 		t.Fatalf("SYN_PRESS_EMPTIES has no kanbans row: %v", err)
 	}
-	if !k.Strict || k.StationID != "edge1.line1" {
+	if !k.Strict || k.StationUID != "edge1.line1" {
 		t.Errorf("SYN_PRESS_EMPTIES kanban = %+v, want strict, station edge1.line1, overflow SYN_SM_Stamp", k)
 	}
 	sources, err := db.ListKanbanSources(mgZone.ID)

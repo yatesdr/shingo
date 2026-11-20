@@ -36,7 +36,7 @@ func mkDigOrder(t *testing.T, db *store.DB, uuid, payloadCode, delivery string) 
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -274,7 +274,7 @@ func TestBlockerClaimedError_CarriesTheHolder(t *testing.T) {
 	pid := parent.ID
 	_, err := testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{
 		Order: testdb.Holding(&orders.Order{
-			EdgeUUID: "holder-id-child", StationID: parent.StationID,
+			EdgeUUID: "holder-id-child", StationUID: parent.StationUID,
 			OrderType: protocol.OrderTypeMove, Status: protocol.StatusPending,
 			Quantity: 1, ParentOrderID: &pid, Sequence: 1,
 		}, bin.ID),

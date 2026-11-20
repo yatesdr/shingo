@@ -19,7 +19,7 @@
       <tbody>
         {{range .}}
         <tr>
-          <td>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.StationID}}{{end}}</td>
+          <td>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.StationUID}}{{end}}</td>
           <td class="rh-num">{{with .Pending}}{{.}}{{end}}</td>
           <td class="rh-num">{{.OldestUnsentAge}}</td>
           <td>{{with .ReportedAt}}{{timeAgo .}}{{end}}</td>

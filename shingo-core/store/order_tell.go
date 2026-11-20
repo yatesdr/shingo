@@ -45,13 +45,15 @@ func (db *DB) SetStationTells(topic, coreStation string) {
 // the fault clock). detail is the write's own history sentence, used when tmpl
 // names none.
 //
-// Nothing is queued for an order no station holds: one with no station or no
-// edge uuid, or one its station has no row for (station_unaware). The queue
+// Nothing is queued for an order no station holds: one with no requester (no
+// station and no Core actor) or no edge uuid, or one its station has no row
+// for (station_unaware). A Core actor's order is told at the actor's name, as
+// it was when the actor sat in the station column: a row nobody reads. The queue
 // fields ride only while the order waits, exactly as before: an empty one on
 // the wire reads as absent, and the station keeps a reason only while waiting.
 func (db *DB) queueTellTx(tx *sql.Tx, told orders.Told, tmpl protocol.OrderUpdate, detail string) error {
 	t := db.tells.Load()
-	if t == nil || t.topic == "" || told.EdgeUUID == "" || told.StationID == "" || told.StationUnaware {
+	if t == nil || t.topic == "" || told.EdgeUUID == "" || told.Requester() == "" || told.StationUnaware {
 		return nil
 	}
 	u := tmpl
@@ -66,5 +68,5 @@ func (db *DB) queueTellTx(tx *sql.Tx, told orders.Told, tmpl protocol.OrderUpdat
 	if u.Detail == "" {
 		u.Detail = detail
 	}
-	return messaging.EnqueueToEdge(tx, t.topic, protocol.TypeOrderUpdate, t.coreStation, told.StationID, &u)
+	return messaging.EnqueueToEdge(tx, t.topic, protocol.TypeOrderUpdate, t.coreStation, told.Requester(), &u)
 }

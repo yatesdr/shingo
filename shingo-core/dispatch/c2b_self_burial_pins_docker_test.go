@@ -223,7 +223,7 @@ func TestC2bPin_ASwapNeverDropsInFrontOfItsOwnPickup(t *testing.T) {
 	testutil.MustNoErr(t, err, "marshal the swap's plan")
 	swap := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2bsb2-swap"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = sd.Payload.Code
@@ -236,7 +236,7 @@ func TestC2bPin_ASwapNeverDropsInFrontOfItsOwnPickup(t *testing.T) {
 
 	atStation, err := db.GetOrder(swap.ID)
 	testutil.MustNoErr(t, err, "reload the swap")
-	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID),
+	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationUID),
 		&protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
 	d.EvaluateLaneReleases(laneID)
 
@@ -448,7 +448,7 @@ func midTripSwapAtMark(t *testing.T, db *store.DB, d *Dispatcher, prefix string,
 	testutil.MustNoErr(t, err, "marshal the swap's plan")
 	swap = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = strings.ToLower(prefix) + "-swap"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = sd.Payload.Code
@@ -460,7 +460,7 @@ func midTripSwapAtMark(t *testing.T, db *store.DB, d *Dispatcher, prefix string,
 	testutil.MustNoErr(t, db.UpdateOrderVendor(swap.ID, prefix+"-V1", "WAITING", "AMR-1"), "set the vendor order")
 	atStation, err := db.GetOrder(swap.ID)
 	testutil.MustNoErr(t, err, "reload the swap")
-	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID), &protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
+	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationUID), &protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
 	d.EvaluateLaneReleases(laneA)
 	after, err := db.GetOrder(swap.ID)
 	testutil.MustNoErr(t, err, "reload after the gate")

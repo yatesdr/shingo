@@ -79,7 +79,7 @@ func ownerExemptFixture(t *testing.T, db *store.DB, algo string) (grp *nodes.Nod
 func testdbCreateStore(t *testing.T, db *store.DB, deliveryNode string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: "ownex-holder-" + deliveryNode, StationID: "test",
+		EdgeUUID: "ownex-holder-" + deliveryNode, StationUID: "test",
 		OrderType: "move", Status: "in_transit", Quantity: 1,
 		DeliveryNode: deliveryNode,
 	}

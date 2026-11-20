@@ -76,7 +76,7 @@ func TestEdgesPage_RowsLineUpWithHostAndSchema(t *testing.T) {
 }
 
 func enrollAndRegister(db *store.DB, uid, hostname string, schemaVersion sql.NullInt64) error {
-	if _, err := db.EnrollEdge(uid, "", uid); err != nil {
+	if _, err := db.EnrollEdge(uid, ""); err != nil {
 		return fmt.Errorf("enroll %s: %w", uid, err)
 	}
 	if _, err := db.RegisterEdge(uid, hostname, "inst-"+uid, "test", "", schemaVersion); err != nil {

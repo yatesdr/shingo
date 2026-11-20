@@ -410,7 +410,7 @@ func isParkedOnDeckOrder(o *orders.Order) bool {
 // and confirms it went terminal. CancelOrder logs a refused transition rather
 // than returning it, so the re-read is the only way to know the bin is free.
 func (e *Engine) cancelParkedOnDeckOrder(o *orders.Order, actor string) error {
-	e.dispatcher.Lifecycle().CancelOrder(o, o.StationID, "superseded by a new recovery request",
+	e.dispatcher.Lifecycle().CancelOrder(o, o.Requester(), "superseded by a new recovery request",
 		dispatch.CancelCause{Code: protocol.TermOperatorCancelled, Actor: actor})
 	after, err := e.db.GetOrder(o.ID)
 	if err != nil || after == nil || !protocol.IsTerminal(after.Status) {
@@ -667,7 +667,7 @@ func (e *Engine) stationClaiming(n *nodes.Node) string {
 	case 0:
 		return ""
 	case 1:
-		return edges[0].StationID
+		return edges[0].StationUID
 	}
 	sts, err := e.db.StationsClaimingNode(n.Name)
 	if err != nil {

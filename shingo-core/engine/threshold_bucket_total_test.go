@@ -36,7 +36,7 @@ var rtBucketDoors = []struct {
 // plantBucket writes one lineside_buckets row for the rig's payload at node.
 func (r *rtRig) plantBucket(node string, state protocol.LinesideBucketState, qty int) {
 	r.t.Helper()
-	_, err := r.eng.db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+	_, err := r.eng.db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		VALUES ('PLANT.RT', $1, $2, $3, $4)`, node, r.b.payloadCode, string(state), qty)
 	testutil.MustNoErr(r.t, err, "plant bucket")
 }

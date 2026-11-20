@@ -114,7 +114,7 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 	// Status=Staged AND claimed_by=order.ID.
 	order := &coreorders.Order{
 		EdgeUUID:     "scenario-partial-1",
-		StationID:    "edge.test",
+		StationUID:   "edge.test",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       dispatch.StatusStaged,
 		Quantity:     1,

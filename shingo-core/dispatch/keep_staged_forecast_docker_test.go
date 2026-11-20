@@ -35,14 +35,14 @@ func TestKeepStaged_RefillBesideAForecastIsLiveDemand(t *testing.T) {
 	key := protocol.CellEpisodeKey("SNF-KS", bp.Code, protocol.ClaimRoleConsume)
 	fc := uuid.NewString()
 	_, err := db.Exec(`
-		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_id, payload_code, opened_at)
+		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_uid, payload_code, opened_at)
 		VALUES ($1, 0, $2, 'cell', 'line-1', $3, NULL)`, fc, key, bp.Code)
 	testutil.MustNoErr(t, err, "plant the forecast at the line's key")
 
 	live := uuid.NewString()
 	testutil.MustNoErr(t, db.UpsertDemandOrigin(store.DemandOrigin{
 		OriginID: live, Revision: 1, EpisodeKey: protocol.CellEpisodeKey("SNF-KS2", bp.Code, protocol.ClaimRoleConsume),
-		Kind: protocol.EpisodeKindCell, Direction: protocol.ClaimRoleConsume, StationID: "line-1",
+		Kind: protocol.EpisodeKindCell, Direction: protocol.ClaimRoleConsume, StationUID: "line-1",
 		PayloadCode: bp.Code, OpenedAt: time.Now().UTC().Add(-time.Minute),
 	}), "the live leg's episode")
 

@@ -49,7 +49,7 @@ func (e *Engine) recordMissionEvent(ev OrderStatusChangedEvent) {
 			me.RobotY = &rs.Y
 			me.RobotAngle = &rs.Angle
 			me.RobotBattery = &rs.BatteryLevel
-			me.RobotStation = rs.CurrentStation
+			me.RDSStation = rs.CurrentStation
 		}
 	}
 
@@ -105,7 +105,8 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 		OrderID:         ev.OrderID,
 		VendorOrderID:   ev.VendorOrderID,
 		RobotID:         robotID,
-		StationID:       order.StationID,
+		StationUID:      order.StationUID,
+		RequestedBy:     order.RequestedBy,
 		OrderType:       order.OrderType,
 		SourceNode:      order.SourceNode,
 		DeliveryNode:    order.DeliveryNode,

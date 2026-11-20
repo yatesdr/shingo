@@ -524,7 +524,7 @@ func TestKanbanCost_ScannerParkedPass(t *testing.T) {
 			testdb.KanbanSources(t, r.db, r.k.ID)
 			push := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 				o.EdgeUUID = "kc-parked"
-				o.StationID = "kc-edge"
+				o.StationUID = "kc-edge"
 				o.OrderType = dispatch.OrderTypeMove
 				o.SourceIntent = dispatch.SourceIntentLocal
 				o.OriginClass = protocol.OriginClassNoDemand

@@ -140,7 +140,7 @@ func TestScanner_LosingTheCASToAHandYields(t *testing.T) {
 	binID := bin.ID
 	order := &orders.Order{
 		EdgeUUID:     "scanner-loses",
-		StationID:    "test-station",
+		StationUID:   "test-station",
 		OrderType:    protocol.OrderTypeMove,
 		Status:       protocol.StatusQueued,
 		Quantity:     1,

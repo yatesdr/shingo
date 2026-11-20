@@ -101,7 +101,7 @@ func TestUnification_PlainDispatchRecordsItsOwnPresence(t *testing.T) {
 
 	store := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "uni-take"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = shallow.Name
 		o.Status = "pending"
@@ -136,7 +136,7 @@ func TestUnification_TwoPlainStoresIntoOneLaneSerialize(t *testing.T) {
 
 	first := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "uni-ser-1"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = deep.Name
 		o.Status = "pending"
@@ -244,7 +244,7 @@ func TestUnification_FailedDispatchLeavesNoOccupancy(t *testing.T) {
 	}
 	store := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "uni-roll"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = shallow.Name
 		o.Status = "pending"

@@ -20,7 +20,7 @@ func emptyIntentMoveOrder(t *testing.T, db *store.DB, binID int64, source, deliv
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:     "empty-intent-" + source + "-" + delivery,
-		StationID:    "test-station",
+		StationUID:   "test-station",
 		OrderType:    protocol.OrderTypeRetrieveEmpty,
 		Status:       protocol.StatusPending,
 		Quantity:     1,

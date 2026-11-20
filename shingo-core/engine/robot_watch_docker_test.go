@@ -27,7 +27,7 @@ func TestRobotPositions_NoLeaseNoWork(t *testing.T) {
 	for _, o := range []struct{ uuid, station, robot string }{
 		{"u-a1", "edge.a", "AMR-01"}, {"u-b1", "edge.b", "AMR-02"},
 	} {
-		order := &domain.Order{EdgeUUID: o.uuid, StationID: o.station, OrderType: "move",
+		order := &domain.Order{EdgeUUID: o.uuid, StationUID: o.station, OrderType: "move",
 			Status: protocol.StatusInTransit, Quantity: 1, SourceNode: "S", DeliveryNode: "D"}
 		testutil.MustNoErr(t, db.CreateOrder(order), "create "+o.uuid)
 		testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "v-"+o.uuid, "RUNNING", o.robot), "robot on "+o.uuid)
@@ -113,7 +113,7 @@ func TestRobotPositions_NoLeaseNoWork(t *testing.T) {
 func TestRobotPositions_ANewWatchIsAnsweredFromTheLatestPoll(t *testing.T) {
 	t.Parallel()
 	db, dbCfg := testdb.OpenWithConfig(t)
-	order := &domain.Order{EdgeUUID: "u-a1", StationID: "edge.a", OrderType: "move",
+	order := &domain.Order{EdgeUUID: "u-a1", StationUID: "edge.a", OrderType: "move",
 		Status: protocol.StatusInTransit, Quantity: 1, SourceNode: "S", DeliveryNode: "D"}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create u-a1")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "v-u-a1", "RUNNING", "AMR-01"), "robot on u-a1")

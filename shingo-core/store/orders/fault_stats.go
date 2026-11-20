@@ -113,7 +113,7 @@ func faultCTEFor(scope OrderScope, nBase int) (string, []any) {
 	cond := ""
 	var args []any
 	for _, c := range []struct{ col, val string }{
-		{"station_id", scope.StationID},
+		{RequesterColumn(scope.StationID), scope.StationID},
 		{"robot_id", scope.RobotID},
 	} {
 		if c.val != "" {

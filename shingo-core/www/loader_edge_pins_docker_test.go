@@ -33,7 +33,7 @@ func listedEdge(t *testing.T, h *Handlers, id int64) (uid, name string) {
 		Loaders []struct {
 			Loader struct {
 				ID             int64  `json:"id"`
-				EdgeStationUID string `json:"edge_station_uid"`
+				EdgeStationUID string `json:"station_uid"`
 			} `json:"loader"`
 			EdgeDisplayName string `json:"edge_display_name"`
 		} `json:"loaders"`
@@ -54,7 +54,7 @@ func listedEdge(t *testing.T, h *Handlers, id int64) (uid, name string) {
 func TestLoaderUpdate_EdgeStationUIDRoundTrip(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	_, err := db.EnrollEdge("stn-lep-press", "PRESS EDGE", "stn-lep-press")
+	_, err := db.EnrollEdge("stn-lep-press", "PRESS EDGE")
 	testutil.MustNoErr(t, err, "enroll the Edge")
 	id, err := db.CreateLoader(loaders.Loader{Name: "LEP-LDR", Role: loaders.RoleProduce,
 		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator})
@@ -64,7 +64,7 @@ func TestLoaderUpdate_EdgeStationUIDRoundTrip(t *testing.T) {
 	}
 
 	rec := postJSON(t, h.apiUpdateLoader, "/api/loader/update",
-		map[string]any{"id": id, "name": "LEP-LDR", "edge_station_uid": "stn-lep-press"})
+		map[string]any{"id": id, "name": "LEP-LDR", "station_uid": "stn-lep-press"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("pick the Edge: %d %s", rec.Code, rec.Body.String())
 	}
@@ -73,7 +73,7 @@ func TestLoaderUpdate_EdgeStationUIDRoundTrip(t *testing.T) {
 	}
 
 	rec = postJSON(t, h.apiUpdateLoader, "/api/loader/update",
-		map[string]any{"id": id, "name": "LEP-LDR", "edge_station_uid": "stn-lep-nobody"})
+		map[string]any{"id": id, "name": "LEP-LDR", "station_uid": "stn-lep-nobody"})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `no Edge with station uid \"stn-lep-nobody\"`) {
 		t.Errorf("an unknown uid: %d %s; want 400 naming the uid", rec.Code, rec.Body.String())
 	}
@@ -95,10 +95,10 @@ func TestLoaderUpdate_EdgeStationUIDRoundTrip(t *testing.T) {
 func TestListLoaders_EdgeNamesDegrade(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	_, err := db.EnrollEdge("stn-lep-cell", "CELL EDGE", "stn-lep-cell")
+	_, err := db.EnrollEdge("stn-lep-cell", "CELL EDGE")
 	testutil.MustNoErr(t, err, "enroll the Edge")
 	id, err := db.CreateLoader(loaders.Loader{Name: "LEP-CELL", Role: loaders.RoleProduce,
-		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator, EdgeStationUID: "stn-lep-cell"})
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator, StationUID: "stn-lep-cell"})
 	testutil.MustNoErr(t, err, "a loader with an Edge")
 	_, err = db.Exec(`ALTER TABLE edge_registry RENAME TO edge_registry_hidden`)
 	testutil.MustNoErr(t, err, "hide the registry")

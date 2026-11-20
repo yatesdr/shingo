@@ -42,14 +42,14 @@ func TestVacate_ALiftIsOneReadAndNoRowWhenNothingWaits(t *testing.T) {
 	e := makeEmptyBin(t, db, home.ID, "VOR-E")
 	p := makeEmptyBin(t, db, src.ID, "VOR-P")
 	other := makeEmptyBin(t, db, else_.ID, "VOR-OTHER")
-	parent := &orders.Order{EdgeUUID: orders.ClearUUIDPrefix + "vor", StationID: "edge.vor", OrderType: OrderTypeMove,
+	parent := &orders.Order{EdgeUUID: orders.ClearUUIDPrefix + "vor", StationUID: "edge.vor", OrderType: OrderTypeMove,
 		Status: StatusReshuffling, Quantity: 1, SourceNode: home.Name, DeliveryNode: home.Name}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "parent")
 	stamped := time.Now().UTC()
 	steps, err := json.Marshal([]resolvedStep{{Action: protocol.ActionPickup, Node: src.Name},
 		{Action: protocol.ActionDropoff, Node: home.Name, Vacate: &plan.Vacate{Node: home.Name, Bin: e.ID, StampedAt: &stamped}}})
 	testutil.MustNoErr(t, err, "steps")
-	child := testdb.Holding(&orders.Order{EdgeUUID: "vor-p", StationID: "edge.vor", OrderType: OrderTypeMove, Status: StatusPending,
+	child := testdb.Holding(&orders.Order{EdgeUUID: "vor-p", StationUID: "edge.vor", OrderType: OrderTypeMove, Status: StatusPending,
 		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, SourceNode: src.Name,
 		DeliveryNode: home.Name, StepsJSON: string(steps), SourceIntent: SourceIntentForType(OrderTypeMove)}, p.ID)
 	_, err = testdb.CreateCompoundChildren(t, db, []store.CompoundChild{{Order: child}}, nil)
@@ -100,7 +100,7 @@ func TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead(t *testing.T) {
 	e := makeEmptyBin(t, db, home.ID, "VTL-E")
 	p := makeEmptyBin(t, db, spot.ID, "VTL-P")
 	other := makeEmptyBin(t, db, else_.ID, "VTL-OTHER")
-	parent := &orders.Order{EdgeUUID: orders.ClearUUIDPrefix + "vtl", StationID: "edge.vtl", OrderType: OrderTypeMove,
+	parent := &orders.Order{EdgeUUID: orders.ClearUUIDPrefix + "vtl", StationUID: "edge.vtl", OrderType: OrderTypeMove,
 		Status: StatusReshuffling, Quantity: 1, SourceNode: home.Name, DeliveryNode: home.Name}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "parent")
 	stamped := time.Now().UTC().Add(-time.Minute)
@@ -108,7 +108,7 @@ func TestVacate_TheLiftAsksItsOwnTradeLegInTheSameRead(t *testing.T) {
 		{Action: protocol.ActionWait, WaitKind: WaitKindVacate},
 		{Action: protocol.ActionDropoff, Node: home.Name, Vacate: &plan.Vacate{Node: home.Name, Bin: e.ID, StampedAt: &stamped}}})
 	testutil.MustNoErr(t, err, "steps")
-	leg := testdb.Holding(&orders.Order{EdgeUUID: "vtl-l1", StationID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusPending,
+	leg := testdb.Holding(&orders.Order{EdgeUUID: "vtl-l1", StationUID: "edge.vtl", OrderType: OrderTypeMove, Status: StatusPending,
 		Quantity: 1, ParentOrderID: &parent.ID, Sequence: 2, SourceNode: spot.Name,
 		DeliveryNode: home.Name, StepsJSON: string(steps)}, p.ID)
 	testutil.MustNoErr(t, db.CreateOrder(leg), "the trade leg")

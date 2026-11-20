@@ -101,7 +101,7 @@ func ttEvac(t *testing.T, r turnRig, prefix, sibling string, status protocol.Sta
 	testutil.MustNoErr(t, r.db.ConfirmBinManifest(cart.ID, ""), "confirm")
 	steps := []resolvedStep{voWait(line.Name, WaitKindStation), vsPick(line.Name), voDrop(out.Name, nil)}
 	o := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-evac", "line-1", OrderTypeComplex, status
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = prefix+"-evac", "line-1", OrderTypeComplex, status
 		o.ProcessNode, o.SiblingOrderUUID, o.Coordinated = line.Name, sibling, true
 		o.StepsJSON = string(mustJSON(t, steps))
 	})
@@ -421,7 +421,7 @@ func TestTableTurn_HeldForBothGoesWhenBoth(t *testing.T) {
 	r := newTurnRig(t)
 	line, out := prNode(t, r.db, "TT9-LINE"), prNode(t, r.db, "TT9-B1")
 	partner := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.Status = "TT9-lifter", "line-1", StatusInTransit
+		o.EdgeUUID, o.StationUID, o.Status = "TT9-lifter", "line-1", StatusInTransit
 	})
 	resident := makeEmptyBin(t, r.db, out.ID, "TT9-RESIDENT")
 	stamped := time.Now().UTC().Add(-time.Minute)

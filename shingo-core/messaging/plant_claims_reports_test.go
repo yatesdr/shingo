@@ -18,7 +18,7 @@ import (
 func reportRow(t *testing.T, db *store.DB, process string) string {
 	t.Helper()
 	var station, digest string
-	err := db.QueryRow(`SELECT station_id, digest FROM plant_claims_reports WHERE process_id = $1`, process).
+	err := db.QueryRow(`SELECT station_uid, digest FROM plant_claims_reports WHERE process_id = $1`, process).
 		Scan(&station, &digest)
 	if err != nil {
 		return ""
@@ -125,7 +125,7 @@ func TestHandleEdgeHeartbeat_Claims(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testdb.Open(t)
-			_, err := db.EnrollEdge(st, "", st)
+			_, err := db.EnrollEdge(st, "")
 			testutil.MustNoErr(t, err, "enroll")
 			resp := &feedsPinResponder{}
 			svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
@@ -160,9 +160,9 @@ func TestReportDigests_QuotesAnUnreportedMirror(t *testing.T) {
 	svc.HandlePlantClaims(feedsPinEnv("edge.test"), digestedReport("LIVE", "d1", oneStyle))
 	svc.HandlePlantClaims(feedsPinEnv("edge.other"), digestedReport("OTHERS", "o1", oneStyle))
 	for _, q := range []string{
-		`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('LEGACY', 'S1', NULL)`,
-		`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('MINE', 'S1', 'edge.test')`,
-		`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('THEIRS', 'S1', 'edge.other')`,
+		`INSERT INTO process_styles (process_id, style_id, station_uid) VALUES ('LEGACY', 'S1', NULL)`,
+		`INSERT INTO process_styles (process_id, style_id, station_uid) VALUES ('MINE', 'S1', 'edge.test')`,
+		`INSERT INTO process_styles (process_id, style_id, station_uid) VALUES ('THEIRS', 'S1', 'edge.other')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatalf("seed mirror: %v", err)

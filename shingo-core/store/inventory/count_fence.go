@@ -33,10 +33,10 @@ type RowsQuerier interface {
 // scan of inventory_delta_dedup rather than a key lookup. It runs once per
 // count (tens a month per plant), not per message.
 func SoleBinCursor(q RowsQuerier, binID, epoch int64) (station string, c DeltaCursor, rows int, err error) {
-	rs, err := q.Query(`SELECT station, last_seq, applied_net, applied_window_end
+	rs, err := q.Query(`SELECT station_uid, last_seq, applied_net, applied_window_end
 		FROM inventory_delta_dedup
 		WHERE scope_kind=$1 AND scope_key=$2 AND epoch=$3
-		ORDER BY station LIMIT 2`,
+		ORDER BY station_uid LIMIT 2`,
 		protocol.InvDeltaScopeBin, strconv.FormatInt(binID, 10), epoch)
 	if err != nil {
 		return "", DeltaCursor{}, 0, fmt.Errorf("read delta cursors bin=%d epoch=%d: %w", binID, epoch, err)

@@ -35,7 +35,7 @@ func (s *HeartbeatService) CellCatalog(station string) ([]store.EdgeCell, error)
 
 // Stops returns the discrete stop events in [since, until]. The target cycle is
 // the stream's own median per-part gap (heartbeat.EstimateTarget): nothing
-// configures one (cell_targets never had a writer, and v184 drops it).
+// configures one (cell_targets never had a writer, and v185 drops it).
 func (s *HeartbeatService) Stops(cellID string, since, until time.Time) ([]heartbeat.StopEvent, error) {
 	events, err := s.db.ListCellPartEvents(cellID, since, until)
 	if err != nil {
@@ -58,11 +58,11 @@ func (s *HeartbeatService) ListCells() ([]heartbeat.CellConfig, error) {
 	}
 	have := make(map[string]bool, len(configured))
 	for _, c := range configured {
-		have[c.CellID] = true
+		have[c.CellLabel] = true
 	}
 	out := configured
 	for _, d := range s.derivedCatalogCells() {
-		if !have[d.CellID] {
+		if !have[d.CellLabel] {
 			out = append(out, d)
 		}
 	}
@@ -87,7 +87,7 @@ func (s *HeartbeatService) DashboardCells(stations []string, configJSON []byte) 
 		}
 		kept := make([]heartbeat.CellConfig, 0, len(cells))
 		for _, c := range cells {
-			if want[c.Station] {
+			if want[c.StationUID] {
 				kept = append(kept, c)
 			}
 		}
@@ -105,7 +105,7 @@ func (s *HeartbeatService) DashboardCells(stations []string, configJSON []byte) 
 	}
 	out := make([]heartbeat.CellConfig, 0, len(cells))
 	for _, c := range cells {
-		if ov, ok := cfg.Cells[c.CellID]; ok {
+		if ov, ok := cfg.Cells[c.CellLabel]; ok {
 			if ov.Hide {
 				continue
 			}
@@ -155,8 +155,8 @@ func deriveCellConfig(c store.EdgeCell) (heartbeat.CellConfig, bool) {
 		subs = append(subs, b.ProcessID)
 	}
 	return heartbeat.CellConfig{
-		CellID:           c.CellLabel,
-		Station:          c.Station,
+		CellLabel:        c.CellLabel,
+		StationUID:       c.StationUID,
 		PrimaryProcessID: bindings[0].ProcessID,
 		SubProcessIDs:    subs,
 		DisplayName:      c.CellLabel,
@@ -203,8 +203,8 @@ func (s *HeartbeatService) UpsertCell(cellID, station string, primaryProcessID i
 		subProcessIDs = []int64{}
 	}
 	return s.db.UpsertCellConfig(heartbeat.CellConfig{
-		CellID:           cellID,
-		Station:          station,
+		CellLabel:        cellID,
+		StationUID:       station,
 		PrimaryProcessID: primaryProcessID,
 		SubProcessIDs:    subProcessIDs,
 		DisplayName:      displayName,
@@ -242,7 +242,7 @@ func (s *HeartbeatService) ResolveCellState(cellID string, now time.Time) (heart
 			SubProcesses: []heartbeat.ProcessState{},
 		}, nil
 	}
-	events, err := s.db.ListCellPartEvents(cfg.Station, now.Add(-2*time.Hour), now)
+	events, err := s.db.ListCellPartEvents(cfg.StationUID, now.Add(-2*time.Hour), now)
 	if err != nil {
 		return heartbeat.ResolvedCellState{}, err
 	}
@@ -262,10 +262,10 @@ func (s *HeartbeatService) ResolveCellHeartbeat(cellID string, since, until time
 		if err != nil {
 			return heartbeat.CellHeartbeat{}, err
 		}
-		cfg = heartbeat.CellConfig{CellID: cellID, Station: cellID, DisplayName: cellID, PrimaryProcessID: 0}
+		cfg = heartbeat.CellConfig{CellLabel: cellID, StationUID: cellID, DisplayName: cellID, PrimaryProcessID: 0}
 		return heartbeat.ComputeCellHeartbeat(events, cfg, since, until, heartbeat.DefaultThresholds()), nil
 	}
-	events, err := s.db.ListCellPartEvents(cfg.Station, since, until)
+	events, err := s.db.ListCellPartEvents(cfg.StationUID, since, until)
 	if err != nil {
 		return heartbeat.CellHeartbeat{}, err
 	}
@@ -277,7 +277,7 @@ func (s *HeartbeatService) ResolveCellHeartbeat(cellID string, since, until time
 // station-grain Stops endpoint until it gains a per-Process split.
 func (s *HeartbeatService) resolveStation(cellID string) string {
 	if cfg, ok, err := s.resolveCellConfig(cellID); err == nil && ok {
-		return cfg.Station
+		return cfg.StationUID
 	}
 	return cellID
 }

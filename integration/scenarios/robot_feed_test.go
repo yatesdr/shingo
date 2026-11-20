@@ -130,7 +130,7 @@ func startFeedCore(t *testing.T, verified bool) *feedCore {
 	for i, o := range []struct{ name, station, robot string }{
 		{"own", feedStation, "AMR-01"}, {"theirs", feedOther, "AMR-02"}, {"unpolled", feedStation, "AMR-09"},
 	} {
-		order := &coreorders.Order{EdgeUUID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), StationID: o.station, OrderType: "move",
+		order := &coreorders.Order{EdgeUUID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), StationUID: o.station, OrderType: "move",
 			Status: protocol.StatusInTransit, Quantity: 1, SourceNode: "FEED-A", DeliveryNode: "FEED-B"}
 		mustNil(t, db.CreateOrder(order), "order "+o.name)
 		mustNil(t, db.UpdateOrderVendor(order.ID, "v-"+o.name, "RUNNING", o.robot), "robot on "+o.name)

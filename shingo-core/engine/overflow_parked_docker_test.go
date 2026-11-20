@@ -81,7 +81,7 @@ func newParkedPush(t *testing.T, db *store.DB, pfx string, withOverflow bool) pa
 
 	fx.push = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = pfx + "-push"
-		o.StationID = "ovp-line"
+		o.StationUID = "ovp-line"
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceNode = src
 		o.DeliveryNode = fx.group
@@ -200,7 +200,7 @@ func TestOverflow_ADispatchedPushIsNeverReAimed(t *testing.T) {
 		fx.away, fx.blocker).Scan(&inFlightBin), "the in-flight carrier")
 	moving := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "OVP2-moving"
-		o.StationID = "ovp-line"
+		o.StationUID = "ovp-line"
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceNode = "OVP2-AWAY"
 		o.DeliveryNode = fx.group + "-PB"
@@ -367,7 +367,7 @@ func morePushes(t *testing.T, db *store.DB, pfx string, fx parkedPush, n int) {
 			btID, fmt.Sprintf("%s-CART%d", pfx, i+2), src.ID).Scan(&cart), "a cart")
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.EdgeUUID = fmt.Sprintf("%s-push%d", pfx, i+2)
-			o.StationID = "ovp-line"
+			o.StationUID = "ovp-line"
 			o.OrderType = dispatch.OrderTypeMove
 			o.SourceNode = src.Name
 			o.DeliveryNode = fx.group

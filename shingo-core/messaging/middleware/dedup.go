@@ -39,7 +39,7 @@ func NewInboxDedup(db *store.DB, dbg func(string, ...any)) router.Middleware {
 			next()
 			return
 		}
-		inserted, err := db.RecordInboundMessage(env.ID, env.Type, env.Src.Station)
+		inserted, err := db.RecordInboundMessage(env.ID, env.Type)
 		if err != nil {
 			log.Printf("inbox_dedup: record %s: %v", env.ID, err)
 			return

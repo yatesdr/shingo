@@ -24,11 +24,11 @@ func TestCoverage_PurgeOldInbox(t *testing.T) {
 	db := testdb.Open(t)
 
 	if _, err := db.Exec(
-		`INSERT INTO inbox (msg_id, msg_type, station_id, processed_at) VALUES ($1, $2, $3, $4)`,
-		"msg-old", "order.ack", "line-1", time.Now().UTC().AddDate(0, 0, -120)); err != nil {
+		`INSERT INTO inbox (msg_id, msg_type, processed_at) VALUES ($1, $2, $3)`,
+		"msg-old", "order.ack", time.Now().UTC().AddDate(0, 0, -120)); err != nil {
 		t.Fatalf("insert old inbox row: %v", err)
 	}
-	isNew, err := db.RecordInboundMessage("msg-recent", "order.ack", "line-1")
+	isNew, err := db.RecordInboundMessage("msg-recent", "order.ack")
 	if err != nil || !isNew {
 		t.Fatalf("record recent: isNew=%v err=%v", isNew, err)
 	}
@@ -42,13 +42,13 @@ func TestCoverage_PurgeOldInbox(t *testing.T) {
 	}
 
 	// The recent record still suppresses its replay.
-	if isNew, err := db.RecordInboundMessage("msg-recent", "order.ack", "line-1"); err != nil || isNew {
+	if isNew, err := db.RecordInboundMessage("msg-recent", "order.ack"); err != nil || isNew {
 		t.Errorf("a record inside the window was purged: isNew=%v err=%v", isNew, err)
 	}
 	// The expired one no longer does — the accepted cost of retaining
 	// dedup records for a finite time, three months against a redelivery
 	// window the outbox bounds at 24 hours.
-	if isNew, err := db.RecordInboundMessage("msg-old", "order.ack", "line-1"); err != nil || !isNew {
+	if isNew, err := db.RecordInboundMessage("msg-old", "order.ack"); err != nil || !isNew {
 		t.Errorf("expired record still suppressing: isNew=%v err=%v", isNew, err)
 	}
 }
@@ -59,7 +59,7 @@ func TestPurgeOldInbox_PreservesEverythingInsideTheWindow(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
-	if isNew, err := db.RecordInboundMessage("msg-fresh", "order.ack", "line-1"); err != nil || !isNew {
+	if isNew, err := db.RecordInboundMessage("msg-fresh", "order.ack"); err != nil || !isNew {
 		t.Fatalf("record: isNew=%v err=%v", isNew, err)
 	}
 	n, err := db.PurgeOldInbox(messaging.InboxRetentionPeriod)
@@ -93,7 +93,7 @@ func TestAskReplay_TheInboxRecordsItsAnswer(t *testing.T) {
 		t.Fatalf("ack: %v", err)
 	}
 
-	if inserted, err := db.RecordInboundMessage("ask-1", "edge.ask", "line-1"); err != nil || !inserted {
+	if inserted, err := db.RecordInboundMessage("ask-1", "edge.ask"); err != nil || !inserted {
 		t.Fatalf("record ask: inserted %v err %v", inserted, err)
 	}
 	if _, ok, err := db.InboundReply("ask-1"); err != nil || ok {

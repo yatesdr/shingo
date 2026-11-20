@@ -87,7 +87,7 @@ func (r *loopRig) delivering(uuid string, cart int64, from, to string) *orders.O
 	r.t.Helper()
 	o := testdb.CreateOrder(r.t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "edge.1"
+		o.StationUID = "edge.1"
 		o.OrderType = "move"
 		o.OriginClass = protocol.OriginClassNoDemand
 		o.SourceNode = from
@@ -300,7 +300,7 @@ func TestKanbanPin_ACartOnARobotOnASwapCountsOnce(t *testing.T) {
 	testutil.MustNoErr(t, err, "the lift")
 	swap := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = "loop-swap"
-		o.StationID = "edge.1"
+		o.StationUID = "edge.1"
 		o.OrderType = "complex"
 		o.OriginClass = protocol.OriginClassNoDemand
 		o.Status = protocol.StatusInTransit
@@ -325,7 +325,7 @@ func TestKanbanPin_ASwapsOldCartIsGoingToAWindow(t *testing.T) {
 	fresh := r.cart("LOOP-SWAP-FRESH", "PIC-SMALL", r.slot.ID)
 	swap := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = "loop-swap-live"
-		o.StationID = "edge.1"
+		o.StationUID = "edge.1"
 		o.OrderType = "complex"
 		o.OriginClass = protocol.OriginClassNoDemand
 		o.SourceNode = r.position.Name
@@ -366,7 +366,7 @@ func TestKanbanPin_ACartOnARobotAfterItsSwapEndedStaysCounted(t *testing.T) {
 			onRobot := r.cart("LOOP-SWAP-END", "PIC-SMALL", r.slot.ID)
 			swap := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 				o.EdgeUUID = "loop-swap-end"
-				o.StationID = "edge.1"
+				o.StationUID = "edge.1"
 				o.OrderType = "complex"
 				o.OriginClass = protocol.OriginClassNoDemand
 				o.SourceNode = r.position.Name

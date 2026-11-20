@@ -25,7 +25,7 @@ func TestInventoryLoop_ReadsTheRegistry(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(at), "create node")
 	createTestBin(t, db, at.ID, "LOOP-RT-BIN", "LOOP-RT", 40)
 	_, err := db.SyncDemandRegistry("ST-LOOP", []demands.RegistryEntry{{
-		StationID: "ST-LOOP", CoreNodeName: at.Name, Role: protocol.ClaimRoleConsume, PayloadCode: "LOOP-RT",
+		StationUID: "ST-LOOP", CoreNodeName: at.Name, Role: protocol.ClaimRoleConsume, PayloadCode: "LOOP-RT",
 		ReplenishUOPThreshold: 50,
 	}})
 	testutil.MustNoErr(t, err, "seed registry")
@@ -151,11 +151,11 @@ func TestInventoryLoop_LiveOrders(t *testing.T) {
 func TestInventoryLoop_LineStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, err := db.Exec(`INSERT INTO process_styles (process_id, style_id, is_active, station_id) VALUES ('LINE-E4', 'S1', true, 'stn-e4');
+	_, err := db.Exec(`INSERT INTO process_styles (process_id, style_id, is_active, station_uid) VALUES ('LINE-E4', 'S1', true, 'stn-e4');
 		INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity, reorder_point)
 		VALUES ('LINE-E4', 'S1', 'PLN_E4', 'produce', 'single_robot', 'P-E4FG', 30, 4)`)
 	testutil.MustNoErr(t, err, "seed claims")
-	_, err = db.Exec(`INSERT INTO edge_registry (station_id, display_name) VALUES ('stn-e4', 'Line E4')`)
+	_, err = db.Exec(`INSERT INTO edge_registry (station_uid, display_name) VALUES ('stn-e4', 'Line E4')`)
 	testutil.MustNoErr(t, err, "seed edge")
 	claims, err := db.LoopClaims()
 	testutil.MustNoErr(t, err, "loop claims")
@@ -178,7 +178,7 @@ func TestInventoryLoop_OnTheWayIsQueuedOrInTransit(t *testing.T) {
 	db := testDB(t)
 	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: "OTW-HOME", Enabled: true}), "create node")
 	_, err := db.SyncDemandRegistry("ST-OTW", []demands.RegistryEntry{
-		{StationID: "ST-OTW", CoreNodeName: "OTW-HOME", Role: protocol.ClaimRoleConsume, PayloadCode: "P-OTW", ReplenishUOPThreshold: 50},
+		{StationUID: "ST-OTW", CoreNodeName: "OTW-HOME", Role: protocol.ClaimRoleConsume, PayloadCode: "P-OTW", ReplenishUOPThreshold: 50},
 	})
 	testutil.MustNoErr(t, err, "seed registry")
 	for _, o := range []struct{ uuid, status string }{
@@ -213,8 +213,8 @@ func TestInventoryLoop_CompletedL1IsPerPosition(t *testing.T) {
 		testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: name, Enabled: true}), "create node")
 	}
 	_, err := db.SyncDemandRegistry("ST-L1", []demands.RegistryEntry{
-		{StationID: "ST-L1", CoreNodeName: "L1-HOME-A", Role: protocol.ClaimRoleConsume, PayloadCode: "P-L1", ReplenishUOPThreshold: 50},
-		{StationID: "ST-L1", CoreNodeName: "L1-HOME-B", Role: protocol.ClaimRoleConsume, PayloadCode: "P-L1", ReplenishUOPThreshold: 50},
+		{StationUID: "ST-L1", CoreNodeName: "L1-HOME-A", Role: protocol.ClaimRoleConsume, PayloadCode: "P-L1", ReplenishUOPThreshold: 50},
+		{StationUID: "ST-L1", CoreNodeName: "L1-HOME-B", Role: protocol.ClaimRoleConsume, PayloadCode: "P-L1", ReplenishUOPThreshold: 50},
 	})
 	testutil.MustNoErr(t, err, "seed registry")
 	order := func(uuid, node, kind string, confirmedAgo string) {

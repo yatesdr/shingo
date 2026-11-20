@@ -28,10 +28,10 @@ let lastMissions = []; // for CSV export
 
 // Station uid → operator label, refreshed with each list response.
 //
-// The rows keep the opaque station_id — it is what the filter sends, what the
-// CSV export writes and what the drill-down queries by. Only the rendered text
-// becomes the label, so a rename shows up here on the next refresh without
-// anything stored having changed. A station with no registry row (core-operator,
+// The rows keep the opaque station_uid — it is what the filter sends (as
+// ?station_id=), what the CSV export writes and what the drill-down queries
+// by. Only the rendered text becomes the label, so a rename shows up here on
+// the next refresh without anything stored having changed. A station with no registry row (core-operator,
 // core-direct, core-test, '*') is absent from the map and renders as itself.
 let stationNames = {};
 function stationLabel(id) {
@@ -57,7 +57,7 @@ function refreshList(state) {
             tr.innerHTML =
                 '<td>' + m.order_id + '</td>' +
                 '<td>' + escapeHtml(m.robot_id || '-') + '</td>' +
-                '<td>' + escapeHtml(stationLabel(m.station_id)) + '</td>' +
+                '<td>' + escapeHtml(stationLabel(m.station_uid || m.requested_by)) + '</td>' +
                 '<td>' + escapeHtml(m.source_node || '—') + ' &rarr; ' + escapeHtml(m.delivery_node || '—') + '</td>' +
                 '<td><span class="badge badge-' + escapeHtml(m.status) + '"' +
                     (m.terminal_state ? ' title="fleet reported: ' + escapeHtml(m.terminal_state) + '"' : '') + '>' +
@@ -93,7 +93,10 @@ function exportCSV() {
     if (!lastMissions.length) { toast('No missions to export', 'info'); return; }
     const cols = ['order_id', 'robot_id', 'station_id', 'source_node', 'delivery_node', 'status', 'terminal_state', 'duration_ms', 'core_completed'];
     const lines = [cols.join(',')];
-    for (const m of lastMissions) lines.push(cols.map((c) => csvCell(m[c])).join(','));
+    // The CSV keeps its station_id header; the value is the row's requester: its
+    // station_uid, or the Core actor in requested_by.
+    const cell = (m, c) => (c === 'station_id' ? (m.station_uid || m.requested_by) : m[c]);
+    for (const m of lastMissions) lines.push(cols.map((c) => csvCell(cell(m, c))).join(','));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = el('a', { href: url, download: 'missions.csv' });

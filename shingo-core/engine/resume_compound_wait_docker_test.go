@@ -53,7 +53,7 @@ func TestResumeCompound_KeepsTheWaitTheScanWrites(t *testing.T) {
 	// `reshuffling`, still carrying the wait its dig parked it under.
 	eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("resume-shape", sd, grp))
 	shape := testdb.RequireOrder(t, db, "resume-shape")
-	parent := &orders.Order{EdgeUUID: "resume-parent", StationID: shape.StationID, OrderType: shape.OrderType,
+	parent := &orders.Order{EdgeUUID: "resume-parent", StationUID: shape.StationUID, OrderType: shape.OrderType,
 		Status: protocol.StatusReshuffling, Quantity: 1, PayloadCode: shape.PayloadCode,
 		SourceNode: shape.SourceNode, DeliveryNode: shape.DeliveryNode, StepsJSON: shape.StepsJSON,
 		Coordinated: true}

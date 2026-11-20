@@ -209,7 +209,7 @@ func IssueCensusDB(t testing.TB) *store.DB {
 // points at it and has promised it to itself.
 func StrangerHolds(t testing.TB, db *store.DB, cart int64) {
 	t.Helper()
-	o := &orders.Order{EdgeUUID: fmt.Sprintf("stranger-%d", orderSeq.Add(1)), StationID: "test",
+	o := &orders.Order{EdgeUUID: fmt.Sprintf("stranger-%d", orderSeq.Add(1)), StationUID: "test",
 		OrderType: "retrieve", Status: "queued", Quantity: 1}
 	o.HoldFromBirth(cart)
 	if err := db.CreateOrder(o); err != nil {

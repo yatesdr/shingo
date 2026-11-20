@@ -85,7 +85,7 @@ func TestHandleDashboard_ReflectsActiveOrderCount(t *testing.T) {
 	// Seed a pending order.
 	o := &orders.Order{
 		EdgeUUID:   "dash-order-1",
-		StationID:  "line-1",
+		StationUID: "line-1",
 		OrderType:  "move",
 		Status:     "pending",
 		Quantity:   1,
@@ -133,7 +133,7 @@ func TestHandleDashboard_ActiveOrderRow(t *testing.T) {
 	h, db := testHandlersForPages(t)
 
 	o := &orders.Order{
-		EdgeUUID: "dash-row-1", StationID: "line-1", OrderType: "complex",
+		EdgeUUID: "dash-row-1", StationUID: "line-1", OrderType: "complex",
 		Status: "in_transit", Quantity: 1, SourceNode: "UTN_014", ProcessNode: "ALN_003",
 		DeliveryNode: "UTN_013", PayloadCode: "SHIM", PayloadDesc: "SHIM (dev)",
 	}

@@ -29,7 +29,7 @@ func insertForecast(t *testing.T, db *store.DB, key, kind, station string) strin
 	t.Helper()
 	id := uuid.NewString()
 	_, err := db.Exec(`
-		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_id, opened_at)
+		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_uid, opened_at)
 		VALUES ($1, 0, $2, $3, $4, NULL)`, id, key, kind, station)
 	testutil.MustNoErr(t, err, "insert synthetic forecast")
 	return id

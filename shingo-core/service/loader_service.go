@@ -292,11 +292,11 @@ type LoaderUpdate struct {
 	// NoClearPartials: Clear partials is off (loaders.Loader.NoClearPartials).
 	// A full-row write like the rest: absent leaves the clear on.
 	NoClearPartials bool
-	// EdgeStationUID: the Edge that works the station, by its station uid
-	// (loaders.Loader.EdgeStationUID). Trimmed; a newly picked uid must be an
+	// StationUID: the Edge that works the station, by its station uid
+	// (loaders.Loader.StationUID). Trimmed; a newly picked uid must be an
 	// enrolled Edge's (checkEdge). A full-row write like the rest: absent
 	// picks no Edge.
-	EdgeStationUID string
+	StationUID string
 	// Drains: the part-less carrier states an unloader drains from its inbound
 	// source (loaders.DrainStates). A full-row write like the rest: absent
 	// drains nothing. Checked on every save that leaves a box on (checkDrains).
@@ -400,7 +400,7 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	cur.BoardHidesIdle = in.BoardHidesIdle
 	cur.BoardShowsAllParts = in.BoardShowsAllParts
 	cur.NoClearPartials = in.NoClearPartials
-	if cur.EdgeStationUID, err = s.checkEdge(cur.EdgeStationUID, in.EdgeStationUID); err != nil {
+	if cur.StationUID, err = s.checkEdge(cur.StationUID, in.StationUID); err != nil {
 		return err
 	}
 	if cur.Drains, err = loaders.NewDrainStates(in.Drains); err != nil {
@@ -702,7 +702,7 @@ func (s *LoaderService) rederive() {
 		log.Printf("loader_service: rederive: list edges: %v", err)
 	} else {
 		for _, e := range edges {
-			stationSet[e.StationID] = struct{}{}
+			stationSet[e.StationUID] = struct{}{}
 		}
 	}
 	for st := range stationSet {

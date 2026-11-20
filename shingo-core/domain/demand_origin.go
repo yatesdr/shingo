@@ -21,7 +21,7 @@ import (
 // NO PARTIAL-DELIVERY SIGNAL EXISTS. READ THIS BEFORE BUILDING 5.3. Stage 5.3
 // wanted "UOP delivered vs expected UOP" per episode. uop_delivered was planned
 // as its Core-owned numerator; like parent_origin_id it never had a writer or a
-// reader (2026-07-28, and the A9 census of 2026-11-20), and v184 drops both.
+// reader (2026-07-28, and the A9 census of 2026-11-20), and v185 drops both.
 // A 5.3 needs, in order: a numerator with a writer that can say "never
 // accumulated" apart from a measured zero (a NOT NULL DEFAULT 0 cannot), and a
 // denominator, which no column holds: expected_orders (nullable by design,
@@ -42,7 +42,7 @@ type DemandOrigin struct {
 	Direction  protocol.ClaimRole
 	Trigger    string
 	TriggerRef string
-	StationID  string
+	StationUID string
 
 	// ProcessID is the Edge process NAME ("SNF2"), the same value
 	// process_styles.process_id and style_claims.process_id carry — which is
@@ -151,7 +151,7 @@ type ForecastBirth struct {
 	EpisodeKey   string
 	Kind         string
 	Direction    protocol.ClaimRole
-	StationID    string
+	StationUID   string
 	ProcessID    string
 	CoreNodeName string
 	PayloadCode  string

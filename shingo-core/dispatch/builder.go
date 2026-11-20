@@ -31,8 +31,12 @@ import (
 // door fills it; the issue writes it verbatim. A door difference lives here,
 // never as a parameter on the issue (v4 §2.5).
 type Need struct {
-	Type        protocol.OrderType
+	Type protocol.OrderType
+	// Station is the uid of the station that asked; RequestedBy is the Core actor
+	// that asked when no station did (domain.SplitRequester). At most one is set;
+	// neither for Core's own errand.
 	Station     string
+	RequestedBy string
 	Ref         string // the order's reference number (edge_uuid)
 	Quantity    int64
 	Priority    int
@@ -181,28 +185,29 @@ type Taken struct {
 // writes nothing.
 func row(need Need, p plan.Plan) *orders.Order {
 	o := &orders.Order{
-		EdgeUUID:         need.Ref,
-		StationID:        need.Station,
-		OrderType:        need.Type,
-		Status:           protocol.StatusPending,
-		Quantity:         need.Quantity,
-		SourceNode:       need.Source,
-		DeliveryNode:     need.Delivery,
-		Priority:         need.Priority,
-		PayloadDesc:      need.Desc,
-		PayloadCode:      need.PayloadCode,
-		SkipAutoConfirm:  need.SkipAutoConfirm,
-		OriginID:         need.OriginID,
-		OriginClass:      need.OriginClass,
-		ProcessNode:      need.ProcessNode,
-		SourceIntent:     need.SourceIntent,
-		StationUnaware:   !need.StationKnows,
-		ProjectsTo:       need.Projects,
-		RecoversOrderID:  need.Recovers,
-		StepsJSON:        need.Steps,
-		SiblingOrderUUID: need.Sibling,
-		RobotID:          need.Robot,
-		Want:             need.Want,
+		EdgeUUID:             need.Ref,
+		StationUID:           need.Station,
+		RequestedBy:          need.RequestedBy,
+		OrderType:            need.Type,
+		Status:               protocol.StatusPending,
+		Quantity:             need.Quantity,
+		SourceNode:           need.Source,
+		DeliveryNode:         need.Delivery,
+		Priority:             need.Priority,
+		PayloadDesc:          need.Desc,
+		PayloadCode:          need.PayloadCode,
+		SkipAutoConfirm:      need.SkipAutoConfirm,
+		OriginID:             need.OriginID,
+		OriginClass:          need.OriginClass,
+		ProcessNode:          need.ProcessNode,
+		SourceIntent:         need.SourceIntent,
+		StationUnaware:       !need.StationKnows,
+		ProjectsToStationUID: need.Projects,
+		RecoversOrderID:      need.Recovers,
+		StepsJSON:            need.Steps,
+		SiblingOrderUUID:     need.Sibling,
+		RobotID:              need.Robot,
+		Want:                 need.Want,
 	}
 	if o.SourceIntent == "" {
 		o.SourceIntent = SourceIntentForType(need.Type)

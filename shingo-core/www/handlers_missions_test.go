@@ -86,7 +86,7 @@ func TestHandleMissionDetail_HappyPath(t *testing.T) {
 	h, db := testHandlersForPages(t)
 	o := &orders.Order{
 		EdgeUUID:   "mission-detail-1",
-		StationID:  "line-x",
+		StationUID: "line-x",
 		OrderType:  "move",
 		Status:     "pending",
 		Quantity:   1,
@@ -225,7 +225,7 @@ func TestApiGetMission_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	o := &orders.Order{
 		EdgeUUID:   "mission-get-1",
-		StationID:  "line-x",
+		StationUID: "line-x",
 		OrderType:  "move",
 		Status:     "pending",
 		Quantity:   1,
@@ -304,7 +304,7 @@ func TestApiMissionStats_AcceptsFilters(t *testing.T) {
 func TestApiGetMission_LegRowCarriesNoBlockView(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	o := &orders.Order{EdgeUUID: "mission-leg-1", StationID: "line-x", OrderType: "move",
+	o := &orders.Order{EdgeUUID: "mission-leg-1", StationUID: "line-x", OrderType: "move",
 		Status: "pending", Quantity: 1, SourceNode: "ALN_002"}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	testutil.MustNoErr(t, db.InsertMissionEvent(&telemetry.Event{
@@ -354,15 +354,15 @@ func TestApiGetMission_LegRowCarriesNoBlockView(t *testing.T) {
 func TestApiListMissions_InFlightAndState(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	done := &orders.Order{EdgeUUID: "mission-list-done", StationID: "line-x", OrderType: "retrieve",
+	done := &orders.Order{EdgeUUID: "mission-list-done", StationUID: "line-x", OrderType: "retrieve",
 		Status: "confirmed", Quantity: 1, SourceNode: "ALN_002", DeliveryNode: "UTN_010"}
 	testutil.MustNoErr(t, db.CreateOrder(done), "create finished order")
-	live := &orders.Order{EdgeUUID: "mission-list-live", StationID: "line-x", OrderType: "retrieve",
+	live := &orders.Order{EdgeUUID: "mission-list-live", StationUID: "line-x", OrderType: "retrieve",
 		Status: "staged", Quantity: 1, SourceNode: "ALN_008", DeliveryNode: "PLK_H1", RobotID: "AMR-13"}
 	testutil.MustNoErr(t, db.CreateOrder(live), "create in-flight order")
 	created := time.Now().UTC()
 	testutil.MustNoErr(t, db.UpsertMissionTelemetry(&telemetry.Mission{
-		OrderID: done.ID, RobotID: "AMR-02", StationID: "line-x", OrderType: "retrieve",
+		OrderID: done.ID, RobotID: "AMR-02", StationUID: "line-x", OrderType: "retrieve",
 		SourceNode: "ALN_002", DeliveryNode: "UTN_010", TerminalState: "FINISHED",
 		CoreCreated: &created, CoreCompleted: &created, DurationMS: 1500000,
 		BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]", RobotAlarmsJSON: "[]",
@@ -424,7 +424,7 @@ func TestApiListMissions_InFlightAndState(t *testing.T) {
 func TestApiGetMission_ALegRowCarriesWhatEachBlockDid(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
-	o := &orders.Order{EdgeUUID: "mission-leg-2", StationID: "line-x", OrderType: "move",
+	o := &orders.Order{EdgeUUID: "mission-leg-2", StationUID: "line-x", OrderType: "move",
 		Status: "pending", Quantity: 1, SourceNode: "ALN_002"}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	for _, blocks := range []string{

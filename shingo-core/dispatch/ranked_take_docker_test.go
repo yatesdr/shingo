@@ -75,7 +75,7 @@ func digAgainstBlocker(t *testing.T, db *store.DB, prefix string, parentPriority
 	})
 	leg := &orders.Order{
 		EdgeUUID:      prefix + "-leg",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		Quantity:      1,

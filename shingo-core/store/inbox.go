@@ -16,8 +16,8 @@ const InboxRetentionPeriod = messaging.InboxRetentionPeriod
 
 // RecordInboundMessage records a processed inbound envelope ID.
 // Returns true when the message is newly recorded, false when it was already seen.
-func (db *DB) RecordInboundMessage(msgID, msgType, stationID string) (bool, error) {
-	return messaging.RecordInboundMessage(db.DB, msgID, msgType, stationID)
+func (db *DB) RecordInboundMessage(msgID, msgType string) (bool, error) {
+	return messaging.RecordInboundMessage(db.DB, msgID, msgType)
 }
 
 // PurgeOldInbox deletes processed-message records older than the given

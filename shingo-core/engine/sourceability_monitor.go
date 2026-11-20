@@ -77,7 +77,7 @@ type SourceabilityMonitor struct {
 	// recompute so an event maps to affected styles without a per-event query.
 	index map[string][]plantclaims.ProcessKey
 	// stations is process → the station that published it (process_styles.
-	// station_id), refreshed on every full pass. A process absent from it has no
+	// station_uid), refreshed on every full pass. A process absent from it has no
 	// recorded station and goes to every station.
 	stations map[string]string
 	// computed is set once the first full pass has run: before it there is no
@@ -132,7 +132,7 @@ func (m *SourceabilityMonitor) broadcast(station string, report protocol.Sourcin
 // (ListSourcingStateForProcess), and it used to be sent the whole plant's every
 // two minutes — a DELETE of its cache plus an INSERT per style in the plant,
 // on every Pi, for rows nothing there reads (SYNTH §4). Now a verdict goes to
-// the station that published its process (process_styles.station_id). A process
+// the station that published its process (process_styles.station_uid). A process
 // with no recorded station — every one in the first minutes after the
 // migration, and every one an older Edge publishes — goes to every station, as
 // before; it is in every station's snapshot too, so each Edge's full replace

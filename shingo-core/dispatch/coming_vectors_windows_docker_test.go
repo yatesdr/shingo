@@ -83,7 +83,7 @@ func TestComingVectors_TheWindowReadersAgree(t *testing.T) {
 			_, delivery = extractEndpoints(stepsAsResolved(steps))
 		}
 		coreDelivery = strings.TrimPrefix(delivery, prefix)
-		o := &orders.Order{EdgeUUID: prefix + "ROW", StationID: "line-1", OrderType: typ, Status: StatusPending,
+		o := &orders.Order{EdgeUUID: prefix + "ROW", StationUID: "line-1", OrderType: typ, Status: StatusPending,
 			Quantity: 1, DeliveryNode: delivery, StepsJSON: raw, SourceIntent: SourceIntentForType(typ)}
 		testutil.MustNoErr(t, db.CreateOrder(o), c.Name)
 		testdb.SeedDispatched(t, db, o.ID, "sg-"+prefix+"ROW") // the fleet has it: `dispatched` names the job

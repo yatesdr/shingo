@@ -223,7 +223,7 @@ func (r *kanbanRig) fly() {
 		for _, o := range r.live() {
 			switch {
 			case o.Status == protocol.StatusDelivered:
-				r.eng.Dispatcher().HandleOrderReceipt(rigEnvelope(o.StationID),
+				r.eng.Dispatcher().HandleOrderReceipt(rigEnvelope(o.StationUID),
 					&protocol.OrderReceipt{OrderUUID: o.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1})
 				moved = true
 			case o.VendorOrderID != "" && r.sim.HasOrder(o.VendorOrderID):
@@ -792,7 +792,7 @@ func (r *kanbanRig) openChangeover(part string) string {
 	r.next++
 	id := fmt.Sprintf("c0c0c0c0-0000-4000-8000-%012d", r.next)
 	testutil.MustNoErr(r.t, r.db.UpsertDemandOrigin(store.DemandOrigin{OriginID: id, Revision: 1, EpisodeKey: "co|" + id,
-		Kind: protocol.EpisodeKindChangeover, StationID: rigStation, ProcessID: "KP-PRESS", CoreNodeName: "PLN_021",
+		Kind: protocol.EpisodeKindChangeover, StationUID: rigStation, ProcessID: "KP-PRESS", CoreNodeName: "PLN_021",
 		PayloadCode: part, OpenedAt: time.Now().UTC()}), "open the changeover")
 	return id
 }

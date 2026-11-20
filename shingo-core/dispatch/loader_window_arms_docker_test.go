@@ -69,7 +69,7 @@ func TestManualRetrieve_AWindowHeldOrdersNothingAndIsNamed(t *testing.T) {
 				} else {
 					want = "window-order-open"
 					testutil.MustNoErr(t, db.CreateOrder(&orders.Order{
-						EdgeUUID: "MRH-INBOUND", StationID: "edge.line1", OrderType: pull, Status: StatusPending,
+						EdgeUUID: "MRH-INBOUND", StationUID: "edge.line1", OrderType: pull, Status: StatusPending,
 						Quantity: 1, SourceNode: cfg.InboundSource, DeliveryNode: w.Name, PayloadCode: req.PayloadCode,
 						SourceIntent: SourceIntentForType(pull),
 					}), "the carrier already asked for")
@@ -120,7 +120,7 @@ func TestLoaderWindows_AClaimDrivenDeliveryIsSeenByItsArm(t *testing.T) {
 			// rests `pending` with its ask open. One not yet claimed is pending
 			// with no ask.
 			o := &orders.Order{
-				EdgeUUID: "CDD-CLAIM", StationID: "edge.line1", OrderType: c.typ, Status: StatusPending,
+				EdgeUUID: "CDD-CLAIM", StationUID: "edge.line1", OrderType: c.typ, Status: StatusPending,
 				Quantity: 1, SourceNode: cell.Name, DeliveryNode: w.Name, PayloadCode: req.PayloadCode,
 				SourceIntent: SourceIntentForType(c.typ),
 			}

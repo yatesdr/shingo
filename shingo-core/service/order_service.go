@@ -105,10 +105,11 @@ func (s *OrderService) GetOrder(id int64) (*orders.Order, error) {
 	return s.db.GetOrder(id)
 }
 
-// ListOrderStations returns the distinct station IDs seen on orders — the
-// selectable values for a dashboard's area scope. The board filter matches
-// station_id exactly, so only these values (plus registered-edge composites)
-// can ever scope a board to something non-empty.
+// ListOrderStations returns the distinct requesters seen on orders (station
+// uids and Core actors) — the selectable values for a dashboard's area scope.
+// The board filter matches each exactly, in station_uid or requested_by, so
+// only these values (plus registered Edges) can ever scope a board to
+// something non-empty.
 func (s *OrderService) ListOrderStations() ([]string, error) {
 	return s.db.ListOrderStations()
 }

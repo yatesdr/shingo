@@ -80,7 +80,7 @@ func (s *CoreDataService) HandleDemandOrigin(env *protocol.Envelope, st *protoco
 		Direction:             st.Direction,
 		Trigger:               st.Trigger,
 		TriggerRef:            st.TriggerRef,
-		StationID:             station,
+		StationUID:            station,
 		ProcessID:             st.ProcessID,
 		CoreNodeName:          st.CoreNodeName,
 		PayloadCode:           st.PayloadCode,

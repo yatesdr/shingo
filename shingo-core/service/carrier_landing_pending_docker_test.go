@@ -36,8 +36,8 @@ import (
 // its register message would (edge_registry.schema_version, v137).
 func registerEdgeSchema(t *testing.T, db *store.DB, station string, v int) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO edge_registry (station_id, schema_version) VALUES ($1, $2)
-		ON CONFLICT (station_id) DO UPDATE SET schema_version = EXCLUDED.schema_version`, station, v)
+	_, err := db.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)
+		ON CONFLICT (station_uid) DO UPDATE SET schema_version = EXCLUDED.schema_version`, station, v)
 	testutil.MustNoErr(t, err, "register the station's schema")
 }
 

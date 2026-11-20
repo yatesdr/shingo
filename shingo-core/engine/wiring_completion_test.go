@@ -98,7 +98,7 @@ func TestOrderCompleted_NoBinID(t *testing.T) {
 	// Create an order with no bin assigned
 	order := &orders.Order{
 		EdgeUUID:     "co-no-bin",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		Status:       "delivered",
 		SourceNode:   "STORAGE-A1",
@@ -111,7 +111,7 @@ func TestOrderCompleted_NoBinID(t *testing.T) {
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID:   order.ID,
 		EdgeUUID:  order.EdgeUUID,
-		StationID: order.StationID,
+		StationID: order.StationUID,
 	})
 }
 
@@ -125,10 +125,10 @@ func TestOrderCompleted_MissingNodes(t *testing.T) {
 
 	// Order with empty source and delivery nodes
 	order := &orders.Order{
-		EdgeUUID:  "co-no-nodes",
-		StationID: "line-1",
-		OrderType: dispatch.OrderTypeRetrieve,
-		Status:    "delivered",
+		EdgeUUID:   "co-no-nodes",
+		StationUID: "line-1",
+		OrderType:  dispatch.OrderTypeRetrieve,
+		Status:     "delivered",
 		// SourceNode and DeliveryNode empty
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -137,7 +137,7 @@ func TestOrderCompleted_MissingNodes(t *testing.T) {
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID:   order.ID,
 		EdgeUUID:  order.EdgeUUID,
-		StationID: order.StationID,
+		StationID: order.StationUID,
 	})
 }
 
@@ -172,7 +172,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	// Create a delivered order with bin still at source (simulating delivery arrival failure).
 	order := &orders.Order{
 		EdgeUUID:     "co-safety-net",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
@@ -195,7 +195,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID:   order.ID,
 		EdgeUUID:  order.EdgeUUID,
-		StationID: order.StationID,
+		StationID: order.StationUID,
 	})
 
 	// Bin should now be at the delivery (line) node via BinService.ApplyArrival
@@ -226,7 +226,7 @@ func TestOrderCompleted_ConfirmedNetNoOpsAfterClaimCleared(t *testing.T) {
 	// claimed_by cleared (as TerminalizeOrder leaves it on the confirmed transition).
 	order := &orders.Order{
 		EdgeUUID:     "co-confirmed-noop",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		Status:       "confirmed",
 		SourceNode:   sd.StorageNode.Name,
@@ -241,7 +241,7 @@ func TestOrderCompleted_ConfirmedNetNoOpsAfterClaimCleared(t *testing.T) {
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID:   order.ID,
 		EdgeUUID:  order.EdgeUUID,
-		StationID: order.StationID,
+		StationID: order.StationUID,
 	})
 
 	// Net no-ops: the bin stays at source — the safety net can't recover it once
@@ -273,7 +273,7 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "regr-fifo-poach",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
@@ -291,7 +291,7 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 
 	eng.handleOrderCompleted(OrderCompletedEvent{
-		OrderID: order.ID, EdgeUUID: order.EdgeUUID, StationID: order.StationID,
+		OrderID: order.ID, EdgeUUID: order.EdgeUUID, StationID: order.StationUID,
 	})
 
 	// Sanity: bin moved to lineside and unclaimed
@@ -343,7 +343,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	binEmpty := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LSS-EMPTY")
 	emptyOrder := &orders.Order{
 		EdgeUUID:     "lss-retrieve-empty",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeRetrieveEmpty,
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
@@ -354,7 +354,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(emptyOrder), "create empty order")
 	testdb.ClaimBinForTest(t, db, binEmpty.ID, emptyOrder.ID)
 	eng.handleOrderCompleted(OrderCompletedEvent{
-		OrderID: emptyOrder.ID, EdgeUUID: emptyOrder.EdgeUUID, StationID: emptyOrder.StationID,
+		OrderID: emptyOrder.ID, EdgeUUID: emptyOrder.EdgeUUID, StationID: emptyOrder.StationUID,
 	})
 	testdb.AssertBinAtNode(t, db, binEmpty.ID, sd.LineNode.ID)
 	emptyAfter := testdb.RequireBin(t, db, binEmpty.ID)
@@ -368,7 +368,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	binComplex := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LSS-CPLX")
 	complexOrder := &orders.Order{
 		EdgeUUID:     "lss-complex-wait",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
@@ -380,7 +380,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(complexOrder.ID, 1), "update wait index")
 	testdb.ClaimBinForTest(t, db, binComplex.ID, complexOrder.ID)
 	eng.handleOrderCompleted(OrderCompletedEvent{
-		OrderID: complexOrder.ID, EdgeUUID: complexOrder.EdgeUUID, StationID: complexOrder.StationID,
+		OrderID: complexOrder.ID, EdgeUUID: complexOrder.EdgeUUID, StationID: complexOrder.StationUID,
 	})
 	testdb.AssertBinAtNode(t, db, binComplex.ID, sd.LineNode.ID)
 	complexAfter := testdb.RequireBin(t, db, binComplex.ID)
@@ -436,7 +436,7 @@ func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
 	// elsewhere; now the late CONFIRMED is firing.
 	order := &orders.Order{
 		EdgeUUID:     "regr-late-confirm",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		Status:       "delivered",
 		SourceNode:   sd.LineNode.Name,
@@ -452,7 +452,7 @@ func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID:   order.ID,
 		EdgeUUID:  order.EdgeUUID,
-		StationID: order.StationID,
+		StationID: order.StationUID,
 	})
 
 	// Critical: bin must STILL be at the third node. If the safety-net guard

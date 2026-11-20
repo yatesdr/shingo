@@ -35,7 +35,7 @@ func TestScenario_H_ALateDrawAtTheNextSeatReachesItsEdge(t *testing.T) {
 	w := newTwoBooks(t, "SCN-H-LATE", n)
 	acc := edgeuop.New(w.edge.DB, handoffStation, w.edge.DB, w.edge.DB)
 	w.edge.Engine.SetInventoryDeltaSink(acc)
-	if _, err := w.core.Exec(`INSERT INTO edge_registry (station_id, schema_version) VALUES ($1, $2)`,
+	if _, err := w.core.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)`,
 		handoffStation, protocol.EdgeSchemaBinLanded); err != nil {
 		t.Fatalf("register the station: %v", err)
 	}

@@ -228,7 +228,7 @@ func (e *Engine) reconcileChildlessEpisodes() (closed int, unreachable int) {
 		if contact != edgeContactRecent {
 			unreachable++
 			e.dbg("demand_reconciler: episode %s (%s, station=%s) left open — %s",
-				s.OriginID, s.Kind, s.StationID, describeEdgeSilence(s, contact, horizon))
+				s.OriginID, s.Kind, s.StationUID, describeEdgeSilence(s, contact, horizon))
 			continue
 		}
 		if s.Children > 0 {
@@ -333,10 +333,10 @@ func (e *Engine) edgeSilenceHorizon() time.Duration {
 // throws away the half of the message that tells an operator where to look.
 func describeEdgeSilence(s *store.OpenEpisodeState, c edgeContact, horizon time.Duration) string {
 	if c == edgeContactNever || s.EdgeLastSeen == nil {
-		return "Core has never heard from its Edge (" + s.StationID +
+		return "Core has never heard from its Edge (" + s.StationUID +
 			"), so a zero order count proves nothing"
 	}
-	return "Core has not heard from its Edge (" + s.StationID + ") since " +
+	return "Core has not heard from its Edge (" + s.StationUID + ") since " +
 		s.EdgeLastSeen.UTC().Format(time.RFC3339) + ", over " + horizon.String() +
 		" ago, so a zero order count proves nothing"
 }

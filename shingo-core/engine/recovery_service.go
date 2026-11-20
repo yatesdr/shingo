@@ -147,7 +147,7 @@ func (s *RecoveryService) ForceConfirmDelivered(orderID int64, actor string) err
 		return fmt.Errorf("order %d is not delivered (status=%q)", orderID, order.Status)
 	}
 	receiptType := "force_confirm:" + actor
-	if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, receiptType, 0); err != nil {
+	if _, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.Requester(), receiptType, 0); err != nil {
 		return fmt.Errorf("confirm receipt: %w", err)
 	}
 	s.db.AppendAudit("order", order.ID, "recovery.force_confirm_delivered", "", "", actor)

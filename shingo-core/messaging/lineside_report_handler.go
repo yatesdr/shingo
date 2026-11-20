@@ -56,7 +56,7 @@ func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *p
 			continue
 		}
 		m, err := s.db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-			Station:      station,
+			StationUID:   station,
 			CoreNodeName: e.CoreNodeName,
 			PayloadCode:  e.PayloadCode,
 			ReportedAt:   r.ReportedAt,

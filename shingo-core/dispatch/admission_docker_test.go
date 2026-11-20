@@ -34,7 +34,7 @@ func admitOrder(t *testing.T, db *store.DB, uuid string, slot *nodes.Node, opts 
 	t.Helper()
 	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = slot.Name
 	}}, opts...)...)
 }
@@ -164,7 +164,7 @@ func TestAdmit_ForeignDigRefusesAndOwnDigDoesNot(t *testing.T) {
 	// The digger's OWN leg is not.
 	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "adm-dig-leg"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = s0.Name
 		o.OrderType = protocol.OrderTypeMove
 		o.ParentOrderID = &digger.ID
@@ -259,7 +259,7 @@ func TestAdmit_BuriedRefusesAtThePickupEndOnly(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "adm-buried"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = deep.Name
 		o.HoldFromBirth(wanted.ID)
 	})
@@ -339,7 +339,7 @@ func TestAdmit_UndeterminedIsNeverAdmitted(t *testing.T) {
 	// is the first arm that can fail.
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "adm-undetermined"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = "NO-SUCH-NODE-ADM"
 	})
 

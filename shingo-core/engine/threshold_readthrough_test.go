@@ -364,7 +364,7 @@ func TestReadThrough_RestartMidEpisode(t *testing.T) {
 func insertRegistryRow(t *testing.T, r *rtRig, station string, threshold int) {
 	t.Helper()
 	_, err := r.eng.db.Exec(`INSERT INTO demand_registry
-		(station_id, core_node_name, role, payload_code, replenish_uop_threshold)
+		(station_uid, core_node_name, role, payload_code, replenish_uop_threshold)
 		VALUES ($1, $2, 'consume', $3, $4)`, station, r.b.coreNodeName, r.b.payloadCode, threshold)
 	testutil.MustNoErr(t, err, "insert registry row")
 }
@@ -631,7 +631,7 @@ var rtCountCases = []rtCountCase{
 	{name: "healthy_no_report", setup: func(r *rtRig, _ string) {}},
 	{name: "healthy_fresh_report", setup: func(r *rtRig, node string) {
 		_, err := r.eng.db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
-			Station: r.b.stationID, CoreNodeName: node, PayloadCode: r.b.payloadCode,
+			StationUID: r.b.stationID, CoreNodeName: node, PayloadCode: r.b.payloadCode,
 			ReportedAt: time.Now().UTC(),
 		})
 		testutil.MustNoErr(r.t, err, "upsert report")

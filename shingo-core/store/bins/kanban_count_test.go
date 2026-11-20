@@ -120,7 +120,7 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 	// lose it too, or the keeper counts stock that is already spoken for.
 	var orderID int64
 	testutil.MustNoErr(t, sdb.QueryRow(
-		`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity)
+		`INSERT INTO orders (edge_uuid, station_uid, order_type, status, quantity)
 		 VALUES ('agree-reserver','line-1','retrieve','pending',1) RETURNING id`).Scan(&orderID),
 		"insert reserving order")
 	_, err = sdb.Exec(
@@ -209,7 +209,7 @@ func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
 	// source-lock shape, where nothing else would hide it.
 	var digOrder int64
 	testutil.MustNoErr(t, sdb.QueryRow(
-		`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity)
+		`INSERT INTO orders (edge_uuid, station_uid, order_type, status, quantity)
 		 VALUES ('part-dig','line-1','retrieve','reshuffling',1) RETURNING id`).Scan(&digOrder), "dig order")
 	_, err = sdb.Exec(
 		`INSERT INTO reservations (resource_kind, node_id, order_id, state, mode)

@@ -140,7 +140,7 @@ func TestKanbanPin_CoverFollowsTheTargetAndRevertsWithinATick(t *testing.T) {
 
 	const co = "c0c0c0c0-0000-4000-8000-000000000001"
 	testutil.MustNoErr(t, db.UpsertDemandOrigin(store.DemandOrigin{OriginID: co, Revision: 1, EpisodeKey: "co|" + co,
-		Kind: protocol.EpisodeKindChangeover, StationID: "edge.1", ProcessID: "KET-PRESS", CoreNodeName: "KET-SUPPORT",
+		Kind: protocol.EpisodeKindChangeover, StationUID: "edge.1", ProcessID: "KET-PRESS", CoreNodeName: "KET-SUPPORT",
 		PayloadCode: "KET-TP", OpenedAt: time.Now().UTC()}), "open the changeover")
 	wants("a changeover opened for totes", 1, 2)
 
@@ -586,7 +586,7 @@ func TestKanbanForecast_AgreesWithTheFinder(t *testing.T) {
 			}
 			id, err := r.db.OpenCoreEpisode(store.DemandOrigin{OriginID: "fcfcfcfc-0000-4000-8000-000000000001",
 				EpisodeKey: protocol.KanbanEpisodeKey(r.k, r.bt), Kind: protocol.EpisodeKindKanban,
-				StationID: "test-core", CoreNodeName: name, OpenedAt: time.Now().UTC(), Threshold: 2})
+				StationUID: "test-core", CoreNodeName: name, OpenedAt: time.Now().UTC(), Threshold: 2})
 			testutil.MustNoErr(t, err, "the episode")
 
 			got, err := r.db.SourceableCounts([]string{r.code}, bins.EmptyFence{OriginGroup: name, Sources: sources})

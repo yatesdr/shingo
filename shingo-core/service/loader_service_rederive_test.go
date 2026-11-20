@@ -37,7 +37,7 @@ func (r *recordingNotifier) last() []demands.RegistryChange {
 // registered edge with no registry rows yet.
 func enrollRegisteredEdge(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	_, err := db.EnrollEdge(stationID, "", stationID)
+	_, err := db.EnrollEdge(stationID, "")
 	testutil.MustNoErr(t, err, "enroll edge")
 	_, err = db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{})
 	testutil.MustNoErr(t, err, "register edge")
@@ -46,7 +46,7 @@ func enrollRegisteredEdge(t *testing.T, db *store.DB, stationID string) {
 func stationRegistryRows(t *testing.T, db *store.DB, stationID string) int {
 	t.Helper()
 	var n int
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_id=$1`, stationID).Scan(&n),
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_uid = $1`, stationID).Scan(&n),
 		"count demand_registry")
 	return n
 }

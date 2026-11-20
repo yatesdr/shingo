@@ -161,7 +161,7 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 	}
 	// One active pile of 11, and a stranded row of 5 that does not count: the
 	// invariant's bucket term is the active piles, as on-hand is.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		VALUES ('STATION-INV', $1, 'PAY-INV', 'active', 11), ('STATION-INV', $1, 'PAY-INV', 'stranded', 5)`,
 		sd.StorageNode.Name); err != nil {
 		t.Fatalf("seed bucket: %v", err)
@@ -293,8 +293,8 @@ func TestApiInventoryLedgerExceptions_ListsOpenReportDivergences(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-DIVERGE")
 	for _, recovered := range []string{"NULL", "now()"} {
 		_, err := db.Exec(`INSERT INTO bin_uop_exception
-			(kind, bin_id, payload_code, actor, occurred_at, op, recovered_at, detail)
-			VALUES ('report_divergence', $1, $2, 'stn-page', now(), 'count', `+recovered+`,
+			(kind, bin_id, payload_code, actor, station_uid, occurred_at, op, recovered_at, detail)
+			VALUES ('report_divergence', $1, $2, '', 'stn-page', now(), 'count', `+recovered+`,
 			        jsonb_build_object('node', $3::text, 'edge_epoch', 4, 'core_epoch', 4,
 			                           'edge_count', 10, 'core_count', 150))`,
 			bin.ID, sd.Payload.Code, sd.LineNode.Name)
@@ -374,9 +374,9 @@ func TestApiInventoryLedgerExceptions_HoldDropsAtALineRunningFull(t *testing.T) 
 	sd := testdb.SetupStandardData(t, db)
 	seed := func(n int, startMinutesAgo int) {
 		for i := 0; i < n; i++ {
-			_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
-				VALUES ('hold_dropped', NULL, $1, 'edge:tick', now() - make_interval(mins => $2), 'hold_cap',
-				        jsonb_build_object('node', 'ALN_011', 'qty', 1, 'reason', 'hold_cap', 'station', 'stn-page',
+			_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, station_uid, occurred_at, op, detail)
+				VALUES ('hold_dropped', NULL, $1, 'edge:tick', 'stn-page', now() - make_interval(mins => $2), 'hold_cap',
+				        jsonb_build_object('node', 'ALN_011', 'qty', 1, 'reason', 'hold_cap',
 				                           'msg_id', 'm' || $2::text))`,
 				sd.Payload.Code, startMinutesAgo-i)
 			testutil.MustNoErr(t, err, "seed hold drop")
@@ -426,9 +426,9 @@ func TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-STAMPED")
 	for _, age := range []string{"1 hour", "30 days"} {
-		_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
-			VALUES ('hold_dropped', NULL, $1, 'edge:sweep', now() - $2::interval, 'sweep',
-			        jsonb_build_object('node', 'ALN_011', 'qty', 24, 'reason', 'sweep', 'station', 'stn-page'))`,
+		_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, station_uid, occurred_at, op, detail)
+			VALUES ('hold_dropped', NULL, $1, 'edge:sweep', 'stn-page', now() - $2::interval, 'sweep',
+			        jsonb_build_object('node', 'ALN_011', 'qty', 24, 'reason', 'sweep'))`,
 			sd.Payload.Code, age)
 		testutil.MustNoErr(t, err, "seed hold drop")
 		_, err = db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, source, payload_code, actor, applied_at, detail)

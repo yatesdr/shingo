@@ -42,7 +42,7 @@ func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 
 	parent := &orders.Order{
 		EdgeUUID:     "parent-cancel-leg",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve, // plain-retrieve compound
 		Status:       StatusReshuffling,
 		PayloadCode:  bp.Code,
@@ -53,13 +53,13 @@ func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 
 	// One completed child + one cancelled child — all terminal, one cancelled.
 	doneChild := &orders.Order{
-		EdgeUUID: "child-done", StationID: parent.StationID, OrderType: OrderTypeMove,
+		EdgeUUID: "child-done", StationUID: parent.StationUID, OrderType: OrderTypeMove,
 		Status: StatusConfirmed, ParentOrderID: &parent.ID, Sequence: 1,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(doneChild), "create done child")
 	cancelledChild := &orders.Order{
-		EdgeUUID: "child-cancelled", StationID: parent.StationID, OrderType: OrderTypeMove,
+		EdgeUUID: "child-cancelled", StationUID: parent.StationUID, OrderType: OrderTypeMove,
 		Status: StatusCancelled, ParentOrderID: &parent.ID, Sequence: 2,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name,
 	}
@@ -90,7 +90,7 @@ func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 
 	parent := &orders.Order{
 		EdgeUUID:     "parent-clean",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusReshuffling,
 		PayloadCode:  bp.Code,
@@ -99,7 +99,7 @@ func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 	child := &orders.Order{
-		EdgeUUID: "child-clean", StationID: parent.StationID, OrderType: OrderTypeMove,
+		EdgeUUID: "child-clean", StationUID: parent.StationUID, OrderType: OrderTypeMove,
 		Status: StatusConfirmed, ParentOrderID: &parent.ID, Sequence: 1,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name,
 	}
@@ -156,7 +156,7 @@ func TestGate1_TheDemandSurvivesItsDigsFailure(t *testing.T) {
 
 	// THE DEMAND, wearing `reshuffling` because it re-parented onto its own dig.
 	demand := &orders.Order{
-		EdgeUUID: "g1-demand", StationID: "line-1", OrderType: OrderTypeRetrieve,
+		EdgeUUID: "g1-demand", StationUID: "line-1", OrderType: OrderTypeRetrieve,
 		Status: StatusReshuffling, PayloadCode: bp.Code, DeliveryNode: lineNode.Name, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(demand), "create the demand")
@@ -164,7 +164,7 @@ func TestGate1_TheDemandSurvivesItsDigsFailure(t *testing.T) {
 	// ITS PARTNER: a two-robot swap peer, pointed at the demand and untouched by
 	// anything this test does directly.
 	partner := &orders.Order{
-		EdgeUUID: "g1-partner", StationID: "line-1", OrderType: OrderTypeRetrieve,
+		EdgeUUID: "g1-partner", StationUID: "line-1", OrderType: OrderTypeRetrieve,
 		Status: StatusQueued, PayloadCode: bp.Code, DeliveryNode: lineNode.Name, Quantity: 1,
 		SiblingOrderUUID: demand.EdgeUUID,
 	}
@@ -172,7 +172,7 @@ func TestGate1_TheDemandSurvivesItsDigsFailure(t *testing.T) {
 
 	// A leg that died of something a re-plan can fix.
 	brokeDown := &orders.Order{
-		EdgeUUID: "g1-leg-dead", StationID: demand.StationID, OrderType: OrderTypeMove,
+		EdgeUUID: "g1-leg-dead", StationUID: demand.StationUID, OrderType: OrderTypeMove,
 		Status: StatusFailed, ParentOrderID: &demand.ID, Sequence: 1,
 		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name,
 	}

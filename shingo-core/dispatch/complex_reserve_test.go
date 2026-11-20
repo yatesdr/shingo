@@ -51,7 +51,7 @@ func mkComplexOrder(t *testing.T, db complexOrderStore, uuid, source, process, d
 	t.Helper()
 	j, _ := json.Marshal(steps)
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending,
+		EdgeUUID: uuid, StationUID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending,
 		Quantity: 1, PayloadCode: payload, SourceNode: source, ProcessNode: process,
 		DeliveryNode: delivery, StepsJSON: string(j),
 	}
@@ -496,7 +496,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "PBT-BIN")
 
 	// Another order claims the sole bin at the source — present, but taken.
-	other := &orders.Order{EdgeUUID: "pbt-other", StationID: "s", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1}
+	other := &orders.Order{EdgeUUID: "pbt-other", StationUID: "s", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create other order")
 	testdb.ClaimBinForTest(t, db, binA.ID, other.ID)
 

@@ -44,7 +44,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "uuid-empty-leg",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusPending, // the confirm runs in the hand: the order rests with its ask open (C1.5)
 		Quantity:     1,

@@ -35,7 +35,7 @@ func r10Fixture(t *testing.T, prefix string) (db *store.DB, storage, line *nodes
 	storage, line, bp := testdb.SetupTestData(t, db)
 	bin = createTestBinAtNode(t, db, bp.Code, line.ID, prefix+"-BIN")
 	o = testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.Status = strings.ToLower(prefix), "line-1", "in_transit"
+		o.EdgeUUID, o.StationUID, o.Status = strings.ToLower(prefix), "line-1", "in_transit"
 		o.SourceNode = storage.Name // its row lifts the cart at storage
 	})
 	testdb.HoldCart(t, db, o.ID, bin.ID)

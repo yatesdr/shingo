@@ -141,11 +141,12 @@ func ChaseEndedAsk(db *sql.DB, id int64, askedVendorOrderID string) (bool, error
 }
 
 // OpenAsk is an ask open on an order row: the order, the status it rests in,
-// its station, and the job Core asked the fleet for.
+// its requester (station, or the Core actor that asked), and the job Core
+// asked the fleet for.
 type OpenAsk struct {
 	OrderID   int64
 	Status    protocol.Status
-	StationID string
+	Requester string
 	Asked     string
 }
 
@@ -153,7 +154,7 @@ type OpenAsk struct {
 // boot each one is a create a previous Core did not live to answer
 // (engine.ReconciliationService.TakeBootAsks).
 func ListOpenAsks(db *sql.DB) ([]OpenAsk, error) {
-	rows, err := db.Query(`SELECT id, status, COALESCE(station_id, ''), asked_vendor_order_id
+	rows, err := db.Query(`SELECT id, status, ` + helpers.RequesterSQL("") + `, asked_vendor_order_id
 		FROM orders WHERE asked_vendor_order_id <> '' ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -163,7 +164,7 @@ func ListOpenAsks(db *sql.DB) ([]OpenAsk, error) {
 	for rows.Next() {
 		var a OpenAsk
 		var status string
-		if err := rows.Scan(&a.OrderID, &status, &a.StationID, &a.Asked); err != nil {
+		if err := rows.Scan(&a.OrderID, &status, &a.Requester, &a.Asked); err != nil {
 			return nil, err
 		}
 		a.Status = protocol.Status(status)

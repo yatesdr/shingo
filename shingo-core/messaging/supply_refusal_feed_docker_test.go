@@ -66,10 +66,10 @@ func TestRefusalsFeed_BuildAndSend(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testdb.Open(t)
-			_, err := db.EnrollEdge(st, "", st)
+			_, err := db.EnrollEdge(st, "")
 			testutil.MustNoErr(t, err, "enroll")
 			if tc.seed {
-				testutil.MustNoErr(t, db.ApplySupplyRefusal(*opened, st), "seed")
+				testutil.MustNoErr(t, db.ApplySupplyRefusal(*opened), "seed")
 			}
 			if tc.hide {
 				hideTable(t, db, "supply_refusals")
@@ -119,7 +119,7 @@ func TestRefusalsFeed_StoredMessageDropsTheMemo(t *testing.T) {
 	t.Parallel()
 	const st = "edge.test"
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge(st, "", st)
+	_, err := db.EnrollEdge(st, "")
 	testutil.MustNoErr(t, err, "enroll")
 	resp := &feedsPinResponder{}
 	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
@@ -147,10 +147,10 @@ func TestRefusalsFeed_OlderEdgeGetsNoSnapshot(t *testing.T) {
 	t.Parallel()
 	const st = "edge.test"
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge(st, "", st)
+	_, err := db.EnrollEdge(st, "")
 	testutil.MustNoErr(t, err, "enroll")
 	testutil.MustNoErr(t, db.ApplySupplyRefusal(protocol.SupplyRefusalState{Action: protocol.SupplyRefusalOpened,
-		LoaderNode: "LN-1", PayloadCode: "PC-A", RefusedAt: time.Now().UTC(), RefusedBy: st}, st), "seed")
+		LoaderNode: "LN-1", PayloadCode: "PC-A", RefusedAt: time.Now().UTC(), RefusedBy: st}), "seed")
 	resp := &feedsPinResponder{}
 	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 	refusalFeedHeartbeat(svc, st, nil)

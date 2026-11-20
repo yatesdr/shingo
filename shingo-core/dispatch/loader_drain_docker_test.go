@@ -333,8 +333,8 @@ func TestDrain_ADrainFirstSendsAFullAskToAnotherWindow(t *testing.T) {
 
 	// The move ends, and so does the full asked beside it, so the next ask has
 	// nothing outstanding and both windows to choose from.
-	f.d.Lifecycle().CancelOrder(moves[0], moves[0].StationID, "test: the drain's move ends", CancelCause{})
-	f.d.Lifecycle().CancelOrder(res.Created[0], res.Created[0].StationID, "test: the full ends", CancelCause{})
+	f.d.Lifecycle().CancelOrder(moves[0], moves[0].StationUID, "test: the drain's move ends", CancelCause{})
+	f.d.Lifecycle().CancelOrder(res.Created[0], res.Created[0].StationUID, "test: the full ends", CancelCause{})
 	spoken, err := db.SlotSpokenForByStranger(f.windows[0].ID, 0)
 	testutil.MustNoErr(t, err, "read the window's reservations")
 	if spoken {

@@ -46,7 +46,7 @@ func TestSaveKanban_AuditsEachChangeOnce(t *testing.T) {
 	family, err := db.EnsureCarrierFamily("SK-FAMILY")
 	testutil.MustNoErr(t, err, "the family")
 	wants := []store.KanbanLayerWant{{Layers: 0, Want: 1}, {Layers: 3, Want: 2}}
-	first := store.KanbanChange{NodeID: *k, EnsureRow: true, Station: &station, Strict: &strict,
+	first := store.KanbanChange{NodeID: *k, EnsureRow: true, StationUID: &station, Strict: &strict,
 		Pools: map[int64]int{family: 5},
 		Levels: []store.KanbanLevelChange{
 			{BinTypeID: small, Want: &want, LayerWants: &wants},
@@ -182,7 +182,7 @@ func TestSaveKanban_OneTransaction(t *testing.T) {
 	db := testdb.Open(t)
 	k := testdb.MarkedGroup(t, db, "SKT-K")
 	station := "edge.1"
-	err := db.SaveKanban(store.KanbanChange{NodeID: *k, EnsureRow: true, Station: &station,
+	err := db.SaveKanban(store.KanbanChange{NodeID: *k, EnsureRow: true, StationUID: &station,
 		Sources: &[]int64{999999999}}, "stephen")
 	if err == nil || !strings.Contains(err.Error(), "source") {
 		t.Fatalf("save of a source that does not exist: %v", err)

@@ -72,13 +72,13 @@ func TestLaneGateWiring_HeldCompoundLegResumesOnLaneClearingEvent(t *testing.T) 
 	lane, slots := laneWithSlots(t, db, "WIRED-LANE", 3)
 
 	parent := &orders.Order{
-		EdgeUUID: "WIRED-parent", StationID: "line-1",
+		EdgeUUID: "WIRED-parent", StationUID: "line-1",
 		OrderType: "retrieve", Status: protocol.StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	child := &orders.Order{
-		EdgeUUID: "WIRED-child", StationID: "line-1",
+		EdgeUUID: "WIRED-child", StationUID: "line-1",
 		OrderType: "move", Status: protocol.StatusPending, Quantity: 1,
 		ParentOrderID: &parent.ID, Sequence: 1,
 		SourceNode: slots[0].Name, DeliveryNode: lineNode.Name,
@@ -88,7 +88,7 @@ func TestLaneGateWiring_HeldCompoundLegResumesOnLaneClearingEvent(t *testing.T) 
 	// A FOREIGN order is inside the lane, so the leg is refused and no sibling
 	// exists whose completion would bring the dispatcher back.
 	foreign := &orders.Order{
-		EdgeUUID: "WIRED-foreign", StationID: "line-1",
+		EdgeUUID: "WIRED-foreign", StationUID: "line-1",
 		OrderType: "retrieve", Status: protocol.StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(foreign), "create foreign occupant")

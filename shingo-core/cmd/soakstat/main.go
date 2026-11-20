@@ -596,7 +596,7 @@ func vacatedLineHolds(db *store.DB) (int, float64, error) {
 		         AND EXISTS (SELECT 1 FROM style_claims sc
 		                     JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
 		                     CROSS JOIN LATERAL (VALUES (sc.paired_core_node), (sc.second_paired_core_node)) d(pos)
-		                     WHERE ps.is_active AND ps.station_id = o.station_id AND sc.core_node_name = o.process_node
+		                     WHERE ps.is_active AND ps.station_uid = o.station_uid AND sc.core_node_name = o.process_node
 		                       AND `+bins.FedClaimSQL("sc")+`
 		                       AND d.pos <> ''
 		                       AND NOT EXISTS (SELECT 1 FROM bins b JOIN nodes n ON n.id = b.node_id

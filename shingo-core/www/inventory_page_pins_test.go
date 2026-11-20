@@ -36,7 +36,7 @@ func jsonKeys(m map[string]any) []string {
 // through, and returns the loader id and the home's node.
 func pinLoaderHome(t *testing.T, h *Handlers, db *store.DB, station, nodeName, payload string, threshold int) (int64, *nodes.Node) {
 	t.Helper()
-	_, err := db.EnrollEdge(station, "", station)
+	_, err := db.EnrollEdge(station, "")
 	testutil.MustNoErr(t, err, "enroll edge")
 	_, err = db.RegisterEdge(station, "pin-host", "pin-inst", "test", "", sql.NullInt64{})
 	testutil.MustNoErr(t, err, "register edge")
@@ -148,7 +148,7 @@ func TestInventoryPin_ThresholdSave(t *testing.T) {
 	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_threshold FROM bin_loader_homes WHERE loader_id=$1 AND position_node_id=$2`,
 		id, home.ID).Scan(&stored), "read home")
 	testutil.MustNoErr(t, db.QueryRow(`SELECT replenish_uop_threshold FROM demand_registry
-		WHERE station_id='ST-SAVE' AND core_node_name=$1 AND payload_code=$2`, home.Name, sd.Payload.Code).Scan(&derived),
+		WHERE station_uid='ST-SAVE' AND core_node_name=$1 AND payload_code=$2`, home.Name, sd.Payload.Code).Scan(&derived),
 		"read registry")
 	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM audit_log WHERE entity_type='loader_home' AND entity_id=$1`,
 		home.ID).Scan(&audit), "count audit")

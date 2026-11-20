@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/store/internal/helpers"
 )
 
 // queryNoJIT runs a query with JIT compilation disabled, handing the rows to
@@ -77,7 +78,7 @@ func openOrderCond(alias string) string {
 // `busy(robot_id, s, e)` is the same instants merged per robot (robotUnionCTEs),
 // so a robot on two orders at once is one robot for that time, not two.
 // stationCond, when non-empty, is appended to the filter (it reads the
-// station_id column).
+// station_uid column).
 //
 // The mission_telemetry half keeps its core_created/core_completed bound for
 // the index: those bracket the computed execution interval, so it is a superset
@@ -91,13 +92,13 @@ func openOrderCond(alias string) string {
 // JIT on and 0.2 s with it off.
 func busyIntervalsCTE(startArg, endArg, nowArg, stationCond string) string {
 	return fmt.Sprintf(`exec_ord AS (
-			SELECT mt.robot_id, mt.station_id, mt.order_id, false AS open
+			SELECT mt.robot_id, mt.station_uid, mt.requested_by, mt.order_id, false AS open
 			FROM mission_telemetry mt
 			WHERE mt.robot_id <> ''
 			  AND mt.core_completed >= %[1]s::timestamptz
 			  AND mt.core_created <= %[2]s::timestamptz
 			UNION ALL
-			SELECT o.robot_id, o.station_id, o.id, true
+			SELECT o.robot_id, o.station_uid, o.requested_by, o.id, true
 			FROM orders o
 			WHERE %[4]s
 		),
@@ -111,7 +112,7 @@ func busyIntervalsCTE(startArg, endArg, nowArg, stationCond string) string {
 		),
 		exec AS (
 			SELECT robot_id, started AS s, ended AS e FROM (
-				SELECT x.robot_id, x.station_id, b.s AS started,
+				SELECT x.robot_id, x.station_uid, x.requested_by, b.s AS started,
 				       CASE WHEN x.open THEN %[3]s::timestamptz ELSE b.e END AS ended
 				FROM exec_ord x JOIN exec_b b ON b.order_id = x.order_id
 			) iv
@@ -241,7 +242,7 @@ func GetRobotMissionAggs(db *sql.DB, f Filter, now time.Time) ([]RobotMissionAgg
 	stationCond := ""
 	if f.StationID != "" {
 		args = append(args, f.StationID)
-		stationCond = fmt.Sprintf(" AND station_id = $%d", len(args))
+		stationCond = fmt.Sprintf(" AND %s = $%d", helpers.RequesterColumn(f.StationID), len(args))
 	}
 
 	q := fmt.Sprintf(`WITH %[1]s,
@@ -295,7 +296,7 @@ func GetHourlyConcurrency(db *sql.DB, dayStart, dayEnd, now time.Time, stationID
 	args := []any{dayStart, dayEnd, now}
 	stationCond := ""
 	if stationID != "" {
-		stationCond = " AND station_id = $4"
+		stationCond = " AND " + helpers.RequesterColumn(stationID) + " = $4"
 		args = append(args, stationID)
 	}
 	// The exec CTE is bounded by the caller's window. Unbounded it ran the two
@@ -356,7 +357,7 @@ func GetDailyConcurrency(db *sql.DB, since, until, now time.Time, tz, stationID 
 	args := []any{since, until, now, tz}
 	stationCond := ""
 	if stationID != "" {
-		stationCond = " AND station_id = $5"
+		stationCond = " AND " + helpers.RequesterColumn(stationID) + " = $5"
 		args = append(args, stationID)
 	}
 	// Same window bound as GetHourlyConcurrency — see the note there.

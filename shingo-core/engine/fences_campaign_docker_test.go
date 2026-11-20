@@ -250,7 +250,7 @@ func TestFences_F9_ComingIsSubtracted(t *testing.T) {
 
 	dest := firstChild(t, db, grpID)
 	push := &orders.Order{
-		EdgeUUID: "f9-push", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+		EdgeUUID: "f9-push", StationUID: "line-1", OrderType: protocol.OrderTypeMove,
 		Status: protocol.StatusQueued, Quantity: 1,
 		SourceNode: market.Name, DeliveryNode: dest.Name,
 	}

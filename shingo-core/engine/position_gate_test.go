@@ -36,7 +36,7 @@ func TestPositionGate_HoldsWhenAnotherOrderOwnsTheBin(t *testing.T) {
 
 	// The full bin sits at the press, CLAIMED by the removal order that is dwelling
 	// there to collect it (the full-out half of a two-robot swap).
-	fullOut := &orders.Order{EdgeUUID: "gate-full-out", StationID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
+	fullOut := &orders.Order{EdgeUUID: "gate-full-out", StationUID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(fullOut), "create full-out order")
 	full := &bins.Bin{BinTypeID: bt.ID, Label: "GATE-FULL", NodeID: &press.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(full), "create full bin")
@@ -44,7 +44,7 @@ func TestPositionGate_HoldsWhenAnotherOrderOwnsTheBin(t *testing.T) {
 
 	// The empty-in half: a DIFFERENT order, whose robot is about to place an empty
 	// onto that same press.
-	emptyIn := &orders.Order{EdgeUUID: "gate-empty-in", StationID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1, VendorOrderID: "sim-empty-in"}
+	emptyIn := &orders.Order{EdgeUUID: "gate-empty-in", StationUID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1, VendorOrderID: "sim-empty-in"}
 	testutil.MustNoErr(t, db.CreateOrder(emptyIn), "create empty-in order")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(emptyIn.ID, "sim-empty-in", "RUNNING", "bot-1"), "set vendor id")
 
@@ -91,7 +91,7 @@ func TestPositionGate_NeverHoldsAPickup(t *testing.T) {
 	bt := &bins.BinType{Code: "BT-OWN", Description: "gate test"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
 
-	pickup := &orders.Order{EdgeUUID: "gate-own", StationID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
+	pickup := &orders.Order{EdgeUUID: "gate-own", StationUID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(pickup), "create order")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(pickup.ID, "sim-own", "RUNNING", "bot-1"), "set vendor id")
 
@@ -191,7 +191,7 @@ func TestPositionGate_OccupancyCoreExcludesTheOrdersOwnBin(t *testing.T) {
 	bt := &bins.BinType{Code: "BT-OWNBIN", Description: "own-bin test"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
 
-	owner := &orders.Order{EdgeUUID: "ownbin-order", StationID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
+	owner := &orders.Order{EdgeUUID: "ownbin-order", StationUID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(owner), "create order")
 	mine := &bins.Bin{BinTypeID: bt.ID, Label: "OWNBIN-MINE", NodeID: &press.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(mine), "create bin")

@@ -546,7 +546,7 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 		meta, _ := json.Marshal(map[string]int{"count": actualUOP, "capacity": pl.UOPCapacity})
 		if err := audit.AppendBinUOPOverride(tx, b.ID, pl.UOPCapacity, actualUOP,
 			audit.OpCycleCountOverCapacity, "service/bin_service.go:RecordCount",
-			nil, b.PayloadCode, actor, meta); err != nil {
+			nil, b.PayloadCode, actor, "", meta); err != nil {
 			return nil, fmt.Errorf("audit over-capacity count bin %d: %w", b.ID, err)
 		}
 	}
@@ -1092,9 +1092,16 @@ func (s *BinService) Lift(binID int64, n PickupNotice) (bins.Lift, error) {
 			orderID = &n.OrderID
 		}
 		count := l.Count
+		// The notice's station is the lifting order's requester: a station's uid
+		// goes in station_uid, and a Core actor's name is the who (actor), with
+		// no station, as v185 moves the lifted rows that held one.
+		liftStation, liftActor := domain.SplitRequester(n.Station)
+		if liftActor == "" {
+			liftActor = "system"
+		}
 		if err := audit.AppendBinUOP(tx, binID, &count, count, audit.OpLifted,
-			"service/bin_service.go:Lift", orderID, l.PayloadCode, "system",
-			audit.BinUOPContext{Station: n.Station}); err != nil {
+			"service/bin_service.go:Lift", orderID, l.PayloadCode, liftActor,
+			audit.BinUOPContext{StationUID: liftStation}); err != nil {
 			return bins.Lift{}, err
 		}
 	case !l.Moved && n.Station != "":

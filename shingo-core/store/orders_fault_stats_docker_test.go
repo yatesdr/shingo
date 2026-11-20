@@ -31,7 +31,7 @@ func seedFaultOrder(t *testing.T, db *store.DB, uuid, robot string, rows []struc
 ) {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "edge.test", OrderType: "retrieve",
+		EdgeUUID: uuid, StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: "DELV.1",
 		RobotID: robot,
 	}

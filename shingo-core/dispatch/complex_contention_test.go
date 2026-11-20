@@ -35,7 +35,7 @@ func TestReserveComplexPlan_ConcurrentContention(t *testing.T) {
 	mkOrder := func(uuid string) *orders.Order {
 		o := &orders.Order{
 			EdgeUUID:     uuid,
-			StationID:    "line-1",
+			StationUID:   "line-1",
 			OrderType:    OrderTypeComplex,
 			Status:       StatusQueued,
 			Quantity:     1,

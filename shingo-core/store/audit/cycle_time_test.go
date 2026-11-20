@@ -72,11 +72,12 @@ func TestCycleOpMatchesTheApplier(t *testing.T) {
 //
 // So the assertions below are a ratchet in both directions: the stamp must not
 // regress (that would strand the re-grain indefinitely, and nothing else
-// watches it), and the station must keep arriving in the actor slot
+// watches it), and the station must keep arriving in the station_uid column
 // ListCycleEvents actually reads for as long as the surface is grained on it.
 //
 // VERIFIED RED BY: dropping node_id from the applier's INSERT column list (the
-// first half), and by moving station out of the actor position (the second).
+// first half), and by moving station out of the station_uid position (the
+// second). Before v185 the station went in actor and this pinned that slot.
 func TestCycleSurfaceAwaitsTheNodeRegrain(t *testing.T) {
 	src := applierSource(t)
 
@@ -101,15 +102,15 @@ func TestCycleSurfaceAwaitsTheNodeRegrain(t *testing.T) {
 	}
 
 	// And the half that is still load-bearing today: the station really is
-	// arriving as the actor, which is the column ListCycleEvents reads. Without
+	// arriving in station_uid, which is the column ListCycleEvents reads. Without
 	// this, a present node_id would be consistent with a surface that had
 	// quietly lost the grain it is actually still serving.
 	//
 	// SCOPED TO THIS CALL'S OWN ARGUMENTS, which the predecessor of this test
 	// was not. It matched the token pair against the whole file behind a comment
-	// claiming it pinned the actor slot "specifically" — but `d.PayloadCode,
+	// claiming it pinned the station's slot "specifically" — but `d.PayloadCode,
 	// station,` appears at seven other call sites in applier.go, so moving the
-	// station out of the actor position here left it green. Narrowing to the
+	// station out of its position here left it green. Narrowing to the
 	// window between this INSERT's op literal and its `); err != nil` is what
 	// makes the claim true: the pair has to be in THIS argument list. The token
 	// is `station` and not `d.Station` because the station moved off the delta
@@ -118,9 +119,13 @@ func TestCycleSurfaceAwaitsTheNodeRegrain(t *testing.T) {
 	if n := strings.Index(src[loc[1]:], "); err != nil"); n >= 0 {
 		argsEnd = loc[1] + n
 	}
-	if !strings.Contains(src[loc[1]:argsEnd], "d.PayloadCode, station,") {
+	// The pair lands in station_uid only while the column list names
+	// station_uid right after payload_code, as the argument list does.
+	if !strings.Contains(src[loc[1]:argsEnd], "d.PayloadCode, station,") ||
+		!regexp.MustCompile(`\bpayload_code,\s*station_uid,`).MatchString(cols) {
 		t.Error("the applier no longer passes the envelope station into the audit INSERT's " +
-			"actor position — ListCycleEvents reads the actor column for the station and " +
-			"would now return one nameless key for the whole site")
+			"station_uid position — ListCycleEvents reads station_uid for the station and " +
+			"would now return one nameless key for the whole site. Put `station` in the " +
+			"argument after d.PayloadCode and station_uid in the column after payload_code")
 	}
 }

@@ -184,7 +184,7 @@ func TestStepsDone_TheSubscriberCountsThePlanStepsTheFleetFinished(t *testing.T)
 func TestBlockCompleted_OneWriteForTheStepItFinishes(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
-	o := &orders.Order{EdgeUUID: "done-count", StationID: "line-1", OrderType: "complex", Status: protocol.StatusInTransit, Quantity: 1,
+	o := &orders.Order{EdgeUUID: "done-count", StationUID: "line-1", OrderType: "complex", Status: protocol.StatusInTransit, Quantity: 1,
 		StepsJSON: `[{"action":"pickup","node":"S"},{"action":"dropoff","node":"L"},{"action":"wait","node":"L"},` +
 			`{"action":"pickup","node":"L"},{"action":"dropoff","node":"S"}]`}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
@@ -265,7 +265,7 @@ func TestStepsDone_ARestartThatReplaysFinishedBlocksCountsNothing(t *testing.T) 
 	t.Parallel()
 	db := testDB(t)
 	vendor, url := newStubVendor(t)
-	o := &orders.Order{EdgeUUID: "replay-1", StationID: "line-1", OrderType: "complex", Status: protocol.StatusPending,
+	o := &orders.Order{EdgeUUID: "replay-1", StationUID: "line-1", OrderType: "complex", Status: protocol.StatusPending,
 		Quantity: 1, SourceNode: "SMN_A", DeliveryNode: "ALN_C", StepsJSON: replayPlan}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	// Named as the create names it: the fleet's yes writes the vendor order and
@@ -324,7 +324,7 @@ func TestStepsDone_ARestartThatReplaysFinishedBlocksCountsNothing(t *testing.T) 
 func TestBlockCompleted_AReplayedBlockWritesNothing(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
-	o := &orders.Order{EdgeUUID: "replay-count", StationID: "line-1", OrderType: "complex", Status: protocol.StatusInTransit,
+	o := &orders.Order{EdgeUUID: "replay-count", StationUID: "line-1", OrderType: "complex", Status: protocol.StatusInTransit,
 		Quantity: 1, StepsJSON: `[{"action":"wait","node":"AP7"},{"action":"pickup","node":"SMN_A"},{"action":"wait"},` +
 			`{"action":"wait","node":"AP7"},{"action":"dropoff","node":"ALN_C"}]`}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")

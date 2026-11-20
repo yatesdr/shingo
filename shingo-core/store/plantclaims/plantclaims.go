@@ -100,7 +100,7 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 }
 
 // ReplaceProcessFromStation is ReplaceProcess recording WHICH station published
-// the process: process_styles.station_id, the address the sourceability feed
+// the process: process_styles.station_uid, the address the sourceability feed
 // sends that process's verdicts to. stationID "" records NULL — the station is
 // unknown, and the feed then sends the process to every station, as before.
 //
@@ -112,7 +112,7 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 // positions are the report's Positions (the seats the process binds at that no
 // claim names: loader windows and homes, FG drains), mirrored in
 // process_positions in the same transaction; nil clears them. Their station is
-// the process's process_styles.station_id, like the claims'.
+// the process's process_styles.station_uid, like the claims'.
 func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles []StyleRow, claims []ClaimRow, positions []string, staleGuardConfigGen int64) (previousStation string, err error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -122,7 +122,7 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 
 	var prev sql.NullString
 	if err := tx.QueryRow(
-		`SELECT MAX(station_id) FROM process_styles WHERE process_id = $1`, processID,
+		`SELECT MAX(station_uid) FROM process_styles WHERE process_id = $1`, processID,
 	).Scan(&prev); err != nil {
 		return "", fmt.Errorf("plantclaims replace %s: read station: %w", processID, err)
 	}
@@ -153,7 +153,7 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 
 	for _, s := range styles {
 		if _, err := tx.Exec(
-			`INSERT INTO process_styles (process_id, style_id, config_gen, is_active, station_id)
+			`INSERT INTO process_styles (process_id, style_id, config_gen, is_active, station_uid)
 			 VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
 			s.ProcessID, s.StyleID, s.ConfigGen, s.IsActive, stationID,
 		); err != nil {
@@ -373,11 +373,11 @@ func ProcessesByNode(db *sql.DB) (map[string][]string, error) {
 }
 
 // ProcessStations maps each process to the station that published it
-// (process_styles.station_id). A process with no recorded station is absent:
+// (process_styles.station_uid). A process with no recorded station is absent:
 // the sourceability feed sends those to every station.
 func ProcessStations(db *sql.DB) (map[string]string, error) {
-	rows, err := db.Query(`SELECT process_id, MAX(station_id) FROM process_styles
-		WHERE station_id IS NOT NULL GROUP BY process_id`)
+	rows, err := db.Query(`SELECT process_id, MAX(station_uid) FROM process_styles
+		WHERE station_uid IS NOT NULL GROUP BY process_id`)
 	if err != nil {
 		return nil, fmt.Errorf("plantclaims process stations: %w", err)
 	}
@@ -394,11 +394,11 @@ func ProcessStations(db *sql.DB) (map[string]string, error) {
 }
 
 // ClaimingStationsSQL is the ONE spelling of "the stations whose processes
-// claim the node nameExpr names", as a SELECT of station_id rows, de-duplicated
+// claim the node nameExpr names", as a SELECT of station_uid rows, de-duplicated
 // (UNION). nameExpr is an SQL expression for the node's name: "$1" for a read
 // by name, or a column of an outer row (the lifecycle announcements' RETURNING,
 // bins.LifecycleAddressSQL). Two sources, both publishing station from
-// process_styles.station_id:
+// process_styles.station_uid:
 //   - a style_claims row naming the node as its own position or as one of a
 //     press-index cell's paired positions (a station binds at those too, after a
 //     changeover creates the row: Lane H, H.3; DESIGN-H §4; DECISIONS D9; the
@@ -410,27 +410,27 @@ func ProcessStations(db *sql.DB) (map[string]string, error) {
 // The landing (ResolveLandingAddress), StationsClaimingNode and the lifecycle
 // announcements all read it, so they cannot disagree about who owns a seat.
 func ClaimingStationsSQL(nameExpr string) string {
-	return `SELECT ps.station_id FROM style_claims sc
+	return `SELECT ps.station_uid FROM style_claims sc
 		  JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
 		 WHERE ` + nameExpr + ` IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)
-		   AND ps.station_id IS NOT NULL
+		   AND ps.station_uid IS NOT NULL
 		UNION
-		SELECT ps.station_id FROM process_positions pp
+		SELECT ps.station_uid FROM process_positions pp
 		  JOIN process_styles ps ON ps.process_id = pp.process_id
-		 WHERE pp.core_node_name = ` + nameExpr + ` AND ps.station_id IS NOT NULL`
+		 WHERE pp.core_node_name = ` + nameExpr + ` AND ps.station_uid IS NOT NULL`
 }
 
 // LastArmEdgesSQL is the FROM/WHERE of the last arm's address: every registered
 // Edge (RULINGS-C2c-run-through §4). Shared by the landing and the lifecycle
 // announcements; the alias is er.
-const LastArmEdgesSQL = `FROM edge_registry er WHERE er.station_id <> ''`
+const LastArmEdgesSQL = `FROM edge_registry er WHERE er.station_uid <> ''`
 
 // StationsClaimingNode lists the stations whose processes claim a node, from
 // the mirror (ClaimingStationsSQL), sorted. One statement. A node no process
 // claims, or one claimed only by processes with no recorded station, lists
 // none.
 func StationsClaimingNode(db *sql.DB, nodeName string) ([]string, error) {
-	rows, err := db.Query(`SELECT station_id FROM (`+ClaimingStationsSQL("$1")+`) c ORDER BY station_id`, nodeName)
+	rows, err := db.Query(`SELECT station_uid FROM (`+ClaimingStationsSQL("$1")+`) c ORDER BY station_uid`, nodeName)
 	if err != nil {
 		return nil, fmt.Errorf("plantclaims stations claiming %s: %w", nodeName, err)
 	}
@@ -540,20 +540,23 @@ type LandingAddress struct {
 // Edges (Plant) come in the same statement, so it costs nothing either.
 //
 // The order's station is spelled as engine.materialStation spells it: the
-// order's own station unless it is station-unaware, then the station it
-// projects to.
+// order's requester (its station, or the Core actor that asked) unless it is
+// station-unaware, then the station it projects to. An aware actor's order
+// therefore names its actor here, as it did when the actor sat in the station
+// column, and does not fall to the plant arm.
 func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAddress, error) {
 	rows, err := q.Query(`
 		WITH c AS (`+ClaimingStationsSQL("$1")+`),
-		     o AS (SELECT CASE WHEN station_unaware THEN projects_to ELSE station_id END AS st, edge_uuid
+		     o AS (SELECT CASE WHEN station_unaware THEN projects_to_station_uid
+		                 WHEN station_uid <> '' THEN station_uid ELSE requested_by END AS st, edge_uuid
 		             FROM orders WHERE id = $2)
-		SELECT 'claim', c.station_id, COALESCE(er.schema_version, 0), ''
-		  FROM c LEFT JOIN edge_registry er ON er.station_id = c.station_id
+		SELECT 'claim', c.station_uid, COALESCE(er.schema_version, 0), ''
+		  FROM c LEFT JOIN edge_registry er ON er.station_uid = c.station_uid
 		UNION ALL
 		SELECT 'order', o.st, COALESCE(er.schema_version, 0), o.edge_uuid
-		  FROM o LEFT JOIN edge_registry er ON er.station_id = o.st AND o.st <> ''
+		  FROM o LEFT JOIN edge_registry er ON er.station_uid = o.st AND o.st <> ''
 		UNION ALL
-		SELECT 'plant', er.station_id, COALESCE(er.schema_version, 0), ''
+		SELECT 'plant', er.station_uid, COALESCE(er.schema_version, 0), ''
 		  `+LastArmEdgesSQL+`
 		   AND NOT EXISTS (SELECT 1 FROM c)
 		   AND NOT EXISTS (SELECT 1 FROM o WHERE COALESCE(o.st, '') <> '')

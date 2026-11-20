@@ -140,14 +140,14 @@ func TestCompound_HeldLegOnItsDESTINATIONLaneResumes(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	parent := &orders.Order{
-		EdgeUUID: "DESTHELD-parent", StationID: "line-1",
+		EdgeUUID: "DESTHELD-parent", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	// A STORE leg: picks from ordinary storage, drops INTO the lane.
 	child := &orders.Order{
-		EdgeUUID: "DESTHELD-child", StationID: "line-1",
+		EdgeUUID: "DESTHELD-child", StationUID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		ParentOrderID: &parent.ID, Sequence: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: slots[0].Name,
@@ -204,7 +204,7 @@ func TestListHeldLegParentsInLane_MatchesDottedAndBareNames(t *testing.T) {
 
 	mk := func(uuid string, parentID int64, source string) {
 		c := &orders.Order{
-			EdgeUUID: uuid, StationID: "line-1",
+			EdgeUUID: uuid, StationUID: "line-1",
 			OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 			ParentOrderID: &parentID, Sequence: 1,
 			SourceNode: source, DeliveryNode: sd.LineNode.Name,

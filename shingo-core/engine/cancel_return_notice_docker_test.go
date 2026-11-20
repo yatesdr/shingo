@@ -18,7 +18,7 @@ import (
 // order, in send order. The outbox is the seam: SendDataToEdge enqueues there.
 func binReturnNotices(t *testing.T, db *store.DB, orderUUID string) (out []protocol.BinReturn, stations []string) {
 	t.Helper()
-	rows, err := db.DB.Query(`SELECT payload, station_id FROM outbox ORDER BY id`)
+	rows, err := db.DB.Query(`SELECT payload, dst_station FROM outbox ORDER BY id`)
 	testutil.MustNoErr(t, err, "read outbox")
 	defer rows.Close()
 	for rows.Next() {
@@ -61,8 +61,8 @@ func TestCancelReturnNotice_ReturningThenReturned(t *testing.T) {
 
 	got, stations := binReturnNotices(t, db, carrier.EdgeUUID)
 	if len(got) != 1 || got[0].State != protocol.BinReturnReturning || got[0].Destination != slot.Name ||
-		got[0].BinLabel != bin.Label || stations[0] != carrier.StationID {
-		t.Fatalf("notices after dispatch = %+v to %v, want one 'returning' to %s for %s", got, stations, carrier.StationID, slot.Name)
+		got[0].BinLabel != bin.Label || stations[0] != carrier.StationUID {
+		t.Fatalf("notices after dispatch = %+v to %v, want one 'returning' to %s for %s", got, stations, carrier.StationUID, slot.Name)
 	}
 
 	// Through the real lifecycle: delivered (the bin is down), then confirmed.
@@ -124,10 +124,10 @@ func TestCancelReturnNotice_AHoldIsNamed(t *testing.T) {
 func TestCancelReturnNotice_AnOrdinaryOrderEndingReadsNothing(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
-	ordinary := &orders.Order{EdgeUUID: "crn-ordinary", StationID: "edge.test", OrderType: "retrieve",
+	ordinary := &orders.Order{EdgeUUID: "crn-ordinary", StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusConfirmed, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(ordinary), "an ordinary order")
-	cancelled := &orders.Order{EdgeUUID: "crn-cancelled", StationID: "edge.test", OrderType: "retrieve",
+	cancelled := &orders.Order{EdgeUUID: "crn-cancelled", StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(cancelled), "a cancelled order")
 	ret := &orders.Order{EdgeUUID: "crn-return", OrderType: "move", Status: protocol.StatusDelivered,
@@ -161,12 +161,12 @@ func TestCancelReturnNotice_ADigLegsNoticeGoesToTheOrderTheEdgePlaced(t *testing
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	parent := &orders.Order{EdgeUUID: "crnd-parent", StationID: "edge.test", OrderType: "retrieve",
+	parent := &orders.Order{EdgeUUID: "crnd-parent", StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "the order the Edge placed")
 	bin, leg := seedCancelledCarry(t, db, "AMR-CRND", "CRND-NOCLAIM", "LINE-CRND")
-	_, err := db.DB.Exec(`UPDATE orders SET parent_order_id=$1, station_id=$2 WHERE id=$3`,
-		parent.ID, parent.StationID, leg.ID)
+	_, err := db.DB.Exec(`UPDATE orders SET parent_order_id=$1, station_uid=$2 WHERE id=$3`,
+		parent.ID, parent.StationUID, leg.ID)
 	testutil.MustNoErr(t, err, "make the carrier a dig leg of the parent")
 	cacheRobot(eng, loadedDispatchable("AMR-CRND"))
 	eng.sweepCarriedBins()
@@ -177,8 +177,8 @@ func TestCancelReturnNotice_ADigLegsNoticeGoesToTheOrderTheEdgePlaced(t *testing
 	}
 	got, stations := binReturnNotices(t, db, parent.EdgeUUID)
 	if len(got) != 1 || got[0].State != protocol.BinReturnHeld || got[0].Reason == "" ||
-		stations[0] != parent.StationID {
+		stations[0] != parent.StationUID {
 		t.Errorf("notices keyed on the parent = %+v to %v, want one held with the reason to %s",
-			got, stations, parent.StationID)
+			got, stations, parent.StationUID)
 	}
 }

@@ -157,7 +157,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 						Payload: engine.OrderFailedEvent{
 							OrderID:         order.ID,
 							EdgeUUID:        order.EdgeUUID,
-							StationID:       order.StationID,
+							StationID:       order.Requester(),
 							ErrorCode:       "group_restructured",
 							Detail:          "source group restructured (node reparented)",
 							RecoversOrderID: order.RecoversOrderID,
@@ -350,7 +350,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 					Payload: engine.OrderFailedEvent{
 						OrderID:         order.ID,
 						EdgeUUID:        order.EdgeUUID,
-						StationID:       order.StationID,
+						StationID:       order.Requester(),
 						ErrorCode:       "group_deleted",
 						Detail:          "source group deleted",
 						RecoversOrderID: order.RecoversOrderID,

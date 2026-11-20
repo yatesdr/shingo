@@ -48,7 +48,7 @@ func TestComplexIntake_TheRowAsWritten(t *testing.T) {
 	got := *o
 	got.ID, got.StepsJSON, got.CreatedAt, got.UpdatedAt = 0, "", got.CreatedAt.Truncate(0), got.UpdatedAt.Truncate(0)
 	want := orders.Order{
-		EdgeUUID: "cir-1", StationID: testEnvelope().Src.Station, OrderType: OrderTypeComplex,
+		EdgeUUID: "cir-1", StationUID: testEnvelope().Src.Station, OrderType: OrderTypeComplex,
 		Status: StatusPending, Quantity: 2, Priority: 3, PayloadCode: bp.Code, PayloadDesc: "the row's desc",
 		SourceNode: storage.Name, DeliveryNode: line.Name, ProcessNode: line.Name, Coordinated: true,
 		SiblingOrderUUID: "cir-sibling", KeyRoute: []string{"R1", "R2"}, KeyTask: "T1",

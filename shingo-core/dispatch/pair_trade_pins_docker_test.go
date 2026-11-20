@@ -75,12 +75,12 @@ func TestCompoundPin_AdvanceSendsOneLegPerCall(t *testing.T) {
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	src2 := prNode(t, db, "ONE-SRC-2")
-	parent := &orders.Order{EdgeUUID: "one-per-call-parent", StationID: "line-1",
+	parent := &orders.Order{EdgeUUID: "one-per-call-parent", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 	var kids []*orders.Order
 	for i, src := range []string{sd.StorageNode.Name, src2.Name} {
-		c := &orders.Order{EdgeUUID: "one-per-call-child" + string(rune('1'+i)), StationID: "line-1",
+		c := &orders.Order{EdgeUUID: "one-per-call-child" + string(rune('1'+i)), StationUID: "line-1",
 			OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 			ParentOrderID: &parent.ID, Sequence: i + 1, SourceNode: src, DeliveryNode: sd.LineNode.Name}
 		testutil.MustNoErr(t, db.CreateOrder(c), "create child")

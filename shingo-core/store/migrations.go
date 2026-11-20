@@ -191,7 +191,9 @@ type migration struct {
 // is regenerated after it (make schema-baseline), so a database born on the
 // new baseline records it too.
 func migrationList() []migration {
-	return []migration{}
+	return []migration{
+		{185, "the clean column model: station_uid wherever a station's uid is held, requested_by for Core's actors, dst_station, rds_station; the columns and tables nothing reads dropped", v185Up, v185Verify},
+	}
 }
 
 // latestMigrationVersion is the highest version this build records: the last

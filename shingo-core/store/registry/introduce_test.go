@@ -77,7 +77,7 @@ func TestIntroduce_CannotTakeOverAnotherStation(t *testing.T) {
 
 	// A real, claimed station with history attached to it.
 	const established = "stn-established00"
-	if _, err := registry.Enroll(db.DB, established, "SPRINGFIELD / LINE 1", established); err != nil {
+	if _, err := registry.Enroll(db.DB, established, "SPRINGFIELD / LINE 1"); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 

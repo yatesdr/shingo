@@ -298,7 +298,7 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	//
 	// Already-enrolled is the normal case on a re-seed and is not an error.
 	for _, stationID := range p.Edges() {
-		if _, err := db.EnrollEdge(stationID, strings.Replace(stationID, ".", " ", 1), stationID); err != nil &&
+		if _, err := db.EnrollEdge(stationID, strings.Replace(stationID, ".", " ", 1)); err != nil &&
 			!errors.Is(err, registry.ErrAlreadyEnrolled) {
 			return fmt.Errorf("enroll station %s: %w", stationID, err)
 		}
@@ -381,7 +381,7 @@ func seedKanbans(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, bin
 			}
 			return id, nil
 		}
-		change := store.KanbanChange{NodeID: groupID, EnsureRow: true, Station: &mg.Station, Strict: &mg.Strict}
+		change := store.KanbanChange{NodeID: groupID, EnsureRow: true, StationUID: &mg.Station, Strict: &mg.Strict}
 		for _, l := range mg.Levels {
 			btID, ok := binTypeIDs[l.BinType]
 			if !ok {

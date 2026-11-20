@@ -2035,7 +2035,7 @@ type Lift struct {
 func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now time.Time) (Lift, error) {
 	const streamed = `(NOT ` + helpers.NodeNotASeatSQL + `
 		OR EXISTS (SELECT 1 FROM inventory_delta_dedup dd
-		            WHERE dd.station = $4 AND dd.scope_kind = 'bin'
+		            WHERE dd.station_uid = $4 AND dd.scope_kind = 'bin'
 		              AND dd.scope_key = bins.id::text AND dd.epoch = bins.delta_epoch))`
 	var (
 		l        Lift

@@ -152,15 +152,15 @@ type Loader struct {
 	// what an older Core leaves off the wire -- is the clear every loader has.
 	NoClearPartials bool `json:"no_clear_partials"`
 
-	// EdgeStationUID names the Edge that works this loader, by its
-	// edge_registry.station_uid (v178): that Edge makes the station's operator
-	// screen and keeps its windows on it, and every other Edge takes nothing of
-	// it. Carried on LoaderInfo.EdgeStationUID, with the Edge's display name
-	// beside it. Blank -- the column default, the Go zero value, what every
-	// loader read before v178 and what a client omitting it sends -- picks no
-	// Edge. The service checks a newly picked uid against the registry
-	// (LoaderService.checkEdge); nothing here does.
-	EdgeStationUID string `json:"edge_station_uid"`
+	// StationUID names the Edge that works this loader, by its
+	// edge_registry.station_uid (bin_loaders.station_uid; v178): that Edge makes
+	// the station's operator screen and keeps its windows on it, and every other
+	// Edge takes nothing of it. Carried on the wire as LoaderInfo.EdgeStationUID,
+	// with the Edge's display name beside it. Blank -- the column default, the Go
+	// zero value, what every loader read before v178 and what a client omitting
+	// it sends -- picks no Edge. The service checks a newly picked uid against
+	// the registry (LoaderService.checkEdge); nothing here does.
+	StationUID string `json:"station_uid"`
 
 	// Drains is what an UNLOADER pulls from its inbound source beside its
 	// fulls: the part-less carrier states a plant ticked (v165, DrainStates).
@@ -198,7 +198,7 @@ func ActsAsUnloaderSQL(alias string) string {
 // unrepresentable-otherwise — the structural fix for the SLN_002 incident.
 //
 // The legacy bin-count floor (min_stock) is retired: a loader is operator-driven
-// or UOP-threshold-driven, never bin-count-driven. v184 dropped its column.
+// or UOP-threshold-driven, never bin-count-driven. v185 dropped its column.
 type Home struct {
 	LoaderID       int64  `json:"loader_id"`
 	PositionNodeID int64  `json:"position_node_id"`
@@ -235,7 +235,7 @@ type Config struct {
 }
 
 // loaderCols is every loader read's column list.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, archived_at, funnel_windows, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, edge_station_uid, ` + drainCols
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, archived_at, funnel_windows, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, station_uid, ` + drainCols
 
 // drainCols are the four drain boxes (v165), in Drainable's order, for every
 // read and both writes.
@@ -251,7 +251,7 @@ func scanLoader(s scanner) (Loader, error) {
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &archivedAt, &l.FunnelWindows,
 		&l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly, &l.PulledDirectly,
-		&l.BoardHidesIdle, &l.BoardShowsAllParts, &l.NoClearPartials, &l.EdgeStationUID, &drains[0], &drains[1], &drains[2], &drains[3])
+		&l.BoardHidesIdle, &l.BoardShowsAllParts, &l.NoClearPartials, &l.StationUID, &drains[0], &drains[1], &drains[2], &drains[3])
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -271,12 +271,12 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
 			funnel_windows, accept_partials, auto_push,
-			second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, edge_station_uid, `+drainCols+`)
+			second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts, no_clear_partials, station_uid, `+drainCols+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.AcceptPartials, l.AutoPush,
 		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
-		l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials, l.EdgeStationUID, drains[0], drains[1], drains[2], drains[3],
+		l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials, l.StationUID, drains[0], drains[1], drains[2], drains[3],
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -362,14 +362,14 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
 			accept_partials=$7, auto_push=$8,
 			second_stage_loader_id=$9, fed_directly=$10, pulled_directly=$11,
-			board_hides_idle=$12, board_shows_all_parts=$13, no_clear_partials=$14, edge_station_uid=$15,
+			board_hides_idle=$12, board_shows_all_parts=$13, no_clear_partials=$14, station_uid=$15,
 			drains_empty=$16, drains_tops_bottoms=$17, drains_leftover=$18, drains_unverified=$19,
 			config_gen=config_gen+1, updated_at=NOW()
 		WHERE id=$20`,
 		l.Name, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.AcceptPartials, l.AutoPush,
 		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
-		l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials, l.EdgeStationUID, drains[0], drains[1], drains[2], drains[3], l.ID)
+		l.BoardHidesIdle, l.BoardShowsAllParts, l.NoClearPartials, l.StationUID, drains[0], drains[1], drains[2], drains[3], l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

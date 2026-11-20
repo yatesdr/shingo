@@ -70,7 +70,7 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	// refusal rather than the dedup it is named for.
 	order := &orders.Order{
 		EdgeUUID:     "uuid-redir",
-		StationID:    "edge.1",
+		StationUID:   "edge.1",
 		OrderType:    dispatch.OrderTypeMove,
 		Status:       dispatch.StatusQueued,
 		Quantity:     1,
@@ -200,7 +200,7 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 	db := testdb.Open(t)
 	order := &orders.Order{
 		EdgeUUID:     "uuid-receipt-restart",
-		StationID:    "edge.1",
+		StationUID:   "edge.1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		Status:       dispatch.StatusDelivered,
 		DeliveryNode: "LINE-1",

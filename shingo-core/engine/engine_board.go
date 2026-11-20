@@ -18,7 +18,8 @@ type BoardOrder struct {
 	DeliveryNode   string `json:"delivery_node"`
 	Status         string `json:"status"`
 	ETA            string `json:"eta,omitempty"`
-	StationID      string `json:"station_id"`
+	StationUID     string `json:"station_uid"`
+	RequestedBy    string `json:"requested_by,omitempty"`
 	CreatedAt      string `json:"created_at"`
 	CurrentStation string `json:"current_station"`
 	// Carrying is true when the assigned robot is physically loaded (lift/jack up).
@@ -70,7 +71,8 @@ func (e *Engine) GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]
 			PayloadCode:    o.PayloadCode,
 			DeliveryNode:   o.DeliveryNode,
 			Status:         string(o.Status),
-			StationID:      o.StationID,
+			StationUID:     o.StationUID,
+			RequestedBy:    o.RequestedBy,
 			CreatedAt:      o.CreatedAt.Format(time.RFC3339),
 			CurrentStation: rob.CurrentStation,
 			Carrying:       rob.LiftHeight > liftLoadedThreshold,
@@ -101,7 +103,8 @@ func (e *Engine) GetActiveOrderWithRobotLocation(orderID int64) (*BoardOrder, er
 		PayloadCode:  o.PayloadCode,
 		DeliveryNode: o.DeliveryNode,
 		Status:       string(o.Status),
-		StationID:    o.StationID,
+		StationUID:   o.StationUID,
+		RequestedBy:  o.RequestedBy,
 		CreatedAt:    o.CreatedAt.Format(time.RFC3339),
 	}
 	if rs, ok := e.GetCachedRobotStatus(o.RobotID); ok {

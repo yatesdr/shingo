@@ -89,7 +89,7 @@ func (g *goldenPlant) births(since int) []birthAnswer {
 	g.t.Helper()
 	projected := g.projections(since)
 	rows, err := g.db.DB.Query(`
-		SELECT id, parent_order_id, edge_uuid, order_type, status, COALESCE(station_id,''), quantity,
+		SELECT id, parent_order_id, edge_uuid, order_type, status, COALESCE(station_uid,''), quantity,
 		       COALESCE(payload_code,''), COALESCE(source_node,''), COALESCE(delivery_node,''),
 		       COALESCE(process_node,''), born_cart, COALESCE(steps_json,''), COALESCE(source_intent,''),
 		       coordinated, sibling_order_uuid <> '', COALESCE(origin_class,''),

@@ -183,14 +183,14 @@ type LoopClaim struct {
 const loopClaimsSQL = `
 WITH claims AS (
     SELECT DISTINCT c.process_id, c.core_node_name, c.payload_code, c.role, c.reorder_point, c.uop_capacity,
-           COALESCE(s.station_id, '') AS station_id
+           COALESCE(s.station_uid, '') AS station_uid
       FROM style_claims c
       JOIN process_styles s ON s.process_id = c.process_id AND s.style_id = c.style_id AND s.is_active
      WHERE c.payload_code <> '')
 SELECT c.process_id, c.core_node_name, c.payload_code, c.role, c.reorder_point, c.uop_capacity,
        EXISTS (SELECT 1 FROM bin_loader_homes h JOIN nodes hn ON hn.id = h.position_node_id WHERE hn.name = c.core_node_name),
-       COALESCE(NULLIF((SELECT e.display_name FROM edge_registry e WHERE e.station_id = c.station_id
-                         ORDER BY e.id LIMIT 1), ''), c.station_id)
+       COALESCE(NULLIF((SELECT e.display_name FROM edge_registry e WHERE e.station_uid = c.station_uid
+                         ORDER BY e.id LIMIT 1), ''), c.station_uid)
   FROM claims c
  ORDER BY c.process_id, c.core_node_name, c.payload_code, c.role`
 

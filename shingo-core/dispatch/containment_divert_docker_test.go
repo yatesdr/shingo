@@ -48,7 +48,7 @@ func containmentFixture(t *testing.T, db *store.DB) (prod, fgn, hold *nodes.Node
 func containmentOrder(t *testing.T, db *store.DB, uuid, fgnName, prodName string, binID *int64) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
+		EdgeUUID: uuid, StationUID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgnName, PayloadCode: "PART-QC",
 		ProcessNode: prodName,
 		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + prodName + `"},` +
@@ -132,7 +132,7 @@ func TestPlaceForContainment_SingleBinRepoints(t *testing.T) {
 
 	fgBin := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-single-bin", 4, time.Now().UTC())
 	o := &orders.Order{
-		EdgeUUID: "qc-single-1", StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
+		EdgeUUID: "qc-single-1", StationUID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
 		ProcessNode: "PROD-QC",
 		StepsJSON:   `[{"action":"pickup","node":"PROD-QC"},{"action":"dropoff","node":"` + fgn.Name + `"}]`,
@@ -198,7 +198,7 @@ func TestPlaceForContainment_AGroupOutboundIsDiverted(t *testing.T) {
 	steps := []resolvedStep{rlWait("PROD-QC", WaitKindStation), {Action: protocol.ActionPickup, Node: "PROD-QC"},
 		{Action: protocol.ActionDropoff, Node: "FG-QC-GRP-1", Group: "FG-QC-GRP"}}
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "qc-group-1", "test", OrderTypeComplex, StatusPending
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "qc-group-1", "test", OrderTypeComplex, StatusPending
 		o.ProcessNode, o.DeliveryNode, o.PayloadCode = "PROD-QC", "FG-QC-GRP-1", "PART-QC"
 		o.StepsJSON = string(mustJSON(t, steps))
 	})
@@ -227,7 +227,7 @@ func TestPlaceForContainment_RobotOneDivertsTheFullNotItsRefill(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: fgn.Name}, {Action: protocol.ActionPickup, Node: "SRC-QC"},
 		{Action: protocol.ActionDropoff, Node: "PROD-QC-BACK"}}
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "qc-r1-1", "test", OrderTypeComplex, StatusPending
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "qc-r1-1", "test", OrderTypeComplex, StatusPending
 		o.ProcessNode, o.DeliveryNode, o.PayloadCode = "PROD-QC", "PROD-QC-BACK", "PART-QC"
 		o.StepsJSON = string(mustJSON(t, steps))
 	})

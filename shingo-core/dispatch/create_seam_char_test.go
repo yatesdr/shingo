@@ -226,7 +226,7 @@ func TestCharSeam_ComplexUngated_TakesItsOccupancyRow(t *testing.T) {
 	testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "CSEAM-CPLX-BIN")
 	order := &orders.Order{
 		EdgeUUID:     "cseam-complex",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,
@@ -277,7 +277,7 @@ func TestCharSeam_ComplexIsRefusedByAnotherOrdersOccupancy(t *testing.T) {
 	testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "CSEAM-CREAD-BIN")
 	order := &orders.Order{
 		EdgeUUID:     "cseam-cread",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,

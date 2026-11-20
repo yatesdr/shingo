@@ -25,7 +25,7 @@ import (
 func seedCursor(t *testing.T, db *store.DB, station string, binID, epoch, seq, net int64) {
 	t.Helper()
 	_, err := db.DB.Exec(`INSERT INTO inventory_delta_dedup
-		(station, scope_kind, scope_key, epoch, last_seq, applied_net) VALUES ($1, 'bin', $2, $3, $4, $5)`,
+		(station_uid, scope_kind, scope_key, epoch, last_seq, applied_net) VALUES ($1, 'bin', $2, $3, $4, $5)`,
 		station, strconv.FormatInt(binID, 10), epoch, seq, net)
 	testutil.MustNoErr(t, err, "seed cursor")
 }

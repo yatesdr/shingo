@@ -135,11 +135,11 @@ func TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp(t *testing.T) {
 
 	// In-memory order only: the guard returns before touching the DB.
 	order := &orders.Order{
-		EdgeUUID:  "char-nonacquiring",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusDispatched, // not in the acquiring set {pending, queued}
-		StepsJSON: `[{"action":"pickup","node":"X"},{"action":"dropoff","node":"Y"}]`,
+		EdgeUUID:   "char-nonacquiring",
+		StationUID: "line-1",
+		OrderType:  OrderTypeComplex,
+		Status:     StatusDispatched, // not in the acquiring set {pending, queued}
+		StepsJSON:  `[{"action":"pickup","node":"X"},{"action":"dropoff","node":"Y"}]`,
 	}
 
 	if err := d.DispatchPreparedComplex(order); err != nil {
@@ -165,12 +165,12 @@ func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
-		EdgeUUID:  "char-bad-json",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-		Quantity:  1,
-		StepsJSON: `{ this is not valid json`,
+		EdgeUUID:   "char-bad-json",
+		StationUID: "line-1",
+		OrderType:  OrderTypeComplex,
+		Status:     StatusQueued,
+		Quantity:   1,
+		StepsJSON:  `{ this is not valid json`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order with bad steps json")
 
@@ -213,7 +213,7 @@ func TestChar_FailOrderInternal_ARefusedFailTellsTheEdgeNothing(t *testing.T) {
 	for _, st := range []protocol.Status{StatusConfirmed, StatusCancelled, StatusFailed} {
 		d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 		// In-memory order only: Fail's IsTerminal guard returns before touching the DB.
-		order := &orders.Order{EdgeUUID: "char-fail-refused-" + string(st), StationID: "line-1", OrderType: OrderTypeComplex, Status: st}
+		order := &orders.Order{EdgeUUID: "char-fail-refused-" + string(st), StationUID: "line-1", OrderType: OrderTypeComplex, Status: st}
 		d.failOrderInternal(order, "invalid_steps", "a refused fail")
 		if len(emitter.failed) != 0 {
 			t.Errorf("%s order: failed events = %d, want 0 (the Edge is not told an order failed that %s)", st, len(emitter.failed), st)
@@ -229,7 +229,7 @@ func TestChar_SkipOrderInternal_ARefusedSkipTellsTheEdgeNothing(t *testing.T) {
 	testdb.SetupTestData(t, db)
 	for _, st := range []protocol.Status{StatusConfirmed, StatusCancelled, StatusSkipped} {
 		d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-		order := &orders.Order{EdgeUUID: "char-skip-refused-" + string(st), StationID: "line-1", OrderType: OrderTypeComplex, Status: st}
+		order := &orders.Order{EdgeUUID: "char-skip-refused-" + string(st), StationUID: "line-1", OrderType: OrderTypeComplex, Status: st}
 		d.skipOrderInternal(order, "no_source_bin", "a refused skip")
 		if len(emitter.skipped) != 0 {
 			t.Errorf("%s order: skipped events = %d, want 0", st, len(emitter.skipped))
@@ -260,7 +260,7 @@ func TestC2bPin_AComplexOrderTheFleetRefusesRequeues(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "char-fleet-fail",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,
@@ -318,7 +318,7 @@ func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot
 	// Another order already holds the slot reservation (soft — the reservation-
 	// native stand-in for "it got there first"). Give it a delivery node OTHER than
 	// the slot so it never counts as inbound to the slot.
-	other := &orders.Order{EdgeUUID: "char-slot-other", StationID: "line-1",
+	other := &orders.Order{EdgeUUID: "char-slot-other", StationUID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create contending order")
 	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, other.ID), "other reserves the slot")
@@ -329,7 +329,7 @@ func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot
 	testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "BIN-SLOT-CONTEND")
 	order := &orders.Order{
 		EdgeUUID:     "char-slot-contend",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,

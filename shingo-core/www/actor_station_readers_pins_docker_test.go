@@ -63,7 +63,7 @@ func wwwActorOrders(t *testing.T) (*Handlers, *store.DB, map[string]int64) {
 	t.Helper()
 	h, db := testHandlersWithSim(t, simulator.New())
 	sd := testdb.SetupStandardData(t, db)
-	if _, err := db.EnrollEdge(pinStation, pinStationLabel, pinStation); err != nil {
+	if _, err := db.EnrollEdge(pinStation, pinStationLabel); err != nil {
 		t.Fatalf("enroll %s: %v", pinStation, err)
 	}
 	storType, err := db.GetNodeTypeByCode("STOR")
@@ -116,7 +116,7 @@ func wwwActorOrders(t *testing.T) (*Handlers, *store.DB, map[string]int64) {
 	intake("test", "core-test", "test order from shingo core")
 
 	carrier := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.Status = "wpin-carrier", pinStation, protocol.StatusCancelled
+		o.EdgeUUID, o.StationUID, o.Status = "wpin-carrier", pinStation, protocol.StatusCancelled
 	})
 	core, _, err := h.engine.Dispatcher().IssueOrder(dispatch.Need{
 		Type: protocol.OrderTypeMove, Ref: "wpin-core", Quantity: 1,

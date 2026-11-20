@@ -57,7 +57,7 @@ func TestC2aPin_ABuriedRetrieveWaitingForParkingHasOneWait(t *testing.T) {
 
 	// The waiting retrieve, parked once under the wait it had before the scan.
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.PayloadCode = "c2af-demand", "line-1", OrderTypeRetrieve, bp.Code
+		o.EdgeUUID, o.StationUID, o.OrderType, o.PayloadCode = "c2af-demand", "line-1", OrderTypeRetrieve, bp.Code
 		o.Status = StatusQueued
 	})
 	d.SetQueueReason(o, protocol.QueueWaitingForMaterial, CauseFinderGroupEmpty, QueueParams{Payload: bp.Code})

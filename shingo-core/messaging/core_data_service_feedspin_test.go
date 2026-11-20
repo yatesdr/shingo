@@ -165,7 +165,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 			t.Parallel()
 			db := testdb.Open(t)
 			if tc.enroll {
-				_, err := db.EnrollEdge(st, "", st)
+				_, err := db.EnrollEdge(st, "")
 				testutil.MustNoErr(t, err, "enroll")
 			}
 			if tc.breakRegistry {

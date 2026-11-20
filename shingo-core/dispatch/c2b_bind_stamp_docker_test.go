@@ -38,7 +38,7 @@ func TestC2bPin_AGateRebindStampsTheBindMoment(t *testing.T) {
 	before := time.Now().Add(-time.Second)
 	at, err := f.db.GetOrder(f.swap.ID)
 	testutil.MustNoErr(t, err, "reload the swap")
-	f.d.HandleOrderRelease(f.d.syntheticEnvelope(at.StationID), &protocol.OrderRelease{OrderUUID: at.EdgeUUID})
+	f.d.HandleOrderRelease(f.d.syntheticEnvelope(at.StationUID), &protocol.OrderRelease{OrderUUID: at.EdgeUUID})
 
 	stamped, ok, err := f.db.OrderDestinationResolvedAt(f.swap.ID)
 	testutil.MustNoErr(t, err, "read the stamp")

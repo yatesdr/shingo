@@ -27,7 +27,7 @@ type TelemetryEvent struct {
 	RobotY        *float64  `json:"robot_y,omitempty"`
 	RobotAngle    *float64  `json:"robot_angle,omitempty"`
 	RobotBattery  *float64  `json:"robot_battery,omitempty"`
-	RobotStation  string    `json:"robot_station"`
+	RDSStation    string    `json:"rds_station"`
 	BlocksJSON    string    `json:"blocks_json"`
 	ErrorsJSON    string    `json:"errors_json"`
 	Detail        string    `json:"detail"`
@@ -46,7 +46,8 @@ type TelemetryMission struct {
 	OrderID          int64              `json:"order_id"`
 	VendorOrderID    string             `json:"vendor_order_id"`
 	RobotID          string             `json:"robot_id"`
-	StationID        string             `json:"station_id"`
+	StationUID       string             `json:"station_uid"`
+	RequestedBy      string             `json:"requested_by,omitempty"` // the order's Core actor; see domain.Order
 	OrderType        protocol.OrderType `json:"order_type"`
 	SourceNode       string             `json:"source_node"`
 	DeliveryNode     string             `json:"delivery_node"`

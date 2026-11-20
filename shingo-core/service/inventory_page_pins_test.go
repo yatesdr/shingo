@@ -58,7 +58,7 @@ func TestInventoryPin_SystemUOPSum(t *testing.T) {
 	}
 
 	// (c) a lineside pile: active counts, stranded does not.
-	_, err = db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+	_, err = db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		VALUES ('PIN-ST', 'PIN-SUM-AT', $1, 'active', 11), ('PIN-ST', 'PIN-SUM-AT', $1, 'stranded', 5)`, payload)
 	testutil.MustNoErr(t, err, "seed piles")
 	got := sum()

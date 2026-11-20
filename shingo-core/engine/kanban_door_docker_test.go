@@ -55,7 +55,7 @@ func (r *kanbanCostRig) parked(t *testing.T, uuid, window string, bin int64) *or
 	t.Helper()
 	o := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "kc-edge"
+		o.StationUID = "kc-edge"
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceIntent = dispatch.SourceIntentLocal
 		o.OriginClass = protocol.OriginClassNoDemand
@@ -301,7 +301,7 @@ func TestKanbanDoor_APersonsNamedDropStaysNamed(t *testing.T) {
 		r := newKanbanCostRig(t, 1, 2, 2)
 		o := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 			o.EdgeUUID = "kd6"
-			o.StationID = "kc-page"
+			o.StationUID = "kc-page"
 			o.OrderType = dispatch.OrderTypeMove
 			o.SourceIntent = dispatch.SourceIntentLocal
 			o.OriginClass = protocol.OriginClassNoDemand
@@ -344,7 +344,7 @@ func TestKanbanDoor_ARobotUnderTheCartIsNotRedirected(t *testing.T) {
 	bin := r.push
 	moving := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = "kd7"
-		o.StationID = "kc-edge"
+		o.StationUID = "kc-edge"
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceIntent = dispatch.SourceIntentLocal
 		o.OriginClass = protocol.OriginClassNoDemand
@@ -414,7 +414,7 @@ func TestKanbanDoor_AgreesWithTheKeepersCounts(t *testing.T) {
 	coming := r.push
 	testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = "kd10"
-		o.StationID = "kc-edge"
+		o.StationUID = "kc-edge"
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceNode = r.windows[1].Name
 		o.DeliveryNode = kids[len(kids)-1].Name
@@ -463,7 +463,7 @@ func TestKanbanDoor_ACartGoingToASourceIsWalkedByNoGroup(t *testing.T) {
 	testutil.MustNoErr(t, err, "Z45's children")
 	testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 		o.EdgeUUID = "kd11"
-		o.StationID = "kc-edge"
+		o.StationUID = "kc-edge"
 		o.OrderType = dispatch.OrderTypeMove
 		o.SourceNode = r.windows[1].Name
 		o.DeliveryNode = kids[len(kids)-1].Name
@@ -580,7 +580,7 @@ func TestKanbanDoor_ItsFreeSlotsAreTheResolversSlots(t *testing.T) {
 	anOrder := func(t *testing.T, r *kanbanCostRig, uuid, delivery string) *orders.Order {
 		return testdb.CreateOrder(t, r.db, func(o *orders.Order) {
 			o.EdgeUUID = uuid
-			o.StationID = "kc-edge"
+			o.StationUID = "kc-edge"
 			o.OrderType = dispatch.OrderTypeMove
 			o.DeliveryNode = delivery
 		})

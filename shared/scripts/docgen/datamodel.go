@@ -8,9 +8,10 @@ package main
 // The snapshots are each module's own rendering of its migrated schema
 // (Core: pg_dump of a migrated Postgres, `make schema-snapshot`; Edge: the
 // SQLite DDL of a migrated database), so a column the generator shows is one
-// a fresh database has. Core's dump carries no column comments (the schema
-// declares none); the Edge's DDL keeps the `--` comments its migrations wrote,
-// and those become the Comment column.
+// a fresh database has. Core's dump carries the COMMENT ON statements migration
+// 185 applies (shingo-core/store/schema/comments.sql): a column's becomes its
+// Comment, a table's its first note. The Edge's DDL keeps the `--` comments its
+// migrations wrote, and those become the Comment column.
 
 import (
 	"fmt"
@@ -153,6 +154,9 @@ var (
 	pgUniqueRe  = regexp.MustCompile(`^UNIQUE \((.*)\)$`)
 	pgFKRe      = regexp.MustCompile(`^FOREIGN KEY \((.*?)\) REFERENCES public\.(\w+\(.*?\))(.*)$`)
 	pgCheckRe   = regexp.MustCompile(`^CHECK \((.*)\)( NOT VALID)?$`)
+
+	pgColCommentRe = regexp.MustCompile(`(?m)^COMMENT ON COLUMN public\.(\w+)\.(\w+) IS '((?:[^']|'')*)';$`)
+	pgTabCommentRe = regexp.MustCompile(`(?m)^COMMENT ON TABLE public\.(\w+) IS '((?:[^']|'')*)';$`)
 )
 
 func parsePgDump(src string) ([]*sqlTable, error) {
@@ -212,6 +216,18 @@ func parsePgDump(src string) ([]*sqlTable, error) {
 	for _, m := range pgUniqIdxRe.FindAllStringSubmatch(src, -1) {
 		if t := byName[m[1]]; t != nil {
 			t.addUnique(splitList(m[2]), sqlText(strings.TrimSuffix(strings.TrimPrefix(m[3], "("), ")")))
+		}
+	}
+	for _, m := range pgColCommentRe.FindAllStringSubmatch(src, -1) {
+		if t := byName[m[1]]; t != nil {
+			if c := t.col(m[2]); c != nil {
+				c.comment = strings.ReplaceAll(m[3], "''", "'")
+			}
+		}
+	}
+	for _, m := range pgTabCommentRe.FindAllStringSubmatch(src, -1) {
+		if t := byName[m[1]]; t != nil {
+			t.notes = append([]string{strings.ReplaceAll(m[2], "''", "'")}, t.notes...)
 		}
 	}
 	return out, nil

@@ -978,7 +978,7 @@ func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	_, enrErr := db.EnrollEdge("edge-svc-1", "", "edge-svc-1")
+	_, enrErr := db.EnrollEdge("edge-svc-1", "")
 	testutil.MustNoErr(t, enrErr, "EnrollEdge")
 	_, regErr := db.RegisterEdge("edge-svc-1", "host-svc", "inst-svc", "v1", "", sql.NullInt64{})
 	testutil.MustNoErr(t, regErr, "RegisterEdge")
@@ -989,7 +989,7 @@ func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
 	}
 	found := false
 	for _, e := range edges {
-		if e.StationID == "edge-svc-1" {
+		if e.StationUID == "edge-svc-1" {
 			found = true
 			break
 		}

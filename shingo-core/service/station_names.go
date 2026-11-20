@@ -54,7 +54,7 @@ import (
 // # WHAT MUST NOT BE RESOLVED THROUGH HERE
 //
 // Not every column called "station" is an edge station. mission_events
-// .robot_station holds SEER fleet-station names — 148 distinct values at
+// .rds_station holds SEER fleet-station names — 148 distinct values at
 // Springfield — and Core's own synthetic order sources (core-operator, core-direct,
 // core-test) and the '*' broadcast address have no registry row and never will.
 // The fallback covers the second group correctly, by design: they render as

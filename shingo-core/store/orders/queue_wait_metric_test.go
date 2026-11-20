@@ -49,7 +49,7 @@ func TestQueueWaitMetrics_MeasureATransitionCoreActuallyWrites(t *testing.T) {
 	}
 	seed := func(uuid string, evs []ev) {
 		o := &domain.Order{
-			EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
+			EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
 			Status: protocol.StatusPending, Quantity: 1, PayloadCode: "PART-QW",
 			DeliveryNode: "D", SourceNode: "S",
 		}
@@ -153,7 +153,7 @@ func TestQueueWaitMetrics_CountAnOrderThatNeverQueued(t *testing.T) {
 
 	// Born pending and taken by its first hand: no queued row anywhere in its history.
 	o := &domain.Order{
-		EdgeUUID: "never-queued", StationID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
+		EdgeUUID: "never-queued", StationUID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
 		Status: protocol.StatusPending, Quantity: 1, PayloadCode: "PART-BS",
 		DeliveryNode: "D", SourceNode: "S",
 	}
@@ -205,7 +205,7 @@ func TestQueueWaitMetrics_APlainOrdersNumberIsUnchanged(t *testing.T) {
 	s := time.Second
 
 	o := &domain.Order{
-		EdgeUUID: "plain-unchanged", StationID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
+		EdgeUUID: "plain-unchanged", StationUID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
 		Status: protocol.StatusPending, Quantity: 1, PayloadCode: "PART-PU",
 		DeliveryNode: "D", SourceNode: "S",
 	}
@@ -254,7 +254,7 @@ func TestInFlightForDropoff_CountsHoldersNotStatuses(t *testing.T) {
 
 	mk := func(uuid string, status protocol.Status) {
 		o := &domain.Order{
-			EdgeUUID: uuid, StationID: "line-1", OrderType: "retrieve",
+			EdgeUUID: uuid, StationUID: "line-1", OrderType: "retrieve",
 			Status: status, Quantity: 1, DeliveryNode: "CAP-NODE", SourceNode: "S",
 		}
 		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)

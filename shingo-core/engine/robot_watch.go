@@ -229,7 +229,7 @@ func buildRobotPositions(watches []stationWatch, rows []orders.OrderRobot, robot
 		}}
 		for _, u := range w.uuids {
 			o, ok := order[u]
-			if !ok || o.StationID != w.station {
+			if !ok || o.StationUID != w.station {
 				continue
 			}
 			r, ok := polled[o.RobotID]

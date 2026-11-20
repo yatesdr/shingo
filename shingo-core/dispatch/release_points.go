@@ -20,7 +20,7 @@ func (d *Dispatcher) ReleasePoints(stationID string, orderUUIDs []string) []prot
 	for _, uuid := range orderUUIDs {
 		pt := protocol.ReleasePoint{OrderUUID: uuid, Enters: []string{}, AwaitsLift: []protocol.LiftDependency{}}
 		o, err := d.db.GetOrderByUUID(uuid)
-		if err != nil || o == nil || o.StationID != stationID {
+		if err != nil || o == nil || o.Requester() != stationID {
 			out = append(out, pt)
 			continue
 		}

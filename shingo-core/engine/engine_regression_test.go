@@ -104,7 +104,7 @@ func TestRegression_OrderFailedNotifiesEdge(t *testing.T) {
 	var count int
 	err := db.QueryRow(`
 		SELECT COUNT(*) FROM outbox
-		WHERE msg_type = 'order.error' AND station_id = $1
+		WHERE msg_type = 'order.error' AND dst_station = $1
 	`, "line-1").Scan(&count)
 	if err != nil {
 		t.Fatalf("query outbox: %v", err)
@@ -158,8 +158,8 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 
 	// Create an order with empty EdgeUUID (simulates auto-return order)
 	autoReturn := &orders.Order{
-		EdgeUUID:  "",
-		StationID: "line-1",
+		EdgeUUID:   "",
+		StationUID: "line-1",
 		// Incidental to this test, which is about cancelling an order with a
 		// blank EdgeUUID. Literal because "store" is no longer an order type.
 		OrderType:    protocol.OrderType("store"),

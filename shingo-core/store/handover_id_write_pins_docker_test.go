@@ -29,7 +29,7 @@ func TestHandoverIDWrite_TheYesRefusesAnEndedRow(t *testing.T) {
 	t.Parallel()
 	testdb.ExpectAskLeftOpen(t, "an ended row keeps the ask the handover settles; this pin stops before the handover")
 	db := testdb.Open(t)
-	o := &orders.Order{EdgeUUID: "hiw-ended", StationID: "edge.1", OrderType: "retrieve",
+	o := &orders.Order{EdgeUUID: "hiw-ended", StationUID: "edge.1", OrderType: "retrieve",
 		Status: protocol.StatusPending, Quantity: 1, DeliveryNode: "LINE"}
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create: %v", err)

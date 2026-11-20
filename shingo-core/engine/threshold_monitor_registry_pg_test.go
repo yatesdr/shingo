@@ -45,7 +45,7 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 	// payload is 0. Simulates the Springfield case where the payload's
 	// in-loop total is below any positive threshold.
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -128,7 +128,7 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache(t *testing.T) {
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -172,7 +172,7 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_FiresWhenDBBelow(t *testing.T) {
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -228,7 +228,7 @@ func TestThresholdMonitor_SwapContradiction_RecordedWhenStocked(t *testing.T) {
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -279,7 +279,7 @@ func TestThresholdMonitor_SwapContradiction_NotRecordedWhenBelow(t *testing.T) {
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -329,7 +329,7 @@ func TestThresholdMonitor_ReportBelowTheLedger_HoldsAndOpensADivergence(t *testi
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -381,7 +381,7 @@ func TestThresholdMonitor_ReportBelowTheLedger_HoldsAndOpensADivergence(t *testi
 	)
 	err := db.QueryRow(`SELECT op, bin_id, (detail->>'edge_count')::int, (detail->>'core_count')::int
 		FROM bin_uop_exception
-		WHERE kind = 'report_divergence' AND actor = $1 AND recovered_at IS NULL`, stationID).
+		WHERE kind = 'report_divergence' AND station_uid = $1 AND recovered_at IS NULL`, stationID).
 		Scan(&class, &epBin, &edge, &core)
 	if err != nil {
 		t.Fatalf("no open report_divergence episode for the carrier: %v", err)
@@ -417,7 +417,7 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -470,7 +470,7 @@ func TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding(t *testing.T) {
 	// notification — exactly how a fresh dev seed leaves the running monitor
 	// stale. No bins of this payload exist → system UOP is 0, below threshold.
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleProduce,
 		PayloadCode:           payload,
@@ -622,7 +622,7 @@ func TestThresholdMonitor_StartupSweep_NegativeTotal_StillEmitsSignal(t *testing
 	)
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,
@@ -696,7 +696,7 @@ func TestThresholdMonitor_AFlaggedCarrierAtTheLoaderDoesNotHoldOffTheRefill(t *t
 	testutil.MustNoErr(t, db.SetPayloadBinTypes(part.ID, []int64{fits.ID}), "the part rides FC-FITS only")
 
 	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
-		StationID:             stationID,
+		StationUID:            stationID,
 		CoreNodeName:          loader,
 		Role:                  protocol.ClaimRoleProduce,
 		PayloadCode:           payload,

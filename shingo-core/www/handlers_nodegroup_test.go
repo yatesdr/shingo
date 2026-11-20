@@ -127,7 +127,7 @@ func createActiveOrderRefSource(t *testing.T, db *store.DB, uuid, station, sourc
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    station,
+		StationUID:   station,
 		OrderType:    "retrieve",
 		Status:       "pending",
 		SourceNode:   sourceName,
@@ -550,8 +550,8 @@ func TestApiReparentNode_ForceFailsBlockedOrdersEmitsEvents(t *testing.T) {
 		if e.EdgeUUID != o.EdgeUUID {
 			t.Errorf("order %d: EdgeUUID = %q, want %q", o.ID, e.EdgeUUID, o.EdgeUUID)
 		}
-		if e.StationID != o.StationID {
-			t.Errorf("order %d: StationID = %q, want %q", o.ID, e.StationID, o.StationID)
+		if e.StationID != o.StationUID {
+			t.Errorf("order %d: StationID = %q, want %q", o.ID, e.StationID, o.StationUID)
 		}
 	}
 }
@@ -684,8 +684,8 @@ func TestApiDeleteNodeGroup_ForceFailsBlockedOrdersThenDeletes(t *testing.T) {
 		if e.EdgeUUID != o.EdgeUUID {
 			t.Errorf("order %d: EdgeUUID = %q, want %q", o.ID, e.EdgeUUID, o.EdgeUUID)
 		}
-		if e.StationID != o.StationID {
-			t.Errorf("order %d: StationID = %q, want %q", o.ID, e.StationID, o.StationID)
+		if e.StationID != o.StationUID {
+			t.Errorf("order %d: StationID = %q, want %q", o.ID, e.StationID, o.StationUID)
 		}
 	}
 

@@ -200,7 +200,7 @@ func TestResume_TheParentGoesBackToPendingAndAcquiresOnce(t *testing.T) {
 
 	eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("c1res-shape", sd, grp))
 	shape := testdb.RequireOrder(t, db, "c1res-shape")
-	parent := &orders.Order{EdgeUUID: "c1res-parent", StationID: shape.StationID, OrderType: shape.OrderType,
+	parent := &orders.Order{EdgeUUID: "c1res-parent", StationUID: shape.StationUID, OrderType: shape.OrderType,
 		Status: protocol.StatusReshuffling, Quantity: 1, PayloadCode: shape.PayloadCode,
 		SourceNode: shape.SourceNode, DeliveryNode: shape.DeliveryNode, StepsJSON: shape.StepsJSON,
 		Coordinated: true}

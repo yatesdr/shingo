@@ -1116,17 +1116,17 @@ func (d *Dispatcher) dispatchDirect(order *orders.Order, sourceNode, destNode *n
 // — and no station has standing to release, cancel, redirect or file a receipt
 // against one. All four handlers behind getOwnedOrder inherit this.
 //
-// It is needed because station_id does NOT mean what the comparison below assumes
-// for such an order. A leg inherits its parent's station_id (compound.go), and the
-// parent is a real station-originated retrieve, so the comparison passes. And a
+// It is needed because the requester does NOT mean what the comparison below
+// assumes for such an order. A leg inherits its parent's station (compound.go),
+// and the parent is a real station-originated retrieve, so the comparison passes. And a
 // station can genuinely hold a row for a leg: the reconcile heals an Edge with
 // every active order for the asking station (CoreDataService.unlistedFor →
 // ListActiveOrdersByStation), and that query carries no parent filter, so legs are
 // projected down and Edge creates rows for them.
 //
-// station_id is doing three jobs — authorization, addressing, attribution — and
-// only the first is wrong here. Hence a separate structural discriminator rather
-// than blanking the column: blanking would lose the audit actor on the compound
+// The requester is doing three jobs — authorization, addressing, attribution —
+// and only the first is wrong here. Hence a separate structural discriminator
+// rather than blanking the column: blanking would lose the audit actor on the compound
 // Fail/Cancel paths, and a new originating-station column would duplicate
 // origin_id/origin_class, which is already copied parent→child.
 func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *orders.Order) bool {
@@ -1136,7 +1136,12 @@ func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *orders.Order)
 	if order.ParentOrderID != nil {
 		return false
 	}
-	return env.Src.Station == order.StationID
+	// THE REQUESTER, NOT THE STATION: core-direct's and core-test's pages send as
+	// Edges under the actor's name, and own exactly their own orders, as when the
+	// actor sat in the station column. Compared with the blank station alone, an
+	// envelope with no station would own every actor's order. Pinned by
+	// TestPinDispatch_OwnershipBySender.
+	return env.Src.Station == order.Requester()
 }
 
 // getOwnedOrder fetches an order by UUID and checks ownership. Returns the
@@ -1157,7 +1162,7 @@ func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*o
 			d.dbg("station %s cannot act on order %s: it is a leg of compound order %d, which Core runs",
 				env.Src.Station, orderUUID, *order.ParentOrderID)
 		} else {
-			d.dbg("station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.StationID)
+			d.dbg("station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.Requester())
 		}
 		return nil, false
 	}

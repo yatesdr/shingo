@@ -23,7 +23,7 @@ import (
 
 func enroll(t *testing.T, db *store.DB, uid, displayName string) {
 	t.Helper()
-	if _, err := registry.Enroll(db.DB, uid, displayName, uid); err != nil {
+	if _, err := registry.Enroll(db.DB, uid, displayName); err != nil {
 		t.Fatalf("Enroll %s: %v", uid, err)
 	}
 }
@@ -55,8 +55,8 @@ func stationColumns(t *testing.T, db *store.DB) [][2]string {
 		}
 		// edge_registry.display_name is the one place the label is allowed to
 		// live; the column is not named "station" so it is not in this set
-		// anyway, but the station_uid/station_id columns ON that table are, and
-		// they must not hold it either.
+		// anyway, but the station_uid column ON that table is, and it must not
+		// hold it either.
 		out = append(out, [2]string{tbl, col})
 	}
 	if err := rows.Err(); err != nil {

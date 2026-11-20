@@ -30,7 +30,7 @@ func originFor() domain.DemandOrigin {
 		Direction:   "supply",
 		Trigger:     "autoreorder",
 		TriggerRef:  "claim-77",
-		StationID:   "edge1.line1",
+		StationUID:  "edge1.line1",
 		ProcessID:   "SNF2",
 		PayloadCode: "PANEL-A",
 		OpenedAt:    openedAt(),
@@ -123,7 +123,7 @@ func TestExpectedSurvivesAFailedChildRead(t *testing.T) {
 		t.Errorf("expected orders must survive a failed CHILD read: kind=%q text=%q",
 			d.Expected.Kind, d.Expected.Text)
 	}
-	if d.EpisodeKey != o.EpisodeKey || d.Station != o.StationID {
+	if d.EpisodeKey != o.EpisodeKey || d.Station != o.StationUID {
 		t.Errorf("the header must render intact: key=%q station=%q", d.EpisodeKey, d.Station)
 	}
 }

@@ -104,7 +104,7 @@ func FedInboundSource(db *sql.DB, stationID, coreNodeName, position, originID st
 		       COALESCE((SELECT d.kind FROM demand_origins d WHERE d.origin_id = NULLIF($4, '')::uuid), '')
 		FROM style_claims sc
 		JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-		WHERE ps.is_active AND ps.station_id = $1 AND sc.core_node_name = $2 AND sc.inbound_source <> ''
+		WHERE ps.is_active AND ps.station_uid = $1 AND sc.core_node_name = $2 AND sc.inbound_source <> ''
 		  AND $3 <> '' AND $3 IN (sc.paired_core_node, sc.second_paired_core_node)
 		  AND `+FedClaimSQL("sc")+`
 		ORDER BY sc.process_id, sc.seq

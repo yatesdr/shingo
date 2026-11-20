@@ -415,7 +415,7 @@ function buildManifest(data, opts) {
     if (fromGroup) ident.push('from ' + nodeLink(fromGroup));
     if (toGroup) ident.push('to ' + nodeLink(toGroup));
   }
-  if (o.station_id) ident.push('station ' + escapeHtml(o.station_id));
+  if (o.station_uid || o.requested_by) ident.push('station ' + escapeHtml(o.station_uid || o.requested_by));
   if (o.quantity > 1) ident.push('qty ' + o.quantity);
   if (o.priority) ident.push('priority ' + o.priority);
   if (o.parent_order_id) {

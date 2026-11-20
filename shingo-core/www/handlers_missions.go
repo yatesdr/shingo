@@ -61,7 +61,7 @@ func (h *Handlers) apiListMissions(w http.ResponseWriter, r *http.Request) {
 
 	// station_names is the uid→label dictionary, shipped once per response
 	// rather than decorated onto every mission row. The rows keep the key —
-	// station_id is what the filter, the CSV export and the drill-down all send
+	// station_uid (or requested_by) is what the filter, the CSV export and the drill-down all send
 	// back — and the page renders the label beside it. Denormalising the name
 	// onto each row would put a copy of a mutable value in a payload that gets
 	// cached, exported and compared, which is the failure this split exists to
@@ -386,7 +386,8 @@ func (h *Handlers) apiMissionFailures(w http.ResponseWriter, r *http.Request) {
 // hero "in flight" KPI (plan §3.A / §15.A). Cheap count; the page also
 // refreshes it on SSE order-update.
 // apiMissionsActive returns the in-flight order count for the Overview tile
-// (item 10). station_id/robot_id make it respect the global filter; without
+// (item 10). ?station_id=/?robot_id= make it respect the global filter (the
+// station matched against the order's requester); without
 // them it stays on the fast unfiltered count. The active set is small
 // (currently-executing orders), so listing + filtering in-process is cheap —
 // no bespoke filtered-count query needed.
@@ -412,7 +413,7 @@ func (h *Handlers) apiMissionsActive(w http.ResponseWriter, r *http.Request) {
 	}
 	n := 0
 	for _, o := range active {
-		if station != "" && o.StationID != station {
+		if station != "" && o.Requester() != station {
 			continue
 		}
 		if robot != "" && o.RobotID != robot {

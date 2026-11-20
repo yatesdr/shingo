@@ -326,7 +326,7 @@ function formStateFromLoader(l) {
     // Stored as its restriction (no_clear_partials); on unless it says so.
     clearPartials: !l.no_clear_partials,
     // The Edge that works it, by station uid; blank picks none.
-    edgeStationUID: l.edge_station_uid || '',
+    edgeStationUID: l.station_uid || '',
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
   };
@@ -376,7 +376,7 @@ function loaderPayload(state) {
     // keeps the clear on.
     no_clear_partials: state.clearPartials === false,
     // Sent back with every save: absent, the server would pick no Edge.
-    edge_station_uid: state.edgeStationUID || '',
+    station_uid: state.edgeStationUID || '',
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };
@@ -701,7 +701,7 @@ function stationHtml(item, s2) {
 // station, by the name Core holds for it (the uid when it holds none); nothing
 // when no Edge is picked. Signed in, the Settings pick says it instead.
 function edgeLineHtml(item) {
-  const uid = item.loader.edge_station_uid || '';
+  const uid = item.loader.station_uid || '';
   if (!uid) return '';
   return h`<span class="loader-station-kind loader-station-edge">${'Edge: ' + (item.edge_display_name || uid)}</span>`;
 }

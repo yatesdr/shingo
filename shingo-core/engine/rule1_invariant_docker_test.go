@@ -86,7 +86,7 @@ func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
 	testdb.ClaimSlotForTest(t, db, slot.ID, other.ID)
 
 	order := &orders.Order{
-		EdgeUUID: "r1inv-simple", StationID: "edge.r1", OrderType: dispatch.OrderTypeRetrieve,
+		EdgeUUID: "r1inv-simple", StationUID: "edge.r1", OrderType: dispatch.OrderTypeRetrieve,
 		Status: protocol.StatusPending, Quantity: 1, PayloadCode: sd.Payload.Code,
 		SourceNode: src.Name, DeliveryNode: slot.Name,
 	}
@@ -157,13 +157,13 @@ func TestRule1_ACompoundChildIsBornHoldingNothing(t *testing.T) {
 	childBin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, src.ID, "R1EXM-BIN")
 
 	parent := &orders.Order{
-		EdgeUUID: "r1exm-parent", StationID: "edge.r1", OrderType: dispatch.OrderTypeComplex,
+		EdgeUUID: "r1exm-parent", StationUID: "edge.r1", OrderType: dispatch.OrderTypeComplex,
 		Status: protocol.StatusReshuffling, Quantity: 1, PayloadCode: sd.Payload.Code,
 		SourceNode: src.Name, DeliveryNode: sd.LineNode.Name, Coordinated: true,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 	child := &orders.Order{
-		EdgeUUID: "r1exm-child", StationID: "edge.r1", OrderType: dispatch.OrderTypeMove,
+		EdgeUUID: "r1exm-child", StationUID: "edge.r1", OrderType: dispatch.OrderTypeMove,
 		Status: protocol.StatusQueued, Quantity: 1,
 		SourceNode: src.Name, DeliveryNode: sd.LineNode.Name,
 		ParentOrderID: &parent.ID, Sequence: 1,

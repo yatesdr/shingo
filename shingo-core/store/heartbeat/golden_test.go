@@ -46,7 +46,7 @@ func goldenEvents() []PartEvent {
 	out := make([]PartEvent, len(raw))
 	for i, r := range raw {
 		out[i] = PartEvent{
-			CellID:         "stn-test",
+			StationUID:     "stn-test",
 			RecordedAt:     goldenT0.Add(time.Duration(r.sec) * time.Second),
 			EdgeSnapshotID: int64(i + 1),
 			CountValue:     int64(1000 + i),
@@ -93,7 +93,7 @@ func TestHeartbeatMath_Golden(t *testing.T) {
 	now := goldenT0.Add(1230 * time.Second)
 	since, until := goldenT0.Add(-time.Minute), now
 	target := EstimateTarget(prim)
-	cfg := CellConfig{CellID: "cell-test", Station: "stn-test", DisplayName: "Cell Test",
+	cfg := CellConfig{CellLabel: "cell-test", StationUID: "stn-test", DisplayName: "Cell Test",
 		PrimaryProcessID: 7, SubProcessIDs: []int64{9}}
 
 	got := map[string]any{

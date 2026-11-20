@@ -48,14 +48,12 @@ const OpBinUOPDelta = "bin_uop_delta"
 // ListCycleEvents returns the truth-path delta rows a cycle distribution is
 // built from, oldest first, plus whether the row cap bit.
 //
-// ── THE STATION COMES OUT OF actor, AND THAT IS NOT A TYPO ───────────────────
+// ── THE STATION IS station_uid ───────────────────────────────────────────────
 //
-// bin_uop_ledger has both a station column and a node_id column, and the applied
-// delta INSERT populates only the second: it names
-// (bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, node_id)
-// and passes the Edge station as actor. So on this op the station column is
-// empty for every row ever written. Reading it here would return an empty
-// string for all of them and the page would render one nameless key.
+// The applied delta INSERT names the counting Edge in station_uid
+// (uop/applier.go, op bin_uop_delta). Before v185 it put the Edge under actor
+// and left the station column empty, and this read took actor; v185 moved
+// those rows' uid into station_uid, so old and new rows read alike.
 //
 // The consequence for 5.10 is worth stating plainly: the style guide assigns
 // this surface a distribution per (NODE, payload), and until the node stamp
@@ -83,7 +81,7 @@ func ListCycleEvents(db *sql.DB, since time.Time, limit int) ([]domain.CycleEven
 	if limit <= 0 {
 		limit = 20000
 	}
-	rows, err := db.Query(`SELECT actor, payload_code, metadata->>'reason', applied_at
+	rows, err := db.Query(`SELECT station_uid, payload_code, metadata->>'reason', applied_at
 		FROM bin_uop_ledger
 		WHERE op = $1
 		  AND applied_at >= $2
@@ -100,15 +98,15 @@ func ListCycleEvents(db *sql.DB, since time.Time, limit int) ([]domain.CycleEven
 
 	out := make([]domain.CycleEvent, 0, 512)
 	for rows.Next() {
-		var actor, payload sql.NullString
+		var station, payload sql.NullString
 		var reason sql.NullString
 		var at time.Time
-		if err := rows.Scan(&actor, &payload, &reason, &at); err != nil {
+		if err := rows.Scan(&station, &payload, &reason, &at); err != nil {
 			return nil, false, fmt.Errorf("scan cycle event: %w", err)
 		}
 		out = append(out, domain.CycleEvent{
 			CycleKey: domain.CycleKey{
-				Station:   actor.String,
+				Station:   station.String,
 				Payload:   payload.String,
 				Direction: reason.String,
 			},

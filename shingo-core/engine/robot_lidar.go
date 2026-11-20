@@ -93,7 +93,7 @@ func lidarRows(hour time.Time, vehicleID, station string, stats []fleet.LidarSta
 	out := make([]robothours.LidarHour, 0, len(stats))
 	for _, s := range stats {
 		out = append(out, robothours.LidarHour{
-			Hour: hour, VehicleID: vehicleID, Lidar: s.Lidar, Station: station, UseForLoc: s.UseForLoc,
+			Hour: hour, VehicleID: vehicleID, Lidar: s.Lidar, RDSStation: station, UseForLoc: s.UseForLoc,
 			Beams: s.Beams, Valid: s.Valid, RSSIMedValid: s.RSSIMedValid, RSSIP25Valid: s.RSSIP25Valid,
 			RSSIP75Valid: s.RSSIP75Valid, NearValid: s.NearValid,
 		})

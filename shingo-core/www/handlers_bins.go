@@ -703,10 +703,10 @@ func (h *Handlers) apiRequestBinMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.fileBinMove(w, engine.BinMoveRequest{
-		Selection:  engine.BinSelectionByLabel,
-		BinLabel:   b.Label,
-		DestNodeID: req.DestinationNodeID,
-		StationID:  "core-operator",
+		Selection:   engine.BinSelectionByLabel,
+		BinLabel:    b.Label,
+		DestNodeID:  req.DestinationNodeID,
+		RequestedBy: domain.RequesterOperator,
 	})
 }
 

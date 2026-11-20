@@ -44,7 +44,7 @@ func TestProcessPickerAndFootprint_OverFixture(t *testing.T) {
 		{"stn-b", 10 * time.Minute, 1, 7, 3}, // same process id, other station
 	}
 	for _, r := range rows {
-		if _, err := db.Exec(`INSERT INTO cell_part_events (cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id)
+		if _, err := db.Exec(`INSERT INTO cell_part_events (station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id)
 			VALUES ($1, $2, $3, 0, 1, '', $4, $5)`, r.cell, now.Add(-r.ago), r.edgeID, r.proc, r.style); err != nil {
 			t.Fatalf("seed: %v", err)
 		}

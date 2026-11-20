@@ -47,10 +47,10 @@ func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 			}
 
 			parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
-				o.EdgeUUID, o.StationID, o.OrderType, o.Status = "pin-parent-"+door, "line-1", OrderTypeComplex, StatusInTransit
+				o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "pin-parent-"+door, "line-1", OrderTypeComplex, StatusInTransit
 			})
 			child := testdb.CreateOrder(t, db, func(o *orders.Order) {
-				o.EdgeUUID, o.StationID, o.Status = "pin-child-"+door, "line-1", StatusStaged
+				o.EdgeUUID, o.StationUID, o.Status = "pin-child-"+door, "line-1", StatusStaged
 				o.ParentOrderID = &parent.ID
 				o.DeliveryNode = lineNode.Name
 			})
@@ -121,7 +121,7 @@ func TestPinDispatch_ForeignStationRefusal(t *testing.T) {
 	}
 
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.Status = "pin-foreign", "line-2", StatusStaged
+		o.EdgeUUID, o.StationUID, o.Status = "pin-foreign", "line-2", StatusStaged
 	})
 	d.HandleOrderCancel(testdb.Envelope(), &protocol.OrderCancel{OrderUUID: o.EdgeUUID, Reason: "pin"})
 

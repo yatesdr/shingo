@@ -26,7 +26,7 @@ func insertOrder(t *testing.T, db *store.DB, station, status, vendorID, originCl
 	originID any, created time.Time, agedAt *time.Time) {
 	t.Helper()
 	if _, err := db.Exec(`
-		INSERT INTO orders (edge_uuid, station_id, status, vendor_order_id,
+		INSERT INTO orders (edge_uuid, station_uid, status, vendor_order_id,
 		                    origin_id, origin_class, created_at, orphan_aged_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 		// The vendor id is in the key because it is the one argument that always

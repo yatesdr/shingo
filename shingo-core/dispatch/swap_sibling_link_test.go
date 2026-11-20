@@ -53,7 +53,7 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 
 	// Supply leg — exists but holds no replacement bin yet.
 	supply := &orders.Order{
-		EdgeUUID: "swap-supply-dl", StationID: "ST", OrderType: OrderTypeComplex,
+		EdgeUUID: "swap-supply-dl", StationUID: "ST", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: superNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 	}
@@ -68,7 +68,7 @@ func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	// thing that records the sibling here (no LinkOrderSiblingsByEdgeUUID call),
 	// simulating a failed intake link.
 	evac := &orders.Order{
-		EdgeUUID: "swap-removal-dl", StationID: "ST", OrderType: OrderTypeComplex,
+		EdgeUUID: "swap-removal-dl", StationUID: "ST", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: lineNode.Name, DeliveryNode: superNode.Name, ProcessNode: lineNode.Name,
 		SiblingOrderUUID: "swap-supply-dl",
@@ -133,7 +133,7 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 
 	// Supply with NO back-link recorded (sibling_order_uuid = "").
 	supply := &orders.Order{
-		EdgeUUID: "swap-supply-rb", StationID: "ST", OrderType: OrderTypeComplex,
+		EdgeUUID: "swap-supply-rb", StationUID: "ST", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: superNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 	}
@@ -141,7 +141,7 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 
 	// Evac with the forward link present.
 	evac := &orders.Order{
-		EdgeUUID: "swap-removal-rb", StationID: "ST", OrderType: OrderTypeComplex,
+		EdgeUUID: "swap-removal-rb", StationUID: "ST", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: lineNode.Name, DeliveryNode: superNode.Name, ProcessNode: lineNode.Name,
 		SiblingOrderUUID: "swap-supply-rb",
@@ -197,7 +197,7 @@ func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
 	})
 	testutil.MustNoErr(t, err, "marshal supply steps")
 	supply := &orders.Order{
-		EdgeUUID: "race-supply", StationID: "ST", OrderType: OrderTypeComplex,
+		EdgeUUID: "race-supply", StationUID: "ST", OrderType: OrderTypeComplex,
 		Status: StatusSkipped, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: superNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
 		StepsJSON: string(supplySteps),
@@ -211,7 +211,7 @@ func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
 	// Evac leg — created AFTER the supply already skipped, carrying only the forward
 	// sibling pointer (the supply's back-link is still missing, modelling the race).
 	evac := &orders.Order{
-		EdgeUUID: "race-evac", StationID: "ST", OrderType: OrderTypeComplex,
+		EdgeUUID: "race-evac", StationUID: "ST", OrderType: OrderTypeComplex,
 		Status: StatusQueued, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: lineNode.Name, DeliveryNode: superNode.Name, ProcessNode: lineNode.Name,
 		SiblingOrderUUID: "race-supply",

@@ -102,7 +102,7 @@
 
 == tap to assign: the requests, in order (each write is followed by the re-read)
 -- UNL-A "Empties go to", tap the GRP-A header (one update, then refresh)
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
@@ -136,7 +136,7 @@
   (no request)
   toast warning: a group can’t be a window
 -- drop the SPOT-9 tile on "Empties go to"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"SPOT-9"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"SPOT-9"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
@@ -180,37 +180,37 @@
 
 == refusals: UNL-A "Empties go to", tap GRP-A (assignPlace re-reads after a refusal too)
 -- loader.update.400: 400 "{\"error\":\"id and name are required\"}"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
   toast error: id and name are required
 -- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
   toast error: refused: the service's sentence
 -- auth.401: 401 "{\"error\":\"unauthorized\"}"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
   toast error (sticky): Signed out
 -- json.500: 500 "{\"error\":\"failed: the store's error\"}"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
   toast error: failed: the store's error
 -- proxy.502: 502 "<html><body>502 Bad Gateway</body></html>"
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges
   toast error: Server error (502)
 -- fetch rejects (TypeError: Failed to fetch)
-  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"edge_station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
+  POST /api/loader/update {"id":20,"name":"UNL-A","layout":"shared_window","replenishment":"operator","funnel_windows":false,"accept_partials":false,"auto_push":false,"drain_states":[],"fed_directly":false,"pulled_directly":false,"board_hides_idle":false,"board_shows_all_parts":false,"no_clear_partials":false,"station_uid":"","inbound_source":"GRP-B","outbound_dest":"GRP-A"}
   GET /api/nodes
   GET /api/loader/list
   GET /api/edges

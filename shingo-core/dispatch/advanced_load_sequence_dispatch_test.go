@@ -34,7 +34,7 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 
 	order := &orders.Order{
 		EdgeUUID:     "cart-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -108,7 +108,7 @@ func TestDispatchDirect_UnconfiguredPayload_SingleLoadBlock(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "plain-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,

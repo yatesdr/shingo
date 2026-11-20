@@ -272,7 +272,7 @@ func TestHandleBinWatch_AnswersEveryListWithItsSnapshot(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	f := newBinsFixture(t, db)
-	_, err := db.EnrollEdge("edge.a", "", "edge.a")
+	_, err := db.EnrollEdge("edge.a", "")
 	testutil.MustNoErr(t, err, "enroll")
 	resp := &feedsPinResponder{}
 	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
@@ -336,7 +336,7 @@ func TestBinsFeed_EdgesWithoutAListGetNothing(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	newBinsFixture(t, db)
-	_, err := db.EnrollEdge("edge.a", "", "edge.a")
+	_, err := db.EnrollEdge("edge.a", "")
 	testutil.MustNoErr(t, err, "enroll")
 	resp := &feedsPinResponder{}
 	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
@@ -380,7 +380,7 @@ func TestBinsFeed_ALostSnapshotIsResentByTheHeartbeat(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	newBinsFixture(t, db)
-	_, err := db.EnrollEdge("edge.a", "", "edge.a")
+	_, err := db.EnrollEdge("edge.a", "")
 	testutil.MustNoErr(t, err, "enroll")
 	resp := &feedsPinResponder{}
 	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
@@ -660,7 +660,7 @@ func TestBuildNodeBins_InboundOrders(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(src), "source")
 	order := func(uuid, dest string, claimed bool) int64 {
 		t.Helper()
-		o := &domain.Order{EdgeUUID: uuid, StationID: "edge.a", OrderType: "retrieve", Status: "pending",
+		o := &domain.Order{EdgeUUID: uuid, StationUID: "edge.a", OrderType: "retrieve", Status: "pending",
 			Quantity: 1, SourceNode: "STORE-1", DeliveryNode: dest, PayloadCode: "PART-A"}
 		testutil.MustNoErr(t, orders.Create(db.DB, o), "order "+uuid)
 		// The fleet has it: `dispatched` names its job in one write (the INSERT

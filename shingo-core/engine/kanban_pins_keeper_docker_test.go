@@ -196,7 +196,7 @@ func TestKanbanPin_TheKeepersAskIsBornWithNoSource(t *testing.T) {
 	}
 
 	sim.DriveSimpleLifecycle(got.VendorOrderID)
-	started.Dispatcher().HandleOrderReceipt(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: got.StationID}},
+	started.Dispatcher().HandleOrderReceipt(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: got.StationUID}},
 		&protocol.OrderReceipt{OrderUUID: got.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1})
 	done, err := db.GetOrder(ask.ID)
 	testutil.MustNoErr(t, err, "the ask, done")

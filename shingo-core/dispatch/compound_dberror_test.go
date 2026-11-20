@@ -23,7 +23,7 @@ func TestAdvanceCompoundOrder_SurfacesDBError(t *testing.T) {
 
 	parent := &orders.Order{
 		EdgeUUID:     "parent-dberr",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusReshuffling,
 		PayloadCode:  bp.Code,
@@ -34,7 +34,7 @@ func TestAdvanceCompoundOrder_SurfacesDBError(t *testing.T) {
 
 	pendingChild := &orders.Order{
 		EdgeUUID:      "child-dberr",
-		StationID:     parent.StationID,
+		StationUID:    parent.StationUID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		ParentOrderID: &parent.ID,
@@ -83,7 +83,7 @@ func TestAdvanceCompoundChapterEnd_UnreadableChildListDoesNotComplete(t *testing
 
 	parent := &orders.Order{
 		EdgeUUID:     "parent-chapter-dberr",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusReshuffling,
 		PayloadCode:  bp.Code,
@@ -98,7 +98,7 @@ func TestAdvanceCompoundChapterEnd_UnreadableChildListDoesNotComplete(t *testing
 	// failure, not from the in-flight guard doing the work.
 	child := &orders.Order{
 		EdgeUUID:      "child-chapter-dberr",
-		StationID:     parent.StationID,
+		StationUID:    parent.StationUID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		ParentOrderID: &parent.ID,

@@ -2514,34 +2514,34 @@ Core records each station in `edge_registry`; the full Core schema is in [data-m
 
 <!-- generated: shingo-core/store/schema/schema.snapshot.sql edge_registry -->
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('edge_registry_id_seq')` | PK |
-| `station_uid` | `text` | yes | `''` |  |
-| `display_name` | `text` | yes | `''` |  |
-| `station_id` | `text` | yes |  | unique |
-| `hostname` | `text` | yes | `''` |  |
-| `version` | `text` | yes | `''` |  |
-| `registered_at` | `timestamp with time zone` | yes | `now()` |  |
-| `last_heartbeat` | `timestamp with time zone` |  |  |  |
-| `status` | `text` | yes | `'active'` |  |
-| `bound_hostname` | `text` | yes | `''` |  |
-| `bound_instance` | `text` | yes | `''` |  |
-| `prev_instance` | `text` | yes | `''` |  |
-| `bound_at` | `timestamp with time zone` |  |  |  |
-| `claimed_at` | `timestamp with time zone` |  |  |  |
-| `conflict_hostname` | `text` | yes | `''` |  |
-| `conflict_count` | `bigint` | yes | `0` |  |
-| `conflict_at` | `timestamp with time zone` |  |  |  |
-| `schema_version` | `integer` |  |  |  |
-| `clock_offset_ms` | `bigint` |  |  |  |
-| `timezone` | `text` | yes | `''` |  |
-| `tick_pending` | `bigint` |  |  |  |
-| `tick_oldest_unsent_age_ms` | `bigint` |  |  |  |
-| `tick_reported_at` | `timestamp with time zone` |  |  |  |
-| `tick_rejected` | `bigint` | yes | `0` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('edge_registry_id_seq')` | PK |  |
+| `station_uid` | `text` | yes | `''` | unique | What Core correlates all history to. Core mints it at enrollment and it never changes. Opaque on purpose: the moment an identifier is legible it acquires an editor. |
+| `display_name` | `text` | yes | `''` |  | The operator's label (PLANT / EDGE-2). Operator-owned, freely mutable, and it never crosses the wire as an identifier. |
+| `hostname` | `text` | yes | `''` |  |  |
+| `version` | `text` | yes | `''` |  |  |
+| `registered_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `last_heartbeat` | `timestamp with time zone` |  |  |  |  |
+| `status` | `text` | yes | `'active'` |  |  |
+| `bound_hostname` | `text` | yes | `''` |  |  |
+| `bound_instance` | `text` | yes | `''` |  |  |
+| `prev_instance` | `text` | yes | `''` |  |  |
+| `bound_at` | `timestamp with time zone` |  |  |  |  |
+| `claimed_at` | `timestamp with time zone` |  |  |  | NULL until a human has said what this station is. It is not status: Register writes status = active on every register, so anything recorded there is erased by the next heartbeat's worth of traffic. The question has anybody acknowledged this box has to survive registration, so it gets its own column and only moves one way. NULL is a real and expected state: an unconfigured Pi mints its own uid and comes up working. What it cannot do is claim to be an existing station: a minted uid is random, so it always makes its own row and can never take over another one. |
+| `conflict_hostname` | `text` | yes | `''` |  |  |
+| `conflict_count` | `bigint` | yes | `0` |  |  |
+| `conflict_at` | `timestamp with time zone` |  |  |  |  |
+| `schema_version` | `integer` |  |  |  | The applied schema_migrations version the edge's register payload last reported (protocol.EdgeRegister.SchemaVersion; v137), written only from the wire, never by a human. NULL means no register has carried one. |
+| `clock_offset_ms` | `bigint` |  |  |  | The edge's clock minus Core's, as its last heartbeat implied it: the envelope's ts minus Core's clock on receipt, the broker's delay included (v154). Written by the heartbeat's UPDATE; NULL until a heartbeat carried a ts. |
+| `timezone` | `text` | yes | `''` |  |  |
+| `tick_pending` | `bigint` |  |  |  |  |
+| `tick_oldest_unsent_age_ms` | `bigint` |  |  |  |  |
+| `tick_reported_at` | `timestamp with time zone` |  |  |  |  |
+| `tick_rejected` | `bigint` | yes | `0` |  |  |
 
-- Unique (station_uid) where `station_uid <> ''`
+- The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope's Address.Station carries. display_name is the operator's label. Core mints the uid rather than the Pi because a Core-issued token is re-issuable: replace the hardware for an existing station and hand the new Pi the existing uid, and history does not move because identity did not move. Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm's persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.
+- Check `(station_uid <> '')`
 
 <!-- /generated -->
 

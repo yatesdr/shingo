@@ -651,7 +651,7 @@ func TestCancelReturn_TheRecordIsKeyedOnTheCarrier(t *testing.T) {
 	eng.sweepCarriedBins()
 	assertNoRecoveryOrder(t, db, bin.ID)
 
-	second := testdb.Holding(&orders.Order{EdgeUUID: "cr9-second", StationID: "edge.test", OrderType: "retrieve",
+	second := testdb.Holding(&orders.Order{EdgeUUID: "cr9-second", StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: "LINE-CR9", ProcessNode: "LINE-CR9",
 		PayloadCode: "CR9-P"}, bin.ID)
 	testutil.MustNoErr(t, db.CreateOrder(second), "a later cancelled order for the same bin")
@@ -748,7 +748,7 @@ func TestCancelReturn_ACancelUnderTheScannerLockDoesNotDeadlock(t *testing.T) {
 			}
 		})
 	}, EventOrderFailed)
-	bad := &orders.Order{EdgeUUID: "cr12-bad", StationID: "edge.test", OrderType: "retrieve",
+	bad := &orders.Order{EdgeUUID: "cr12-bad", StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusQueued, Quantity: 1, DeliveryNode: "LINE-CR12"}
 	testutil.MustNoErr(t, db.CreateOrder(bad), "a queued order the scan will fail")
 

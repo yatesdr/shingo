@@ -482,7 +482,7 @@ func TestStatusPairPin_ConfirmVsCoreCancel(t *testing.T) {
 			// Core cancels the delivered order and holds its notice.
 			c.coreOut.hold(true)
 			co := c.coreRow(o.UUID)
-			c.core.eng.Dispatcher().Lifecycle().CancelOrder(co, co.StationID, sppCoreCancel, dispatch.CancelCause{})
+			c.core.eng.Dispatcher().Lifecycle().CancelOrder(co, co.StationUID, sppCoreCancel, dispatch.CancelCause{})
 			if s := c.coreRow(o.UUID).Status; s != protocol.StatusCancelled {
 				t.Fatalf("after Core's cancel Core reads %q, want cancelled", s)
 			}

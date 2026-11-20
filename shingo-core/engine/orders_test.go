@@ -256,10 +256,10 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{
-		EdgeUUID:  "term-already-done",
-		StationID: "s1",
-		OrderType: "retrieve",
-		Status:    dispatch.StatusConfirmed,
+		EdgeUUID:   "term-already-done",
+		StationUID: "s1",
+		OrderType:  "retrieve",
+		Status:     dispatch.StatusConfirmed,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
@@ -299,10 +299,10 @@ func TestFailOrderAndEmit_PopulatesEventFromDB(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	order := &orders.Order{
-		EdgeUUID:  "fail-helper-1",
-		StationID: "edge-stationX",
-		OrderType: "retrieve",
-		Status:    "in_transit",
+		EdgeUUID:   "fail-helper-1",
+		StationUID: "edge-stationX",
+		OrderType:  "retrieve",
+		Status:     "in_transit",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 

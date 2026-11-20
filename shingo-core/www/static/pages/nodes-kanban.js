@@ -219,7 +219,7 @@ function fillStations(current) {
   if (!sel) return;
   var html = '<option value="">— none —</option>';
   _allStations.forEach(function (e) {
-    var id = e.station_id || e.station_uid || '';
+    var id = e.station_uid || '';
     if (!id) return;
     html += '<option value="' + escapeHtml(id) + '">' + escapeHtml(e.display_name || id) + '</option>';
   });

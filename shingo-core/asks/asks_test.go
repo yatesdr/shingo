@@ -21,7 +21,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{seen: map[string]bool{}, replies: map[string]int64{}, outbox: map[int64]bool{}}
 }
 
-func (f *fakeStore) RecordInboundMessage(id, _, _ string) (bool, error) {
+func (f *fakeStore) RecordInboundMessage(id, _ string) (bool, error) {
 	if f.seen[id] {
 		return false, nil
 	}

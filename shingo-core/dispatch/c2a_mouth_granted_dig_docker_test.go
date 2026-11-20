@@ -66,7 +66,7 @@ func TestC2aPin_ADigIsNotAdmittedOnALaneWhoseMouthIsGranted(t *testing.T) {
 	// driven on, and Hold B went with the drop.
 	storeOrder := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2am-store"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = bp.Code
@@ -145,7 +145,7 @@ func TestC2aPin_ARequesterWalledFromItsOwnSlotGetsItsDig(t *testing.T) {
 	// and confirmed, as the gate's release left 147.
 	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2aw-store"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = bp.Code

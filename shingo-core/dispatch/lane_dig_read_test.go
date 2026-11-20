@@ -29,7 +29,7 @@ func plainOrderIntoLane(t *testing.T, db *store.DB, prefix string) (*orders.Orde
 	}
 
 	o := &orders.Order{
-		EdgeUUID: prefix + "-plain", StationID: "line-1",
+		EdgeUUID: prefix + "-plain", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1,
 		SourceNode: slots[0].Name, DeliveryNode: sd.LineNode.Name,
 	}
@@ -40,7 +40,7 @@ func plainOrderIntoLane(t *testing.T, db *store.DB, prefix string) (*orders.Orde
 func digHolder(t *testing.T, db *store.DB, uuid string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1",
+		EdgeUUID: uuid, StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create dig-holding order")
@@ -155,7 +155,7 @@ func TestAcquireLanesForOrder_OwnDigAdmitsItsOwnLeg(t *testing.T) {
 		t.Fatal("parent could not take the dig")
 	}
 	child := &orders.Order{
-		EdgeUUID: "LEGDIG-child", StationID: "line-1",
+		EdgeUUID: "LEGDIG-child", StationUID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		ParentOrderID: &parent.ID, Sequence: 1,
 		SourceNode: src.Name, DeliveryNode: dest.Name,

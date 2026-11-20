@@ -42,7 +42,7 @@ func loaderUnderItsLevel(t *testing.T, prefix string) (*Engine, string, *nodes.N
 	testutil.MustNoErr(t, svc.SetHome(loaderID, window.ID, "", "", 0), "window")
 	testutil.MustNoErr(t, svc.SetPayload(loaderID, part, 50), "part at the loader")
 	_, err = db.SyncDemandRegistry(station, []demands.RegistryEntry{{
-		StationID: station, CoreNodeName: window.Name, LoaderID: loaderID,
+		StationUID: station, CoreNodeName: window.Name, LoaderID: loaderID,
 		Role: protocol.ClaimRoleProduce, PayloadCode: part, ReplenishUOPThreshold: 50,
 	}})
 	testutil.MustNoErr(t, err, "registry")

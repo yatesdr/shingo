@@ -68,7 +68,7 @@ func TestAvgL1QueueSeconds_EveryRung(t *testing.T) {
 	}
 	seed := func(uuid, orderType, payload string, evs ...ev) {
 		o := &domain.Order{
-			EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderType(orderType), Status: evs[0].status,
+			EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderType(orderType), Status: evs[0].status,
 			Quantity: 1, PayloadCode: payload, DeliveryNode: "D", SourceNode: "S",
 		}
 		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)

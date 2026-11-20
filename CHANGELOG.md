@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration. Core only; the Edges are unchanged and need no install. A plant whose Core is older than v0.17.1 installs v0.17.1 first, then this release.
+Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on v0.17.1 installs v0.17.1 first. Rollback: migrate down 185 with this release's binary, then the previous binary.
 
 - The shared migration runner records an adopted chain's first version on Postgres too (it sent SQLite's placeholder)
 - Core's --reset-db empties the database whole, its function and sequences with its tables, also where Core's user does not own the schema
@@ -24,6 +24,11 @@ Deploy: no migration. Core only; the Edges are unchanged and need no install. A 
 - Core stops at start on tables restored without their schema_migrations rows and says to restore the whole dump
 - A new Core database is created in one step from a generated baseline; it lands whole or not at all, never half, and the next start boots it or creates it again
 - soakstat's handoff report names the station that counted each tick after a release; it put every tick under a blank station
+- Core's database names a station one way everywhere, by its uid; Core's own manual, direct and test orders say which door asked in a column of their own instead of standing in for a station
+- The robot map points in Core's records are named as the fleet's, apart from stations; the outbox says whom a message is for
+- The tables and columns nothing read or wrote are gone: downtime events, cell targets, and a dozen unused columns
+- A registry row with no uid takes the one its station id held; a row that would collide with another Edge's, or has no id at all, is removed and named in the log
+- The move takes Core's tables for its run: on a seeded test database up took about 0.2 s and down 0.2 s; a plant's time grows with its orders, telemetry and ledger rows
 
 ## v0.17.3 — 2026-11-21
 

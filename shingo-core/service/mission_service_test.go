@@ -23,7 +23,7 @@ func seedMission(t *testing.T, db *store.DB, orderID int64, station, robot, stat
 		OrderID:       orderID,
 		VendorOrderID: "vendor-" + station,
 		RobotID:       robot,
-		StationID:     station,
+		StationUID:    station,
 		OrderType:     "delivery",
 		TerminalState: state,
 		DurationMS:    1000,
@@ -47,7 +47,7 @@ func TestMissionService_Telemetry_RoundTripsRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Telemetry: %v", err)
 	}
-	if got.OrderID != seed.OrderID || got.StationID != "STN-A" || got.RobotID != "R1" {
+	if got.OrderID != seed.OrderID || got.StationUID != "STN-A" || got.RobotID != "R1" {
 		t.Errorf("Telemetry = %+v, want order=%d station=STN-A robot=R1", got, seed.OrderID)
 	}
 }

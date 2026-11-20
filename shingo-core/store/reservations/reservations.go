@@ -21,7 +21,7 @@
 // appear — so age is no longer a proxy for orphaned. ReapOrphaned keys on the OWNING
 // ORDER's liveness instead: a hold is reclaimed only when its order is terminal or gone,
 // never on age (demand is operator-driven and never evaporates). Acquire no longer stamps
-// expires_at and nothing reads it; v184 drops the column. Do NOT re-introduce an
+// expires_at and nothing reads it; v185 drops the column. Do NOT re-introduce an
 // age-based reap.
 package reservations
 

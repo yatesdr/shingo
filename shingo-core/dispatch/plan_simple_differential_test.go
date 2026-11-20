@@ -63,7 +63,7 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	order := &orders.Order{
-		EdgeUUID: "re-diff-1", StationID: "ST", OrderType: OrderTypeRetrieveEmpty, Status: StatusPending, SourceIntent: SourceIntentEmpty,
+		EdgeUUID: "re-diff-1", StationUID: "ST", OrderType: OrderTypeRetrieveEmpty, Status: StatusPending, SourceIntent: SourceIntentEmpty,
 		Quantity: 1, PayloadCode: bp.Code, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -123,7 +123,7 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-1", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
+		EdgeUUID: "mv-diff-1", StationUID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: srcNode.Name, DeliveryNode: dstNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -166,7 +166,7 @@ func TestStage2_MovePlanDifferential_SameNode(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-2", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
+		EdgeUUID: "mv-diff-2", StationUID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: lineNode.Name, DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -216,7 +216,7 @@ func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", &DefaultResolver{DB: db})
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-3", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
+		EdgeUUID: "mv-diff-3", StationUID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: srcNode.Name, DeliveryNode: grp.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
@@ -259,7 +259,7 @@ func TestStage2_MovePlanDifferential_MissingSource(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	order := &orders.Order{
-		EdgeUUID: "mv-diff-4", StationID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
+		EdgeUUID: "mv-diff-4", StationUID: "ST", OrderType: OrderTypeMove, Status: StatusPending, SourceIntent: SourceIntentLocal,
 		Quantity: 1, PayloadCode: bp.Code, SourceNode: "", DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")

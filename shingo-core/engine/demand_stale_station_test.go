@@ -47,7 +47,7 @@ func staleSweep(t *testing.T, db *store.DB) {
 func registryRows(t *testing.T, db *store.DB, stationID string) int {
 	t.Helper()
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM demand_registry WHERE station_id = $1`,
+	if err := db.QueryRow(`SELECT COUNT(*) FROM demand_registry WHERE station_uid = $1`,
 		stationID).Scan(&n); err != nil {
 		t.Fatalf("count demand_registry rows for %s: %v", stationID, err)
 	}
@@ -61,7 +61,7 @@ func registryRows(t *testing.T, db *store.DB, stationID string) int {
 func staleNotifications(t *testing.T, db *store.DB, stationID string) int {
 	t.Helper()
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = $1 AND station_id = $2`,
+	if err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = $1 AND dst_station = $2`,
 		"data."+protocol.SubjectEdgeStale, stationID).Scan(&n); err != nil {
 		t.Fatalf("count stale notifications for %s: %v", stationID, err)
 	}
@@ -90,7 +90,7 @@ func monitorHoldsBinding(m *ThresholdMonitor, b thresholdEntry) bool {
 		return false
 	}
 	for _, e := range entries {
-		if e.StationID == b.stationID && e.CoreNodeName == b.coreNodeName {
+		if e.StationUID == b.stationID && e.CoreNodeName == b.coreNodeName {
 			return true
 		}
 	}
@@ -264,7 +264,7 @@ func TestStaleStation_ThresholdEditedWhileDownClosesAsChanged(t *testing.T) {
 	// The edit, as loader_service.rederive performs it: the aggregate's new
 	// value is derived into the registry and the change list drives the monitor.
 	changes, err := db.SyncDemandRegistry(b.stationID, []demands.RegistryEntry{{
-		StationID:             b.stationID,
+		StationUID:            b.stationID,
 		CoreNodeName:          b.coreNodeName,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           payload,

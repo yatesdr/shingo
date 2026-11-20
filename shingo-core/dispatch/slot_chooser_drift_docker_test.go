@@ -311,7 +311,7 @@ func loaderDriftChoice(t *testing.T, db *store.DB, d *Dispatcher, fx *driftFixtu
 	staging := &nodes.Node{Name: fx.prefix + "-STG", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(staging), "staging")
 	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = fx.prefix+"-LEG", "test", OrderTypeComplex, protocol.StatusPending
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = fx.prefix+"-LEG", "test", OrderTypeComplex, protocol.StatusPending
 		o.SourceNode, o.DeliveryNode, o.PayloadCode = staging.Name, home.Name, fx.bp.Code
 	})
 	steps := []resolvedStep{vsWait(staging.Name), vsPick(staging.Name), vsDrop(home.Name)}

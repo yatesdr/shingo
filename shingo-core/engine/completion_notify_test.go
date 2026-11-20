@@ -48,7 +48,7 @@ func TestRegression_OrderCompletedNotifiesEdge(t *testing.T) {
 
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "regr-complete-edge-uuid"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = protocol.StatusDelivered
 	})
 	testutil.MustNoErr(t, eng.ForceConfirmDelivered(o.ID, "regr"), "force-confirm the delivered order")
@@ -80,7 +80,7 @@ func TestRegression_OrderCompletedSkipsEmptyEdgeUUID(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.Status = "", "line-1", protocol.StatusDelivered // Core-internal order
+		o.EdgeUUID, o.StationUID, o.Status = "", "line-1", protocol.StatusDelivered // Core-internal order
 	})
 	if _, err := eng.Dispatcher().Lifecycle().ConfirmReceipt(o, "line-1", "confirmed", 0); err != nil {
 		t.Fatalf("confirm the internal order: %v", err)

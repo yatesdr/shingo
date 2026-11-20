@@ -133,7 +133,7 @@ func TestContainmentChanged_BroadcastsThenHeartbeatsCompare(t *testing.T) {
 	db := testdb.Open(t)
 	containmentFeedFixture(t, db)
 	for _, st := range []string{"edge.a", "edge.b"} {
-		_, err := db.EnrollEdge(st, "", st)
+		_, err := db.EnrollEdge(st, "")
 		testutil.MustNoErr(t, err, "enroll "+st)
 	}
 	resp := &feedsPinResponder{}

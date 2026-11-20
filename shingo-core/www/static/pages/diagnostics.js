@@ -270,7 +270,7 @@ import { onSSE } from '/static/shared/bus.js';
         '<td>' + escapeHtml(item.severity || '') + '</td>' +
         '<td>' + (item.order_id || '-') + '</td>' +
         '<td>' + (item.bin_id || '-') + '</td>' +
-        '<td>' + escapeHtml(item.station_id || '-') + '</td>' +
+        '<td>' + escapeHtml(item.station_uid || '-') + '</td>' +
         '<td>' + escapeHtml(item.order_status || '') + '</td>' +
         '<td>' + escapeHtml(item.bin_status || '-') + '</td>' +
         '<td>' + escapeHtml(item.issue || '') + '</td>' +
@@ -306,7 +306,7 @@ import { onSSE } from '/static/shared/bus.js';
         '<td>' + msg.id + '</td>' +
         '<td>' + formatRecoveryTime(msg.created_at) + '</td>' +
         '<td>' + escapeHtml(msg.msg_type || '') + '</td>' +
-        '<td>' + escapeHtml(msg.station_id || '') + '</td>' +
+        '<td>' + escapeHtml(msg.dst_station || '') + '</td>' +
         '<td>' + msg.retries + '</td>' +
         '<td><button class="btn btn-sm" data-action="replayDeadLetter:' + msg.id + '">Replay</button></td>';
       recoveryBody.appendChild(tr);

@@ -372,13 +372,13 @@ func (m *ThresholdMonitor) collapsePlaces(entries []demands.RegistryEntry) []thr
 	out := make([]thresholdEntry, 0, len(order))
 	for _, key := range order {
 		rows := byPlace[key]
-		sort.Slice(rows, func(i, j int) bool { return rows[i].StationID < rows[j].StationID })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].StationUID < rows[j].StationUID })
 		if len(rows) > 1 {
 			m.logDuplicateBinding(key, rows)
 		}
 		e := rows[0]
 		out = append(out, thresholdEntry{
-			stationID:    e.StationID,
+			stationID:    e.StationUID,
 			coreNodeName: e.CoreNodeName,
 			payloadCode:  e.PayloadCode,
 			threshold:    e.ReplenishUOPThreshold,
@@ -402,10 +402,10 @@ func (m *ThresholdMonitor) logDuplicateBinding(key string, rows []demands.Regist
 	m.mu.Unlock()
 	parts := make([]string, 0, len(rows))
 	for _, r := range rows {
-		parts = append(parts, fmt.Sprintf("%s(threshold=%d loader=%d)", r.StationID, r.ReplenishUOPThreshold, r.LoaderID))
+		parts = append(parts, fmt.Sprintf("%s(threshold=%d loader=%d)", r.StationUID, r.ReplenishUOPThreshold, r.LoaderID))
 	}
 	m.eng.logFn("threshold_monitor: DUPLICATE BINDING node=%s payload=%s stations=%s — one place, %d registry rows; evaluating it once as %s. Two configs claim this place: decide which is real (further occurrences suppressed for %s)",
-		rows[0].CoreNodeName, rows[0].PayloadCode, strings.Join(parts, ","), len(rows), rows[0].StationID, swapContradictionWindow)
+		rows[0].CoreNodeName, rows[0].PayloadCode, strings.Join(parts, ","), len(rows), rows[0].StationUID, swapContradictionWindow)
 }
 
 // startupSweep evaluates every monitored place once at boot, seeding the
@@ -877,7 +877,7 @@ func (m *ThresholdMonitor) Resync(stationID string) {
 	affected := map[string]bool{}
 	m.mu.Lock()
 	for _, e := range entries {
-		if e.StationID != stationID || e.ReplenishUOPThreshold <= 0 {
+		if e.StationUID != stationID || e.ReplenishUOPThreshold <= 0 {
 			continue
 		}
 		key := placeKey(e.CoreNodeName, e.PayloadCode)

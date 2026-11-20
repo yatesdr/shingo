@@ -19,7 +19,7 @@ func mkQueuedComplexParent(t *testing.T, db *store.DB, edgeUUID, payloadCode str
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:    edgeUUID,
-		StationID:   "line-1",
+		StationUID:  "line-1",
 		OrderType:   OrderTypeComplex,
 		Status:      StatusQueued,
 		Quantity:    1,

@@ -41,7 +41,7 @@ func mustOrder(t *testing.T, db *store.DB, label, deliveryNode, stepsJSON string
 	t.Helper()
 	o := &domain.Order{
 		EdgeUUID:     "soak-res-" + label,
-		StationID:    "soak",
+		StationUID:   "soak",
 		OrderType:    protocol.OrderTypeComplex,
 		Status:       protocol.StatusDelivered,
 		Quantity:     1,

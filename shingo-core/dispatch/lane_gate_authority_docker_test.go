@@ -65,13 +65,13 @@ func TestAuthority_StationCannotCancelAReshuffleLeg(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = protocol.StatusReshuffling
 	})
 	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		// Exactly what writeCompoundChildren writes: the parent's station,
 		// a Core-minted edge uuid, a parent pointer.
-		o.StationID = parent.StationID
+		o.StationUID = parent.StationUID
 		o.OrderType = OrderTypeMove
 		o.Status = StatusPending
 		o.ParentOrderID = &parent.ID
@@ -80,7 +80,7 @@ func TestAuthority_StationCannotCancelAReshuffleLeg(t *testing.T) {
 	})
 
 	// The station the leg claims to belong to sends a cancel.
-	stationEnv := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: parent.StationID}}
+	stationEnv := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: parent.StationUID}}
 	d.HandleOrderCancel(stationEnv, &protocol.OrderCancel{OrderUUID: leg.EdgeUUID, Reason: "operator cancel"})
 
 	after, err := db.GetOrder(leg.ID)
@@ -123,12 +123,12 @@ func TestAuthority_StationStillCommandsItsOwnOrder(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	own := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = StatusPending
 		o.DeliveryNode = sd.LineNode.Name
 	})
 
-	stationEnv := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: own.StationID}}
+	stationEnv := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: own.StationUID}}
 	d.HandleOrderCancel(stationEnv, &protocol.OrderCancel{OrderUUID: own.EdgeUUID, Reason: "operator cancel"})
 
 	after, err := db.GetOrder(own.ID)
@@ -156,7 +156,7 @@ func TestAuthority_ForeignStationStillRefused(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	own := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = StatusPending
 		o.DeliveryNode = sd.LineNode.Name
 	})

@@ -82,11 +82,11 @@ const (
 	// bsNotOrder: the station is not an order's: an Edge's envelope or report,
 	// a kanban, a registry row, an RDS map point, a filter's parameter.
 	bsNotOrder
-	// (A third kind, bsHistory, named the branches in migration-chain and
-	// baseline DDL text: v66, v72 and its verify, the kanban migration's census
-	// and the baseline's partial unique index on edge_registry.station_uid. They
-	// went with the chain at the squash (v184); a migration above it that
-	// branches on a blank station names its kind again.)
+	// bsHistory: migration text, which runs against the schema, not against an
+	// order. The retired chain's sites (v66, v72 and its verify, the kanban
+	// migration's census, the baseline DDL's partial uid index) went with it at
+	// the squash (v184); v185's are the ones now.
+	bsHistory
 )
 
 // bsSite is one declaration's branches. An order site says what each kind of
@@ -101,6 +101,7 @@ type bsSite struct {
 }
 
 func notOrder(forms, why string) bsSite { return bsSite{forms: forms, kind: bsNotOrder, why: why} }
+func history(forms, why string) bsSite  { return bsSite{forms: forms, kind: bsHistory, why: why} }
 
 // bsNobody is what a send to an actor's name reaches.
 const bsNobody = "an outbox row to core-* that no Edge reads"
@@ -111,193 +112,220 @@ var blankStationSites = map[string]bsSite{
 		edge:   "its own cancel, release, receipt or redirect passes when the envelope's station is the order's; a leg's never does",
 		actors: "core-operator sends as RoleCore and passes before the compare; core-direct and core-test send as RoleEdge under their own name and pass because the order's station is that name",
 		none:   "no envelope names a blank station: only a RoleCore sender passes",
-		split:  "core-direct's release and core-test's cancel and receipt are refused as not their own (the envelope names the actor, the order's station is blank)"},
+		split:  "DECIDED (names lane): the envelope is compared with order.Requester(), the station or the actor, so each actor still owns exactly its own orders and a blank sender gains none (TestPinDispatch_OwnershipBySender)"},
 	"dispatch:Dispatcher.ReleasePoints": {forms: `station == station ×1`, kind: bsOrder,
 		edge:   "an order is found only for the asking station (Doors.AskReleasePoints)",
 		actors: "never asked for: only an Edge's ask reaches it, and an Edge asking an actor's order reads not found",
 		none:   "not found",
-		split:  "none"},
+		split:  "DECIDED (names lane): compared with Requester(); unchanged, no actor asks"},
 	"engine:buildRobotPositions": {forms: `station == station ×1`, kind: bsOrder,
 		edge:   "a watched order's robot goes to the watching station only when the order is that station's",
 		actors: "no Edge watches one; one named in a watch is skipped",
 		none:   "skipped",
-		split:  "none"},
+		split:  "DECIDED (names lane): unchanged; OrderRobot.StationUID is the station, and no actor watches"},
 
 	// ── What Core sends the order's station ───────────────────────────────
-	"dispatch:LifecycleService.projectOrder": {forms: `StationID == "" ×1`, kind: bsOrder,
+	"dispatch:LifecycleService.projectOrder": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "an admitted order's row is projected (order.projected) to its station",
 		actors: "aware: core-operator's spot transports and core-test's plain orders are admitted here and projected to core-*, " + bsNobody + "; core-direct's complex orders are not admitted here; unaware (bin moves): not admitted here",
 		none:   "not admitted here",
-		split:  "the projections to core-* stop"},
-	"dispatch:Dispatcher.projectClear": {forms: `StationID == "" ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): projects to Requester(), so the projections to core-* go on as before"},
+	"dispatch:Dispatcher.projectClear": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "a home clear's parent and partial rows are projected to the clearing station",
 		actors: "not reached: a home clear is an Edge's ask (Doors.clearHome refuses a blank station)",
 		none:   "not reached",
-		split:  "none"},
+		split:  "DECIDED (names lane): projects to Requester(); unchanged"},
 	"engine:dispatchEmitter.ProjectOrder": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "enqueues order.projected to the station projectOrder and projectClear name",
 		actors: "aware: to core-*, " + bsNobody,
 		none:   "a blank station sends nothing",
-		split:  "the projections to core-* stop"},
-	"fulfillment:Scanner.notifyEdgeDispatched": {forms: `StationID == "" ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): its callers (projectOrder, projectClear) pass Requester(), so the projections to core-* go on"},
+	"fulfillment:Scanner.notifyEdgeDispatched": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "the ack and the waybill go to the station",
 		actors: "aware: both go to core-*, " + bsNobody + "; unaware: none (station_unaware)",
 		none:   "none",
-		split:  "the ack and waybill to core-* stop"},
-	"store:DB.queueTellTx": {forms: `StationID == "" ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): reads and sends to Requester(), so the ack and waybill to core-* go on"},
+	"store:DB.queueTellTx": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "every status write queues the order's station tell (order.update)",
 		actors: "aware: queued to core-*, " + bsNobody + "; unaware: none",
 		none:   "none",
-		split:  "the tells to core-* stop"},
+		split:  "DECIDED (names lane): reads Told.Requester() (requested_by rides ToldReturning), so the tells to core-* go on"},
 	"engine:Engine.wireEventHandlers": {forms: `StationID == "" ×4`, kind: bsOrder,
 		edge:   "order.error, order.skipped and order.cancelled go to the station; a fault-cleared email takes the event's station",
 		actors: "aware: the three go to core-*, " + bsNobody + "; unaware: none of the three (station_unaware); the cleared email names the actor",
 		none:   "none of the three; the cleared email falls back to the station stored with its fault, also blank",
-		split:  "the sends to core-* stop; the cleared email for an actor's order loses its Station line"},
-	"engine:Engine.notifyBinReturn": {forms: `StationID == "" ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): every emit fills the event's StationID with order.Requester() (lifecycle transitions, the dispatcher's Fail/Skip/Cancel callers, nodegroup), so the sends to core-* and the cleared email's Station line go on"},
+	"engine:Engine.notifyBinReturn": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "the cancelled order's station is told what became of its bin (data.bin_return)",
 		actors: "aware and unaware alike (it does not read station_unaware, and a bin move carries an edge_uuid): sent to core-*, " + bsNobody,
 		none:   "none",
-		split:  "the bin-return notices to core-* stop"},
+		split:  "DECIDED (names lane): reads and sends to Requester(); the notices to core-* go on"},
 	"engine:Engine.handleOrderDelivered": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "order.delivered goes to the order's material station (its own, or a window move's projects_to)",
 		actors: "aware: to core-*, " + bsNobody + "; unaware: materialStation says nobody and it returns before this branch",
 		none:   "station-unaware: the projects_to Edge or nobody; a station-aware order with a blank station would be broadcast to every Edge ('*')",
-		split:  "an aware actor's order.delivered is BROADCAST to every Edge ('*') instead of going to nobody: every Edge tries the delivery-node bind"},
+		split:  "DECIDED (names lane): materialStation returns Requester() for an aware order, so an actor's order.delivered goes to core-* as before and never to '*' (the step-0 engine pins)"},
 	"engine:materialStation": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "a station-aware order's own station, true; a station-unaware one's projects_to, true only when it names one",
 		actors: "aware: the actor's name, true; unaware: projects_to is blank, so nobody (false)",
 		none:   "projects_to, or nobody",
-		split:  "an aware actor's order returns (\"\", true): order.delivered is broadcast (Engine.handleOrderDelivered) and its lift writes a blank station (BinService.Lift)"},
+		split:  "DECIDED (names lane): an aware order returns Requester(), the actor's name for an actor's order, so nothing is broadcast and the lift's notice keeps its station"},
 	"service:BinService.Lift": {forms: `station == "" ×2`, kind: bsOrder,
 		edge:   "the lifted ledger row's station is the uid, a repeated pickup reads the generation, and bin_picked_up goes to the station (the notice's station is materialStation's)",
 		actors: "aware: the lifted row's station is core-* (the rows v185 blanks) and bin_picked_up goes to core-*, " + bsNobody + "; unaware: blank station, no notice",
 		none:   "the projects_to Edge, or blank and no notice",
-		split:  "an aware actor's lifted row has a blank station and no notice is sent: what v185 makes of the old rows"},
+		split:  "DECIDED (names lane): the notice's station is materialStation's, the requester, as before; the lifted ledger row splits it (station_uid for a station, actor = the Core actor for an actor's order: the move rules)"},
 	"service:landingStations": {forms: `StationID == "" ×1, station == station ×1`, kind: bsOrder,
 		edge:   "the one claiming station, or with none the order's material station",
 		actors: "aware: on a node no station claims, the landing goes to core-*, " + bsNobody + "; unaware: its material station is blank, so on an unclaimed node the plant arm: every Edge",
 		none:   "as an unaware actor's: the plant arm on an unclaimed node",
-		split:  "an aware actor's landing on an unclaimed node goes to every Edge (the plant arm) instead of to nobody"},
-	"store/plantclaims:ResolveLandingAddress": {forms: `SQL alias = '' ×2`, kind: bsOrder,
+		split:  "DECIDED (names lane): unchanged; the order's material station comes from ResolveLandingAddress, which reads the requester"},
+	"store/plantclaims:ResolveLandingAddress": {forms: `SQL station = '' ×1, SQL alias = '' ×2`, kind: bsOrder,
 		edge:   "the order row carries its material station (st) and that Edge's schema version; the plant arm is read only when no station claims the node and st is blank",
 		actors: "aware: st is core-* (schema version 0) and no plant arm is read; unaware: st is projects_to, blank, so the plant arm is read on an unclaimed node",
 		none:   "as an unaware actor's",
-		split:  "an aware actor's st is blank: the plant arm is read and the landing goes to every Edge (service:landingStations)"},
+		split:  "DECIDED (names lane): st is the requester (station_uid, else requested_by) for an aware order, so an actor's landing goes to core-* and not to the plant arm"},
 
 	// ── What a person reads ───────────────────────────────────────────────
 	"service:NodeService.StationName": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "the station's display name, or its uid when it has none",
 		actors: "Core · Manual, Core · Direct, Core · Test (CoreSourceLabels)",
 		none:   "\"\": nothing is printed (a recovery is labelled CoreRecoveryLabel where it is shown)",
-		split:  "an actor's order prints no source unless the reader labels its requested_by"},
+		split:  "DECIDED (names lane): the readers pass the requester (templates .Requester; JS station_uid || requested_by), so the labels read as before"},
 	"service:CoreSourceLabels": {forms: `Core actor name ×3`, kind: bsOrder,
 		edge:   "not read for an Edge's uid",
 		actors: "the label of each actor's name, found by StationName from the order's station",
 		none:   "not read",
-		split:  "keyed by a value the station no longer holds: it must be read from requested_by"},
+		split:  "DECIDED (names lane): kept; looked up with the requester"},
 	"notify:FaultAlert": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "the fault email prints Station: <uid>",
 		actors: "prints Station: core-*",
 		none:   "no Station line",
-		split:  "an actor's fault email loses its Station line"},
+		split:  "DECIDED (names lane): the event's station is the requester where one is filled; unchanged (MarkFaulted fills none, for any order)"},
 	"notify:FailAlert": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "the failure email prints Station: <uid>",
 		actors: "prints Station: core-*",
 		none:   "no Station line",
-		split:  "an actor's failure email loses its Station line"},
+		split:  "DECIDED (names lane): the event's station is the requester (Fail and FailWithRef callers pass Requester()), so the Station line reads as before"},
 	"notify:FaultClearedAlert": {forms: `station == "" ×1`, kind: bsOrder,
 		edge:   "the cleared email prints Station: <uid>",
 		actors: "prints Station: core-*",
 		none:   "no Station line",
-		split:  "an actor's cleared email loses its Station line"},
+		split:  "DECIDED (names lane): as FaultAlert; unchanged"},
 	"dispatch:FutilityKey.incomplete": {forms: `StationID == "" ×1`, kind: bsOrder,
 		edge:   "a terminal that never reached in_transit counts against (station, process node, payload) when all three are set",
 		actors: "counted under the actor's name only when the order names a process node and a payload (a test-page swap's legs can; a spot order names no process node)",
 		none:   "never counted",
-		split:  "an actor's futile asks stop being counted (observe-only: one log line and one audit_log row each)"},
-	"engine:moveActor": {forms: `StationID == "" ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): noteFutility keys by Requester(), so an actor's futile asks count under its name as before"},
+	"engine:moveActor": {forms: `StationID == "" ×1, station == "" ×1`, kind: bsOrder,
 		edge:   "not reached: every caller of Engine.CreateBinMove is a Core page",
 		actors: "the history row that takes a stranger's hold names core-operator or core-direct",
 		none:   "\"bin-move\"; no caller passes a blank station today",
-		split:  "a bin move's hold-taking history says \"bin-move\" instead of the actor unless the door passes its requested_by"},
-	"store/orders:ListDistinctStations": {forms: `SQL station = '' ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): the door names RequestedBy, and moveActor falls back to it, so the history still names core-operator or core-direct"},
+	"store/orders:ListDistinctStations": {forms: `SQL alias = '' ×1`, kind: bsOrder,
 		edge:   "each uid seen on an order is listed, for the station pickers (Handlers.apiStations)",
 		actors: "core-operator, core-direct and core-test are listed, so the board scope and the missions filter offer them",
 		none:   "a blank station is not listed",
-		split:  "the actors drop out of every station picker unless the list also reads requested_by"},
-	"store/orders:ListActiveBoardFiltered": {forms: `SQL station IN (…) ×1`, kind: bsOrder,
+		split:  "DECIDED (names lane): the list is the union of station_uid and requested_by, so the pickers still offer the actors"},
+	"store/orders:ListActiveBoardFiltered": {forms: `SQL station IN (…) ×2`, kind: bsOrder,
 		edge:   "a board scoped (dashboards.stations_json) to a uid shows that station's active orders",
 		actors: "a board scoped to an actor's name shows that actor's active orders",
 		none:   "shown only on an unscoped board",
-		split:  "a board scoped to an actor's name shows nothing unless the scope also matches requested_by"},
+		split:  "DECIDED (names lane): each entry is matched in its own column (station_uid IN, requested_by IN), the set station_id IN matched before"},
 	"www:Handlers.apiMissionsActive": {forms: `station == "" ×2, station == station ×1`, kind: bsOrder,
 		edge:   "with a station filter, counts that station's active orders; with no filter, the fast unfiltered count",
 		actors: "a filter naming an actor counts that actor's active orders",
 		none:   "counted only unfiltered",
-		split:  "a filter naming an actor counts 0"},
+		split:  "DECIDED (names lane): compares the filter with Requester(), so an actor filter counts its orders as before"},
 
 	// ── The actors' own doors ─────────────────────────────────────────────
 	"www:Handlers.apiManualOrderSubmit": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: Core's Orders page",
 		actors: "core-operator's spot transports and staged orders are sent as RoleCore from core-operator, which intake writes as the order's station (aware)",
 		none:   "not reached",
-		split:  "the door names core-operator as requested_by and leaves the station blank"},
+		split:  "DECIDED (names lane): the envelope still names core-operator (domain.RequesterOperator); intake splits it into requested_by with a blank station"},
 	"www:Handlers.submitSpotRetrieveSpecific": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: Core's Orders page",
 		actors: "core-operator's named-bin move: Engine.CreateBinMove with station core-operator (unaware)",
 		none:   "not reached",
-		split:  "the door names core-operator as requested_by and leaves the station blank"},
+		split:  "DECIDED (names lane): the door names RequestedBy core-operator and leaves the station blank"},
 	"www:Handlers.apiRequestBinMove": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: Core's Bins page",
 		actors: "core-operator's bin move: Engine.CreateBinMove with station core-operator (unaware)",
 		none:   "not reached",
-		split:  "the door names core-operator as requested_by and leaves the station blank"},
+		split:  "DECIDED (names lane): the door names RequestedBy core-operator and leaves the station blank"},
 	"www:Handlers.apiDirectOrderSubmit": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the test-orders page's direct tab",
 		actors: "core-direct's bin move: Engine.CreateBinMove with station core-direct (unaware)",
 		none:   "not reached",
-		split:  "the door names core-direct as requested_by and leaves the station blank"},
+		split:  "DECIDED (names lane): the door names RequestedBy core-direct and leaves the station blank"},
 	"www:Handlers.apiDirectComplexOrderSubmit": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the direct tab",
 		actors: "core-direct's complex orders, sent in-process as RoleEdge from core-direct (aware)",
 		none:   "not reached",
-		split:  "intake must read the envelope's core-direct as the actor, not the station"},
+		split:  "DECIDED (names lane): complex intake splits the envelope's core-direct into requested_by (domain.SplitRequester)"},
 	"www:Handlers.apiDirectOrderRelease": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the direct tab",
 		actors: "releases as RoleEdge from core-direct, which passes Dispatcher.checkOwnership because the order's station is core-direct",
 		none:   "not reached",
-		split:  "refused as not core-direct's (Dispatcher.checkOwnership) unless ownership reads requested_by"},
+		split:  "DECIDED (names lane): ownership compares with Requester(), so core-direct's release passes as before"},
 	"www:Handlers.apiDirectOrdersList": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached",
 		actors: "lists core-direct's orders by station (ListOrdersByStation)",
 		none:   "not listed",
-		split:  "the list is empty unless it reads requested_by"},
+		split:  "DECIDED (names lane): ListByStation matches a Core actor in requested_by (RequesterColumn), so the list is core-direct's as before"},
 	"www:Handlers.apiTestOrderSubmit": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the test-orders page's Kafka tab",
 		actors: "core-test's plain orders, published as RoleEdge from core-test through the wire (aware)",
 		none:   "not reached",
-		split:  "intake must read the envelope's core-test as the actor, not the station"},
+		split:  "DECIDED (names lane): intake splits the envelope's core-test into requested_by (domain.SplitRequester)"},
 	"www:Handlers.apiKafkaComplexOrderSubmit": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the Kafka tab",
 		actors: "core-test's complex orders, published as RoleEdge from core-test (aware)",
 		none:   "not reached",
-		split:  "intake must read the envelope's core-test as the actor, not the station"},
+		split:  "DECIDED (names lane): complex intake splits the envelope's core-test into requested_by"},
 	"www:Handlers.apiTestOrderCancel": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the Kafka tab",
 		actors: "cancels as RoleEdge from core-test, which passes Dispatcher.checkOwnership",
 		none:   "not reached",
-		split:  "refused as not core-test's unless ownership reads requested_by"},
+		split:  "DECIDED (names lane): ownership compares with Requester(), so core-test's cancel passes as before"},
 	"www:Handlers.apiTestOrderReceipt": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached: the Kafka tab",
 		actors: "confirms receipt as RoleEdge from core-test, which passes Dispatcher.checkOwnership",
 		none:   "not reached",
-		split:  "refused as not core-test's unless ownership reads requested_by"},
+		split:  "DECIDED (names lane): ownership compares with Requester(), so core-test's receipt passes as before"},
 	"www:Handlers.apiTestOrdersList": {forms: `Core actor name ×1`, kind: bsOrder,
 		edge:   "not reached",
 		actors: "lists core-test's orders by station (ListOrdersByStation)",
 		none:   "not listed",
-		split:  "the list is empty unless it reads requested_by"},
+		split:  "DECIDED (names lane): ListByStation matches a Core actor in requested_by, so the list is core-test's as before"},
+
+	// ── The requester (names lane): one spelling of who asked ───────────────
+	"domain:Order.Requester": {forms: `station == "" ×1`, kind: bsOrder,
+		edge:   "the station's uid",
+		actors: "the actor's name, from requested_by",
+		none:   "\"\": a Core-born order with neither",
+		split:  "DECIDED (names lane): the requester is the value station_id held before v185; every site above that addressed, labelled, filtered or owned by it reads this"},
+	"store/orders:Told.Requester": {forms: `station == "" ×1`, kind: bsOrder,
+		edge:   "the told order's station uid",
+		actors: "the actor's name (requested_by rides ToldReturning)",
+		none:   "\"\": nothing is told",
+		split:  "DECIDED (names lane): Order.Requester for a status write's RETURNING row (DB.queueTellTx)"},
+	"store/internal/helpers:RequesterSQL": {forms: `SQL station = '' ×1`, kind: bsOrder,
+		edge:   "station_uid",
+		actors: "requested_by",
+		none:   "''",
+		split:  "DECIDED (names lane): Order.Requester in SQL, for the readers that group or address by it (the orphan trend and findings, the ETA backfill)"},
+	"engine:Engine.CreateBinMove": {forms: `station == "" ×1`, kind: bsOrder,
+		edge:   "not reached with a station: every caller is a Core page or a test",
+		actors: "a caller that names its actor as RequestedBy keeps it; one that names it as the station (as the doors did before v185) has it moved to RequestedBy with a blank station (SplitRequester)",
+		none:   "a blank station stays blank: the bin-move history names \"bin-move\"",
+		split:  "DECIDED (names lane): the order is born with requested_by = the actor and a blank station, whichever way the caller named it"},
+	"domain:CoreActors":        notOrder(`Core actor name ×3`, "the Core actors' one Go spelling, in v185's CHECK order (domain/requester.go)"),
+	"domain:IsCoreActor":       notOrder(`Core actor name ×3`, "SplitRequester's and RequesterColumn's question: is this sender or requester a Core actor"),
+	"domain:RequesterOperator": notOrder(`Core actor name ×2`, "core-operator, defined once"),
+	"domain:RequesterDirect":   notOrder(`Core actor name ×2`, "core-direct, defined once"),
+	"domain:RequesterTest":     notOrder(`Core actor name ×2`, "core-test, defined once"),
 
 	// ── Not an order's station ────────────────────────────────────────────
 	"cmd/seeddev:main":                                    notOrder(`station == "" ×1`, "the dev seeder's -station flag, defaulted from the plant spec"),
@@ -307,7 +335,7 @@ var blankStationSites = map[string]bsSite{
 	"domain:BuildCycleSeries":                             notOrder(`station == "" ×1, station == station ×1`, "a cycle event's station, read from bin_uop_ledger.actor on bin_uop_delta rows (store/audit cycle time): the reporting Edge's uid, which the uid-under-actor census moves"),
 	"engine:Engine.HandleRobotWatch":                      notOrder(`station == "" ×1, station == station ×1`, "the watching Edge's envelope against its body"),
 	"engine:Engine.RequestEdgeReregister":                 notOrder(`station == "" ×1`, "blank asks every Edge to re-register (the dashboard's re-sync)"),
-	"engine:KanbanKeeper.tickKanban":                      notOrder(`StationID == "" ×1`, "a kanban's station (kanbans.station_id): no station, no keeper"),
+	"engine:KanbanKeeper.tickKanban":                      notOrder(`station == "" ×1`, "a kanban's station (kanbans.station_uid): no station, no keeper"),
 	"engine:SourceabilityMonitor.snapshotFor":             notOrder(`station == station ×2`, "a process's station against the station a sourceability report is for"),
 	"engine:ThresholdMonitor.Resync":                      notOrder(`station == station ×1`, "a demand threshold's station (demand_registry)"),
 	"engine:lidarCandidate":                               notOrder(`station == "" ×1`, "an RDS map point (robot CurrentStation)"),
@@ -317,8 +345,8 @@ var blankStationSites = map[string]bsSite{
 	"messaging:CoreDataService.HandleLinesideLevelReport": notOrder(`station == "" ×2`, "the reporting Edge (the report's station, else its envelope's)"),
 	"messaging:CoreDataService.HandlePlantClaims":         notOrder(`station == "" ×1, alias == "" ×1, station == station ×1`, "the Edge publishing a process's claims, against the one that published it before"),
 	"messaging:CoreDataService.unlistedFor":               notOrder(`station == "" ×1`, "the asking Edge's envelope station; it lists that station's active orders, which no actor asks for"),
-	"messaging:loadersNameAnEdge":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.edge_station_uid)"),
-	"messaging:nameLoaderEdges":                           notOrder(`alias == "" ×1`, "a loader's Edge (bin_loaders.edge_station_uid)"),
+	"messaging:loadersNameAnEdge":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),
+	"messaging:nameLoaderEdges":                           notOrder(`alias == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),
 	"plantspec:Plant.ForEdge":                             notOrder(`station == "" ×1`, "a plant-spec claim's operator station"),
 	"plantspec:Plant.Validate":                            notOrder(`station == "" ×2, alias == "" ×1`, "plant-spec stations: a process's Edge, a claim's operator station, a kanban's station"),
 	"service:BinManifestService.syncOrClearForReleased":   notOrder(`station == "" ×1`, "a release's stream fence, the releasing Edge's own statement"),
@@ -326,15 +354,14 @@ var blankStationSites = map[string]bsSite{
 	"service:NodeService.ValidateKanban":                  notOrder(`station == "" ×2`, "a kanban's maintenance station"),
 	"service:NodeService.stationNameMap":                  notOrder(`station == "" ×1`, "edge_registry rows with no uid or display name are not labels"),
 	"store/dashboards:scanRow":                            notOrder(`station == "" ×1`, "blank stations_json text reads as no scope"),
-	"store/orders:filterWhere":                            notOrder(`StationID == "" ×1`, "a filter: blank means unscoped; a picked actor name matches that actor's orders today and none after the split unless the filter reads requested_by"),
-	"store/plantclaims:LastArmEdgesSQL":                   notOrder(`SQL station = '' ×1`, "edge_registry.station_id: the plant arm's registered Edges"),
-	"store/registry:Enroll":                               notOrder(`station == "" ×1, alias == "" ×1`, "a registry enrol's station id and display name defaults"),
-	"store/telemetry:GetDailyConcurrency":                 notOrder(`station == "" ×1`, "a filter on mission_telemetry.station_id: blank is unscoped; an actor name matches that actor's rows today and none after the split unless it reads requested_by"),
-	"store/telemetry:GetHourlyConcurrency":                notOrder(`station == "" ×1`, "a filter on mission_telemetry.station_id, as GetDailyConcurrency"),
-	"store/telemetry:GetRobotMissionAggs":                 notOrder(`StationID == "" ×1`, "a filter on mission_telemetry.station_id, as GetDailyConcurrency"),
-	"store/telemetry:buildLiveWhere":                      notOrder(`StationID == "" ×1`, "a filter on orders.station_id for the live missions, as GetDailyConcurrency"),
-	"store/telemetry:buildWhere":                          notOrder(`StationID == "" ×1`, "a filter on mission_telemetry.station_id, as GetDailyConcurrency"),
-	"store/telemetry:orderOutcomeWhere":                   notOrder(`StationID == "" ×1`, "a filter on orders.station_id for order outcomes, as GetDailyConcurrency"),
+	"store/orders:filterWhere":                            notOrder(`StationID == "" ×1`, "a filter: blank means unscoped; DECIDED (names lane): a picked actor name is matched in requested_by (RequesterColumn), so it still matches that actor's orders"),
+	"store/plantclaims:LastArmEdgesSQL":                   notOrder(`SQL station = '' ×1`, "edge_registry.station_uid: the plant arm's registered Edges"),
+	"store/telemetry:GetDailyConcurrency":                 notOrder(`station == "" ×1`, "a filter on mission_telemetry's requester: blank is unscoped; DECIDED (names lane): an actor name is matched in requested_by (RequesterColumn), so it still matches that actor's rows"),
+	"store/telemetry:GetHourlyConcurrency":                notOrder(`station == "" ×1`, "a filter on mission_telemetry's requester, as GetDailyConcurrency"),
+	"store/telemetry:GetRobotMissionAggs":                 notOrder(`StationID == "" ×1`, "a filter on mission_telemetry's requester, as GetDailyConcurrency"),
+	"store/telemetry:buildLiveWhere":                      notOrder(`StationID == "" ×1`, "a filter on the orders' requester for the live missions, as GetDailyConcurrency"),
+	"store/telemetry:buildWhere":                          notOrder(`StationID == "" ×1`, "a filter on mission_telemetry's requester, as GetDailyConcurrency"),
+	"store/telemetry:orderOutcomeWhere":                   notOrder(`StationID == "" ×1`, "a filter on the orders' requester for order outcomes, as GetDailyConcurrency"),
 	"store:DB.ListEdgeCells":                              notOrder(`station == "" ×1`, "an edge_cells filter: blank lists every station's cells"),
 	"store:kanbanSave.applyScalars":                       notOrder(`station == station ×1`, "a kanban's station before and after a save"),
 	"uop:InventoryDeltaService.ApplyBinUOPDelta":          notOrder(`station == "" ×1`, "the counting Edge's envelope station"),
@@ -344,9 +371,15 @@ var blankStationSites = map[string]bsSite{
 	"www:Doors.releasePoints":                             notOrder(`station == "" ×1`, "the asking Edge's station"),
 	"www:Handlers.apiCellProcesses":                       notOrder(`station == "" ×1`, "a cell_config station query parameter"),
 	"www:Handlers.apiCellUpsert":                          notOrder(`station == "" ×1`, "a cell_config row's station"),
-	"www:Handlers.apiListLoaders":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.edge_station_uid)"),
-	"www:Handlers.apiStations":                            notOrder(`StationID == "" ×1`, "edge_registry rows with no station id are skipped; the order stations come from ListDistinctStations"),
+	"www:Handlers.apiListLoaders":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),
+	"www:Handlers.apiStations":                            notOrder(`station == "" ×1`, "edge_registry rows with no station_uid are skipped (v185's CHECK leaves none); the order stations come from ListDistinctStations"),
 	"www:robotsAtNodes":                                   notOrder(`alias == "" ×1`, "an RDS map point (robot CurrentStation)"),
+
+	// ── Migration text ─────────────────────────────────────────────────────
+	"store:v185Actors":       history(`Core actor name ×3`, "v185's three actors, which it moves out of the station columns into requested_by"),
+	"store:v185Ops":          history(`SQL station = '' ×1, SQL station IN (…) ×2`, "v185's CHECKs: every edge_registry row has its uid, and no Core actor stands in orders' or mission_telemetry's station_uid"),
+	"store:v185Moves":        history(`SQL station = '' ×12, SQL station IN (…) ×3`, "v185's data moves and their inverses: the actors out of the station columns, the uid out of actor, and back"),
+	"store:v185FoldRegistry": history(`station == "" ×1, SQL station = '' ×3`, "v185's registry fold: a blank uid takes the row's station_id; a colliding or both-blank row is deleted"),
 }
 
 // TestCensus_BlankStationSites holds blankStationSites to the tree: every
@@ -411,16 +444,19 @@ var bsFormOrder = []bsForm{bsStationID, bsStationName, bsAlias, bsLen, bsSwitch,
 var (
 	// bsNameRe is a Go name that holds a station: StationID, station, the
 	// material station's ProjectsTo, a Station field, and so on.
-	bsNameRe = regexp.MustCompile(`(?i)station|projects_?to`)
+	bsNameRe = regexp.MustCompile(`(?i)station|projects_?to|requester|requested_?by`)
 	// bsLenNameRe is the len() form's operand: one station string (station,
 	// StationID, EdgeStationUID, ProjectsTo), not a list or map named for
 	// stations (perStation, byStation), which len() also takes.
 	bsLenNameRe   = regexp.MustCompile(`(?i)^(station|projects_?to|\w*station_?u?id)$`)
-	bsSQLName     = `[\w.]*(?:station|projects_to)\w*`
-	bsSQLAliasDef = regexp.MustCompile(`(?i)(?:station|projects_to)\w*(?:\s+END)?\s+AS\s+(\w+)`)
+	bsSQLName     = `[\w.]*(?:station|projects_to|requested_by)\w*`
+	bsSQLAliasDef = regexp.MustCompile(`(?i)(?:station|projects_to|requested_by)\w*(?:\s+END)?\s+AS\s+(\w+)`)
 	bsSQLActorRe  = regexp.MustCompile(`(?i)'core(?:-|%|')`)
 	bsBoardRe     = regexp.MustCompile(`(?i)\b` + bsSQLName + `\s+IN\s*\(`)
 	bsActorNames  = map[string]bool{"core-operator": true, "core-direct": true, "core-test": true}
+	// bsActorConsts are the actors' one Go spelling (domain/requester.go); a use
+	// of one names the actor as its string literal did.
+	bsActorConsts = map[string]bool{"RequesterOperator": true, "RequesterDirect": true, "RequesterTest": true}
 	bsSQLBlankRe  = bsSQLBlankFor(bsSQLName)
 )
 
@@ -617,6 +653,10 @@ func bsInspect(n ast.Node, note func(bsForm, token.Pos)) {
 					note(bsActor, e.Pos())
 				}
 			}
+		case *ast.Ident:
+			if bsActorConsts[e.Name] {
+				note(bsActor, e.Pos())
+			}
 		case *ast.BasicLit:
 			bsLiteral(e, sqlAliases, note)
 		}
@@ -703,6 +743,10 @@ func bsName(x ast.Expr) string {
 	case *ast.SelectorExpr:
 		return e.Sel.Name
 	case *ast.CallExpr:
+		// o.Requester(): the order's station, or its Core actor.
+		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && len(e.Args) == 0 && sel.Sel.Name == "Requester" {
+			return sel.Sel.Name
+		}
 		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && len(e.Args) == 1 {
 			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "strings" {
 				switch sel.Sel.Name {

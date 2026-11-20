@@ -139,7 +139,7 @@ func TestWiden_DoesNotStopAtALaneWait(t *testing.T) {
 	}
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "widen-lane-wait"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.PayloadCode = sd.Payload.Code
 		o.ProcessNode = sd.LineNode.Name
 		o.DeliveryNode = sd.LineNode.Name
@@ -178,7 +178,7 @@ func TestWiden_StillStopsAtAnOperatorWait(t *testing.T) {
 	}
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "widen-operator-wait"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.PayloadCode = sd.Payload.Code
 		o.ProcessNode = sd.LineNode.Name
 		o.DeliveryNode = sd.LineNode.Name

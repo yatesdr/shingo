@@ -86,12 +86,12 @@ func TestAdvanceStuckReshuffleParents_ReDrivesOnlyStranded(t *testing.T) {
 	}
 
 	mkParent := func(uuid string) int64 {
-		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1}
+		p := &orders.Order{EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(p), "create parent "+uuid)
 		return p.ID
 	}
 	mkChild := func(uuid string, parentID int64, status protocol.Status) {
-		c := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeMove, Status: status, ParentOrderID: &parentID, Quantity: 1}
+		c := &orders.Order{EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderTypeMove, Status: status, ParentOrderID: &parentID, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(c), "create child "+uuid)
 	}
 
@@ -152,10 +152,10 @@ func TestAdvanceStuckReshuffleParents_SkipsOpenParent(t *testing.T) {
 	}
 
 	mk := func(uuid string, open bool) int64 {
-		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+		p := &orders.Order{EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderTypeRetrieve,
 			Status: protocol.StatusReshuffling, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(p), "create parent "+uuid)
-		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+		c := &orders.Order{EdgeUUID: uuid + "-c1", StationUID: "line-1", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(c), "create child for "+uuid)
 		if open {
@@ -224,10 +224,10 @@ func TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget(t *testing.T) 
 		if binStillThere {
 			createTestBinAtNode(t, db, bp.Code, slot.ID, uuid+"-BIN")
 		}
-		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeMove,
+		p := &orders.Order{EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusReshuffling, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(p), "create dig parent "+uuid)
-		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+		c := &orders.Order{EdgeUUID: uuid + "-c1", StationUID: "line-1", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(c), "create child for "+uuid)
 		return p.ID, slot.Name
@@ -291,7 +291,7 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	// updated_at-only fixture describes an order that has just progressed.
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "stuck-uuid"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = "retrieve"
 		o.SourceNode = "STORAGE-A1"
 		o.DeliveryNode = "LINE1-IN"
@@ -379,7 +379,7 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "anom-uuid"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = "retrieve"
 	}, testdb.FleetHas("sg-anom-uuid"))
 	// AGE IS AGE SINCE THE LAST TRANSITION. active_order_stuck keys on an
@@ -598,7 +598,7 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 	// Seed a delivered order with updated_at well past the timeout.
 	order := &orders.Order{
 		EdgeUUID:     "auto-confirm-uuid",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "delivered",
 		SourceNode:   "STORAGE-A1",
@@ -678,7 +678,7 @@ func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
 	// A delivered order updated moments ago — too fresh for auto-confirm.
 	order := &orders.Order{
 		EdgeUUID:     "fresh-uuid",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "delivered",
 		SourceNode:   "STORAGE-A1",
@@ -714,10 +714,10 @@ func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
 
 	// A stuck but not-delivered order — query only matches status='delivered'.
 	order := &orders.Order{
-		EdgeUUID:  "ndo-uuid",
-		StationID: "line-1",
-		OrderType: "retrieve",
-		Status:    "in_transit",
+		EdgeUUID:   "ndo-uuid",
+		StationUID: "line-1",
+		OrderType:  "retrieve",
+		Status:     "in_transit",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
@@ -752,7 +752,7 @@ func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "no-hook-uuid",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    "retrieve",
 		Status:       "delivered",
 		SourceNode:   "STORAGE-A1",

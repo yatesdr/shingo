@@ -23,7 +23,7 @@ func TestFeedsPin_EdgesPageRow(t *testing.T) {
 	h, db := testHandlersForRendering(t)
 
 	const uid = "edge.test"
-	_, err := db.EnrollEdge(uid, "", uid)
+	_, err := db.EnrollEdge(uid, "")
 	testutil.MustNoErr(t, err, "enroll")
 	_, err = db.RegisterEdge(uid, "edge-host-a", "inst-a", "test", "America/Chicago", sql.NullInt64{Int64: 3, Valid: true})
 	testutil.MustNoErr(t, err, "register")

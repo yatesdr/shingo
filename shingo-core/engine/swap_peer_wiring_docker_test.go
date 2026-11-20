@@ -63,7 +63,7 @@ func TestSwapDeathRule_ARealTerminalEventReachesThePartner(t *testing.T) {
 
 			mk := func(uuid, sib, delivery, steps string) *orders.Order {
 				o := &orders.Order{
-					EdgeUUID: uuid, StationID: "line-1", OrderType: dispatch.OrderTypeComplex,
+					EdgeUUID: uuid, StationUID: "line-1", OrderType: dispatch.OrderTypeComplex,
 					Status: protocol.StatusInTransit, Quantity: 1, PayloadCode: sd.Payload.Code,
 					ProcessNode: sd.LineNode.Name, DeliveryNode: delivery, SiblingOrderUUID: sib,
 					Coordinated: true, StepsJSON: steps,
@@ -82,15 +82,15 @@ func TestSwapDeathRule_ARealTerminalEventReachesThePartner(t *testing.T) {
 			switch tc.event {
 			case EventOrderFailed:
 				eng.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
-					OrderID: dead.ID, EdgeUUID: dead.EdgeUUID, StationID: dead.StationID,
+					OrderID: dead.ID, EdgeUUID: dead.EdgeUUID, StationID: dead.StationUID,
 					ErrorCode: "fleet_failed", Detail: "robot faulted and was aborted"}})
 			case EventOrderSkipped:
 				eng.Events.Emit(Event{Type: EventOrderSkipped, Payload: OrderSkippedEvent{
-					OrderID: dead.ID, EdgeUUID: dead.EdgeUUID, StationID: dead.StationID,
+					OrderID: dead.ID, EdgeUUID: dead.EdgeUUID, StationID: dead.StationUID,
 					ErrorCode: "no_source_bin", Detail: "no bin at any source node"}})
 			case EventOrderCancelled:
 				eng.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
-					OrderID: dead.ID, EdgeUUID: dead.EdgeUUID, StationID: dead.StationID,
+					OrderID: dead.ID, EdgeUUID: dead.EdgeUUID, StationID: dead.StationUID,
 					Reason: "operator cancelled", PreviousStatus: string(protocol.StatusInTransit)}})
 			}
 

@@ -433,7 +433,7 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		Kind:         o.Kind,
 		KindLabel:    kindLabel(o.Kind),
 		Direction:    string(o.Direction),
-		Station:      o.StationID,
+		Station:      o.StationUID,
 		Payload:      o.PayloadCode,
 		CoreNode:     o.CoreNodeName,
 		OpenedAt:     o.OpenedAt,

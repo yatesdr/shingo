@@ -13,7 +13,7 @@ import (
 // deleting the raw rows — bounding it would remove the only permanent record
 // of daily part flow. No retention on this table, ever.
 //
-// Grain: (day, bin_id, epoch_seq, payload_code, reason, actor). The daily job
+// Grain: (day, bin_id, epoch_seq, payload_code, reason, station_uid). The daily job
 // re-aggregates a whole day from the raw rows and upserts, which makes it
 // idempotent per day AND self-healing: a missed day is re-derivable from the
 // raw rows for as long as they survive (90 days), and the re-run overwrites
@@ -36,11 +36,11 @@ import (
 func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	bumps := pgBumpOpsArraySQL()
 	res, err := db.Exec(`INSERT INTO bin_uop_delta_daily
-		(day, bin_id, epoch_seq, payload_code, reason, actor,
+		(day, bin_id, epoch_seq, payload_code, reason, station_uid,
 		 ticks, consumed, added, first_uop, last_uop, min_uop, crossings)
 	SELECT (w.applied_at AT TIME ZONE 'UTC')::date, w.bin_id, w.epoch_seq,
 	       w.payload_code,
-	       COALESCE(w.metadata->>'reason', ''), w.actor,
+	       COALESCE(w.metadata->>'reason', ''), w.station_uid,
 	       count(*)::int,
 	       COALESCE(sum(-(w.metadata->>'delta')::int) FILTER (WHERE (w.metadata->>'delta')::int < 0), 0)::int,
 	       COALESCE(sum((w.metadata->>'delta')::int)  FILTER (WHERE (w.metadata->>'delta')::int > 0), 0)::int,
@@ -50,7 +50,7 @@ func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	       count(*) FILTER (WHERE w.before_uop >= 0 AND w.after_uop < 0)::int
 	FROM (
 	    SELECT a.id, a.op, a.bin_id, a.applied_at, a.before_uop, a.after_uop,
-	           a.payload_code, a.actor, a.metadata,
+	           a.payload_code, a.station_uid, a.metadata,
 	           count(*) FILTER (WHERE a.op = ANY(`+bumps+`)) OVER (
 		       PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
 	    FROM bin_uop_ledger a
@@ -58,7 +58,7 @@ func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	WHERE w.op = 'bin_uop_delta'
 	  AND w.applied_at >= $1 AND w.applied_at < $1 + interval '1 day'
 	GROUP BY 1, 2, 3, 4, 5, 6
-	ON CONFLICT (day, bin_id, epoch_seq, payload_code, reason, actor) DO UPDATE SET
+	ON CONFLICT (day, bin_id, epoch_seq, payload_code, reason, station_uid) DO UPDATE SET
 		ticks     = EXCLUDED.ticks,
 		consumed  = EXCLUDED.consumed,
 		added     = EXCLUDED.added,

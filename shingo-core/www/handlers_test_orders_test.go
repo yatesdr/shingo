@@ -34,11 +34,11 @@ func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
 	// Seed an order already in the "delivered" state — the only status from
 	// which Lifecycle().ConfirmReceipt proceeds.
 	o := &orders.Order{
-		EdgeUUID:  "rcpt-happy-1",
-		StationID: "line-1",
-		OrderType: "move",
-		Status:    "delivered",
-		Quantity:  1,
+		EdgeUUID:   "rcpt-happy-1",
+		StationUID: "line-1",
+		OrderType:  "move",
+		Status:     "delivered",
+		Quantity:   1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
@@ -79,11 +79,11 @@ func TestApiDirectOrderReceipt_DefaultsReceiptType(t *testing.T) {
 	h, db := testHandlers(t)
 
 	o := &orders.Order{
-		EdgeUUID:  "rcpt-default-1",
-		StationID: "line-1",
-		OrderType: "move",
-		Status:    "delivered",
-		Quantity:  1,
+		EdgeUUID:   "rcpt-default-1",
+		StationUID: "line-1",
+		OrderType:  "move",
+		Status:     "delivered",
+		Quantity:   1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
@@ -129,11 +129,11 @@ func TestApiDirectOrderReceipt_WrongStatusReturns500(t *testing.T) {
 	h, db := testHandlers(t)
 
 	o := &orders.Order{
-		EdgeUUID:  "rcpt-wrong-status-1",
-		StationID: "line-1",
-		OrderType: "move",
-		Status:    "pending",
-		Quantity:  1,
+		EdgeUUID:   "rcpt-wrong-status-1",
+		StationUID: "line-1",
+		OrderType:  "move",
+		Status:     "pending",
+		Quantity:   1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
@@ -161,11 +161,11 @@ func TestApiDirectOrderReceipt_AlreadyCompleted(t *testing.T) {
 	h, db := testHandlers(t)
 
 	o := &orders.Order{
-		EdgeUUID:  "rcpt-done-1",
-		StationID: "line-1",
-		OrderType: "move",
-		Status:    "confirmed",
-		Quantity:  1,
+		EdgeUUID:   "rcpt-done-1",
+		StationUID: "line-1",
+		OrderType:  "move",
+		Status:     "confirmed",
+		Quantity:   1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	// Mark as completed so ConfirmReceipt short-circuits to (false, nil).

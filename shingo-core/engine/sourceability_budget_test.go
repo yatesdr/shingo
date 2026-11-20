@@ -109,7 +109,7 @@ func seedBudgetFixture(t *testing.T, running bool) (*store.DB, *store.QueryCount
 	// shape Q3 measured at Springfield, where no binding sits at a node any style
 	// claim names, and it is the shape the loader samples exist to cover.
 	_, err := db.SyncDemandRegistry("ST-BUD", []demands.RegistryEntry{{
-		StationID: "ST-BUD", CoreNodeName: "LOADER-BUD", Role: protocol.ClaimRoleConsume,
+		StationUID: "ST-BUD", CoreNodeName: "LOADER-BUD", Role: protocol.ClaimRoleConsume,
 		PayloadCode: "BIN-BUD", ReplenishUOPThreshold: 5,
 	}})
 	testutil.MustNoErr(t, err, "seed monitored binding")

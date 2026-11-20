@@ -45,7 +45,7 @@ import (
 func seedMission(t *testing.T, db *store.DB, orderID int64, station, robot, src, dst string, durMS int64) {
 	t.Helper()
 	if err := telemetry.UpsertMission(db.DB, &telemetry.Mission{
-		OrderID: orderID, RobotID: robot, StationID: station,
+		OrderID: orderID, RobotID: robot, StationUID: station,
 		SourceNode: src, DeliveryNode: dst,
 		TerminalState: "FINISHED", DurationMS: durMS,
 		BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]",

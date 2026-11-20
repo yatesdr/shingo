@@ -47,7 +47,7 @@ func seedPinOrder(t *testing.T, db *store.DB, uuid, status, robot string, create
 func seedPinOrderJob(t *testing.T, db *store.DB, uuid, status, robot, job string, created time.Time, completed *time.Time) int64 {
 	t.Helper()
 	var id int64
-	err := db.DB.QueryRow(`INSERT INTO orders (edge_uuid, station_id, status, robot_id, vendor_order_id, created_at, updated_at, completed_at)
+	err := db.DB.QueryRow(`INSERT INTO orders (edge_uuid, station_uid, status, robot_id, vendor_order_id, created_at, updated_at, completed_at)
 		VALUES ($1, 'pin-station', $2, $3, $4, $5, $5, $6) RETURNING id`,
 		uuid, status, robot, job, created, completed).Scan(&id)
 	testutil.MustNoErr(t, err, "seed order "+uuid)
@@ -71,7 +71,7 @@ func seedPinHistoryCode(t *testing.T, db *store.DB, orderID int64, status, detai
 // seedPinMission writes the mission_telemetry summary row a finished mission has.
 func seedPinMission(t *testing.T, db *store.DB, orderID int64, robot string, created, completed time.Time, durationMS int64) {
 	t.Helper()
-	_, err := db.DB.Exec(`INSERT INTO mission_telemetry (order_id, robot_id, station_id, terminal_state, core_created, core_completed, duration_ms)
+	_, err := db.DB.Exec(`INSERT INTO mission_telemetry (order_id, robot_id, station_uid, terminal_state, core_created, core_completed, duration_ms)
 		VALUES ($1, $2, 'pin-station', 'FINISHED', $3, $4, $5)`,
 		orderID, robot, created, completed, durationMS)
 	testutil.MustNoErr(t, err, "seed mission")

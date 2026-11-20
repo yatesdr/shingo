@@ -125,8 +125,12 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	if !ok {
 		return
 	}
-	// Core-admin (manual move) orders have no station; broadcast to all edges so
-	// each can attempt the bin binding via DeliveryNode fallback.
+	// A station-aware order with no requester at all (no station, no Core actor)
+	// is broadcast to every Edge, so each can attempt the bin binding via the
+	// DeliveryNode fallback. No door is known to issue one: a Core page's manual
+	// move is station-unaware and returned above, and an aware Core actor's
+	// order goes to the actor's name (materialStation). This comment said
+	// manual moves broadcast; they never reached this line (2026-11-20).
 	if stationID == "" {
 		stationID = protocol.StationBroadcast
 	}
@@ -154,14 +158,17 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 
 // materialStation is the station an order's material notices (order.delivered,
 // bin_picked_up) go to, and false when they go to nobody. A station-known order
-// sends to its own station, as it always did; a station-unaware one sends to the
-// station it projects to, if any (the orc's ruling on Stop 1's delivery line).
+// sends to its requester, as it always did: its own station, or the Core actor
+// that asked (a name no Edge listens on, which keeps such an order out of the
+// broadcast below; pinned by the step-0 reader pins). A station-unaware one
+// sends to the station it projects to, if any (the orc's ruling on Stop 1's
+// delivery line).
 // The order is already read, so this adds no statement.
 func materialStation(order *orders.Order) (string, bool) {
 	if !order.StationUnaware {
-		return order.StationID, true
+		return order.Requester(), true
 	}
-	return order.ProjectsTo, order.ProjectsTo != ""
+	return order.ProjectsToStationUID, order.ProjectsToStationUID != ""
 }
 
 // deliveredCart is the cart order.delivered ships: the order's one cart, or for

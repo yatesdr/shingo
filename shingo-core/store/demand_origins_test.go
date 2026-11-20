@@ -16,7 +16,7 @@ import (
 func originAt(key, id string, rev int64, opened time.Time) store.DemandOrigin {
 	return store.DemandOrigin{
 		OriginID: id, Revision: rev, EpisodeKey: key, Kind: "cell",
-		Direction: "supply", StationID: "PLANT.LINE1", ProcessID: "SNF2",
+		Direction: "supply", StationUID: "PLANT.LINE1", ProcessID: "SNF2",
 		PayloadCode: "PANEL-B", OpenedAt: opened,
 	}
 }
@@ -167,7 +167,7 @@ func TestSupersedeOpenEpisode_YieldsToTheRealClose(t *testing.T) {
 // does not carry it. Listing it in the upsert's SET clause would zero Core's
 // fact on every subsequent message — silently, and only for episodes that get
 // more than one, which is every episode that ever closes. (uop_delivered was
-// the other such column; it never had a writer and v184 drops it.)
+// the other such column; it never had a writer and v185 drops it.)
 func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 	db := testdb.Open(t)
 	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
@@ -214,12 +214,12 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 
 	thr := store.DemandOrigin{
 		OriginID: "aaaaaaaa-1111-2222-3333-444444444444", EpisodeKey: protocol.ThresholdEpisodeKey("SLN_002", "PANEL-A"),
-		Kind: protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
+		Kind: protocol.EpisodeKindThreshold, StationUID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}
 	mnt := store.DemandOrigin{
 		OriginID: "bbbbbbbb-1111-2222-3333-444444444444", EpisodeKey: protocol.KanbanEpisodeKey(7, 8),
-		Kind: protocol.EpisodeKindKanban, StationID: "PLANT.LINE1",
+		Kind: protocol.EpisodeKindKanban, StationUID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}
 	_, err := db.OpenCoreEpisode(thr)
@@ -280,7 +280,7 @@ func TestKanbanEpisodeForOrigin(t *testing.T) {
 	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "11111111-2222-3333-4444-555555555555",
 		EpisodeKey: protocol.KanbanEpisodeKey(group.ID, typeID),
-		Kind:       protocol.EpisodeKindKanban, StationID: "PLANT.LINE1",
+		Kind:       protocol.EpisodeKindKanban, StationUID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}, "mint kanban")
 
@@ -308,7 +308,7 @@ func TestKanbanEpisodeForOrigin(t *testing.T) {
 	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "99999999-8888-7777-6666-555555555555",
 		EpisodeKey: protocol.ThresholdEpisodeKey("SLN_002", "PANEL-A"),
-		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
+		Kind:       protocol.EpisodeKindThreshold, StationUID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}, "mint threshold")
 	name, got, err = db.KanbanEpisodeForOrigin("99999999-8888-7777-6666-555555555555")

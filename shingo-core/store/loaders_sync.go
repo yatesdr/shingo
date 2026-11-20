@@ -23,7 +23,7 @@ import (
 // demand_registry — the stations the loader-config re-derive must refresh after
 // an aggregate edit.
 func (db *DB) DemandRegistryStations() ([]string, error) {
-	rows, err := db.DB.Query(`SELECT DISTINCT station_id FROM demand_registry ORDER BY station_id`)
+	rows, err := db.DB.Query(`SELECT DISTINCT station_uid FROM demand_registry ORDER BY station_uid`)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			// The Edge that works the loader. Its display name is filled by
 			// the node-list build (messaging.buildNodeList), from one registry
 			// read for every loader rather than one here per loader.
-			EdgeStationUID: l.EdgeStationUID,
+			EdgeStationUID: l.StationUID,
 		}
 
 		homes, err := db.ListLoaderHomes(l.ID)
@@ -360,7 +360,7 @@ func (db *DB) deriveLoaderEntries(stationID string, l loaders.Loader, skips *Dem
 			continue
 		}
 		out = append(out, demands.RegistryEntry{
-			StationID:             stationID,
+			StationUID:            stationID,
 			CoreNodeName:          name,
 			LoaderID:              l.ID,
 			Role:                  role,
@@ -402,7 +402,7 @@ func (db *DB) deriveLoaderEntries(stationID string, l loaders.Loader, skips *Dem
 	}
 	for _, p := range payloads {
 		out = append(out, demands.RegistryEntry{
-			StationID:             stationID,
+			StationUID:            stationID,
 			CoreNodeName:          addr,
 			LoaderID:              l.ID,
 			Role:                  role,
@@ -425,8 +425,8 @@ func (db *DB) keepOwnedEntries(stationID string, entries []demands.RegistryEntry
 	for _, e := range entries {
 		names = append(names, e.CoreNodeName)
 	}
-	rows, err := db.Query(`SELECT n.name, c.station_id FROM unnest($1::text[]) AS n(name)
-		JOIN LATERAL (`+plantclaims.ClaimingStationsSQL("n.name")+`) c(station_id) ON true`, names)
+	rows, err := db.Query(`SELECT n.name, c.station_uid FROM unnest($1::text[]) AS n(name)
+		JOIN LATERAL (`+plantclaims.ClaimingStationsSQL("n.name")+`) c(station_uid) ON true`, names)
 	if err != nil {
 		return nil, fmt.Errorf("demand registry owners: %w", err)
 	}

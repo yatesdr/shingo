@@ -819,7 +819,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 	}
 
 	orderUUID := uuid.New().String()
-	src := protocol.Address{Role: protocol.RoleCore, Station: "core-operator"}
+	src := protocol.Address{Role: protocol.RoleCore, Station: domain.RequesterOperator}
 	dst := protocol.Address{Role: protocol.RoleCore}
 
 	// EVERY SPOT ORDER ON THIS PAGE IS no_demand, and each of the six create
@@ -1076,7 +1076,7 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		Selection:    engine.BinSelectionByLabel,
 		BinLabel:     binLabel,
 		DestNodeName: deliveryNode,
-		StationID:    "core-operator",
+		RequestedBy:  domain.RequesterOperator,
 		EdgeUUID:     orderUUID,
 		Priority:     priority,
 		Desc:         desc,

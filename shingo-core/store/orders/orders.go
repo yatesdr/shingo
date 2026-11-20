@@ -49,7 +49,7 @@ type History = domain.OrderHistory
 // the same statement over idx_order_bins_order: every reader of an order has
 // its carts for no further statement. It names the outer row as orders.id, so
 // a statement using SelectCols reads FROM orders unaliased (all of them do).
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, want, steps_done, version, asked_vendor_order_id, block_actions, ` + CartsColSQL
+const SelectCols = `id, edge_uuid, station_uid, requested_by, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id, station_unaware, projects_to_station_uid, plan, want, steps_done, version, asked_vendor_order_id, block_actions, ` + CartsColSQL
 
 // CartsColSQL is the order's carts as one JSON text column: an array of
 // [bin_id, pick_step, drop_step], in plan order (a carried-over row, with no
@@ -111,14 +111,14 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var blockActions sql.NullString
 	// carts is CartsColSQL's text, the order's order_bins rows.
 	var carts string
-	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
+	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationUID, &o.RequestedBy, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsTo, &planJSON, &want, &o.StepsDone, &o.Version, &o.AskedVendorOrderID, &blockActions, &carts)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID, &o.StationUnaware, &o.ProjectsToStationUID, &planJSON, &want, &o.StepsDone, &o.Version, &o.AskedVendorOrderID, &blockActions, &carts)
 	if err != nil {
 		return nil, err
 	}
@@ -255,12 +255,12 @@ func Create(db helpers.QueryRower, o *Order) error {
 	// memory (Order.HoldFromBirth). An order born holding nothing writes none.
 	carts := RowsOf(o.Carts)
 	cb, cp, cd := cartArrays(carts)
-	id, err := helpers.InsertID(db, `WITH ins AS (INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to, plan, robot_id, want, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $26, $27, $28, $29, $30, $25, $25) RETURNING id),
+	id, err := helpers.InsertID(db, `WITH ins AS (INSERT INTO orders (edge_uuid, station_uid, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, station_unaware, projects_to_station_uid, plan, robot_id, want, requested_by, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $26, $27, $28, $29, $30, $34, $25, $25) RETURNING id),
 		carts AS (INSERT INTO order_bins (order_id, bin_id, pick_step, drop_step)
 		          SELECT ins.id, r.bin, r.pick, NULLIF(r.drop, -1)
 		            FROM ins, unnest($31::bigint[], $32::bigint[], $33::bigint[]) AS r(bin, pick, drop))
 		SELECT id FROM ins`,
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
@@ -269,8 +269,8 @@ func Create(db helpers.QueryRower, o *Order) error {
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
 		helpers.NullableInt64(o.NamedBinID),
-		now, o.StationUnaware, o.ProjectsTo, marshalPlan(o.Plan), o.RobotID, o.Want.String(),
-		cb, cp, cd)
+		now, o.StationUnaware, o.ProjectsToStationUID, marshalPlan(o.Plan), o.RobotID, o.Want.String(),
+		cb, cp, cd, o.RequestedBy)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -527,7 +527,8 @@ func UpdateStatusFromWithReason(db *sql.DB, id int64, from, to, detail, code, ac
 // and whether there is a station to send it to.
 type Told struct {
 	EdgeUUID       string
-	StationID      string
+	StationUID     string
+	RequestedBy    string
 	StationUnaware bool
 	IsLeg          bool
 	Status         protocol.Status
@@ -537,16 +538,25 @@ type Told struct {
 	Version        int64
 }
 
+// Requester is who asked for the told order: its station, or its Core actor
+// (domain.Order.Requester).
+func (t Told) Requester() string {
+	if t.StationUID != "" {
+		return t.StationUID
+	}
+	return t.RequestedBy
+}
+
 // ToldReturning is the RETURNING clause that reads a Told; ScanTold scans it.
 // The values are the row's after the write.
-const ToldReturning = ` RETURNING edge_uuid, station_id, station_unaware, parent_order_id IS NOT NULL,
+const ToldReturning = ` RETURNING edge_uuid, station_uid, requested_by, station_unaware, parent_order_id IS NOT NULL,
 	status, robot_id, COALESCE(queue_reason, ''), COALESCE(queue_code, ''), version`
 
 // ScanTold scans ToldReturning's columns, followed by any extra the caller's
 // RETURNING appends.
 func ScanTold(row interface{ Scan(...any) error }, extra ...any) (Told, error) {
 	var t Told
-	dest := append([]any{&t.EdgeUUID, &t.StationID, &t.StationUnaware, &t.IsLeg,
+	dest := append([]any{&t.EdgeUUID, &t.StationUID, &t.RequestedBy, &t.StationUnaware, &t.IsLeg,
 		&t.Status, &t.RobotID, &t.QueueReason, &t.QueueCode, &t.Version}, extra...)
 	err := row.Scan(dest...)
 	return t, err
@@ -1204,14 +1214,23 @@ func List(db *sql.DB, status string, limit int) ([]*Order, error) {
 // Filter supports filtered, paginated order queries. See domain.OrderFilter.
 type Filter = domain.OrderFilter
 
+// RequesterColumn is the orders or mission_telemetry column requester r lives
+// in (helpers.RequesterColumn): requested_by for a Core actor, else station_uid.
+func RequesterColumn(r string) string { return helpers.RequesterColumn(r) }
+
+// RequesterSQL is the requester of the orders or mission_telemetry row named by
+// alias, as one SQL expression (helpers.RequesterSQL).
+func RequesterSQL(alias string) string { return helpers.RequesterSQL(alias) }
+
 // likeEscaper escapes a search term's own wildcards, so a search for "ALN_00"
 // means that and not "ALN" + any character + "00".
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // searchColumns are what the orders board prints in a row: the id, the route's
-// three nodes, station, type, payload, status, robot and the wait sentence.
+// three nodes, the requester (its station, or a Core actor), type, payload,
+// status, robot and the wait sentence.
 var searchColumns = []string{"CAST(id AS text)", "source_node", "process_node", "delivery_node",
-	"station_id", "order_type", "payload_code", "payload_desc", "status", "robot_id", "queue_reason"}
+	"station_uid", "requested_by", "order_type", "payload_code", "payload_desc", "status", "robot_id", "queue_reason"}
 
 // filterWhere builds the WHERE clause and its arguments for a Filter. ONE
 // builder for ListFiltered and CountFiltered, so a page and its total cannot
@@ -1249,7 +1268,7 @@ func filterWhere(f Filter) (string, []any) {
 		where += ` AND (` + strings.Join(ors, " OR ") + `)`
 	}
 	if f.StationID != "" {
-		where += ` AND station_id = ` + arg(f.StationID)
+		where += ` AND ` + RequesterColumn(f.StationID) + ` = ` + arg(f.StationID)
 	}
 	if f.Since != nil {
 		where += ` AND created_at >= ` + arg(*f.Since)
@@ -1329,9 +1348,9 @@ func ActiveIDsByRobot(db *sql.DB) (map[string]int64, error) {
 // OrderRobot is one order's station and robot, as the live robot feed reads
 // them (engine/robot_watch.go).
 type OrderRobot struct {
-	UUID      string
-	StationID string
-	RobotID   string
+	UUID       string
+	StationUID string
+	RobotID    string
 }
 
 // RobotsByUUID returns the station and robot of each order among uuids that
@@ -1353,7 +1372,7 @@ func RobotsByUUID(db *sql.DB, uuids []string) ([]OrderRobot, error) {
 		args[i] = u
 	}
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT edge_uuid, station_id, robot_id FROM orders
+		`SELECT edge_uuid, station_uid, robot_id FROM orders
 		  WHERE edge_uuid IN (%s) AND robot_id <> '' AND status IN (%s)`,
 		strings.Join(ph, ", "), protocol.VendorTrackedStatusSQLList()), args...)
 	if err != nil {
@@ -1363,7 +1382,7 @@ func RobotsByUUID(db *sql.DB, uuids []string) ([]OrderRobot, error) {
 	var out []OrderRobot
 	for rows.Next() {
 		var r OrderRobot
-		if err := rows.Scan(&r.UUID, &r.StationID, &r.RobotID); err != nil {
+		if err := rows.Scan(&r.UUID, &r.StationUID, &r.RobotID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1389,8 +1408,8 @@ func ListActive(db *sql.DB) ([]*Order, error) {
 // predicate as ListActive, so the two cannot disagree about what "active" means.
 func ListActiveByStation(db *sql.DB, stationID string) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT %s FROM orders WHERE station_id = $1 AND status NOT IN (%s) ORDER BY id DESC`,
-		SelectCols, protocol.TerminalStatusSQLList()), stationID)
+		`SELECT %s FROM orders WHERE %s = $1 AND status NOT IN (%s) ORDER BY id DESC`,
+		SelectCols, RequesterColumn(stationID), protocol.TerminalStatusSQLList()), stationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1537,12 +1556,14 @@ func ListActiveBoard(db *sql.DB) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// ListDistinctStations returns the distinct station IDs seen on orders,
-// sorted. These are the values a dashboard's station scope can actually
-// match — the board filter below is an exact station_id comparison, so
-// offering anything else in a picker would silently empty the board.
+// ListDistinctStations returns the distinct requesters seen on orders, sorted:
+// every station uid and every Core actor. These are the values a dashboard's
+// station scope can actually match — the board filter below compares each
+// exactly with station_uid or requested_by, so offering anything else in a
+// picker would silently empty the board.
 func ListDistinctStations(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT DISTINCT station_id FROM orders WHERE station_id != '' ORDER BY station_id`)
+	rows, err := db.Query(`SELECT r FROM (SELECT station_uid AS r FROM orders UNION SELECT requested_by FROM orders) s
+		WHERE r <> '' ORDER BY r`)
 	if err != nil {
 		return nil, err
 	}
@@ -1558,25 +1579,39 @@ func ListDistinctStations(db *sql.DB) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ListActiveBoardFiltered is ListActiveBoard scoped to a set of station IDs —
-// the server-side "area" filter for a dashboard. An empty/nil stations slice
-// means no scoping (plant-wide), identical to ListActiveBoard. The IN list is
-// built with positional placeholders rather than a SQL array type to stay
-// portable across the database/sql + pgx stdlib path the rest of this package
-// uses.
+// ListActiveBoardFiltered is ListActiveBoard scoped to a set of requesters —
+// the server-side "area" filter for a dashboard (dashboards.stations_json). An
+// empty/nil stations slice means no scoping (plant-wide), identical to
+// ListActiveBoard. Each entry is matched in the column its kind lives in
+// (RequesterColumn): a Core actor against requested_by, anything else against
+// station_uid, which is the set station_id IN (...) matched before v185 for
+// every non-blank entry. A blank entry, which the stations picker never offers
+// (apiStations skips blank uids), would also match a Core actor's orders
+// (RequesterColumn says why). The IN
+// lists are built with positional placeholders rather than a SQL array type to
+// stay portable across the database/sql + pgx stdlib path the rest of this
+// package uses.
 func ListActiveBoardFiltered(db *sql.DB, stations []string) ([]*Order, error) {
 	if len(stations) == 0 {
 		return ListActiveBoard(db)
 	}
-	placeholders := make([]string, len(stations))
-	args := make([]any, len(stations))
-	for i, s := range stations {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = s
+	var args []any
+	in := map[string][]string{}
+	for _, s := range stations {
+		args = append(args, s)
+		col := RequesterColumn(s)
+		in[col] = append(in[col], fmt.Sprintf("$%d", len(args)))
+	}
+	var scope []string
+	if ph := in["station_uid"]; len(ph) > 0 {
+		scope = append(scope, "station_uid IN ("+strings.Join(ph, ",")+")")
+	}
+	if ph := in["requested_by"]; len(ph) > 0 {
+		scope = append(scope, "requested_by IN ("+strings.Join(ph, ",")+")")
 	}
 	query := fmt.Sprintf(
-		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND station_id IN (%s) ORDER BY created_at ASC`,
-		SelectCols, protocol.TerminalStatusSQLList(), strings.Join(placeholders, ","))
+		`SELECT %s FROM orders WHERE status NOT IN (%s) AND robot_id != '' AND (%s) ORDER BY created_at ASC`,
+		SelectCols, protocol.TerminalStatusSQLList(), strings.Join(scope, " OR "))
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -1827,9 +1862,12 @@ func UpdatePriority(db *sql.DB, id int64, priority int) error {
 	return err
 }
 
-// ListByStation returns up to `limit` orders targeting the given station.
+// ListByStation returns up to `limit` orders the given requester asked for: a
+// station's uid, or a Core actor (the test page lists core-test's and
+// core-direct's this way).
 func ListByStation(db *sql.DB, stationID string, limit int) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE station_id=$1 ORDER BY id DESC LIMIT $2`, SelectCols), stationID, limit)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE %s=$1 ORDER BY id DESC LIMIT $2`,
+		SelectCols, RequesterColumn(stationID)), stationID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -127,13 +127,13 @@ func TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence(t *testing
 		audit.OpReleasedEmpty, "test", nil, "PART-A", "op", audit.BinUOPContext{}), "lossy empty")
 	// Stale-epoch dropped observation (before == after): discrepancy.
 	testutil.MustNoErr(t, audit.AppendBinUOPOverride(db.DB, bin.ID, 50, 50,
-		audit.OpStaleEpochDropped, "test", nil, "PART-A", "ALN", []byte(`{"delta":-3}`)), "stale drop")
+		audit.OpStaleEpochDropped, "test", nil, "PART-A", "ALN", "", []byte(`{"delta":-3}`)), "stale drop")
 	// Negative crossing (1 → -2): discrepancy, from the exceptions ledger —
 	// the raw delta arm was repointed to bin_uop_exception (v93) so the view
 	// stays complete after the 90-day purge. The crossing arrives via the
 	// applier's writer, planted here directly the way the applier writes it.
 	testutil.MustNoErr(t, audit.AppendBinUOPException(db.DB, audit.ExcNegativeCrossing, bin.ID,
-		"PART-A", "applier", nil, time.Now().UTC(), pi(1), pi(-2), nil, nil,
+		"PART-A", "applier", "", nil, time.Now().UTC(), pi(1), pi(-2), nil, nil,
 		"bin_uop_delta", nil), "negative crossing")
 	// A raw negative delta row alone (no exception twin): NOT surfaced — after
 	// the repoint the view no longer reads after_uop < 0 off the raw stream.

@@ -46,7 +46,7 @@ func TestHoldsAtRest_ComplexLaneWaitIsHeldAtTheMarkWithItsCause(t *testing.T) {
 	}
 
 	cplx := &orders.Order{
-		EdgeUUID: "har-cplx", StationID: "line-1", OrderType: OrderTypeComplex,
+		EdgeUUID: "har-cplx", StationUID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: mouth.Name, DeliveryNode: line.Name, ProcessNode: line.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + mouth.Name + `"},` +

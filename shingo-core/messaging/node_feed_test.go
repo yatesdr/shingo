@@ -21,7 +21,7 @@ import (
 func nodeFeedSetup(t *testing.T) (*CoreDataService, *feedsPinResponder) {
 	t.Helper()
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	_, err := db.EnrollEdge("edge.test", "")
 	testutil.MustNoErr(t, err, "enroll")
 	sceneRequest(t, db)
 	seedFeedsPinNodes(t, db)
@@ -197,7 +197,7 @@ func TestNodeFeed_ReplyDigestIsTheFeedDigest(t *testing.T) {
 func TestNodeFeed_AReAskedListIsNotSentBack(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	_, err := db.EnrollEdge("edge.test", "")
 	testutil.MustNoErr(t, err, "enroll")
 	seedFeedsPinNodes(t, db)
 	resp := &feedsPinResponder{}
@@ -243,7 +243,7 @@ func TestNodeFeed_AReAskedListIsNotSentBack(t *testing.T) {
 func TestNodeFeed_FailedReadLeavesTheKeyOut(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	_, err := db.EnrollEdge("edge.test", "")
 	testutil.MustNoErr(t, err, "enroll")
 	seedFeedsPinNodes(t, db)
 	resp := &feedsPinResponder{}
@@ -270,11 +270,11 @@ func TestNodeFeed_FailedReadLeavesTheKeyOut(t *testing.T) {
 func TestNodeFeed_LoaderNamesItsEdge(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	_, err := db.EnrollEdge("edge.test", "")
 	testutil.MustNoErr(t, err, "enroll")
 	seedFeedsPinNodes(t, db)
 	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
-	_, err = db.EnrollEdge("stn-nf-press", "PRESS EDGE", "stn-nf-press")
+	_, err = db.EnrollEdge("stn-nf-press", "PRESS EDGE")
 	testutil.MustNoErr(t, err, "enroll the press Edge")
 	_, err = db.IntroduceEdge("stn-nf-cell", "cell-host", "test")
 	testutil.MustNoErr(t, err, "introduce an unnamed Edge")
@@ -298,7 +298,7 @@ func TestNodeFeed_LoaderNamesItsEdge(t *testing.T) {
 		t.Helper()
 		l, err := db.GetLoader(id)
 		testutil.MustNoErr(t, err, "read the loader")
-		l.EdgeStationUID = uid
+		l.StationUID = uid
 		testutil.MustNoErr(t, db.UpdateLoader(*l), "pick "+uid)
 	}
 	_, none := build(true)
@@ -353,7 +353,7 @@ func TestPayloadsChanged_DropsTheMemos(t *testing.T) {
 	db := testdb.Open(t)
 	stations := []string{"edge.test", "edge.other"}
 	for _, st := range stations {
-		_, err := db.EnrollEdge(st, "", st)
+		_, err := db.EnrollEdge(st, "")
 		testutil.MustNoErr(t, err, "enroll "+st)
 	}
 	seedFeedsPinNodes(t, db)
@@ -448,7 +448,7 @@ func TestPayloadsChanged_DropsTheMemos(t *testing.T) {
 func TestCatalogRow_IsTheFeedsRow(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	_, err := db.EnrollEdge("edge.test", "", "edge.test")
+	_, err := db.EnrollEdge("edge.test", "")
 	testutil.MustNoErr(t, err, "enroll")
 	seedFeedsPinNodes(t, db)
 	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})

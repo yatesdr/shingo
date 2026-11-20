@@ -46,7 +46,7 @@ func BinDeltaCursor(q RowQuerier, station string, binID, epoch int64) (DeltaCurs
 	)
 	err := q.QueryRow(`SELECT last_seq, applied_net, applied_window_end
 		FROM inventory_delta_dedup
-		WHERE station=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=$4`,
+		WHERE station_uid=$1 AND scope_kind=$2 AND scope_key=$3 AND epoch=$4`,
 		station, protocol.InvDeltaScopeBin, strconv.FormatInt(binID, 10), epoch).Scan(&c.LastSeq, &net, &end)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeltaCursor{}, false, nil

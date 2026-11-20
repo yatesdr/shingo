@@ -50,7 +50,7 @@ func readStamp(t *testing.T, d *Dispatcher, binID int64) (stampRow, int) {
 func TestIngestStamp_DeclaredFullStampsTheBin(t *testing.T) {
 	t.Parallel()
 	d, bin, bp := s1bIngestFixture(t)
-	order := &orders.Order{EdgeUUID: "edge-order-stamp-1", StationID: "test", OrderType: protocol.OrderTypeComplex,
+	order := &orders.Order{EdgeUUID: "edge-order-stamp-1", StationUID: "test", OrderType: protocol.OrderTypeComplex,
 		Status: protocol.StatusPending, Quantity: 1, PayloadCode: bp.Code}
 	testutil.MustNoErr(t, d.db.CreateOrder(order), "the departing order")
 	testdb.SeedDispatched(t, d.db, order.ID, "sg-edge-order-stamp-1") // departing: the fleet has it

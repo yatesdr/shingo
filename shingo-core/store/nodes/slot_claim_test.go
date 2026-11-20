@@ -34,7 +34,7 @@ func mkSlotHolder(t *testing.T, db *store.DB, uuid string) int64 {
 
 func mkSlotOrderAt(t *testing.T, sdb *sql.DB, uuid string, status protocol.Status) int64 {
 	t.Helper()
-	o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex", Status: status, Quantity: 1}
+	o := &orders.Order{EdgeUUID: uuid, StationUID: "edge.1", OrderType: "complex", Status: status, Quantity: 1}
 	if err := orders.Create(sdb, o); err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)
 	}

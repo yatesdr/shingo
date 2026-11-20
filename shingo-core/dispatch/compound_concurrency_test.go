@@ -32,7 +32,7 @@ func twoLegCompound(t *testing.T, db *store.DB, prefix string) (*orders.Order, [
 	}
 
 	parent := &orders.Order{
-		EdgeUUID: prefix + "-parent", StationID: "line-1",
+		EdgeUUID: prefix + "-parent", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
@@ -40,7 +40,7 @@ func twoLegCompound(t *testing.T, db *store.DB, prefix string) (*orders.Order, [
 	var children []*orders.Order
 	for i := range 2 {
 		c := &orders.Order{
-			EdgeUUID: prefix + "-child" + string(rune('1'+i)), StationID: "line-1",
+			EdgeUUID: prefix + "-child" + string(rune('1'+i)), StationUID: "line-1",
 			OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 			ParentOrderID: &parent.ID, Sequence: i + 1,
 			SourceNode: slots[i].Name, DeliveryNode: sd.LineNode.Name,

@@ -115,7 +115,7 @@ func TestGateWait_StationReleaseIsRefused(t *testing.T) {
 	// ── The click ─────────────────────────────────────────────────────────
 	// A real station envelope: RoleEdge with the owning station, so checkOwnership
 	// does its genuine comparison rather than being waved through as RoleCore.
-	env := d.syntheticEnvelope(advertised.StationID)
+	env := d.syntheticEnvelope(advertised.StationUID)
 	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: advertised.EdgeUUID})
 
 	// THE ASSERTION. Nobody but the evaluator advances a gate wait.
@@ -419,7 +419,7 @@ func TestGateWait_StationReleaseIsRefusedAsInvalidState(t *testing.T) {
 			advertised.StepsJSON, advertised.WaitIndex, advertised.VendorOrderID)
 	}
 
-	d.HandleOrderRelease(d.syntheticEnvelope(advertised.StationID),
+	d.HandleOrderRelease(d.syntheticEnvelope(advertised.StationUID),
 		&protocol.OrderRelease{OrderUUID: advertised.EdgeUUID})
 
 	reply := onlyOrderError(t, db)

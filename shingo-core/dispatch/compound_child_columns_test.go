@@ -41,14 +41,14 @@ func TestCompoundChild_PersistsEveryFieldSetOnIt(t *testing.T) {
 	childBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "CCC-BIN")
 
 	parent := &orders.Order{
-		EdgeUUID: "ccc-parent", StationID: "edge.ccc", OrderType: OrderTypeComplex,
+		EdgeUUID: "ccc-parent", StationUID: "edge.ccc", OrderType: OrderTypeComplex,
 		Status: StatusReshuffling, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: src.Name, DeliveryNode: lineNode.Name, Coordinated: true,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	child := &orders.Order{
-		EdgeUUID: "ccc-child", StationID: "edge.ccc", OrderType: OrderTypeMove,
+		EdgeUUID: "ccc-child", StationUID: "edge.ccc", OrderType: OrderTypeMove,
 		Status: StatusPending, Quantity: 1,
 		SourceNode: src.Name, DeliveryNode: lineNode.Name,
 		ParentOrderID: &parent.ID, Sequence: 1,

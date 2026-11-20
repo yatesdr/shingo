@@ -88,7 +88,7 @@ async function loadFilterOptions() {
         const list = Array.isArray(stations) ? stations : (stations && stations.stations) || [];
         // /api/stations returns {id, label}. The option's VALUE stays the id —
         // it goes into the filter query and is matched against
-        // orders.station_id exactly — and only the visible text is the label.
+        // an order's requester exactly — and only the visible text is the label.
         if (sel) addOptions(sel, list,
             (s) => (typeof s === 'string' ? s : (s.id || s.station_id || s.name)),
             (s) => (typeof s === 'string' ? s : (s.label || s.id || s.station_id || s.name)));

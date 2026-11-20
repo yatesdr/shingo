@@ -46,7 +46,7 @@ func makeOrderAt(t *testing.T, db *store.DB, uuid string, status protocol.Status
 	t.Helper()
 	ord := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "edge.test",
+		StationUID:   "edge.test",
 		OrderType:    OrderTypeRetrieve,
 		Status:       status,
 		Quantity:     1,

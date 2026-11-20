@@ -33,7 +33,7 @@ func floorWaiterAtHeldLane(t *testing.T, prefix string) (*Dispatcher, *store.DB,
 	testutil.MustNoErr(t, err, "marshal the plan")
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = prefix + "-waiter"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Coordinated = true
 		o.SourceNode = line.Name
 		o.DeliveryNode = slots[1].Name
@@ -128,10 +128,10 @@ func heldOneLegCompound(t *testing.T, prefix string) (*Dispatcher, *store.DB, *t
 	lane := mirrorLane(t, db, prefix+"-LANE", 3)
 	slots, err := db.ListLaneSlots(lane)
 	testutil.MustNoErr(t, err, "list the lane's slots")
-	parent := &orders.Order{EdgeUUID: prefix + "-parent", StationID: "line-1",
+	parent := &orders.Order{EdgeUUID: prefix + "-parent", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: protocol.StatusReshuffling, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create the parent")
-	leg := &orders.Order{EdgeUUID: prefix + "-leg", StationID: "line-1",
+	leg := &orders.Order{EdgeUUID: prefix + "-leg", StationUID: "line-1",
 		OrderType: OrderTypeMove, Status: StatusPending, Quantity: 1,
 		ParentOrderID: &parent.ID, Sequence: 1, SourceNode: slots[0].Name, DeliveryNode: sd.LineNode.Name}
 	testutil.MustNoErr(t, db.CreateOrder(leg), "create the leg")

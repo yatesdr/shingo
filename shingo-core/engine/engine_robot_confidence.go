@@ -102,20 +102,20 @@ func (e *Engine) sampleRobotConfidence(robots []fleet.RobotStatus, now time.Time
 			continue
 		}
 		batch = append(batch, robotconfidence.Sample{
-			VehicleID:   r.VehicleID,
-			SampledAt:   now,
-			Confidence:  r.Confidence,
-			X:           r.X,
-			Y:           r.Y,
-			Angle:       r.Angle,
-			Station:     r.CurrentStation,
-			LastStation: r.LastStation,
-			OnTask:      r.Busy,
-			Blocked:     r.Blocked,
-			RelocStatus: r.RelocStatus,
-			AreaIDs:     r.AreaIDs,
-			MapMD5:      r.MapMD5,
-			AlarmCodes:  alarmCodes(r.Alarms),
+			VehicleID:      r.VehicleID,
+			SampledAt:      now,
+			Confidence:     r.Confidence,
+			X:              r.X,
+			Y:              r.Y,
+			Angle:          r.Angle,
+			RDSStation:     r.CurrentStation,
+			LastRDSStation: r.LastStation,
+			OnTask:         r.Busy,
+			Blocked:        r.Blocked,
+			RelocStatus:    r.RelocStatus,
+			AreaIDs:        r.AreaIDs,
+			MapMD5:         r.MapMD5,
+			AlarmCodes:     alarmCodes(r.Alarms),
 		})
 	}
 	if len(batch) == 0 {

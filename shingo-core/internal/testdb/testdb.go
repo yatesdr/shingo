@@ -1366,7 +1366,7 @@ func OpenEpisode(t *testing.T, db *store.DB, kind, key string) string {
 	t.Helper()
 	id := uuid.NewString()
 	if err := db.UpsertDemandOrigin(store.DemandOrigin{OriginID: id, Revision: 1, EpisodeKey: key, Kind: kind,
-		StationID: "line-1", OpenedAt: time.Now().UTC()}); err != nil {
+		StationUID: "line-1", OpenedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("open a %s episode %s: %v", kind, key, err)
 	}
 	return id
@@ -1384,11 +1384,11 @@ var orderSeq atomic.Int64
 func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID:  fmt.Sprintf("testorder-%d", orderSeq.Add(1)),
-		StationID: "test",
-		OrderType: "retrieve",
-		Status:    "queued",
-		Quantity:  1,
+		EdgeUUID:   fmt.Sprintf("testorder-%d", orderSeq.Add(1)),
+		StationUID: "test",
+		OrderType:  "retrieve",
+		Status:     "queued",
+		Quantity:   1,
 	}
 	for _, opt := range opts {
 		opt(o)

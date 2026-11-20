@@ -33,7 +33,7 @@ func makeOrder(t *testing.T, db *store.DB, nodeName string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:     fmt.Sprintf("svc-order-%s-%d", t.Name(), makeOrderSeq.Add(1)),
-		StationID:    "test-station",
+		StationUID:   "test-station",
 		OrderType:    "move",
 		Status:       "pending",
 		Quantity:     1,
@@ -334,7 +334,7 @@ func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
 
 	parent := &orders.Order{
 		EdgeUUID:     "svc-parent-" + t.Name(),
-		StationID:    "test-station",
+		StationUID:   "test-station",
 		OrderType:    "compound",
 		Status:       "pending",
 		Quantity:     1,
@@ -345,7 +345,7 @@ func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		child := &orders.Order{
 			EdgeUUID:      fmt.Sprintf("svc-child-%s-%d", t.Name(), i),
-			StationID:     "test-station",
+			StationUID:    "test-station",
 			OrderType:     "move",
 			Status:        "pending",
 			Quantity:      1,
@@ -387,7 +387,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 
 	mine := &orders.Order{
 		EdgeUUID:     "svc-by-station-mine",
-		StationID:    "station-alpha",
+		StationUID:   "station-alpha",
 		OrderType:    "move",
 		Status:       "pending",
 		Quantity:     1,
@@ -396,7 +396,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(mine), "create mine")
 	other := &orders.Order{
 		EdgeUUID:     "svc-by-station-other",
-		StationID:    "station-beta",
+		StationUID:   "station-beta",
 		OrderType:    "move",
 		Status:       "pending",
 		Quantity:     1,
@@ -410,8 +410,8 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 	}
 	foundMine := false
 	for _, o := range got {
-		if o.StationID != "station-alpha" {
-			t.Errorf("leaked station %q into station-alpha results (order %d)", o.StationID, o.ID)
+		if o.StationUID != "station-alpha" {
+			t.Errorf("leaked station %q into station-alpha results (order %d)", o.StationUID, o.ID)
 		}
 		if o.ID == mine.ID {
 			foundMine = true
@@ -434,7 +434,7 @@ func TestOrderService_ListOrdersByStation_AppliesLimit(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		o := &orders.Order{
 			EdgeUUID:     fmt.Sprintf("svc-limit-%d", i),
-			StationID:    "station-limit",
+			StationUID:   "station-limit",
 			OrderType:    "move",
 			Status:       "pending",
 			Quantity:     1,

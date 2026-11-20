@@ -54,7 +54,7 @@ func c2bDeeperPending(t *testing.T, prefix string) (*Dispatcher, *orders.Order, 
 	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, deep.ID), "the deeper store holds its slot")
 	shallow := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = strings.ToLower(prefix) + "-shallow"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = s0.Name
 		o.Status = "queued"

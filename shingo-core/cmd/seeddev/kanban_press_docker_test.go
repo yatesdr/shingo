@@ -77,7 +77,7 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	if err != nil || row == nil {
 		t.Fatalf("K: %v", err)
 	}
-	if row.Strict || row.StationID != "edge1.line1" {
+	if row.Strict || row.StationUID != "edge1.line1" {
 		t.Errorf("K = %+v, want not strict, station edge1.line1", row)
 	}
 	pools, err := db.ListKanbanPools(k)
@@ -111,7 +111,7 @@ func TestSeedKanbanPress_CoreHoldsTheKanbans(t *testing.T) {
 	if err != nil || row2 == nil {
 		t.Fatalf("K2: %v", err)
 	}
-	if row2.StationID != "edge1.line1" {
+	if row2.StationUID != "edge1.line1" {
 		t.Errorf("K2 = %+v, want station edge1.line1", row2)
 	}
 	if got := sourcesOf(k2); len(got) != 0 {

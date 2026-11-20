@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"go/types"
 	"maps"
-	"os"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -36,6 +35,13 @@ import (
 // Core actor's name. The lists are derived from uidUnderActorWriters below and
 // held to it, and the writer table is held to the tree, so a migration that
 // asserts its lists equal these cannot move the wrong rows.
+//
+// SINCE v185 the writers put the uid in station_uid and leave actor for the
+// who ('' on a station's own rows). An entry marked moved says its op's or
+// kind's rows held the uid in actor before v185, which is what v185 moves;
+// detailKey and actorFromStation mark the hold drop's detail key and the
+// lifted row's Core actor the same way. The exported lists are read from
+// those marks, so they still name exactly the rows the migration moves.
 //
 // HOW. The module's non-test source (parseCoreSource; the migration chain and
 // the baseline DDL are left out by skippedSource and counted separately below)
@@ -77,6 +83,8 @@ const (
 	uaHelper uaActor = "the helper's actor parameter"
 	// uaFixture: internal/testdb, which no production path reaches.
 	uaFixture uaActor = "test fixture"
+	// uaRequesterActor: the lifting order's Core actor, else "system".
+	uaRequesterActor uaActor = "the lifting order's Core actor, else \"system\""
 )
 
 // uaWriter is one writer site. ops is the ledger ops it writes, or for an
@@ -94,6 +102,14 @@ type uaWriter struct {
 	boundary       bool
 	reading        string
 	callers        []string
+	// moved: the writer puts the station uid in station_uid where it put it in
+	// actor before v185, so v185 moves this op's or kind's old rows.
+	moved bool
+	// detailKey: before v185 the writer put the uid in this detail key.
+	detailKey string
+	// actorFromStation: before v185 the station column could hold a Core
+	// actor's name, which the writer now puts in actor.
+	actorFromStation bool
 }
 
 const (
@@ -106,67 +122,73 @@ const (
 const uaAppliedBy = "station is ApplyBinUOPDelta's, which CoreDataService.HandleBinUOPDelta passes from the envelope (env.Src.Station)"
 
 var uidUnderActorWriters = map[string]uaWriter{
-	// ── The counting Edge's rows: the uid under actor ───────────────────
+	// ── The counting Edge's rows: the uid in station_uid (v185 moved it out of actor) ──
 	"uop:InventoryDeltaService.ApplyBinUOPDelta INSERT INTO bin_uop_ledger": {n: 1, table: uaLedger,
-		ops: []string{"bin_uop_delta"}, actor: uaUID,
-		reading: "the op is the statement's literal and the actor its $5, " + uaAppliedBy + "; the station column is not written",
+		ops: []string{"bin_uop_delta"}, actor: uaNone, moved: true,
+		reading: "the op is the statement's literal and station_uid its $5, " + uaAppliedBy + "; actor is not written",
 		callers: []string{"messaging:CoreDataService.HandleBinUOPDelta"}},
-	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPOverride(audit.OpStaleEpochDropped, station)": {n: 1, table: uaLedger,
-		ops: []string{"stale_epoch_dropped"}, actor: uaUID, reading: uaAppliedBy,
+	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPOverride(audit.OpStaleEpochDropped, \"\")": {n: 1, table: uaLedger,
+		ops: []string{"stale_epoch_dropped"}, actor: uaNone, station: "station", moved: true, reading: uaAppliedBy,
 		callers: []string{"messaging:CoreDataService.HandleBinUOPDelta"}},
-	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPOverride(audit.OpPayloadBoundFirstDelta, station)": {n: 1, table: uaLedger,
-		ops: []string{"payload_bound_first_delta"}, actor: uaUID, reading: uaAppliedBy,
+	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPOverride(audit.OpPayloadBoundFirstDelta, \"\")": {n: 1, table: uaLedger,
+		ops: []string{"payload_bound_first_delta"}, actor: uaNone, station: "station", moved: true, reading: uaAppliedBy,
 		callers: []string{"messaging:CoreDataService.HandleBinUOPDelta"}},
-	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPOverride(audit.OpPayloadReboundWithInventory, station)": {n: 1, table: uaLedger,
-		ops: []string{"payload_rebound_with_inventory"}, actor: uaUID, reading: uaAppliedBy,
+	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPOverride(audit.OpPayloadReboundWithInventory, \"\")": {n: 1, table: uaLedger,
+		ops: []string{"payload_rebound_with_inventory"}, actor: uaNone, station: "station", moved: true, reading: uaAppliedBy,
 		callers: []string{"messaging:CoreDataService.HandleBinUOPDelta"}},
-	"uop:InventoryDeltaService.recordRejectedDelta AppendBinUOPOverride(audit.OpPayloadMismatchDropped, station)": {n: 1, table: uaLedger,
-		ops: []string{"payload_mismatch_dropped"}, actor: uaUID, reading: "ApplyBinUOPDelta's station; " + uaAppliedBy,
+	"uop:InventoryDeltaService.recordRejectedDelta AppendBinUOPOverride(audit.OpPayloadMismatchDropped, \"\")": {n: 1, table: uaLedger,
+		ops: []string{"payload_mismatch_dropped"}, actor: uaNone, station: "station", moved: true,
+		reading: "ApplyBinUOPDelta's station; " + uaAppliedBy,
 		callers: []string{"uop:InventoryDeltaService.ApplyBinUOPDelta"}},
-	"uop:InventoryDeltaService.refuseAfterLift AppendBinUOPOverride(audit.OpAfterLift, station)": {n: 1, table: uaLedger,
-		ops: []string{"after_lift"}, actor: uaUID, reading: "ApplyBinUOPDelta's station; " + uaAppliedBy,
+	"uop:InventoryDeltaService.refuseAfterLift AppendBinUOPOverride(audit.OpAfterLift, \"\")": {n: 1, table: uaLedger,
+		ops: []string{"after_lift"}, actor: uaNone, station: "station", moved: true,
+		reading: "ApplyBinUOPDelta's station; " + uaAppliedBy,
 		callers: []string{"uop:InventoryDeltaService.ApplyBinUOPDelta"}},
-	"service:BinManifestService.RebaseAfterEdgeRollbackTx AppendBinUOP(audit.OpEdgeRollback, station)": {n: 1, table: uaLedger,
-		ops: []string{"edge_rollback"}, actor: uaUID, station: "station",
+	"service:BinManifestService.RebaseAfterEdgeRollbackTx AppendBinUOP(audit.OpEdgeRollback, \"\")": {n: 1, table: uaLedger,
+		ops: []string{"edge_rollback"}, actor: uaNone, station: "station", moved: true,
 		reading: "recordEdgeRollback's station, from atOrBelowHighWater, from ApplyBinUOPDelta; " + uaAppliedBy +
-			"; the same uid goes into the station column too",
+			"; before v185 the same uid went into actor as well as the station column",
 		callers: []string{"uop:InventoryDeltaService.recordEdgeRollback"}},
 
-	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPException(audit.ExcStaleEpoch/audit.OpStaleEpochDropped, station)": {n: 1, table: uaException,
-		ops: []string{"stale_epoch/stale_epoch_dropped"}, actor: uaUID, reading: uaAppliedBy,
+	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPException(audit.ExcStaleEpoch/audit.OpStaleEpochDropped, \"\")": {n: 1, table: uaException,
+		ops: []string{"stale_epoch/stale_epoch_dropped"}, actor: uaNone, station: "station", moved: true, reading: uaAppliedBy,
 		callers: []string{"messaging:CoreDataService.HandleBinUOPDelta"}},
-	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPException(audit.ExcNegativeCrossing/\"bin_uop_delta\", station)": {n: 1, table: uaException,
-		ops: []string{"negative_crossing/bin_uop_delta"}, actor: uaUID, reading: uaAppliedBy,
+	"uop:InventoryDeltaService.ApplyBinUOPDelta AppendBinUOPException(audit.ExcNegativeCrossing/\"bin_uop_delta\", \"\")": {n: 1, table: uaException,
+		ops: []string{"negative_crossing/bin_uop_delta"}, actor: uaNone, station: "station", moved: true, reading: uaAppliedBy,
 		callers: []string{"messaging:CoreDataService.HandleBinUOPDelta"}},
-	"uop:InventoryDeltaService.recordRejectedDelta AppendBinUOPException(audit.ExcPayloadMismatch/audit.OpPayloadMismatchDropped, station)": {n: 1, table: uaException,
-		ops: []string{"payload_mismatch/payload_mismatch_dropped"}, actor: uaUID, reading: "ApplyBinUOPDelta's station; " + uaAppliedBy,
+	"uop:InventoryDeltaService.recordRejectedDelta AppendBinUOPException(audit.ExcPayloadMismatch/audit.OpPayloadMismatchDropped, \"\")": {n: 1, table: uaException,
+		ops: []string{"payload_mismatch/payload_mismatch_dropped"}, actor: uaNone, station: "station", moved: true,
+		reading: "ApplyBinUOPDelta's station; " + uaAppliedBy,
 		callers: []string{"uop:InventoryDeltaService.ApplyBinUOPDelta"}},
-	"uop:InventoryDeltaService.recordEdgeRollback AppendBinUOPException(audit.ExcEdgeRollback/audit.OpEdgeRollback, station)": {n: 1, table: uaException,
-		ops: []string{"edge_rollback/edge_rollback"}, actor: uaUID, reading: "atOrBelowHighWater's station, from ApplyBinUOPDelta; " + uaAppliedBy,
+	"uop:InventoryDeltaService.recordEdgeRollback AppendBinUOPException(audit.ExcEdgeRollback/audit.OpEdgeRollback, \"\")": {n: 1, table: uaException,
+		ops: []string{"edge_rollback/edge_rollback"}, actor: uaNone, station: "station", moved: true,
+		reading: "atOrBelowHighWater's station, from ApplyBinUOPDelta; " + uaAppliedBy,
 		callers: []string{"uop:InventoryDeltaService.atOrBelowHighWater"}},
 	"store:DB.RecordReportDivergences INSERT INTO bin_uop_exception": {n: 1, table: uaException,
-		ops: []string{"report_divergence/*"}, actor: uaUID,
-		reading: "kind is ExcReportDivergence, op the divergence's class, actor the station parameter: " +
+		ops: []string{"report_divergence/*"}, actor: uaNone, moved: true,
+		reading: "kind is ExcReportDivergence, op the divergence's class, actor '' and station_uid the station parameter: " +
 			"LinesideDivergenceService.CheckReport's, which HandleLinesideLevelReport passes from the report (else its envelope)",
 		callers: []string{"service:LinesideDivergenceService.CheckReport"}},
 	"store:DB.RecordHoldDropped AppendHoldDropped(reason, actor)": {n: 1, table: uaException,
-		ops: []string{"hold_dropped/*"}, actor: uaComponent, station: "station",
+		ops: []string{"hold_dropped/*"}, actor: uaComponent, station: "station", detailKey: "station",
 		reading: "op is the drop's reason and actor its called_by (edge:recount, edge:sweep, an operator), " +
-			"from CoreDataService.HandleHoldDropped; the uid is the envelope's station, written to detail->>'station'",
+			"from CoreDataService.HandleHoldDropped; the uid is the envelope's station, written to station_uid " +
+			"(before v185, to detail->>'station')",
 		callers: []string{"messaging:CoreDataService.HandleHoldDropped"}},
 
-	// ── The boundary row: the ledger row's actor ────────────────────────
+	// ── The boundary row: the ledger row's actor and station ────────────
 	"store/audit:AppendBinUOP AppendBinUOPException(ExcBoundary/op, actor)": {n: 1, table: uaException,
-		ops: []string{"boundary/*"}, actor: uaInherited,
-		reading: "written for every EpochBumpOps op and a BinUOPContext.Boundary row, with that call's op and actor: " +
-			"a station uid only where the ledger call's is (edge_rollback)"},
+		ops: []string{"boundary/*"}, actor: uaInherited, station: "ctx.StationUID",
+		reading: "written for every EpochBumpOps op and a BinUOPContext.Boundary row, with that call's op, actor and " +
+			"station_uid: a station uid only where the ledger call's is (edge_rollback)"},
 
-	// ── The material station under the lift's station column ─────────────
-	"service:BinService.Lift AppendBinUOP(audit.OpLifted, \"system\")": {n: 1, table: uaLedger,
-		ops: []string{"lifted"}, actor: uaSystem, station: "n.Station", actorInStation: true,
-		reading: "the station is the notice's, materialStation(order) in Engine.handlePickupBlockCompletedFor: " +
-			"a station-aware order's own station (a uid, or core-operator / core-direct / core-test), " +
-			"else its projects_to"},
+	// ── The lifting order's requester ───────────────────────────────────
+	"service:BinService.Lift AppendBinUOP(audit.OpLifted, liftActor)": {n: 1, table: uaLedger,
+		ops: []string{"lifted"}, actor: uaRequesterActor, station: "liftStation", actorFromStation: true,
+		reading: "the notice's station, materialStation(order) in Engine.handlePickupBlockCompletedFor (a " +
+			"station-aware order's requester, else its projects_to), split by domain.SplitRequester: a station's " +
+			"uid goes to station_uid; a Core actor's name (core-operator / core-direct / core-test) is the actor, " +
+			"else \"system\". Before v185 the actor's name sat in the station column under actor \"system\""},
 
 	// ── A person's or a mechanism's rows ─────────────────────────────────
 	"service:BinManifestService.syncOrClearForReleased AppendBinUOP(op, actor)": {n: 2, table: uaLedger,
@@ -420,14 +442,14 @@ func uaCheckLists(t *testing.T) {
 	}
 	for _, w := range uidUnderActorWriters {
 		switch {
-		case w.table == uaLedger && w.actor == uaUID:
+		case w.table == uaLedger && (w.actor == uaUID || w.moved):
 			for _, op := range w.ops {
 				ledger[op] = true
 				if slices.Contains(bumpable, op) {
 					excOps["boundary"] = append(excOps["boundary"], op)
 				}
 			}
-		case w.table == uaException && w.actor == uaUID:
+		case w.table == uaException && (w.actor == uaUID || w.moved):
 			for _, p := range w.ops {
 				kind, op, _ := strings.Cut(p, "/")
 				if op == "*" {
@@ -436,11 +458,11 @@ func uaCheckLists(t *testing.T) {
 				}
 				excOps[kind] = append(excOps[kind], op)
 			}
-		case w.table == uaException && w.station != "":
+		case w.detailKey != "":
 			kind, _, _ := strings.Cut(w.ops[0], "/")
-			detail[kind] = uaDetailKey(t, w.station)
+			detail[kind] = w.detailKey
 		}
-		if w.actorInStation {
+		if w.actorInStation || w.actorFromStation {
 			for _, op := range w.ops {
 				inStation[op] = true
 			}
@@ -469,21 +491,6 @@ func uaCheckLists(t *testing.T) {
 	}
 }
 
-// uaDetailKey is the JSON key a hold drop's detail writes the station under:
-// holdDropDetail's field tag, read from store/audit.
-func uaDetailKey(t *testing.T, field string) string {
-	t.Helper()
-	src, err := os.ReadFile(filepath.Join("..", "store", "audit", "bin_uop_exception.go"))
-	if err != nil {
-		t.Fatalf("read the hold drop's detail type: %v", err)
-	}
-	m := regexp.MustCompile(`(?m)^\s*` + strings.ToUpper(field[:1]) + field[1:] + `\s+string\s+` + "`" + `json:"([^",]+)`).FindSubmatch(src)
-	if m == nil {
-		t.Fatalf("no %s field with a json tag in store/audit/bin_uop_exception.go: repoint uaDetailKey", field)
-	}
-	return string(m[1])
-}
-
 // uaCheckHelpers holds uaHelpers' argument positions to the helpers'
 // declared parameter names, and checks the scan read the module.
 func uaCheckHelpers(t *testing.T, got uaScanResult) {
@@ -506,6 +513,12 @@ func uaCheckHelpers(t *testing.T, got uaScanResult) {
 		}
 		if h.detailStation >= 0 {
 			want[h.detailStation] = "station"
+			want[h.op] = "reason"
+		}
+		if h.stationUID >= 0 {
+			want[h.stationUID] = "stationUID"
+		}
+		if name == "AppendHoldDropped" {
 			want[h.op] = "reason"
 		}
 		for i, p := range want {
@@ -628,11 +641,14 @@ var uaHelpers = map[string]struct {
 	table              string
 	op, kind, actor    int
 	ctx, detailStation int
+	// stationUID is the parameter that writes the station_uid column (v185),
+	// -1 where the helper takes it in ctx or has none.
+	stationUID int
 }{
-	"AppendBinUOP":          {table: uaLedger, op: 4, kind: -1, actor: 8, ctx: 9, detailStation: -1},
-	"AppendBinUOPOverride":  {table: uaLedger, op: 4, kind: -1, actor: 8, ctx: -1, detailStation: -1},
-	"AppendBinUOPException": {table: uaException, op: 11, kind: 1, actor: 4, ctx: -1, detailStation: -1},
-	"AppendHoldDropped":     {table: uaException, op: 6, kind: -1, actor: 7, ctx: -1, detailStation: 2},
+	"AppendBinUOP":          {table: uaLedger, op: 4, kind: -1, actor: 8, ctx: 9, detailStation: -1, stationUID: -1},
+	"AppendBinUOPOverride":  {table: uaLedger, op: 4, kind: -1, actor: 8, ctx: -1, detailStation: -1, stationUID: 9},
+	"AppendBinUOPException": {table: uaException, op: 12, kind: 1, actor: 4, ctx: -1, detailStation: -1, stationUID: 5},
+	"AppendHoldDropped":     {table: uaException, op: 6, kind: -1, actor: 7, ctx: -1, detailStation: -1, stationUID: 2},
 }
 
 var uaInsertRe = regexp.MustCompile(`(?is)\bINSERT\s+INTO\s+(bin_uop_ledger|bin_uop_exception|bin_uop_delta_daily)\b`)
@@ -709,7 +725,7 @@ func uaNoteCall(sites map[string]uaFound, key, callee, table string, e *ast.Call
 	f.n++
 	f.table = table
 	f.boundary = boundary && table == uaLedger
-	for _, i := range []int{h.op, h.kind, h.actor} {
+	for _, i := range []int{h.op, h.kind, h.actor, h.stationUID} {
 		if i < 0 {
 			continue
 		}
@@ -722,6 +738,10 @@ func uaNoteCall(sites map[string]uaFound, key, callee, table string, e *ast.Call
 		f.station = uaCtxStation(fn, e.Args[h.ctx])
 	case h.detailStation >= 0:
 		f.station = types.ExprString(e.Args[h.detailStation])
+	case h.stationUID >= 0:
+		if s := types.ExprString(e.Args[h.stationUID]); s != `""` {
+			f.station = s
+		}
 	}
 	sites[site] = f
 }
@@ -768,7 +788,7 @@ func uaCtxStation(fn ast.Node, ctx ast.Expr) string {
 	switch c := ctx.(type) {
 	case *ast.CompositeLit:
 		for _, el := range c.Elts {
-			if kv, ok := el.(*ast.KeyValueExpr); ok && types.ExprString(kv.Key) == "Station" {
+			if kv, ok := el.(*ast.KeyValueExpr); ok && types.ExprString(kv.Key) == "StationUID" {
 				return types.ExprString(kv.Value)
 			}
 		}
@@ -780,7 +800,7 @@ func uaCtxStation(fn ast.Node, ctx ast.Expr) string {
 				return true
 			}
 			switch types.ExprString(as.Lhs[0]) {
-			case c.Name + ".Station":
+			case c.Name + ".StationUID":
 				out = types.ExprString(as.Rhs[0])
 			case c.Name:
 				if lit, ok := as.Rhs[0].(*ast.CompositeLit); ok && out == "" {

@@ -338,10 +338,10 @@ type BinUOPExecer interface {
 // audit.BinUOPContext{}. LoaderID is a PLAIN value (no FK) — see the v37 migration:
 // it must survive a loader archive/delete. Inventory refactor §16 PR 2 + keystone step 2.
 type BinUOPContext struct {
-	NodeID   *int64
-	LoaderID *int64
-	Station  string
-	Detail   json.RawMessage
+	NodeID     *int64
+	LoaderID   *int64
+	StationUID string
+	Detail     json.RawMessage
 	// Boundary: the write ends a binding though its op is not an EpochBumpOps
 	// op, so its boundary row is written as a bump op's is. One writer: a
 	// pull-parts clear of a bin below zero, labelled released_overpack.
@@ -387,9 +387,9 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 		detail = []byte(ctx.Detail)
 	}
 	if _, err := execer.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, detail)
+		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station_uid, loader_id, detail)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.Station, loader, detail); err != nil {
+		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.StationUID, loader, detail); err != nil {
 		return fmt.Errorf("append bin_uop_ledger bin=%d op=%q: %w", binID, op, err)
 	}
 	// Epoch-bump ops also write their boundary row on the permanent
@@ -409,7 +409,7 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 			if len(ctx.Detail) > 0 {
 				det = ctx.Detail
 			}
-			if err := AppendBinUOPException(execer, ExcBoundary, binID, payloadCode, actor,
+			if err := AppendBinUOPException(execer, ExcBoundary, binID, payloadCode, actor, ctx.StationUID,
 				&seq, clock.Now().UTC(), beforeUOP, &afterUOP, nil, nil, op, det); err != nil {
 				return err
 			}
@@ -450,7 +450,7 @@ type BinUOPRow struct {
 	PayloadCode string  `json:"payload_code"`
 	Actor       string  `json:"actor"`
 	NodeID      *int64  `json:"node_id,omitempty"`
-	Station     string  `json:"station"`
+	StationUID  string  `json:"station"`
 	LoaderID    *int64  `json:"loader_id,omitempty"`
 	Metadata    *string `json:"metadata,omitempty"`
 	AppliedAt   string  `json:"applied_at"`
@@ -484,7 +484,7 @@ func scanBinUOPRows(rows *sql.Rows) ([]BinUOPRow, error) {
 			r.NodeID = &v
 		}
 		if station.Valid {
-			r.Station = station.String
+			r.StationUID = station.String
 		}
 		if loaderID.Valid {
 			v := loaderID.Int64
@@ -499,7 +499,7 @@ func scanBinUOPRows(rows *sql.Rows) ([]BinUOPRow, error) {
 	return out, rows.Err()
 }
 
-const binUOPSelectCols = `id, bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, COALESCE(metadata, detail) AS metadata, applied_at`
+const binUOPSelectCols = `id, bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station_uid, loader_id, COALESCE(metadata, detail) AS metadata, applied_at`
 
 // ListBinUOPByBin returns the audit timeline for one bin, newest
 // first. Item 10's per-bin endpoint pages on this. limit clamps the
@@ -571,7 +571,7 @@ func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error)
 		UNION ALL
 		SELECT e.id, e.bin_id, e.before_uop, e.after_uop, e.op, 'bin_uop_exception' AS source,
 		       NULL::bigint AS order_id, e.payload_code, e.actor, NULL::bigint AS node_id,
-		       '' AS station, NULL::bigint AS loader_id,
+		       e.station_uid, NULL::bigint AS loader_id,
 		       jsonb_build_object('deepest_uop', e.deepest_uop, 'recovered_at', e.recovered_at) AS metadata,
 		       e.occurred_at AS applied_at
 		FROM bin_uop_exception e
@@ -589,7 +589,7 @@ func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error)
 	return scanBinUOPRows(rows)
 }
 
-func AppendBinUOPOverride(execer BinUOPExecer, binID int64, suggestedUOP, operatorUOP int, op, source string, orderID *int64, payloadCode, actor string, metadata []byte) error {
+func AppendBinUOPOverride(execer BinUOPExecer, binID int64, suggestedUOP, operatorUOP int, op, source string, orderID *int64, payloadCode, actor, stationUID string, metadata []byte) error {
 	var ord any
 	if orderID != nil {
 		ord = *orderID
@@ -605,9 +605,9 @@ func AppendBinUOPOverride(execer BinUOPExecer, binID int64, suggestedUOP, operat
 	// would be worse — it would return where the bin is now, not where this
 	// happened.
 	if _, err := execer.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		binID, suggestedUOP, operatorUOP, op, source, ord, payloadCode, actor, meta); err != nil {
+		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, station_uid, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		binID, suggestedUOP, operatorUOP, op, source, ord, payloadCode, actor, stationUID, meta); err != nil {
 		return fmt.Errorf("append bin_uop_ledger override bin=%d op=%q: %w", binID, op, err)
 	}
 	return nil

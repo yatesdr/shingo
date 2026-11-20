@@ -13,8 +13,8 @@ import (
 // MaxOutboxRetries preserves the store.MaxOutboxRetries public API.
 const MaxOutboxRetries = messaging.MaxOutboxRetries
 
-func (db *DB) EnqueueOutbox(topic string, payload []byte, eventType, stationID string) error {
-	return messaging.EnqueueOutbox(db.DB, topic, payload, eventType, stationID)
+func (db *DB) EnqueueOutbox(topic string, payload []byte, eventType, dstStation string) error {
+	return messaging.EnqueueOutbox(db.DB, topic, payload, eventType, dstStation)
 }
 
 func (db *DB) ListPendingOutbox(limit int) ([]*messaging.OutboxMessage, error) {
@@ -45,8 +45,8 @@ func (db *DB) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error)
 }
 
 // EnqueueOutboxReturningID enqueues and returns the row's id.
-func (db *DB) EnqueueOutboxReturningID(topic string, payload []byte, eventType, stationID string) (int64, error) {
-	return messaging.EnqueueOutboxReturningID(db.DB, topic, payload, eventType, stationID)
+func (db *DB) EnqueueOutboxReturningID(topic string, payload []byte, eventType, dstStation string) (int64, error) {
+	return messaging.EnqueueOutboxReturningID(db.DB, topic, payload, eventType, dstStation)
 }
 
 // ReplayOutbox puts a row, sent or not, back in the drain.

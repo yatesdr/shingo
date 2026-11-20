@@ -230,7 +230,7 @@ func TestCancelDoor_WakesLanesWhenAnOperatorCancelsADig(t *testing.T) {
 	}
 
 	// ── THE OPERATOR CANCELS THE DIG, through the one cancel door. ──
-	d.CancelOrderWithCascade(parent, parent.StationID, "cancelled by operator",
+	d.CancelOrderWithCascade(parent, parent.StationUID, "cancelled by operator",
 		CancelCause{Code: protocol.TermOperatorCancelled, Actor: "operator"})
 
 	// (a) THE CHILD WAS CASCADED. Without it the leg keeps its vendor order and

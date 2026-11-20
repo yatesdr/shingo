@@ -39,7 +39,7 @@ func seedCarried(t *testing.T, db *store.DB, robotID, place string) *bins.Bin {
 
 	press := "PRESS-" + robotID
 	ord := &orders.Order{
-		EdgeUUID: "carried-" + robotID, StationID: "edge.test", OrderType: "retrieve",
+		EdgeUUID: "carried-" + robotID, StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: press, ProcessNode: press,
 		RobotID: robotID,
 	}

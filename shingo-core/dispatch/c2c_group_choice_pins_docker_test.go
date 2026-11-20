@@ -103,7 +103,7 @@ func c2cAtSpot(t *testing.T, db *store.DB, uuid, payload string, priority int, s
 	testutil.MustNoErr(t, err, "marshal the plan of "+uuid)
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = payload
@@ -361,7 +361,7 @@ func c2cPlainStore(t *testing.T, db *store.DB, uuid, payload string, press, dest
 	t.Helper()
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeMove
 		o.SourceIntent = SourceIntentLocal
 		o.PayloadCode = payload

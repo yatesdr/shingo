@@ -77,9 +77,9 @@ func (r *divergenceRig) carrier(nodeID int64, label, payload string, uop int) (i
 // lastSeq plants Core's dedup high-water mark for (station, bin, epoch).
 func (r *divergenceRig) lastSeq(binID, epoch, seq int64) {
 	r.t.Helper()
-	_, err := r.db.Exec(`INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq)
+	_, err := r.db.Exec(`INSERT INTO inventory_delta_dedup (station_uid, scope_kind, scope_key, epoch, last_seq)
 		VALUES ($1, 'bin', $2, $3, $4)
-		ON CONFLICT (station, scope_kind, scope_key, epoch) DO UPDATE SET last_seq = EXCLUDED.last_seq`,
+		ON CONFLICT (station_uid, scope_kind, scope_key, epoch) DO UPDATE SET last_seq = EXCLUDED.last_seq`,
 		r.station, fmt.Sprint(binID), epoch, seq)
 	testutil.MustNoErr(r.t, err, "plant dedup row")
 }
@@ -124,7 +124,7 @@ func (r *divergenceRig) open() []openDivergence {
 	rows, err := r.db.Query(`SELECT op, bin_id, COALESCE(detail->>'node', ''), payload_code,
 		       (detail->>'edge_count')::bigint, (detail->>'core_count')::bigint
 		FROM bin_uop_exception
-		WHERE kind = 'report_divergence' AND actor = $1 AND recovered_at IS NULL
+		WHERE kind = 'report_divergence' AND station_uid = $1 AND recovered_at IS NULL
 		ORDER BY id`, r.station)
 	testutil.MustNoErr(r.t, err, "list open divergences")
 	defer rows.Close()
@@ -143,7 +143,7 @@ func (r *divergenceRig) closed() int {
 	r.t.Helper()
 	var n int
 	testutil.MustNoErr(r.t, r.db.QueryRow(`SELECT count(*) FROM bin_uop_exception
-		WHERE kind = 'report_divergence' AND actor = $1 AND recovered_at IS NOT NULL`, r.station).Scan(&n), "count closed")
+		WHERE kind = 'report_divergence' AND station_uid = $1 AND recovered_at IS NOT NULL`, r.station).Scan(&n), "count closed")
 	return n
 }
 

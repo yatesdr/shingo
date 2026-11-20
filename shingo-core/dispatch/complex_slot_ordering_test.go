@@ -42,13 +42,13 @@ func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 
 	// Order A already holds a slot RESERVATION on S1 (soft — the reservation-native
 	// stand-in for "A got there first").
-	orderA := &orders.Order{EdgeUUID: "abba-A", StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending, Quantity: 1}
+	orderA := &orders.Order{EdgeUUID: "abba-A", StationUID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(orderA), "create order A")
 	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, orderA.ID), "A reserves S1")
 
 	// Order B drops at S2 THEN S1 — opposite step order, fixed-concrete (no group).
 	orderB := &orders.Order{
-		EdgeUUID: "abba-B", StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusQueued, Quantity: 1,
+		EdgeUUID: "abba-B", StationUID: "line-1", OrderType: OrderTypeComplex, Status: StatusQueued, Quantity: 1,
 		SourceNode: lineNode.Name, DeliveryNode: s1.Name, PayloadCode: bp.Code,
 		StepsJSON: `[{"action":"pickup","node":"` + lineNode.Name + `"},` +
 			`{"action":"dropoff","node":"` + s2.Name + `"},` +

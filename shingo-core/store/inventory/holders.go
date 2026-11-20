@@ -41,8 +41,8 @@ func CountHolders(db *sql.DB, code string, limit int) (holders []Holder, bins, p
 		holders = append(holders, h)
 	}
 	rows.Close()
-	prows, err := db.Query(`SELECT station || ' · ' || core_node_name, qty FROM lineside_buckets
-		WHERE payload_code = $1 AND state = 'active' AND qty <> 0 ORDER BY station, core_node_name LIMIT $2`, code, limit)
+	prows, err := db.Query(`SELECT station_uid || ' · ' || core_node_name, qty FROM lineside_buckets
+		WHERE payload_code = $1 AND state = 'active' AND qty <> 0 ORDER BY station_uid, core_node_name LIMIT $2`, code, limit)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("list the piles of %s: %w", code, err)
 	}

@@ -119,7 +119,7 @@ func TestClearTrade_BothLegsGoInOnePassOrNeither(t *testing.T) {
 			r := newClearRig(t, "CT1"+strings.ToUpper(held[:1]), false)
 			parent, l1, l2 := r.bornTrade(t)
 			stranger := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
-				o.EdgeUUID, o.StationID, o.OrderType, o.Quantity = "ct1-stranger-"+held, "edge.other", dispatch.OrderTypeMove, 1
+				o.EdgeUUID, o.StationUID, o.OrderType, o.Quantity = "ct1-stranger-"+held, "edge.other", dispatch.OrderTypeMove, 1
 			}, testdb.FleetHas("sg-ct1-stranger-"+held))
 			bin := r.p.ID
 			if held == "empty" {
@@ -241,7 +241,7 @@ func TestClearTrade_EachLegsFailureCancelsTheOther(t *testing.T) {
 			if failing == "empty" {
 				dead, other = l2, l1
 			}
-			testutil.MustNoErr(t, r.d.Lifecycle().Fail(dead, dead.StationID, "robot_fault", "the robot faulted"), "fail a leg")
+			testutil.MustNoErr(t, r.d.Lifecycle().Fail(dead, dead.StationUID, "robot_fault", "the robot faulted"), "fail a leg")
 			r.eng.after.settle()
 			other = r.reload(t, other.ID)
 			if other.Status != protocol.StatusCancelled || r.cancelCode(t, other.ID) != string(protocol.TermPeerTerminal) {
@@ -279,7 +279,7 @@ func TestClearTrade_AnAppendedLegFinishesWhenItsPartnerDies(t *testing.T) {
 		t.Fatalf("fixture: the partial's move's drop must be appended once E left, wait %d", got.WaitIndex)
 	}
 	l2 = r.reload(t, l2.ID)
-	testutil.MustNoErr(t, r.d.Lifecycle().Fail(l2, l2.StationID, "robot_fault", "the robot faulted"), "fail the empty's move")
+	testutil.MustNoErr(t, r.d.Lifecycle().Fail(l2, l2.StationUID, "robot_fault", "the robot faulted"), "fail the empty's move")
 	r.eng.after.settle()
 	if got := r.reload(t, l1.ID); protocol.IsTerminal(got.Status) {
 		t.Fatalf("the partial's move went %s with its drop already appended", got.Status)
@@ -311,7 +311,7 @@ func TestClearTrade_PartnerDiedBeforeSend_NoRerun(t *testing.T) {
 	t.Parallel()
 	r := newClearRig(t, "CTD", false)
 	parent, l1, l2 := r.bornTrade(t)
-	r.d.Lifecycle().CancelOrder(l2, l2.StationID, "operator cancelled", dispatch.CancelCause{})
+	r.d.Lifecycle().CancelOrder(l2, l2.StationUID, "operator cancelled", dispatch.CancelCause{})
 	r.eng.after.settle()
 	if got := r.reload(t, l1.ID); got.Status != protocol.StatusCancelled || r.cancelCode(t, l1.ID) != string(protocol.TermPeerTerminal) {
 		t.Fatalf("the partial's move is %s (code %q), want cancelled by the death rule", got.Status, r.cancelCode(t, l1.ID))
@@ -419,7 +419,7 @@ func TestClearHome_TradeThatCannotBeBorn_RefusedBeforeAnyWrite(t *testing.T) {
 func TestClearHome_PromisedPartial_RefusedBeforeAnyWrite(t *testing.T) {
 	t.Parallel()
 	r := newClearRig(t, "CTP", true)
-	holder := &orders.Order{EdgeUUID: "ctp-holder", StationID: "edge.other", OrderType: dispatch.OrderTypeRetrieve,
+	holder := &orders.Order{EdgeUUID: "ctp-holder", StationUID: "edge.other", OrderType: dispatch.OrderTypeRetrieve,
 		Status: protocol.StatusQueued, Quantity: 1, PayloadCode: r.part}
 	testutil.MustNoErr(t, r.db.CreateOrder(holder), "holder")
 	testutil.MustNoErr(t, reservations.Acquire(r.db.DB, holder.ID, 0, r.p.ID, "test"), "the partial is promised")
@@ -455,7 +455,7 @@ func TestClearHome_RerunReachesTheTrade(t *testing.T) {
 	parent := r.parent(t)
 	partial, _ := r.children(t, parent.ID)
 	pull := testdb.RequireOrder(t, r.db, "cte-pull")
-	r.d.Lifecycle().CancelOrder(pull, pull.StationID, "operator cancelled", dispatch.CancelCause{})
+	r.d.Lifecycle().CancelOrder(pull, pull.StationUID, "operator cancelled", dispatch.CancelCause{})
 	r.eng.after.settle()
 
 	l1, l2 := r.tradeLegs(t, parent.ID)

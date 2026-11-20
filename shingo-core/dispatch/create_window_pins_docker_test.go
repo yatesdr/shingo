@@ -61,7 +61,7 @@ func newCWCell(t *testing.T, uuid string) *cwCell {
 	bin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, strings.ToUpper(uuid)+"-BIN")
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "edge.line1"
+		o.StationUID = "edge.line1"
 		o.OrderType = OrderTypeRetrieve
 		o.PayloadCode = bp.Code
 		o.SourceNode = src.Name

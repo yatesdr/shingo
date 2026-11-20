@@ -9,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -50,7 +51,12 @@ type BinMoveRequest struct {
 	DestNodeID   int64
 	DestNodeName string
 
-	StationID string
+	// StationID is the station that asked, and RequestedBy the Core actor that
+	// asked when no station did (the Orders and Bins pages: core-operator; the
+	// test page's direct tab: core-direct). A Core page names its actor, never a
+	// station.
+	StationID   string
+	RequestedBy string
 	// Projects is the station whose Edge models the destination and binds the
 	// bin when it arrives, so it is sent the move's order.delivered and
 	// bin_picked_up and nothing else (dispatch.Need.Projects). The stage-2 pull
@@ -146,6 +152,12 @@ func refuse(kind BinMoveErrKind, cause error, format string, a ...any) *BinMoveE
 // it `queued` with its cause. The door no longer dispatches (ruling F2), so what
 // it answers is the row as acquiring left it.
 func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
+	// A caller that names a Core actor as the station (as every door did before
+	// v185 split the actors out) means the actor: it is the RequestedBy, and the
+	// station stays blank. The doors name RequestedBy themselves.
+	if req.RequestedBy == "" {
+		req.StationID, req.RequestedBy = domain.SplitRequester(req.StationID)
+	}
 	// Destination first, then source, then a bin — and the order is not
 	// arbitrary. A request that names a node which does not exist, or names the
 	// same node twice, is wrong however busy the plant is; answering it with
@@ -209,9 +221,10 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		edgeUUID = uuid.New().String()
 	}
 	need := dispatch.Need{
-		Type:    protocol.OrderTypeMove,
-		Station: req.StationID,
-		Ref:     edgeUUID,
+		Type:        protocol.OrderTypeMove,
+		Station:     req.StationID,
+		RequestedBy: req.RequestedBy,
+		Ref:         edgeUUID,
 		// One robot, one bin.
 		Quantity: 1,
 		Priority: req.Priority,
@@ -350,10 +363,13 @@ func moveRefusal(r *plan.Refusal, bin *bins.Bin, source, dest *nodes.Node) *BinM
 }
 
 // moveActor is who the history records as taking a promised bin: the station
-// that asked, or the door when none did.
+// or Core actor that asked, or the door when neither did.
 func moveActor(req BinMoveRequest) string {
 	if req.StationID != "" {
 		return req.StationID
+	}
+	if req.RequestedBy != "" {
+		return req.RequestedBy
 	}
 	return "bin-move"
 }

@@ -22,7 +22,7 @@ import (
 func registerBinding(t *testing.T, db *store.DB, b thresholdEntry) {
 	t.Helper()
 	if _, err := db.SyncDemandRegistry(b.stationID, []demands.RegistryEntry{{
-		StationID:             b.stationID,
+		StationUID:            b.stationID,
 		CoreNodeName:          b.coreNodeName,
 		Role:                  protocol.ClaimRoleConsume,
 		PayloadCode:           b.payloadCode,
@@ -40,7 +40,7 @@ func registerBinding(t *testing.T, db *store.DB, b thresholdEntry) {
 // existence — that is guard 2, and this fixture is the first place it shows.
 func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	if _, err := db.EnrollEdge(stationID, "", stationID); err != nil {
+	if _, err := db.EnrollEdge(stationID, ""); err != nil {
 		t.Fatalf("enroll edge: %v", err)
 	}
 	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{}); err != nil {
@@ -57,7 +57,7 @@ func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 // under a status-based reachability check it reads as perfectly healthy.
 func registerEdgeWithoutHeartbeat(t *testing.T, db *store.DB, stationID string) {
 	t.Helper()
-	if _, err := db.EnrollEdge(stationID, "", stationID); err != nil {
+	if _, err := db.EnrollEdge(stationID, ""); err != nil {
 		t.Fatalf("enroll edge: %v", err)
 	}
 	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{}); err != nil {
@@ -71,7 +71,7 @@ func registerEdgeWithoutHeartbeat(t *testing.T, db *store.DB, stationID string) 
 // off 'active'.
 func silenceEdge(t *testing.T, db *store.DB, stationID string, silentFor time.Duration) {
 	t.Helper()
-	if _, err := db.Exec(`UPDATE edge_registry SET last_heartbeat = $1 WHERE station_id = $2`,
+	if _, err := db.Exec(`UPDATE edge_registry SET last_heartbeat = $1 WHERE station_uid = $2`,
 		time.Now().UTC().Add(-silentFor), stationID); err != nil {
 		t.Fatalf("silence edge: %v", err)
 	}
@@ -82,7 +82,7 @@ func silenceEdge(t *testing.T, db *store.DB, stationID string, silentFor time.Du
 func mustEdgeStatus(t *testing.T, db *store.DB, stationID string) string {
 	t.Helper()
 	var status string
-	if err := db.QueryRow(`SELECT status FROM edge_registry WHERE station_id = $1`,
+	if err := db.QueryRow(`SELECT status FROM edge_registry WHERE station_uid = $1`,
 		stationID).Scan(&status); err != nil {
 		t.Fatalf("read edge status: %v", err)
 	}
@@ -100,7 +100,7 @@ func openCellEpisode(t *testing.T, db *store.DB, stationID, payloadCode, process
 		EpisodeKey: protocol.CellEpisodeKey(processID, payloadCode, protocol.ClaimRoleConsume),
 		Kind:       protocol.EpisodeKindCell,
 		Direction:  protocol.ClaimRoleConsume,
-		StationID:  stationID,
+		StationUID: stationID,
 		ProcessID:  processID,
 		OpenedAt:   time.Now().UTC().Add(-age),
 	}); err != nil {
@@ -127,7 +127,7 @@ func insertOrderWithOrigin(t *testing.T, db *store.DB, originID, class string, a
 		oid = originID
 	}
 	if _, err := db.Exec(`
-		INSERT INTO orders (edge_uuid, station_id, origin_id, origin_class, created_at)
+		INSERT INTO orders (edge_uuid, station_uid, origin_id, origin_class, created_at)
 		VALUES ($1, 'PLANT.LINE1', $2, $3, $4)`,
 		uuid.NewString(), oid, class, time.Now().UTC().Add(-age)); err != nil {
 		t.Fatalf("insert order: %v", err)
@@ -330,7 +330,7 @@ func TestDemandReconciler_ChildlessOnAnUnreachableEdgeIsNotAFinding(t *testing.T
 		EpisodeKey: protocol.CellEpisodeKey("SNF7", "PANEL-RC4", protocol.ClaimRoleConsume),
 		Kind:       protocol.EpisodeKindCell,
 		Direction:  protocol.ClaimRoleConsume,
-		StationID:  "PLANT.DARK",
+		StationUID: "PLANT.DARK",
 		ProcessID:  "SNF7",
 		OpenedAt:   time.Now().UTC().Add(-6 * time.Hour),
 	}); err != nil {
@@ -516,7 +516,7 @@ func TestDemandReconciler_InferredCloseStepsAsideForTheRealOne(t *testing.T) {
 		EpisodeKey: key,
 		Kind:       protocol.EpisodeKindCell,
 		Direction:  protocol.ClaimRoleProduce,
-		StationID:  "PLANT.LINE1",
+		StationUID: "PLANT.LINE1",
 		ProcessID:  "SNF11",
 		OpenedAt:   time.Now().UTC().Add(-2 * time.Hour),
 	}

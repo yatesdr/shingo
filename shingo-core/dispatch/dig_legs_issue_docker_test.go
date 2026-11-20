@@ -26,7 +26,7 @@ func TestDigLegs_OneBinTwoLegs_BothIssued(t *testing.T) {
 	_, line, bp := testdb.SetupTestData(t, db)
 	_, _, slots, shuffles, _ := setupNodeGroupWithShuffle(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "DL2-BIN")
-	parent := &orders.Order{EdgeUUID: "dl2-dig", StationID: "line-1", OrderType: OrderTypeComplex,
+	parent := &orders.Order{EdgeUUID: "dl2-dig", StationUID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusReshuffling, Priority: 1}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "the dig's parent")
 	plan := &ReshufflePlan{Steps: []ReshuffleStep{
@@ -70,7 +70,7 @@ func TestDigLegs_OutrankedPendingHoldIsStolenAtIssue(t *testing.T) {
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, stranger.ID, stranger.ID, blocker.ID, "test"), "its promise")
 	// The dig outranks the stranger: a higher priority.
-	parent := &orders.Order{EdgeUUID: "dls-dig", StationID: "line-1", OrderType: OrderTypeComplex,
+	parent := &orders.Order{EdgeUUID: "dls-dig", StationUID: "line-1", OrderType: OrderTypeComplex,
 		Status: StatusReshuffling, Priority: 5}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "the dig's parent")
 	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)

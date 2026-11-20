@@ -49,7 +49,7 @@ func TestDemandOriginJoinsProcessStyles(t *testing.T) {
 		OriginID: "11111111-1111-1111-1111-111111111111", Revision: 1,
 		EpisodeKey: "cell|PLANT.LINE1|" + proc + "|PANEL-B|supply",
 		Kind:       "cell", Direction: "supply",
-		StationID: "PLANT.LINE1", ProcessID: proc,
+		StationUID: "PLANT.LINE1", ProcessID: proc,
 		PayloadCode: "PANEL-B", OpenedAt: opened,
 	}); err != nil {
 		t.Fatalf("upsert demand origin: %v", err)
@@ -91,7 +91,7 @@ func TestDemandOriginProcessIDRoundTripsAName(t *testing.T) {
 		OriginID: id, Revision: 1,
 		EpisodeKey: "cell|PLANT.LINE1|" + proc + "|PANEL-B|supply",
 		Kind:       "cell", Direction: "supply",
-		StationID: "PLANT.LINE1", ProcessID: proc,
+		StationUID: "PLANT.LINE1", ProcessID: proc,
 		PayloadCode: "PANEL-B", OpenedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("upsert demand origin: %v", err)

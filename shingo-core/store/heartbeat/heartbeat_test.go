@@ -11,7 +11,7 @@ var base = time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 func evAt(offsetsSec ...int) []PartEvent {
 	out := make([]PartEvent, len(offsetsSec))
 	for i, s := range offsetsSec {
-		out[i] = PartEvent{CellID: "STN-A", RecordedAt: base.Add(time.Duration(s) * time.Second), Delta: 1}
+		out[i] = PartEvent{StationUID: "STN-A", RecordedAt: base.Add(time.Duration(s) * time.Second), Delta: 1}
 	}
 	return out
 }

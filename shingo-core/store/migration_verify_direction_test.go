@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,17 +27,29 @@ import (
 // would invert a correct check. The lint keys on the parameter type, which is
 // what actually distinguishes the two.
 //
-// Since the squash at v184 migrations.go carries only the migrations above the
-// retired chain, and until the first of them (v185) it has no verify predicate
-// to read: the lint then reads none and finds none, which is the true answer.
+// It reads migrations.go and every migration_v*.go beside it, and a verify
+// written as a function declaration (v185Verify) as well as a literal.
 func TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers(t *testing.T) {
 	t.Parallel()
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "migrations.go", nil, parser.ParseComments)
+	paths, err := filepath.Glob("migration_v*.go")
 	if err != nil {
-		t.Fatalf("parse migrations.go: %v", err)
+		t.Fatal(err)
 	}
+	paths = append([]string{"migrations.go"}, paths...)
+	var files []*ast.File
+	for _, p := range paths {
+		if strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, p, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p, err)
+		}
+		files = append(files, f)
+	}
+	predicates := 0
 
 	banned := map[string]string{
 		"ColumnExists": "schema.ColumnAbsent",
@@ -45,12 +58,9 @@ func TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers(t *testing.
 	}
 
 	var findings []string
-	ast.Inspect(file, func(n ast.Node) bool {
-		lit, ok := n.(*ast.FuncLit)
-		if !ok || !takesQuerier(lit.Type) {
-			return true
-		}
-		ast.Inspect(lit.Body, func(inner ast.Node) bool {
+	check := func(body *ast.BlockStmt) {
+		predicates++
+		ast.Inspect(body, func(inner ast.Node) bool {
 			unary, ok := inner.(*ast.UnaryExpr)
 			if !ok || unary.Op != token.NOT {
 				return true
@@ -68,13 +78,30 @@ func TestMigrationVerifyPredicatesAssertAbsenceWithTheAbsenceHelpers(t *testing.
 				return true
 			}
 			if want, bad := banned[sel.Sel.Name]; bad {
-				findings = append(findings, "migrations.go:"+
-					ffPos(fset, unary.Pos())+" !schema."+sel.Sel.Name+"(...) — use "+want+"(...)")
+				findings = append(findings, fset.Position(unary.Pos()).String()+
+					" !schema."+sel.Sel.Name+"(...) — use "+want+"(...)")
 			}
 			return true
 		})
-		return true
-	})
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch fn := n.(type) {
+			case *ast.FuncLit:
+				if takesQuerier(fn.Type) {
+					check(fn.Body)
+				}
+			case *ast.FuncDecl:
+				if fn.Body != nil && takesQuerier(fn.Type) {
+					check(fn.Body)
+				}
+			}
+			return true
+		})
+	}
+	if predicates == 0 {
+		t.Fatalf("read no verify predicate in %v: the lint has nothing to check, so its silence would mean nothing", paths)
+	}
 
 	if len(findings) > 0 {
 		t.Errorf("%d verify predicate(s) assert an absence by negating an Exists helper. "+
@@ -96,8 +123,4 @@ func takesQuerier(ft *ast.FuncType) bool {
 	}
 	pkg, ok := sel.X.(*ast.Ident)
 	return ok && pkg.Name == "schema" && sel.Sel.Name == "Querier"
-}
-
-func ffPos(fset *token.FileSet, p token.Pos) string {
-	return strings.TrimPrefix(fset.Position(p).String(), "migrations.go:")
 }

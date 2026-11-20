@@ -398,7 +398,7 @@ func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) 
 		rn := i + 2
 		f.SetCellValue(bucketSheet, cell("A", rn), br.GroupName)
 		f.SetCellValue(bucketSheet, cell("B", rn), br.LaneName)
-		f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
+		f.SetCellValue(bucketSheet, cell("C", rn), br.StationUID)
 		f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
 		f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
 		f.SetCellValue(bucketSheet, cell("F", rn), br.PayloadCode)

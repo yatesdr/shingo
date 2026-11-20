@@ -22,7 +22,7 @@ import (
 func mkStoreOrder(t *testing.T, db *store.DB, uuid, payload, destName string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "ST", OrderType: protocol.OrderType("store"),
+		EdgeUUID: uuid, StationUID: "ST", OrderType: protocol.OrderType("store"),
 		Status: StatusQueued, Quantity: 1, PayloadCode: payload, DeliveryNode: destName,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create store order")

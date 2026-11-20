@@ -20,10 +20,10 @@ func TestClassifyTickFeed(t *testing.T) {
 	fresh := now.Add(-30 * time.Second)
 	old := now.Add(-TickFeedReportStaleAfter - time.Second)
 	edges := []domain.RegistryEdge{
-		{StationID: "stn-ok", DisplayName: "OK", TickPending: i64(0), TickOldestUnsentAgeMS: i64(0), TickReportedAt: &fresh},
-		{StationID: "stn-behind", DisplayName: "Behind", TickPending: i64(40), TickOldestUnsentAgeMS: i64(TickFeedLagThreshold.Milliseconds() + 1), TickReportedAt: &fresh},
-		{StationID: "stn-silent", DisplayName: "Silent", TickPending: i64(0), TickOldestUnsentAgeMS: i64(0), TickReportedAt: &old},
-		{StationID: "stn-old-edge", DisplayName: "Old"},
+		{StationUID: "stn-ok", DisplayName: "OK", TickPending: i64(0), TickOldestUnsentAgeMS: i64(0), TickReportedAt: &fresh},
+		{StationUID: "stn-behind", DisplayName: "Behind", TickPending: i64(40), TickOldestUnsentAgeMS: i64(TickFeedLagThreshold.Milliseconds() + 1), TickReportedAt: &fresh},
+		{StationUID: "stn-silent", DisplayName: "Silent", TickPending: i64(0), TickOldestUnsentAgeMS: i64(0), TickReportedAt: &old},
+		{StationUID: "stn-old-edge", DisplayName: "Old"},
 	}
 	got := ClassifyTickFeed(edges, now)
 	want := map[string][2]bool{ // lagging, reportStale
@@ -36,13 +36,13 @@ func TestClassifyTickFeed(t *testing.T) {
 		t.Fatalf("rows = %d, want %d", len(got), len(want))
 	}
 	for _, g := range got {
-		w, ok := want[g.StationID]
+		w, ok := want[g.StationUID]
 		if !ok {
-			t.Errorf("unexpected station %s", g.StationID)
+			t.Errorf("unexpected station %s", g.StationUID)
 			continue
 		}
 		if g.Lagging != w[0] || g.ReportStale != w[1] {
-			t.Errorf("%s: lagging/stale = %v/%v, want %v/%v", g.StationID, g.Lagging, g.ReportStale, w[0], w[1])
+			t.Errorf("%s: lagging/stale = %v/%v, want %v/%v", g.StationUID, g.Lagging, g.ReportStale, w[0], w[1])
 		}
 	}
 }

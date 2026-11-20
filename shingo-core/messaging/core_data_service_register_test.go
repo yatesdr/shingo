@@ -28,7 +28,7 @@ func registerEnv(stationID string) *protocol.Envelope {
 func stationThresholds(t *testing.T, db *store.DB, stationID string) map[string]int {
 	t.Helper()
 	rows, err := db.DB.Query(`SELECT core_node_name || '/' || payload_code, replenish_uop_threshold
-		FROM demand_registry WHERE station_id=$1`, stationID)
+		FROM demand_registry WHERE station_uid = $1`, stationID)
 	testutil.MustNoErr(t, err, "read demand_registry")
 	defer rows.Close()
 	out := map[string]int{}
@@ -61,7 +61,7 @@ func TestHandleEdgeRegisterPin_DerivesRegistry(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	const st = "ST-REG-PIN"
-	_, err := db.EnrollEdge(st, "", st)
+	_, err := db.EnrollEdge(st, "")
 	testutil.MustNoErr(t, err, "enroll edge")
 	id, _ := seedRegisterLoader(t, db, "REG-PIN-SLOT", "P-REG", 12)
 
@@ -88,7 +88,7 @@ func TestHandleEdgeRegisterPin_DerivesRegistry(t *testing.T) {
 func TestHandleEdgeRegister_UnresolvableNodeKeepsRows(t *testing.T) {
 	db := testdb.Open(t)
 	const st = "ST-REG-RED"
-	_, err := db.EnrollEdge(st, "", st)
+	_, err := db.EnrollEdge(st, "")
 	testutil.MustNoErr(t, err, "enroll edge")
 	_, nodeID := seedRegisterLoader(t, db, "REG-RED-SLOT", "P-RED", 7)
 

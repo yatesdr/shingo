@@ -404,7 +404,7 @@ func TestApiRobotForceComplete_BackendError(t *testing.T) {
 func TestApiRobotForceComplete_RefusedOnAShingoOrder(t *testing.T) {
 	t.Parallel()
 	h, db, sim := testHandlersWithRobotFleet(t)
-	live := &orders.Order{EdgeUUID: "force-complete-live", StationID: "line-x", OrderType: "retrieve",
+	live := &orders.Order{EdgeUUID: "force-complete-live", StationUID: "line-x", OrderType: "retrieve",
 		Status: "in_transit", Quantity: 1, SourceNode: "SRC_1", DeliveryNode: "DST_1", RobotID: "R4"}
 	testutil.MustNoErr(t, db.CreateOrder(live), "create in-flight order")
 	// CreateOrder does not write robot_id; dispatch assigns it afterwards.

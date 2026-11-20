@@ -31,7 +31,7 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 		t.Fatalf("create bin: %v", err)
 	}
 
-	claimed := &orders.Order{EdgeUUID: "claimed-terminal", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	claimed := &orders.Order{EdgeUUID: "claimed-terminal", StationUID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	claimed.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, claimed); err != nil {
 		t.Fatalf("create claimed order: %v", err)
@@ -39,7 +39,7 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 	testdb.ClaimBinForTest(t, db, bin.ID, claimed.ID)
 	testdb.SeedOrderStatus(t, db, claimed.ID, "failed", "test failure")
 
-	missingBin := &orders.Order{EdgeUUID: "missing-bin", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	missingBin := &orders.Order{EdgeUUID: "missing-bin", StationUID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, missingBin); err != nil {
 		t.Fatalf("create missing-bin order: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 		t.Fatalf("complete order: %v", err)
 	}
 
-	confirmedNoComplete := &orders.Order{EdgeUUID: "confirmed-no-complete", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	confirmedNoComplete := &orders.Order{EdgeUUID: "confirmed-no-complete", StationUID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	confirmedNoComplete.HoldFromBirth(bin.ID)
 	if err := orders.Create(db.DB, confirmedNoComplete); err != nil {
 		t.Fatalf("create confirmed-no-complete order: %v", err)
@@ -80,7 +80,7 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 
-	order := &orders.Order{EdgeUUID: "summary-order", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, PayloadDesc: "payload"}
+	order := &orders.Order{EdgeUUID: "summary-order", StationUID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, PayloadDesc: "payload"}
 	if err := orders.Create(db.DB, order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	}
 
 	mk := func(uuid, status, cause string, ageSeconds int) int64 {
-		o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "retrieve_empty",
+		o := &orders.Order{EdgeUUID: uuid, StationUID: "edge.1", OrderType: "retrieve_empty",
 			Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 		if err := orders.Create(db.DB, o); err != nil {
 			t.Fatalf("create %s: %v", uuid, err)
@@ -259,13 +259,13 @@ func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
 	}
 
 	// A COMPOUND PARENT: no bin of its own, one leg that carries the bin.
-	parent := &orders.Order{EdgeUUID: "cp-parent", StationID: "edge.1", OrderType: "move",
+	parent := &orders.Order{EdgeUUID: "cp-parent", StationUID: "edge.1", OrderType: "move",
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, parent); err != nil {
 		t.Fatalf("create the compound parent: %v", err)
 	}
 	bin := testdb.CreateBinAtNode(t, db, "PART-A", node.ID, "CP-BIN")
-	leg := testdb.Holding(&orders.Order{EdgeUUID: "cp-leg", StationID: "edge.1", OrderType: "move",
+	leg := testdb.Holding(&orders.Order{EdgeUUID: "cp-leg", StationUID: "edge.1", OrderType: "move",
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name,
 		ParentOrderID: &parent.ID}, bin.ID)
 	if err := orders.Create(db.DB, leg); err != nil {
@@ -288,7 +288,7 @@ func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
 	}
 
 	// ── THE TRUE POSITIVE IS UNTOUCHED ───────────────────────────────────────
-	childless := &orders.Order{EdgeUUID: "cp-childless", StationID: "edge.1", OrderType: "retrieve",
+	childless := &orders.Order{EdgeUUID: "cp-childless", StationUID: "edge.1", OrderType: "retrieve",
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, childless); err != nil {
 		t.Fatalf("create the childless order: %v", err)
@@ -341,7 +341,7 @@ func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testin
 		t.Fatalf("create node: %v", err)
 	}
 
-	o := &orders.Order{EdgeUUID: "retry-wedged", StationID: "edge.1", OrderType: "retrieve_empty",
+	o := &orders.Order{EdgeUUID: "retry-wedged", StationUID: "edge.1", OrderType: "retrieve_empty",
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, o); err != nil {
 		t.Fatalf("create order: %v", err)
@@ -417,7 +417,7 @@ func TestListAnomalies_AnOrderThatJustTransitionedIsNotStuck(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 
-	o := &orders.Order{EdgeUUID: "moving-along", StationID: "edge.1", OrderType: "retrieve_empty",
+	o := &orders.Order{EdgeUUID: "moving-along", StationUID: "edge.1", OrderType: "retrieve_empty",
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, o); err != nil {
 		t.Fatalf("create order: %v", err)

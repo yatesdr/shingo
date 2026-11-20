@@ -134,8 +134,9 @@ func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r 
 }
 
 // OrderScope narrows a lead-time read to some orders. An empty field means
-// "all". StationID and RobotID are the orders' own station_id and robot_id,
-// the same columns the missions list filters on.
+// "all". StationID is a requester, matched in the orders' station_uid or, for a
+// Core actor, requested_by (RequesterColumn); RobotID is the orders' robot_id.
+// The missions list filters the same way.
 type OrderScope struct {
 	PayloadCode string
 	OrderType   string
@@ -233,7 +234,7 @@ func transitionsSQL(name string, fromStates []string, fromEarliest bool, toState
 	for _, c := range []struct{ col, val string }{
 		{"payload_code", scope.PayloadCode},
 		{"order_type", scope.OrderType},
-		{"station_id", scope.StationID},
+		{RequesterColumn(scope.StationID), scope.StationID},
 		{"robot_id", scope.RobotID},
 	} {
 		if c.val != "" {

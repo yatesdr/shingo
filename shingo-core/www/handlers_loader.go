@@ -152,10 +152,10 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// NoClearPartials: the Clear partials switch, off. Absent reads as
 		// false, which keeps the clear on.
 		NoClearPartials bool `json:"no_clear_partials"`
-		// EdgeStationUID: the Edge that works the station, by its station uid.
+		// StationUID: the Edge that works the station, by its station uid.
 		// A full-row write like the rest: absent picks no Edge, so the page
 		// sends the stored uid back with every other setting.
-		EdgeStationUID string `json:"edge_station_uid"`
+		StationUID string `json:"station_uid"`
 		// DrainStates: the drain boxes, as the set of carrier states ticked.
 		// A full-row write like the rest: absent drains nothing, so the page
 		// sends the stored set back with every other setting.
@@ -175,7 +175,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
 		BoardHidesIdle: req.BoardHidesIdle, BoardShowsAllParts: req.BoardShowsAllParts,
 		NoClearPartials: req.NoClearPartials,
-		EdgeStationUID:  req.EdgeStationUID,
+		StationUID:      req.StationUID,
 		Drains:          req.DrainStates,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
@@ -421,7 +421,7 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 	// whole list, and none when no loader names an Edge.
 	var edgeNames map[string]string
 	for _, l := range ls {
-		if l.EdgeStationUID != "" {
+		if l.StationUID != "" {
 			edgeNames = h.edgeDisplayNames("loader list")
 			break
 		}
@@ -448,9 +448,9 @@ func (h *Handlers) apiListLoaders(w http.ResponseWriter, _ *http.Request) {
 			// (LoaderService.DrainAllowed): the page draws the boxes from it.
 			"drain_allowed": svc.DrainAllowed(l),
 			// The display name of the Edge the loader names (its
-			// edge_station_uid); blank when it names none, or the registry
+			// station_uid); blank when it names none, or the registry
 			// has no name for it.
-			"edge_display_name": edgeNames[l.EdgeStationUID],
+			"edge_display_name": edgeNames[l.StationUID],
 		})
 	}
 	h.jsonOK(w, map[string]any{"loaders": out})

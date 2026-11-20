@@ -103,7 +103,7 @@ func nodeReportFixture(t *testing.T, h *Handlers, db *store.DB, tag string) (das
 	}
 
 	order := &orders.Order{
-		EdgeUUID: tag + "-ORD", StationID: "st-1", OrderType: "retrieve",
+		EdgeUUID: tag + "-ORD", StationUID: "st-1", OrderType: "retrieve",
 		Status: "in_transit", PayloadCode: payload.Code,
 		DeliveryNode: posB.Name, SourceNode: sd.StorageNode.Name,
 		Quantity: 1,
@@ -239,7 +239,7 @@ func TestApiDashboardNodeReport_TransitScopesToTheLoadersOwnNodes(t *testing.T) 
 	stranger := &nodes.Node{Name: "NRS-UNRELATED-UTN", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(stranger), "create the unrelated node")
 	strayOrder := &orders.Order{
-		EdgeUUID: "NRS-STRAY", StationID: "st-1", OrderType: "retrieve",
+		EdgeUUID: "NRS-STRAY", StationUID: "st-1", OrderType: "retrieve",
 		Status: "in_transit", PayloadCode: "NRS-PART",
 		DeliveryNode: stranger.Name, SourceNode: "NRS-MKT",
 		Quantity: 1,

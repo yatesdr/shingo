@@ -8,7 +8,7 @@ import (
 // ev builds one event at a second-offset from base with the given delta and
 // anomaly.
 func ev(sec int, delta int64, anomaly string) PartEvent {
-	return PartEvent{CellID: "STN-A", RecordedAt: base.Add(time.Duration(sec) * time.Second), Delta: delta, Anomaly: anomaly}
+	return PartEvent{StationUID: "STN-A", RecordedAt: base.Add(time.Duration(sec) * time.Second), Delta: delta, Anomaly: anomaly}
 }
 
 // Parts are counted by delta, not by row. A poll pass that saw three strokes

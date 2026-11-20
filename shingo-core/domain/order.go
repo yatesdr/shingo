@@ -17,9 +17,17 @@ import (
 // carries are its order_bins rows, one per lift, read with the order
 // (Carts); an order has no single "bin" column.
 type Order struct {
-	ID            int64              `json:"id"`
-	EdgeUUID      string             `json:"edge_uuid"`
-	StationID     string             `json:"station_id"`
+	ID       int64  `json:"id"`
+	EdgeUUID string `json:"edge_uuid"`
+	// StationUID is the station that asked for the order, "" when no station
+	// did: a Core actor (RequestedBy) or Core itself. RequestedBy is the Core
+	// actor that asked, "" when a station did or nobody did. At most one of the
+	// two should be set: the writers take them from SplitRequester, which gives
+	// one or the other. v185's CHECKs keep an actor's name out of station_uid
+	// and anything else out of requested_by; no CHECK forbids both being set.
+	// Requester reads either.
+	StationUID    string             `json:"station_uid"`
+	RequestedBy   string             `json:"requested_by,omitempty"`
 	OrderType     protocol.OrderType `json:"order_type"`
 	Status        protocol.Status    `json:"status"`
 	Quantity      int64              `json:"quantity"`
@@ -194,14 +202,14 @@ type Order struct {
 	// true for a Core-born order whose station has no row for it.
 	StationUnaware bool `json:"station_unaware,omitempty"`
 
-	// ProjectsTo is the station a station-unaware order projects to, and what it
-	// projects there is its material notices alone: order.delivered and
+	// ProjectsToStationUID is the station a station-unaware order projects to,
+	// and what it projects there is its material notices alone: order.delivered and
 	// data.transit.bin_picked_up, which bind the bin at a node that station's
 	// Edge models (a stage-2 pull's window). Blank projects to nobody, and such
 	// an order sends no station anything (the orc's ruling on Stop 1, v4 §2.5).
-	// Unread for a station-known order, which sends to StationID as it always
-	// did. Written by the issue (dispatch.issue) from its need's Projects.
-	ProjectsTo string `json:"projects_to,omitempty"`
+	// Unread for a station-known order, which sends to its requester (station or
+	// Core actor) as it always did. Written by the issue (dispatch.issue) from its need's Projects.
+	ProjectsToStationUID string `json:"projects_to_station_uid,omitempty"`
 
 	// Plan is the planner's pick, written at birth by a door that picks before
 	// its INSERT and does not hold the bin (the wire door, v147). Acquiring reads
@@ -238,7 +246,7 @@ type OrderFilter struct {
 	ActiveOnly bool       // non-terminal statuses only
 	IDs        []int64    // id IN (...); empty = any id
 	Search     string     // case-insensitive substring over the fields the board prints
-	StationID  string     // station_id; empty = all
+	StationID  string     // a requester: station_uid, or the Core actor in requested_by; empty = all
 	Since      *time.Time // created_at >= since
 	Limit      int        // max rows; 0 = default 100
 	NoLimit    bool       // every matching row (Limit and Offset ignored)

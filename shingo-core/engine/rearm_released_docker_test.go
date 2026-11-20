@@ -48,7 +48,7 @@ func TestBoot_RearmsReleasedOpenOrders(t *testing.T) {
 		{"V-STAGED", protocol.StatusStaged, 1},
 	} {
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID, o.StationID, o.Status = "u-"+c.vid, "line-1", c.status
+			o.EdgeUUID, o.StationUID, o.Status = "u-"+c.vid, "line-1", c.status
 		})
 		testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, c.vid, "WAITING", ""), "vendor")
 		if c.waitIndex != 0 {

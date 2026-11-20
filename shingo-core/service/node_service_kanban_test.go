@@ -370,7 +370,7 @@ func TestKanbanGuard_StrictOnReportsDrain(t *testing.T) {
 
 	grpID, _ := mgGroup(t, db, "GRP-DRAIN", 2)
 	o := &orders.Order{
-		EdgeUUID: "drain-1", StationID: "EDGE-1", OrderType: "retrieve",
+		EdgeUUID: "drain-1", StationUID: "EDGE-1", OrderType: "retrieve",
 		Status: "queued", SourceNode: "GRP-DRAIN", Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "CreateOrder")

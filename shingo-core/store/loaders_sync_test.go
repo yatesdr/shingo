@@ -67,7 +67,7 @@ func TestBuildDemandRegistryFromAggregate(t *testing.T) {
 	if a == nil {
 		t.Fatal("no PART-A entry")
 	}
-	if a.StationID != "stn-1" || a.CoreNodeName != "WIN-1" || a.Role != protocol.ClaimRoleProduce || a.OutboundDest != "FG-MARKET" || a.ReplenishUOPThreshold != 100 {
+	if a.StationUID != "stn-1" || a.CoreNodeName != "WIN-1" || a.Role != protocol.ClaimRoleProduce || a.OutboundDest != "FG-MARKET" || a.ReplenishUOPThreshold != 100 {
 		t.Errorf("PART-A entry = %+v, want stn-1 / WIN-1 / produce / FG-MARKET / 100", a)
 	}
 }
@@ -585,16 +585,16 @@ func TestLoaderEdgeStationUID_RoundTrip(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("GetLoader: %v", err)
 	}
-	if got.EdgeStationUID != "" || wireHasKey() {
-		t.Fatalf("a new loader: edge_station_uid=%q, on the wire=%v; want blank and no key", got.EdgeStationUID, wireHasKey())
+	if got.StationUID != "" || wireHasKey() {
+		t.Fatalf("a new loader: station_uid=%q, on the wire=%v; want blank and no key", got.StationUID, wireHasKey())
 	}
 
-	got.EdgeStationUID = "stn-esu-press"
+	got.StationUID = "stn-esu-press"
 	if err := db.UpdateLoader(*got); err != nil {
 		t.Fatalf("UpdateLoader: %v", err)
 	}
-	if back, err := db.GetLoader(id); err != nil || back == nil || back.EdgeStationUID != "stn-esu-press" {
-		t.Errorf("picked, GetLoader = %+v (%v); want edge_station_uid stn-esu-press", back, err)
+	if back, err := db.GetLoader(id); err != nil || back == nil || back.StationUID != "stn-esu-press" {
+		t.Errorf("picked, GetLoader = %+v (%v); want station_uid stn-esu-press", back, err)
 	}
 	all, err := db.ListLoaders()
 	if err != nil {
@@ -602,16 +602,16 @@ func TestLoaderEdgeStationUID_RoundTrip(t *testing.T) {
 	}
 	listed := false
 	for _, l := range all {
-		listed = listed || (l.ID == id && l.EdgeStationUID == "stn-esu-press")
+		listed = listed || (l.ID == id && l.StationUID == "stn-esu-press")
 	}
 	if !listed {
-		t.Error("ListLoaders drops edge_station_uid: the sync walks that list")
+		t.Error("ListLoaders drops station_uid: the sync walks that list")
 	}
 	if li := findLoaderInfo(t, db, id); li.EdgeStationUID != "stn-esu-press" || li.EdgeDisplayName != "" {
 		t.Errorf("picked, BuildLoaderInfos sends uid %q name %q; want the uid and no name", li.EdgeStationUID, li.EdgeDisplayName)
 	}
 
-	got.EdgeStationUID = ""
+	got.StationUID = ""
 	if err := db.UpdateLoader(*got); err != nil {
 		t.Fatalf("UpdateLoader blank: %v", err)
 	}

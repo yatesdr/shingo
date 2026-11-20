@@ -63,7 +63,7 @@ func TestWaitKind_FenceHoldsBothWaysOnOneCoordinatedPlan(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "wk-both"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Coordinated = true
 		o.SourceNode = line.Name
 		o.DeliveryNode = target.Name
@@ -119,7 +119,7 @@ func TestWaitKind_FenceHoldsBothWaysOnOneCoordinatedPlan(t *testing.T) {
 		t.Fatal("fixture: the dig could not take the free lane")
 	}
 	before := len(backend.ReleaseCalls())
-	env := d.syntheticEnvelope(atOperator.StationID)
+	env := d.syntheticEnvelope(atOperator.StationUID)
 	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: atOperator.EdgeUUID})
 	if n := len(backend.ReleaseCalls()); n != before+1 {
 		t.Fatalf("append calls after the station released its OWN wait = %d, want %d — the fence is "+
@@ -273,7 +273,7 @@ func TestWaitKind_UnstampedLaneWaitIsNotSilentlyRescued(t *testing.T) {
 	}
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "wk-unstamped"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 	})
 	if err := db.UpdateOrderStepsJSON(order.ID, string(planJSON)); err != nil {
 		t.Fatalf("persist plan: %v", err)

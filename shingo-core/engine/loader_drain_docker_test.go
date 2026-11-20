@@ -174,12 +174,12 @@ func TestDrain_FiresOnPickupOnArrivalAndAtStartup(t *testing.T) {
 		time.Sleep(300 * time.Millisecond) // the startup sweep finds no cart
 		r.leftover(t, r.slots[0].ID)
 		arrived := &orders.Order{
-			EdgeUUID: "drt3-send-back", StationID: "test-station", OrderType: dispatch.OrderTypeMove,
+			EdgeUUID: "drt3-send-back", StationUID: "test-station", OrderType: dispatch.OrderTypeMove,
 			Status: dispatch.StatusConfirmed, Quantity: 1, DeliveryNode: r.slots[0].Name,
 		}
 		testutil.MustNoErr(t, db.CreateOrder(arrived), "the press's move into its outbound group")
 		eng.Events.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-			OrderID: arrived.ID, EdgeUUID: arrived.EdgeUUID, StationID: arrived.StationID,
+			OrderID: arrived.ID, EdgeUUID: arrived.EdgeUUID, StationID: arrived.StationUID,
 		}})
 		if got := awaitDrainMoves(t, db, 1); len(got) != 1 {
 			t.Errorf("a cart arriving in the inbound source drained %d carts, want 1", len(got))
@@ -206,12 +206,12 @@ func TestDrain_SendBackLeftoverCartReachesAWindow(t *testing.T) {
 	time.Sleep(300 * time.Millisecond) // nothing to drain at startup
 	cart := r.leftover(t, r.slots[0].ID)
 	sentBack := &orders.Order{
-		EdgeUUID: "drsb-send-back", StationID: "test-station", OrderType: dispatch.OrderTypeMove,
+		EdgeUUID: "drsb-send-back", StationUID: "test-station", OrderType: dispatch.OrderTypeMove,
 		Status: dispatch.StatusConfirmed, Quantity: 1, DeliveryNode: r.slots[0].Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(sentBack), "SEND BACK's move into the press's outbound")
 	eng.Events.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID: sentBack.ID, EdgeUUID: sentBack.EdgeUUID, StationID: sentBack.StationID,
+		OrderID: sentBack.ID, EdgeUUID: sentBack.EdgeUUID, StationID: sentBack.StationUID,
 	}})
 
 	moves := awaitDrainMoves(t, db, 1)

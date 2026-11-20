@@ -11,12 +11,12 @@ import (
 // wire protocol's binding shape — the messaging handler marshals it in, the API
 // serves it back out.
 type EdgeCell struct {
-	Station   string          `json:"station"`
-	CellLabel string          `json:"cell_label"`
-	Bindings  json.RawMessage `json:"bindings"`
-	FirstSeen time.Time       `json:"first_seen"`
-	LastSeen  time.Time       `json:"last_seen"`
-	Stale     bool            `json:"stale"`
+	StationUID string          `json:"station"`
+	CellLabel  string          `json:"cell_label"`
+	Bindings   json.RawMessage `json:"bindings"`
+	FirstSeen  time.Time       `json:"first_seen"`
+	LastSeen   time.Time       `json:"last_seen"`
+	Stale      bool            `json:"stale"`
 }
 
 // UpsertEdgeCells reconciles a station's full catalog in one transaction: mark
@@ -33,7 +33,7 @@ func (db *DB) UpsertEdgeCells(station string, cells []EdgeCell) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 
-	if _, err := tx.Exec(`UPDATE edge_cells SET stale = TRUE WHERE station = $1`, station); err != nil {
+	if _, err := tx.Exec(`UPDATE edge_cells SET stale = TRUE WHERE station_uid = $1`, station); err != nil {
 		return err
 	}
 	for _, c := range cells {
@@ -42,9 +42,9 @@ func (db *DB) UpsertEdgeCells(station string, cells []EdgeCell) error {
 			b = json.RawMessage("[]")
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO edge_cells (station, cell_label, bindings, last_seen, stale)
+			INSERT INTO edge_cells (station_uid, cell_label, bindings, last_seen, stale)
 			VALUES ($1, $2, $3, NOW(), FALSE)
-			ON CONFLICT (station, cell_label) DO UPDATE
+			ON CONFLICT (station_uid, cell_label) DO UPDATE
 			   SET bindings = EXCLUDED.bindings, last_seen = NOW(), stale = FALSE`,
 			station, c.CellLabel, []byte(b)); err != nil {
 			return err
@@ -57,13 +57,13 @@ func (db *DB) UpsertEdgeCells(station string, cells []EdgeCell) error {
 // every station's cells; otherwise just that station. Stale cells are included
 // (callers decide whether to show them) — ordered station, then label.
 func (db *DB) ListEdgeCells(station string) ([]EdgeCell, error) {
-	q := `SELECT station, cell_label, bindings, first_seen, last_seen, stale FROM edge_cells`
+	q := `SELECT station_uid, cell_label, bindings, first_seen, last_seen, stale FROM edge_cells`
 	var args []any
 	if station != "" {
-		q += ` WHERE station = $1`
+		q += ` WHERE station_uid = $1`
 		args = append(args, station)
 	}
-	q += ` ORDER BY station, cell_label`
+	q += ` ORDER BY station_uid, cell_label`
 
 	rows, err := db.DB.Query(q, args...)
 	if err != nil {
@@ -75,7 +75,7 @@ func (db *DB) ListEdgeCells(station string) ([]EdgeCell, error) {
 	for rows.Next() {
 		var c EdgeCell
 		var bindings []byte
-		if err := rows.Scan(&c.Station, &c.CellLabel, &bindings, &c.FirstSeen, &c.LastSeen, &c.Stale); err != nil {
+		if err := rows.Scan(&c.StationUID, &c.CellLabel, &bindings, &c.FirstSeen, &c.LastSeen, &c.Stale); err != nil {
 			return nil, err
 		}
 		c.Bindings = json.RawMessage(bindings)

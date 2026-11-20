@@ -22,7 +22,7 @@ func TestLatestOrderHistoryForStatus_ReturnsTheNewerOfTwoFaults(t *testing.T) {
 	db := testdb.Open(t)
 
 	ord := &orders.Order{
-		EdgeUUID: "fault-history-1", StationID: "edge.test",
+		EdgeUUID: "fault-history-1", StationUID: "edge.test",
 		OrderType: "retrieve", Status: protocol.StatusInTransit,
 		Quantity: 1, DeliveryNode: "DELV.1",
 	}

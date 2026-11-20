@@ -148,7 +148,7 @@ function openModal(d) {
 
     // WHAT GOES IN `selected` IS THE ID, ALWAYS. This Set is posted verbatim as
     // `stations` and stored in dashboards.stations_json, and the board filter
-    // matches orders.station_id EXACTLY — so a display name in here scopes the
+    // matches an order's requester EXACTLY — so a display name in here scopes the
     // board to nothing, silently, and does it by writing a mutable label into a
     // data column. The label is rendered beside the checkbox and never read
     // back.

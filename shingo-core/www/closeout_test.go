@@ -26,8 +26,8 @@ func seedCountAnomaly(t *testing.T, db *store.DB) string {
 	seat := &nodes.Node{Name: "ALN_HOME_ANOM", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(seat), "create seat")
 	b := testdb.CreateBinAtNode(t, db, "PART-A", seat.ID, "BIN-HOME-ANOM")
-	_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
-		VALUES ('report_divergence', $1, 'PART-A', 'stn-home', NOW() - interval '90 minutes', 'count',
+	_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, station_uid, occurred_at, op, detail)
+		VALUES ('report_divergence', $1, 'PART-A', '', 'stn-home', NOW() - interval '90 minutes', 'count',
 		        '{"key":"count|ALN_HOME_ANOM|PART-A|x","node":"ALN_HOME_ANOM","edge_count":10,"core_count":150}'::jsonb)`, b.ID)
 	testutil.MustNoErr(t, err, "open a count anomaly")
 	return b.Label

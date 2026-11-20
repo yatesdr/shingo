@@ -63,14 +63,14 @@ func vsPairRows(t *testing.T, db *store.DB, prefix, line, supplySrc, home string
 	supplySteps := vsSupply(supplySrc)
 	sj := mustJSON(t, supplySteps)
 	supply = testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-supply", "line-1", OrderTypeComplex, StatusPending
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = prefix+"-supply", "line-1", OrderTypeComplex, StatusPending
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.PayloadCode = supplySrc, line, line, "PART-X"
 		o.SiblingOrderUUID, o.Coordinated, o.StepsJSON = prefix+"-return", true, string(sj)
 	})
 	retSteps = []resolvedStep{vsWait(line), vsPick(line), vsDrop(home)}
 	rj := mustJSON(t, retSteps)
 	ret = testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-return", "line-1", OrderTypeComplex, StatusPending
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = prefix+"-return", "line-1", OrderTypeComplex, StatusPending
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.PayloadCode = line, home, line, "PART-X"
 		o.SiblingOrderUUID, o.Coordinated, o.StepsJSON = prefix+"-supply", true, string(rj)
 	})
@@ -685,7 +685,7 @@ func TestVacatedSlot_P24_RepointedStampsDoNotCount(t *testing.T) {
 			{Action: protocol.ActionDropoff, Node: c1.Name, Vacate: stamp}}
 		j := mustJSON(t, steps)
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID, o.StationID, o.OrderType, o.Status = "vs24-redirected", "line-1", OrderTypeComplex, StatusStaged
+			o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "vs24-redirected", "line-1", OrderTypeComplex, StatusStaged
 			o.DeliveryNode, o.StepsJSON = "VS24-ELSEWHERE", string(j)
 		})
 		steps, _ = decodeSteps(o.StepsJSON)
@@ -705,7 +705,7 @@ func vsStagedLeg(t *testing.T, db *store.DB, uuid, sibling, delivery string, sta
 	t.Helper()
 	j := mustJSON(t, steps)
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, status
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, status
 		o.DeliveryNode, o.SiblingOrderUUID, o.Coordinated, o.StepsJSON = delivery, sibling, true, string(j)
 		o.VendorOrderID = "V-" + uuid
 	})
@@ -732,7 +732,7 @@ func newReleaseRig(t *testing.T) releaseRig {
 func (r releaseRig) released(t *testing.T, o *orders.Order) bool {
 	t.Helper()
 	before := len(r.backend.ReleaseCalls())
-	r.d.HandleOrderRelease(r.d.syntheticEnvelope(o.StationID), &protocol.OrderRelease{OrderUUID: o.EdgeUUID})
+	r.d.HandleOrderRelease(r.d.syntheticEnvelope(o.StationUID), &protocol.OrderRelease{OrderUUID: o.EdgeUUID})
 	return len(r.backend.ReleaseCalls()) > before
 }
 

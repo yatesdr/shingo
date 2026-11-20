@@ -58,7 +58,7 @@ func TestDashboardActiveOrders_RefreshedCardIsTheReloadedCard(t *testing.T) {
 	// One order the fleet is carrying, one parked with a wait sentence and its
 	// wait clock (waitSinceFor's history read), so every cell kind is in it.
 	moving := &orders.Order{
-		EdgeUUID: "w4-moving", StationID: "line-1", OrderType: "complex",
+		EdgeUUID: "w4-moving", StationUID: "line-1", OrderType: "complex",
 		Status: "in_transit", Quantity: 1, SourceNode: "UTN_014", ProcessNode: "ALN_003",
 		DeliveryNode: "UTN_013", PayloadCode: "SHIM",
 	}

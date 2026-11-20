@@ -29,7 +29,7 @@ func c2bComplexOrder(t *testing.T, uuid string) (*Dispatcher, *mockEmitter, *ord
 	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-"+uuid)
 	order := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,

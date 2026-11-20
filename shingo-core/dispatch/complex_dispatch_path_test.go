@@ -43,7 +43,7 @@ func TestComplexDispatch_ApplyEndState(t *testing.T) {
 	stepsJSON, _ := json.Marshal(steps)
 	order := &orders.Order{
 		EdgeUUID:     "apply-endstate",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,

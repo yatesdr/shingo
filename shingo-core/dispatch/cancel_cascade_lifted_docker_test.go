@@ -31,7 +31,7 @@ func TestCancelCascade_ALiftedLegFinishesItsStore(t *testing.T) {
 
 	stale, err := db.GetOrder(parent.ID)
 	testutil.MustNoErr(t, err, "reload the parent")
-	d.CancelOrderWithCascade(stale, stale.StationID, "test: changeover start", CancelCause{})
+	d.CancelOrderWithCascade(stale, stale.StationUID, "test: changeover start", CancelCause{})
 
 	after, err := db.GetOrder(parent.ID)
 	testutil.MustNoErr(t, err, "reload the parent")

@@ -18,7 +18,7 @@ import (
 // a name, so no test could distinguish "enrolled" from "mentioned".
 func enrolled(t *testing.T, db *store.DB, uid string) {
 	t.Helper()
-	if _, err := registry.Enroll(db.DB, uid, "", uid); err != nil {
+	if _, err := registry.Enroll(db.DB, uid, ""); err != nil {
 		t.Fatalf("Enroll %s: %v", uid, err)
 	}
 }
@@ -93,7 +93,7 @@ func TestCoverage_Enroll_MintsOnceAndRefusesTheSecond(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStationUID: %v", err)
 	}
-	e, err := registry.Enroll(db.DB, uid, "SPRINGFIELD / EDGE-2", "")
+	e, err := registry.Enroll(db.DB, uid, "SPRINGFIELD / EDGE-2")
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -103,14 +103,11 @@ func TestCoverage_Enroll_MintsOnceAndRefusesTheSecond(t *testing.T) {
 	if e.DisplayName != "SPRINGFIELD / EDGE-2" {
 		t.Errorf("display_name = %q, want the operator's string", e.DisplayName)
 	}
-	if e.StationID != uid {
-		t.Errorf("station_id = %q, want the uid — Address.Station's VALUE is the identity", e.StationID)
-	}
 	if e.Status != "enrolled" {
 		t.Errorf("status = %q, want enrolled — an enrolled station has not claimed to be up yet", e.Status)
 	}
 
-	if _, err := registry.Enroll(db.DB, uid, "someone else", ""); !errors.Is(err, registry.ErrAlreadyEnrolled) {
+	if _, err := registry.Enroll(db.DB, uid, "someone else"); !errors.Is(err, registry.ErrAlreadyEnrolled) {
 		t.Fatalf("second Enroll of the same uid: err = %v, want ErrAlreadyEnrolled", err)
 	}
 	got, err := registry.GetByUID(db.DB, uid)
@@ -148,9 +145,8 @@ func TestCoverage_SetDisplayName_RenamesNothingThatIsKeyed(t *testing.T) {
 	if e.DisplayName != "LINE 4 / WELD" {
 		t.Errorf("display_name = %q, want LINE 4 / WELD", e.DisplayName)
 	}
-	if e.StationUID != "stn-rename" || e.StationID != "stn-rename" {
-		t.Errorf("rename moved the identity: uid=%q station_id=%q, want both stn-rename",
-			e.StationUID, e.StationID)
+	if e.StationUID != "stn-rename" {
+		t.Errorf("rename moved the identity: uid=%q, want stn-rename", e.StationUID)
 	}
 }
 

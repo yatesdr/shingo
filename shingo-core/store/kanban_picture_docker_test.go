@@ -91,7 +91,7 @@ func (r *pictureRig) openChangeover(id, process, node, part string, age time.Dur
 	r.t.Helper()
 	testutil.MustNoErr(r.t, r.db.UpsertDemandOrigin(store.DemandOrigin{
 		OriginID: id, Revision: 1, EpisodeKey: "co|" + id, Kind: protocol.EpisodeKindChangeover,
-		StationID: "edge.1", ProcessID: process, CoreNodeName: node, PayloadCode: part,
+		StationUID: "edge.1", ProcessID: process, CoreNodeName: node, PayloadCode: part,
 		OpenedAt: time.Now().UTC().Add(-age),
 	}), "open changeover")
 }
@@ -289,7 +289,7 @@ func TestKanbanPicture_TheRow(t *testing.T) {
 	testdb.KanbanStrict(t, db, *noLevel, true)
 	strict, station := true, "edge.1"
 	wants := []store.KanbanLayerWant{{Layers: 0, Want: 2}, {Layers: 3, Want: 1}}
-	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: r.k, EnsureRow: true, Strict: &strict, Station: &station,
+	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: r.k, EnsureRow: true, Strict: &strict, StationUID: &station,
 		Levels: []store.KanbanLevelChange{
 			{BinTypeID: r.types["PIC-SMALL"], LayerWants: &wants},
 		},
@@ -297,7 +297,7 @@ func TestKanbanPicture_TheRow(t *testing.T) {
 	}, "test"), "save")
 
 	row := r.picture()["PIC-SMALL"]
-	if row.KanbanName != "PIC-K" || row.StationID != "edge.1" || !row.Strict || row.Slots != 3 || row.Base != 1 || row.Cover != 0 {
+	if row.KanbanName != "PIC-K" || row.StationUID != "edge.1" || !row.Strict || row.Slots != 3 || row.Base != 1 || row.Cover != 0 {
 		t.Errorf("row = %+v", row)
 	}
 	if row.TopsAndBottomsWant != 2 {

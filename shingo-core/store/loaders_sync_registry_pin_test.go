@@ -35,7 +35,7 @@ func seedRegistryNode(t *testing.T, db *store.DB, typeCode, name string) int64 {
 func registryRowCount(t *testing.T, db *store.DB, stationID string) int {
 	t.Helper()
 	var n int
-	if err := db.DB.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_id=$1`, stationID).Scan(&n); err != nil {
+	if err := db.DB.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_uid = $1`, stationID).Scan(&n); err != nil {
 		t.Fatalf("count demand_registry: %v", err)
 	}
 	return n

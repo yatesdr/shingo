@@ -33,12 +33,12 @@ func TestVacatedLineHolds_APairAtAVacantDependentPosition(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode, payload_code, paired_core_node)
 		VALUES ('VLH-P', 'VLH-S', $1, 'consume', $2, 'VLH-PART', $3)`, press.Name, string(protocol.SwapModeTwoRobotPressIndex), onDeck.Name)
 	testutil.MustNoErr(t, err, "a press fed from behind")
-	_, err = db.Exec(`INSERT INTO process_styles (process_id, style_id, station_id, is_active) VALUES ('VLH-P', 'VLH-S', 'vlh-line', true)`)
+	_, err = db.Exec(`INSERT INTO process_styles (process_id, style_id, station_uid, is_active) VALUES ('VLH-P', 'VLH-S', 'vlh-line', true)`)
 	testutil.MustNoErr(t, err, "its style, active at the station")
 	base := time.Date(2026, 10, 23, 8, 0, 0, 0, time.UTC)
 	leg := func(uuid, sibling string, at time.Time) {
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID, o.SiblingOrderUUID, o.StationID = uuid, sibling, "vlh-line"
+			o.EdgeUUID, o.SiblingOrderUUID, o.StationUID = uuid, sibling, "vlh-line"
 			o.OrderType, o.Status, o.ProcessNode = protocol.OrderTypeComplex, protocol.StatusQueued, press.Name
 		})
 		_, err := db.Exec(`UPDATE orders SET queue_cause = $1 WHERE id = $2`, string(dispatch.CauseReserveHolding), o.ID)

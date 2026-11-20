@@ -279,12 +279,12 @@ func TestReservations_SwapSiblingCancel(t *testing.T) {
 
 	// Create two sibling orders — supply and evac legs of a two-robot swap.
 	supply := &orders.Order{
-		EdgeUUID: "swap-sib-supply", StationID: "test",
+		EdgeUUID: "swap-sib-supply", StationUID: "test",
 		OrderType: "move", Status: "pending", Quantity: 1,
 		DeliveryNode: sd.LineNode.Name,
 	}
 	evac := &orders.Order{
-		EdgeUUID: "swap-sib-evac", StationID: "test",
+		EdgeUUID: "swap-sib-evac", StationUID: "test",
 		OrderType: "move", Status: "pending", Quantity: 1,
 		DeliveryNode: sd.LineNode.Name,
 	}

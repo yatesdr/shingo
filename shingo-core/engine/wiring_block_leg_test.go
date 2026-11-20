@@ -25,7 +25,7 @@ func seedLegOrder(t *testing.T, db *store.DB, uuid string) int64 {
 	t.Helper()
 	ord := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		Status:       dispatch.StatusInTransit,
 		SourceNode:   "S",

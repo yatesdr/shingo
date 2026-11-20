@@ -56,7 +56,7 @@ func (r *kanbanRig) pinFly(when string) {
 		for _, o := range r.live() {
 			switch {
 			case o.Status == protocol.StatusDelivered:
-				r.eng.Dispatcher().HandleOrderReceipt(rigEnvelope(o.StationID),
+				r.eng.Dispatcher().HandleOrderReceipt(rigEnvelope(o.StationUID),
 					&protocol.OrderReceipt{OrderUUID: o.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1})
 				moved = true
 			case o.VendorOrderID != "" && r.sim.HasOrder(o.VendorOrderID):

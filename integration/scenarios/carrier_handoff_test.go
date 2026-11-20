@@ -80,7 +80,7 @@ func newTwoBooks(t *testing.T, label string, count int) *twoBooks {
 		t.Fatalf("confirm manifest: %v", err)
 	}
 	order := &coreorders.Order{
-		EdgeUUID: "handoff-" + label, StationID: handoffStation, OrderType: dispatch.OrderTypeComplex,
+		EdgeUUID: "handoff-" + label, StationUID: handoffStation, OrderType: dispatch.OrderTypeComplex,
 		Status: dispatch.StatusStaged, PayloadCode: sd.Payload.Code, Quantity: 1,
 		SourceNode: sd.LineNode.Name, DeliveryNode: sd.StorageNode.Name,
 	}

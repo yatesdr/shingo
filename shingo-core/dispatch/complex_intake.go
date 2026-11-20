@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -223,9 +224,14 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 func complexNeed(stationID string, p *protocol.ComplexOrderRequest, steps []resolvedStep, stepsJSON string) Need {
 	source, delivery := extractEndpoints(steps)
 	originID, originClass := classifyInboundOrigin(p.OriginID, p.OriginClass, stationID, p.OrderUUID)
+	// The sender is split once, here, as the plain intake splits it
+	// (LifecycleService.CreateInboundOrder): a Core actor's name is the
+	// requested_by and leaves the station blank.
+	stationUID, requestedBy := domain.SplitRequester(stationID)
 	return Need{
 		Type:         OrderTypeComplex,
-		Station:      stationID,
+		Station:      stationUID,
+		RequestedBy:  requestedBy,
 		Ref:          p.OrderUUID,
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
@@ -267,7 +273,7 @@ func (d *Dispatcher) refuseComplexIntake(env *protocol.Envelope, p *protocol.Com
 	if own, err := d.db.GetOrderByUUID(p.OrderUUID); readFailed(err) || own != nil {
 		return
 	}
-	if err := d.db.RecordIntakeRefusal(p.OrderUUID, env.Src.Station, code, detail); err != nil {
+	if err := d.db.RecordIntakeRefusal(p.OrderUUID, code, detail); err != nil {
 		log.Printf("dispatch: record intake refusal of %s (pair with %s): %v", p.OrderUUID, p.SiblingOrderUUID, err)
 	}
 	partner, err := d.db.GetOrderByUUID(p.SiblingOrderUUID)
@@ -275,6 +281,6 @@ func (d *Dispatcher) refuseComplexIntake(env *protocol.Envelope, p *protocol.Com
 		return
 	}
 	_ = d.failForRefusedPartner(partner, &orders.IntakeRefusal{
-		EdgeUUID: p.OrderUUID, StationID: env.Src.Station, ErrorCode: code, Detail: detail,
+		EdgeUUID: p.OrderUUID, ErrorCode: code, Detail: detail,
 	})
 }

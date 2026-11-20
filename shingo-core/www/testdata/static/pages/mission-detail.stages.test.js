@@ -121,7 +121,7 @@ function rows(els) {
 // old_status/new_status mapped server-side, plus leg rows flagged is_leg, whose
 // blocks_json is the engine's blockLeg record), and history (order_history).
 
-const Z = { robot_x: 0, robot_y: 0, robot_battery: 80, robot_station: '' };
+const Z = { robot_x: 0, robot_y: 0, robot_battery: 80, rds_station: '' };
 
 function ev(at, oldState, newState, oldStatus, newStatus) {
     return Object.assign({ created_at: at, robot_id: 'AMR-01', old_state: oldState, new_state: newState,
@@ -149,7 +149,7 @@ function sec(iso) { return Date.parse(iso) / 1000; }
 // staged at Lane_03-WAIT, one fault/recover pair while moving, confirmed 26 s
 // after delivery.
 const F1 = {
-    order: { id: 632, order_type: 'swap', station_id: 'line-1', robot_id: 'AMR-01', status: 'confirmed',
+    order: { id: 632, order_type: 'swap', station_uid: 'line-1', robot_id: 'AMR-01', status: 'confirmed',
         source_node: 'ALN_002', delivery_node: 'UTN_013', created_at: '2026-10-05T07:00:00Z',
         steps_json: JSON.stringify([{ action: 'pickup', node: 'ALN_002' }, { action: 'wait', node: 'Lane_03-WAIT' },
             { action: 'dropoff', node: 'UTN_013' }]) },
@@ -182,7 +182,7 @@ const F1 = {
 // F2 — queued, then dispatched (the audit's #610 shape). 24 minutes in the
 // queue before a robot was asked for.
 const F2 = {
-    order: { id: 610, order_type: 'retrieve', station_id: 'line-2', robot_id: 'AMR-02', status: 'confirmed',
+    order: { id: 610, order_type: 'retrieve', station_uid: 'line-2', robot_id: 'AMR-02', status: 'confirmed',
         source_node: 'ALN_002', delivery_node: 'UTN_010', created_at: '2026-10-05T06:59:00Z' },
     telemetry: { robot_id: 'AMR-02', duration_ms: 1500000, vendor_duration_ms: 0,
         core_created: '2026-10-05T06:59:00Z', core_completed: '2026-10-05T07:24:00Z',
@@ -208,7 +208,7 @@ const F2 = {
 // there at 16:30. No mission_telemetry row exists until a terminal state, so
 // the API serves telemetry null.
 const F3 = {
-    order: { id: 664, order_type: 'retrieve', station_id: 'line-3', robot_id: 'AMR-13', status: 'staged',
+    order: { id: 664, order_type: 'retrieve', station_uid: 'line-3', robot_id: 'AMR-13', status: 'staged',
         source_node: 'ALN_008', delivery_node: 'PLK_H1', created_at: '2026-10-05T07:20:00Z' },
     telemetry: null,
     history: [
@@ -227,7 +227,7 @@ const F3 = {
 
 // F4 — three replans while moving, then the fleet gave up.
 const F4 = {
-    order: { id: 700, order_type: 'retrieve', station_id: 'line-1', robot_id: 'AMR-03', status: 'failed',
+    order: { id: 700, order_type: 'retrieve', station_uid: 'line-1', robot_id: 'AMR-03', status: 'failed',
         source_node: 'ALN_001', delivery_node: 'UTN_001', created_at: '2026-10-05T08:00:00Z' },
     telemetry: null,
     history: [

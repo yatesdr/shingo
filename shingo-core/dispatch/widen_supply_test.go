@@ -41,7 +41,7 @@ func mkWidenOrder(t *testing.T, db interface {
 	stepsJSON, _ := json.Marshal(steps)
 	o := &orders.Order{
 		EdgeUUID:     uuid,
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeComplex,
 		Status:       StatusQueued,
 		Quantity:     1,

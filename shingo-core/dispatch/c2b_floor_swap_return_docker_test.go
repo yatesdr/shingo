@@ -85,7 +85,7 @@ func newC2bSwapDroppingAt(t *testing.T, drop func(db *store.DB, laneD int64, slo
 
 	swap := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2bf-swap"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = sd.Payload.Code
@@ -146,7 +146,7 @@ func TestC2bPin_ASwapsLaneReturnIsReleasedByItsOwnEventNotTheFloor(t *testing.T)
 	}
 
 	// ── THE EVENT: the station releases its own wait. ─────────────────────
-	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID),
+	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationUID),
 		&protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
 
 	afterEvent, err := db.GetOrder(swap.ID)

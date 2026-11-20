@@ -293,7 +293,7 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	// reservations.order_id FKs to orders(id), so the claimer must be a real row.
 	releaseOrder := &coreorders.Order{
 		EdgeUUID:    "scenario-swap-release-1",
-		StationID:   "edge.test",
+		StationUID:  "edge.test",
 		OrderType:   dispatch.OrderTypeRetrieveEmpty,
 		Status:      dispatch.StatusStaged,
 		PayloadCode: sd.Payload.Code,

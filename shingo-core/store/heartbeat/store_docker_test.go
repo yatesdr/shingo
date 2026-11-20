@@ -27,8 +27,8 @@ func TestCoverage_HeartbeatStore(t *testing.T) {
 		t.Fatalf("EnsurePartitions (2nd): %v", err)
 	}
 
-	e1 := heartbeat.PartEvent{CellID: "STN-A", RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 100}
-	e2 := heartbeat.PartEvent{CellID: "STN-A", RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 101}
+	e1 := heartbeat.PartEvent{StationUID: "STN-A", RecordedAt: now.Add(-2 * time.Minute), EdgeSnapshotID: 1, Delta: 1, CountValue: 100}
+	e2 := heartbeat.PartEvent{StationUID: "STN-A", RecordedAt: now.Add(-1 * time.Minute), EdgeSnapshotID: 2, Delta: 1, CountValue: 101}
 	if got, rej := heartbeat.InsertPartEvents(db.DB, []heartbeat.PartEvent{e1, e2}); rej != nil || len(got) != 2 {
 		t.Fatalf("InsertPartEvents: %d rows, rejected %v, want 2/none", len(got), rej)
 	}
@@ -51,7 +51,7 @@ func TestCoverage_HeartbeatStore(t *testing.T) {
 		t.Fatalf("re-sent tick: %d rows, rejected %v, want 0/none", len(got), rej)
 	}
 	other := e1
-	other.CellID = "STN-B"
+	other.StationUID = "STN-B"
 	restored := e1
 	restored.RecordedAt = now.Add(-30 * time.Second)
 	if got, rej := heartbeat.InsertPartEvents(db.DB, []heartbeat.PartEvent{other, restored}); rej != nil || len(got) != 2 {

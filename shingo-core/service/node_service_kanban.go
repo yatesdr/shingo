@@ -96,7 +96,7 @@ func (s *NodeService) GetKanban(groupNodeID int64) (*KanbanConfig, error) {
 	if k != nil {
 		cfg.hasRow = true
 		cfg.StrictSourcing = k.Strict
-		cfg.MaintenanceStation = k.StationID
+		cfg.MaintenanceStation = k.StationUID
 	}
 	return cfg, nil
 }
@@ -329,7 +329,7 @@ func (s *NodeService) kanbanChange(post *KanbanConfig, save KanbanSave) store.Ka
 	change := store.KanbanChange{
 		NodeID:       save.GroupNodeID,
 		EnsureRow:    post.isKanban(),
-		Station:      save.Station,
+		StationUID:   save.Station,
 		Strict:       save.Strict,
 		Pools:        save.Pools,
 		RemoveLevels: save.RemoveLevels,

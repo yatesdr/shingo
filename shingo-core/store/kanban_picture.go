@@ -43,7 +43,7 @@ type KanbanPictureRow struct {
 	Minimum      int
 	// TopsAndBottomsWant is the want of the type's row at 0 layers, 0 with none.
 	TopsAndBottomsWant int
-	StationID          string
+	StationUID         string
 	Strict             bool
 	// Live says the kanban's node is an enabled group: a disabled one is counted
 	// by nobody and keeps nothing.
@@ -248,7 +248,7 @@ sources AS (
 const kanbanPictureSelect = `
 SELECT g.id, g.name, l.bin_type_id, bt.code, l.want, COALESCE(r.claimed, 0),
        COALESCE(sl.slots, 0), COALESCE(su.refs, '[]'), COALESCE(so.refs, '[]'),
-       COALESCE(tb.want, 0), COALESCE(k.station_id, ''), k.strict, g.enabled AND g.is_synthetic,
+       COALESCE(tb.want, 0), COALESCE(k.station_uid, ''), k.strict, g.enabled AND g.is_synthetic,
        COALESCE(r.processes, '[]'), COALESCE(nt.processes, '[]'), COALESCE(fa.processes, '[]'),
        bt.family_id, f.code,
        COALESCE(kf.pool, COALESCE(mf.mix, 0) + COALESCE(lf.positions, 0)), kf.pool IS NOT NULL,
@@ -324,7 +324,7 @@ func scanKanbanPicture(rows *sql.Rows, err error) ([]KanbanPictureRow, error) {
 		)
 		if err := rows.Scan(&r.KanbanNodeID, &r.KanbanName, &r.BinTypeID, &r.BinTypeCode,
 			&r.Base, &r.Cover, &r.Slots, &supports, &sources,
-			&r.TopsAndBottomsWant, &r.StationID, &r.Strict, &r.Live, &running, &nothing, &fell,
+			&r.TopsAndBottomsWant, &r.StationUID, &r.Strict, &r.Live, &running, &nothing, &fell,
 			&r.FamilyID, &r.FamilyCode, &r.Pool, &r.PoolDeclared, &r.Minimum); err != nil {
 			return nil, fmt.Errorf("kanban picture: scan: %w", err)
 		}

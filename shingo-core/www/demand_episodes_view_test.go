@@ -507,7 +507,7 @@ func TestKanbanRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
 			EpisodeKey:   "mnt|12|34",
 			Kind:         "kanban",
 			PayloadCode:  "45x58",
-			StationID:    "core",
+			StationUID:   "core",
 			CoreNodeName: "PRESS-BUFFER",
 			OpenedAt:     now.Add(-at(20)),
 			OpenedTotal:  1, // one carrier standing there

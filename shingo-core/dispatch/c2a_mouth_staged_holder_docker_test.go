@@ -40,7 +40,7 @@ func TestC2aPin_ARequesterWhoseOwnDropIsTheMouthGetsItsDig(t *testing.T) {
 
 	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2ao-move"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = bp.Code
@@ -73,7 +73,7 @@ func TestC2aPin_AnOrderStagedAtItsMarkDoesNotHoldTheMouthAgainstADig(t *testing.
 
 	waiter := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2ah-waiter"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = bp.Code
@@ -85,7 +85,7 @@ func TestC2aPin_AnOrderStagedAtItsMarkDoesNotHoldTheMouthAgainstADig(t *testing.
 
 	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "c2ah-store"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
 		o.PayloadCode = bp.Code

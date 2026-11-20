@@ -116,7 +116,7 @@ func TestOrderPress_ThePressAPlainOrderNamesIsWhatCoreKeysItOn(t *testing.T) {
 		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: uuid, OrderType: OrderTypeRetrieve,
 			PayloadCode: c.part, DeliveryNode: outside.Name, ProcessNode: press, Quantity: 1})
 		o := testdb.RequireOrderStatus(t, db, uuid, protocol.StatusQueued)
-		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})
+		d.Lifecycle().CancelOrder(o, o.StationUID, "no_source_bin", CancelCause{})
 		clk.Advance(time.Minute)
 		return testdb.RequireOrder(t, db, uuid)
 	}

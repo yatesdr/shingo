@@ -79,7 +79,7 @@ func TestRouteSurfaces_Statements(t *testing.T) {
 // route.
 func routeOrder(t *testing.T, db *store.DB, uuid, steps string) *orders.Order {
 	t.Helper()
-	o := &orders.Order{EdgeUUID: uuid, StationID: "line-route", OrderType: "move", Status: protocol.StatusInTransit,
+	o := &orders.Order{EdgeUUID: uuid, StationUID: "line-route", OrderType: "move", Status: protocol.StatusInTransit,
 		Quantity: 1, SourceNode: "UTN_014", DeliveryNode: "UTN_013", StepsJSON: steps}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
 	testutil.MustNoErr(t, db.UpdateOrderRobotID(o.ID, "AMR-01"), "robot for "+uuid)

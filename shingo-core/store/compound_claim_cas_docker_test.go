@@ -54,7 +54,7 @@ func compoundParent(t *testing.T, db *store.DB, uuid string) *orders.Order {
 	t.Helper()
 	return testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.Status = protocol.StatusReshuffling
 		o.Priority = 1
 	})
@@ -66,7 +66,7 @@ func childFor(parent *orders.Order, binID int64, seq int) store.CompoundChild {
 		Order: testdb.Holding(&orders.Order{
 			EdgeUUID: parent.EdgeUUID + "-child" + string(rune('0'+seq)),
 			// The station a leg inherits from its parent (compound.go).
-			StationID:     parent.StationID,
+			StationUID:    parent.StationUID,
 			OrderType:     protocol.OrderTypeMove,
 			Status:        protocol.StatusPending,
 			Quantity:      1,

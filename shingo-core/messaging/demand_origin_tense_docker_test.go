@@ -29,7 +29,7 @@ func plantForecast(t *testing.T, db *store.DB, key string, revision, signalCount
 	t.Helper()
 	id := uuid.NewString()
 	_, err := db.Exec(`
-		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_id, signal_count, opened_at)
+		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_uid, signal_count, opened_at)
 		VALUES ($1, $2, $3, 'cell', 'edge.fc', $4, NULL)`, id, revision, key, signalCount)
 	testutil.MustNoErr(t, err, "plant forecast")
 	return id

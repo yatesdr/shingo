@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Orders-table outcome source — the v2 dashboard success/cancel counts.
@@ -52,7 +53,7 @@ func orderOutcomeWhere(alias string, f Filter) (string, []any) {
 		conds = append(conds, fmt.Sprintf(expr, len(args)))
 	}
 	if f.StationID != "" {
-		add(p+"station_id=$%d", f.StationID)
+		add(p+helpers.RequesterColumn(f.StationID)+"=$%d", f.StationID)
 	}
 	if f.RobotID != "" {
 		add(p+"robot_id=$%d", f.RobotID)

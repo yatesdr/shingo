@@ -316,7 +316,7 @@ func TestBudget_C2cGroupGateEvent(t *testing.T) {
 		testutil.MustNoErr(t, mErr, "marshal a waiter's plan")
 		w := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.EdgeUUID = fmt.Sprintf("budg-waiter-%d", i)
-			o.StationID = "line-1"
+			o.StationUID = "line-1"
 			o.OrderType = dispatch.OrderTypeComplex
 			o.PayloadCode = sd.Payload.Code
 			o.SourceNode = line.Name
@@ -442,7 +442,7 @@ func c2cGateEventFixture(t *testing.T, prefix string, waiters int) c2cGateEvent 
 		testutil.MustNoErr(t, mErr, "marshal a waiter's plan")
 		w := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.EdgeUUID = fmt.Sprintf("%s-waiter-%d", prefix, i)
-			o.StationID = "line-1"
+			o.StationUID = "line-1"
 			o.OrderType = dispatch.OrderTypeComplex
 			o.Coordinated = true
 			o.PayloadCode = sd.Payload.Code

@@ -35,7 +35,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	// First robot assignment: send waybill only (no DB write here - Option C)
 	if ev.RobotID != "" && order.RobotID == "" && !order.StationUnaware {
-		if err := e.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
+		if err := e.sendToEdge(protocol.TypeOrderWaybill, order.Requester(), &protocol.OrderWaybill{
 			OrderUUID: order.EdgeUUID,
 			WaybillID: order.VendorOrderID,
 			RobotID:   ev.RobotID,
@@ -155,7 +155,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// guard ensures the next child dispatches exactly once. Idempotent — a
 		// later edge/reconciliation receipt becomes a no-op (CompletedAt set).
 		if order.ParentOrderID != nil {
-			if _, err := lc.ConfirmReceipt(order, order.StationID, "auto_confirm_internal", 0); err != nil {
+			if _, err := lc.ConfirmReceipt(order, order.Requester(), "auto_confirm_internal", 0); err != nil {
 				e.logFn("engine: auto-confirm child order %d: %v", order.ID, err)
 			}
 		}
@@ -266,7 +266,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			e.dispatcher.RedriveTableTurns(order.ID)
 		}
 		if !order.StationUnaware {
-			if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
+			if err := e.sendToEdge(protocol.TypeOrderStaged, order.Requester(), &protocol.OrderStaged{
 				OrderUUID:   order.EdgeUUID,
 				Detail:      "robot dwelling at staging node",
 				StationWait: stationWait,
@@ -416,7 +416,7 @@ func (e *Engine) handleFleetOrderFailed(order *orders.Order, fleetDetail string)
 	if detail == "" {
 		detail = "fleet order failed"
 	}
-	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, "fleet_failed", detail); err != nil {
+	if err := e.dispatcher.Lifecycle().Fail(order, order.Requester(), "fleet_failed", detail); err != nil {
 		e.logFn("engine: fail order %d: %v", order.ID, err)
 	}
 }
@@ -431,7 +431,7 @@ func (e *Engine) handleFleetOrderCancelled(order *orders.Order, snap *fleet.Orde
 	// The reason carries what the fleet said (fleetStopReason). It is the one
 	// string that reaches orders.error_detail, the history row, the Edge's
 	// OrderCancelled and — through swap_peer.go — the partner leg's sentence.
-	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, fleetStopReason(snap),
+	e.dispatcher.Lifecycle().CancelOrder(order, order.Requester(), fleetStopReason(snap),
 		dispatch.CancelCause{})
 }
 func (e *Engine) handleGraceExpired(ev GraceExpiredEvent) {
@@ -462,7 +462,7 @@ func (e *Engine) handleGraceExpired(ev GraceExpiredEvent) {
 	ref, since := e.latestFaultReason(order.ID)
 	detail := protocol.FormatFaultSentence(
 		protocol.FaultPhaseGaveUp, ref, since, clock.Now().UTC(), true)
-	if err := e.dispatcher.Lifecycle().FailWithRef(order, order.StationID,
+	if err := e.dispatcher.Lifecycle().FailWithRef(order, order.Requester(),
 		string(protocol.TermGraceTimeout), detail, ref); err != nil {
 		e.logFn("engine: grace-expiry fail order %d: %v", order.ID, err)
 	}

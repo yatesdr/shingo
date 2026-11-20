@@ -62,7 +62,7 @@ func (h *tickHarness) tick(station string, ev protocol.ProductionTickEvent) {
 // rows counts cell_part_events rows for (cell, edge_snapshot_id).
 func (h *tickHarness) rows(cell string, edgeID int64) int {
 	var n int
-	if err := h.db.QueryRow(`SELECT count(*) FROM cell_part_events WHERE cell_id=$1 AND edge_snapshot_id=$2`,
+	if err := h.db.QueryRow(`SELECT count(*) FROM cell_part_events WHERE station_uid=$1 AND edge_snapshot_id=$2`,
 		cell, edgeID).Scan(&n); err != nil {
 		h.t.Fatalf("count rows: %v", err)
 	}
@@ -120,8 +120,8 @@ func TestProductionTick_ProjectsEveryColumn(t *testing.T) {
 		recorded                    time.Time
 		edgeID, cv, delta, pid, sid int64
 	)
-	if err := h.db.QueryRow(`SELECT cell_id, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
-		FROM cell_part_events WHERE cell_id='stn-a' AND edge_snapshot_id=41`).
+	if err := h.db.QueryRow(`SELECT station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id
+		FROM cell_part_events WHERE station_uid='stn-a' AND edge_snapshot_id=41`).
 		Scan(&cell, &recorded, &edgeID, &cv, &delta, &anomaly, &pid, &sid); err != nil {
 		t.Fatalf("read row: %v", err)
 	}

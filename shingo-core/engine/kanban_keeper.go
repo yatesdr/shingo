@@ -325,7 +325,7 @@ func (m *KanbanKeeper) tickKanban(rows []store.KanbanPictureRow, openByKey map[s
 		return nil, nil, false
 	}
 	supported := len(k.Supports) > 0
-	keeper := supported && k.StationID != ""
+	keeper := supported && k.StationUID != ""
 	if supported && !keeper {
 		m.eng.logFn("keeper: kanban %s has supports and no station — skipped; "+
 			"its asks would be invisible on every Edge board", k.KanbanName)
@@ -545,7 +545,7 @@ func (m *KanbanKeeper) tickLine(l *keeperLine, ask *kanbanAsks, family int64, wa
 				OriginID:     uuid.NewString(),
 				EpisodeKey:   l.key,
 				Kind:         protocol.EpisodeKindKanban,
-				StationID:    ask.station,
+				StationUID:   ask.station,
 				CoreNodeName: ask.group.Name,
 				OpenedAt:     m.now().UTC(),
 				OpenedTotal:  c.Resident,
@@ -802,7 +802,7 @@ func (m *KanbanKeeper) planAsks(k store.KanbanPictureRow, rows []store.KanbanPic
 	wants := askByLargestGap(rows, lines, need, m.forecast(k, codes))
 	ask := &kanbanAsks{
 		group:      &nodes.Node{ID: k.KanbanNodeID, Name: k.KanbanName, IsSynthetic: true, Enabled: true},
-		station:    k.StationID,
+		station:    k.StationUID,
 		hasSources: len(k.Sources) > 0,
 		deficit:    need,
 	}

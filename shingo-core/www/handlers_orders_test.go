@@ -131,7 +131,7 @@ func makeOrder(t *testing.T, db *store.DB, uuid, vendorID string, priority int) 
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:   uuid,
-		StationID:  "line-prio",
+		StationUID: "line-prio",
 		OrderType:  "move",
 		Status:     "pending",
 		Quantity:   1,
@@ -494,7 +494,7 @@ func TestOrdersBoard_RowColumns(t *testing.T) {
 	h, db := testHandlersForRendering(t)
 
 	o := seedBoardOrder(t, db, &orders.Order{
-		EdgeUUID: "pin-uuid-7f3a", StationID: "line-1", OrderType: "complex",
+		EdgeUUID: "pin-uuid-7f3a", StationUID: "line-1", OrderType: "complex",
 		Status: protocol.StatusInTransit, SourceNode: "UTN_014", ProcessNode: "ALN_003",
 		DeliveryNode: "UTN_013", PayloadCode: "SHIM", PayloadDesc: "SHIM (dev)",
 	}, "2026-10-05T12:24:13Z")
@@ -532,12 +532,12 @@ func TestOrdersBoard_RouteOmitsARepeatedNode(t *testing.T) {
 	h, db := testHandlersForRendering(t)
 
 	o := seedBoardOrder(t, db, &orders.Order{
-		EdgeUUID: "pin-route-repeat", StationID: "line-1", OrderType: "retrieve",
+		EdgeUUID: "pin-route-repeat", StationUID: "line-1", OrderType: "retrieve",
 		Status: protocol.StatusInTransit, SourceNode: "SYN_MARKET_01", ProcessNode: "ALN_008",
 		DeliveryNode: "ALN_008",
 	}, "")
 	open := seedBoardOrder(t, db, &orders.Order{
-		EdgeUUID: "pin-route-open", StationID: "line-1", OrderType: "complex",
+		EdgeUUID: "pin-route-open", StationUID: "line-1", OrderType: "complex",
 		Status: protocol.StatusSourcing, SourceNode: "UTN_013",
 	}, "")
 
@@ -564,7 +564,7 @@ func TestOrdersBoard_Paging(t *testing.T) {
 	var ids []int64
 	for i := range 5 {
 		o := seedBoardOrder(t, db, &orders.Order{
-			EdgeUUID: fmt.Sprintf("pin-page-%d", i), StationID: "line-1", OrderType: "move",
+			EdgeUUID: fmt.Sprintf("pin-page-%d", i), StationUID: "line-1", OrderType: "move",
 			Status: protocol.StatusConfirmed,
 		}, "")
 		ids = append(ids, o.ID)
@@ -611,14 +611,14 @@ func TestOrdersBoard_SearchQueriesTheServer(t *testing.T) {
 	h, db := testHandlersForRendering(t)
 
 	hit := seedBoardOrder(t, db, &orders.Order{
-		EdgeUUID: "pin-search-hit", StationID: "line-1", OrderType: "move",
+		EdgeUUID: "pin-search-hit", StationUID: "line-1", OrderType: "move",
 		Status: protocol.StatusConfirmed,
 	}, "")
 	_, err := db.DB.Exec(`UPDATE orders SET robot_id='AMR-17' WHERE id=$1`, hit.ID)
 	testutil.MustNoErr(t, err, "set robot")
 	// Newer than the hit, so on a one-row page the hit is not on page 1.
 	miss := seedBoardOrder(t, db, &orders.Order{
-		EdgeUUID: "pin-search-miss", StationID: "line-1", OrderType: "move",
+		EdgeUUID: "pin-search-miss", StationUID: "line-1", OrderType: "move",
 		Status: protocol.StatusConfirmed,
 	}, "")
 	_, err = db.DB.Exec(`UPDATE orders SET robot_id='AMR-03' WHERE id=$1`, miss.ID)
@@ -644,11 +644,11 @@ func TestOrdersBoard_IDsFilter(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
 
-	a := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-a", StationID: "line-1",
+	a := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-a", StationUID: "line-1",
 		OrderType: "move", Status: protocol.StatusQueued}, "")
-	b := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-b", StationID: "line-1",
+	b := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-b", StationUID: "line-1",
 		OrderType: "move", Status: protocol.StatusQueued}, "")
-	gone := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-gone", StationID: "line-1",
+	gone := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-gone", StationUID: "line-1",
 		OrderType: "move", Status: protocol.StatusConfirmed}, "")
 
 	body := renderOrdersPage(t, h, fmt.Sprintf("?ids=%d,%d", a.ID, gone.ID))

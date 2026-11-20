@@ -28,7 +28,7 @@ func TestDispatchDirect_CarriesTheOrdersKeyRoute(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "routed-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -83,7 +83,7 @@ func TestDispatchDirect_NoRouteStaysEmpty(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "unrouted-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,

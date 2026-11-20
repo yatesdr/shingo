@@ -113,7 +113,7 @@ func TestOrderCartsPin_AContainmentDivertKeepsEachCartsDropWithItsPlan(t *testin
 	first := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-first", 4, time.Now().UTC())
 	second := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-second", 4, time.Now().UTC())
 	o := &orders.Order{
-		EdgeUUID: "carts-divert", StationID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
+		EdgeUUID: "carts-divert", StationUID: "test", OrderType: protocol.OrderTypeRetrieve, Status: "staged",
 		Quantity: 1, SourceNode: "SRC-QC", DeliveryNode: fgn.Name, PayloadCode: "PART-QC",
 		ProcessNode: "PROD-QC",
 		StepsJSON: `[{"action":"pickup","node":"SRC-QC"},{"action":"dropoff","node":"` + fgn.Name + `"},` +

@@ -230,7 +230,7 @@ func TestCompoundDig_StoreRefusesALegUnderAnEndedParent(t *testing.T) {
 	f := seedBuriedRetrieve(t, "PGONE6")
 	f.cancel(t)
 	leg := &orders.Order{
-		EdgeUUID: "PGONE6-leg", StationID: f.order.StationID, OrderType: OrderTypeMove, Status: StatusPending,
+		EdgeUUID: "PGONE6-leg", StationUID: f.order.StationUID, OrderType: OrderTypeMove, Status: StatusPending,
 		ParentOrderID: &f.order.ID, Sequence: 1, SourceNode: f.sc.Slots[0].Name,
 	}
 	leg.HoldFromBirth(f.sc.Blockers[0].ID)

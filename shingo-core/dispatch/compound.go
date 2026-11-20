@@ -500,7 +500,7 @@ func (d *Dispatcher) withdrawIfParentEnded(parent *orders.Order) error {
 		log.Printf("dispatch: compound %d: list the legs to withdraw: %v", parent.ID, lerr)
 	}
 	for _, c := range children {
-		d.lifecycle.CancelOrder(c, parent.StationID, reshuffleWithdrawnDetail, CancelCause{})
+		d.lifecycle.CancelOrder(c, parent.Requester(), reshuffleWithdrawnDetail, CancelCause{})
 	}
 	log.Printf("dispatch: compound %d ended (%s) as its dig was written: legs withdrawn", parent.ID, fresh.Status)
 	return &store.ParentGoneError{ParentID: parent.ID, Status: fresh.Status}
@@ -682,7 +682,8 @@ func (d *Dispatcher) legNeed(parentOrder *orders.Order, step ReshuffleStep) Need
 		// ordered by sequence (ListChildOrders / GetNextChildOrder). The fleet
 		// still gets it as ExternalID, an opaque correlation token.
 		Ref:          uuid.New().String(),
-		Station:      parentOrder.StationID,
+		Station:      parentOrder.StationUID,
+		RequestedBy:  parentOrder.RequestedBy,
 		StationKnows: true,
 		Desc:         fmt.Sprintf("reshuffle %s: bin %d", step.StepType, step.BinID),
 		PayloadCode:  payloadCode,
@@ -794,7 +795,7 @@ func (d *Dispatcher) failDisplacedForCart(displaced []store.DisplacedForCart) {
 		detail := fmt.Sprintf("a dig (order %d) had to move bin %d out of its way and parked it at %s. "+
 			"This order is for that bin, so it is not re-aimed at a different "+
 			"one — re-issue it against the bin's new position", v.DigID, v.BinID, where)
-		if fErr := d.lifecycle.FailWithRef(ord, ord.StationID,
+		if fErr := d.lifecycle.FailWithRef(ord, ord.Requester(),
 			string(protocol.TermBinDugAway), detail, protocol.TermRef{Node: where}); fErr != nil {
 			log.Printf("dispatch: could not fail order %d, an order for its bin, after dig %d took bin %d (%v)",
 				v.OrderID, v.DigID, v.BinID, fErr)
@@ -864,7 +865,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	if parent, perr := d.db.GetOrder(parentOrderID); perr == nil && protocol.IsTerminal(parent.Status) {
 		log.Printf("dispatch: compound %d is %s: leg %d is not dispatched, its legs are cancelled",
 			parentOrderID, parent.Status, next.ID)
-		d.cancelCompoundChildren(parent, parent.StationID, fmt.Sprintf("parent order %s", parent.Status),
+		d.cancelCompoundChildren(parent, parent.Requester(), fmt.Sprintf("parent order %s", parent.Status),
 			CancelCause{}, d.digLanesHeld(parent.ID))
 		return nil
 	}
@@ -1130,7 +1131,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
 	// Build a synthetic envelope for the child dispatch
-	env := d.syntheticEnvelope(next.StationID)
+	env := d.syntheticEnvelope(next.Requester())
 	hand, herr := legHand(next)
 	if herr != nil {
 		return fmt.Errorf("compound %d: leg %d: %w", parentOrderID, next.ID, herr)
@@ -2135,7 +2136,7 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 		// re-plans. Stamping it would move a dashboard number as a side effect
 		// of an attribution change. That is its own decision, with its own
 		// before/after count. Same at every teardown below.
-		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleDissolveDetail, CancelCause{})
+		d.lifecycle.CancelOrder(child, parent.Requester(), reshuffleDissolveDetail, CancelCause{})
 	}
 
 	// A KEPT LEG KEEPS THE LANE: its robot is still in it. The chapter-end arm
@@ -2258,7 +2259,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	}
 	cancelled := 0
 	for _, child := range cancel {
-		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleLegFailedDetail, CancelCause{})
+		d.lifecycle.CancelOrder(child, parent.Requester(), reshuffleLegFailedDetail, CancelCause{})
 		cancelled++
 	}
 
@@ -2540,7 +2541,7 @@ func (d *Dispatcher) chapterStoppedShort(
 		log.Printf("dispatch: compound order %d has a leg that cannot be built (%s) — failing "+
 			"the demand; this is a person's to fix, not congestion", parentOrderID, broken.ErrorDetail)
 		if parent != nil {
-			if err := d.lifecycle.Fail(parent, parent.StationID, "reshuffle_error", broken.ErrorDetail); err != nil {
+			if err := d.lifecycle.Fail(parent, parent.Requester(), "reshuffle_error", broken.ErrorDetail); err != nil {
 				log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
 			}
 		}
@@ -2585,7 +2586,7 @@ func (d *Dispatcher) chapterStoppedShort(
 				"it down first; the chapter closes when it lands", parentOrderID, leg.ID)
 		}
 		for _, c := range cancel {
-			d.lifecycle.CancelOrder(c, parent.StationID, reshuffleLegFailedDetail, CancelCause{})
+			d.lifecycle.CancelOrder(c, parent.Requester(), reshuffleLegFailedDetail, CancelCause{})
 		}
 	}
 

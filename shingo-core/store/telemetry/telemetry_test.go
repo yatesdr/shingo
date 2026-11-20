@@ -14,11 +14,11 @@ func TestCoverage_InsertAndListMissionEvents(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	orderID := int64(100)
-	e1 := &telemetry.Event{OrderID: orderID, VendorOrderID: "rds-100", OldState: "CREATED", NewState: "RUNNING", RobotID: "AMB-1", RobotStation: "LINE-1", BlocksJSON: "[]", ErrorsJSON: "[]", Detail: "dispatched"}
+	e1 := &telemetry.Event{OrderID: orderID, VendorOrderID: "rds-100", OldState: "CREATED", NewState: "RUNNING", RobotID: "AMB-1", RDSStation: "LINE-1", BlocksJSON: "[]", ErrorsJSON: "[]", Detail: "dispatched"}
 	if err := telemetry.InsertEvent(db.DB, e1); err != nil {
 		t.Fatalf("InsertEvent 1: %v", err)
 	}
-	e2 := &telemetry.Event{OrderID: orderID, VendorOrderID: "rds-100", OldState: "RUNNING", NewState: "FINISHED", RobotID: "AMB-1", RobotStation: "LINE-1", BlocksJSON: "[]", ErrorsJSON: "[]"}
+	e2 := &telemetry.Event{OrderID: orderID, VendorOrderID: "rds-100", OldState: "RUNNING", NewState: "FINISHED", RobotID: "AMB-1", RDSStation: "LINE-1", BlocksJSON: "[]", ErrorsJSON: "[]"}
 	if err := telemetry.InsertEvent(db.DB, e2); err != nil {
 		t.Fatalf("InsertEvent 2: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestCoverage_UpsertAndGetMissionTelemetry(t *testing.T) {
 	db := testdb.Open(t)
 	created := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	completed := time.Date(2025, 1, 1, 10, 5, 0, 0, time.UTC)
-	mt := &telemetry.Mission{OrderID: 500, VendorOrderID: "rds-500", RobotID: "AMB-1", StationID: "STN-1", OrderType: "retrieve", SourceNode: "SRC", DeliveryNode: "DST", TerminalState: "FINISHED", CoreCreated: &created, CoreCompleted: &completed, DurationMS: 300000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"}
+	mt := &telemetry.Mission{OrderID: 500, VendorOrderID: "rds-500", RobotID: "AMB-1", StationUID: "STN-1", OrderType: "retrieve", SourceNode: "SRC", DeliveryNode: "DST", TerminalState: "FINISHED", CoreCreated: &created, CoreCompleted: &completed, DurationMS: 300000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"}
 	if err := telemetry.UpsertMission(db.DB, mt); err != nil {
 		t.Fatalf("UpsertMission (insert): %v", err)
 	}
@@ -98,10 +98,10 @@ func TestCoverage_ListMissionsFilter(t *testing.T) {
 	db := testdb.Open(t)
 	times := []time.Time{time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC), time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC), time.Date(2025, 4, 1, 10, 0, 0, 0, time.UTC)}
 	rows := []*telemetry.Mission{
-		{OrderID: 1001, StationID: "STN-1", TerminalState: "FINISHED", DurationMS: 1000, CoreCompleted: &times[0], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 1002, StationID: "STN-1", TerminalState: "FAILED", DurationMS: 2000, CoreCompleted: &times[1], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 1003, StationID: "STN-2", TerminalState: "FINISHED", DurationMS: 3000, CoreCompleted: &times[2], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 1004, StationID: "STN-1", TerminalState: "FINISHED", DurationMS: 4000, CoreCompleted: &times[3], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 1001, StationUID: "STN-1", TerminalState: "FINISHED", DurationMS: 1000, CoreCompleted: &times[0], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 1002, StationUID: "STN-1", TerminalState: "FAILED", DurationMS: 2000, CoreCompleted: &times[1], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 1003, StationUID: "STN-2", TerminalState: "FINISHED", DurationMS: 3000, CoreCompleted: &times[2], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 1004, StationUID: "STN-1", TerminalState: "FINISHED", DurationMS: 4000, CoreCompleted: &times[3], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 	}
 	for _, r := range rows {
 		if err := telemetry.UpsertMission(db.DB, r); err != nil {
@@ -146,10 +146,10 @@ func TestCoverage_GetMissionStats(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	rows := []*telemetry.Mission{
-		{OrderID: 2001, StationID: "S", TerminalState: "FINISHED", DurationMS: 1000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 2002, StationID: "S", TerminalState: "FINISHED", DurationMS: 3000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 2003, StationID: "S", TerminalState: "FAILED", DurationMS: 2000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
-		{OrderID: 2004, StationID: "S", TerminalState: "STOPPED", DurationMS: 500, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 2001, StationUID: "S", TerminalState: "FINISHED", DurationMS: 1000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 2002, StationUID: "S", TerminalState: "FINISHED", DurationMS: 3000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 2003, StationUID: "S", TerminalState: "FAILED", DurationMS: 2000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
+		{OrderID: 2004, StationUID: "S", TerminalState: "STOPPED", DurationMS: 500, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 	}
 	for _, r := range rows {
 		telemetry.UpsertMission(db.DB, r)

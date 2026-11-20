@@ -65,12 +65,12 @@ func (db *DB) ListUnsettledDemandRecords() ([]domain.ForecastRecord, error) {
 func (db *DB) BirthForecast(f domain.ForecastBirth) (bool, error) {
 	res, err := db.Exec(`
 		INSERT INTO demand_origins (
-		    origin_id, revision, episode_key, kind, direction, station_id, process_id,
+		    origin_id, revision, episode_key, kind, direction, station_uid, process_id,
 		    core_node_name, payload_code, threshold, opened_at,
 		    plan, plan_verdict, need_at, predicted_need_at, provenance
 		) VALUES ($1, 0, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11, $12, $12, 'arithmetic')
 		ON CONFLICT (episode_key) WHERE `+helpers.DemandUnsettledSQL("")+` DO NOTHING`,
-		f.OriginID, f.EpisodeKey, f.Kind, string(f.Direction), f.StationID, f.ProcessID,
+		f.OriginID, f.EpisodeKey, f.Kind, string(f.Direction), f.StationUID, f.ProcessID,
 		f.CoreNodeName, f.PayloadCode, f.Threshold,
 		marshalPlannedPick(f.Plan), f.PlanVerdict, f.NeedAt)
 	if err != nil {
@@ -131,7 +131,7 @@ func unmarshalPlannedPick(s string) *domain.PlannedPick {
 // ListForecasts is every forecast, soonest need first (unprojectable last): the
 // ahead view on the sourcing page. One read per page load.
 func (db *DB) ListForecasts() ([]domain.ForecastView, error) {
-	rows, err := db.Query(`SELECT episode_key, kind, station_id, core_node_name, payload_code,
+	rows, err := db.Query(`SELECT episode_key, kind, station_uid, core_node_name, payload_code,
 		       plan, plan_verdict, need_at, predicted_need_at
 		FROM demand_origins
 		WHERE ` + helpers.DemandForecastSQL("") + `

@@ -58,7 +58,8 @@ const (
 	// protocol.SubjectHoldDropped. bin_id is NULL (a hold has no carrier, the
 	// v127 shape), payload_code the held part, actor who dropped it, op the
 	// reason (a protocol.HoldDrop* constant), occurred_at the Edge's time, and
-	// detail {node, qty, reason, station, order_id, msg_id}. One row per
+	// detail {node, qty, reason, order_id, msg_id}, the station in station_uid
+	// (v185 moved it out of detail). One row per
 	// envelope (AppendHoldDropped). Never recovered: recovered_at stays NULL.
 	ExcHoldDropped = "hold_dropped"
 )
@@ -85,7 +86,6 @@ type holdDropDetail struct {
 	Node    string `json:"node"`
 	Qty     int64  `json:"qty"`
 	Reason  string `json:"reason"`
-	Station string `json:"station"`
 	OrderID string `json:"order_id,omitempty"`
 	MsgID   string `json:"msg_id"`
 }
@@ -97,22 +97,22 @@ type holdDropDetail struct {
 // the id and the INSERT checks for it in the same statement. The check reads
 // idx_bin_uop_exception_open (kind, occurred_at) at one occurred_at, so it is
 // a probe, not a scan. One statement.
-func AppendHoldDropped(execer BinUOPExecer, msgID, station, node, payloadCode string, qty int64, reason, actor, orderID string, occurredAt time.Time) (bool, error) {
+func AppendHoldDropped(execer BinUOPExecer, msgID, stationUID, node, payloadCode string, qty int64, reason, actor, orderID string, occurredAt time.Time) (bool, error) {
 	if occurredAt.IsZero() {
 		return false, fmt.Errorf("append hold_dropped %s: occurred_at is required", msgID)
 	}
 	// Postgres keeps microseconds; the key compares the stored value, so the
 	// write and the check must carry the same one.
 	at := occurredAt.UTC().Truncate(time.Microsecond)
-	det, err := json.Marshal(holdDropDetail{Node: node, Qty: qty, Reason: reason, Station: station, OrderID: orderID, MsgID: msgID})
+	det, err := json.Marshal(holdDropDetail{Node: node, Qty: qty, Reason: reason, OrderID: orderID, MsgID: msgID})
 	if err != nil {
 		return false, fmt.Errorf("append hold_dropped %s: encode detail: %w", msgID, err)
 	}
-	res, err := execer.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
-		SELECT $1, NULL, $2, $3, $4, $5, $6
+	res, err := execer.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, station_uid, occurred_at, op, detail)
+		SELECT $1, NULL, $2, $3, $8, $4, $5, $6
 		WHERE NOT EXISTS (SELECT 1 FROM bin_uop_exception
 			WHERE kind = $1 AND recovered_at IS NULL AND occurred_at = $4 AND detail->>'msg_id' = $7)`,
-		ExcHoldDropped, payloadCode, actor, at, reason, det, msgID)
+		ExcHoldDropped, payloadCode, actor, at, reason, det, msgID, stationUID)
 	if err != nil {
 		return false, fmt.Errorf("append hold_dropped %s node=%s: %w", msgID, node, err)
 	}
@@ -135,7 +135,7 @@ func ListHoldDropRuns(db *sql.DB, since time.Time, gap time.Duration, limit int)
 	}
 	rows, err := db.Query(`WITH d AS (
 			SELECT occurred_at, payload_code, COALESCE(op, '') AS reason,
-			       COALESCE(detail->>'node', '') AS node, COALESCE(detail->>'station', '') AS station,
+			       COALESCE(detail->>'node', '') AS node, station_uid AS station,
 			       COALESCE((detail->>'qty')::bigint, 0) AS qty
 			  FROM bin_uop_exception
 			 WHERE kind = $1 AND recovered_at IS NULL AND occurred_at >= $2),
@@ -233,7 +233,7 @@ func ListDeclaredFullStamps(db *sql.DB, since time.Time, limit int) ([]DeclaredF
 // detail may be nil; it is the applier's metadata blob verbatim when present.
 // occurredAt is required — an exception without a timestamp is not an
 // exception.
-func AppendBinUOPException(execer BinUOPExecer, kind string, binID int64, payloadCode, actor string, epochSeq *int64, occurredAt time.Time, beforeUOP, afterUOP, deepestUOP *int, recoveredAt *time.Time, op string, detail []byte) error {
+func AppendBinUOPException(execer BinUOPExecer, kind string, binID int64, payloadCode, actor, stationUID string, epochSeq *int64, occurredAt time.Time, beforeUOP, afterUOP, deepestUOP *int, recoveredAt *time.Time, op string, detail []byte) error {
 	var epoch any
 	if epochSeq != nil {
 		epoch = *epochSeq
@@ -262,10 +262,10 @@ func AppendBinUOPException(execer BinUOPExecer, kind string, binID int64, payloa
 		return fmt.Errorf("append bin_uop_exception bin=%d kind=%s: occurred_at is required", binID, kind)
 	}
 	if _, err := execer.Exec(`INSERT INTO bin_uop_exception
-		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop,
+		(kind, bin_id, payload_code, actor, station_uid, epoch_seq, occurred_at, before_uop, after_uop,
 		 deepest_uop, recovered_at, op, detail)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		kind, binID, payloadCode, actor, epoch, occurredAt.UTC(), before, after,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		kind, binID, payloadCode, actor, stationUID, epoch, occurredAt.UTC(), before, after,
 		deepest, recovered, op, det); err != nil {
 		return fmt.Errorf("append bin_uop_exception bin=%d kind=%s: %w", binID, kind, err)
 	}

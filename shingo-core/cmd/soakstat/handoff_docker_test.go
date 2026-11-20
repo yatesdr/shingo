@@ -25,7 +25,7 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 		t.Helper()
 		data, msgType, err := messaging.BuildDataEnvelope(subject, "core", protocol.StationBroadcast, body)
 		testutil.MustNoErr(t, err, "build envelope")
-		_, err = db.Exec(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ('d', $1, $2, '*')`, data, msgType)
+		_, err = db.Exec(`INSERT INTO outbox (topic, payload, msg_type, dst_station) VALUES ('d', $1, $2, '*')`, data, msgType)
 		testutil.MustNoErr(t, err, "seed outbox")
 	}
 	enqueue(protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{BinID: 1, CoreNodeName: line, Bound: true})
@@ -37,7 +37,7 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 
 	_, err := db.Exec(`INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode) VALUES ('p1', 's1', $1, 'consume', 'single_robot')`, line)
 	testutil.MustNoErr(t, err, "seed a claim")
-	_, err = db.Exec(`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('p1', 's1', 'line-1')`)
+	_, err = db.Exec(`INSERT INTO process_styles (process_id, style_id, station_uid) VALUES ('p1', 's1', 'line-1')`)
 	testutil.MustNoErr(t, err, "seed the claim's station")
 
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "HO-1")
@@ -48,15 +48,15 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 	over := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "HO-2")
 	_, err = db.Exec(`UPDATE bins SET uop_remaining = -3 WHERE id = $1`, over.ID)
 	testutil.MustNoErr(t, err, "the second carrier is labelled and overpacked")
-	_, err = db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, actor, occurred_at, op, detail)
+	_, err = db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, station_uid, occurred_at, op, detail)
 		VALUES ($1, $2, 'line-1', NOW(), $3, '{"delta": -3}')`, audit.ExcStaleEpoch, bin.ID, audit.OpStaleEpochDropped)
 	testutil.MustNoErr(t, err, "seed a stale drop")
-	// A tick names its counting station in actor, as the delta writer does
-	// (uop/applier.go); the ledger's station column stays blank on it.
-	ledger := func(op, reason, actor string, before, after int) {
+	// A tick names its counting station in station_uid, as the delta writer
+	// does (uop/applier.go).
+	ledger := func(op, reason, station string, before, after int) {
 		t.Helper()
-		_, err := db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, reason, actor)
-			VALUES ($1, $2, $3, $4, $5, $6)`, bin.ID, before, after, op, reason, actor)
+		_, err := db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, reason, station_uid)
+			VALUES ($1, $2, $3, $4, $5, $6)`, bin.ID, before, after, op, reason, station)
 		testutil.MustNoErr(t, err, "seed a ledger row")
 	}
 	ledger(audit.OpReleasedPartial, "", "", 40, 40)

@@ -167,7 +167,7 @@ func TestSplice_FenceHoldsOnASplicedPlan(t *testing.T) {
 
 	// DIRECTION 1: the station must not advance a lane wait.
 	before := len(backend.ReleaseCalls())
-	d.HandleOrderRelease(d.syntheticEnvelope(staged.StationID),
+	d.HandleOrderRelease(d.syntheticEnvelope(staged.StationUID),
 		&protocol.OrderRelease{OrderUUID: staged.EdgeUUID})
 	if n := len(backend.ReleaseCalls()); n != before {
 		t.Fatalf("append calls after a station release = %d, want %d — a station advanced a wait "+

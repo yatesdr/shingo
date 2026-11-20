@@ -30,7 +30,7 @@ func ClassifyTickFeed(edges []domain.RegistryEdge, now time.Time) []domain.TickF
 	out := make([]domain.TickFeedStation, 0, len(edges))
 	for _, e := range edges {
 		row := domain.TickFeedStation{
-			StationID:         e.StationID,
+			StationUID:        e.StationUID,
 			DisplayName:       e.DisplayName,
 			Pending:           e.TickPending,
 			OldestUnsentAgeMS: e.TickOldestUnsentAgeMS,

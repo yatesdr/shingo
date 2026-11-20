@@ -16,8 +16,8 @@ import (
 
 // CellConfig is one operator-defined cell (a cell_config row).
 type CellConfig struct {
-	CellID           string    `json:"cell_id"`
-	Station          string    `json:"station"`
+	CellLabel        string    `json:"cell_id"`
+	StationUID       string    `json:"station"`
 	PrimaryProcessID int64     `json:"primary_process_id"`
 	SubProcessIDs    []int64   `json:"sub_process_ids"`
 	DisplayName      string    `json:"display_name"`
@@ -48,11 +48,11 @@ type ProcessOption struct {
 	StyleID   int64     `json:"style_id"`
 }
 
-// ListCellConfigs returns every configured cell, ordered by cell_id.
+// ListCellConfigs returns every configured cell, ordered by cell_label.
 func ListCellConfigs(db *sql.DB) ([]CellConfig, error) {
-	rows, err := db.Query(`SELECT cell_id, station, primary_process_id,
+	rows, err := db.Query(`SELECT cell_label, station_uid, primary_process_id,
 		COALESCE(sub_process_ids::text,'[]'), display_name, updated_at
-		FROM cell_config ORDER BY cell_id`)
+		FROM cell_config ORDER BY cell_label`)
 	if err != nil {
 		return nil, err
 	}
@@ -71,9 +71,9 @@ func ListCellConfigs(db *sql.DB) ([]CellConfig, error) {
 // GetCellConfig returns one cell by id. The bool is false (no error) when the
 // cell isn't configured.
 func GetCellConfig(db *sql.DB, cellID string) (CellConfig, bool, error) {
-	row := db.QueryRow(`SELECT cell_id, station, primary_process_id,
+	row := db.QueryRow(`SELECT cell_label, station_uid, primary_process_id,
 		COALESCE(sub_process_ids::text,'[]'), display_name, updated_at
-		FROM cell_config WHERE cell_id=$1`, cellID)
+		FROM cell_config WHERE cell_label=$1`, cellID)
 	c, err := scanCellConfig(row)
 	if err == sql.ErrNoRows {
 		return CellConfig{}, false, nil
@@ -84,7 +84,7 @@ func GetCellConfig(db *sql.DB, cellID string) (CellConfig, bool, error) {
 	return c, true, nil
 }
 
-// UpsertCellConfig inserts or updates a cell (keyed on cell_id), stamping
+// UpsertCellConfig inserts or updates a cell (keyed on cell_label), stamping
 // updated_at. sub_process_ids is stored as a JSONB int array.
 func UpsertCellConfig(db *sql.DB, c CellConfig) error {
 	subs, err := marshalIDs(c.SubProcessIDs)
@@ -92,21 +92,21 @@ func UpsertCellConfig(db *sql.DB, c CellConfig) error {
 		return fmt.Errorf("marshal sub_process_ids: %w", err)
 	}
 	_, err = db.Exec(`INSERT INTO cell_config
-		(cell_id, station, primary_process_id, sub_process_ids, display_name, updated_at)
+		(cell_label, station_uid, primary_process_id, sub_process_ids, display_name, updated_at)
 		VALUES ($1,$2,$3,$4::jsonb,$5,NOW())
-		ON CONFLICT (cell_id) DO UPDATE SET
-			station=EXCLUDED.station,
+		ON CONFLICT (cell_label) DO UPDATE SET
+			station_uid=EXCLUDED.station_uid,
 			primary_process_id=EXCLUDED.primary_process_id,
 			sub_process_ids=EXCLUDED.sub_process_ids,
 			display_name=EXCLUDED.display_name,
 			updated_at=NOW()`,
-		c.CellID, c.Station, c.PrimaryProcessID, string(subs), c.DisplayName)
+		c.CellLabel, c.StationUID, c.PrimaryProcessID, string(subs), c.DisplayName)
 	return err
 }
 
 // DeleteCellConfig removes a cell. Deleting a non-existent cell is not an error.
 func DeleteCellConfig(db *sql.DB, cellID string) error {
-	_, err := db.Exec(`DELETE FROM cell_config WHERE cell_id=$1`, cellID)
+	_, err := db.Exec(`DELETE FROM cell_config WHERE cell_label=$1`, cellID)
 	return err
 }
 
@@ -118,7 +118,7 @@ func DistinctProcesses(db *sql.DB, station string) ([]ProcessOption, error) {
 	rows, err := db.Query(`SELECT e.process_id, count(*) AS ticks, max(e.recorded_at) AS last_seen,
 		max(e.style_id) AS style_id
 		FROM cell_part_events e
-		WHERE e.cell_id=$1 AND e.recorded_at >= NOW() - INTERVAL '30 days'
+		WHERE e.station_uid=$1 AND e.recorded_at >= NOW() - INTERVAL '30 days'
 		GROUP BY e.process_id
 		ORDER BY ticks DESC`, station)
 	if err != nil {
@@ -141,12 +141,12 @@ func DistinctProcesses(db *sql.DB, station string) ([]ProcessOption, error) {
 func scanCellConfig(s interface{ Scan(...any) error }) (CellConfig, error) {
 	var c CellConfig
 	var subs string
-	if err := s.Scan(&c.CellID, &c.Station, &c.PrimaryProcessID, &subs, &c.DisplayName, &c.UpdatedAt); err != nil {
+	if err := s.Scan(&c.CellLabel, &c.StationUID, &c.PrimaryProcessID, &subs, &c.DisplayName, &c.UpdatedAt); err != nil {
 		return CellConfig{}, err
 	}
 	ids, err := unmarshalIDs([]byte(subs))
 	if err != nil {
-		return CellConfig{}, fmt.Errorf("decode sub_process_ids for cell %q: %w", c.CellID, err)
+		return CellConfig{}, fmt.Errorf("decode sub_process_ids for cell %q: %w", c.CellLabel, err)
 	}
 	c.SubProcessIDs = ids
 	return c, nil

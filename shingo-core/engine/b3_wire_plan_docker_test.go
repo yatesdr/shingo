@@ -156,7 +156,7 @@ func TestB3D3_RecoveryIsStationUnaware(t *testing.T) {
 		}
 	}
 	var toBlank int
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE id > $1 AND COALESCE(station_id, '') = ''`,
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE id > $1 AND COALESCE(dst_station, '') = ''`,
 		outboxBefore).Scan(&toBlank), "notices to no station")
 	if toBlank != 0 {
 		t.Errorf("recovery sent %d notice(s) to station \"\"", toBlank)

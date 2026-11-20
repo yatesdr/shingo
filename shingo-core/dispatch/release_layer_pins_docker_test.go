@@ -63,7 +63,7 @@ func rlChangeoverLeg() []resolvedStep {
 func rlLeg(t *testing.T, db *store.DB, uuid string, status protocol.Status, waitIndex int, stepsJSON string) *orders.Order {
 	t.Helper()
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, status
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, status
 		o.DeliveryNode, o.StepsJSON = "SYN-PRESS", stepsJSON
 	})
 	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "V-"+uuid, "WAITING", ""), "vendor")

@@ -26,22 +26,22 @@ const MaxOutboxRetries = outbox.MaxRetries
 
 // OutboxMessage is one queued outbound envelope.
 type OutboxMessage struct {
-	ID        int64      `json:"id"`
-	Topic     string     `json:"topic"`
-	Payload   []byte     `json:"payload"`
-	MsgType   string     `json:"msg_type"`
-	StationID string     `json:"station_id"`
-	Retries   int        `json:"retries"`
-	CreatedAt time.Time  `json:"created_at"`
-	SentAt    *time.Time `json:"sent_at,omitempty"`
+	ID         int64      `json:"id"`
+	Topic      string     `json:"topic"`
+	Payload    []byte     `json:"payload"`
+	MsgType    string     `json:"msg_type"`
+	DstStation string     `json:"dst_station"`
+	Retries    int        `json:"retries"`
+	CreatedAt  time.Time  `json:"created_at"`
+	SentAt     *time.Time `json:"sent_at,omitempty"`
 }
 
 // EnqueueOutbox writes a new outbox row on ex — the pool for an ordinary
 // send, or a transaction when the message must live or die with the work that
 // caused it (see EnqueueDataToEdge).
-func EnqueueOutbox(ex Execer, topic string, payload []byte, eventType, stationID string) error {
-	_, err := ex.Exec(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4)`,
-		topic, payload, eventType, stationID)
+func EnqueueOutbox(ex Execer, topic string, payload []byte, eventType, dstStation string) error {
+	_, err := ex.Exec(`INSERT INTO outbox (topic, payload, msg_type, dst_station) VALUES ($1, $2, $3, $4)`,
+		topic, payload, eventType, dstStation)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func notifyEnqueued() {
 
 // ListPendingOutbox returns unsent rows whose retries are below the cap.
 func ListPendingOutbox(db *sql.DB, limit int) ([]*OutboxMessage, error) {
-	rows, err := db.Query(`SELECT id, topic, payload, msg_type, station_id, retries, created_at, sent_at FROM outbox WHERE sent_at IS NULL AND retries < $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
+	rows, err := db.Query(`SELECT id, topic, payload, msg_type, dst_station, retries, created_at, sent_at FROM outbox WHERE sent_at IS NULL AND retries < $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func ListPendingOutbox(db *sql.DB, limit int) ([]*OutboxMessage, error) {
 
 // ListDeadLetterOutbox returns unsent rows that exhausted retries.
 func ListDeadLetterOutbox(db *sql.DB, limit int) ([]*OutboxMessage, error) {
-	rows, err := db.Query(`SELECT id, topic, payload, msg_type, station_id, retries, created_at, sent_at FROM outbox WHERE sent_at IS NULL AND retries >= $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
+	rows, err := db.Query(`SELECT id, topic, payload, msg_type, dst_station, retries, created_at, sent_at FROM outbox WHERE sent_at IS NULL AND retries >= $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func scanOutbox(rows *sql.Rows) ([]*OutboxMessage, error) {
 	var msgs []*OutboxMessage
 	for rows.Next() {
 		var m OutboxMessage
-		if err := rows.Scan(&m.ID, &m.Topic, &m.Payload, &m.MsgType, &m.StationID, &m.Retries, &m.CreatedAt, &m.SentAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Topic, &m.Payload, &m.MsgType, &m.DstStation, &m.Retries, &m.CreatedAt, &m.SentAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, &m)
@@ -183,9 +183,9 @@ func PurgeOldOutbox(db *sql.DB, delivered, deadLetter time.Duration) (int64, err
 
 // RecordInboundMessage records a processed inbound envelope ID. Returns
 // true when the message is newly recorded, false when it was already seen.
-func RecordInboundMessage(db *sql.DB, msgID, msgType, stationID string) (bool, error) {
-	res, err := db.Exec(`INSERT INTO inbox (msg_id, msg_type, station_id) VALUES ($1, $2, $3) ON CONFLICT (msg_id) DO NOTHING`,
-		msgID, msgType, stationID)
+func RecordInboundMessage(db *sql.DB, msgID, msgType string) (bool, error) {
+	res, err := db.Exec(`INSERT INTO inbox (msg_id, msg_type) VALUES ($1, $2) ON CONFLICT (msg_id) DO NOTHING`,
+		msgID, msgType)
 	if err != nil {
 		return false, err
 	}
@@ -239,10 +239,10 @@ func PurgeOldInbox(db *sql.DB, olderThan time.Duration) (int64, error) {
 // keeps: the answer to an ask whose repeat must be answered by re-sending it
 // (RecordInboundReply, ReplayOutbox). The same row, the same doorbell; the
 // second INSERT into outbox, and the only other one.
-func EnqueueOutboxReturningID(db *sql.DB, topic string, payload []byte, eventType, stationID string) (int64, error) {
+func EnqueueOutboxReturningID(db *sql.DB, topic string, payload []byte, eventType, dstStation string) (int64, error) {
 	var id int64
-	if err := db.QueryRow(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-		topic, payload, eventType, stationID).Scan(&id); err != nil {
+	if err := db.QueryRow(`INSERT INTO outbox (topic, payload, msg_type, dst_station) VALUES ($1, $2, $3, $4) RETURNING id`,
+		topic, payload, eventType, dstStation).Scan(&id); err != nil {
 		return 0, err
 	}
 	notifyEnqueued()

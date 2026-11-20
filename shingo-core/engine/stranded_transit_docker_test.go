@@ -44,7 +44,7 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	// order live would be testing a world that cannot happen — and would trip
 	// BinService.Move's orphaned-order guard, which is right to refuse it.
 	ord := &orders.Order{
-		EdgeUUID: "stranded-" + robotID, StationID: "edge.test", OrderType: "retrieve",
+		EdgeUUID: "stranded-" + robotID, StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, SourceNode: "SRC", DeliveryNode: "DELV.1",
 		RobotID: robotID,
 	}

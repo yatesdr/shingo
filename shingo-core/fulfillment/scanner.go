@@ -1166,17 +1166,17 @@ func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, c
 func (s *Scanner) notifyEdgeDispatched(order *orders.Order, sourceNode *nodes.Node, vendorOrderID string) {
 	// Only a station that sent the order or that it projects to is told (v4
 	// §2.5; the orc's Stop 1 ruling): an unaware station has no row to ack.
-	if order.StationID == "" || order.StationUnaware {
+	if order.Requester() == "" || order.StationUnaware {
 		return
 	}
-	if err := s.sendToEdge(protocol.TypeOrderAck, order.StationID, &protocol.OrderAck{
+	if err := s.sendToEdge(protocol.TypeOrderAck, order.Requester(), &protocol.OrderAck{
 		OrderUUID:     order.EdgeUUID,
 		ShingoOrderID: order.ID,
 		SourceNode:    sourceNode.Name,
 	}); err != nil {
 		s.logFn("fulfillment: ack for order %d: %v", order.ID, err)
 	}
-	if err := s.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
+	if err := s.sendToEdge(protocol.TypeOrderWaybill, order.Requester(), &protocol.OrderWaybill{
 		OrderUUID: order.EdgeUUID,
 		WaybillID: vendorOrderID,
 	}); err != nil {

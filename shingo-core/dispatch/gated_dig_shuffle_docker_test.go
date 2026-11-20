@@ -104,7 +104,7 @@ func TestGatedDig_BlockerMayGoToAnotherGatedLane(t *testing.T) {
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	order := &orders.Order{EdgeUUID: "dig-gated", StationID: "line-1", OrderType: OrderTypeRetrieve,
+	order := &orders.Order{EdgeUUID: "dig-gated", StationUID: "line-1", OrderType: OrderTypeRetrieve,
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-GD"}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
@@ -178,7 +178,7 @@ func TestGatedDig_NoSlotAnywhereWaitsRatherThanFailing(t *testing.T) {
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	order := &orders.Order{EdgeUUID: "dig-nogap", StationID: "line-1", OrderType: OrderTypeRetrieve,
+	order := &orders.Order{EdgeUUID: "dig-nogap", StationUID: "line-1", OrderType: OrderTypeRetrieve,
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-GD"}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
@@ -250,7 +250,7 @@ func TestDig_NeverParksIntoALaneAnotherDigIsHolding(t *testing.T) {
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	order := &orders.Order{EdgeUUID: "f19", StationID: "line-1", OrderType: OrderTypeRetrieve,
+	order := &orders.Order{EdgeUUID: "f19", StationUID: "line-1", OrderType: OrderTypeRetrieve,
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-F19"}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 

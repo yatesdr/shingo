@@ -34,7 +34,7 @@ func TestReleasePointsDoor_Arms(t *testing.T) {
 	// segment a drop at LINE1-IN.
 	staged := func(t *testing.T, f *doorFix, uuid string, station string) {
 		testdb.CreateOrder(t, f.db, func(o *orders.Order) {
-			o.EdgeUUID, o.StationID, o.Status, o.WaitIndex = uuid, station, protocol.StatusStaged, 1
+			o.EdgeUUID, o.StationUID, o.Status, o.WaitIndex = uuid, station, protocol.StatusStaged, 1
 			o.StepsJSON = `[{"action":"pickup","node":"` + f.sd.StorageNode.Name + `"},{"action":"wait"},` +
 				`{"action":"dropoff","node":"` + f.sd.LineNode.Name + `"}]`
 		})

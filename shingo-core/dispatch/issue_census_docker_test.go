@@ -74,7 +74,7 @@ var dispatchIssueDrivers = map[string]testdb.IssueDriver{
 	"dig legs": func(t *testing.T, stranger bool) (*store.DB, int64) {
 		db := testdb.IssueCensusDB(t)
 		grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-		parent := &orders.Order{EdgeUUID: "ic-dig-parent", StationID: "line-1",
+		parent := &orders.Order{EdgeUUID: "ic-dig-parent", StationUID: "line-1",
 			OrderType: OrderTypeComplex, Status: StatusQueued, OriginClass: protocol.OriginClassNoDemand}
 		testutil.MustNoErr(t, db.CreateOrder(parent), "the dig's parent")
 		blocker := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "IC-DIG-BLK")

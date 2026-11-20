@@ -237,7 +237,7 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 	// `dispatched` row names its job in the same write (v183).
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "resolver-uuid"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = "retrieve"
 		o.SourceNode = "STORAGE-A1"
 		o.DeliveryNode = "LINE1-IN"

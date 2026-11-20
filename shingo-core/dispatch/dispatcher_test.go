@@ -126,7 +126,7 @@ func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "dup-receipt",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusDelivered,
 		Quantity:     1,
@@ -137,7 +137,7 @@ func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 
 	emitter := &mockEmitter{}
 	d := NewDispatcher(db, testdb.NewFailingBackend(), emitter, "core", "dispatch", nil)
-	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: order.StationID}}
+	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: order.StationUID}}
 
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   order.EdgeUUID,
@@ -634,7 +634,7 @@ func TestHandleOrderCancel(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &orders.Order{EdgeUUID: "uuid-cancel", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-cancel", StationUID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -661,7 +661,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := testdb.SetupTestData(t, db)
 
-	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationUID: "line-1", Status: StatusPending}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-unclaim")
 
@@ -689,7 +689,7 @@ func TestHandleOrderReceipt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &orders.Order{EdgeUUID: "uuid-receipt", StationID: "line-1", Status: StatusDelivered}
+	order := &orders.Order{EdgeUUID: "uuid-receipt", StationUID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -712,7 +712,7 @@ func TestHandleOrderCancel_RejectsWrongStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &orders.Order{EdgeUUID: "uuid-owned", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-owned", StationUID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -739,7 +739,7 @@ func TestHandleOrderCancel_AllowsCoreRole(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &orders.Order{EdgeUUID: "uuid-core-cancel", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-core-cancel", StationUID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -765,7 +765,7 @@ func TestHandleOrderCancel_DuplicateCancelledOrderIgnored(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &orders.Order{EdgeUUID: "uuid-cancel-dupe", StationID: "edge-1", Status: StatusCancelled}
+	order := &orders.Order{EdgeUUID: "uuid-cancel-dupe", StationUID: "edge-1", Status: StatusCancelled}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -804,7 +804,7 @@ func TestCancelOrder_NonCompound_NoSpuriousChildCancel(t *testing.T) {
 	// status would have skipped cancelCompoundChildren entirely; post-
 	// fix we always call it, but the call must no-op because there are
 	// no child rows.
-	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-nc-cancel", StationUID: "line-1", Status: StatusPending}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-nc-cancel")
 
@@ -848,10 +848,10 @@ func TestCancelOrder_CascadesAfterResume(t *testing.T) {
 	db := testDB(t)
 
 	parent := &orders.Order{
-		EdgeUUID:  "uuid-resume-cancel",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued, // post-resume state per Step 5
+		EdgeUUID:   "uuid-resume-cancel",
+		StationUID: "line-1",
+		OrderType:  OrderTypeComplex,
+		Status:     StatusQueued, // post-resume state per Step 5
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
@@ -861,7 +861,7 @@ func TestCancelOrder_CascadesAfterResume(t *testing.T) {
 	// a child is in a transient state when cancel races the resume.
 	child := &orders.Order{
 		EdgeUUID:      "uuid-resume-cancel-step-1",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		ParentOrderID: &parent.ID,
@@ -900,7 +900,7 @@ func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &orders.Order{EdgeUUID: "uuid-receipt-own", StationID: "line-1", Status: StatusDelivered}
+	order := &orders.Order{EdgeUUID: "uuid-receipt-own", StationUID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -926,7 +926,7 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := testdb.SetupTestData(t, db)
 
-	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusPending, SourceNode: lineNode.Name}
+	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationUID: "line-1", Status: StatusPending, SourceNode: lineNode.Name}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testdb.SeedDispatched(t, db, order.ID, "sg-uuid-redir-own")
 
@@ -1023,7 +1023,7 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 	// ConfirmReceipt requires status == delivered, so this will fail.
 	order := &orders.Order{
 		EdgeUUID:     "receipt-err-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -1078,7 +1078,7 @@ func TestDispatchToFleet_ConcurrentTerminal_CancelsVendorOrder(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "orphan-guard-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusQueued,
 		Quantity:     1,
@@ -1145,7 +1145,7 @@ func TestDispatchToFleet_AlreadyTerminal_NeverCreatesFleetOrder(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "terminal-predispatch-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusQueued,
 		Quantity:     1,
@@ -1182,7 +1182,7 @@ func TestDispatchDirect_Retrieve(t *testing.T) {
 	// Create order at pending (simulates direct creation from UI/scanner)
 	order := &orders.Order{
 		EdgeUUID:     "direct-ret-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -1238,7 +1238,7 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "direct-fail-1",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -1323,7 +1323,7 @@ func TestDemoteAfterFleetRefusal_OnlyTheFirstRefusalTellsThePark(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:     "direct-fail-repeat",
-		StationID:    "edge.line1",
+		StationUID:   "edge.line1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		Quantity:     1,
@@ -1361,7 +1361,7 @@ func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 
 	order := &orders.Order{
 		EdgeUUID:      "redir-noexist",
-		StationID:     "edge.line1",
+		StationUID:    "edge.line1",
 		Status:        StatusPending,
 		SourceNode:    lineNode.Name,
 		DeliveryNode:  lineNode.Name,
@@ -1404,7 +1404,7 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 	// Order with no source node set — redirect should fail
 	order := &orders.Order{
 		EdgeUUID:      "redir-nosrc",
-		StationID:     "edge.line1",
+		StationUID:    "edge.line1",
 		Status:        StatusPending,
 		DeliveryNode:  lineNode.Name,
 		VendorOrderID: "sg-456-test",
@@ -1476,7 +1476,7 @@ func TestHandleOrderCancel_CodedByWhoDecidedIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testDB(t)
-			order := &orders.Order{EdgeUUID: "uuid-coded", StationID: "line-1", Status: StatusPending}
+			order := &orders.Order{EdgeUUID: "uuid-coded", StationUID: "line-1", Status: StatusPending}
 			db.CreateOrder(order)
 			d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 			d.HandleOrderCancel(testEnvelope(), &protocol.OrderCancel{OrderUUID: "uuid-coded",

@@ -222,7 +222,7 @@ func (d *Dispatcher) resolveSwapPeer(peer, dead *orders.Order, reason string) {
 		// it just stops this cascade being indistinguishable from a person, which
 		// is the confusion that made a machine-vs-human retry exemption look
 		// implementable.
-		d.lifecycle.CancelOrder(peer, peer.StationID, reason,
+		d.lifecycle.CancelOrder(peer, peer.Requester(), reason,
 			CancelCause{Code: protocol.TermPeerTerminal})
 		return
 	}

@@ -109,7 +109,7 @@ func (c rpCell) stagedLeg(uuid string, b *bins.Bin, steps ...resolvedStep) *orde
 	c.t.Helper()
 	delivery := steps[lastDropIndex(steps)].Node
 	o := testdb.CreateOrder(c.t, c.db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, StatusStaged
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = uuid, "line-1", OrderTypeComplex, StatusStaged
 		o.ProcessNode, o.DeliveryNode, o.PayloadCode, o.StepsJSON = c.line.Name, delivery, c.part, string(mustJSON(c.t, steps))
 	})
 	testutil.MustNoErr(c.t, c.db.UpdateOrderVendor(o.ID, "V-"+uuid, "WAITING", ""), "vendor")

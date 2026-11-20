@@ -64,7 +64,7 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 		// The binding that decided it, station included — the station is data
 		// on the episode, not part of the place.
 		TriggerRef:   "binding:" + b.stationID + "|" + b.coreNodeName + "|" + b.payloadCode,
-		StationID:    b.stationID,
+		StationUID:   b.stationID,
 		CoreNodeName: b.coreNodeName,
 		PayloadCode:  b.payloadCode,
 		// THE RECORD'S CLOCK, NOT THE MONITOR'S. demand_origins is stamped in

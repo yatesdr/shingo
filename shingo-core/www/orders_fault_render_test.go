@@ -21,7 +21,7 @@ func faultRow(t *testing.T, elapsed time.Duration, ref protocol.TermRef) (string
 	since := now.Add(-elapsed)
 	line := protocol.BuildFaultLine(ref, since, since.Add(45*time.Minute), now, noticeAfter)
 
-	order := &domain.Order{ID: 4711, EdgeUUID: "e-4711", StationID: "plant-a.line-1", Status: protocol.StatusFaulted}
+	order := &domain.Order{ID: 4711, EdgeUUID: "e-4711", StationUID: "plant-a.line-1", Status: protocol.StatusFaulted}
 	data := map[string]any{
 		"Page":       "orders",
 		"Orders":     []*domain.Order{order},
@@ -121,7 +121,7 @@ func TestOrdersPage_FaultWithNoClockStillRendersItsSentence(t *testing.T) {
 	line := protocol.BuildFaultLine(protocol.TermRef{}, time.Time{}, time.Time{},
 		time.Date(2026, 8, 22, 14, 0, 0, 0, time.UTC), 60*time.Second)
 
-	order := &domain.Order{ID: 4712, EdgeUUID: "e-4712", StationID: "plant-a.line-1", Status: protocol.StatusFaulted}
+	order := &domain.Order{ID: 4712, EdgeUUID: "e-4712", StationUID: "plant-a.line-1", Status: protocol.StatusFaulted}
 	namer := &fakeNamer{byUID: map[string]string{"plant-a.line-1": "SPRINGFIELD / LINE 1"}}
 	html := renderPageWithNamer(t, "orders.html", namer, map[string]any{
 		"Page":       "orders",

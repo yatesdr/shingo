@@ -28,7 +28,7 @@ func insertForecastRow(t *testing.T, db *store.DB, key, kind, station, node, pay
 	t.Helper()
 	id := uuid.NewString()
 	_, err := db.Exec(`
-		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_id,
+		INSERT INTO demand_origins (origin_id, revision, episode_key, kind, station_uid,
 		                            core_node_name, payload_code, opened_at)
 		VALUES ($1, 0, $2, $3, $4, $5, $6, NULL)`, id, key, kind, station, node, payload)
 	testutil.MustNoErr(t, err, "insert synthetic forecast")
@@ -94,7 +94,7 @@ func TestThresholdSweep_AForecastIsNotOpen(t *testing.T) {
 	openID := uuid.NewString()
 	testutil.MustNoErr(t, db.UpsertDemandOrigin(store.DemandOrigin{
 		OriginID: openID, Revision: 1, EpisodeKey: protocol.ThresholdEpisodeKey("SLN_GONE", "PANEL-TS"),
-		Kind: protocol.EpisodeKindThreshold, StationID: "PLANT.TS", CoreNodeName: "SLN_GONE",
+		Kind: protocol.EpisodeKindThreshold, StationUID: "PLANT.TS", CoreNodeName: "SLN_GONE",
 		PayloadCode: "PANEL-TS", OpenedAt: time.Now().UTC().Add(-time.Hour),
 	}), "open a threshold episode with no binding")
 	fc := insertForecastRow(t, db, protocol.ThresholdEpisodeKey("SLN_FC", "PANEL-TS"),

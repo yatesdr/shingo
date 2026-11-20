@@ -81,7 +81,7 @@ func TestPurgeOldBinUOPDelta_DeletesOnlyExpiredDeltaRows(t *testing.T) {
 type dailyRow struct {
 	day                         string
 	binID, epoch                int64
-	reason, actor               string
+	reason, station             string
 	ticks, consumed, added      int64
 	first, last, min, crossings int
 }
@@ -89,7 +89,7 @@ type dailyRow struct {
 // readDaily returns bin_uop_delta_daily's rows for bins, in grain order.
 func readDaily(t *testing.T, db *sql.DB, bins ...int64) []dailyRow {
 	t.Helper()
-	rows, err := db.Query(`SELECT to_char(day,'YYYY-MM-DD'), bin_id, epoch_seq, reason, actor, ticks, consumed, added,
+	rows, err := db.Query(`SELECT to_char(day,'YYYY-MM-DD'), bin_id, epoch_seq, reason, station_uid, ticks, consumed, added,
 		       first_uop, last_uop, min_uop, crossings
 		FROM bin_uop_delta_daily WHERE bin_id = ANY($1) ORDER BY day, bin_id, epoch_seq, reason`, bins)
 	if err != nil {
@@ -99,7 +99,7 @@ func readDaily(t *testing.T, db *sql.DB, bins ...int64) []dailyRow {
 	var got []dailyRow
 	for rows.Next() {
 		var r dailyRow
-		if err := rows.Scan(&r.day, &r.binID, &r.epoch, &r.reason, &r.actor, &r.ticks,
+		if err := rows.Scan(&r.day, &r.binID, &r.epoch, &r.reason, &r.station, &r.ticks,
 			&r.consumed, &r.added, &r.first, &r.last, &r.min, &r.crossings); err != nil {
 			t.Fatalf("scan roll-up: %v", err)
 		}
@@ -113,18 +113,18 @@ func readDaily(t *testing.T, db *sql.DB, bins ...int64) []dailyRow {
 
 // seedRollupDelta writes one raw bin_uop_delta row in the applier's shape:
 // the delta and its reason in metadata.
-func seedRollupDelta(t *testing.T, db *sql.DB, binID int64, before, after int, payload, reason, actor string, at time.Time) {
+func seedRollupDelta(t *testing.T, db *sql.DB, binID int64, before, after int, payload, reason, station string, at time.Time) {
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
-		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
+		(bin_id, before_uop, after_uop, op, source, payload_code, station_uid, metadata, applied_at)
 		VALUES ($1,$2,$3,'bin_uop_delta','test',$4,$5,jsonb_build_object('reason',$6::text,'delta',$7::int,'sequence_id',1),$8)`,
-		binID, before, after, payload, actor, reason, after-before, at.Truncate(time.Microsecond)); err != nil {
+		binID, before, after, payload, station, reason, after-before, at.Truncate(time.Microsecond)); err != nil {
 		t.Fatalf("seed delta row: %v", err)
 	}
 }
 
 // TestRollupBinUOPDeltaDay_AggregatesAtTheReviewedGrain: one row per (day,
-// bin, epoch, payload, reason, actor); ticks, consumed and added summed;
+// bin, epoch, payload, reason, station_uid); ticks, consumed and added summed;
 // first, last and min taken in order; crossings counted; epoch 0 and epoch 1
 // of one day not folded together; a second day's rows split by reason. It is
 // the runtime half of store's deleted TestV94_BackfillAggregatesAtTheReviewedGrain,

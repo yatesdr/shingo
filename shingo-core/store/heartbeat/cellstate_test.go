@@ -28,7 +28,7 @@ func TestComputeResolvedCellState(t *testing.T) {
 	}
 
 	cfg := CellConfig{
-		CellID: "SNF2", Station: "plant-a.line-1", DisplayName: "Assembly NF 2",
+		CellLabel: "SNF2", StationUID: "plant-a.line-1", DisplayName: "Assembly NF 2",
 		PrimaryProcessID: 100, SubProcessIDs: []int64{200},
 	}
 	got := ComputeResolvedCellState(events, cfg, now, DefaultThresholds())
@@ -58,7 +58,7 @@ func TestComputeResolvedCellState(t *testing.T) {
 // satellites with no special casing, and the JSON is [] not null.
 func TestComputeResolvedCellState_SimpleCell(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
-	cfg := CellConfig{CellID: "SNF3", Station: "plant-a.line-1", PrimaryProcessID: 300}
+	cfg := CellConfig{CellLabel: "SNF3", StationUID: "plant-a.line-1", PrimaryProcessID: 300}
 	got := ComputeResolvedCellState([]PartEvent{procEv(300, now.Add(-time.Second))}, cfg, now, DefaultThresholds())
 
 	if got.SubProcesses == nil {
@@ -76,7 +76,7 @@ func TestComputeResolvedCellState_SimpleCell(t *testing.T) {
 // events still appears (as no-data) so the tile renders a stable dot set.
 func TestComputeResolvedCellState_NoEvents(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
-	cfg := CellConfig{CellID: "C", Station: "s", PrimaryProcessID: 1, SubProcessIDs: []int64{2}}
+	cfg := CellConfig{CellLabel: "C", StationUID: "s", PrimaryProcessID: 1, SubProcessIDs: []int64{2}}
 	got := ComputeResolvedCellState(nil, cfg, now, DefaultThresholds())
 
 	if got.Primary.State != StateNoData {
@@ -98,7 +98,7 @@ func TestComputeCellHeartbeat(t *testing.T) {
 		procEv(200, now.Add(-10*time.Minute)),
 		procEv(999, now.Add(-5*time.Minute)), // outside the cell — must be dropped
 	}
-	cfg := CellConfig{CellID: "SNF2", Station: "s", PrimaryProcessID: 100, SubProcessIDs: []int64{200}}
+	cfg := CellConfig{CellLabel: "SNF2", StationUID: "s", PrimaryProcessID: 100, SubProcessIDs: []int64{200}}
 	got := ComputeCellHeartbeat(events, cfg, since, now, DefaultThresholds())
 
 	if len(got.Processes) != 2 {

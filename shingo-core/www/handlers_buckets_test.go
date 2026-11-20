@@ -143,7 +143,7 @@ func seedBucket(t *testing.T, db *store.DB, station string, nodeID int64, state,
 	if err := db.QueryRow(`SELECT name FROM nodes WHERE id=$1`, nodeID).Scan(&coreNodeName); err != nil {
 		t.Fatalf("seedBucket lookup node name for id=%d: %v", nodeID, err)
 	}
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, state, payload_code, qty)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, state, payload_code, qty)
 		VALUES ($1, $2, $3, $4, $5)`, station, coreNodeName, state, payloadCode, qty); err != nil {
 		t.Fatalf("seed bucket (%s/%s): %v", station, payloadCode, err)
 	}

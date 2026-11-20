@@ -52,7 +52,7 @@ func renderOrdersPage(t *testing.T, h *Handlers, query string) string {
 func parkOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status, code protocol.QueueCode, reason string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+		EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderTypeRetrieve,
 		Status: status, Quantity: 1, DeliveryNode: "LINE1-IN", PayloadCode: "PART-A",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)

@@ -523,7 +523,7 @@ func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	e, err := s.db.EnrollEdge(uid, displayName, uid)
+	e, err := s.db.EnrollEdge(uid, displayName)
 	if err != nil {
 		return nil, err
 	}

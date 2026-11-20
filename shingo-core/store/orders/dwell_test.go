@@ -35,7 +35,7 @@ func TestDwellStats_PercentilesAndCounts(t *testing.T) {
 	}
 	seed := func(uuid, orderType, payload string, evs []ev) {
 		o := &domain.Order{
-			EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderType(orderType), Status: "pending",
+			EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderType(orderType), Status: "pending",
 			Quantity: 1, PayloadCode: payload, DeliveryNode: "D", SourceNode: "S",
 		}
 		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
@@ -139,7 +139,7 @@ func TestDwellStats_FiltersScopeTheResult(t *testing.T) {
 
 	seed := func(uuid, orderType, payload string, gap time.Duration) {
 		o := &domain.Order{
-			EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderType(orderType), Status: "pending",
+			EdgeUUID: uuid, StationUID: "line-1", OrderType: protocol.OrderType(orderType), Status: "pending",
 			Quantity: 1, PayloadCode: payload, DeliveryNode: "D", SourceNode: "S",
 		}
 		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)

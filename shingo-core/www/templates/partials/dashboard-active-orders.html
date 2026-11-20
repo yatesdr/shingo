@@ -30,7 +30,7 @@
           <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
           <td class="orders-route">{{template "order-route" .}}</td>
           <td>{{if $.OrderProcess}}{{index $.OrderProcess .ID}}{{end}}</td>
-          <td>{{stationName .StationID}}</td>
+          <td>{{stationName .Requester}}</td>
           <td>{{.OrderType}}</td>
           <td>{{template "order-payload" .}}</td>
           {{/* THE WALL SHOULD NOT KNOW LESS THAN THE BOARD. This cell rendered

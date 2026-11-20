@@ -78,7 +78,7 @@ func TestBuildInputsAndCompute_PoolPredicate(t *testing.T) {
 	}
 	var orderID int64
 	testutil.MustNoErr(t, db.QueryRow(
-		`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity)
+		`INSERT INTO orders (edge_uuid, station_uid, order_type, status, quantity)
 		 VALUES ('res-1','edge.line1','retrieve','pending',1) RETURNING id`).Scan(&orderID), "create order")
 	if _, err := db.Exec(
 		`INSERT INTO reservations (order_id, bin_id, state)

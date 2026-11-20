@@ -45,7 +45,7 @@ func parkFixture(t *testing.T, db *store.DB) (home, buffer, outbound *nodes.Node
 func makeEvacOrder(t *testing.T, db *store.DB, uuid, home, outbound string) *orders.Order {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "test", OrderType: protocol.OrderTypeMove, Status: "staged",
+		EdgeUUID: uuid, StationUID: "test", OrderType: protocol.OrderTypeMove, Status: "staged",
 		Quantity: 1, SourceNode: home, DeliveryNode: outbound, PayloadCode: "PART-X",
 	}
 	if err := db.CreateOrder(o); err != nil {
@@ -61,7 +61,7 @@ func makeEvacOrder(t *testing.T, db *store.DB, uuid, home, outbound string) *ord
 func makeInFlightTo(t *testing.T, db *store.DB, uuid, node string) {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: "in_transit",
+		EdgeUUID: uuid, StationUID: "test", OrderType: protocol.OrderTypeRetrieveEmpty, Status: "in_transit",
 		Quantity: 1, DeliveryNode: node, PayloadCode: "PART-X",
 	}
 	if err := db.CreateOrder(o); err != nil {
@@ -172,7 +172,7 @@ func TestPlaceForDedicatedLoader_SupplyLeg_Untouched(t *testing.T) {
 
 	// Supply leg: source = staging (not a home), delivery = home.
 	supply := &orders.Order{
-		EdgeUUID: "supply-1", StationID: "test", OrderType: protocol.OrderTypeMove, Status: "staged",
+		EdgeUUID: "supply-1", StationUID: "test", OrderType: protocol.OrderTypeMove, Status: "staged",
 		Quantity: 1, SourceNode: staging.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
 	}
 	if err := db.CreateOrder(supply); err != nil {
@@ -208,7 +208,7 @@ func TestPlaceForDedicatedLoader_SupplyFromHome_Untouched(t *testing.T) {
 	// Supply leg: source = home (dedicated home, IS a loader home), delivery = line.
 	// Steps mirror the two-robot swap shape: pickup home → stage → wait → pickup → drop line.
 	supply := &orders.Order{
-		EdgeUUID: "supply-from-home-1", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "supply-from-home-1", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: home.Name, DeliveryNode: line.Name, PayloadCode: "PART-X",
 	}
 	if err := db.CreateOrder(supply); err != nil {
@@ -246,7 +246,7 @@ func TestPlaceForDedicatedLoader_SupplyWithWait_HomeOccupied_RoutesBuffer(t *tes
 		t.Fatalf("create staging: %v", err)
 	}
 	supply := &orders.Order{
-		EdgeUUID: "supply-wait-1", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "supply-wait-1", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: staging.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
 	}
 	if err := db.CreateOrder(supply); err != nil {
@@ -279,7 +279,7 @@ func TestPlaceForDedicatedLoader_SupplyWithWait_HomeFree_RoutesHome(t *testing.T
 		t.Fatalf("create staging: %v", err)
 	}
 	supply := &orders.Order{
-		EdgeUUID: "supply-wait-free-1", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "supply-wait-free-1", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: staging.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
 	}
 	if err := db.CreateOrder(supply); err != nil {
@@ -393,7 +393,7 @@ func TestPlaceForDedicatedLoader_NonHomeSource_FallsThroughToPatternB(t *testing
 	makeInFlightTo(t, db, "restock-ft-1", home.Name)
 
 	o := &orders.Order{
-		EdgeUUID: "park-fallthrough-1", StationID: "test", OrderType: protocol.OrderTypeMove,
+		EdgeUUID: "park-fallthrough-1", StationUID: "test", OrderType: protocol.OrderTypeMove,
 		Status: "staged", Quantity: 1,
 		SourceNode: line.Name, DeliveryNode: home.Name, PayloadCode: "PART-X",
 	}
@@ -455,7 +455,7 @@ func parkSwapPair(t *testing.T, db *store.DB, home, line string, linkSibling boo
 		t.Fatalf("marshal supply steps: %v", err)
 	}
 	supply := &orders.Order{
-		EdgeUUID: "park-swap-supply", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "park-swap-supply", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: home, DeliveryNode: line, ProcessNode: line,
 		PayloadCode: "PART-X", StepsJSON: string(raw),
 	}
@@ -468,7 +468,7 @@ func parkSwapPair(t *testing.T, db *store.DB, home, line string, linkSibling boo
 		{Action: protocol.ActionDropoff, Node: home},
 	}
 	ret = &orders.Order{
-		EdgeUUID: "park-swap-return", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "park-swap-return", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: line, DeliveryNode: home, ProcessNode: line, PayloadCode: "PART-X",
 	}
 	if linkSibling {
@@ -622,7 +622,7 @@ func stageSwapAtHome(t *testing.T, db *store.DB, home, line string) (ret *orders
 		t.Fatalf("marshal supply steps: %v", err)
 	}
 	supply := &orders.Order{
-		EdgeUUID: "spr-supply", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "spr-supply", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: home, DeliveryNode: line, ProcessNode: line,
 		PayloadCode: "PART-X", StepsJSON: string(raw),
 	}
@@ -635,7 +635,7 @@ func stageSwapAtHome(t *testing.T, db *store.DB, home, line string) (ret *orders
 		{Action: protocol.ActionDropoff, Node: home},
 	}
 	ret = &orders.Order{
-		EdgeUUID: "spr-return", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		EdgeUUID: "spr-return", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
 		Quantity: 1, SourceNode: line, DeliveryNode: home, ProcessNode: line,
 		PayloadCode: "PART-X", SiblingOrderUUID: supply.EdgeUUID,
 	}

@@ -59,7 +59,7 @@ func levelledGroup(t *testing.T, db *store.DB, name, code string, want, held, sl
 func pushInto(t *testing.T, d *Dispatcher, db *store.DB, uuid, group string) string {
 	t.Helper()
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeMove,
+		EdgeUUID: uuid, StationUID: "line-1", OrderType: OrderTypeMove,
 		Status: StatusPending, Quantity: 1, DeliveryNode: group,
 		SourceNode: "OVF-SRC",
 	}

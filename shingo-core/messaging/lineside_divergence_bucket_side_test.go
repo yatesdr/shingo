@@ -13,7 +13,7 @@ import (
 // plantCoreBucket writes one lineside_buckets row at the rig's seat.
 func (r *divergenceRig) plantCoreBucket(station string, state protocol.LinesideBucketState, payload string, qty int) {
 	r.t.Helper()
-	_, err := r.db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, payload_code, state, qty)
+	_, err := r.db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
 		VALUES ($1, $2, $3, $4, $5)`, station, r.seat.Name, payload, string(state), qty)
 	testutil.MustNoErr(r.t, err, "plant core bucket")
 }

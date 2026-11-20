@@ -9,19 +9,19 @@ import (
 
 // AssignStation links a station ID to a node.
 func AssignStation(db *sql.DB, nodeID int64, stationID string) error {
-	_, err := db.Exec(`INSERT INTO node_stations (node_id, station_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, nodeID, stationID)
+	_, err := db.Exec(`INSERT INTO node_stations (node_id, station_uid) VALUES ($1, $2) ON CONFLICT DO NOTHING`, nodeID, stationID)
 	return err
 }
 
 // UnassignStation removes a station ID from a node.
 func UnassignStation(db *sql.DB, nodeID int64, stationID string) error {
-	_, err := db.Exec(`DELETE FROM node_stations WHERE node_id=$1 AND station_id=$2`, nodeID, stationID)
+	_, err := db.Exec(`DELETE FROM node_stations WHERE node_id=$1 AND station_uid=$2`, nodeID, stationID)
 	return err
 }
 
 // ListStationsForNode returns the directly-assigned stations for a node.
 func ListStationsForNode(db *sql.DB, nodeID int64) ([]string, error) {
-	rows, err := db.Query(`SELECT station_id FROM node_stations WHERE node_id=$1 ORDER BY station_id`, nodeID)
+	rows, err := db.Query(`SELECT station_uid FROM node_stations WHERE node_id=$1 ORDER BY station_uid`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func ListNodesForStation(db *sql.DB, stationID string) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s %s
 		WHERE (n.id IN (
-			SELECT ns.node_id FROM node_stations ns WHERE ns.station_id = $1
+			SELECT ns.node_id FROM node_stations ns WHERE ns.station_uid = $1
 		)
 		AND (n.parent_id IS NULL
 		     OR (n.is_synthetic = false AND EXISTS (
@@ -55,7 +55,7 @@ func ListNodesForStation(db *sql.DB, stationID string) ([]*Node, error) {
 		    SELECT 1 FROM node_types nt WHERE nt.id = n.node_type_id AND nt.code = 'NGRP'
 		    AND EXISTS (
 		        SELECT 1 FROM nodes c JOIN node_stations cs ON cs.node_id = c.id
-		        WHERE c.parent_id = n.id AND cs.station_id = $1
+		        WHERE c.parent_id = n.id AND cs.station_uid = $1
 		    )
 		))
 		ORDER BY n.name`, SelectCols, FromClause), stationID)
@@ -82,14 +82,14 @@ func GetEffectiveStations(db *sql.DB, nodeID int64) ([]string, error) {
 		return ListStationsForNode(db, nodeID)
 	default: // "" or "inherit"
 		rows, err := db.Query(nodetree.AncestorsOf(1)+`
-			SELECT ns.station_id FROM node_stations ns
+			SELECT ns.station_uid FROM node_stations ns
 			WHERE ns.node_id = (
 				SELECT a.id FROM ancestors a
 				WHERE EXISTS (SELECT 1 FROM node_stations ns2 WHERE ns2.node_id = a.id)
 				ORDER BY a.depth ASC
 				LIMIT 1
 			)
-			ORDER BY ns.station_id
+			ORDER BY ns.station_uid
 		`, nodeID)
 		if err != nil {
 			return nil, err
@@ -118,7 +118,7 @@ func SetStations(db *sql.DB, nodeID int64, stationIDs []string) error {
 		return err
 	}
 	for _, sid := range stationIDs {
-		if _, err := tx.Exec(`INSERT INTO node_stations (node_id, station_id) VALUES ($1, $2)`, nodeID, sid); err != nil {
+		if _, err := tx.Exec(`INSERT INTO node_stations (node_id, station_uid) VALUES ($1, $2)`, nodeID, sid); err != nil {
 			return err
 		}
 	}

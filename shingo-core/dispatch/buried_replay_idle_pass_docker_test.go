@@ -67,7 +67,7 @@ func TestBuriedReplay_AnIdlePassWritesNothingAndTellsNobody(t *testing.T) {
 
 	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "idlepass-demand"
-		o.StationID = "line-1"
+		o.StationUID = "line-1"
 		o.OrderType = OrderTypeComplex
 		o.Status = StatusQueued
 		o.PayloadCode = sc.Payload.Code

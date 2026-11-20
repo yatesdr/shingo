@@ -49,7 +49,7 @@ func storedReportedAt(t *testing.T, db *store.DB, station, node, payload string)
 	t.Helper()
 	var at time.Time
 	err := db.QueryRow(`SELECT reported_at FROM edge_lineside_reports
-		WHERE station = $1 AND core_node_name = $2 AND payload_code = $3`, station, node, payload).Scan(&at)
+		WHERE station_uid = $1 AND core_node_name = $2 AND payload_code = $3`, station, node, payload).Scan(&at)
 	if err != nil {
 		return time.Time{}, false
 	}

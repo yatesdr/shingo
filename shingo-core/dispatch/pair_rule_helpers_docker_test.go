@@ -85,7 +85,7 @@ func prLegRow(t *testing.T, db *store.DB, uuid, sibling, processNode, deliveryNo
 	j, err := json.Marshal(steps)
 	testutil.MustNoErr(t, err, "marshal steps "+uuid)
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending,
+		EdgeUUID: uuid, StationUID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending,
 		Quantity: 1, PayloadCode: payload, SourceNode: sourceNode, DeliveryNode: deliveryNode,
 		ProcessNode: processNode, SiblingOrderUUID: sibling, Coordinated: true, StepsJSON: string(j),
 	}

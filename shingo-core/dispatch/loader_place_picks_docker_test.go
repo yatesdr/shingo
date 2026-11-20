@@ -140,7 +140,7 @@ func placeSupplyWithWait(hold func(t *testing.T, db *store.DB, fx *pickFixture))
 			hold(t, db, fx)
 		}
 		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID, o.StationID, o.OrderType, o.Status = "pick-supply", "test", OrderTypeComplex, "staged"
+			o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "pick-supply", "test", OrderTypeComplex, "staged"
 			o.SourceNode, o.DeliveryNode, o.PayloadCode = staging.Name, fx.home.Name, "PART-X"
 		})
 		steps := []resolvedStep{vsWait(staging.Name), vsPick(staging.Name), vsDrop(fx.home.Name)}
@@ -232,7 +232,7 @@ func hardClaimedBy(n func(fx *pickFixture) *nodes.Node) func(t *testing.T, db *s
 func namedBy(n func(fx *pickFixture) *nodes.Node) func(t *testing.T, db *store.DB, fx *pickFixture) {
 	return func(t *testing.T, db *store.DB, fx *pickFixture) {
 		testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID, o.StationID, o.OrderType, o.Status = "pick-named-"+n(fx).Name, "test", OrderTypeComplex, StatusQueued
+			o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "pick-named-"+n(fx).Name, "test", OrderTypeComplex, StatusQueued
 			o.DeliveryNode = n(fx).Name
 		})
 	}
@@ -409,7 +409,7 @@ func TestContainmentPlacementPicks(t *testing.T) {
 		// still diverts.
 		{hold: "containment node named by a live order", want: "diverted", set: func(t *testing.T, db *store.DB, hold *nodes.Node) {
 			testdb.CreateOrder(t, db, func(o *orders.Order) {
-				o.EdgeUUID, o.StationID, o.OrderType, o.Status = "qc-named", "test", OrderTypeComplex, StatusQueued
+				o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "qc-named", "test", OrderTypeComplex, StatusQueued
 				o.DeliveryNode = hold.Name
 			})
 		}},
@@ -517,7 +517,7 @@ func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "spr-0805-evac", "test", OrderTypeComplex, StatusQueued
+		o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "spr-0805-evac", "test", OrderTypeComplex, StatusQueued
 		o.QueueCode = string(protocol.QueueWaitingForPartner)
 		o.DeliveryNode, o.ProcessNode, o.PayloadCode = home.Name, "SPR-0805-LINE", "PART-X"
 	})

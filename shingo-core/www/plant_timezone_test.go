@@ -106,7 +106,7 @@ func TestRenderedPagesArePlantLocal(t *testing.T) {
 	opened := time.Date(2026, 9, 5, 14, 23, 1, 0, time.UTC)
 	detail := BuildEpisodeDetail(domain.DemandOrigin{
 		OriginID: "o1", EpisodeKey: "k1", Kind: "cell", Direction: "supply",
-		StationID: "S1", PayloadCode: "PANEL-A", OpenedAt: opened,
+		StationUID: "S1", PayloadCode: "PANEL-A", OpenedAt: opened,
 	}, nil, false, nil, opened, disp())
 
 	out := renderPage(t, "demand-episode.html", map[string]any{

@@ -212,10 +212,10 @@ func (e *Engine) tryReturnCarriedBin(bin *bins.Bin, robotID string, robot fleet.
 // fate is still on the order page and in recovery_actions.
 func (e *Engine) notifyBinReturn(cancelled *orders.Order, bin *bins.Bin, state, destination, reason string) {
 	cancelled = e.orderTheEdgeHolds(cancelled)
-	if cancelled == nil || cancelled.StationID == "" || cancelled.EdgeUUID == "" {
+	if cancelled == nil || cancelled.Requester() == "" || cancelled.EdgeUUID == "" {
 		return
 	}
-	if err := e.SendDataToEdge(protocol.SubjectBinReturn, cancelled.StationID, &protocol.BinReturn{
+	if err := e.SendDataToEdge(protocol.SubjectBinReturn, cancelled.Requester(), &protocol.BinReturn{
 		OrderUUID:   cancelled.EdgeUUID,
 		BinLabel:    bin.Label,
 		PayloadCode: bin.PayloadCode,
@@ -224,7 +224,7 @@ func (e *Engine) notifyBinReturn(cancelled *orders.Order, bin *bins.Bin, state, 
 		Reason:      reason,
 		At:          clock.Now().UTC(),
 	}); err != nil {
-		e.logFn("engine: cancel return: notify %s of bin %d (%s): %v", cancelled.StationID, bin.ID, state, err)
+		e.logFn("engine: cancel return: notify %s of bin %d (%s): %v", cancelled.Requester(), bin.ID, state, err)
 	}
 }
 

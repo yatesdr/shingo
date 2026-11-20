@@ -460,9 +460,9 @@ func (s *BinManifestService) RebaseAfterEdgeRollbackTx(tx *sql.Tx, binID int64, 
 	if err != nil {
 		return 0, err
 	}
-	uopCtx.Station = station
+	uopCtx.StationUID = station
 	if err := audit.AppendBinUOP(tx, binID, before, *before, audit.OpEdgeRollback,
-		"service/bin_manifest.go:RebaseAfterEdgeRollback", nil, payloadCode, station, uopCtx); err != nil {
+		"service/bin_manifest.go:RebaseAfterEdgeRollback", nil, payloadCode, "", uopCtx); err != nil {
 		return 0, err
 	}
 	return newEpoch, nil
@@ -1380,7 +1380,7 @@ func (s *BinManifestService) RecordIngestRefused(binID int64, payloadCode string
 		return fmt.Errorf("marshal ingest refusal bin %d: %w", binID, err)
 	}
 	return audit.AppendBinUOPOverride(s.db, binID, uop, uop, audit.OpIngestStaleEpochRefused,
-		"service/bin_manifest.go:RecordIngestRefused", nil, payloadCode, "", meta)
+		"service/bin_manifest.go:RecordIngestRefused", nil, payloadCode, "", "", meta)
 }
 
 // Unconfirm clears a bin's manifest confirmation flag, and writes its
@@ -1818,9 +1818,9 @@ func applyReleaseFence(tx *sql.Tx, binID int64, f *ReleaseFence) (int, error) {
 		net     sql.NullInt64
 	)
 	if err := tx.QueryRow(`
-		INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, applied_net, applied_window_end, updated_at)
+		INSERT INTO inventory_delta_dedup (station_uid, scope_kind, scope_key, epoch, last_seq, applied_net, applied_window_end, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-		ON CONFLICT (station, scope_kind, scope_key, epoch)
+		ON CONFLICT (station_uid, scope_kind, scope_key, epoch)
 		DO UPDATE SET
 			applied_net = CASE WHEN inventory_delta_dedup.last_seq > EXCLUDED.last_seq
 			                    AND inventory_delta_dedup.applied_net IS NOT NULL
@@ -2202,7 +2202,7 @@ func (s *BinManifestService) AuditReleaseOverride(binID, orderID int64, disposit
 		return audit.AppendBinUOPOverride(s.db, binID, suggested, operator,
 			audit.OpOperatorOverrideReleasePartial,
 			"service/bin_manifest.go:AuditReleaseOverride",
-			&orderID, "", actor, meta)
+			&orderID, "", actor, "", meta)
 
 	case protocol.DispositionPullParts:
 		if len(disposition.CapturesSuggested) == 0 {
@@ -2246,7 +2246,7 @@ func (s *BinManifestService) AuditReleaseOverride(binID, orderID int64, disposit
 			if err := audit.AppendBinUOPOverride(s.db, binID, suggested, operator,
 				audit.OpOperatorOverridePullParts,
 				"service/bin_manifest.go:AuditReleaseOverride",
-				&orderID, part, actor, meta); err != nil {
+				&orderID, part, actor, "", meta); err != nil {
 				return err
 			}
 		}

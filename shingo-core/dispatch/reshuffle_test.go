@@ -226,7 +226,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	// Create parent order
 	parentOrder := &orders.Order{
 		EdgeUUID:     "uuid-compound",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		DeliveryNode: "LINE1-DEST",
@@ -323,17 +323,17 @@ func TestHandleChildOrderFailure(t *testing.T) {
 
 	// Create parent order
 	parentOrder := &orders.Order{
-		EdgeUUID:  "uuid-fail-parent",
-		StationID: "line-1",
-		OrderType: OrderTypeRetrieve,
-		Status:    StatusReshuffling,
+		EdgeUUID:   "uuid-fail-parent",
+		StationUID: "line-1",
+		OrderType:  OrderTypeRetrieve,
+		Status:     StatusReshuffling,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Create 3 child orders
 	child1 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-1",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusConfirmed,
 		ParentOrderID: &parentOrder.ID,
@@ -345,7 +345,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 
 	child2 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-2",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusFailed,
 		ParentOrderID: &parentOrder.ID,
@@ -360,7 +360,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 
 	child3 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-3",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		ParentOrderID: &parentOrder.ID,
@@ -456,17 +456,17 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 
 	// Create parent order
 	parentOrder := &orders.Order{
-		EdgeUUID:  "uuid-inflight-parent",
-		StationID: "line-1",
-		OrderType: OrderTypeRetrieve,
-		Status:    StatusReshuffling,
+		EdgeUUID:   "uuid-inflight-parent",
+		StationUID: "line-1",
+		OrderType:  OrderTypeRetrieve,
+		Status:     StatusReshuffling,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Child 1: already confirmed (done)
 	child1 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-1",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusConfirmed,
 		ParentOrderID: &parentOrder.ID,
@@ -479,7 +479,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	// Child 2: the one that fails
 	child2 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-2",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusFailed,
 		ParentOrderID: &parentOrder.ID,
@@ -494,7 +494,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	binC3 := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-C3-INFLIGHT")
 	child3 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-3",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusInTransit,
 		VendorOrderID: "vendor-inflight-step-3",
@@ -511,7 +511,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	binC4 := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-C4-PENDING")
 	child4 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-4",
-		StationID:     "line-1",
+		StationUID:    "line-1",
 		OrderType:     OrderTypeMove,
 		Status:        StatusPending,
 		ParentOrderID: &parentOrder.ID,
@@ -620,7 +620,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 
 	parent := &orders.Order{
 		EdgeUUID:     "parent-fail-event",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusReshuffling,
 		PayloadCode:  bp.Code,
@@ -631,7 +631,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 
 	failedChild := &orders.Order{
 		EdgeUUID:      "child-fail-event",
-		StationID:     parent.StationID,
+		StationUID:    parent.StationUID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusFailed,
 		ErrorDetail:   plan.ConfigFailure("source node", "NOBODY-CONFIGURED-THIS"),
@@ -697,7 +697,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 
 	live := &orders.Order{
 		EdgeUUID:     "parent-congestion-event",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusReshuffling,
 		PayloadCode:  bp.Code,
@@ -707,7 +707,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(live), "create the congestion parent")
 	brokeDown := &orders.Order{
 		EdgeUUID:      "child-congestion-event",
-		StationID:     live.StationID,
+		StationUID:    live.StationUID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusFailed,
 		ErrorDetail:   "the robot stopped responding",
@@ -773,7 +773,7 @@ func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 
 	parent := &orders.Order{
 		EdgeUUID:     "uuid-co-still",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending, // BeginReshuffle accepts Pending→Reshuffling
 		DeliveryNode: "LINE1-DEST-STILL",
@@ -817,7 +817,7 @@ func TestCreateCompoundOrder_RetrieveInheritsParentDeliveryNode(t *testing.T) {
 
 	parentOrder := &orders.Order{
 		EdgeUUID:     "uuid-inherit",
-		StationID:    "line-1",
+		StationUID:   "line-1",
 		OrderType:    OrderTypeRetrieve,
 		Status:       StatusPending,
 		DeliveryNode: "LINE1-DEST-INH",

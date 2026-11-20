@@ -18,7 +18,8 @@ import (
 // hold_dropped_handler_test.go — what Core writes for an Edge's dropped produce
 // hold (strict pack, lane P0): one hold_dropped row on bin_uop_exception per
 // envelope, with no bin (a hold has no carrier), the part on the row, the
-// dropper as actor, and the seat, quantity, reason and station in detail.
+// dropper as actor, the station in station_uid, and the seat, quantity and
+// reason in detail.
 
 func holdDropEnvelope(id, station string) *protocol.Envelope {
 	return &protocol.Envelope{
@@ -50,6 +51,7 @@ func TestHoldDropped_WritesOneRowWithNoBin(t *testing.T) {
 		n                  int
 		bin                sql.NullInt64
 		payload, actor, op string
+		station            string
 		occurred           time.Time
 		before, after      sql.NullInt64
 		detailRaw          []byte
@@ -59,14 +61,17 @@ func TestHoldDropped_WritesOneRowWithNoBin(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("hold_dropped rows = %d after one message delivered twice, want 1", n)
 	}
-	testutil.MustNoErr(t, db.QueryRow(`SELECT bin_id, payload_code, actor, op, occurred_at, before_uop, after_uop, detail, recovered_at
+	testutil.MustNoErr(t, db.QueryRow(`SELECT bin_id, payload_code, actor, station_uid, op, occurred_at, before_uop, after_uop, detail, recovered_at
 		FROM bin_uop_exception WHERE kind = 'hold_dropped'`).
-		Scan(&bin, &payload, &actor, &op, &occurred, &before, &after, &detailRaw, &recovered), "read row")
+		Scan(&bin, &payload, &actor, &station, &op, &occurred, &before, &after, &detailRaw, &recovered), "read row")
 	if bin.Valid {
 		t.Errorf("bin_id = %d, want NULL (a hold has no carrier)", bin.Int64)
 	}
 	if payload != "SYN44-PARTA.06" || actor != "edge:uop_stranded_monitor" || op != protocol.HoldDropSweep {
 		t.Errorf("row = payload %q actor %q op %q, want the part, the dropper and the reason", payload, actor, op)
+	}
+	if station != "stn-drop" {
+		t.Errorf("station_uid = %q, want the envelope's station stn-drop", station)
 	}
 	if !occurred.Equal(at.Truncate(time.Microsecond)) {
 		t.Errorf("occurred_at = %v, want the Edge's %v", occurred, at)
@@ -77,12 +82,15 @@ func TestHoldDropped_WritesOneRowWithNoBin(t *testing.T) {
 	var detail map[string]any
 	testutil.MustNoErr(t, json.Unmarshal(detailRaw, &detail), "decode detail")
 	for key, want := range map[string]any{
-		"node": "ALN_011", "qty": float64(24), "reason": protocol.HoldDropSweep, "station": "stn-drop",
+		"node": "ALN_011", "qty": float64(24), "reason": protocol.HoldDropSweep,
 		"order_id": "edge-order-held-for", "msg_id": "env-drop-1",
 	} {
 		if detail[key] != want {
 			t.Errorf("detail[%s] = %v, want %v (detail %s)", key, detail[key], want, detailRaw)
 		}
+	}
+	if s, ok := detail["station"]; ok {
+		t.Errorf("detail[station] = %v, want no key: the station is the station_uid column (detail %s)", s, detailRaw)
 	}
 
 	// A different drop is a different row.

@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -16,11 +14,6 @@ import (
 // root: Core's whole schema and seed rows as one SQL text, which store.migrate
 // applies to a database with no tables. It is generated, never edited.
 const BaselinePath = "store/schema/baseline.sql"
-
-// CommentsPath holds the schema's rationale as COMMENT ON statements. The
-// generator applies it before the dump, so the baseline carries every comment
-// and a database born on it answers obj_description / col_description.
-const CommentsPath = "store/schema/comments.sql"
 
 // BaselineRegenCommand is what the staleness test tells you to run. The
 // snapshot is regenerated after it, by a build that embeds the new baseline.
@@ -43,11 +36,12 @@ var timeSentinels = []struct {
 //  1. An empty database is booted by RetiredChainRelease's own store.Open,
 //     built from git (BuildRelease): the chain v1..RetiredChain, run by the
 //     code the plants ran.
-//  2. This tree's store.Open runs the migrations above RetiredChain.
-//  3. CommentsPath is applied.
-//  4. Every time column of every seed row is stamped with a sentinel.
-//  5. pg_dump --inserts, schema and data, comments kept.
-//  6. CleanBaseline.
+//  2. This tree's store.Open runs the migrations above RetiredChain; v185
+//     applies store/schema/comments.sql, so the comments come from the
+//     migrations, as a plant database's do.
+//  3. Every time column of every seed row is stamped with a sentinel.
+//  4. pg_dump --inserts, schema and data, comments kept.
+//  5. CleanBaseline.
 //
 // moduleRoot is the shingo-core directory; workDir holds the release build and
 // is the caller's to remove.
@@ -69,10 +63,6 @@ func (i *Instance) GenerateBaseline(ctx context.Context, moduleRoot, workDir str
 	}
 	db.Close()
 
-	comments, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(CommentsPath)))
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", CommentsPath, err)
-	}
 	conn, err := sql.Open("pgx", fmt.Sprintf(
 		"host=%s port=%d dbname=%s user=%s password=%s sslmode=disable",
 		i.host, i.port, name, pgUser, pgPass))
@@ -80,9 +70,6 @@ func (i *Instance) GenerateBaseline(ctx context.Context, moduleRoot, workDir str
 		return "", err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, string(comments)); err != nil {
-		return "", fmt.Errorf("apply %s: %w", CommentsPath, err)
-	}
 	if err := stampSeedTimes(ctx, conn); err != nil {
 		return "", err
 	}
@@ -221,7 +208,7 @@ func baselineHeader(head int) string {
 	return strings.Join([]string{
 		fmt.Sprintf("-- Core's schema at v%d with its seed rows: GENERATED, never edited by hand.", head),
 		fmt.Sprintf("-- cmd/schemabaseline boots %s's chain (v1..v%d) on an empty database, runs this", store.RetiredChainRelease, store.RetiredChain),
-		"-- tree's migrations above it, applies " + CommentsPath + ", and dumps the result with",
+		"-- tree's migrations above it (which apply store/schema/comments.sql), and dumps the result with",
 		"-- pg_dump --inserts. Regenerate: " + BaselineRegenCommand + ".",
 		"-- store.migrate applies it, as one statement, to a database with no tables.",
 	}, "\n") + "\n"

@@ -86,7 +86,7 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 	// cancelled every order a person cancelled — on this door and the
 	// diagnostics CancelStuckOrder door above it. The prose is kept as it was:
 	// classifyCancelByDetail reads it for every row written before now.
-	e.dispatcher.CancelOrderWithCascade(order, order.StationID, "cancelled by "+actor,
+	e.dispatcher.CancelOrderWithCascade(order, order.Requester(), "cancelled by "+actor,
 		dispatch.CancelCause{Code: protocol.TermOperatorCancelled, Actor: actor})
 	return nil
 }
@@ -109,7 +109,7 @@ func (e *Engine) failOrderAndEmit(orderID int64, errorCode, detail string) {
 		return
 	}
 	// Route through lifecycle.Fail for atomic transition + emit.
-	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, errorCode, detail); err != nil {
+	if err := e.dispatcher.Lifecycle().Fail(order, order.Requester(), errorCode, detail); err != nil {
 		e.logFn("engine: fail order %d (%s): %v", orderID, errorCode, err)
 	}
 }

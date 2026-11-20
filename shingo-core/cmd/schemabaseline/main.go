@@ -4,7 +4,7 @@
 //
 // It boots an empty Postgres, builds the boot path of store.RetiredChainRelease
 // from git and runs it (the retired chain, by the code the plants ran), runs
-// this tree's migrations above it, applies store/schema/comments.sql and dumps
+// this tree's migrations above it (which apply store/schema/comments.sql) and dumps
 // the result (schemadump.GenerateBaseline). The file is never edited by hand;
 // TestBaselineIsCurrent regenerates it and compares.
 //

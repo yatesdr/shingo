@@ -55,7 +55,7 @@ func TestPlanTransport_EmptyToAGroupLeavesWithAConcreteSlot(t *testing.T) {
 	d := NewDispatcher(db, testdb.NewTrackingBackend(), &mockEmitter{}, "core",
 		"shingo.dispatch", &DefaultResolver{DB: db})
 	order := &orders.Order{
-		EdgeUUID: "mg29-empty-to-group", StationID: "line-1", OrderType: OrderTypeRetrieveEmpty,
+		EdgeUUID: "mg29-empty-to-group", StationUID: "line-1", OrderType: OrderTypeRetrieveEmpty,
 		SourceIntent: SourceIntentEmpty, Status: StatusPending, Quantity: 1,
 		DeliveryNode: grp.Name,
 	}
@@ -113,7 +113,7 @@ func TestPlanTransport_SameNodeRefusalStaysMoveOnly(t *testing.T) {
 	d := NewDispatcher(db, testdb.NewTrackingBackend(), &mockEmitter{}, "core",
 		"shingo.dispatch", &DefaultResolver{DB: db})
 	order := &orders.Order{
-		EdgeUUID: "mg29-same-node", StationID: "line-1", OrderType: OrderTypeRetrieveEmpty,
+		EdgeUUID: "mg29-same-node", StationUID: "line-1", OrderType: OrderTypeRetrieveEmpty,
 		SourceIntent: SourceIntentEmpty, Status: StatusPending, Quantity: 1,
 		DeliveryNode: grp.Name,
 	}

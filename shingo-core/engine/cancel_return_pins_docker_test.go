@@ -74,7 +74,7 @@ func seedCancelledCarry(t *testing.T, db *store.DB, robotID, payload, processNod
 	bin.PayloadCode = payload
 
 	ord := &orders.Order{
-		EdgeUUID: "carry-" + robotID, StationID: "edge.test", OrderType: "retrieve",
+		EdgeUUID: "carry-" + robotID, StationUID: "edge.test", OrderType: "retrieve",
 		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: processNode,
 		ProcessNode: processNode, PayloadCode: payload, RobotID: robotID,
 	}

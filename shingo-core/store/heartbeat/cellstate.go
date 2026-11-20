@@ -47,8 +47,8 @@ func ComputeResolvedCellState(events []PartEvent, cfg CellConfig, now time.Time,
 		}
 	}
 	out := ResolvedCellState{
-		CellID:       cfg.CellID,
-		Station:      cfg.Station,
+		CellID:       cfg.CellLabel,
+		Station:      cfg.StationUID,
 		DisplayName:  cfg.DisplayName,
 		Primary:      state(cfg.PrimaryProcessID),
 		SubProcesses: make([]ProcessState, 0, len(cfg.SubProcessIDs)),
@@ -101,7 +101,7 @@ func ComputeCellHeartbeat(events []PartEvent, cfg CellConfig, since, until time.
 		}
 	}
 	out := CellHeartbeat{
-		CellID: cfg.CellID, Station: cfg.Station, DisplayName: cfg.DisplayName,
+		CellID: cfg.CellLabel, Station: cfg.StationUID, DisplayName: cfg.DisplayName,
 		Since: since, Until: until,
 		Processes: make([]ProcessWindow, 0, len(cfg.SubProcessIDs)+1),
 	}

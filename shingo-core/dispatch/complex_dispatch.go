@@ -1223,7 +1223,7 @@ func (d *Dispatcher) SetQueueReason(order *orders.Order, code protocol.QueueCode
 // edge already has the queued status from intake; it'll learn about
 // the failure via EventOrderFailed → edge_handler.HandleOrderError).
 func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string) {
-	if err := d.lifecycle.Fail(order, order.StationID, code, detail); err != nil {
+	if err := d.lifecycle.Fail(order, order.Requester(), code, detail); err != nil {
 		log.Printf("dispatch: fail order %d: %v", order.ID, err)
 		// A refused transition (the order already finished, or another writer
 		// moved it first) emits nothing: that order's own transition told the
@@ -1232,7 +1232,7 @@ func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string)
 		// sent explicitly. On the success path fireFailed is the single
 		// authoritative emit.
 		if !transitionRefused(err) {
-			d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail, order.RecoversOrderID)
+			d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.Requester(), code, detail, order.RecoversOrderID)
 		}
 	}
 }
@@ -1244,12 +1244,12 @@ func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string)
 // HandleOrderSkipped and advances the linked changeover node task without
 // surfacing a failure to the operator.
 func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string) {
-	if err := d.lifecycle.Skip(order, order.StationID, code, detail); err != nil {
+	if err := d.lifecycle.Skip(order, order.Requester(), code, detail); err != nil {
 		log.Printf("dispatch: skip order %d: %v", order.ID, err)
 		// As failOrderInternal: only a write error falls back to an explicit
 		// emit; a refused transition emits nothing.
 		if !transitionRefused(err) {
-			d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
+			d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.Requester(), code, detail)
 		}
 	}
 }

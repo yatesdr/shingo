@@ -36,7 +36,7 @@ func TestBinMove_ATakenHolderIsReFoundAtOnce(t *testing.T) {
 	other := testdb.CreateBinAtNode(t, db, sd.Payload.Code, store2.ID, "TAKE-C")
 
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.StationID = "take-holder"
+		o.StationUID = "take-holder"
 		o.PayloadCode = sd.Payload.Code
 		o.DeliveryNode = sd.LineNode.Name
 		o.SourceIntent = "full"

@@ -387,7 +387,7 @@ func TestSelectMaterialFlagsTakesOnlyOpenEpisodesPastTheLine(t *testing.T) {
 
 	mk := func(id string, openedAgo time.Duration, closed bool) EpisodeRow {
 		o := domain.DemandOrigin{
-			OriginID: id, EpisodeKey: "k" + id, Kind: "cell", StationID: "S",
+			OriginID: id, EpisodeKey: "k" + id, Kind: "cell", StationUID: "S",
 			OpenedAt: now.Add(-openedAgo), ExpectedOrders: &expected,
 		}
 		if closed {

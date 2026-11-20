@@ -67,7 +67,7 @@ func TestBinMovePark_AHistoryRowCarriesItsLaneCause(t *testing.T) {
 	elsewhere := &nodes.Node{Name: "BMQH-ELSEWHERE", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(elsewhere), "create the blocker's destination")
 	blocker := &orders.Order{
-		EdgeUUID: "bmqh-blocker", StationID: "edge.test", OrderType: "move",
+		EdgeUUID: "bmqh-blocker", StationUID: "edge.test", OrderType: "move",
 		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: elsewhere.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(blocker), "create blocking order")

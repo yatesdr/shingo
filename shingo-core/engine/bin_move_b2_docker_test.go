@@ -33,7 +33,7 @@ func historyStatuses(t *testing.T, db *store.DB, orderID int64) []protocol.Statu
 func outboxTo(t *testing.T, db *store.DB, station string) int {
 	t.Helper()
 	var n int
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE station_id=$1`, station).Scan(&n),
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE dst_station=$1`, station).Scan(&n),
 		"count outbox rows")
 	return n
 }
@@ -107,9 +107,9 @@ func TestBinMove_ACoreBornMoveSendsItsStationNothing(t *testing.T) {
 	testutil.MustNoErr(t, err, "move")
 	o, err := db.GetOrder(res.OrderID)
 	testutil.MustNoErr(t, err, "reload")
-	if !o.StationUnaware || o.ProjectsTo != "" {
+	if !o.StationUnaware || o.ProjectsToStationUID != "" {
 		t.Fatalf("the bin move was born unaware=%t projecting to %q; Build writes every Core-born row unaware, and a person's move projects to nobody",
-			o.StationUnaware, o.ProjectsTo)
+			o.StationUnaware, o.ProjectsToStationUID)
 	}
 	testutil.MustNoErr(t, eng.TerminateOrder(res.OrderID, "test"), "cancel the move")
 	if n := outboxTo(t, db, "b2-quiet"); n != 0 {
@@ -146,7 +146,7 @@ func moveThroughDelivery(t *testing.T, eng *Engine, db *store.DB, from, to *node
 // names the order's reference number.
 func messagesAbout(t *testing.T, db *store.DB, o *orders.Order) []string {
 	t.Helper()
-	rows, err := db.DB.Query(`SELECT station_id, msg_type FROM outbox
+	rows, err := db.DB.Query(`SELECT dst_station, msg_type FROM outbox
 		WHERE position(convert_to($1, 'UTF8') in payload) > 0 ORDER BY id`, o.EdgeUUID)
 	testutil.MustNoErr(t, err, "list messages")
 	defer rows.Close()
@@ -218,7 +218,7 @@ func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *tes
 	var dispatched bool
 	eng.fulfillment.Door(func() {
 		known = testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.StationID = "b2-known"
+			o.StationUID = "b2-known"
 			o.OrderType = protocol.OrderTypeMove
 			o.Status = protocol.StatusPending
 			o.SourceNode = storageNode.Name
@@ -238,7 +238,7 @@ func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *tes
 		t.Errorf("history %v, want %v: a station-known order takes pending -> dispatched", got, want)
 	}
 	var acks int
-	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE station_id='b2-known'
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE dst_station='b2-known'
 		AND msg_type IN ('order.ack','order.waybill')`).Scan(&acks), "count acks")
 	if acks != 2 {
 		t.Errorf("%d ack/waybill message(s) for the known order's station, want 2", acks)
@@ -256,7 +256,7 @@ func TestAcquireOne_TriesOneOrderAndNotTheWaitingSet(t *testing.T) {
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
 	created := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.StationID = "b2-waiting"
+		o.StationUID = "b2-waiting"
 		o.PayloadCode = "NO-SUCH-PART"
 		o.DeliveryNode = lineNode.Name
 		o.SourceIntent = "full"

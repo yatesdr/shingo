@@ -446,7 +446,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 <!-- generated: shingo-core/store/schema/schema.snapshot.sql -->
 
-87 tables.
+84 tables.
 
 | Table | Columns | Primary key | References |
 |---|---|---|---|
@@ -454,34 +454,31 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`area_confidence_daily`](#core-area_confidence_daily) | 17 | `day`, `area_name` |  |
 | [`audit_log`](#core-audit_log) | 8 | `id` |  |
 | [`bin_loader_home_bin_types`](#core-bin_loader_home_bin_types) | 2 | `position_node_id`, `bin_type_id` | [`bin_loader_homes`](#core-bin_loader_homes), [`bin_types`](#core-bin_types) |
-| [`bin_loader_homes`](#core-bin_loader_homes) | 7 |  | [`bin_loaders`](#core-bin_loaders), [`nodes`](#core-nodes) |
-| [`bin_loader_payloads`](#core-bin_loader_payloads) | 4 | `loader_id`, `payload_code` | [`bin_loaders`](#core-bin_loaders) |
+| [`bin_loader_homes`](#core-bin_loader_homes) | 6 |  | [`bin_loaders`](#core-bin_loaders), [`nodes`](#core-nodes) |
+| [`bin_loader_payloads`](#core-bin_loader_payloads) | 3 | `loader_id`, `payload_code` | [`bin_loaders`](#core-bin_loaders) |
 | [`bin_loader_quotas`](#core-bin_loader_quotas) | 3 | `loader_id`, `bin_type_id` | [`bin_loaders`](#core-bin_loaders), [`bin_types`](#core-bin_types) |
 | [`bin_loaders`](#core-bin_loaders) | 25 | `id` | `bin_loaders` |
 | [`bin_types`](#core-bin_types) | 13 | `id` | [`carrier_families`](#core-carrier_families), `bin_types` |
-| [`bin_uop_delta_daily`](#core-bin_uop_delta_daily) | 13 | `day`, `bin_id`, `epoch_seq`, `payload_code`, `reason`, `actor` |  |
-| [`bin_uop_exception`](#core-bin_uop_exception) | 13 | `id` |  |
+| [`bin_uop_delta_daily`](#core-bin_uop_delta_daily) | 13 | `day`, `bin_id`, `epoch_seq`, `payload_code`, `reason`, `station_uid` |  |
+| [`bin_uop_exception`](#core-bin_uop_exception) | 14 | `id` |  |
 | [`bin_uop_ledger`](#core-bin_uop_ledger) | 16 | `id` |  |
 | [`bins`](#core-bins) | 33 | `id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
-| [`carrier_families`](#core-carrier_families) | 7 | `id` |  |
-| [`cell_config`](#core-cell_config) | 6 | `cell_id` |  |
+| [`carrier_families`](#core-carrier_families) | 6 | `id` |  |
+| [`cell_config`](#core-cell_config) | 6 | `cell_label` |  |
 | [`cell_part_events`](#core-cell_part_events) | 9 |  |  |
-| [`cell_targets`](#core-cell_targets) | 5 | `cell_id`, `payload_code` |  |
 | [`cleaning_mission_setup`](#core-cleaning_mission_setup) | 7 | `id` |  |
 | [`cleaning_missions`](#core-cleaning_missions) | 7 | `id` |  |
 | [`cleaning_opt_outs`](#core-cleaning_opt_outs) | 1 | `vehicle_id` |  |
 | [`cms_postings`](#core-cms_postings) | 13 | `id` |  |
 | [`cms_transactions`](#core-cms_transactions) | 17 | `id` | [`bins`](#core-bins), [`nodes`](#core-nodes), [`orders`](#core-orders) |
 | [`dashboards`](#core-dashboards) | 9 | `id` |  |
-| [`demand_origins`](#core-demand_origins) | 29 | `origin_id` |  |
+| [`demand_origins`](#core-demand_origins) | 27 | `origin_id` |  |
 | [`demand_registry`](#core-demand_registry) | 9 | `id` |  |
-| [`downtime_event_dedup`](#core-downtime_event_dedup) | 3 | `station`, `edge_event_id` |  |
-| [`downtime_events`](#core-downtime_events) | 8 |  |  |
-| [`edge_cells`](#core-edge_cells) | 6 | `station`, `cell_label` |  |
-| [`edge_lineside_reports`](#core-edge_lineside_reports) | 5 | `station`, `core_node_name`, `payload_code` |  |
-| [`edge_registry`](#core-edge_registry) | 24 | `id` |  |
-| [`inbox`](#core-inbox) | 5 | `msg_id` |  |
-| [`inventory_delta_dedup`](#core-inventory_delta_dedup) | 8 | `station`, `scope_kind`, `scope_key`, `epoch` |  |
+| [`edge_cells`](#core-edge_cells) | 6 | `station_uid`, `cell_label` |  |
+| [`edge_lineside_reports`](#core-edge_lineside_reports) | 5 | `station_uid`, `core_node_name`, `payload_code` |  |
+| [`edge_registry`](#core-edge_registry) | 23 | `id` |  |
+| [`inbox`](#core-inbox) | 4 | `msg_id` |  |
+| [`inventory_delta_dedup`](#core-inventory_delta_dedup) | 8 | `station_uid`, `scope_kind`, `scope_key`, `epoch` |  |
 | [`kanban_families`](#core-kanban_families) | 5 | `kanban_node_id`, `family_id` | [`carrier_families`](#core-carrier_families), [`kanbans`](#core-kanbans) |
 | [`kanban_layer_levels`](#core-kanban_layer_levels) | 4 | `kanban_node_id`, `bin_type_id`, `layers` | [`bin_types`](#core-bin_types), [`kanbans`](#core-kanbans) |
 | [`kanban_levels`](#core-kanban_levels) | 5 | `kanban_node_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`kanbans`](#core-kanbans) |
@@ -494,17 +491,17 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`lineside_drain_ledger`](#core-lineside_drain_ledger) | 6 | `id` |  |
 | [`load_sequences`](#core-load_sequences) | 4 | `name` |  |
 | [`mission_events`](#core-mission_events) | 15 | `id` |  |
-| [`mission_telemetry`](#core-mission_telemetry) | 21 | `id` |  |
+| [`mission_telemetry`](#core-mission_telemetry) | 22 | `id` |  |
 | [`node_bin_types`](#core-node_bin_types) | 3 | `node_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
 | [`node_payloads`](#core-node_payloads) | 3 | `node_id`, `payload_id` | [`nodes`](#core-nodes), [`payloads`](#core-payloads) |
 | [`node_properties`](#core-node_properties) | 6 | `id` | [`nodes`](#core-nodes) |
-| [`node_stations`](#core-node_stations) | 3 | `node_id`, `station_id` | [`nodes`](#core-nodes) |
+| [`node_stations`](#core-node_stations) | 3 | `node_id`, `station_uid` | [`nodes`](#core-nodes) |
 | [`node_types`](#core-node_types) | 7 | `id` |  |
 | [`nodes`](#core-nodes) | 12 | `id` | [`orders`](#core-orders), `nodes` |
 | [`order_bins`](#core-order_bins) | 6 | `id` | [`bins`](#core-bins), [`orders`](#core-orders) |
 | [`order_history`](#core-order_history) | 8 | `id` | [`orders`](#core-orders) |
-| [`order_intake_refusals`](#core-order_intake_refusals) | 5 | `edge_uuid` |  |
-| [`orders`](#core-orders) | 48 | `id` | `orders` |
+| [`order_intake_refusals`](#core-order_intake_refusals) | 4 | `edge_uuid` |  |
+| [`orders`](#core-orders) | 49 | `id` | `orders` |
 | [`outbox`](#core-outbox) | 8 | `id` |  |
 | [`parts`](#core-parts) | 6 | `id` |  |
 | [`payload_bin_types`](#core-payload_bin_types) | 2 | `payload_id`, `bin_type_id` | [`bin_types`](#core-bin_types), [`payloads`](#core-payloads) |
@@ -516,7 +513,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`process_positions`](#core-process_positions) | 2 | `process_id`, `core_node_name` |  |
 | [`process_styles`](#core-process_styles) | 6 | `process_id`, `style_id` |  |
 | [`recovery_actions`](#core-recovery_actions) | 7 | `id` |  |
-| [`reservations`](#core-reservations) | 10 | `id` | [`bins`](#core-bins), [`nodes`](#core-nodes), [`orders`](#core-orders) |
+| [`reservations`](#core-reservations) | 9 | `id` | [`bins`](#core-bins), [`nodes`](#core-nodes), [`orders`](#core-orders) |
 | [`robot_alarm_onsets`](#core-robot_alarm_onsets) | 5 | `hour`, `vehicle_id`, `code` |  |
 | [`robot_confidence_daily`](#core-robot_confidence_daily) | 8 | `day`, `vehicle_id` |  |
 | [`robot_confidence_low`](#core-robot_confidence_low) | 16 |  |  |
@@ -525,16 +522,16 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`robot_hours`](#core-robot_hours) | 9 | `hour`, `vehicle_id` |  |
 | [`robot_lidar_hours`](#core-robot_lidar_hours) | 11 | `hour`, `vehicle_id`, `lidar` |  |
 | [`scene_areas`](#core-scene_areas) | 16 | `id` | [`scene_diffs`](#core-scene_diffs), [`scene_map_versions`](#core-scene_map_versions), `scene_areas` |
-| [`scene_diffs`](#core-scene_diffs) | 11 | `id` |  |
+| [`scene_diffs`](#core-scene_diffs) | 10 | `id` |  |
 | [`scene_edges`](#core-scene_edges) | 15 | `id` |  |
 | [`scene_lane_versions`](#core-scene_lane_versions) | 14 | `id` | [`scene_diffs`](#core-scene_diffs), `scene_lane_versions` |
 | [`scene_map_versions`](#core-scene_map_versions) | 12 | `id` | [`scene_diffs`](#core-scene_diffs) |
 | [`scene_points`](#core-scene_points) | 13 | `id` |  |
-| [`scene_reflectors`](#core-scene_reflectors) | 11 | `id` | [`scene_diffs`](#core-scene_diffs), [`scene_map_versions`](#core-scene_map_versions), `scene_reflectors` |
+| [`scene_reflectors`](#core-scene_reflectors) | 10 | `id` | [`scene_diffs`](#core-scene_diffs), [`scene_map_versions`](#core-scene_map_versions) |
 | [`schema_migrations`](#core-schema_migrations) | 2 | `version` |  |
 | [`sourceability_events`](#core-sourceability_events) | 13 | `id` |  |
 | [`style_claims`](#core-style_claims) | 16 |  |  |
-| [`supply_refusals`](#core-supply_refusals) | 11 | `id` |  |
+| [`supply_refusals`](#core-supply_refusals) | 10 | `id` |  |
 | [`test_commands`](#core-test_commands) | 11 | `id` |  |
 | [`tte_samples`](#core-tte_samples) | 13 | `id` |  |
 
@@ -569,6 +566,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `sentinel_robots` | `integer` | yes | `0` |  |
 | `conf_hist` | `integer[]` |  |  |  |
 
+- The per-zone roll-up (v82). One reading can be in several zones (SEER areas overlap), so its samples column does not sum to the plant total.
 - Primary key (day, area_name)
 
 #### Core: `audit_log`
@@ -591,6 +589,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `position_node_id` | `bigint` | yes |  | → `bin_loader_homes(position_node_id) ON DELETE CASCADE` |
 | `bin_type_id` | `bigint` | yes |  | → `bin_types(id) ON DELETE CASCADE` |
 
+- What each loader window can physically take (v75).
 - Primary key (position_node_id, bin_type_id)
 
 #### Core: `bin_loader_homes`
@@ -600,7 +599,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `loader_id` | `bigint` | yes |  | → `bin_loaders(id) ON DELETE CASCADE` |
 | `position_node_id` | `bigint` | yes |  | unique, → `nodes(id)` |
 | `payload_code` | `text` | yes |  |  |
-| `min_stock` | `integer` | yes | `0` |  |
 | `uop_threshold` | `integer` | yes | `0` |  |
 | `sort_order` | `integer` | yes | `0` |  |
 | `home_kind` | `text` | yes | `'home'` |  |
@@ -613,7 +611,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 |---|---|---|---|---|
 | `loader_id` | `bigint` | yes |  | → `bin_loaders(id) ON DELETE CASCADE` |
 | `payload_code` | `text` | yes |  |  |
-| `min_stock` | `integer` | yes | `0` |  |
 | `uop_threshold` | `integer` | yes | `0` |  |
 
 - Primary key (loader_id, payload_code)
@@ -626,6 +623,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `bin_type_id` | `bigint` | yes |  | → `bin_types(id) ON DELETE CASCADE` |
 | `want` | `integer` | yes | `0` |  |
 
+- A loader's declared carrier mix (v75).
 - Check `(want >= 0)`
 - Primary key (loader_id, bin_type_id)
 
@@ -657,7 +655,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `drains_leftover` | `boolean` | yes | `false` |  |
 | `drains_unverified` | `boolean` | yes | `false` |  |
 | `no_clear_partials` | `boolean` | yes | `false` |  |
-| `edge_station_uid` | `text` | yes | `''` |  |
+| `station_uid` | `text` | yes | `''` |  |
 
 - Check `(layout = ANY (ARRAY['shared_window', 'dedicated_positions']))`
 - Check `(replenishment = ANY (ARRAY['operator', 'threshold']))`
@@ -665,21 +663,21 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Core: `bin_types`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('bin_types_id_seq')` | PK |
-| `code` | `text` | yes |  | unique |
-| `description` | `text` | yes | `''` |  |
-| `width_in` | `double precision` | yes | `0` |  |
-| `height_in` | `double precision` | yes | `0` |  |
-| `length_in` | `double precision` | yes | `0` |  |
-| `required_robot_group` | `text` | yes | `''` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `totes_per_layer` | `integer` |  |  |  |
-| `bare_of` | `bigint` |  |  | unique, → `bin_types(id)` |
-| `bare` | `boolean` | yes | `generated: ((bare_of IS NOT NULL))` |  |
-| `family_id` | `bigint` | yes |  | → `carrier_families(id) ON DELETE RESTRICT` |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('bin_types_id_seq')` | PK |  |
+| `code` | `text` | yes |  | unique |  |
+| `description` | `text` | yes | `''` |  |  |
+| `width_in` | `double precision` | yes | `0` |  |  |
+| `height_in` | `double precision` | yes | `0` |  |  |
+| `length_in` | `double precision` | yes | `0` |  | The third dimension (v90). The table carried width and height only, which left a code like 45x58x32 holding its own length in the string, where no query could reach it. Width x length is a type's footprint: a label and a check, never a decision. What a cart may be stamped as is its carrier family (v172); a slot's fit is type identity everywhere. |
+| `required_robot_group` | `text` | yes | `''` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `totes_per_layer` | `integer` |  |  |  | How many totes one layer of this carrier holds (v161). NULL: not a tote carrier, or not said. |
+| `bare_of` | `bigint` |  |  | unique, → `bin_types(id)` |  |
+| `bare` | `boolean` | yes | `generated: ((bare_of IS NOT NULL))` |  |  |
+| `family_id` | `bigint` | yes |  | → `carrier_families(id) ON DELETE RESTRICT` |  |
 
 - Check `(bare_of <> id)`
 - Check `(totes_per_layer > 0)`
@@ -693,7 +691,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `epoch_seq` | `bigint` | yes |  |  |
 | `payload_code` | `text` | yes | `''` |  |
 | `reason` | `text` | yes | `''` |  |
-| `actor` | `text` | yes | `''` |  |
+| `station_uid` | `text` | yes | `''` |  |
 | `ticks` | `integer` | yes |  |  |
 | `consumed` | `integer` | yes |  |  |
 | `added` | `integer` | yes |  |  |
@@ -702,84 +700,88 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `min_uop` | `integer` |  |  |  |
 | `crossings` | `integer` | yes | `0` |  |
 
-- Primary key (day, bin_id, epoch_seq, payload_code, reason, actor)
+- The permanent daily roll-up of the raw delta stream (v94): growth accepted.
+- Primary key (day, bin_id, epoch_seq, payload_code, reason, station_uid)
 
 #### Core: `bin_uop_exception`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('bin_uop_exception_id_seq')` | PK |
-| `kind` | `text` | yes |  |  |
-| `bin_id` | `bigint` |  |  |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `actor` | `text` | yes | `''` |  |
-| `epoch_seq` | `bigint` |  |  |  |
-| `occurred_at` | `timestamp with time zone` | yes |  |  |
-| `before_uop` | `integer` |  |  |  |
-| `after_uop` | `integer` |  |  |  |
-| `deepest_uop` | `integer` |  |  |  |
-| `recovered_at` | `timestamp with time zone` |  |  |  |
-| `op` | `text` | yes |  |  |
-| `detail` | `jsonb` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('bin_uop_exception_id_seq')` | PK |  |
+| `kind` | `text` | yes |  |  |  |
+| `bin_id` | `bigint` |  |  |  |  |
+| `payload_code` | `text` | yes | `''` |  |  |
+| `actor` | `text` | yes | `''` |  |  |
+| `epoch_seq` | `bigint` |  |  |  |  |
+| `occurred_at` | `timestamp with time zone` | yes |  |  |  |
+| `before_uop` | `integer` |  |  |  |  |
+| `after_uop` | `integer` |  |  |  |  |
+| `deepest_uop` | `integer` |  |  |  |  |
+| `recovered_at` | `timestamp with time zone` |  |  |  |  |
+| `op` | `text` | yes |  |  |  |
+| `detail` | `jsonb` |  |  |  |  |
+| `station_uid` | `text` | yes | `''` |  | The Edge whose report the exception is about, for the kinds a station writes (negative_crossing on bin_uop_delta, stale_epoch, payload_mismatch, edge_rollback, boundary on edge_rollback, report_divergence, hold_dropped). Until v185 that uid was in actor, or in hold_dropped's detail; actor holds only a who. |
+
+- The permanent exceptions ledger (v93): no retention, ever.
 
 #### Core: `bin_uop_ledger`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('bin_uop_ledger_id_seq')` | PK |
-| `bin_id` | `bigint` | yes |  |  |
-| `before_uop` | `integer` |  |  |  |
-| `after_uop` | `integer` | yes |  |  |
-| `op` | `text` | yes |  |  |
-| `source` | `text` | yes | `''` |  |
-| `order_id` | `bigint` |  |  |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `actor` | `text` | yes | `''` |  |
-| `metadata` | `jsonb` |  |  |  |
-| `applied_at` | `timestamp with time zone` | yes | `now()` |  |
-| `node_id` | `bigint` |  |  |  |
-| `station` | `text` | yes | `''` |  |
-| `detail` | `jsonb` |  |  |  |
-| `loader_id` | `bigint` |  |  |  |
-| `reason` | `text` | yes | `''` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('bin_uop_ledger_id_seq')` | PK |  |
+| `bin_id` | `bigint` | yes |  |  |  |
+| `before_uop` | `integer` |  |  |  |  |
+| `after_uop` | `integer` | yes |  |  |  |
+| `op` | `text` | yes |  |  |  |
+| `source` | `text` | yes | `''` |  |  |
+| `order_id` | `bigint` |  |  |  |  |
+| `payload_code` | `text` | yes | `''` |  |  |
+| `actor` | `text` | yes | `''` |  |  |
+| `metadata` | `jsonb` |  |  |  |  |
+| `applied_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `node_id` | `bigint` |  |  |  |  |
+| `station_uid` | `text` | yes | `''` |  | The Edge a row is about. For a station-reported op (bin_uop_delta and the drops and rebinds beside it) the who is that Edge, so actor is blank; for a lifted row it is the order's station, and actor holds a Core actor when the order was one's. |
+| `detail` | `jsonb` |  |  |  |  |
+| `loader_id` | `bigint` |  |  |  |  |
+| `reason` | `text` | yes | `''` |  |  |
 
 #### Core: `bins`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('bins_id_seq')` | PK |
-| `bin_type_id` | `bigint` | yes |  | → `bin_types(id)` |
-| `label` | `text` | yes | `''` |  |
-| `description` | `text` | yes | `''` |  |
-| `node_id` | `bigint` |  |  | → `nodes(id)` |
-| `status` | `text` | yes | `'available'` |  |
-| `claimed_by` | `bigint` |  |  |  |
-| `staged_at` | `timestamp with time zone` |  |  |  |
-| `staged_expires_at` | `timestamp with time zone` |  |  |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `manifest` | `jsonb` |  |  |  |
-| `uop_remaining` | `integer` | yes | `0` |  |
-| `delta_epoch` | `bigint` | yes | `1` |  |
-| `manifest_confirmed` | `boolean` | yes | `false` |  |
-| `locked` | `boolean` | yes | `false` |  |
-| `locked_by` | `text` | yes | `''` |  |
-| `locked_at` | `timestamp with time zone` |  |  |  |
-| `last_counted_at` | `timestamp with time zone` |  |  |  |
-| `last_counted_by` | `text` | yes | `''` |  |
-| `loaded_at` | `timestamp with time zone` |  |  |  |
-| `anomaly_at` | `timestamp with time zone` |  |  |  |
-| `quality_hold` | `boolean` | yes | `false` |  |
-| `hold_by` | `text` | yes | `''` |  |
-| `hold_at` | `timestamp with time zone` |  |  |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `lifted_at` | `timestamp with time zone` |  |  |  |
-| `totes_on_cart` | `integer` |  |  |  |
-| `last_lift_at` | `timestamp with time zone` |  |  |  |
-| `lifted_from_node_id` | `bigint` |  |  | → `nodes(id) ON DELETE SET NULL` |
-| `anomaly_note` | `text` | yes | `''` |  |
-| `undeclared_carrier_at` | `timestamp with time zone` |  |  |  |
-| `held_since` | `timestamp with time zone` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('bins_id_seq')` | PK |  |
+| `bin_type_id` | `bigint` | yes |  | → `bin_types(id)` |  |
+| `label` | `text` | yes | `''` |  |  |
+| `description` | `text` | yes | `''` |  |  |
+| `node_id` | `bigint` |  |  | → `nodes(id)` |  |
+| `status` | `text` | yes | `'available'` |  |  |
+| `claimed_by` | `bigint` |  |  |  |  |
+| `staged_at` | `timestamp with time zone` |  |  |  |  |
+| `staged_expires_at` | `timestamp with time zone` |  |  |  |  |
+| `payload_code` | `text` | yes | `''` |  |  |
+| `manifest` | `jsonb` |  |  |  |  |
+| `uop_remaining` | `integer` | yes | `0` |  |  |
+| `delta_epoch` | `bigint` | yes | `1` |  |  |
+| `manifest_confirmed` | `boolean` | yes | `false` |  |  |
+| `locked` | `boolean` | yes | `false` |  |  |
+| `locked_by` | `text` | yes | `''` |  |  |
+| `locked_at` | `timestamp with time zone` |  |  |  |  |
+| `last_counted_at` | `timestamp with time zone` |  |  |  |  |
+| `last_counted_by` | `text` | yes | `''` |  |  |
+| `loaded_at` | `timestamp with time zone` |  |  |  |  |
+| `anomaly_at` | `timestamp with time zone` |  |  |  |  |
+| `quality_hold` | `boolean` | yes | `false` |  | Quality containment: the per-bin hold marker an operator's Send to Quality Hold sets. A held bin is not re-sourceable and not re-releasable to FG while it waits for (or sits in) containment. Default false is every other bin. |
+| `hold_by` | `text` | yes | `''` |  |  |
+| `hold_at` | `timestamp with time zone` |  |  |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `lifted_at` | `timestamp with time zone` |  |  |  | When a streamed carrier's generation ended at a lift (v151): set with the bump in the lift's UPDATE and cleared at the arrival. A late window starting at or after it is not the lifted carrier's (refused as after_lift). |
+| `totes_on_cart` | `integer` |  |  |  | The totes standing on the cart, filled or empty (v161). NULL is unknown; 0 is tops and bottoms. Every statement that empties a carrier writes NULL. |
+| `last_lift_at` | `timestamp with time zone` |  |  |  | When a robot last lifted the bin (v162). Every lift writes it, in the lift's own UPDATE; nothing clears it. The vacate hold's floor. |
+| `lifted_from_node_id` | `bigint` |  |  | → `nodes(id) ON DELETE SET NULL` | The node a streamed carrier was lifted from (v175), written with lifted_at. A late draw of the generation the lift ended is booked there. |
+| `anomaly_note` | `text` | yes | `''` |  |  |
+| `undeclared_carrier_at` | `timestamp with time zone` |  |  |  |  |
+| `held_since` | `timestamp with time zone` |  |  |  |  |
 
 - Check `(totes_on_cart >= 0)`
 - Unique (label) where `label <> ''`
@@ -790,29 +792,30 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 |---|---|---|---|---|
 | `id` | `bigint` | yes | `nextval('carrier_families_id_seq')` | PK |
 | `code` | `text` | yes |  | unique |
-| `description` | `text` | yes | `''` |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 | `lift_bintask` | `text` | yes | `''` |  |
 | `wait_bintask` | `text` | yes | `''` |  |
 
+- The physical cart a bin type is one setting of (v172).
+
 #### Core: `cell_config`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `cell_id` | `text` | yes |  | PK |
-| `station` | `text` | yes |  |  |
-| `primary_process_id` | `bigint` | yes |  |  |
-| `sub_process_ids` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `display_name` | `text` | yes | `''` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `cell_label` | `text` | yes |  | PK | The operator's label for the cell (cell_id until v185), the key. |
+| `station_uid` | `text` | yes |  |  |  |
+| `primary_process_id` | `bigint` | yes |  |  |  |
+| `sub_process_ids` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `display_name` | `text` | yes | `''` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
 
 #### Core: `cell_part_events`
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
 | `id` | `bigint` | yes | `nextval('cell_part_events_id_seq')` |  |
-| `cell_id` | `text` | yes |  |  |
+| `station_uid` | `text` | yes |  |  |
 | `recorded_at` | `timestamp with time zone` | yes |  |  |
 | `edge_snapshot_id` | `bigint` | yes |  |  |
 | `count_value` | `bigint` | yes | `0` |  |
@@ -821,19 +824,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `process_id` | `bigint` | yes | `0` |  |
 | `style_id` | `bigint` | yes | `0` |  |
 
+- One row per PLC counter tick, projected from production.ticks (and production.tick from older Edges). Partitioned monthly by recorded_at: store/heartbeat creates the current and next month's partitions at boot and drops partitions older than the retention window nightly. The dedup key is the unique index uq_cell_part_events_tick (v128). station_uid is the sending Edge's uid, the envelope's station (cell_id until v185).
 - Partitioned: `RANGE (recorded_at)`
-
-#### Core: `cell_targets`
-
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `cell_id` | `text` | yes |  |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `target_cycle_ms` | `bigint` | yes | `0` |  |
-| `owner` | `text` | yes | `''` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-
-- Primary key (cell_id, payload_code)
 
 #### Core: `cleaning_mission_setup`
 
@@ -847,6 +839,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `min_battery` | `smallint` | yes | `25` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- The one air-knife mission set up on the Robots page's Cleaning tab (v158; floor data, never yaml); read by the cleaning loop every tick and by the tab.
 - Check `(id = 1)`
 
 #### Core: `cleaning_missions`
@@ -861,11 +854,15 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `dispatched_at` | `timestamp with time zone` | yes | `now()` |  |
 | `finished_at` | `timestamp with time zone` |  |  |  |
 
+- One row per pinned cleaning order sent to the fleet, the only record of it: no Core orders row is ever written (v158). Read by the cleaning loop (open rows, last dispatch per robot) and the Cleaning tab's history.
+
 #### Core: `cleaning_opt_outs`
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
 | `vehicle_id` | `text` | yes |  | PK |
+
+- A row per robot never to clean (v158); read by the cleaning loop's guard and the robot pop-up's switch.
 
 #### Core: `cms_postings`
 
@@ -885,27 +882,29 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `posted_at` | `timestamp with time zone` |  |  |  |
 | `settled_at` | `timestamp with time zone` |  |  |  |
 
+- One row per POST to the CMS middleware (v102). Separate from cms_transactions because a transaction is a local fact (a bin crossed a boundary) and a posting is a claim about a remote system (whether it knows). Their lifecycles do not line up: one posting carries many transactions, and a posting can be retried while the transactions it carries never change.
+
 #### Core: `cms_transactions`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('cms_transactions_id_seq')` | PK |
-| `node_id` | `bigint` | yes |  | → `nodes(id)` |
-| `node_name` | `text` | yes | `''` |  |
-| `cat_id` | `text` | yes |  |  |
-| `delta` | `bigint` | yes | `0` |  |
-| `bin_id` | `bigint` |  |  | → `bins(id)` |
-| `bin_label` | `text` | yes | `''` |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `source_type` | `text` | yes |  |  |
-| `order_id` | `bigint` |  |  | → `orders(id)` |
-| `notes` | `text` | yes | `''` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `posting_id` | `bigint` |  |  |  |
-| `robot_id` | `text` | yes | `''` |  |
-| `storeroom` | `text` | yes | `''` |  |
-| `location_node_id` | `bigint` |  |  |  |
-| `location_node_name` | `text` | yes | `''` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('cms_transactions_id_seq')` | PK |  |
+| `node_id` | `bigint` | yes |  | → `nodes(id)` |  |
+| `node_name` | `text` | yes | `''` |  |  |
+| `cat_id` | `text` | yes |  |  |  |
+| `delta` | `bigint` | yes | `0` |  | Signed: negative leaves the boundary, positive arrives at it. There is deliberately no txn_type (it was sign(delta) as a word, free to disagree with the delta beside it) and no qty_before or qty_after (computed at insert from a recursive subtree scan, unsound under concurrent moves; v101 dropped them). A running total is a query, not a column. |
+| `bin_id` | `bigint` |  |  | → `bins(id)` |  |
+| `bin_label` | `text` | yes | `''` |  |  |
+| `payload_code` | `text` | yes | `''` |  |  |
+| `source_type` | `text` | yes |  |  | No DEFAULT: every writer sets it, and a default that silently supplies it is a place for a future writer to forget. Historical rows carry correction and stay browsable. |
+| `order_id` | `bigint` |  |  | → `orders(id)` |  |
+| `notes` | `text` | yes | `''` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `posting_id` | `bigint` |  |  |  |  |
+| `robot_id` | `text` | yes | `''` |  |  |
+| `storeroom` | `text` | yes | `''` |  |  |
+| `location_node_id` | `bigint` |  |  |  |  |
+| `location_node_name` | `text` | yes | `''` |  |  |
 
 - Unique (order_id, bin_id, node_id, cat_id, delta) NULLS NOT DISTINCT WHERE (order_id IS NOT NULL)
 
@@ -923,6 +922,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- Floor-facing definitions for the wall-display platform. A row is a saved, named view of Core's live data, scoped to a set of stations (an area), rendered chromeless at /wall-display/{id}?kiosk=1 and managed on the hub at /. Pure presentation: it owns no operational data beyond its own definition. kind selects the renderer (task-board, robot-map, heartbeat, node-report); stations_json is the area filter; config_json carries per-kind options. The table name matches the /api/.../dashboards namespace and domain.Dashboard, not the page's name.
+
 #### Core: `demand_origins`
 
 | Column | Type | Not null | Default | Key |
@@ -933,8 +934,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `direction` | `text` | yes | `''` |  |
 | `trigger_kind` | `text` | yes | `''` |  |
 | `trigger_ref` | `text` | yes | `''` |  |
-| `parent_origin_id` | `uuid` |  |  |  |
-| `station_id` | `text` | yes | `''` |  |
+| `station_uid` | `text` | yes | `''` |  |
 | `process_id` | `text` | yes | `''` |  |
 | `core_node_name` | `text` | yes | `''` |  |
 | `payload_code` | `text` | yes | `''` |  |
@@ -944,7 +944,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `revision` | `bigint` | yes | `1` |  |
 | `expected_orders` | `integer` |  |  |  |
 | `expected_reason` | `text` | yes | `''` |  |
-| `uop_delivered` | `integer` | yes | `0` |  |
 | `rerequest_count` | `integer` | yes | `0` |  |
 | `signal_count` | `integer` | yes | `0` |  |
 | `discretionary` | `boolean` | yes | `false` |  |
@@ -961,100 +960,75 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Core: `demand_registry`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('demand_registry_id_seq')` | PK |
-| `station_id` | `text` | yes |  |  |
-| `core_node_name` | `text` | yes |  |  |
-| `role` | `text` | yes |  |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `outbound_dest` | `text` | yes | `''` |  |
-| `replenish_uop_threshold` | `integer` | yes | `0` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `loader_id` | `bigint` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('demand_registry_id_seq')` | PK |  |
+| `station_uid` | `text` | yes |  |  |  |
+| `core_node_name` | `text` | yes |  |  |  |
+| `role` | `text` | yes |  |  |  |
+| `payload_code` | `text` | yes | `''` |  |  |
+| `outbound_dest` | `text` | yes | `''` |  |  |
+| `replenish_uop_threshold` | `integer` | yes | `0` |  | UOP-threshold replenishment: when above 0, Core's threshold monitor holds this (loader, payload) loop's combined in-loop UOP (bins and buckets) against it. 0 is off. |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `loader_id` | `bigint` |  |  |  |  |
 
-- Unique (station_id, core_node_name, payload_code)
-
-#### Core: `downtime_event_dedup`
-
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `station` | `text` | yes |  |  |
-| `edge_event_id` | `bigint` | yes |  |  |
-| `applied_at` | `timestamp with time zone` | yes | `now()` |  |
-
-- Primary key (station, edge_event_id)
-
-#### Core: `downtime_events`
-
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('downtime_events_id_seq')` |  |
-| `station` | `text` | yes |  |  |
-| `plc_name` | `text` | yes |  |  |
-| `reason` | `text` | yes | `''` |  |
-| `started_at` | `timestamp with time zone` | yes |  |  |
-| `ended_at` | `timestamp with time zone` |  |  |  |
-| `duration_ms` | `bigint` | yes | `0` |  |
-| `edge_event_id` | `bigint` | yes | `0` |  |
-
-- Partitioned: `RANGE (started_at)`
+- Unique (station_uid, core_node_name, payload_code)
 
 #### Core: `edge_cells`
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
-| `station` | `text` | yes |  |  |
+| `station_uid` | `text` | yes |  |  |
 | `cell_label` | `text` | yes |  |  |
 | `bindings` | `jsonb` | yes | `'[]'::jsonb` |  |
 | `first_seen` | `timestamp with time zone` | yes | `now()` |  |
 | `last_seen` | `timestamp with time zone` | yes | `now()` |  |
 | `stale` | `boolean` | yes | `false` |  |
 
-- Primary key (station, cell_label)
+- Primary key (station_uid, cell_label)
 
 #### Core: `edge_lineside_reports`
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
-| `station` | `text` | yes |  |  |
+| `station_uid` | `text` | yes |  |  |
 | `core_node_name` | `text` | yes |  |  |
 | `payload_code` | `text` | yes |  |  |
 | `reported_at` | `timestamp with time zone` | yes |  |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 
-- Primary key (station, core_node_name, payload_code)
+- Primary key (station_uid, core_node_name, payload_code)
 
 #### Core: `edge_registry`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('edge_registry_id_seq')` | PK |
-| `station_uid` | `text` | yes | `''` |  |
-| `display_name` | `text` | yes | `''` |  |
-| `station_id` | `text` | yes |  | unique |
-| `hostname` | `text` | yes | `''` |  |
-| `version` | `text` | yes | `''` |  |
-| `registered_at` | `timestamp with time zone` | yes | `now()` |  |
-| `last_heartbeat` | `timestamp with time zone` |  |  |  |
-| `status` | `text` | yes | `'active'` |  |
-| `bound_hostname` | `text` | yes | `''` |  |
-| `bound_instance` | `text` | yes | `''` |  |
-| `prev_instance` | `text` | yes | `''` |  |
-| `bound_at` | `timestamp with time zone` |  |  |  |
-| `claimed_at` | `timestamp with time zone` |  |  |  |
-| `conflict_hostname` | `text` | yes | `''` |  |
-| `conflict_count` | `bigint` | yes | `0` |  |
-| `conflict_at` | `timestamp with time zone` |  |  |  |
-| `schema_version` | `integer` |  |  |  |
-| `clock_offset_ms` | `bigint` |  |  |  |
-| `timezone` | `text` | yes | `''` |  |
-| `tick_pending` | `bigint` |  |  |  |
-| `tick_oldest_unsent_age_ms` | `bigint` |  |  |  |
-| `tick_reported_at` | `timestamp with time zone` |  |  |  |
-| `tick_rejected` | `bigint` | yes | `0` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('edge_registry_id_seq')` | PK |  |
+| `station_uid` | `text` | yes | `''` | unique | What Core correlates all history to. Core mints it at enrollment and it never changes. Opaque on purpose: the moment an identifier is legible it acquires an editor. |
+| `display_name` | `text` | yes | `''` |  | The operator's label (PLANT / EDGE-2). Operator-owned, freely mutable, and it never crosses the wire as an identifier. |
+| `hostname` | `text` | yes | `''` |  |  |
+| `version` | `text` | yes | `''` |  |  |
+| `registered_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `last_heartbeat` | `timestamp with time zone` |  |  |  |  |
+| `status` | `text` | yes | `'active'` |  |  |
+| `bound_hostname` | `text` | yes | `''` |  |  |
+| `bound_instance` | `text` | yes | `''` |  |  |
+| `prev_instance` | `text` | yes | `''` |  |  |
+| `bound_at` | `timestamp with time zone` |  |  |  |  |
+| `claimed_at` | `timestamp with time zone` |  |  |  | NULL until a human has said what this station is. It is not status: Register writes status = active on every register, so anything recorded there is erased by the next heartbeat's worth of traffic. The question has anybody acknowledged this box has to survive registration, so it gets its own column and only moves one way. NULL is a real and expected state: an unconfigured Pi mints its own uid and comes up working. What it cannot do is claim to be an existing station: a minted uid is random, so it always makes its own row and can never take over another one. |
+| `conflict_hostname` | `text` | yes | `''` |  |  |
+| `conflict_count` | `bigint` | yes | `0` |  |  |
+| `conflict_at` | `timestamp with time zone` |  |  |  |  |
+| `schema_version` | `integer` |  |  |  | The applied schema_migrations version the edge's register payload last reported (protocol.EdgeRegister.SchemaVersion; v137), written only from the wire, never by a human. NULL means no register has carried one. |
+| `clock_offset_ms` | `bigint` |  |  |  | The edge's clock minus Core's, as its last heartbeat implied it: the envelope's ts minus Core's clock on receipt, the broker's delay included (v154). Written by the heartbeat's UPDATE; NULL until a heartbeat carried a ts. |
+| `timezone` | `text` | yes | `''` |  |  |
+| `tick_pending` | `bigint` |  |  |  |  |
+| `tick_oldest_unsent_age_ms` | `bigint` |  |  |  |  |
+| `tick_reported_at` | `timestamp with time zone` |  |  |  |  |
+| `tick_rejected` | `bigint` | yes | `0` |  |  |
 
-- Unique (station_uid) where `station_uid <> ''`
+- The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope's Address.Station carries. display_name is the operator's label. Core mints the uid rather than the Pi because a Core-issued token is re-issuable: replace the hardware for an existing station and hand the new Pi the existing uid, and history does not move because identity did not move. Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm's persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.
+- Check `(station_uid <> '')`
 
 #### Core: `inbox`
 
@@ -1062,7 +1036,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 |---|---|---|---|---|
 | `msg_id` | `text` | yes |  | PK |
 | `msg_type` | `text` | yes | `''` |  |
-| `station_id` | `text` | yes | `''` |  |
 | `processed_at` | `timestamp with time zone` | yes | `now()` |  |
 | `reply_outbox_id` | `bigint` |  |  |  |
 
@@ -1070,7 +1043,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
-| `station` | `text` | yes |  |  |
+| `station_uid` | `text` | yes |  |  |
 | `scope_kind` | `text` | yes |  |  |
 | `scope_key` | `text` | yes |  |  |
 | `epoch` | `bigint` | yes | `0` |  |
@@ -1079,7 +1052,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `applied_net` | `bigint` |  |  |  |
 | `applied_window_end` | `timestamp with time zone` |  |  |  |
 
-- Primary key (station, scope_kind, scope_key, epoch)
+- At-most-once dedup for inventory delta envelopes. Distinct from inbox dedup, which gates order-message processing: this gates the count change the envelope carries. last_seq is the highest SequenceID Core has applied for the (station_uid, scope_kind, scope_key) tuple; epoch is the bin's delta_epoch when the delta was emitted (bucket-scope deltas carry 0). A bucket's row is not cleared when the pile empties, and must not be: since v126 (applied_net) an absent row applies the station's whole running net. The admin delete resets the row instead of deleting it (store/inventory/inventory.go).
+- Primary key (station_uid, scope_kind, scope_key, epoch)
 
 #### Core: `kanban_families`
 
@@ -1091,6 +1065,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- The pool of each carrier family a kanban owns (v172).
 - Check `(pool >= 0)`
 - Primary key (kanban_node_id, family_id)
 
@@ -1103,6 +1078,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `layers` | `integer` | yes |  |  |
 | `want` | `integer` | yes |  |  |
 
+- Per kanban, carrier type and height in layers, how many carts the kanban wants standing that high (v161 as node_maintain_layer_levels, renamed at v169). A height of 1 or more is communication, summed against nothing; the row at 0 (v164) is tops and bottoms, a cap of its own beside the type's stack level in kanban_levels.
 - Check `(layers >= 0)`
 - Check `(want >= 0)`
 - Primary key (kanban_node_id, bin_type_id, layers)
@@ -1117,6 +1093,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- How many empty carriers of each type a kanban is to hold, and the type's own overflow (v90 as node_maintain_levels, renamed at v169). Separate from bin_loader_quotas on purpose: a quota is a preference bounded by never-2N, a level is the number Core keeps.
 - Check `(want >= 0)`
 - Primary key (kanban_node_id, bin_type_id)
 
@@ -1128,6 +1105,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `rank` | `integer` | yes |  |  |
 | `source_node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |
 
+- The groups a kanban's keeper may pull from, in rank order (v169).
 - Check `(source_node_id <> kanban_node_id)`
 - Check `(rank >= 1)`
 - Unique (kanban_node_id, source_node_id)
@@ -1141,6 +1119,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `process_node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- Which process nodes a kanban serves (v90 as node_maintain_supports, renamed at v169): the resolved node set, because a claim is Edge-local and Core cannot read one.
 - Primary key (kanban_node_id, process_node_id)
 
 #### Core: `kanbans`
@@ -1148,10 +1127,12 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
 | `node_id` | `bigint` | yes |  | PK, → `nodes(id) ON DELETE CASCADE` |
-| `station_id` | `text` |  |  |  |
+| `station_uid` | `text` |  |  |  |
 | `strict` | `boolean` | yes | `false` |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+
+- One row per kanban: its station and strict (v169).
 
 #### Core: `lane_confidence_daily`
 
@@ -1179,6 +1160,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `version_id` | `bigint` | yes |  | → `scene_lane_versions(id)` |
 | `conf_hist` | `integer[]` |  |  |  |
 
+- The permanent per-lane roll-up (v80), in place of the per-segment one, whose rows were at the directed-segment grain, half a lane.
 - Primary key (day, area_name, lane, version_id)
 
 #### Core: `lane_robot_confidence_daily`
@@ -1202,21 +1184,23 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `version_id` | `bigint` | yes |  | → `scene_lane_versions(id)` |
 | `conf_hist` | `integer[]` |  |  |  |
 
+- The permanent per-lane, per-robot grain the map filters by AMR (v83). lane_confidence_daily merges its robots irreversibly, so this carries the intersection.
 - Primary key (day, area_name, lane, version_id, vehicle_id)
 
 #### Core: `lineside_buckets`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('lineside_buckets_id_seq')` | PK |
-| `station` | `text` | yes |  |  |
-| `core_node_name` | `text` | yes |  |  |
-| `payload_code` | `text` | yes |  |  |
-| `qty` | `integer` | yes |  |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `state` | `text` | yes |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('lineside_buckets_id_seq')` | PK |  |
+| `station_uid` | `text` | yes |  |  | Attribute data, not identity: the station that last reported this pile. Never a predicate (v65). |
+| `core_node_name` | `text` | yes |  |  |  |
+| `payload_code` | `text` | yes |  |  | The payload this pile's parts belong to, filled by the Edge at capture from the order context. Empty means unknown (an orphan whose claim was deleted before the capture resolved a payload) and is excluded from SystemUOPForPayload: a conservative undercount, never an overcount. |
+| `qty` | `integer` | yes |  |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `state` | `text` | yes |  |  |  |
 
+- Core's mirror of the Edge's bucket model: parts at a node, by payload. core_node_name is the canonical node name, not the Edge's process_nodes.id: the two int64 namespaces share a type and mean different things at each end, and reading the Edge's id as Core's produced cross-plant attribution bugs. It resolves to nodes.id through GetNodeByName. The station left the key at v65: which node holds the parts is the fact, which Pi reported it is not. The key is (core_node_name, payload_code, state), state active or stranded (v131).
 - Check `(qty >= 0)`
 - Check `(state = ANY (ARRAY['active', 'stranded']))`
 - Unique (core_node_name, payload_code, state)
@@ -1232,70 +1216,80 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `after_qty` | `integer` | yes |  |  |
 | `applied_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- One row per applied lineside drain (v120). A drain is consumption at a node from a pile, not a bin event, so bin_uop_ledger cannot take it (bin_id is NOT NULL), and the pile's row deletes at qty 0; this is where the history survives.
+
 #### Core: `load_sequences`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `name` | `text` | yes |  | PK |
-| `task_names` | `text` | yes | `'[]'` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `lift_at` | `integer` | yes |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `name` | `text` | yes |  | PK |  |
+| `task_names` | `text` | yes | `'[]'` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `lift_at` | `integer` | yes |  |  | The index in task_names of the name that lifts (v179). |
 
+- The advanced-load-sequence registry. One row per sequence name; task_names is a JSON array of binTask names in execution order. Editable data (a plant names its RDS-side binTask keys differently); seeded by v50 with Child cart interlock. A payload selects a sequence by name via payloads.advanced_load_sequence.
 - Check `((lift_at >= 0) AND (lift_at < GREATEST(json_array_length((task_names)::json), 1)))`
 
 #### Core: `mission_events`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('mission_events_id_seq')` | PK |
-| `order_id` | `bigint` | yes |  |  |
-| `vendor_order_id` | `text` | yes | `''` |  |
-| `old_state` | `text` | yes |  |  |
-| `new_state` | `text` | yes |  |  |
-| `robot_id` | `text` | yes | `''` |  |
-| `robot_x` | `double precision` |  |  |  |
-| `robot_y` | `double precision` |  |  |  |
-| `robot_angle` | `double precision` |  |  |  |
-| `robot_battery` | `double precision` |  |  |  |
-| `robot_station` | `text` | yes | `''` |  |
-| `blocks_json` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `errors_json` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `detail` | `text` | yes | `''` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('mission_events_id_seq')` | PK |  |
+| `order_id` | `bigint` | yes |  |  |  |
+| `vendor_order_id` | `text` | yes | `''` |  |  |
+| `old_state` | `text` | yes |  |  |  |
+| `new_state` | `text` | yes |  |  |  |
+| `robot_id` | `text` | yes | `''` |  |  |
+| `robot_x` | `double precision` |  |  |  |  |
+| `robot_y` | `double precision` |  |  |  |  |
+| `robot_angle` | `double precision` |  |  |  |  |
+| `robot_battery` | `double precision` |  |  |  |  |
+| `rds_station` | `text` | yes | `''` |  | The RDS map point the robot reported standing at: a fleet name, not a station. |
+| `blocks_json` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `errors_json` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `detail` | `text` | yes | `''` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+
+- Raw vendor observations, one row per transition: what the fleet reported, in what order, with the robot where. Fed by the RDS status poller, so new_state holds vendor states (RUNNING, WAITING, FINISHED: SEER's vocabulary), not Core's order statuses. The one exception is BLOCK_FINISHED, Core's own per-leg marker, deliberately not a vendor state so a reader filtering on real states does not pick it up. Not the source for canonical timing: two clocks meet here, and order_history is the one written by Core's own state machine. Same subject as mission_telemetry at a different grain, answering a different question: do not merge them, and do not grow this into a leg table beyond the per-block rows it carries.
 
 #### Core: `mission_telemetry`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('mission_telemetry_id_seq')` | PK |
-| `order_id` | `bigint` | yes |  | unique |
-| `vendor_order_id` | `text` | yes | `''` |  |
-| `robot_id` | `text` | yes | `''` |  |
-| `station_id` | `text` | yes | `''` |  |
-| `order_type` | `text` | yes | `''` |  |
-| `source_node` | `text` | yes | `''` |  |
-| `delivery_node` | `text` | yes | `''` |  |
-| `terminal_state` | `text` | yes | `''` |  |
-| `vendor_created` | `timestamp with time zone` |  |  |  |
-| `vendor_completed` | `timestamp with time zone` |  |  |  |
-| `core_created` | `timestamp with time zone` |  |  |  |
-| `core_completed` | `timestamp with time zone` |  |  |  |
-| `duration_ms` | `bigint` | yes | `0` |  |
-| `vendor_duration_ms` | `bigint` | yes | `0` |  |
-| `blocks_json` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `errors_json` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `warnings_json` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `notices_json` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `robot_alarms_json` | `jsonb` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('mission_telemetry_id_seq')` | PK |  |
+| `order_id` | `bigint` | yes |  | unique |  |
+| `vendor_order_id` | `text` | yes | `''` |  |  |
+| `robot_id` | `text` | yes | `''` |  |  |
+| `station_uid` | `text` | yes | `''` |  |  |
+| `order_type` | `text` | yes | `''` |  |  |
+| `source_node` | `text` | yes | `''` |  |  |
+| `delivery_node` | `text` | yes | `''` |  |  |
+| `terminal_state` | `text` | yes | `''` |  |  |
+| `vendor_created` | `timestamp with time zone` |  |  |  |  |
+| `vendor_completed` | `timestamp with time zone` |  |  |  |  |
+| `core_created` | `timestamp with time zone` |  |  |  |  |
+| `core_completed` | `timestamp with time zone` |  |  |  |  |
+| `duration_ms` | `bigint` | yes | `0` |  | Lead time (created to terminal, queue included). Execution time, what the robot actually spent with faulted dwell excluded, is computed on read from order_history (store/telemetry/execution.go). |
+| `vendor_duration_ms` | `bigint` | yes | `0` |  |  |
+| `blocks_json` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `errors_json` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `warnings_json` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `notices_json` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `robot_alarms_json` | `jsonb` |  |  |  |  |
+| `requested_by` | `text` | yes | `''` |  | The order's requested_by, as orders carries it. |
+
+- What the robots did, one row per mission: what the fleet actually carried out, not what happened to the orders. Written only when an order reaches a vendor terminal (finalizeMissionTelemetry, gated on fleet.IsTerminalState), so most terminal orders have no row here. That survivorship is correct for the question this table answers, since every skip and most cancels never reached a robot, and wrong for any question about order outcomes, which belong to orders and order_history. Reading failure counts from here was a real bug (see GetFailures).
+- Check `(requested_by = ANY (ARRAY['', 'core-operator', 'core-direct', 'core-test']))`
+- Check `(station_uid <> ALL (ARRAY['core-operator', 'core-direct', 'core-test']))`
 
 #### Core: `node_bin_types`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |
-| `bin_type_id` | `bigint` | yes |  | → `bin_types(id) ON DELETE CASCADE` |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |  |
+| `bin_type_id` | `bigint` | yes |  | → `bin_types(id) ON DELETE CASCADE` |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  | When the row was written (v90); the table carried no timestamp before. Written by the group settings modal, as node_properties is. |
 
 - Primary key (node_id, bin_type_id)
 
@@ -1311,14 +1305,14 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Core: `node_properties`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('node_properties_id_seq')` | PK |
-| `node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |
-| `key` | `text` | yes |  |  |
-| `value` | `text` | yes | `''` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('node_properties_id_seq')` | PK |  |
+| `node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |  |
+| `key` | `text` | yes |  |  |  |
+| `value` | `text` | yes | `''` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  | When the row last moved (v90). The property UPSERT changes the value in place, so a created_at-only row read as untouched forever. The audit_log says who and what; this says when. |
 
 - Unique (node_id, key)
 
@@ -1327,10 +1321,10 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
 | `node_id` | `bigint` | yes |  | → `nodes(id) ON DELETE CASCADE` |
-| `station_id` | `text` | yes |  |  |
+| `station_uid` | `text` | yes |  |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 
-- Primary key (node_id, station_id)
+- Primary key (node_id, station_uid)
 
 #### Core: `node_types`
 
@@ -1346,20 +1340,20 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Core: `nodes`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('nodes_id_seq')` | PK |
-| `name` | `text` | yes |  | unique |
-| `display_name` | `text` | yes | `''` |  |
-| `is_synthetic` | `boolean` | yes | `false` |  |
-| `zone` | `text` | yes | `''` |  |
-| `enabled` | `boolean` | yes | `true` |  |
-| `depth` | `integer` |  |  |  |
-| `node_type_id` | `bigint` |  |  |  |
-| `parent_id` | `bigint` |  |  | → `nodes(id)` |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `claimed_by` | `bigint` |  |  | → `orders(id)` |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('nodes_id_seq')` | PK |  |
+| `name` | `text` | yes |  | unique |  |
+| `display_name` | `text` | yes | `''` |  | The person-readable label (v144). The node's own name is the fleet's identity: scenesync matches the fleet's location set by name and deletes a physical node the scene does not carry, so the cosmetic rename rides a column of its own; empty renders the name. |
+| `is_synthetic` | `boolean` | yes | `false` |  |  |
+| `zone` | `text` | yes | `''` |  |  |
+| `enabled` | `boolean` | yes | `true` |  |  |
+| `depth` | `integer` |  |  |  |  |
+| `node_type_id` | `bigint` |  |  |  |  |
+| `parent_id` | `bigint` |  |  | → `nodes(id)` |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `claimed_by` | `bigint` |  |  | → `orders(id)` |  |
 
 #### Core: `order_bins`
 
@@ -1378,95 +1372,101 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Core: `order_history`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('order_history_id_seq')` | PK |
-| `order_id` | `bigint` | yes |  | → `orders(id)` |
-| `status` | `text` | yes |  |  |
-| `detail` | `text` | yes | `''` |  |
-| `code` | `text` |  |  |  |
-| `actor` | `text` |  |  |  |
-| `ref` | `jsonb` |  |  |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('order_history_id_seq')` | PK |  |
+| `order_id` | `bigint` | yes |  | → `orders(id)` |  |
+| `status` | `text` | yes |  |  |  |
+| `detail` | `text` | yes | `''` |  |  |
+| `code` | `text` |  |  |  | protocol.TermCode on a terminal row, protocol.QueueCode on a to-queued row. Prefer it over parsing detail, which is prose. |
+| `actor` | `text` |  |  |  | Who caused the transition. |
+| `ref` | `jsonb` |  |  |  | What the reason concerns, as JSONB: node, payload, peer. The reference is what makes a reason actionable: ref->>payload is the GROUP BY that turns no_source_bin into starvation by cause. |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+
+- Every status transition an order made, in order. The canonical timing source: both endpoints of execution time come from here rather than mission_telemetry, because these rows are written by Core's own state machine, on Core's clock. code, actor and ref are the typed reason (v55); all three are NULL on rows written before v55 and on uncoded transitions.
 
 #### Core: `order_intake_refusals`
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
 | `edge_uuid` | `text` | yes |  | PK |
-| `station_id` | `text` | yes | `''` |  |
 | `error_code` | `text` | yes |  |  |
 | `detail` | `text` | yes | `''` |  |
 | `refused_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- The pair legs Core refused at intake (v115). A refused request leaves no order row, so the partner naming one could not tell refused from not-received-yet; the pair rule reads this when the partner's row is absent.
+
 #### Core: `orders`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('orders_id_seq')` | PK |
-| `edge_uuid` | `text` | yes |  |  |
-| `station_id` | `text` | yes | `''` |  |
-| `order_type` | `text` | yes | `'retrieve'` |  |
-| `status` | `text` | yes | `'pending'` |  |
-| `quantity` | `bigint` | yes | `1` |  |
-| `source_node` | `text` | yes | `''` |  |
-| `delivery_node` | `text` | yes | `''` |  |
-| `process_node` | `text` | yes | `''` |  |
-| `vendor_order_id` | `text` | yes | `''` |  |
-| `vendor_state` | `text` | yes | `''` |  |
-| `robot_id` | `text` | yes | `''` |  |
-| `priority` | `integer` | yes | `0` |  |
-| `payload_desc` | `text` | yes | `''` |  |
-| `error_detail` | `text` | yes | `''` |  |
-| `steps_json` | `text` | yes | `''` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `completed_at` | `timestamp with time zone` |  |  |  |
-| `parent_order_id` | `bigint` |  |  | → `orders(id)` |
-| `sequence` | `integer` | yes | `0` |  |
-| `payload_code` | `text` | yes | `''` |  |
-| `wait_index` | `integer` | yes | `0` |  |
-| `queue_reason` | `text` | yes | `''` |  |
-| `queue_code` | `text` |  |  |  |
-| `queue_cause` | `text` |  |  |  |
-| `skip_auto_confirm` | `boolean` | yes | `false` |  |
-| `sibling_order_uuid` | `text` | yes | `''` |  |
-| `key_route` | `text` | yes | `''` |  |
-| `key_task` | `text` | yes | `''` |  |
-| `source_intent` | `text` | yes | `''` |  |
-| `coordinated` | `boolean` | yes | `false` |  |
-| `remaining_uop` | `integer` |  |  |  |
-| `origin_id` | `uuid` |  |  |  |
-| `origin_class` | `text` | yes | `''` |  |
-| `open_for_children` | `boolean` | yes | `false` |  |
-| `station_unaware` | `boolean` | yes | `false` |  |
-| `projects_to` | `text` | yes | `''` |  |
-| `plan` | `text` | yes | `''` |  |
-| `orphan_aged_at` | `timestamp with time zone` |  |  |  |
-| `destination_resolved_at` | `timestamp with time zone` |  |  |  |
-| `recovers_order_id` | `bigint` |  |  | → `orders(id)` |
-| `named_bin_id` | `bigint` |  |  |  |
-| `want` | `text` | yes | `''` |  |
-| `steps_done` | `integer` | yes | `0` |  |
-| `block_actions` | `jsonb` |  | `'{}'::jsonb` |  |
-| `version` | `bigint` | yes | `1` |  |
-| `asked_vendor_order_id` | `text` | yes | `''` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('orders_id_seq')` | PK |  |
+| `edge_uuid` | `text` | yes |  |  |  |
+| `station_uid` | `text` | yes | `''` |  | The station that sent the order or is its owner: an Edge's uid, or blank for an order no station asked for (since v185, Core's actors are in requested_by, and a CHECK keeps them out of this column). |
+| `order_type` | `text` | yes | `'retrieve'` |  |  |
+| `status` | `text` | yes | `'pending'` |  |  |
+| `quantity` | `bigint` | yes | `1` |  |  |
+| `source_node` | `text` | yes | `''` |  |  |
+| `delivery_node` | `text` | yes | `''` |  |  |
+| `process_node` | `text` | yes | `''` |  |  |
+| `vendor_order_id` | `text` | yes | `''` |  |  |
+| `vendor_state` | `text` | yes | `''` |  |  |
+| `robot_id` | `text` | yes | `''` |  |  |
+| `priority` | `integer` | yes | `0` |  |  |
+| `payload_desc` | `text` | yes | `''` |  |  |
+| `error_detail` | `text` | yes | `''` |  |  |
+| `steps_json` | `text` | yes | `''` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `completed_at` | `timestamp with time zone` |  |  |  |  |
+| `parent_order_id` | `bigint` |  |  | → `orders(id)` |  |
+| `sequence` | `integer` | yes | `0` |  |  |
+| `payload_code` | `text` | yes | `''` |  |  |
+| `wait_index` | `integer` | yes | `0` |  |  |
+| `queue_reason` | `text` | yes | `''` |  |  |
+| `queue_code` | `text` |  |  |  |  |
+| `queue_cause` | `text` |  |  |  |  |
+| `skip_auto_confirm` | `boolean` | yes | `false` |  |  |
+| `sibling_order_uuid` | `text` | yes | `''` |  |  |
+| `key_route` | `text` | yes | `''` |  |  |
+| `key_task` | `text` | yes | `''` |  |  |
+| `source_intent` | `text` | yes | `''` |  |  |
+| `coordinated` | `boolean` | yes | `false` |  |  |
+| `remaining_uop` | `integer` |  |  |  |  |
+| `origin_id` | `uuid` |  |  |  | The demand this order was created to serve. See origin_class. |
+| `origin_class` | `text` | yes | `''` |  | Whether the order should have had a demand. It is what makes origin_id IS NULL answerable: without it that predicate selects every consume-side order, every opportunistic stage and every admin action, with the actual lost origins buried in there. Only orphan is a finding. |
+| `open_for_children` | `boolean` | yes | `false` |  | Sealedness, on the compound parent: sealed = NOT open_for_children. Sealed is the concept's name everywhere else (SealDigGroup), and this is the column that carries it. Named for the exception so the safe state is the zero value in both languages: false here and false for a bare orders.Order literal in Go, and both mean sealed. Only a compound parent means anything by it: a reshuffle that may still gain children is not finished when its current children are all terminal, and all children terminal is what AdvanceCompoundOrder's success arm and AdvanceStuckReshuffleParents read as done. Born sealed by DEFAULT false; only SetCompoundOpen changes it. |
+| `station_unaware` | `boolean` | yes | `false` |  | The station named on the order has no row for it: it did not send the order and the order does not project there. Its station is sent nothing about it. Named for the exception; false is every order but a Core-born one that does not project (v145). |
+| `projects_to_station_uid` | `text` | yes | `''` |  | The station a station-unaware order's delivered and picked_up notices go to; blank is nobody. Unread for a station-known order (v146). |
+| `plan` | `text` | yes | `''` |  | The planner's pick at birth, as JSON: the bin, its node and the bin row as the pick saw it. Acquiring reads it instead of picking again, and picks only when it no longer stands. Blank is no pick (v147). |
+| `orphan_aged_at` | `timestamp with time zone` |  |  |  | When an order was judged an orphan (v61). A timestamp rather than a fourth origin_class, so aging records when a judgement was made without overwriting what the judgement was. |
+| `destination_resolved_at` | `timestamp with time zone` |  |  |  | When the store-slot selector chose this order's destination, at intake. Written only by admission (admit), only when resolveSyntheticDestination rewrote a group into a concrete slot; NULL means the destination was not chosen at intake (named concretely by the sender, or the group was full and planMove resolves it at dispatch). It exists for one reader, the burial shadow's tripwire (service/burial_shadow.go), which has to tell a placement that skipped the guard from a guard consulted before the world moved, and so has to know when the guard looked: intake resolves before the order row exists, and the fleet commit can follow minutes later when the order queues behind capacity. Nullable, and the fallback is the old behaviour: an order without a stamp is judged against fleet commit. |
+| `recovers_order_id` | `bigint` |  |  | → `orders(id)` | The cancelled order whose bin this order returns (v140). Set only on a Core-minted return for a bin left on a robot's deck by a cancel; NULL on every other order. |
+| `named_bin_id` | `bigint` |  |  |  | The one bin a move is for, named by the station that sent it (a keep-staged spare's return; v141). The bin hold and claim statements take that bin and no other, and only while it stands on the source node. NULL on every other order. No foreign key: a bin row deleted under a waiting move must read as the bin has left, not turn the move into one that names nothing. |
+| `want` | `text` | yes | `''` |  | The height an empty is wanted at, as the station stated it on its request (protocol.OrderRequest.Want; v166): blank none, a decimal for that many layers, tops_bottoms for tops and bottoms only. Every find of the order reads it. |
+| `steps_done` | `integer` | yes | `0` |  | How many steps of the order's plan the fleet has finished, by position (v167): the block subscriber advances it as each block finishes the plan's next open step (an order with no stored plan counts its two implied steps). The route strip reads where the robot is from it. |
+| `block_actions` | `jsonb` |  | `'{}'::jsonb` |  | What each block Core sent the fleet for this order is, by block id: a plan action (pickup, dropoff, wait) or blank for a block of no step's kind (v179). Written by the create and by each append; the block subscriber reads a finished block's meaning from it. NULL on an order sent before v179, read by the old name rule for its whole life. |
+| `version` | `bigint` | yes | `1` |  | One counter for everything the order's station is told (v181): bumped in the same statement as a status write, a robot write that names a new robot, and a change of wait the station is told. It rides the order.update, the reconcile snapshot and the projection, and the station applies only a newer one. Born 1, so a 0 on the wire is an older Core. |
+| `asked_vendor_order_id` | `text` | yes | `''` |  | The vendor order id Core is asking the fleet to create, from the hand that takes the order's holds until the fleet answers; blank when Core is not asking (v182). Core-only, never on the wire. An open ask is spoken for whatever the status says. |
+| `requested_by` | `text` | yes | `''` |  | Which Core door made an order no station asked for: core-operator (the manual and spot doors), core-direct (the direct doors), core-test (the test doors), or blank (a station's order, or one Core made itself, such as a recovery or a cancel-return). Until v185 the three were written into the station column. |
 
+- Check `(requested_by = ANY (ARRAY['', 'core-operator', 'core-direct', 'core-test']))`
+- Check `(station_uid <> ALL (ARRAY['core-operator', 'core-direct', 'core-test']))`
 - Check `((status <> 'dispatched') OR (vendor_order_id <> ''))`
 - Unique (edge_uuid) where `edge_uuid <> ''`
 
 #### Core: `outbox`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('outbox_id_seq')` | PK |
-| `topic` | `text` | yes |  |  |
-| `payload` | `bytea` | yes |  |  |
-| `msg_type` | `text` | yes | `''` |  |
-| `station_id` | `text` | yes | `''` |  |
-| `retries` | `integer` | yes | `0` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `sent_at` | `timestamp with time zone` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('outbox_id_seq')` | PK |  |
+| `topic` | `text` | yes |  |  |  |
+| `payload` | `bytea` | yes |  |  |  |
+| `msg_type` | `text` | yes | `''` |  |  |
+| `dst_station` | `text` | yes | `''` |  | The addressee: a station's uid, * for every station, or core-test. Not a station uid column (outbox.station_id until v185). |
+| `retries` | `integer` | yes | `0` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `sent_at` | `timestamp with time zone` |  |  |  |  |
 
 #### Core: `parts`
 
@@ -1478,6 +1478,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `description` | `text` | yes | `''` |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
+
+- A part under both of the names it is known by (v107): the part number CMS books against and the cat id a cell's PLC declares. A table rather than two columns on payload_manifest because a cat id belongs to the part, not to the line that mentions it, and because a foreign key from the line is the one guard that cannot be forgotten at a door.
 
 #### Core: `payload_bin_types`
 
@@ -1501,38 +1503,40 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `deactivated_at` | `timestamp with time zone` |  |  |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 
+- The per-payload quality containment flag. A quality alert on a part sets active, and every FG-bound delivery of that payload diverts to its claim's containment destination instead of the FG drop zone. The audit columns are written by the store on every set and clear: containment nobody can attribute is containment nobody can defend. One row per payload code; the row persists after deactivation so the history (who, when, why) survives the alert clearing.
+
 #### Core: `payload_manifest`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('payload_manifest_id_seq')` | PK |
-| `payload_id` | `bigint` | yes |  | → `payloads(id) ON DELETE CASCADE` |
-| `part_number` | `text` | yes | `''` |  |
-| `parts_per_cycle` | `bigint` | yes | `1` |  |
-| `description` | `text` | yes | `''` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `part_id` | `bigint` |  |  | → `parts(id)` |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('payload_manifest_id_seq')` | PK |  |
+| `payload_id` | `bigint` | yes |  | → `payloads(id) ON DELETE CASCADE` |  |
+| `part_number` | `text` | yes | `''` |  | Names a part, and has since it was created. Its values at the plants were cat ids, because the entry form asked for one: that was a data correction (v107, v108), not a reason to rename the column after the mistake. |
+| `parts_per_cycle` | `bigint` | yes | `1` |  | A ratio, not a count: how many of this part one assembly cycle consumes, an assembly consume setting. A bin's count of its parts is derived at read time from bins.uop_remaining and stored nowhere; the rule is protocol.ManifestItem's. It was called quantity until v99 renamed it; the value did not change, because it was always the ratio. Default 1: a line with no stated ratio is one per cycle. |
+| `description` | `text` | yes | `''` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `part_id` | `bigint` |  |  | → `parts(id)` |  |
 
 - Check `(part_number <> '')`
 - Unique (payload_id, part_number)
 
 #### Core: `payloads`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('payloads_id_seq')` | PK |
-| `code` | `text` | yes |  | unique |
-| `description` | `text` | yes | `''` |  |
-| `uop_capacity` | `integer` | yes | `0` |  |
-| `robot_group` | `text` | yes | `''` |  |
-| `advanced_load_sequence` | `text` | yes | `''` |  |
-| `near_empty_enabled` | `boolean` | yes | `false` |  |
-| `near_empty_robot_group` | `text` | yes | `''` |  |
-| `near_empty_threshold_pct` | `integer` | yes | `0` |  |
-| `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |
-| `tote_layers` | `integer` |  |  |  |
-| `uop_per_tote` | `integer` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('payloads_id_seq')` | PK |  |
+| `code` | `text` | yes |  | unique |  |
+| `description` | `text` | yes | `''` |  |  |
+| `uop_capacity` | `integer` | yes | `0` |  |  |
+| `robot_group` | `text` | yes | `''` |  |  |
+| `advanced_load_sequence` | `text` | yes | `''` |  |  |
+| `near_empty_enabled` | `boolean` | yes | `false` |  |  |
+| `near_empty_robot_group` | `text` | yes | `''` |  |  |
+| `near_empty_threshold_pct` | `integer` | yes | `0` |  |  |
+| `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
+| `tote_layers` | `integer` |  |  |  | The layers of totes a full cart stands (v161). NULL is unknown. |
+| `uop_per_tote` | `integer` |  |  |  | The UOP (in the capacity's unit: pieces, for a payload of one part) that fill one tote (v161). NULL is unknown. |
 
 - Check `(tote_layers > 0)`
 - Check `(uop_per_tote > 0)`
@@ -1542,9 +1546,11 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
 | `process_id` | `text` | yes |  | PK |
-| `station_id` | `text` | yes |  |  |
+| `station_uid` | `text` | yes |  |  |
 | `digest` | `text` | yes |  |  |
 | `received_at` | `timestamp with time zone` | yes |  |  |
+
+- Per process, the station whose plant-claims report the mirror holds and the digest it carried (v143); read back onto each station's heartbeat ack.
 
 #### Core: `plant_confidence_daily`
 
@@ -1565,6 +1571,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `lanes_fail_only` | `integer` | yes | `0` |  |
 | `lane_robot_rows` | `integer` | yes | `0` |  |
 
+- The plant-day record for counts that have no lane to hang on: orphans, unkeyable, unversioned, unattributed (v82).
+
 #### Core: `process_positions`
 
 | Column | Type | Not null | Default | Key |
@@ -1572,6 +1580,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `process_id` | `text` | yes |  |  |
 | `core_node_name` | `text` | yes |  |  |
 
+- The seats a process binds at that no claim names (loader windows and homes, FG drains), mirrored from plant.claims for addressing only (v152).
 - Primary key (process_id, core_node_name)
 
 #### Core: `process_styles`
@@ -1583,7 +1592,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `config_gen` | `bigint` | yes | `0` |  |
 | `updated_at` | `timestamp with time zone` | yes | `now()` |  |
 | `is_active` | `boolean` | yes | `false` |  |
-| `station_id` | `text` |  |  |  |
+| `station_uid` | `text` |  |  |  |
 
 - Primary key (process_id, style_id)
 
@@ -1609,7 +1618,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `state` | `text` | yes | `'pending'` |  |
 | `reserved_by` | `text` | yes | `''` |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |
-| `expires_at` | `timestamp with time zone` |  |  |  |
 | `resource_kind` | `text` | yes | `'bin'` |  |
 | `node_id` | `bigint` |  |  | → `nodes(id)` |
 | `mode` | `text` |  |  |  |
@@ -1631,6 +1639,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `onsets` | `integer` | yes |  |  |
 | `first_at` | `timestamp with time zone` | yes |  |  |
 
+- Alarm onsets per robot per hour per code, permanent (v158), past RDS's five-week alarm retention; read by the Fleet tab and the cleaning trial.
 - Primary key (hour, vehicle_id, code)
 
 #### Core: `robot_confidence_daily`
@@ -1646,6 +1655,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `p05` | `double precision` |  |  |  |
 | `map_mismatch_samples` | `integer` | yes | `0` |  |
 
+- The permanent per-robot residual roll-up (v77).
 - Primary key (day, vehicle_id)
 
 #### Core: `robot_confidence_low`
@@ -1659,8 +1669,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `x` | `double precision` | yes |  |  |
 | `y` | `double precision` | yes |  |  |
 | `angle` | `double precision` | yes |  |  |
-| `station` | `text` | yes | `''` |  |
-| `last_station` | `text` | yes | `''` |  |
+| `rds_station` | `text` | yes | `''` |  |
+| `last_rds_station` | `text` | yes | `''` |  |
 | `order_id` | `bigint` | yes | `0` |  |
 | `on_task` | `boolean` | yes | `false` |  |
 | `blocked` | `boolean` | yes | `false` |  |
@@ -1669,29 +1679,31 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `map_md5` | `text` |  |  |  |
 | `alarm_codes` | `integer[]` |  |  |  |
 
+- The long-retention low-confidence forensic trail (v77).
 - Partitioned: `RANGE (sampled_at)`
 
 #### Core: `robot_confidence_samples`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `id` | `bigint` | yes | `nextval('robot_confidence_samples_id_seq')` |  |
-| `vehicle_id` | `text` | yes |  |  |
-| `sampled_at` | `timestamp with time zone` | yes |  |  |
-| `confidence` | `double precision` | yes |  |  |
-| `x` | `double precision` | yes |  |  |
-| `y` | `double precision` | yes |  |  |
-| `angle` | `double precision` | yes |  |  |
-| `station` | `text` | yes | `''` |  |
-| `last_station` | `text` | yes | `''` |  |
-| `order_id` | `bigint` | yes | `0` |  |
-| `on_task` | `boolean` | yes | `false` |  |
-| `blocked` | `boolean` | yes | `false` |  |
-| `reloc_status` | `smallint` | yes |  |  |
-| `area_ids` | `text[]` |  |  |  |
-| `map_md5` | `text` |  |  |  |
-| `alarm_codes` | `integer[]` |  |  |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `id` | `bigint` | yes | `nextval('robot_confidence_samples_id_seq')` |  |  |
+| `vehicle_id` | `text` | yes |  |  |  |
+| `sampled_at` | `timestamp with time zone` | yes |  |  |  |
+| `confidence` | `double precision` | yes |  |  |  |
+| `x` | `double precision` | yes |  |  |  |
+| `y` | `double precision` | yes |  |  |  |
+| `angle` | `double precision` | yes |  |  |  |
+| `rds_station` | `text` | yes | `''` |  | The RDS map point the robot reported at the sample: a fleet name, not a station. |
+| `last_rds_station` | `text` | yes | `''` |  | The RDS map point the robot last stood at: a fleet name, not a station. |
+| `order_id` | `bigint` | yes | `0` |  |  |
+| `on_task` | `boolean` | yes | `false` |  |  |
+| `blocked` | `boolean` | yes | `false` |  |  |
+| `reloc_status` | `smallint` | yes |  |  |  |
+| `area_ids` | `text[]` |  |  |  |  |
+| `map_md5` | `text` |  |  |  |  |
+| `alarm_codes` | `integer[]` |  |  |  |  |
 
+- Raw localization-confidence samples, daily partitions (v77).
 - Partitioned: `RANGE (sampled_at)`
 
 #### Core: `robot_deviceconfig_pulls`
@@ -1704,6 +1716,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `model_md5` | `text` | yes |  |  |
 | `params` | `jsonb` | yes |  |  |
 | `config` | `jsonb` | yes |  |  |
+
+- The Device Config tab's pull history (v184): one append-only row per robot per pull. params is the flattened leaf set the matrix reads (a tab open never re-parses a robot's whole model); config is the SANITIZED whole model: credential values are SHA-256 fingerprints before either column is written, because a robot's live model carries a wifi password in the clear. model_md5 hashes the raw bytes at pull time, kept as provenance only: the fleet's status envelope model_md5 matches no robot's file, so it is not a staleness signal and nothing reads this column for one.
 
 #### Core: `robot_hours`
 
@@ -1719,6 +1733,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `battery_min` | `double precision` |  |  |  |
 | `lift_count` | `integer` |  |  |  |
 
+- The 2-second robot poll kept as totals per robot per UTC hour, permanent (v158); read by the Robots page's Fleet tab and the cleaning trial (robot-days, km).
 - Primary key (hour, vehicle_id)
 
 #### Core: `robot_lidar_hours`
@@ -1728,7 +1743,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `hour` | `timestamp with time zone` | yes |  |  |
 | `vehicle_id` | `text` | yes |  |  |
 | `lidar` | `text` | yes |  |  |
-| `station` | `text` | yes |  |  |
+| `rds_station` | `text` | yes |  |  |
 | `use_for_loc` | `boolean` | yes |  |  |
 | `beams` | `integer` | yes |  |  |
 | `valid` | `integer` | yes |  |  |
@@ -1737,6 +1752,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `rssi_p75_valid` | `double precision` |  |  |  |
 | `near_valid` | `integer` | yes |  |  |
 
+- One laser frame per parked robot per hour reduced per lidar, 90-day retention (v158); read per robot against itself by the cleaning trial's before/after time join.
 - Primary key (hour, vehicle_id, lidar)
 
 #### Core: `scene_areas`
@@ -1760,6 +1776,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `valid_from` | `timestamp with time zone` | yes |  |  |
 | `valid_to` | `timestamp with time zone` |  |  |  |
 
+- Declared map areas, temporally versioned, parsed from the robot .smap (v81).
 - Unique (area_name) where `valid_to IS NULL`
 
 #### Core: `scene_diffs`
@@ -1776,7 +1793,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `objects_removed` | `integer` | yes | `0` |  |
 | `median_delta_m` | `double precision` |  |  |  |
 | `max_delta_m` | `double precision` |  |  |  |
-| `renames` | `jsonb` |  |  |  |
+
+- One row per observed map edit (v81): the join that relates an RDS /scene edit to a robot .smap edit made in the same sitting.
 
 #### Core: `scene_edges`
 
@@ -1819,6 +1837,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `valid_from` | `timestamp with time zone` | yes |  |  |
 | `valid_to` | `timestamp with time zone` |  |  |  |
 
+- Per-lane geometry versions (v81): what lane_confidence_daily.version_id points at.
 - Unique (area_name, lane) where `valid_to IS NULL`
 
 #### Core: `scene_map_versions`
@@ -1838,6 +1857,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `diff_id` | `bigint` |  |  | → `scene_diffs(id)` |
 | `confirmed_at` | `timestamp with time zone` |  |  |  |
 
+- The archived .smap blob, gzipped, the scan cloud in its own column (v81).
 - Unique (map_name, content_sha)
 
 #### Core: `scene_points`
@@ -1870,11 +1890,12 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `y` | `double precision` | yes |  |  |
 | `width` | `double precision` |  |  |  |
 | `shape_hash` | `text` | yes |  |  |
-| `supersedes_id` | `bigint` |  |  | → `scene_reflectors(id)` |
 | `diff_id` | `bigint` | yes |  | → `scene_diffs(id)` |
 | `map_version_id` | `bigint` |  |  | → `scene_map_versions(id)` |
 | `valid_from` | `timestamp with time zone` | yes |  |  |
 | `valid_to` | `timestamp with time zone` |  |  |  |
+
+- Reflector positions, temporally versioned; identity is the position (v81).
 
 #### Core: `schema_migrations`
 
@@ -1882,6 +1903,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 |---|---|---|---|---|
 | `version` | `integer` | yes |  | PK |
 | `applied_at` | `timestamp with time zone` | yes | `now()` |  |
+
+- The migration runner's own bookkeeping (protocol/migrate): one row per applied version. A database born on the baseline records the whole retired chain.
 
 #### Core: `sourceability_events`
 
@@ -1929,7 +1952,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `id` | `bigint` | yes | `nextval('supply_refusals_id_seq')` | PK |
 | `loader_node` | `text` | yes |  |  |
 | `payload_code` | `text` | yes |  |  |
-| `station_id` | `text` | yes | `''` |  |
 | `refused_at` | `timestamp with time zone` | yes |  |  |
 | `refused_by` | `text` | yes | `''` |  |
 | `ack_at` | `timestamp with time zone` |  |  |  |
@@ -1973,6 +1995,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `reorder_point` | `integer` | yes | `0` |  |
 | `rate_grain` | `text` | yes | `''` |  |
 | `kind` | `text` | yes | `'cell'` |  |
+
+- The per-line time-to-empty the sourceability pass computes on every full pass (v118). Written only by the two-minute full recompute, self-pruning at 45 days.
 
 <!-- /generated -->
 

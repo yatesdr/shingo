@@ -409,7 +409,7 @@ func (s *LifecycleService) noteFutility(ord *orders.Order, from, to protocol.Sta
 		return
 	}
 	key := FutilityKey{
-		StationID:   ord.StationID,
+		StationID:   ord.Requester(),
 		ProcessNode: ord.ProcessNode,
 		PayloadCode: ord.PayloadCode,
 	}
@@ -716,7 +716,7 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 	return s.transition(ord, StatusConfirmed, Event{
 		Actor:     "system",
 		Reason:    "reshuffle complete",
-		StationID: ord.StationID,
+		StationID: ord.Requester(),
 	})
 }
 
@@ -761,7 +761,7 @@ func (s *LifecycleService) Restart(ord *orders.Order, reason string) error {
 	return s.transition(ord, StatusPending, Event{
 		Actor:     "system",
 		Reason:    reason,
-		StationID: ord.StationID,
+		StationID: ord.Requester(),
 	})
 }
 

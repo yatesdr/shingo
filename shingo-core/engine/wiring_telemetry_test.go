@@ -35,7 +35,7 @@ func makeTelemetryOrder(t *testing.T, db *store.DB, edgeUUID, station string) *o
 	t.Helper()
 	o := &orders.Order{
 		EdgeUUID:      edgeUUID,
-		StationID:     station,
+		StationUID:    station,
 		OrderType:     dispatch.OrderTypeRetrieve,
 		Status:        dispatch.StatusInTransit,
 		VendorOrderID: "V-" + edgeUUID,
@@ -201,8 +201,8 @@ func TestRecordMissionEvent_TerminalStateWritesTelemetrySummary(t *testing.T) {
 	if mt.TerminalState != "FINISHED" {
 		t.Errorf("TerminalState = %q, want FINISHED", mt.TerminalState)
 	}
-	if mt.StationID != order.StationID {
-		t.Errorf("StationID = %q, want %q (hydrated from order row)", mt.StationID, order.StationID)
+	if mt.StationUID != order.StationUID {
+		t.Errorf("StationID = %q, want %q (hydrated from order row)", mt.StationUID, order.StationUID)
 	}
 	if mt.SourceNode != order.SourceNode || mt.DeliveryNode != order.DeliveryNode {
 		t.Errorf("source/delivery = %s/%s, want %s/%s",

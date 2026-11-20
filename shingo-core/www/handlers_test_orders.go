@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"shingocore/domain"
 	"shingocore/fleet"
 )
 
@@ -37,7 +38,7 @@ func (h *Handlers) handleTestOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiTestOrdersList(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.engine.OrderService().ListOrdersByStation("core-test", 50)
+	orders, err := h.engine.OrderService().ListOrdersByStation(domain.RequesterTest, 50)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

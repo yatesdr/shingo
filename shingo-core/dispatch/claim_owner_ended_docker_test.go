@@ -196,7 +196,7 @@ func TestHandover_AnOrderEndedAfterItsClaimsSendsNothing(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "HANDOVER-ENDED-BIN")
 	o := &orders.Order{
-		EdgeUUID: "HANDOVER-ended", StationID: "line-1",
+		EdgeUUID: "HANDOVER-ended", StationUID: "line-1",
 		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
 		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
 	}

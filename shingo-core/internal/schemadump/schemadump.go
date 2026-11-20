@@ -216,7 +216,7 @@ func dumpFile(dbName string) string { return "/tmp/shingo-schema-" + dbName + ".
 // copy gives clean bytes and the difference is visible the moment you open the
 // snapshot.
 func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
-	body, err := i.pgDump(ctx, dbName, "--schema-only --no-owner --no-privileges --no-comments")
+	body, err := i.pgDump(ctx, dbName, "--schema-only --no-owner --no-privileges")
 	if err != nil {
 		return "", err
 	}

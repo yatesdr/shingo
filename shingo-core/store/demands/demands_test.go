@@ -14,8 +14,8 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	db := testdb.Open(t)
 
 	initial := []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "MS-A", Role: "consume", PayloadCode: "WIDGET-A", OutboundDest: "LINE1-IN"},
-		{StationID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "WIDGET-B", OutboundDest: ""},
+		{StationUID: "line-1", CoreNodeName: "MS-A", Role: "consume", PayloadCode: "WIDGET-A", OutboundDest: "LINE1-IN"},
+		{StationUID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "WIDGET-B", OutboundDest: ""},
 	}
 	if _, err := demands.SyncRegistry(db.DB, "line-1", initial); err != nil {
 		t.Fatalf("SyncRegistry initial: %v", err)
@@ -43,7 +43,7 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	}
 
 	replacement := []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "MS-Z", Role: "consume", PayloadCode: "WIDGET-Z", OutboundDest: ""},
+		{StationUID: "line-1", CoreNodeName: "MS-Z", Role: "consume", PayloadCode: "WIDGET-Z", OutboundDest: ""},
 	}
 	if _, err := demands.SyncRegistry(db.DB, "line-1", replacement); err != nil {
 		t.Fatalf("SyncRegistry resync: %v", err)
@@ -60,7 +60,7 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	}
 
 	other := []demands.RegistryEntry{
-		{StationID: "line-2", CoreNodeName: "MS-OTHER", Role: "consume", PayloadCode: "WIDGET-Y", OutboundDest: ""},
+		{StationUID: "line-2", CoreNodeName: "MS-OTHER", Role: "consume", PayloadCode: "WIDGET-Y", OutboundDest: ""},
 	}
 	if _, err := demands.SyncRegistry(db.DB, "line-2", other); err != nil {
 		t.Fatalf("SyncRegistry other station: %v", err)
@@ -84,7 +84,7 @@ func TestCoverage_SyncRegistry_ThresholdChangeDetection(t *testing.T) {
 
 	// First sync: introduce a binding with threshold > 0.
 	changes, err := demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
+		{StationUID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
 	})
 	if err != nil {
 		t.Fatalf("SyncRegistry: %v", err)
@@ -98,7 +98,7 @@ func TestCoverage_SyncRegistry_ThresholdChangeDetection(t *testing.T) {
 
 	// Re-sync with same threshold: no change.
 	changes, _ = demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
+		{StationUID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
 	})
 	if len(changes) != 0 {
 		t.Errorf("re-sync with same threshold yielded %d changes, want 0", len(changes))
@@ -106,7 +106,7 @@ func TestCoverage_SyncRegistry_ThresholdChangeDetection(t *testing.T) {
 
 	// Change the threshold value.
 	changes, _ = demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 25},
+		{StationUID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 25},
 	})
 	if len(changes) != 1 {
 		t.Fatalf("change-value sync yielded %d changes, want 1", len(changes))
@@ -133,9 +133,9 @@ func TestCoverage_LookupThresholdsByPayload(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
-		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
-		{StationID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 0},
-		{StationID: "line-1", CoreNodeName: "MS-C", Role: "produce", PayloadCode: "P-2", ReplenishUOPThreshold: 5},
+		{StationUID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
+		{StationUID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 0},
+		{StationUID: "line-1", CoreNodeName: "MS-C", Role: "produce", PayloadCode: "P-2", ReplenishUOPThreshold: 5},
 	})
 	hits, err := demands.LookupThresholdsByPayload(db.DB, "P-1")
 	if err != nil {

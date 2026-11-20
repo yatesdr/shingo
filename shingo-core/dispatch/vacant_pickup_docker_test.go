@@ -216,7 +216,7 @@ func (c vpCell) liveOrder(uuid string, orderType protocol.OrderType, status prot
 	if status == protocol.StatusDispatched {
 		born = protocol.StatusPending
 	}
-	o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: orderType, Status: born, Quantity: 1,
+	o := &orders.Order{EdgeUUID: uuid, StationUID: "line-1", OrderType: orderType, Status: born, Quantity: 1,
 		PayloadCode: c.part, DeliveryNode: delivery, ProcessNode: c.press.Name, StepsJSON: raw}
 	testutil.MustNoErr(c.t, c.db.CreateOrder(o), "order "+uuid)
 	if status == protocol.StatusDispatched {
@@ -375,7 +375,7 @@ func TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside(t *testing.T) {
 				t.Parallel()
 				c := newVPCell(t, "VP7", role)
 				cart := testdb.CreateBinAtNode(t, c.db, "", c.deck.ID, "VP7-ON-DECK")
-				move := &orders.Order{EdgeUUID: "vp7-move", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+				move := &orders.Order{EdgeUUID: "vp7-move", StationUID: "line-1", OrderType: protocol.OrderTypeMove,
 					Status: protocol.StatusPending, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
 					NamedBinID: &cart.ID}
 				testutil.MustNoErr(t, c.db.CreateOrder(move), "the named move")
@@ -395,7 +395,7 @@ func TestVacantPickup_ACarrierBeingTakenOffHoldsForOutside(t *testing.T) {
 		r1, r2 := c.submitPair("VP8", false, "VP8-r2", "VP8-r1")
 		c.scan(r1, r2)
 		c.requireHolds(protocol.QueueWaitingForMaterial, r1, r2)
-		clearMove := &orders.Order{EdgeUUID: "vp8-clear", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+		clearMove := &orders.Order{EdgeUUID: "vp8-clear", StationUID: "line-1", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusQueued, Quantity: 1, SourceNode: c.deck.Name, DeliveryNode: c.out.Name,
 			NamedBinID: &full.ID}
 		testutil.MustNoErr(t, c.db.CreateOrder(clearMove), "its clear")

@@ -10,7 +10,7 @@ import (
 // tick feed panel: the lag its edge last reported on a heartbeat, and the two
 // flags Core derives from it.
 type TickFeedStation struct {
-	StationID   string `json:"station_id"`
+	StationUID  string `json:"station_uid"`
 	DisplayName string `json:"display_name"`
 	// Pending / OldestUnsentAgeMS / ReportedAt are nil when the station has
 	// never reported (an edge from before the shipper).

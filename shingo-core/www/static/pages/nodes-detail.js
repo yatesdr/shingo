@@ -246,7 +246,7 @@ function loadNodeDetail(nodeID, isSynthetic, opts, open) {
 //
 // The station picker also SAVED wrong: it serialized item.id, which on a raw
 // edge row is the numeric registry id, into a field that stores station_uid
-// strings (node_stations.station_id, e.g. "plant-a.line-1"). Bin types were
+// strings (node_stations.station_uid, e.g. "plant-a.line-1"). Bin types were
 // saved correctly only by luck — bin_type_ids genuinely wants the id.
 //
 // Bin types keep their id as a STRING here so it matches the String(b.id) the
