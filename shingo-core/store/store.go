@@ -146,21 +146,33 @@ func openPgx(cfg *config.PostgresConfig) (*sql.DB, error) {
 	return sql.OpenDB(stdlib.GetConnector(*connConfig)), nil
 }
 
-// ResetDatabase removes all data so the next Open() starts fresh.
+// ResetDatabase empties the database so the next Open() starts fresh: schema
+// public is dropped with everything in it and recreated empty, owned by the
+// user that ran the reset (Core's own) and with PUBLIC's USAGE, which is what
+// PostgreSQL gives a new database's public schema.
+//
+// The schema, not the tables. It dropped the tables only, and that left behind
+// the function and the free-standing sequence the schema also holds
+// (bin_types_family_of_one, bin_placement_seq). The baseline
+// (store/schema/baseline.sql) creates both with a plain CREATE, so a boot that
+// births the database on it after such a reset fails on "already exists", and
+// every boot after it. TestResetDatabase_ThenBootTwice pins the empty schema
+// and the boots after.
+//
+// One statement, so one transaction: a reset that cannot drop the schema
+// changes nothing and says why. A database's owner owns its public schema on
+// PostgreSQL 15 and later (pg_database_owner); on 14 and older the bootstrap
+// superuser owns it, and there the reset is refused unless Core's user does.
 func ResetDatabase(cfg *config.DatabaseConfig) error {
 	sqlDB, err := openPgx(&cfg.Postgres)
 	if err != nil {
 		return fmt.Errorf("connect for reset: %w", err)
 	}
 	defer sqlDB.Close()
-	_, err = sqlDB.Exec(`DO $$ DECLARE r RECORD;
-		BEGIN
-			FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
-				EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(r.tablename) || ' CASCADE';
-			END LOOP;
-		END $$`)
-	if err != nil {
-		return fmt.Errorf("drop tables: %w", err)
+	if _, err := sqlDB.Exec(`DROP SCHEMA public CASCADE;
+		CREATE SCHEMA public AUTHORIZATION CURRENT_USER;
+		GRANT USAGE ON SCHEMA public TO PUBLIC`); err != nil {
+		return fmt.Errorf("drop and recreate schema public: %w", err)
 	}
 	return nil
 }

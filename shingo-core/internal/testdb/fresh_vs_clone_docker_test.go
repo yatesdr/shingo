@@ -4,12 +4,9 @@ package testdb
 
 import (
 	"database/sql"
-	"fmt"
-	"os"
 	"reflect"
 	"testing"
 
-	"shingocore/config"
 	"shingocore/store"
 )
 
@@ -28,9 +25,7 @@ import (
 // seeded where Core passes 0) shows up here as two different lists. Both lists
 // must also end at store.LatestMigrationVersion().
 //
-// It lives in package testdb, not store, because making an EMPTY database
-// needs the unexported admin connection; every exported opener clones the
-// template.
+// It lives in package testdb, beside OpenEmpty and the template it compares.
 func TestFreshAndTemplateCloneRecordTheSameMigrations(t *testing.T) {
 	// OpenWithConfig brings the server and template up (or skips without Docker).
 	_, cloneCfg := OpenWithConfig(t)
@@ -42,24 +37,7 @@ func TestFreshAndTemplateCloneRecordTheSameMigrations(t *testing.T) {
 	defer reopened.Close()
 	cloneRows := migrationVersions(t, reopened.DB)
 
-	freshName := fmt.Sprintf("test_fresh_p%d", os.Getpid())
-	admin, err := adminConn()
-	if err != nil {
-		t.Fatalf("admin connection: %v", err)
-	}
-	defer admin.Close()
-	_, _ = admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", freshName))
-	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s", freshName)); err != nil {
-		t.Fatalf("create empty database: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, freshName)
-		_, _ = admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", freshName))
-	})
-	fresh, err := store.Open(&config.DatabaseConfig{Postgres: config.PostgresConfig{
-		Host: containerHost, Port: containerPort, Database: freshName,
-		User: "test", Password: "test", SSLMode: "disable",
-	}})
+	fresh, err := store.Open(OpenEmpty(t))
 	if err != nil {
 		t.Fatalf("open + migrate an empty database: %v", err)
 	}

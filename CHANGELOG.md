@@ -19,6 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration. Core only; the Edges are unchanged and need no install.
 
 - The shared migration runner records an adopted chain's first version on Postgres too (it sent SQLite's placeholder)
+- Core's --reset-db empties the database whole, its function and sequences with its tables
 
 ## v0.17.3 — 2026-11-21
 

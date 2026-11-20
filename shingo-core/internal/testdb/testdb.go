@@ -650,6 +650,16 @@ func Open(t testing.TB) *store.DB {
 // database, verify and self-heal included, rather than a copy of their SQL.
 func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	t.Helper()
+	ensureServer(t, true)
+	return openClone(t)
+}
+
+// ensureServer brings this process's Postgres up (its own container, or the
+// gate's shared server) and, with template, the migrated template; or skips
+// the test when Docker is down (fails it under SHINGO_TEST_REQUIRE_DOCKER).
+// Every opener starts with it.
+func ensureServer(t testing.TB, template bool) {
+	t.Helper()
 
 	// Guard against Docker panics from testcontainers
 	defer func() {
@@ -678,10 +688,19 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		t.Fatalf("start postgres container: %v", containerErr)
 	}
 
+	if !template {
+		return
+	}
 	templateOnce.Do(setupTemplate)
 	if templateErr != nil {
 		t.Fatalf("setup template database: %v", templateErr)
 	}
+}
+
+// openClone clones the template into a database of its own for t, opened
+// without migrating, with the drop and the end-of-test sweep registered.
+func openClone(t testing.TB) (*store.DB, *config.DatabaseConfig) {
+	t.Helper()
 
 	// ONE NAME PER OPEN, BY CONSTRUCTION: test_<test name>_p<pid>_<n>
 	// (nextTestDBName).
@@ -828,6 +847,39 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		}
 	})
 	return db, cfg
+}
+
+// OpenEmpty creates a database with nothing in it on the test server and
+// returns the config that reaches it; the database is dropped at cleanup. It
+// is for the tests of what store.Open does to a database it has not touched:
+// the baseline a new database is born on, the refusals, the reset. Every other
+// opener clones the migrated template. The caller opens and closes its own
+// connections; any still open at cleanup are terminated before the drop.
+func OpenEmpty(t testing.TB) *config.DatabaseConfig {
+	t.Helper()
+	ensureServer(t, false)
+	dbName := nextTestDBName(t.Name())
+	admin, err := adminConn()
+	if err != nil {
+		t.Fatalf("open admin connection: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
+		t.Fatalf("create empty database %s: %v%s", dbName, err, ownContainerHint())
+	}
+	t.Cleanup(func() {
+		cleanup, err := adminConn()
+		if err != nil {
+			return
+		}
+		defer cleanup.Close()
+		cleanup.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, dbName)
+		cleanup.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+	})
+	return &config.DatabaseConfig{Postgres: config.PostgresConfig{
+		Host: containerHost, Port: containerPort, Database: dbName,
+		User: "test", Password: "test", SSLMode: "disable",
+	}}
 }
 
 // wedgeSweepOff records the tests that build the pointer wedge on purpose.
