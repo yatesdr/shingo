@@ -382,7 +382,10 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 
 // ── core_sync_service.go ────────────────────────────────────────────
 
-func TestCoreSyncService_StartupReconcileCallsAllHooks(t *testing.T) {
+// StartupReconcile is the order reconcile and nothing else: it asks for no
+// node list and no catalog (the boot burst does, and feeds resend them), and
+// it sends the order status request, which here fails for want of a sendFn.
+func TestCoreSyncService_StartupReconcileAsksOnlyForOrders(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
 	nodeSyncCalls := 0
@@ -394,8 +397,8 @@ func TestCoreSyncService_StartupReconcileCallsAllHooks(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "send function not configured") {
 		t.Errorf("StartupReconcile err = %v, want send-function-not-configured", err)
 	}
-	if nodeSyncCalls != 1 || catalogSyncCalls != 1 {
-		t.Errorf("nodeSync=%d catalogSync=%d, want 1/1", nodeSyncCalls, catalogSyncCalls)
+	if nodeSyncCalls != 0 || catalogSyncCalls != 0 {
+		t.Errorf("nodeSync=%d catalogSync=%d, want 0/0: the boot burst asks, and feeds resend", nodeSyncCalls, catalogSyncCalls)
 	}
 }
 

@@ -14,9 +14,19 @@ func newCoreSyncService(e *Engine) *CoreSyncService {
 	return &CoreSyncService{engine: e}
 }
 
+// StartupReconcile is the order reconcile (RequestOrderStatusSync), and it
+// asks Core for nothing else. It runs at boot, on Core's register request, on
+// edge.stale, and on the first ack after an ack gap (reconcileAfterGap).
+//
+// IT ASKS FOR NO NODE LIST AND NO CATALOG. The boot burst asks for both
+// (messaging Heartbeater.SendBootBurst); after that a Core that answers feed
+// digests sends either whenever the heartbeat quotes a digest it does not
+// hold, and an older Core is re-asked by the heartbeater's two-minute loop and
+// by the registered reply past an Edge's first 30 s (cmd/shingoedge). Asking
+// here too drew a second reply of each at every boot. PIN:
+// TestCoreSyncService_StartupReconcileAsksOnlyForOrders,
+// TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts.
 func (s *CoreSyncService) StartupReconcile() error {
-	s.engine.RequestNodeSync()
-	s.engine.RequestCatalogSync()
 	// Bin/bucket reconciliation removed with the bin-ownership flip:
 	// Edge owns the count for any bin physically at lineside, ships
 	// deltas to Core via the outbox, and trusts the Kafka pipeline.

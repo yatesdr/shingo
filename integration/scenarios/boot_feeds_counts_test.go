@@ -2,9 +2,10 @@
 // that answers feeds: the asks the Edge sends, the values Core sends back, and
 // the identical catalogs the Edge rewrites. The real Core handlers answer over
 // the harness bus, a real Edge engine applies what comes back, and the Edge's
-// own StartupReconcile makes its asks; the boot burst is sent as
-// messaging.Heartbeater.SendBootBurst sends it (register, node list, catalog,
-// bins watch, heartbeat: TestHeartbeater_TheBootBurstEndsWithAHeartbeat), and
+// own StartupReconcile runs after the burst as main.go runs it (orders only:
+// TestCoreSyncService_StartupReconcileAsksOnlyForOrders); the boot burst is
+// sent as messaging.Heartbeater.SendBootBurst sends it (register, node list,
+// catalog, bins watch, heartbeat: TestHeartbeater_TheBootBurstEndsWithAHeartbeat), and
 // the registered reply asks nothing inside an Edge's first 30 s
 // (TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds), so it is not
 // routed here.
@@ -45,10 +46,9 @@ type bootCount struct {
 // followed by one heartbeat quoting what the Edge then holds, which must move
 // nothing: the boot is over.
 //
-// Lane D2 is to drop StartupReconcile's two asks against a Core that speaks
-// feeds and skip the catalog apply when the digest is the one held; the counts
-// below should then change. Record the new numbers in the lead's
-// PREDICTIONS.md and update want.
+// StartupReconcile asks for no node list or catalog, so the boot burst's are
+// the only asks. Lane D2 is also to skip the catalog apply when the digest is
+// the one held; the rewrites below should then go to 0.
 //
 // Not parallel: catalog.Generation is process-wide, and another scenario's
 // Edge writing its catalog meanwhile would read as a rewrite here.
@@ -191,13 +191,13 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 		name string
 		want bootCount
 	}{
-		// Node list: two replies and the feed the burst's heartbeat draws (the
-		// Edge quotes no node-list digest at boot: it is held in memory only).
-		// Catalog: two replies and the feed, which the Edge then rewrites twice.
-		{"first boot, empty database", bootCount{nodeAsks: 2, catalogAsks: 2, nodeLists: 3, catalogs: 3, catalogRewrites: 2}},
-		// The persisted catalog digest is Core's, so no catalog feed; both
-		// replies still rewrite it.
-		{"restart on the same database", bootCount{nodeAsks: 2, catalogAsks: 2, nodeLists: 3, catalogs: 2, catalogRewrites: 2}},
+		// Node list: the burst's reply and the feed the burst's heartbeat draws
+		// (the Edge quotes no node-list digest at boot: it is held in memory
+		// only). Catalog: the reply and the feed, which the Edge then rewrites.
+		{"first boot, empty database", bootCount{nodeAsks: 1, catalogAsks: 1, nodeLists: 2, catalogs: 2, catalogRewrites: 1}},
+		// The persisted catalog digest is Core's, so no catalog feed; the
+		// reply still rewrites it.
+		{"restart on the same database", bootCount{nodeAsks: 1, catalogAsks: 1, nodeLists: 2, catalogs: 1, catalogRewrites: 1}},
 	}
 	for _, tc := range cases {
 		atBoot, after, eng, stop := boot(t)

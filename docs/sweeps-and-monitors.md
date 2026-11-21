@@ -145,4 +145,4 @@ Every loop Edge's `Engine.Start` starts, in the order it starts them.
 | plant-claims snapshot | `messaging/plant_claims_publisher.go` | Start | **60m**; skipped while Core speaks feeds |
 | `restoreChangeoverState` | `engine/changeover_restore.go` | Start | boot once |
 | `applyHoldAndReplay` | `engine/wiring_counter_delta.go` | counter delta with no bound bin | per tick |
-| `StartupReconcile` | `engine/reconciliation.go` | boot + reconnect | per connect |
+| `StartupReconcile` (the order reconcile alone) | `engine/reconciliation.go` | boot, Core's register request, `edge.stale`, the first ack after `feedAckGap` | per event |

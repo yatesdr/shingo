@@ -2094,6 +2094,14 @@ No assertion read any of the twelve.
 - code: DEAD (E1's legacy carry, as `TestApiConfig_UpdateStationID`'s row)
 - assertion map: a legacy-only Edge's timezone save with its `station_id` carried → nothing; a Station section with no `station_uid` saves its timezone and auto-confirm and leaves the uid → `TestPinEdgeConfig_StationID` `no_uid_is_accepted` (`shingo-edge/www/handlers_config_pins_test.go:367`)
 - mutation: not run (the carry it pinned is deleted, not weakened)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestCoreSyncService_StartupReconcileCallsAllHooks`
+- test: `TestCoreSyncService_StartupReconcileCallsAllHooks` · pkg `shingoedge/engine` · run `-run '^TestCoreSyncService_StartupReconcileCallsAllHooks$'` · `shingo-edge/engine/engine_db_test.go:388` @ `d2686a1d` · tags `none`
+- code: STALE (the behaviour it pinned was changed by ruling: StartupReconcile asks for no node list or catalog)
+- assertion map: node-sync and catalog-sync hooks called once each → called 0 times each; the send-function error from the order status request → unchanged. Same fixture, renamed for what it now holds: `TestCoreSyncService_StartupReconcileAsksOnlyForOrders` (`shingo-edge/engine/engine_db_test.go`)
+- mutation: the renamed test fails against the base's StartupReconcile (1/1 asks, want 0/0)
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row

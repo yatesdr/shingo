@@ -529,6 +529,9 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 // reconcileAfterGap runs the order reconcile on the first ack after a silence
 // longer than feedAckGap: whatever Core pushed meanwhile may have expired on
 // the wire, and the reconcile asks Core for every order this Edge should hold.
+// StartupReconcile is that reconcile and nothing more: it asks for no node
+// list or catalog, which a Core that answers feeds sends when the heartbeat
+// quotes a digest it does not hold, and the heartbeater re-asks of an older one.
 func (e *Engine) reconcileAfterGap(reconcile func() error) {
 	if reconcile == nil {
 		reconcile = e.StartupReconcile
