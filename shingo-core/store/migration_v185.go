@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"shingocore/store/schema"
 )
 
@@ -458,27 +460,32 @@ func v185Relabel1(tx *sql.Tx, table, from, to string, constraint bool) error {
 // Up calls it after the column rename (colNow station_uid, colBefore cell_id),
 // down after the rename back: so a renamed child index is named as a partition
 // created after the rename would be, truncation included, and down restores
-// the name exactly. A child index named by hand is left alone.
+// the name exactly. A child index named by hand is left alone, and so is one
+// on expressions only (no column to be named for: string_agg is NULL, read as
+// the empty list). Names go into ALTER INDEX quoted and schema-qualified, so
+// a child named in mixed case, or made in another schema, is found
+// (TestV185_PartitionIndexRenameTakesAnyChild).
 func v185RelabelChildren(tx *sql.Tx, parent, colNow, colBefore string) error {
-	rows, err := tx.Query(`SELECT ic.relname, c.relname,
-		       (SELECT string_agg(a.attname, '_' ORDER BY k.ord)
+	rows, err := tx.Query(`SELECT icn.nspname, ic.relname, c.relname,
+		       COALESCE((SELECT string_agg(a.attname, '_' ORDER BY k.ord)
 		          FROM unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord)
-		          JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = k.attnum)
+		          JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = k.attnum), '')
 		  FROM pg_inherits i
 		  JOIN pg_class p ON p.oid = i.inhparent AND p.relname = $1
 		  JOIN pg_namespace pn ON pn.oid = p.relnamespace AND pn.nspname = 'public'
 		  JOIN pg_class c ON c.oid = i.inhrelid
 		  JOIN pg_index x ON x.indrelid = i.inhrelid
 		  JOIN pg_class ic ON ic.oid = x.indexrelid
+		  JOIN pg_namespace icn ON icn.oid = ic.relnamespace
 		 ORDER BY ic.relname`, parent)
 	if err != nil {
 		return fmt.Errorf("v185 list %s's partition indexes: %w", parent, err)
 	}
-	type childIndex struct{ name, table, cols string }
+	type childIndex struct{ schema, name, table, cols string }
 	var idx []childIndex
 	for rows.Next() {
 		var c childIndex
-		if err := rows.Scan(&c.name, &c.table, &c.cols); err != nil {
+		if err := rows.Scan(&c.schema, &c.name, &c.table, &c.cols); err != nil {
 			rows.Close()
 			return err
 		}
@@ -496,7 +503,8 @@ func v185RelabelChildren(tx *sql.Tx, parent, colNow, colBefore string) error {
 			continue
 		}
 		to := pgObjectName(c.table, c.cols, "idx")
-		if err := v185Exec(tx, "rename partition index "+c.name, fmt.Sprintf(`ALTER INDEX %s RENAME TO %s`, c.name, to)); err != nil {
+		if err := v185Exec(tx, "rename partition index "+c.name, fmt.Sprintf(`ALTER INDEX %s RENAME TO %s`,
+			pgx.Identifier{c.schema, c.name}.Sanitize(), pgx.Identifier{to}.Sanitize())); err != nil {
 			return err
 		}
 	}

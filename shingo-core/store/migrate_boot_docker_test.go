@@ -312,3 +312,67 @@ func TestV185_TheJSONGuardNeedsNoTempPrivilege(t *testing.T) {
 		t.Errorf("after down and up as a role without TEMP: head v%d, %d v185_jsonb functions left; want v185 and none", head, guards)
 	}
 }
+
+// TestV185_PartitionIndexRenameTakesAnyChild: down and up rename the indexes
+// of cell_part_events' partitions after the column they cover. Two children
+// the rename failed on, every boot: one carrying an expression-only index (no
+// column to be named for, so the catalog read scanned a NULL), and one whose
+// name needs quoting (mixed case, which an unquoted ALTER INDEX folds). Both
+// come through down 185 and the boot that brings v185 back: each child's
+// column indexes are named for the column of the moment, and the expression
+// index keeps the name it was given.
+func TestV185_PartitionIndexRenameTakesAnyChild(t *testing.T) {
+	t.Parallel()
+	raw, cfg := testdb.OpenWithConfig(t)
+	for _, q := range []string{
+		`CREATE TABLE cell_part_events_2031_06 PARTITION OF cell_part_events FOR VALUES FROM ('2031-06-01') TO ('2031-07-01')`,
+		`CREATE INDEX zz_cpe_expr_idx ON cell_part_events_2031_06 ((lower(station_uid)))`,
+		`CREATE TABLE "cell_part_events_Q3" PARTITION OF cell_part_events FOR VALUES FROM ('2031-07-01') TO ('2031-10-01')`,
+	} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	check := func(stage, col, gone string) {
+		t.Helper()
+		rows, err := raw.Query(`SELECT tablename, indexname FROM pg_indexes
+			WHERE schemaname = 'public' AND tablename IN ('cell_part_events_2031_06', 'cell_part_events_Q3') ORDER BY indexname`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		named := map[string]int{}
+		expr := false
+		for rows.Next() {
+			var table, index string
+			if err := rows.Scan(&table, &index); err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case index == "zz_cpe_expr_idx":
+				expr = true
+			case strings.Contains(index, "_"+gone+"_"):
+				t.Errorf("%s: %s's index %s is named for %s", stage, table, index, gone)
+			case strings.Contains(index, "_"+col+"_"):
+				named[table]++
+			}
+		}
+		if !expr {
+			t.Errorf("%s: the expression index zz_cpe_expr_idx is gone or renamed", stage)
+		}
+		if named["cell_part_events_2031_06"] == 0 || named["cell_part_events_Q3"] == 0 {
+			t.Errorf("%s: indexes named for %s per child %v, want some on each: the check had nothing to read", stage, col, named)
+		}
+	}
+	check("at v185", "station_uid", "cell_id")
+	if err := store.MigrateDown(cfg, 185); err != nil {
+		t.Fatalf("migrate down 185 with these partitions: %v", err)
+	}
+	check("after down", "cell_id", "station_uid")
+	db, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("v185 up with these partitions: %v", err)
+	}
+	db.Close()
+	check("after up", "station_uid", "cell_id")
+}
