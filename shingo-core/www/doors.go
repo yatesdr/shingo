@@ -143,9 +143,12 @@ func (d *Doors) AskBinLoad(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, d.binLoad)
 }
 
-// AskBinCount answers protocol.AskBinCount: the count's body (binCount).
-func (d *Doors) AskBinCount(_ string, raw json.RawMessage) asks.Result {
-	return askDoor(raw, errText, d.binCount)
+// AskBinCount answers protocol.AskBinCount: the count's body (binCount), for
+// the asking station.
+func (d *Doors) AskBinCount(station string, raw json.RawMessage) asks.Result {
+	return askDoor(raw, errText, func(req protocol.BinCountRequest) asks.Result {
+		return d.binCount(station, req)
+	})
 }
 
 // AskBinClear answers protocol.AskBinClear: the CLEAR's body (binClear).

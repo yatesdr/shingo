@@ -1,14 +1,15 @@
 // Lost and late count declarations: the four rows of the round-3 count table
-// (SYNTH-round3 §2, a design record outside the repo), as the base (v0.18.0)
-// behaves. Core states a count for a carrier at a line seat — a person's count
-// (BinService.RecordCount, fenced by countFence, announced by announceCount)
-// or a reset (BinManifestService.bumpEpoch's declaration) — and the station
-// loses it or takes it late. The info-flow build's lane C6 fences every count
-// Core states and lane B2 puts the adjustment and the refresh on the
-// must-arrive list; rows (a), (b) and (d) are expected to change then, and
-// each test says how. A changed precondition (the declaration's shape, the
-// loss) is reported and the test runs on, so its books say what the row now
-// does.
+// (SYNTH-round3 §2, a design record outside the repo). Core states a count for
+// a carrier at a line seat — a person's count (BinService.RecordCount, fenced
+// by cursorFences, announced by announceCount) or a reset
+// (BinManifestService.bumpEpoch's declaration, fenced by newGenerationFence) —
+// and the station loses it or takes it late. Pinned at the base (v0.18.0),
+// then moved by the info-flow build: its lane C6 fences every count Core
+// states per addressed station (row (d) changed then: both declarers rebase),
+// and lane B2 puts the adjustment and the refresh on the must-arrive list
+// (rows (a) and (b) are expected to change then, and each test says how). A
+// changed precondition (the declaration's shape, the loss) is reported and the
+// test runs on, so its books say what the row now does.
 //
 // Real: Core against Postgres (the count and its fence, the reset doors and
 // their declarations, the delta applier with its stale drop and its epoch
@@ -212,6 +213,14 @@ func declText(adj protocol.UOPAdjustment) string {
 		" by " + strconv.Quote(adj.Actor) + ", " + fence
 }
 
+// fencedAtTheStart reports whether adj is a reset's declaration as Core states
+// it since C6: n at epoch by actor, fenced for the rig's station at net 0,
+// seq 0 of the generation the reset starts (newGenerationFence).
+func fencedAtTheStart(adj protocol.UOPAdjustment, n int, epoch int64, actor string) bool {
+	return adj.AsOfNet != nil && *adj.AsOfNet == 0 && adj.AsOfSeq != nil && *adj.AsOfSeq == 0 &&
+		adj.AsOfStation == handoffStation && adj.Epoch == epoch && adj.NewRemaining == n && adj.Actor == actor
+}
+
 func (w *declRig) coreRow(id int64) declRow {
 	w.t.Helper()
 	var r declRow
@@ -387,8 +396,8 @@ var declResets = []struct {
 //
 // Expected to change when the adjustment joins the must-arrive list: the
 // count then survives the outage, arrives late and fenced, and is rebased
-// (both books 45). Fencing resets alone does not change it: the count is
-// already fenced at the one cursor.
+// (both books 45). Fencing every count per station (C6) did not change it:
+// the count was already fenced at the station's one cursor.
 func TestScenario_CountDecl_APersonsCountLostEachSideKeepsItsOwn(t *testing.T) {
 	t.Parallel()
 	w := newDeclRig(t, "CD-A", 100)
@@ -435,19 +444,19 @@ func TestScenario_CountDecl_APersonsCountLostEachSideKeepsItsOwn(t *testing.T) {
 
 // TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp is
 // row (b), for each declarer. The station has counted 2 (98 at E) when Core
-// resets the carrier to 60 at E+1; the declaration (unfenced) is
-// dead-lettered by an outage. The station counts 4 under E: Core drops them as
-// stale and answers with the epoch refresh, which carries no count. The Edge
-// adopts E+1 and keeps 94; its next 3 land at Core. Core reads 57, the Edge
-// 91: the reset's 60 never reaches the Edge, and the 4 parts counted under
-// the ended generation are in the Edge's number and discarded at Core.
+// resets the carrier to 60 at E+1; the declaration (fenced at net 0, seq 0 of
+// E+1 since C6; unfenced at the base) is dead-lettered by an outage. The
+// station counts 4 under E: Core drops them as stale and answers with the
+// epoch refresh, which carries no count. The Edge adopts E+1 and keeps 94; its
+// next 3 land at Core. Core reads 57, the Edge 91: the reset's 60 never
+// reaches the Edge, and the 4 parts counted under the ended generation are in
+// the Edge's number and discarded at Core.
 //
-// Expected to change when the adjustment joins the must-arrive list, with or
-// without the reset fenced at net 0, seq 0 of E+1: the declaration survives
-// the outage, reaches the Edge ahead of the refresh (the outbox goes in id
-// order) while the Edge still holds E, and is written as is at E+1, so both
-// books read 57.
-// Fencing resets alone changes only the declaration's shape here.
+// Expected to change when the adjustment joins the must-arrive list: the
+// declaration survives the outage, reaches the Edge ahead of the refresh (the
+// outbox goes in id order) while the Edge still holds E, and is written as is
+// at E+1 (the fence declines on the epoch), so both books read 57.
+// Fencing resets (C6) changed only the declaration's shape here.
 func TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp(t *testing.T) {
 	t.Parallel()
 	for _, tc := range declResets {
@@ -462,8 +471,9 @@ func TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp(t 
 				t.Fatalf("the reset: %v", err)
 			}
 			decl := w.declaration()
-			if f := decl.adj; f.AsOfNet != nil || f.Epoch != e+1 || f.NewRemaining != 60 || f.Actor != tc.actor {
-				t.Errorf("the reset's declaration is %s, want 60 at epoch %d by %q, unfenced", declText(decl.adj), e+1, tc.actor)
+			if !fencedAtTheStart(decl.adj, 60, e+1, tc.actor) {
+				t.Errorf("the reset's declaration is %s, want 60 at epoch %d by %q, fenced at net 0 seq 0 for %s",
+					declText(decl.adj), e+1, tc.actor, handoffStation)
 			}
 			if !w.outage(decl) {
 				t.Errorf("Core's drainer kept the reset's declaration through the outage (offered %d times): "+
@@ -551,22 +561,24 @@ func TestScenario_CountDecl_AFencedCountLateIsRebasedToCores(t *testing.T) {
 	}
 }
 
-// TestScenario_CountDecl_AnUnfencedResetLate is row (d), for each declarer.
-// The station has counted 2 (98 at E) when Core resets the carrier to 60 at
-// E+1, unfenced. The broker refuses the declaration's publish while it takes
-// the rest, so the epoch refresh Core sends for the station's 4 stale parts
-// overtakes it: the Edge adopts E+1 at 94 and counts 3 there (Core 57). Then
-// the declaration lands, late. A person's (the bins page's Load Payload) is
-// written as is: the Edge reads 60, the 3 parts counted since overwritten. A
-// press's (lifecycle) names the generation the slot already holds and is
-// ignored as already applied: the Edge keeps 91, and Core's 60 never reaches
-// it.
+// TestScenario_CountDecl_ALateResetIsRebasedToCores is row (d), for each
+// declarer. The station has counted 2 (98 at E) when Core resets the carrier
+// to 60 at E+1, fenced at net 0, seq 0 of E+1 for the station. The broker
+// refuses the declaration's publish while it takes the rest, so the epoch
+// refresh Core sends for the station's 4 stale parts overtakes it: the Edge
+// adopts E+1 at 94 and counts 3 there (Core 57). Then the declaration lands,
+// late, and is rebased by the 3 counted under E+1: 60 + (-3 - 0) = 57 for both
+// declarers, Core's number.
 //
-// Expected to change when every count Core states is fenced: the late copy
-// carries net 0, seq 0 of E+1 and is rebased to 57 for both declarers.
-func TestScenario_CountDecl_AnUnfencedResetLate(t *testing.T) {
+// It was TestScenario_CountDecl_AnUnfencedResetLate, pinned at the base, where
+// the declaration went out unfenced: a person's (the bins page's Load Payload)
+// was written as is (the Edge read 60, the 3 parts counted since
+// overwritten), and a press's (lifecycle) named the generation the slot
+// already held and was ignored as already applied (the Edge kept 91, and
+// Core's 60 never reached it). C6 (every count Core states fenced per
+// addressed station) flipped both to 57.
+func TestScenario_CountDecl_ALateResetIsRebasedToCores(t *testing.T) {
 	t.Parallel()
-	want := map[string]int{protocol.AuditActorUI: 60, protocol.ActorCoreLifecycle: 91}
 	for _, tc := range declResets {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -579,8 +591,9 @@ func TestScenario_CountDecl_AnUnfencedResetLate(t *testing.T) {
 				t.Fatalf("the reset: %v", err)
 			}
 			decl := w.declaration()
-			if f := decl.adj; f.AsOfNet != nil || f.Epoch != e+1 || f.NewRemaining != 60 || f.Actor != tc.actor {
-				t.Errorf("the reset's declaration is %s, want 60 at epoch %d by %q, unfenced", declText(decl.adj), e+1, tc.actor)
+			if !fencedAtTheStart(decl.adj, 60, e+1, tc.actor) {
+				t.Errorf("the reset's declaration is %s, want 60 at epoch %d by %q, fenced at net 0 seq 0 for %s",
+					declText(decl.adj), e+1, tc.actor, handoffStation)
 			}
 			w.strokes(4)
 			w.shipEdgeDeltas()
@@ -607,10 +620,73 @@ func TestScenario_CountDecl_AnUnfencedResetLate(t *testing.T) {
 				t.Errorf("the Edge was given %v for the bin, want the late declaration", got)
 			}
 			edge, edgeEpoch, core, _ := w.books()
-			if edge != want[tc.actor] || edgeEpoch != e+1 || core != 57 {
-				t.Errorf("after the late declaration by %q: Edge %d at %d, Core %d; want Edge %d at %d, Core 57",
-					tc.actor, edge, edgeEpoch, core, want[tc.actor], e+1)
+			if edge != 57 || edgeEpoch != e+1 || core != 57 {
+				t.Errorf("after the late declaration by %q: Edge %d at %d, Core %d; want both 57 at %d: "+
+					"the late reset rebased by the parts counted under its generation",
+					tc.actor, edge, edgeEpoch, core, e+1)
 			}
 		})
+	}
+}
+
+// TestScenario_CountDecl_CoresEchoOfTheStationsLoadKeepsItsTicks is condor F7
+// end to end, with Core's real echo: the station's own LOAD at the line
+// (BinManifestService.LoadAtLine, the bin.load door's body) resets the carrier
+// to 60 at E+1, and the station seats Core's answer (the count and epoch the
+// reply carries, written as the LOAD's follow-up writes them: Mutator.
+// ManualLoad). It then counts 2 under E+1, one shipped to Core and one still
+// unflushed, before Core's announcement of the same act reaches it through
+// Core's drainer and the Edge's consumer. The announcement is fenced at net 0,
+// seq 0 of E+1 (newGenerationFence), so the Edge rebases it,
+// 60 + (-1 - 0) + (-1) = 58, rather than writing 60 over the two parts; once
+// the second lands, both books read 58.
+//
+// The Edge pins (TestPinF7_LocalLoadThenTickThenUnfencedEchoKeepsTheTick and
+// its CLEAR twin) build an older Core's unfenced echo by hand, which the
+// handler's "already holds" guard ignores; this is the fenced echo the
+// handler's fence takes since C6, which nothing pinned before.
+func TestScenario_CountDecl_CoresEchoOfTheStationsLoadKeepsItsTicks(t *testing.T) {
+	t.Parallel()
+	w := newDeclRig(t, "CD-F7-LOAD", 100)
+	w.strokes(2)
+	w.shipEdgeDeltas()
+	_, _, _, e := w.books()
+
+	n := int64(60)
+	m := `{"items":[{"catid":"` + w.payload + `","qty":60}]}`
+	epoch, count, err := w.manifest.LoadAtLine(w.binID, m, w.payload, &n)
+	if err != nil {
+		t.Fatalf("the station's LOAD at Core: %v", err)
+	}
+	if epoch != e+1 || count != 60 {
+		t.Fatalf("Core's answer to the LOAD is %d at epoch %d, want 60 at %d", count, epoch, e+1)
+	}
+	decl := w.declaration()
+	if !fencedAtTheStart(decl.adj, 60, e+1, protocol.ActorCoreLifecycle) {
+		t.Errorf("the LOAD's announcement is %s, want 60 at epoch %d by %q, fenced at net 0 seq 0 for %s",
+			declText(decl.adj), e+1, protocol.ActorCoreLifecycle, handoffStation)
+	}
+	bin := w.binID
+	if err := w.acc.ManualLoad(w.edge.DB.DB, w.nodeID, w.edgeRuntime().ActiveClaimID, &bin, epoch, count); err != nil {
+		t.Fatalf("the station seats Core's answer: %v", err)
+	}
+
+	w.strokes(1)
+	w.shipEdgeDeltas()
+	w.edge.Engine.Events.Emit(edgeengine.Event{Type: edgeengine.EventCounterDelta,
+		Payload: edgeengine.CounterDeltaEvent{ProcessID: w.process, StyleID: w.style, Delta: 1}})
+
+	w.edgeReads(w.pass())
+	if got := w.readByEdge(); len(got) != 1 || got[0] != protocol.SubjectUOPAdjustment {
+		t.Fatalf("the Edge was given %v for the bin, want the LOAD's announcement", got)
+	}
+	if edge, edgeEpoch, _, _ := w.books(); edge != 58 || edgeEpoch != e+1 {
+		t.Errorf("after the echo the Edge reads %d at %d, want 58 at %d: the two parts counted since the LOAD kept",
+			edge, edgeEpoch, e+1)
+	}
+	w.acc.Flush()
+	w.shipEdgeDeltas()
+	if edge, edgeEpoch, core, coreEpoch := w.books(); edge != 58 || core != 58 || edgeEpoch != e+1 || coreEpoch != e+1 {
+		t.Errorf("books: Edge %d at %d, Core %d at %d; want both 58 at %d", edge, edgeEpoch, core, coreEpoch, e+1)
 	}
 }

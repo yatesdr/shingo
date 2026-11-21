@@ -49,8 +49,8 @@ func TestLinesideDivergence_FencedCountAgreesAtTheSameSeq(t *testing.T) {
 			testutil.MustNoErr(t, err, "read bin")
 			res, err := bins.RecordCount(b, 100, "operator-under-test")
 			testutil.MustNoErr(t, err, "RecordCount")
-			if res.AsOfNet == nil || *res.AsOfNet != -10 || res.AsOfSeq == nil || *res.AsOfSeq != 1 || res.AsOfStation != r.station {
-				t.Fatalf("fence = {%v, %v, %q}, want {-10, 1, %s}", res.AsOfNet, res.AsOfSeq, res.AsOfStation, r.station)
+			if net, seq, st := res.FenceFor(r.station); net == nil || *net != -10 || seq == nil || *seq != 1 || st != r.station {
+				t.Fatalf("fence = {%v, %v, %q}, want {-10, 1, %s}", net, seq, st, r.station)
 			}
 
 			// The station's report at flushed seq 2, before Core has seq 2.

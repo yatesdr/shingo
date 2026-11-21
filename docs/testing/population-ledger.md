@@ -2052,3 +2052,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### STALE — `TestRecordCount_NoCursorMeansNoFence`
+- test: `TestRecordCount_NoCursorMeansNoFence` · pkg `shingocore/service` · run `-run '^TestRecordCount_NoCursorMeansNoFence$'` · `shingo-core/service/record_count_fence_test.go:86` @ `d2686a1d` · tags `docker`
+- code: STALE
+- assertion map: renamed `TestRecordCount_NoCursorFencesAtTheStart` (`shingo-core/service/record_count_fence_test.go`): one adjustment (kept); with no cursor in the generation the addressed station's copy is fenced at net 0, seq 0 for that station, and the count's `FenceFor` it gives the same (nil/nil/"" -> 0/0/the station). Flipped by the info-flow build's C6 ruling: every count Core states carries a fence per addressed station, at that station's own cursor, not "exactly one cursor, else none".
+- mutation: `cursorFences` put back on the base's rule (fence only when exactly one station has a cursor, naming it; else none) · renamed test red: `record_count_fence_test.go:110: fence = {<nil>, <nil>, ""}, want {0, 0, "stn-test"}`, `--- FAIL: TestRecordCount_NoCursorFencesAtTheStart`
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestRecordCount_TwoCountingStationsMeansNoFence`
+- test: `TestRecordCount_TwoCountingStationsMeansNoFence` · pkg `shingocore/service` · run `-run '^TestRecordCount_TwoCountingStationsMeansNoFence$'` · `shingo-core/service/record_count_fence_test.go:118` @ `d2686a1d` · tags `docker`
+- code: STALE
+- assertion map: renamed `TestRecordCount_TwoCountingStationsEachIsFencedAtItsOwn` (`shingo-core/service/record_count_fence_test.go`): one adjustment, to the station claiming the seat (kept); it is fenced at that station's own cursor, never the other counting station's (no fence -> -3/1/the claiming station), and `FenceFor` the other station gives that station's own cursor. Flipped by C6, as the row above.
+- mutation: as the row above · renamed test red: `record_count_fence_test.go:154: fence = {<nil>, <nil>, ""}, want {-3, 1, "stn-test"}`, `--- FAIL: TestRecordCount_TwoCountingStationsEachIsFencedAtItsOwn`
+- coverage Δ: not measured for this row (the same paths run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row

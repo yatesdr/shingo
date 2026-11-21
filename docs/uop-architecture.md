@@ -159,8 +159,10 @@ itself when the pickup reaches it.
 Every delta envelope carries a monotonic `SequenceID` per scope. Core's `inventory_delta_dedup` table records
 `last_seq` per `(station, scope_kind, scope_key, epoch)`. A message at or below it is skipped, and its count is
 carried by the next applied message's running `Net`. A count correction writes `bins.uop_remaining` directly and
-reaches the counting station as a `UOPAdjustment` fenced by the net it was taken at (`AsOfNet`/`AsOfSeq`); a reset
-bumps `delta_epoch`, which retires the old generation's in-flight deltas.
+reaches each station it is addressed to as a `UOPAdjustment` fenced at the net that station's stream was at
+(`AsOfNet`/`AsOfSeq`; net 0, seq 0 for a station with no messages applied in the generation); a reset bumps
+`delta_epoch`, which retires the old generation's in-flight deltas, and its declaration is fenced at net 0, seq 0 of
+the new generation, so a station that already holds that generation rebases it instead of overwriting.
 
 ## Process semantics
 

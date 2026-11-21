@@ -327,14 +327,17 @@ func (h *Handlers) binRecordCount(b *domain.Bin, params json.RawMessage) error {
 	}
 	h.emitBinUpdate(b, engine.BinActionCounted, "")
 
-	// The corrected count goes to every station from inside RecordCount's
-	// transaction (BinService.announceCount), fenced with the counting
-	// station's cursor. The station that models this node applies it: if the
-	// bin is bound there it rebases on the fence (or takes the number as is
-	// when there is none); if the bin is staged-but-unbound (the SNF3
+	// The corrected count goes from inside RecordCount's transaction
+	// (BinService.announceCount) to the stations the landing's rule addresses
+	// (announceLifecycle), each fenced at its own cursor (cursorFences). A
+	// station that models this node applies it: if the bin is bound there it
+	// rebases on the fence when it holds the count's generation (and takes the
+	// number as is, with the generation, otherwise or with no fence); if the
+	// bin is staged-but-unbound (the SNF3
 	// detachment) the correction BINDS it with the count and epoch (P2-C5).
-	// Every other station no-ops. This door used to send its own copy after
-	// the commit, unfenced; that copy is gone, so a count announces once.
+	// A station that does not model the node drops it. This door used to send
+	// its own copy after the commit, unfenced; that copy is gone, so a count
+	// announces once.
 	return nil
 }
 

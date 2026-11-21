@@ -75,22 +75,26 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 //
 // It is the same act as the cycle count on the bins page and it goes through
 // the same service, so it lands the same audit rows, clears the same
-// go-count-this flag, and enqueues the same UOPAdjustment to every station,
-// inside the count's transaction. (Until the record-count fence it broadcast
-// nothing, and this comment said it did.) The only difference is who is
-// standing where when they say it.
+// go-count-this flag, and enqueues the same UOPAdjustments to the stations the
+// landing's rule addresses, inside the count's transaction. (Until the
+// record-count fence it broadcast nothing, and this comment said it did.) The
+// only difference is who is standing where when they say it.
 //
-// The reply carries the fence (as_of_net, as_of_seq, as_of_station) along with
-// the count and epoch, so the station that took the count rebases on the same
-// point in its stream as the broadcast will, whichever of the two it applies
-// first. Writing the reply's number over its count would lose the ticks it
-// consumed while the request was out.
+// On the ask the reply carries the asking station's fence (as_of_net,
+// as_of_seq, as_of_station) along with the count and epoch, so that station
+// rebases on the same point in its stream as the announcement to it will,
+// whichever of the two it applies second. Writing the reply's number over its
+// count would lose the ticks it consumed while the request was out. This
+// adapter has no asking station (the HTTP request names none), so its reply
+// carries no fence; the ask's is TestLineCount_BroadcastsFencedAndRepliesWithTheFence.
 //
 // Not an epoch bump; see store/bins.RecordCount for why.
 //
 // The adapter over Doors.binCount, which the bin.count ask answers through too.
 func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, errText, h.doors().binCount)
+	serveDoor(w, r, errText, func(req protocol.BinCountRequest) asks.Result {
+		return h.doors().binCount("", req)
+	})
 }
 
 // apiBinClear clears the manifest on the bin at a node, resetting it to empty.

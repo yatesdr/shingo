@@ -9,7 +9,6 @@ import (
 	"shingo/protocol"
 
 	"shingocore/store/bins"
-	"shingocore/store/inventory"
 )
 
 // AnnounceLateDrawTx tells the station holding a bin that a late draw changed
@@ -20,19 +19,22 @@ import (
 // the cart's whole stay.
 //
 // The announcement is the count's own (announceCount's shape): Core's count
-// after the draw at the bin's current generation, fenced at that generation's
-// cursor so the station adds back what it has counted since and Core has not
-// applied (engine.fencedCount). With no cursor at the generation yet (the
-// seat's first windows are still in flight) the fence is net 0 at seq 0 for
-// each station addressed: Core has applied none of them. With two stations
-// counting it there is no fence, and a lifecycle announcement without one is
-// news the station already holds (it keeps its count), as before.
+// after the draw at the bin's current generation, fenced for each station
+// addressed at that station's own cursor in that generation (cursorFences), so
+// the station adds back what it has counted since and Core has not applied
+// (engine.fencedCount). A station with no cursor there yet (the seat's first
+// windows are still in flight) is fenced at net 0, seq 0: Core has applied
+// none of them.
+//
+// It used to name the cursor's own station in the fence it sent every station
+// addressed, so any other station declined the fence and wrote the count as
+// is, and with two stations counting it sent no fence at all.
 //
 // Addressed as every lifecycle announcement is (announceLifecycle's rule), and
 // only when the bin stands at a seat: a bin in the air or in storage has no
 // station counting it, and its next landing carries the count. Reports whether
 // it stands at a seat, so the caller pushes the bins feed after its commit.
-// Cost: the address and the cursor, two statements, on a late apply only.
+// Cost: the address and the cursors, two statements, on a late apply only.
 func (s *BinManifestService) AnnounceLateDrawTx(tx *sql.Tx, binID, epoch int64, count int) (bool, error) {
 	dest, address := bins.ScanLifecycleAddress()
 	var nodeName string
@@ -49,12 +51,13 @@ func (s *BinManifestService) AnnounceLateDrawTx(tx *sql.Tx, binID, epoch int64, 
 			"the station keeps the count its landing carried", binID, nodeName)
 		return true, nil
 	}
-	cursorStation, cur, cursors, err := inventory.SoleBinCursor(tx, binID, epoch)
+	fences, err := cursorFences(tx, binID, epoch)
 	if err != nil {
 		return false, fmt.Errorf("late draw on bin %d: %w", binID, err)
 	}
 	sts, _ := lifecycleStations(addr)
 	for _, st := range sts {
+		f := fences(st.StationID)
 		adj := &protocol.UOPAdjustment{
 			BinID:        binID,
 			CoreNodeName: nodeName,
@@ -62,14 +65,9 @@ func (s *BinManifestService) AnnounceLateDrawTx(tx *sql.Tx, binID, epoch int64, 
 			Epoch:        epoch,
 			Actor:        protocol.ActorCoreLifecycle,
 			AdjustedAt:   time.Now().UTC(),
-		}
-		switch {
-		case cursors == 0:
-			net, seq := int64(0), int64(0)
-			adj.AsOfNet, adj.AsOfSeq, adj.AsOfStation = &net, &seq, st.StationID
-		case cursors == 1 && cur.AppliedNet != nil:
-			seq := cur.LastSeq
-			adj.AsOfNet, adj.AsOfSeq, adj.AsOfStation = cur.AppliedNet, &seq, cursorStation
+			AsOfNet:      f.net,
+			AsOfSeq:      f.seq,
+			AsOfStation:  f.station,
 		}
 		if err := s.announce.SendTo(tx, protocol.SubjectUOPAdjustment, st.StationID, adj); err != nil {
 			return false, fmt.Errorf("announce the late draw on bin %d: %w", binID, err)

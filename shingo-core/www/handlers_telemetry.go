@@ -198,8 +198,10 @@ func loaderCarrierRefusal(r *service.CarrierRefusedError) string {
 	return fmt.Sprintf("%s may not ride a %s carrier (%s). Nothing was loaded.", r.Payload, r.BinType, allowed)
 }
 
-// binCount is the count's body.
-func (d *Doors) binCount(req protocol.BinCountRequest) asks.Result {
+// binCount is the count's body, for the asking station: its reply carries the
+// fence of that station's own stream (CountResult.FenceFor), the one the
+// count's announcement to it carries.
+func (d *Doors) binCount(station string, req protocol.BinCountRequest) asks.Result {
 	if req.NodeName == "" {
 		return badRequest("node_name is required")
 	}
@@ -263,6 +265,7 @@ func (d *Doors) binCount(req protocol.BinCountRequest) asks.Result {
 	d.hub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "counted", "bin_id": bin.ID,
 	}))
+	asOfNet, asOfSeq, asOfStation := res.FenceFor(station)
 	return accepted(protocol.BinCountResponse{
 		Status:       "ok",
 		BinID:        bin.ID,
@@ -272,9 +275,9 @@ func (d *Doors) binCount(req protocol.BinCountRequest) asks.Result {
 		Discrepancy:  res.Discrepancy,
 		Warning:      res.Warning,
 		DeltaEpoch:   res.Epoch,
-		AsOfNet:      res.AsOfNet,
-		AsOfSeq:      res.AsOfSeq,
-		AsOfStation:  res.AsOfStation,
+		AsOfNet:      asOfNet,
+		AsOfSeq:      asOfSeq,
+		AsOfStation:  asOfStation,
 	})
 }
 

@@ -170,17 +170,28 @@ func landingStations(addr plantclaims.LandingAddress) []plantclaims.AddressedSta
 //     logged per announcement ("bin_landing: last arm") so soakstat [S.4]
 //     counts it with the landings' last arm.
 //
-// Cost: +0 statements (the address rides the caller's UPDATE); one outbox row
-// per station addressed. It used to be one broadcast row, parsed by every Edge
-// and logged as "process node not found" by each that does not model the node.
-func announceLifecycle(ann EpochAnnounce, tx *sql.Tx, addr bins.LifecycleAddress, what string, adj *protocol.UOPAdjustment) error {
+// Each station addressed gets its own copy, fenced at its own stream (fence:
+// cursorFences for a count, newGenerationFence for a reset). A count Core
+// states says where in that station's stream Core was when it stated it, so a
+// copy the station applies late, or after it already holds the generation, is
+// rebased onto the parts counted since rather than written over them (the
+// Edge's fencedCount).
+//
+// Cost: +0 statements (the address rides the caller's UPDATE, the fence the
+// caller's read); one outbox row per station addressed. It used to be one
+// broadcast row, parsed by every Edge and logged as "process node not found"
+// by each that does not model the node.
+func announceLifecycle(ann EpochAnnounce, tx *sql.Tx, addr bins.LifecycleAddress, what string, adj *protocol.UOPAdjustment, fence countFences) error {
 	sts, lastArm := lifecycleStations(addr)
 	if lastArm && len(sts) > 0 {
 		log.Printf("bin_landing: last arm (%s) — bin %d at %s: no station claims it and no order; "+
 			"sent to %d Edge(s)", what, adj.BinID, adj.CoreNodeName, len(sts))
 	}
 	for _, st := range sts {
-		if err := ann.SendTo(tx, protocol.SubjectUOPAdjustment, st.StationID, adj); err != nil {
+		a := *adj
+		f := fence(st.StationID)
+		a.AsOfNet, a.AsOfSeq, a.AsOfStation = f.net, f.seq, f.station
+		if err := ann.SendTo(tx, protocol.SubjectUOPAdjustment, st.StationID, &a); err != nil {
 			return err
 		}
 	}

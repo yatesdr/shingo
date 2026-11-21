@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration (placeholder; the lead writes this line).
+
+- A count, load or clear from Core (the Bins page, the line's count, a press finishing a cart) that reaches a station late, or after the station took the cart's new life from an epoch refresh, keeps the parts the station counted since; it used to write over them, or be ignored and leave the station's number off Core's
+
 ## v0.18.0 — 2026-11-21
 
 Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on v0.17.1 installs v0.17.1 first. Rollback: migrate down 185 with this release's binary, then the previous binary.

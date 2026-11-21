@@ -84,45 +84,62 @@ func TestAdminCount_BroadcastsCoresNumberFenced(t *testing.T) {
 // TestLineCount_BroadcastsFencedAndRepliesWithTheFence is the inverted
 // TestPin_LineCount_BroadcastsNothing (flint's finding). The count from the
 // line now broadcasts like the bins-page count, so a second station modelling
-// the node hears it, and the reply carries the same fence so the station that
-// took the count rebases on it rather than writing Core's number over the
-// ticks it consumed while the request was out.
+// the node hears it, and the reply carries the asking station's own fence, the
+// one the announcement to it carries, so the station that took the count
+// rebases on it rather than writing Core's number over the ticks it consumed
+// while the request was out.
+//
+// Through the ask, whose sender is the asking station (the HTTP adapter names
+// none, and its reply carries no fence). A station with no cursor in the
+// generation is fenced at net 0, seq 0, in the reply and the announcement
+// alike: every count Core states is fenced per station. It used to go out
+// unfenced in both, and a station that took the reply after the announcement
+// wrote Core's number over the windows it had on the wire.
 func TestLineCount_BroadcastsFencedAndRepliesWithTheFence(t *testing.T) {
 	t.Parallel()
-	h, db := testHandlers(t)
-	sd := testdb.SetupStandardData(t, db)
-	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, where the count was
-	// broadcast. It is now addressed like the landing (not sent at storage), so
-	// the bin stands at the line seat the counting station claims.
-	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-LINE-COUNT")
-	claimSeatFor(t, db, "stn-line", sd.LineNode.Name)
-	seedCursor(t, db, "stn-line", bin.ID, bin.DeltaEpoch, 9, -30)
+	for _, tc := range []struct {
+		name     string
+		cursor   bool
+		net, seq int64
+	}{
+		{"a station with a cursor is fenced at it", true, -30, 9},
+		{"a station with none is fenced at the start", false, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newDoorFix(t)
+			// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, where the
+			// count was broadcast. It is now addressed like the landing (not sent
+			// at storage), so the bin stands at the line seat the counting
+			// station claims.
+			bin := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.LineNode.ID, "BIN-LINE-COUNT")
+			claimSeatFor(t, f.db, "stn-line", f.sd.LineNode.Name)
+			if tc.cursor {
+				seedCursor(t, f.db, "stn-line", bin.ID, bin.DeltaEpoch, 9, -30)
+			}
 
-	rec := postJSON(t, h.apiBinCount, "/api/telemetry/bin-count", map[string]any{
-		"node_name": sd.LineNode.Name, "actual_uop": 7, "actor": "line-operator",
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		UOPRemaining int    `json:"uop_remaining"`
-		DeltaEpoch   int64  `json:"delta_epoch"`
-		AsOfNet      *int64 `json:"as_of_net"`
-		AsOfSeq      *int64 `json:"as_of_seq"`
-		AsOfStation  string `json:"as_of_station"`
-	}
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode reply")
-	if resp.AsOfNet == nil || *resp.AsOfNet != -30 || resp.AsOfSeq == nil || *resp.AsOfSeq != 9 ||
-		resp.AsOfStation != "stn-line" || resp.DeltaEpoch != bin.DeltaEpoch {
-		t.Errorf("reply fence = {%v, %v, %q, epoch %d}, want {-30, 9, stn-line, %d}",
-			resp.AsOfNet, resp.AsOfSeq, resp.AsOfStation, resp.DeltaEpoch, bin.DeltaEpoch)
-	}
+			body, err := json.Marshal(protocol.BinCountRequest{NodeName: f.sd.LineNode.Name, ActualUOP: 7, Actor: "line-operator"})
+			testutil.MustNoErr(t, err, "the count's body")
+			ans := askThrough(t, f, doorAsks["/api/telemetry/bin-count"], "stn-line", body)
+			if ans.Status != http.StatusOK {
+				t.Fatalf("status %d, sentence %q", ans.Status, ans.Sentence)
+			}
+			var resp protocol.BinCountResponse
+			testutil.MustNoErr(t, json.Unmarshal(ans.Body, &resp), "decode reply")
+			if resp.AsOfNet == nil || *resp.AsOfNet != tc.net || resp.AsOfSeq == nil || *resp.AsOfSeq != tc.seq ||
+				resp.AsOfStation != "stn-line" || resp.DeltaEpoch != bin.DeltaEpoch {
+				t.Errorf("reply fence = {%v, %v, %q, epoch %d}, want {%d, %d, stn-line, %d}",
+					resp.AsOfNet, resp.AsOfSeq, resp.AsOfStation, resp.DeltaEpoch, tc.net, tc.seq, bin.DeltaEpoch)
+			}
 
-	adjs := adjustmentsForBin(t, db, bin.ID)
-	if len(adjs) != 1 {
-		t.Fatalf("line count enqueued %d UOPAdjustments, want 1", len(adjs))
-	}
-	if a := adjs[0]; a.NewRemaining != 7 || a.AsOfNet == nil || *a.AsOfNet != -30 || a.AsOfStation != "stn-line" {
-		t.Errorf("adjustment = %+v, want remaining 7 fenced at -30 for stn-line", a)
+			adjs := adjustmentsForBin(t, f.db, bin.ID)
+			if len(adjs) != 1 {
+				t.Fatalf("line count enqueued %d UOPAdjustments, want 1", len(adjs))
+			}
+			if a := adjs[0]; a.NewRemaining != 7 || a.AsOfNet == nil || *a.AsOfNet != tc.net ||
+				a.AsOfSeq == nil || *a.AsOfSeq != tc.seq || a.AsOfStation != "stn-line" {
+				t.Errorf("adjustment = %+v, want remaining 7 fenced at {%d, %d} for stn-line", a, tc.net, tc.seq)
+			}
+		})
 	}
 }

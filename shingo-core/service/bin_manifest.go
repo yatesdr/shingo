@@ -138,6 +138,14 @@ func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, payload,
 // number. (The repair message in the other direction carries no count, because
 // nobody declared anything there — see protocol.BinEpochRefresh.)
 //
+// THE DECLARATION IS FENCED AT THE START OF THE GENERATION IT STARTS: net 0,
+// seq 0 for each station addressed (newGenerationFence). A station still on
+// the ended generation takes the count with the generation, as it always did.
+// A station that already holds the new one (from its own LOAD's or CLEAR's
+// reply, or from an epoch refresh that overtook this row) rebases the count by
+// what it has counted there since, instead of writing it over those parts (a
+// person's reset) or ignoring it as news it already holds (a lifecycle one).
+//
 // by says whether a person declared this reset or Core's own bookkeeping did.
 // It is REQUIRED, not defaulted, because it decides whether the station binds
 // an empty slot to the carrier this names, and the two reset paths a person
@@ -187,7 +195,7 @@ func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Decl
 	if by == protocol.DeclaredByPerson {
 		adj.PayloadCode, adj.PayloadKnown = payload, true
 	}
-	if err := announceLifecycle(s.announce, tx, addr, "epoch", adj); err != nil {
+	if err := announceLifecycle(s.announce, tx, addr, "epoch", adj, newGenerationFence); err != nil {
 		return 0, fmt.Errorf("announce epoch %d for bin %d: %w", epoch, binID, err)
 	}
 	return epoch, nil
@@ -1103,11 +1111,13 @@ var ErrNegativeCount = errors.New("a count is 0 or more")
 // (RecordProducedBin) still flags.
 //
 // THE ANNOUNCEMENT STAYS LIFECYCLE. The Edge seats the LOAD from this call's
-// reply (BindActiveBin with the returned epoch) and ignores a lifecycle echo of
-// the generation it already holds (handler_uop_adjustment.go). A person's echo
-// would be applied again: a second write on the Pi per LOAD, the count rewritten
-// over any tick taken since, and an invitation to bind a carrier the L2 may
-// already have lifted. Only the carrier verdict is a person's here.
+// reply (the returned count and epoch). The announcement is fenced at the
+// start of the generation it names (bumpEpoch), so the Edge, already holding
+// that generation, rebases it onto any tick taken since (the Edge's
+// fencedCount); an older Core's unfenced lifecycle echo is ignored as news the
+// slot holds (handler_uop_adjustment.go). A person's echo would also bind the
+// carrier to a slot it finds empty, one the L2 may already have lifted, and
+// drop the seat's hold. Only the carrier verdict is a person's here.
 //
 // It is RecordProducedBin with the two questions the door used to answer for
 // itself answered here instead:
