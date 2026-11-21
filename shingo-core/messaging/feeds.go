@@ -79,13 +79,23 @@ type feedState struct {
 	memo  map[string]feedMemoEntry
 	sent  map[[2]string]*feedSendRecord
 	flags map[string]map[string]string
+	// drops counts the memo drops; dropped is the count at the last drop of a
+	// memo key, droppedAll at the last drop of every station's memo of a feed.
+	// A build carries the count it started at (lookup), and store keeps it
+	// only when no drop of its key has come since: a build that read before a
+	// known write must not be stored after the drop that write made.
+	drops      uint64
+	dropped    map[string]uint64
+	droppedAll map[string]uint64
 }
 
 func newFeedState() *feedState {
 	return &feedState{
-		memo:  map[string]feedMemoEntry{},
-		sent:  map[[2]string]*feedSendRecord{},
-		flags: map[string]map[string]string{},
+		memo:       map[string]feedMemoEntry{},
+		sent:       map[[2]string]*feedSendRecord{},
+		flags:      map[string]map[string]string{},
+		dropped:    map[string]uint64{},
+		droppedAll: map[string]uint64{},
 	}
 }
 
@@ -133,27 +143,35 @@ func memoTTL(key string) time.Duration { return feedScopes[key].ttl }
 // after a known write to that feed's data.
 func (f *feedState) drop(key string) {
 	f.mu.Lock()
+	f.drops++
 	delete(f.memo, key)
+	f.dropped[key] = f.drops
 	f.mu.Unlock()
 }
 
 // dropStation forgets one station's memo of a per-station feed.
 func (f *feedState) dropStation(station, key string) {
+	k := memoKey(station, key)
 	f.mu.Lock()
-	delete(f.memo, memoKey(station, key))
+	f.drops++
+	delete(f.memo, k)
+	f.dropped[k] = f.drops
 	f.mu.Unlock()
 }
 
 // dropEveryStation forgets every station's memo of a per-station feed, for a
-// write that changes every station's build of it.
+// write that changes every station's build of it, a station whose build is
+// still running included.
 func (f *feedState) dropEveryStation(key string) {
 	prefix := memoKey("", key)
 	f.mu.Lock()
+	f.drops++
 	for k := range f.memo {
 		if strings.HasPrefix(k, prefix) {
 			delete(f.memo, k)
 		}
 	}
+	f.droppedAll[key] = f.drops
 	f.mu.Unlock()
 }
 
@@ -198,20 +216,33 @@ func (f *feedState) lookup(station, key string, now time.Time) (feedMemoEntry, b
 	return e, true
 }
 
-// store keeps a build unless the memo already holds one started later: a
-// heartbeat's build that began before a known write must not overwrite the
-// build the write's push made, or the memo would hold the old digest and the
-// next heartbeats would resend the old value to Edges that have the new one.
-func (f *feedState) store(station, key string, e feedMemoEntry) {
+// dropCount is the number of memo drops so far. A build reads it before its
+// first read and carries it to store.
+func (f *feedState) dropCount() uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.drops
+}
+
+// store keeps a build that started at drop count drops, unless its key was
+// dropped since or the memo already holds a build started later. A build that
+// read before a known write and finished after the write's drop holds the old
+// digest: kept, the next heartbeats would send the old value to Edges that
+// have the new one (one that a reply answered, or a push sent), until the memo
+// aged out. Pinned by TestFeedState_ABuildStartedBeforeADropIsNotKept.
+func (f *feedState) store(station, key string, e feedMemoEntry, drops uint64) {
 	if feedScopes[key].noMemo {
 		return
 	}
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	k := memoKey(station, key)
+	if drops < f.dropped[k] || drops < f.droppedAll[key] {
+		return
+	}
 	if cur, ok := f.memo[k]; !ok || !cur.at.After(e.at) {
 		f.memo[k] = e
 	}
-	f.mu.Unlock()
 }
 
 // compare records one heartbeat's answer for one key and reports whether the
@@ -330,6 +361,7 @@ func (s *CoreDataService) feedCurrent(station, key string, now time.Time) (feedM
 	if e, ok := s.feeds.lookup(station, key, now); ok {
 		return e, true
 	}
+	drops := s.feeds.dropCount()
 	digest, value, known, err := s.buildFeed(station, key)
 	if !known {
 		return feedMemoEntry{}, false
@@ -339,7 +371,7 @@ func (s *CoreDataService) feedCurrent(station, key string, now time.Time) (feedM
 		return feedMemoEntry{}, false
 	}
 	e := feedMemoEntry{digest: digest, value: value, at: now}
-	s.feeds.store(station, key, e)
+	s.feeds.store(station, key, e, drops)
 	return e, true
 }
 

@@ -340,10 +340,9 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 // Without it a heartbeat inside the memo's life compared against the build
 // from before the write: an Edge whose digest differed from that build was
 // sent the catalog from before the write, and its sync deleted any row the
-// write had added there (a floor part its answer had landed). The window left
-// is a heartbeat whose build began before the write and is stored after this
-// drop (feedState.store); it is healed by the next heartbeat after that memo
-// ages out. Pinned by TestPayloadsChanged_DropsTheMemos.
+// write had added there (a floor part its answer had landed). A heartbeat's
+// build that began before the write and finishes after this drop is not
+// stored (feedState.store). Pinned by TestPayloadsChanged_DropsTheMemos.
 func (s *CoreDataService) PayloadsChanged() {
 	s.feeds.drop(protocol.FeedCatalog)
 	s.feeds.dropEveryStation(protocol.FeedNodes)

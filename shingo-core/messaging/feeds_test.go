@@ -133,8 +133,8 @@ func TestFeedState_Memo(t *testing.T) {
 	t.Parallel()
 	f := newFeedState()
 	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	f.store("edge.a", protocol.FeedCatalog, feedMemoEntry{digest: "c1", at: t0})
-	f.store("edge.a", protocol.FeedNodes, feedMemoEntry{digest: "n1", at: t0})
+	f.store("edge.a", protocol.FeedCatalog, feedMemoEntry{digest: "c1", at: t0}, f.dropCount())
+	f.store("edge.a", protocol.FeedNodes, feedMemoEntry{digest: "n1", at: t0}, f.dropCount())
 
 	cases := []struct {
 		name    string
