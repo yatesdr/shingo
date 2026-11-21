@@ -280,11 +280,11 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 	// THE ID IS WHAT ROUND-TRIPS; THE LABEL IS ONLY EVER READ.
 	//
 	// Every consumer of this list is a picker or a filter, and each one sends a
-	// value back: dashboards.stations_json stores the selected ids,
-	// cell_config.station_uid stores the typed one, and the missions/overview
-	// filters put theirs in a query string that is matched against
-	// an order's requester exactly. So the option carries both — the caller binds
-	// `id` to the value it will submit and `label` to the text a person reads.
+	// value back: dashboards.stations_json stores the selected ids, and the
+	// missions/overview filters put theirs in a query string that is matched
+	// against an order's requester exactly. So the option carries both — the
+	// caller binds `id` to the value it will submit and `label` to the text a
+	// person reads.
 	// Collapsing them back into one string is how a display name ends up in a
 	// stored column, which is the failure the whole display-name split exists
 	// to prevent (store/registry/registry.go:345-350).

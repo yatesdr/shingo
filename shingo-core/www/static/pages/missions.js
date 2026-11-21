@@ -288,7 +288,7 @@ function refresh(state) {
 }
 
 // ─── Section D: cells (production rhythm, §3.D / Phase E) ────────────────────
-// Filter-independent live state: load the configured cells, paint each tile's
+// Filter-independent live state: load the catalog cells, paint each tile's
 // current state, then pulse on cell-heartbeat SSE. A burst of ticks schedules
 // one debounced state refresh per cell (colors/cycle), not one per fire.
 const cellTiles = new Map(); // cell_id -> tile node

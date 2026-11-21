@@ -51,7 +51,6 @@ var endStateUIDColumns = []string{
 	"bin_uop_delta_daily.station_uid",
 	"bin_uop_exception.station_uid",
 	"bin_uop_ledger.station_uid",
-	"cell_config.station_uid",
 	"cell_part_events.station_uid",
 	"demand_origins.station_uid",
 	"demand_registry.station_uid",

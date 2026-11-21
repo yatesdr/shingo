@@ -3,6 +3,8 @@ package store
 import (
 	"strings"
 	"testing"
+
+	"shingocore/store/schema"
 )
 
 // TestV185_EveryOpHasItsInverse: down is generated from the same ops table as
@@ -35,5 +37,36 @@ func TestV185_EveryOpHasItsInverse(t *testing.T) {
 			t.Errorf("two renames land on %s: down could not tell them apart", k)
 		}
 		seen[k] = true
+	}
+}
+
+// TestV185CommentTable_ReadsTheTableOfEveryStatement: v185CommentsFor drops a
+// comment whose table is gone (v189 dropped cell_config) by the table
+// v185CommentTable reads off the statement, so that read must name a real
+// table for every COMMENT ON TABLE, COLUMN and CONSTRAINT in comments.sql (one
+// this build ships, or cell_config), and none for an INDEX or SEQUENCE.
+func TestV185CommentTable_ReadsTheTableOfEveryStatement(t *testing.T) {
+	t.Parallel()
+	read := 0
+	for _, line := range strings.Split(schema.Comments, "\n") {
+		if !strings.HasPrefix(line, "COMMENT ON ") {
+			continue
+		}
+		kind := strings.Fields(line)[2]
+		got := v185CommentTable(line)
+		switch kind {
+		case "TABLE", "COLUMN", "CONSTRAINT":
+			read++
+			if got != "cell_config" && !strings.Contains(schema.Snapshot, "CREATE TABLE public."+got+" (") {
+				t.Errorf("v185CommentTable read %q off %.80s…: not a table this build ships", got, line)
+			}
+		default:
+			if got != "" {
+				t.Errorf("v185CommentTable read %q off a COMMENT ON %s; want none", got, kind)
+			}
+		}
+	}
+	if read == 0 {
+		t.Fatal("comments.sql has no COMMENT ON TABLE, COLUMN or CONSTRAINT: the test read nothing")
 	}
 }

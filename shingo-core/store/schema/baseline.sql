@@ -1,4 +1,4 @@
--- Core's schema at v188 with its seed rows: GENERATED, never edited by hand.
+-- Core's schema at v189 with its seed rows: GENERATED, never edited by hand.
 -- cmd/schemabaseline boots v0.17.1's chain (v1..v184) on an empty database, runs this
 -- tree's migrations above it (which apply store/schema/comments.sql), and dumps the result with
 -- pg_dump --inserts. Regenerate: make schema-baseline (go run ./cmd/schemabaseline), then make schema-snapshot.
@@ -355,17 +355,6 @@ CREATE SEQUENCE public.carrier_families_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.carrier_families_id_seq OWNED BY public.carrier_families.id;
-
-CREATE TABLE public.cell_config (
-    cell_label text NOT NULL,
-    station_uid text NOT NULL,
-    primary_process_id bigint NOT NULL,
-    sub_process_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
-    display_name text DEFAULT ''::text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-COMMENT ON COLUMN public.cell_config.cell_label IS 'The operator''s label for the cell (cell_id until v185), the key.';
 
 CREATE TABLE public.cell_part_events (
     id bigint NOT NULL,
@@ -2071,6 +2060,7 @@ INSERT INTO public.schema_migrations VALUES (185, now());
 INSERT INTO public.schema_migrations VALUES (186, now());
 INSERT INTO public.schema_migrations VALUES (187, now());
 INSERT INTO public.schema_migrations VALUES (188, now());
+INSERT INTO public.schema_migrations VALUES (189, now());
 
 SELECT pg_catalog.setval('public.admin_users_id_seq', 1, false);
 
@@ -2217,9 +2207,6 @@ ALTER TABLE ONLY public.carrier_families
 
 ALTER TABLE ONLY public.carrier_families
     ADD CONSTRAINT carrier_families_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.cell_config
-    ADD CONSTRAINT cell_config_pkey PRIMARY KEY (cell_label);
 
 ALTER TABLE ONLY public.cleaning_mission_setup
     ADD CONSTRAINT cleaning_mission_setup_pkey PRIMARY KEY (id);
@@ -2457,8 +2444,6 @@ ALTER TABLE ONLY public.test_commands
 
 ALTER TABLE ONLY public.tte_samples
     ADD CONSTRAINT tte_samples_pkey PRIMARY KEY (id);
-
-CREATE INDEX cell_config_station_uid_idx ON public.cell_config USING btree (station_uid);
 
 CREATE INDEX idx_area_confidence_daily_area ON public.area_confidence_daily USING btree (area_name, day DESC);
 

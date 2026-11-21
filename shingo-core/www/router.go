@@ -418,10 +418,8 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 				r.Put("/config", h.apiConfigSave)
 				r.Post("/config/test-database", h.apiConfigTestDatabase)
 
-				// Cells — production-cell config (Phase E, Q-025)
+				// Cells: the Processes ticking for a station (Phase E)
 				r.Get("/cells/processes", h.apiCellProcesses)
-				r.Post("/cells", h.apiCellUpsert)
-				r.Delete("/cells/{id}", h.apiCellDelete)
 
 				// Edges — ask edge(s) to re-send their registration + catalog (Q-034)
 				r.Post("/edges/reregister", h.apiEdgeReregister)

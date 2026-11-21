@@ -10,7 +10,7 @@ Base URL: `http://<host>:8083`
 
 <!-- generated: shingo-core/www/router.go routes -->
 
-251 routes (126 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
+249 routes (124 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
 
 ### Pages and forms
 
@@ -117,10 +117,8 @@ Base URL: `http://<host>:8083`
 | Method | Path | Handler | Auth |
 |---|---|---|---|
 | `GET` | `/api/cells` | `apiCellsList` | public |
-| `POST` | `/api/cells` | `apiCellUpsert` | login |
 | `GET` | `/api/cells/catalog` | `apiCellsCatalog` | public |
 | `GET` | `/api/cells/processes` | `apiCellProcesses` | login |
-| `DELETE` | `/api/cells/{id}` | `apiCellDelete` | login |
 | `GET` | `/api/cells/{id}/heartbeat` | `apiCellHeartbeat` | public |
 | `GET` | `/api/cells/{id}/state` | `apiCellState` | public |
 | `GET` | `/api/cells/{id}/stops` | `apiCellStops` | public |

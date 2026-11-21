@@ -44,33 +44,19 @@ func (s *HeartbeatService) Stops(cellID string, since, until time.Time) ([]heart
 	return heartbeat.ComputeStops(events, heartbeat.EstimateTarget(events), heartbeat.DefaultThresholds()), nil
 }
 
-// ── cell_config (Phase E, Q-025) ────────────────────────────────────────────
+// ── cells ───────────────────────────────────────────────────────────────────
 
 // ListCells returns the cells to display: the auto-derived catalog cells
-// (Q-034 — a cell per PLC an edge reported) UNION the operator-configured cells,
-// with a configured cell overriding the derived one of the same id (curation
-// wins). This is why a freshly-registered edge's heartbeat populates with zero
-// manual setup; cell_config is now only an optional override.
+// (Q-034), a cell per PLC an Edge reported, so a freshly registered Edge's
+// heartbeat populates with no manual setup. Nothing stores a hand-made cell
+// (v189 dropped cell_config); a board renames or hides a cell in its own setup
+// (DashboardCells). A catalog-read failure is the error, not an empty list.
 func (s *HeartbeatService) ListCells() ([]heartbeat.CellConfig, error) {
-	configured, err := s.db.ListCellConfigs()
-	if err != nil {
-		return nil, err
-	}
-	have := make(map[string]bool, len(configured))
-	for _, c := range configured {
-		have[c.CellLabel] = true
-	}
-	out := configured
-	for _, d := range s.derivedCatalogCells() {
-		if !have[d.CellLabel] {
-			out = append(out, d)
-		}
-	}
-	return out, nil
+	return s.derivedCatalogCells()
 }
 
-// DashboardCells resolves the cells a heartbeat dashboard shows: the full cell
-// set (catalog-derived + configured) scoped to the dashboard's stations, with
+// DashboardCells resolves the cells a heartbeat dashboard shows: the catalog
+// cells (ListCells) scoped to the dashboard's stations, with
 // per-dashboard overrides from its config JSON applied (hide a cell, rename it).
 // This is the "cell setup lives with the dashboard" path (refactor #4) — the
 // kiosk reads it instead of the global /api/cells when rendered as a board.
@@ -119,12 +105,13 @@ func (s *HeartbeatService) DashboardCells(stations []string, configJSON []byte) 
 }
 
 // derivedCatalogCells turns the live (non-stale) edge_cells catalog into
-// display cells. A catalog-read failure is swallowed to []: the heartbeat
-// degrades to whatever cell_config exists rather than erroring.
-func (s *HeartbeatService) derivedCatalogCells() []heartbeat.CellConfig {
+// display cells. A catalog-read failure is an error: the catalog is the only
+// source of cells (v189 dropped cell_config), so a list read through a failure
+// would show "no cells" for an outage.
+func (s *HeartbeatService) derivedCatalogCells() ([]heartbeat.CellConfig, error) {
 	cells, err := s.db.ListEdgeCells("")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]heartbeat.CellConfig, 0, len(cells))
 	for _, c := range cells {
@@ -135,7 +122,7 @@ func (s *HeartbeatService) derivedCatalogCells() []heartbeat.CellConfig {
 			out = append(out, cfg)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // deriveCellConfig maps one catalog cell to a CellConfig. cell_id = the PLC
@@ -164,72 +151,39 @@ func deriveCellConfig(c store.EdgeCell) (heartbeat.CellConfig, bool) {
 }
 
 // resolveCellConfig resolves a cell_id to its grouping for the live heartbeat:
-// an operator cell_config wins; otherwise the auto-derived catalog cell of the
-// same label; otherwise (false) the caller falls back to the station grain.
-// This is the single seam that makes every resolve path (state, heartbeat,
-// stops) catalog-aware without duplicating the lookup.
-func (s *HeartbeatService) resolveCellConfig(cellID string) (heartbeat.CellConfig, bool, error) {
-	cfg, ok, err := s.db.GetCellConfig(cellID)
-	if err != nil {
-		return heartbeat.CellConfig{}, false, err
-	}
-	if ok {
-		return cfg, true, nil
-	}
+// the auto-derived catalog cell of that label (the first live one, in
+// ListEdgeCells' station order); otherwise (false) the caller falls back to
+// the station grain. A catalog-read failure falls back too. This is the single
+// seam that makes every resolve path (state, heartbeat, stops) catalog-aware
+// without duplicating the lookup.
+func (s *HeartbeatService) resolveCellConfig(cellID string) (heartbeat.CellConfig, bool) {
 	cells, err := s.db.ListEdgeCells("")
 	if err != nil {
-		return heartbeat.CellConfig{}, false, nil // non-fatal → station-grain fallback
+		return heartbeat.CellConfig{}, false // non-fatal → station-grain fallback
 	}
 	for _, c := range cells {
 		if c.CellLabel == cellID && !c.Stale {
 			if dcfg, ok := deriveCellConfig(c); ok {
-				return dcfg, true, nil
+				return dcfg, true
 			}
 		}
 	}
-	return heartbeat.CellConfig{}, false, nil
+	return heartbeat.CellConfig{}, false
 }
 
-// GetCell returns one cell by id; ok is false when it isn't configured.
-func (s *HeartbeatService) GetCell(cellID string) (heartbeat.CellConfig, bool, error) {
-	return s.db.GetCellConfig(cellID)
-}
-
-// UpsertCell creates or updates a cell. Takes primitives (not a heartbeat
-// type) so www handlers can call it without importing the store sub-package
-// (depguard www-no-direct-store).
-func (s *HeartbeatService) UpsertCell(cellID, station string, primaryProcessID int64, subProcessIDs []int64, displayName string) error {
-	if subProcessIDs == nil {
-		subProcessIDs = []int64{}
-	}
-	return s.db.UpsertCellConfig(heartbeat.CellConfig{
-		CellLabel:        cellID,
-		StationUID:       station,
-		PrimaryProcessID: primaryProcessID,
-		SubProcessIDs:    subProcessIDs,
-		DisplayName:      displayName,
-	})
-}
-
-// DeleteCell removes a cell.
-func (s *HeartbeatService) DeleteCell(cellID string) error {
-	return s.db.DeleteCellConfig(cellID)
-}
-
-// CellProcesses lists the Processes ticking for a station, for the admin picker.
+// CellProcesses lists the Processes that have ticked for a station in the last
+// 30 days (cell_part_events), for GET /api/cells/processes. The /admin/cells
+// picker that called it is retired and no page reads it today.
 func (s *HeartbeatService) CellProcesses(station string) ([]heartbeat.ProcessOption, error) {
 	return s.db.DistinctCellProcesses(station)
 }
 
 // ResolveCellState resolves a cell_id to its primary/sub-Process split as of
-// now. When the id has no cell_config row it falls back to the Phase B
+// now. When the id is no live catalog cell it falls back to the Phase B
 // station-grain behavior — the whole station stream as a single primary
-// (process_id 0) — so the endpoint keeps working for an unconfigured station.
+// (process_id 0) — so the endpoint keeps working for a bare station id.
 func (s *HeartbeatService) ResolveCellState(cellID string, now time.Time) (heartbeat.ResolvedCellState, error) {
-	cfg, ok, err := s.resolveCellConfig(cellID)
-	if err != nil {
-		return heartbeat.ResolvedCellState{}, err
-	}
+	cfg, ok := s.resolveCellConfig(cellID)
 	if !ok {
 		events, err := s.db.ListCellPartEvents(cellID, now.Add(-2*time.Hour), now)
 		if err != nil {
@@ -250,13 +204,10 @@ func (s *HeartbeatService) ResolveCellState(cellID string, now time.Time) (heart
 }
 
 // ResolveCellHeartbeat returns a cell's windowed history split per Process —
-// the drill payload (Phase E). Unconfigured ids fall back to the station-grain
-// whole stream as a single primary Process (process_id 0).
+// the drill payload (Phase E). An id that is no live catalog cell falls back
+// to the station-grain whole stream as a single primary Process (process_id 0).
 func (s *HeartbeatService) ResolveCellHeartbeat(cellID string, since, until time.Time) (heartbeat.CellHeartbeat, error) {
-	cfg, ok, err := s.resolveCellConfig(cellID)
-	if err != nil {
-		return heartbeat.CellHeartbeat{}, err
-	}
+	cfg, ok := s.resolveCellConfig(cellID)
 	if !ok {
 		events, err := s.db.ListCellPartEvents(cellID, since, until)
 		if err != nil {
@@ -276,7 +227,7 @@ func (s *HeartbeatService) ResolveCellHeartbeat(cellID string, since, until time
 // back to treating the id as the station itself (Phase B). Used by the
 // station-grain Stops endpoint until it gains a per-Process split.
 func (s *HeartbeatService) resolveStation(cellID string) string {
-	if cfg, ok, err := s.resolveCellConfig(cellID); err == nil && ok {
+	if cfg, ok := s.resolveCellConfig(cellID); ok {
 		return cfg.StationUID
 	}
 	return cellID

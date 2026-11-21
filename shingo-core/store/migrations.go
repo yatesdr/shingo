@@ -229,6 +229,7 @@ func migrationList() []migration {
 		{186, "plant_claims_reports keyed by station and process: each station is quoted its own digest", v186Up, v186Verify, v186Down},
 		{187, "edge_cells.catalog_digest: the digest of the cell catalog that made a row live, kept with the rows", v187Up, v187Verify, v187Down},
 		{188, "cms_transactions.notes dropped (no writer); the edge_registry comments that said Core mints the uid corrected", v188Up, v188Verify, v188Down},
+		{189, "cell_config dropped: a cell is always the catalog cell an Edge reported", v189Up, v189Verify, v189Down},
 	}
 }
 

@@ -21,24 +21,6 @@ func (db *DB) ListCellPartEvents(cellID string, since, until time.Time) ([]heart
 	return heartbeat.ListEvents(db.DB, cellID, since, until)
 }
 
-// ── cell_config (Phase E, Q-025) ────────────────────────────────────────────
-
-func (db *DB) ListCellConfigs() ([]heartbeat.CellConfig, error) {
-	return heartbeat.ListCellConfigs(db.DB)
-}
-
-func (db *DB) GetCellConfig(cellID string) (heartbeat.CellConfig, bool, error) {
-	return heartbeat.GetCellConfig(db.DB, cellID)
-}
-
-func (db *DB) UpsertCellConfig(c heartbeat.CellConfig) error {
-	return heartbeat.UpsertCellConfig(db.DB, c)
-}
-
-func (db *DB) DeleteCellConfig(cellID string) error {
-	return heartbeat.DeleteCellConfig(db.DB, cellID)
-}
-
 func (db *DB) DistinctCellProcesses(station string) ([]heartbeat.ProcessOption, error) {
 	return heartbeat.DistinctProcesses(db.DB, station)
 }

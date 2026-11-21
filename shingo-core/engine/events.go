@@ -306,7 +306,8 @@ type BinUpdatedEvent struct {
 
 // CellTickEvent carries one projected production tick to the SSE layer
 // (Phase E). Station is cell_part_events.station_uid; the frontend matches it plus
-// ProcessID against its cell_config to know which cell/dot to pulse.
+// ProcessID against the cells it read (/api/cells or a board's) to know which
+// cell/dot to pulse.
 type CellTickEvent struct {
 	eventbus.PayloadBase
 	Station    string

@@ -446,7 +446,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 <!-- generated: shingo-core/store/schema/schema.snapshot.sql -->
 
-84 tables.
+83 tables.
 
 | Table | Columns | Primary key | References |
 |---|---|---|---|
@@ -464,7 +464,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`bin_uop_ledger`](#core-bin_uop_ledger) | 16 | `id` |  |
 | [`bins`](#core-bins) | 33 | `id` | [`bin_types`](#core-bin_types), [`nodes`](#core-nodes) |
 | [`carrier_families`](#core-carrier_families) | 6 | `id` |  |
-| [`cell_config`](#core-cell_config) | 6 | `cell_label` |  |
 | [`cell_part_events`](#core-cell_part_events) | 9 |  |  |
 | [`cleaning_mission_setup`](#core-cleaning_mission_setup) | 7 | `id` |  |
 | [`cleaning_missions`](#core-cleaning_missions) | 7 | `id` |  |
@@ -798,17 +797,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `wait_bintask` | `text` | yes | `''` |  |
 
 - The physical cart a bin type is one setting of (v172).
-
-#### Core: `cell_config`
-
-| Column | Type | Not null | Default | Key | Comment |
-|---|---|---|---|---|---|
-| `cell_label` | `text` | yes |  | PK | The operator's label for the cell (cell_id until v185), the key. |
-| `station_uid` | `text` | yes |  |  |  |
-| `primary_process_id` | `bigint` | yes |  |  |  |
-| `sub_process_ids` | `jsonb` | yes | `'[]'::jsonb` |  |  |
-| `display_name` | `text` | yes | `''` |  |  |
-| `updated_at` | `timestamp with time zone` | yes | `now()` |  |  |
 
 #### Core: `cell_part_events`
 

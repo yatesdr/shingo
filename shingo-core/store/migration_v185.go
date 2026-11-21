@@ -449,7 +449,42 @@ func v185Up(tx *sql.Tx) error {
 	}
 	// 6. The rationale comments, under the end-state names, so a plant database
 	// carries what a new one is born with.
-	return v185Exec(tx, "comments", schema.Comments)
+	return v185Exec(tx, "comments", v185CommentsFor(tx, schema.Comments))
+}
+
+// v185CommentsFor is comments.sql without the statements on a table that is
+// not there: a table a later migration dropped (v189, cell_config), on a
+// re-run of v185Up after it. On a v184 database every table is there and this
+// is comments.sql whole. Statements on an index or a sequence are kept.
+func v185CommentsFor(tx *sql.Tx, comments string) string {
+	var out []string
+	for _, line := range strings.Split(comments, "\n") {
+		if t := v185CommentTable(line); t != "" && !schema.TableExists(tx, t) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// v185CommentTable is the table a COMMENT ON TABLE, COLUMN or CONSTRAINT
+// statement is on; "" for any other line.
+func v185CommentTable(line string) string {
+	obj, _, ok := strings.Cut(line, " IS '")
+	if !ok {
+		return ""
+	}
+	f := strings.Fields(obj)
+	switch {
+	case len(f) == 4 && f[2] == "TABLE":
+		return f[3]
+	case len(f) == 4 && f[2] == "COLUMN":
+		t, _, _ := strings.Cut(f[3], ".")
+		return t
+	case len(f) == 6 && f[2] == "CONSTRAINT" && f[4] == "ON":
+		return f[5]
+	}
+	return ""
 }
 
 // v185Relabel1 renames index or constraint from to to on table, while from is
@@ -635,10 +670,14 @@ func v185LogReaddressed(tx *sql.Tx) error {
 // name (a hand-dropped index, say) is the boot's drift report's to name, not
 // this verify's (TestV185_AHandDroppedIndexIsDriftNotARerun). Catalog reads
 // only.
+//
+// A rename holds, too, when its table is gone: a later migration dropped it
+// (v189, cell_config), and a re-run of v185Up could not bring it back anyway.
 func v185Verify(q schema.Querier) bool {
 	ok := true
 	for _, r := range v185Ops.renames {
-		ok = ok && schema.ColumnAbsent(q, r.table, r.from) && schema.ColumnExists(q, r.table, r.to)
+		ok = ok && (schema.TableAbsent(q, r.table) ||
+			schema.ColumnAbsent(q, r.table, r.from) && schema.ColumnExists(q, r.table, r.to))
 	}
 	for _, a := range v185Ops.adds {
 		ok = ok && schema.ColumnExists(q, a.table, a.column)

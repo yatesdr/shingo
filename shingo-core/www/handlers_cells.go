@@ -12,7 +12,9 @@ import (
 	"shingo/protocol/clock"
 )
 
-// Production-heartbeat read endpoints (plan §12 slice 5). Cell id = station.
+// Production-heartbeat read endpoints (plan §12 slice 5). A cell id is a catalog
+// cell's label (the PLC an Edge reported); a bare station id reads the station
+// grain.
 // since/until accept RFC3339 or a bare date; default window is the last 8h
 // (the run/stop strip span).
 
@@ -43,8 +45,8 @@ func parseTimeParam(s string) (time.Time, bool) {
 
 // GET /api/cells/{id}/heartbeat?since=&until= — the cell's windowed pulse
 // history split per Process (primary + subs), each with its events and loss
-// metrics. Powers the cell drill. cell_id resolves through cell_config; an
-// unconfigured id falls back to the station-grain whole stream.
+// metrics. Powers the cell drill. cell_id resolves to the live catalog cell of
+// that label; any other id falls back to the station-grain whole stream.
 func (h *Handlers) apiCellHeartbeat(w http.ResponseWriter, r *http.Request) {
 	cellID := chi.URLParam(r, "id")
 	since, until := parseCellWindow(r)
@@ -71,10 +73,10 @@ func (h *Handlers) apiCellStops(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"cell_id": cellID, "stops": stops})
 }
 
-// GET /api/cells/{id}/state — live cell state resolved through cell_config:
-// the primary Process's rhythm plus each configured sub-Process (Phase E,
-// Q-025). When {id} isn't a configured cell it falls back to the station-grain
-// whole-stream state (Phase B behavior). Called on SSE updates.
+// GET /api/cells/{id}/state — live cell state resolved through the catalog
+// cell of that label: the primary Process's rhythm plus each sub-Process
+// (Phase E, Q-025). When {id} is no live catalog cell it falls back to the
+// station-grain whole-stream state (Phase B behavior). Called on SSE updates.
 func (h *Handlers) apiCellState(w http.ResponseWriter, r *http.Request) {
 	cellID := chi.URLParam(r, "id")
 	state, err := h.engine.HeartbeatService().ResolveCellState(cellID, clock.Now().UTC())
@@ -86,9 +88,8 @@ func (h *Handlers) apiCellState(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(state)
 }
 
-// handleCellsAdmin renders the /admin/cells management page (auth-gated). The
-// page lists cell_config rows and provides create/edit/delete with a live
-// Process picker (Phase E, Q-025).
+// handleCellsAdmin answers the retired /admin/cells page with a redirect to
+// the dashboard hub.
 func (h *Handlers) handleCellsAdmin(w http.ResponseWriter, r *http.Request) {
 	// Retired (refactor #4): cells auto-derive from the edge catalog and are
 	// curated per-dashboard in the heartbeat board's setup, not on a separate
@@ -137,9 +138,9 @@ func (h *Handlers) handleHeartbeatKiosk(w http.ResponseWriter, r *http.Request) 
 	h.renderBare(w, "heartbeat.html", map[string]any{})
 }
 
-// GET /api/cells — every configured cell (Phase E, Q-025). Empty list on first
-// deploy (cells are configured via /admin/cells). Public read: the /missions
-// Cells D section and the /heartbeat kiosk consume it.
+// GET /api/cells — every live catalog cell (Phase E, Q-034): a cell per PLC an
+// Edge reported. Public read: the /missions Cells D section and the /heartbeat
+// kiosk consume it.
 func (h *Handlers) apiCellsList(w http.ResponseWriter, r *http.Request) {
 	cells, err := h.engine.HeartbeatService().ListCells()
 	if err != nil {
@@ -163,9 +164,9 @@ func (h *Handlers) apiCellsCatalog(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, cells)
 }
 
-// GET /api/cells/processes?station= — the Processes ticking for a station, for
-// the /admin/cells picker. process_id is opaque on its own, so each option
-// carries a style/payload hint to recognize which Process it is.
+// GET /api/cells/processes?station= — the Processes ticking for a station in the
+// last 30 days, each with a style and tick-count hint (process_id is opaque on
+// its own). The /admin/cells picker that read it is retired; no page reads it.
 func (h *Handlers) apiCellProcesses(w http.ResponseWriter, r *http.Request) {
 	station := strings.TrimSpace(r.URL.Query().Get("station"))
 	if station == "" {
@@ -178,47 +179,4 @@ func (h *Handlers) apiCellProcesses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, procs)
-}
-
-// POST /api/cells — create or update a cell (admin). Keyed on cell_id.
-func (h *Handlers) apiCellUpsert(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CellID           string  `json:"cell_id"`
-		Station          string  `json:"station"`
-		PrimaryProcessID int64   `json:"primary_process_id"`
-		SubProcessIDs    []int64 `json:"sub_process_ids"`
-		DisplayName      string  `json:"display_name"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-	req.CellID = strings.TrimSpace(req.CellID)
-	req.Station = strings.TrimSpace(req.Station)
-	if req.CellID == "" || req.Station == "" {
-		h.jsonError(w, "cell_id and station are required", http.StatusBadRequest)
-		return
-	}
-	if req.PrimaryProcessID == 0 {
-		h.jsonError(w, "primary_process_id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.engine.HeartbeatService().UpsertCell(req.CellID, req.Station, req.PrimaryProcessID, req.SubProcessIDs, req.DisplayName); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonSuccess(w)
-}
-
-// DELETE /api/cells/{id} — remove a cell (admin).
-func (h *Handlers) apiCellDelete(w http.ResponseWriter, r *http.Request) {
-	cellID := strings.TrimSpace(chi.URLParam(r, "id"))
-	if cellID == "" {
-		h.jsonError(w, "cell id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.engine.HeartbeatService().DeleteCell(cellID); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonSuccess(w)
 }

@@ -48,11 +48,13 @@ func stripIDs(v any) any {
 }
 
 // TestCellsAPI_Golden (P7) pins the three heartbeat read endpoints over a
-// seeded fixture, for a configured cell (primary 7 + sub 9) and an
-// unconfigured id (station grain): /api/cells/{id}/heartbeat and /stops over
+// seeded fixture, for an id that is no catalog cell (the station grain):
+// /api/cells/{id}/heartbeat and /stops over
 // HTTP with an explicit window, and the /state payload through the same
 // service call the handler makes, at a fixed "now" (the handler reads the wall
-// clock, which a golden cannot).
+// clock, which a golden cannot). A catalog cell through the same surfaces is
+// TestCellsAPI_CatalogCellWithNoConfigRow; the configured cell this pinned went
+// with cell_config (v189).
 //
 // The fixture rows go in by plain SQL naming only the columns every shape of
 // cell_part_events has. The stream carries a delta = 3 tick and a jump, so a
@@ -63,10 +65,6 @@ func TestCellsAPI_Golden(t *testing.T) {
 	t0 := time.Date(2026, 1, 15, 8, 0, 0, 0, time.UTC)
 	if err := db.EnsureHeartbeatPartitions(t0); err != nil {
 		t.Fatalf("partitions: %v", err)
-	}
-	if err := db.UpsertCellConfig(heartbeat.CellConfig{CellLabel: "cell-cfg", StationUID: "stn-p7",
-		DisplayName: "Cell P7", PrimaryProcessID: 7, SubProcessIDs: []int64{9}}); err != nil {
-		t.Fatalf("cell config: %v", err)
 	}
 	type ev struct {
 		sec     int
@@ -119,11 +117,8 @@ func TestCellsAPI_Golden(t *testing.T) {
 	}
 	win := "?since=2026-01-15T07:59:00Z&until=2026-01-15T08:07:10Z"
 	got := map[string]any{
-		"heartbeat_configured":   get("/api/cells/cell-cfg/heartbeat" + win),
 		"heartbeat_unconfigured": get("/api/cells/stn-p7/heartbeat" + win),
-		"stops_configured":       get("/api/cells/cell-cfg/stops" + win),
 		"stops_unconfigured":     get("/api/cells/stn-p7/stops" + win),
-		"state_configured":       state("cell-cfg"),
 		"state_unconfigured":     state("stn-p7"),
 	}
 	b, err := json.MarshalIndent(got, "", "  ")

@@ -503,8 +503,8 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 
 	// Production heartbeat (Phase E): each projected tick pulses the Cells D
 	// section and the /heartbeat kiosk. station + process_id let the client
-	// match the tick to a cell_config row; ts is server time so a long-running
-	// kiosk renders "X ago" without clock drift.
+	// match the tick to a cell row it read (/api/cells or a board's cells); ts is
+	// server time so a long-running kiosk renders "X ago" without clock drift.
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.CellTickEvent]) {
 		ev := evt.Payload
 		h.Broadcast("cell-heartbeat", sseJSON(map[string]any{

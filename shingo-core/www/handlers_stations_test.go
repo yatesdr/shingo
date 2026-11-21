@@ -15,12 +15,11 @@ import (
 // half a caller uses decides whether this feature is safe.
 //
 // Every consumer is a picker or a filter that SUBMITS something:
-// dashboards.stations_json stores the selected ids, cell_config.station_uid stores
-// the typed one, and the missions/overview filters put theirs in a query string
-// matched against an order's requester exactly. If a caller ever submits `label`,
-// a mutable display name lands in a stored column and the board it scopes
-// matches nothing — silently, because no row errors on a station that does not
-// exist.
+// dashboards.stations_json stores the selected ids, and the missions/overview
+// filters put theirs in a query string matched against an order's requester
+// exactly. If a caller ever submits `label`, a mutable display name lands in a
+// stored column and the board it scopes matches nothing — silently, because no
+// row errors on a station that does not exist.
 
 func TestAPIStations_ReturnsIDAndLabelSeparately(t *testing.T) {
 	t.Parallel()

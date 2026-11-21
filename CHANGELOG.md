@@ -32,6 +32,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - An Edge that re-registers (Core restarted, asked for it, or marked it stale) asks for its orders only when Core sends the node list and catalog by itself; against an older Core it still asks for both
 - The Edge Processes page's Setup tab no longer puts up an error every five seconds while it waits for a screen and the Edge does not answer; the lost-connection banner says it
 - Core Diagnostics: the CMS table drops its Notes column, which Core no longer fills
+- A production cell is always the one Core derives from the Edge's counters; the unused save and delete endpoints for hand-made cells are gone, and the cells list answers an error instead of an empty list when it cannot read the cells
 
 ## v0.18.0 — 2026-11-21
 

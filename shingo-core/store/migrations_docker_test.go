@@ -195,3 +195,56 @@ func TestV188_NotesGoAndTheRegistryCommentsAreTrue(t *testing.T) {
 		}
 	}
 }
+
+// TestV189_CellConfigGoesAndV185StillReRuns: v189 drops cell_config. v185
+// renames two of its columns and comments one, so a re-run of v185 on a
+// database past v189 (its row deleted, as the runner does on a failed verify)
+// must neither fail nor loop: it boots, twice. Down recreates the table empty
+// in v185's shape, its key, index and comment; up again drops it.
+func TestV189_CellConfigGoesAndV185StillReRuns(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	if !schema.TableAbsent(db, "cell_config") {
+		t.Fatal("cell_config is there at this build")
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 185`); err != nil {
+		t.Fatal(err)
+	}
+	for boot := 1; boot <= 2; boot++ {
+		up, err := store.Open(cfg)
+		if err != nil {
+			t.Fatalf("boot %d after v185's row went (v185 re-runs past v189): %v", boot, err)
+		}
+		up.Close()
+	}
+	var applied int
+	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = 185`).Scan(&applied); err != nil || applied != 1 {
+		t.Fatalf("v185 recorded %d times (err %v) after its re-run, want once", applied, err)
+	}
+
+	if err := testdb.MigrateDownThrough(cfg, 189); err != nil {
+		t.Fatalf("down through 189: %v", err)
+	}
+	if got := schema.ConstraintDef(db, "cell_config", "cell_config_pkey"); got != "PRIMARY KEY (cell_label)" {
+		t.Errorf("cell_config key after down = %q, want PRIMARY KEY (cell_label)", got)
+	}
+	if !schema.IndexExists(db, "cell_config_station_uid_idx") {
+		t.Error("cell_config_station_uid_idx is missing after down")
+	}
+	var rows int
+	var comment sql.NullString
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM cell_config), col_description('public.cell_config'::regclass, 1)`).Scan(&rows, &comment); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 || !strings.Contains(comment.String, "(cell_id until v185)") {
+		t.Errorf("after down: %d rows, cell_label comment %q; want an empty table with v185's comment", rows, comment.String)
+	}
+	up, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("up again: %v", err)
+	}
+	up.Close()
+	if !schema.TableAbsent(db, "cell_config") {
+		t.Error("cell_config is there after up again")
+	}
+}

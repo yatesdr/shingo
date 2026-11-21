@@ -2102,6 +2102,32 @@ No assertion read any of the twelve.
 - code: STALE (the behaviour it pinned was changed by ruling: StartupReconcile asks for no node list or catalog)
 - assertion map: node-sync and catalog-sync hooks called once each → called 0 times each; the send-function error from the order status request → unchanged. Same fixture, renamed for what it now holds: `TestCoreSyncService_StartupReconcileAsksOnlyForOrders` (`shingo-edge/engine/engine_db_test.go`)
 - mutation: the renamed test fails against the base's StartupReconcile (1/1 asks, want 0/0)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestSubProcessIDsRoundTrip`
+- test: `TestSubProcessIDsRoundTrip` · pkg `shingocore/store/heartbeat` · run `-run '^TestSubProcessIDsRoundTrip$'` · `shingo-core/store/heartbeat/cellconfig_test.go:12` @ `d2686a1d` · tags `none`
+- code: DEAD (the JSONB encoding of cell_config.sub_process_ids; v189 drops the table and the encoder with it)
+- assertion map: nil/empty/one/many round-trip through `marshalIDs`/`unmarshalIDs` → nothing: no cell is stored, so no sub-process list is encoded
+- mutation: none to run: the functions it calls are deleted with the table
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestUnmarshalIDsLenientInputs`
+- test: `TestUnmarshalIDsLenientInputs` · pkg `shingocore/store/heartbeat` · run `-run '^TestUnmarshalIDsLenientInputs$'` · `shingo-core/store/heartbeat/cellconfig_test.go:44` @ `d2686a1d` · tags `none`
+- code: DEAD (as `TestSubProcessIDsRoundTrip`: the decoder of a dropped column)
+- assertion map: "", "null", "[]" decode to an empty slice → nothing
+- mutation: none to run: `unmarshalIDs` is deleted with the table
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCoverage_CellConfig`
+- test: `TestCoverage_CellConfig` · pkg `shingocore/store/heartbeat` · run `-run '^TestCoverage_CellConfig$'` · `shingo-core/store/heartbeat/cellconfig_docker_test.go:17` @ `d2686a1d` · tags `docker`
+- code: DEAD (cell_config's CRUD; v189 drops the table and its functions)
+- assertion map: list/upsert/get/update/delete of a cell_config row → nothing; the process-picker half (`DistinctProcesses`: one row per ticking process, most ticks first, its style) → `TestDistinctProcesses_RanksAStationsTickingProcesses`, which also asserts the second row and that another station's process is not listed
+- mutation: none to run for the CRUD half; the picker half's assertions are carried whole
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
