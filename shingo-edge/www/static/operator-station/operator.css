@@ -967,6 +967,7 @@ body {
 
 .notice-toast {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     background: var(--os-surface);
@@ -1022,6 +1023,27 @@ body {
 }
 .notice-toast .notice-dismiss:hover {
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* The action (the exit toast's "Cancel changeover to …") takes a row of its
+ * own under the words, the width of the toast: a label that long beside the
+ * words squeezed them to a word a line (seen in the toast shots). Dead while
+ * its exit is out (notice.js disables it). */
+.notice-toast .notice-action {
+    order: 3;
+    flex-basis: 100%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid currentColor;
+    border-radius: 8px;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 10px 12px;
+    text-align: center;
+}
+.notice-toast .notice-action:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 @keyframes os-toast-in {
