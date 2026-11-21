@@ -26,7 +26,6 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - The Edge reads nothing from namespace, line_id or messaging.station_id in its config; a file that still has them loads, and the next save drops them. An Edge known only by messaging.station_id would start as a new station: put that value in station_uid before the upgrade
 - A sim plant file names its own Edge with one station_uid key in place of namespace and line_id, and a process's edge may be any station uid, a minted stn-… one included; seeddev names the dev stations EDGE 1 and EDGE 2 on Core
 - The Edge names its station at the top of every page and on its Configuration page, as named on Core's Stations page, with the uid beside it; after a restart it shows the uid alone until Core answers its first heartbeat. A rename on Core reaches the Edge with the next heartbeat
-- An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence, a stale notice or Core's re-register request it asks for its orders only
 - An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence it asks for its orders only
 - An Edge no longer rewrites its payload catalog and redraws its boards when Core sends the catalog it already holds
 - An Edge checks its plant claims and bins watch list against Core's copy from what it already holds, so a heartbeat that changes nothing reads nothing on the Edge; a claim written somewhere other than the Edge's own editors reaches Core within five minutes (it was the next heartbeat)
@@ -36,7 +35,6 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - Core Diagnostics: the CMS table drops its Notes column, which Core no longer fills
 - A production cell is always the one Core derives from the Edge's counters; the unused save and delete endpoints for hand-made cells are gone, and the cells list answers an error instead of an empty list when it cannot read the cells
 - Core Health no longer lists the schema leftovers the v0.18.0 start reported at the plants; each one removed is written to the audit log (as a schema entry), which is what a rollback puts back
-
 - A toast that says a field is missing or wrong is amber (some were red, some grey), and one that says an order or a save went through is green (some were grey), on Core, the Edge and the station
 - Every toast on Core and the Edge's admin pages has a × that closes it; tapping a toast's button (Sign in) no longer closes the toast
 - A success, info or warning toast stays 10 s (it went at 3.2 s); an error stays 5 minutes or until its × is tapped (it went at 5 s), on Core and the Edge's admin pages
