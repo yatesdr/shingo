@@ -232,8 +232,9 @@ type EdgeHeartbeatAck struct {
 	// publishes an empty report for a name it no longer has. nil means Core
 	// could not read them (or is older); {} means it holds none.
 	//
-	// The old field for OwnedClaims: Core should fill it only for a heartbeat
-	// with no Owned, and the Edge should read it only from an ack with no Owned.
+	// The old field for OwnedClaims: Core fills it only for a heartbeat with no
+	// Owned (TestHeartbeatAck_TheOwnedMapPerFamily), and the Edge reads it only
+	// from an ack with no Owned.
 	Claims map[string]string `json:"claims"`
 	// BinWatch is the digest of the bins watch list Core holds for this Edge,
 	// as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge

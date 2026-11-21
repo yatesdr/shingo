@@ -17,12 +17,14 @@ import (
 // THE ONE FEED WHOSE SCOPE THE EDGE OWNS. Core serves an Edge the rows for the
 // names on its watch list (bins.watch), so the Edge publishes the list: the
 // names StationService.WatchedBinNodes builds from the plant, with no call to
-// Core. Core quotes the digest of the list it holds on every heartbeat ack
-// (EdgeHeartbeatAck.BinWatch); the Edge publishes when that differs from its
-// own, at once when its own list changes, and on the first ack that carries
-// the field while it holds no copy (a restarted Edge asks, rather than waiting
-// out Core's resend guard). sendDue is the guard. It never publishes to a Core
-// whose last ack lacked the field: that Core has no handler for the list.
+// Core. Core quotes the digest of the list it holds on every heartbeat ack:
+// in the Edge-owned map's bins.watch family (EdgeHeartbeatAck.Owned) for an
+// Edge that sends one, else in the old EdgeHeartbeatAck.BinWatch. The Edge
+// publishes when that differs from its own, at once when its own list changes,
+// and on the first ack that carries it while it holds no copy (a restarted Edge
+// asks, rather than waiting out Core's resend guard). sendDue is the guard. It
+// never publishes to a Core whose last ack carried neither: that Core has no
+// handler for the list.
 //
 // THE LIST GOES ON THE DIRECT PATH, NOT THE SQLITE OUTBOX: a lost publish is
 // healed by the next ack, which still quotes the old digest, so the publish

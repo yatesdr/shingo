@@ -313,7 +313,7 @@ func TestOnCoreAck_GapReconciles(t *testing.T) {
 }
 
 // feedCarriers is the Edge-inbound subject Core sends each feed on (Core's
-// sendFeeds; the Edge's handlers in cmd/shingoedge/main.go). The scene has no
+// coreFeeds rows; the Edge's handlers in cmd/shingoedge/main.go). The scene has no
 // subject of its own: its revision and geometry ride the node list.
 var feedCarriers = map[string]string{
 	protocol.FeedContainment: protocol.SubjectContainmentSnapshot,
