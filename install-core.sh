@@ -945,11 +945,20 @@ RESTARTS_BEFORE=$(systemctl show shingo-core -p NRestarts --value 2>/dev/null ||
 # or already crash-looping on a refused one (Restart=always brings it back every
 # 5 s, active each time). Any HTTP answer counts, not only a healthy one: the
 # web server starts after migrate (cmd/shingocore/main.go: store.Open, then
-# startHTTPServer), so an answer means the migration is done, while
-# /api/health's own verdict pings the fleet and reads reconciliation and can be
-# slow or a 500 for reasons outside this install (RDS dark, for one). The wait
-# is a wall-clock deadline. A restart counter that rises while waiting is a
-# crash loop: stop there and show why.
+# startHTTPServer), so an answer means the migration is done.
+#
+# THE PROBE IS GET /login, NOT /api/health. /login answers as soon as the web
+# server does: it renders the sign-in page (www handleLoginPage) and makes no
+# fleet call. /api/health pings the fleet first
+# (www apiHealthCheck: Fleet().Ping()), so with the RDS unreachable every call
+# takes the RDS client's timeout (rds.timeout, 10 s by default) and this 5 s
+# probe never sees an answer: measured 2026-11-21 on a systemd box with the RDS
+# address black-holed, /api/health answered in 10.0 s, and the install of a Core
+# that was serving waited out the 900 s and failed with the rollback text (the
+# data-model-attack round's closing step 5f). A dark RDS is a fleet problem, not
+# this install's.
+# The wait is a wall-clock deadline. A restart counter that rises while waiting
+# is a crash loop: stop there and show why.
 WEB_PORT=8083
 WEB_HOST=127.0.0.1
 if [ -f /etc/shingo/shingocore.yaml ]; then
@@ -962,7 +971,7 @@ if [ -f /etc/shingo/shingocore.yaml ]; then
                | awk '/^web:/{w=1; next} /^[^[:space:]#]/{w=0} w && $1=="host:" {print $2; exit}' | tr -d "\"' ")
     case "$cfg_host" in ''|0.0.0.0|::|'[::]'|localhost) ;; *) WEB_HOST="$cfg_host" ;; esac
 fi
-WEB_URL="http://${WEB_HOST}:${WEB_PORT}/api/health"
+WEB_URL="http://${WEB_HOST}:${WEB_PORT}/login"
 HEALTH_WAIT_S=900
 echo "==> Waiting up to ${HEALTH_WAIT_S}s for Core to answer ${WEB_URL}"
 echo "    (a release that migrates the database starts serving only when the migration is done)"
