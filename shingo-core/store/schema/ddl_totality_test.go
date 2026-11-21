@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
+
 	"shingocore/store"
 )
 
@@ -101,7 +103,8 @@ func TestBaseline_CreatesEveryShippedTable(t *testing.T) {
 
 	recorded := map[int]bool{}
 	for _, m := range migrationRe.FindAllStringSubmatch(baseline, -1) {
-		v, _ := strconv.Atoi(m[1])
+		v, err := strconv.Atoi(m[1])
+		testutil.MustNoErr(t, err, "a schema_migrations version in the baseline")
 		recorded[v] = true
 	}
 	for v := 1; v <= store.RetiredChain; v++ {

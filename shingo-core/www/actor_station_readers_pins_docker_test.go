@@ -170,7 +170,8 @@ func TestPinActorReaders_OrdersBoardStationLabel(t *testing.T) {
 	body := renderOrdersPage(t, h, "")
 	got := map[string]string{}
 	for _, m := range ordersRowStation.FindAllStringSubmatch(body, -1) {
-		id, _ := strconv.ParseInt(m[1], 10, 64)
+		id, err := strconv.ParseInt(m[1], 10, 64)
+		testutil.MustNoErr(t, err, "an order id on the orders page")
 		for _, k := range pinKinds {
 			if ids[k] == id {
 				got[k] = strings.TrimSpace(m[2])
@@ -233,7 +234,8 @@ func TestPinActorReaders_ByStationReads(t *testing.T) {
 		body := renderOrdersPage(t, h, "?status=all&q="+q)
 		var got []int64
 		for _, m := range ordersRowStation.FindAllStringSubmatch(body, -1) {
-			id, _ := strconv.ParseInt(m[1], 10, 64)
+			id, err := strconv.ParseInt(m[1], 10, 64)
+			testutil.MustNoErr(t, err, "an order id on the orders page")
 			got = append(got, id)
 		}
 		return kindsOf(ids, got)

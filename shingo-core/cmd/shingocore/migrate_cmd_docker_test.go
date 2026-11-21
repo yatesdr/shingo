@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -100,10 +101,14 @@ func TestMigrateCheck_TheInstallersLine(t *testing.T) {
 			t.Errorf("%s: stdout %q is not one line `database v<cur> -> v<target>`", c.name, stdout)
 			continue
 		}
-		if cur, _ := strconv.Atoi(m[1]); cur != c.cur {
+		cur, err := strconv.Atoi(m[1])
+		testutil.MustNoErr(t, err, c.name+": the check's current version")
+		if cur != c.cur {
 			t.Errorf("%s: cur v%d, want v%d", c.name, cur, c.cur)
 		}
-		if tgt, _ := strconv.Atoi(m[2]); tgt != target {
+		tgt, err := strconv.Atoi(m[2])
+		testutil.MustNoErr(t, err, c.name+": the check's target version")
+		if tgt != target {
 			t.Errorf("%s: target v%d, want v%d", c.name, tgt, target)
 		}
 		if now := catalog(t, c.cfg); now != was {
