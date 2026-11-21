@@ -272,6 +272,34 @@ func jsCases() []ruleCase {
 			"app/www/static/vendor/lib.js", "vendorGlobal();\n",
 			"lib/outside.js", "notAPageScript();\n"),
 			[]string{"app/www/static/pages/bad.js:3", "app/www/static/pages/bad.js:5", "app/www/static/pages/uses-module-only.js:1"}},
+		{"js-imports", "a name the module does not export, and a module that is no file, fire; every other form links", jsTree(
+			// The 2026-11-21 shape: a helper deleted with an import of it left.
+			"app/www/static/pages/a.js", "import { gone, kept } from './b.js';\n",
+			"app/www/static/pages/b.js", "export function kept() {}\n",
+			"app/www/static/pages/c.js", "import { el } from '/static/shared/dom.js';\n"+
+				"import d from './d.js';\n"+
+				"import * as ns from './b.js';\n"+
+				"import { star, sx } from './re.js';\n"+
+				"export { kept as k } from './b.js';\n"+
+				"export { nope } from './b.js';\n"+
+				"import './b.js';\n"+
+				"export { el, d, ns, star, sx };\n",
+			"shared/dom.js", "export function el() {}\n",
+			"app/www/static/pages/d.js", "export default 1;\n",
+			"app/www/static/pages/re.js", "export * from './star.js';\n",
+			"app/www/static/pages/star.js", "export const star = 1, { sx } = {};\nexport default 2;\n",
+			"app/www/static/pages/e.js", "import { a } from './nofile.js';\n",
+			// A full URL is not ours; import() reads its names when it runs.
+			"app/www/static/pages/f.js", "import { thing } from 'https://cdn.test/x.js';\nimport('./b.js').then(function(m) { return m.gone; });\n",
+			"app/www/static/pages/f.test.js", "import { gone } from './b.js';\n",
+			"app/www/static/vendor/v.js", "import { gone } from '../pages/b.js';\n",
+			"app/www/static/pages/classic.js", "with (Math) { abs(-1); }\n",
+			"app/www/static/pages/g.js", "import { x } from './classic.js';\n",
+			"app/www/static/js/h.js", "import { kept } from '/static/pages/b.js';\nimport { gone } from '/static/pages/b.js';\n",
+			// A default is not lent by export *.
+			"app/www/static/pages/i.js", "import { default as two } from './re.js';\n"),
+			[]string{"app/www/static/js/h.js:2", "app/www/static/pages/a.js:1", "app/www/static/pages/c.js:6",
+				"app/www/static/pages/e.js:1", "app/www/static/pages/i.js:1"}},
 	}
 }
 
@@ -329,6 +357,15 @@ func TestJSUndeclared_MissingNodeFails(t *testing.T) {
 	defer func(n string) { nodeBin = n }(nodeBin)
 	nodeBin = "node-that-is-not-installed"
 	res := jsUndeclared(treeOf("app/www/static/a.js", "export {};\n"))
+	if len(res.findings) != 1 || !strings.Contains(res.findings[0].Why, "NOT checked") {
+		t.Fatalf("a missing node must fail the run, got %v", res.findings)
+	}
+}
+
+func TestJSImports_MissingNodeFails(t *testing.T) {
+	defer func(n string) { nodeBin = n }(nodeBin)
+	nodeBin = "node-that-is-not-installed"
+	res := jsImports(treeOf("app/www/static/a.js", "export {};\n"))
 	if len(res.findings) != 1 || !strings.Contains(res.findings[0].Why, "NOT checked") {
 		t.Fatalf("a missing node must fail the run, got %v", res.findings)
 	}

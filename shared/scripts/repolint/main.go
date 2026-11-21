@@ -1,7 +1,7 @@
 // Command repolint runs the repo-wide text rules over the tracked tree in one
 // process: one `git ls-files` listing, one `git check-attr` call, one read of
-// each tracked file, and one node process for every .js file (two: js-parse's
-// and js-undeclared's).
+// each tracked file, and one node process for every .js file (three: js-imports',
+// js-parse's and js-undeclared's).
 //
 // WHY ONE PROCESS. Each rule was a bash guard of its own (scripts/check-*.sh),
 // and on Windows a guard's cost is its process spawns, not its walk: the three
@@ -14,6 +14,7 @@
 //	comment-references      a file:line citation in a Go comment names a line that exists
 //	conflict-markers        no merge-conflict marker line in a tracked text file
 //	expiry                  an EXPIRY: when <symbol> is gone pin names a declared symbol
+//	js-imports              a served module imports only names its modules export, from files that exist
 //	js-parse                every .js file parses as an ES module or as CommonJS
 //	js-undeclared           a www/static page script reads only names something declares
 //	plant-addresses         no private IPv4 address in a tracked text file
@@ -119,6 +120,7 @@ var rules = []rule{
 	{"conflict-markers", "Resolve the merge: a marker line that is not Go source builds and ships silently.", conflictMarkers},
 	{"expiry", "Retire the pin in the edit that deletes its symbol: rewrite or delete the scar, and say so.", expiry},
 	{"js-parse", "A module that does not parse takes its whole import graph down with it.", jsParse},
+	{"js-imports", "Export the name from the module the import names, or drop the import. A module that imports a name nobody exports takes its whole page down before a line runs.", jsImports},
 	{"js-undeclared", "Declare it, pass it, or import it. A page global goes on window or in the template's inline script; a browser global the rule does not know goes in KNOWN in jsundeclared.js.", jsUndeclared},
 	{"plant-addresses", "Use TEST-NET (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24); 192.168.1.0/24 is reserved for doc examples. To derive a fixture from a capture, see shared/scripts/anonymiserobotsstatus.", plantAddresses},
 	{"swap-mode-literals", "Go: use the typed constant from protocol/swap_mode.go. JavaScript: key the gate on the order graph or a property the server declares (releases_as_pair).", swapModeLiterals},
