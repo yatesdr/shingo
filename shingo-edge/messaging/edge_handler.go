@@ -70,18 +70,6 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	// AN OLD CORE STILL SAYS `sourcing`, and this Edge never stores it (C1; F3):
-	// it is `queued` with a cause, translated here at the door, before the status
-	// write and the reason below read it. The code the push carries is kept; a
-	// push with none waits for material, which is what `sourcing` meant. One
-	// release: the line goes with the alias.
-	if protocol.Status(p.Status) == protocol.StatusSourcing {
-		p.Status = string(protocol.StatusQueued)
-		if p.QueueCode == "" {
-			p.QueueCode = string(protocol.QueueWaitingForMaterial)
-		}
-	}
-
 	// ETA side-write (into in_transit Core stamps an ETA on the update; Edge
 	// stores it and the HMI renders an ETA pill). Preserved exactly from the
 	// legacy ReplyUpdate arm — independent of the status write below.
@@ -103,7 +91,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 
 	// Apply Core's pushed status to the Edge row through the ApplyCoreStatus
 	// mapping shared with boot reconciliation, instead of the legacy "branch on
-	// queued, discard everything else" — so sourcing/dispatched/faulted pushes
+	// queued, discard everything else" — so queued/dispatched/faulted pushes
 	// now update the Edge row instead of leaving a stale acknowledged rendering
 	// as "IN TRANSIT". staged/delivered/terminal are no-ops here (dedicated
 	// envelopes own them).

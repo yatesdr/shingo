@@ -901,33 +901,6 @@ func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
 // and only branched on queued. These tests pin each arm.
 // ═══════════════════════════════════════════════════════════════════════
 
-// TestApplyCoreStatus_Sourcing_TransitionsRow asserts the central case: a
-// sourcing push from an old Core moves the Edge row (to queued since C1). Previously
-// the push was discarded and the row stayed on acknowledged, so the HMI kept
-// showing a moving robot for an order still hunting bins.
-func TestApplyCoreStatus_Sourcing_TransitionsRow(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	oid, err := db.CreateOrder("uuid-src", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
-	testutil.MustNoErr(t, err, "create")
-	// Edge's typical pre-dispatch lifecycle: pending → submitted → acknowledged
-	// (Core's intake ACK). The push is translated to queued before any transition.
-	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
-
-	order, err := db.GetOrder(oid)
-	testutil.MustNoErr(t, err, "get order")
-	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusSourcing, "reserving"), "ApplyCoreStatus sourcing")
-
-	// An old Core's `sourcing` is stored as `queued` (C1, F3).
-	got, _ := db.GetOrder(oid)
-	if got.Status != StatusQueued {
-		t.Errorf("sourcing push: status got %q, want %q", got.Status, StatusQueued)
-	}
-}
-
 // TestApplyCoreStatus_Faulted_TransitionsRow asserts that a faulted push sets
 // StatusFaulted on Edge. Previously Edge had no writer for faulted and discarded
 // it, leaving the amber UI affordances unreachable.
@@ -1110,60 +1083,27 @@ func TestApplyCoreStatus_TerminalIsNeverResurrected(t *testing.T) {
 	}
 }
 
-// TestHandleCoreStatusPush_Sourcing_LivePush exercises the live-push path: the
-// path HandleOrderUpdate drives must apply a pushed sourcing status to the Edge
-// row. HandleCoreStatusPush is the entry point for the live channel; previously
-// only ReplyQueued changed status (HandleDispatchReply), so a sourcing push left
-// the row untouched.
-func TestHandleCoreStatusPush_Sourcing_LivePush(t *testing.T) {
+// TestApplyCoreStatusSnapshot_Faulted exercises the snapshot path: after an
+// Edge restart, a snapshot carrying faulted reconciles the row (previously the
+// default arm returned nil and the row was untouched).
+func TestApplyCoreStatusSnapshot_Faulted(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	oid, _ := db.CreateOrder("uuid-live-src", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+	oid, _ := db.CreateOrder("uuid-snap-faulted", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
+	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
-	testutil.MustNoErr(t, mgr.HandleCoreStatusPush("uuid-live-src", StatusSourcing, "reserving"), "HandleCoreStatusPush sourcing")
-
-	got, _ := db.GetOrder(oid)
-	if got.Status != StatusQueued {
-		t.Errorf("live sourcing push: status got %q, want queued (C1, F3: translated at the door)", got.Status)
+	if err := mgr.ApplyCoreStatusSnapshot(protocol.OrderStatusSnapshot{
+		OrderUUID: "uuid-snap-faulted", Found: true, Status: string(StatusFaulted),
+	}); err != nil {
+		t.Fatalf("ApplyCoreStatusSnapshot faulted: %v", err)
 	}
-}
-
-// TestApplyCoreStatusSnapshot_SourcingAndFaulted exercises the snapshot path:
-// after an Edge restart, a snapshot carrying sourcing/faulted reconciles the
-// row (previously the default arm returned nil and the row was untouched).
-func TestApplyCoreStatusSnapshot_SourcingAndFaulted(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		target protocol.Status
-		want   protocol.Status
-	}{
-		{"sourcing", StatusSourcing, StatusQueued}, // C1, F3: an old Core's word, translated
-		{"faulted", StatusFaulted, StatusFaulted},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			db := testManagerDB(t)
-			mgr := NewManager(db, testEmitter{}, "edge")
-
-			oid, _ := db.CreateOrder("uuid-snap-"+tc.name, TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
-			_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-			_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
-			_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
-
-			if err := mgr.ApplyCoreStatusSnapshot(protocol.OrderStatusSnapshot{
-				OrderUUID: "uuid-snap-" + tc.name, Found: true, Status: string(tc.target),
-			}); err != nil {
-				t.Fatalf("ApplyCoreStatusSnapshot %s: %v", tc.name, err)
-			}
-			got, _ := db.GetOrder(oid)
-			if got.Status != tc.want {
-				t.Errorf("snapshot %s: got %q, want %q", tc.name, got.Status, tc.want)
-			}
-		})
+	got, _ := db.GetOrder(oid)
+	if got.Status != StatusFaulted {
+		t.Errorf("snapshot faulted: got %q, want %q", got.Status, StatusFaulted)
 	}
 }
 

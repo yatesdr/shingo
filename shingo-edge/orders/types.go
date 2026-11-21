@@ -15,11 +15,11 @@ const (
 
 // Order statuses aliased from protocol.
 //
-// Edge mirrors Core's full status vocabulary: sourcing/dispatched/faulted are
-// stored on the Edge row when Core pushes them via order.update or a boot
-// snapshot, so the operator sees the truth of whichever machine owns the order
-// at that moment. See orders.ApplyCoreStatus for the mapping shared by the
-// live-push and snapshot paths.
+// Edge mirrors Core's status vocabulary: queued/dispatched/faulted are stored
+// on the Edge row when Core pushes them via order.update or a boot snapshot, so
+// the operator sees the truth of whichever machine owns the order at that
+// moment. See orders.ApplyCoreStatus and ApplyCoreStatusSnapshot for the two
+// mappings. StatusSourcing is history only: this Edge writes it nowhere.
 const (
 	StatusPending      = protocol.StatusPending
 	StatusSourcing     = protocol.StatusSourcing

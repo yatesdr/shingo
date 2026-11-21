@@ -81,11 +81,10 @@ stays as a constant so old `order_history` rows still render; no edge enters
 it, and its row in `validTransitions` is `queued`'s outgoing edges, so a row
 that still says it is not terminal. Migration v148 moved every `sourcing` order
 to `queued`, keeping its own cause or else `waiting_for_material`;
-`order_history` is not rewritten. An Edge talking to an older Core translates a
-`sourcing` push or snapshot to `queued` at the door (`HandleOrderUpdate`,
-`ApplyCoreStatusSnapshot`), keeping the push's code or else
-`waiting_for_material`; the `.badge-sourcing` class is an alias of
-`.badge-queued` so an old row renders.
+`order_history` is not rewritten. No Core at or above `protocol.FloorCore` sends
+the word, so the Edge maps it nowhere (it translated an older Core's push and
+snapshot to `queued` until this build); the `.badge-sourcing` class is an alias
+of `.badge-queued` so an old row renders.
 
 ---
 
@@ -103,7 +102,7 @@ derived, not hand-maintained): **confirmed, failed, cancelled, skipped**.
 | Status | Scope | Terminal | Core writes | Edge writes | Crosses wire? | What the operator sees |
 |---|---|---|---|---|---|---|
 | `pending` | shared | no | every door — the INSERT (`orders.Create`) sets it; `ResumeCompound` / `Restart` (reshuffling → pending) | local create | no (each side's own zero value) | Submit button on Edge list; Core UI badge |
-| `sourcing` | history only | no (its row is `queued`'s) | nothing (v148 moved live rows to `queued`) | nothing — translated to `queued` at the door | an older Core's push or snapshot only | old history rows render as the `queued` badge (`.badge-sourcing` alias) |
+| `sourcing` | history only | no (its row is `queued`'s) | nothing (v148 moved live rows to `queued`) | nothing (a word Core sends is not mapped) | no: no Core at or above `protocol.FloorCore` sends it | old history rows render as the `queued` badge (`.badge-sourcing` alias) |
 | `queued` | shared | no | `Park` (cause first; via `ParkAndTell` at a door, the scanner's park, `DemoteAfterFleetRefusal`) | `ApplyCoreStatus` (Core's `order.update`) | yes (`order.update`, once per park, with the reason) | "IN QUEUE: \<queue_reason\>"; badge on both lists |
 | `submitted` | Edge-only (in practice) | no | not produced by the dispatcher | local create auto-submit, `SubmitOrder` | no (Edge-local) | Edge UI badge; absent from window cards |
 | `dispatched` | shared | no | `Dispatch` (the CAS claim, taken before the fleet create) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | Core filter chip; Edge mirrors when Core pushes it |
@@ -253,8 +252,8 @@ Edge owns the order envelope from local creation through operator confirmation.
 It mirrors Core's planning status when Core pushes it (via `ApplyCoreStatus`),
 and independently tracks its own submission lifecycle
 (`pending` → `submitted` → `acknowledged`). `dispatched` and `faulted` appear
-here because Core pushes them over `order.update` and the mapping stores them. Edge never stores `sourcing`: an older Core's
-`sourcing` is `queued` by the time it reaches `ApplyCoreStatus`. The diagram is
+here because Core pushes them over `order.update` and the mapping stores them. Edge never stores `sourcing`: no Core
+at or above `protocol.FloorCore` sends it, and the mapping does not map it. The diagram is
 every edge of `validTransitions` between the statuses an order born `pending`
 can reach; who writes each status on Edge is the lifecycle table's Edge column.
 
@@ -348,8 +347,9 @@ Notes on the Edge machine:
   are **no-ops here** — they are owned by dedicated envelopes (`order.staged`,
   `order.delivered`, `order.error`, `order.skipped`, `order.cancelled`) that
   carry the extra fields (bin snapshot, expiry, reason) this generic mapping
-  does not have. An older Core's `sourcing` is translated to `queued` before
-  this mapping (`HandleOrderUpdate`, `ApplyCoreStatusSnapshot`).
+  does not have. `sourcing` is not mapped (neither `ApplyCoreStatus` nor
+  `ApplyCoreStatusSnapshot` writes it): no Core at or above `protocol.FloorCore`
+  sends it.
 - **A resumed parent** leaves `reshuffling` on Core for `pending`, and Core
   never pushes `pending`. The Edge hears where its acquire landed instead:
   `queued` through the park's one update, or `dispatched` (pushed for a
@@ -639,9 +639,7 @@ reconcile.
   (`HandleOrderUpdate` → `HandleCoreStatusPush`); `queued` /
   `dispatched` / `in_transit` / `faulted` update the Edge row, while ETA
   and `queue_reason` are side-written regardless. A park sends one `queued`
-  update with the reason; an order that never waited is not told `queued`. An
-  older Core's `sourcing` is rewritten to `queued` (its code, or
-  `waiting_for_material`) at the top of `HandleOrderUpdate`.
+  update with the reason; an order that never waited is not told `queued`.
 - Dedicated envelopes for the statuses the generic mapping does NOT own:
   `order.waybill` (waybill id + ETA → `in_transit`), `order.staged` (→
   `staged`), `order.delivered` (→ `delivered`, with bin snapshot),

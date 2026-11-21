@@ -112,9 +112,11 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 //     stale/out-of-order fleet push onto an already-TERMINAL edge row is ignored
 //     rather than forced, so it can never resurrect a finished order.
 //   - queued (the pre-fleet wait) → forced, like the fleet statuses (see the
-//     paragraph inside). An old Core's `sourcing` never reaches here: the order
-//     update handler and the boot snapshot translate it to `queued` at the door
-//     (C1, F3).
+//     paragraph inside).
+//   - `sourcing` is not mapped: no Core at or above protocol.FloorCore sends
+//     it (Core's v148 moved every live row to `queued`, and no transition enters
+//     it: protocol TestTransitions_NothingEntersSourcing), so it takes the
+//     unknown-status arm and writes nothing.
 //   - staged/delivered/confirmed/failed/cancelled/skipped → NO-OP here. Those
 //     statuses are owned by DEDICATED envelopes (order.staged, order.delivered,
 //     order.error, order.skipped, order.cancelled) that carry extra fields
@@ -127,11 +129,6 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 // error; both callers log-and-swallow it, a graceful no-op. The fleet arm no
 // longer rejects — a dropped intermediate can no longer freeze the mirror.
 func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
-	// An old Core's `sourcing` is `queued` here (C1, F3); the order update
-	// handler gives it its code. This Edge never stores the word.
-	if coreStatus == StatusSourcing {
-		coreStatus = StatusQueued
-	}
 	switch coreStatus {
 	case StatusDispatched, StatusInTransit, StatusFaulted, StatusQueued:
 		if IsTerminal(order.Status) {
@@ -306,16 +303,10 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 	if IsTerminal(order.Status) {
 		return nil
 	}
+	// `sourcing` takes the default arm below, as on the live path: no Core at or
+	// above protocol.FloorCore reports it (ApplyCoreStatus). A row an older Edge
+	// left saying it is rewritten by the status Core does report for the order.
 	snapStatus := protocol.Status(snapshot.Status)
-	// An old Core's `sourcing` is `queued` here, with the cause the snapshot
-	// carries or else waiting_for_material (C1, F3) — the boot snapshot is the
-	// one restart that rewrites a row an older Edge left saying `sourcing`.
-	if snapStatus == StatusSourcing {
-		snapStatus = StatusQueued
-		if snapshot.QueueCode == "" {
-			snapshot.QueueCode = string(protocol.QueueWaitingForMaterial)
-		}
-	}
 
 	// The fault clock is written BEFORE the unchanged-status early return, and
 	// that placement is the point. The case this reconcile exists for is an Edge

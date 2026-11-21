@@ -64,10 +64,10 @@ const (
 const (
 	StatusPending Status = "pending"
 	// StatusSourcing is history only (C1, v4 §2.6: `sourcing` left the order
-	// ladder; the word is the forecast's). No edge enters it. It stays so old
-	// order_history rows render, and so a row that still says it (an old Core's
-	// push, before the Edge translates it; a row v148 has not reached) is not
-	// terminal and can move on. It goes with the one-release alias.
+	// ladder; the word is the forecast's). No edge enters it, Core's v148 moved
+	// every live order off it, and no Core at or above FloorCore sends it. It
+	// stays so old order_history rows render, and so a row that still says it
+	// (an Edge row an older Edge wrote) is not terminal and can move on.
 	StatusSourcing     Status = "sourcing"
 	StatusQueued       Status = "queued"
 	StatusSubmitted    Status = "submitted"

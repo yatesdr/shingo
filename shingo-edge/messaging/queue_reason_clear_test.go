@@ -123,30 +123,6 @@ func TestHandleOrderUpdate_KeepsQueueReasonWhileStillWaiting(t *testing.T) {
 	}
 }
 
-// An old Core's sourcing push is queued here (C1, F3) and keeps its reason; it
-// regressed at Springfield on 2026-07-31 when sourcing was left out of a related
-// predicate.
-func TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing(t *testing.T) {
-	t.Parallel()
-	db := testHandlerDB(t)
-	h := testHandler(t, db)
-
-	id := seedQueuedWithReason(t, h, db, "uuid-sourcing")
-
-	h.HandleOrderUpdate(nil, &protocol.OrderUpdate{
-		OrderUUID:   "uuid-sourcing",
-		Status:      string(protocol.StatusSourcing),
-		QueueReason: "Waiting for material: SYN-PART13E.06",
-		QueueCode:   "waiting_for_material",
-	})
-
-	o, _ := db.GetOrder(id)
-	if o.QueueReason == "" {
-		t.Error("queue_reason was cleared on a sourcing push — an old Core's sourcing is " +
-			"queued here and still owes the operator an explanation")
-	}
-}
-
 // The incident shape end to end: the reason is set while waiting, survives the
 // wait, and is gone by the time the order reaches a terminal state — so a LATER
 // changeover at the same node cannot inherit it.

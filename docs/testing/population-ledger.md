@@ -2212,3 +2212,48 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row (the same writes run under the new name)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DEAD — `TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued`
+- test: `TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued` · pkg `shingoedge/messaging` · run `-run '^TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued$'` · `shingo-edge/messaging/c1_mixed_version_test.go:69` @ `d2686a1d` · tags `none`
+- code: DEAD (the Edge's translation of an old Core's `sourcing`, on the live push and the boot snapshot, is deleted: no Core at or above `protocol.FloorCore` sends the word; Core's v148 moved every live order off it and no transition enters it)
+- assertion map: a version-0 `sourcing` push with no code, or with its own code, stored as `queued` with that code or `waiting_for_material`; the old ladder's walk never stores `sourcing`; a `sourcing` snapshot stored as `queued` → nothing: the word takes the unknown-status arm on both paths. The new Core's sequences stay pinned by `TestMixedVersion_OldEdgeNewCore` (same file)
+- mutation: not run (the translation it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: the file's header
+- verified at: the commit that adds this row
+
+### DEAD — `TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing`
+- test: `TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing` · pkg `shingoedge/messaging` · run `-run '^TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing$'` · `shingo-edge/messaging/queue_reason_clear_test.go:129` @ `d2686a1d` · tags `none`
+- code: DEAD (as `TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued`: an old Core's `sourcing` push)
+- assertion map: a `sourcing` push keeps the queue reason → nothing; a `queued` push keeps it → `TestHandleOrderUpdate_KeepsQueueReasonWhileStillWaiting` (same file)
+- mutation: not run (the translation it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestApplyCoreStatus_Sourcing_TransitionsRow`
+- test: `TestApplyCoreStatus_Sourcing_TransitionsRow` · pkg `shingoedge/orders` · run `-run '^TestApplyCoreStatus_Sourcing_TransitionsRow$'` · `shingo-edge/orders/manager_db_test.go:908` @ `d2686a1d` · tags `none`
+- code: DEAD (as `TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued`)
+- assertion map: `ApplyCoreStatus(sourcing)` moves an acknowledged row to queued → nothing; a queued push moving an acknowledged row → `TestApplyCoreStatus_Queued_TransitionsRow` (same file)
+- mutation: not run (the translation it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestHandleCoreStatusPush_Sourcing_LivePush`
+- test: `TestHandleCoreStatusPush_Sourcing_LivePush` · pkg `shingoedge/orders` · run `-run '^TestHandleCoreStatusPush_Sourcing_LivePush$'` · `shingo-edge/orders/manager_db_test.go:1118` @ `d2686a1d` · tags `none`
+- code: DEAD (as `TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued`)
+- assertion map: a live `sourcing` push through `HandleCoreStatusPush` stores queued → nothing; the live-push entry itself → `TestApplyCoreStatus_ForcesFleetStatusOverSkippedIntermediate` and `TestApplyCoreStatus_TerminalNotResurrected` (same file), which drive `HandleCoreStatusPush`
+- mutation: not run (the translation it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestApplyCoreStatusSnapshot_SourcingAndFaulted`
+- test: `TestApplyCoreStatusSnapshot_SourcingAndFaulted` · pkg `shingoedge/orders` · run `-run '^TestApplyCoreStatusSnapshot_SourcingAndFaulted$'` · `shingo-edge/orders/manager_db_test.go:1138` @ `d2686a1d` · tags `none`
+- code: STALE (its `sourcing` case pinned the snapshot translation, deleted with `TestMixedVersion_NewEdgeOldCore_SourcingArrivesAsQueued`'s row)
+- assertion map: a `sourcing` snapshot stores queued → nothing; a faulted snapshot over an in-transit row stores faulted → kept whole, renamed `TestApplyCoreStatusSnapshot_Faulted` (`shingo-edge/orders/manager_db_test.go`)
+- mutation: not run (the faulted case is the old test's, unchanged)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
