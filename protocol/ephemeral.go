@@ -83,7 +83,8 @@ const RobotPollInterval = 2 * time.Second
 // RobotWatch is one Edge's watch request (TypeRobotWatch).
 type RobotWatch struct {
 	// StationID is the watching Edge's station uid. Core keys the watch on the
-	// envelope's source station and drops a watch whose StationID is another.
+	// envelope's source station and does not read this copy (a Core before
+	// that dropped a watch whose StationID was another station).
 	StationID string `json:"station_id"`
 	// OrderUUIDs are the Core order uuids this Edge's operator stations are
 	// showing, together, sorted and each once. Core honours only the ones whose

@@ -72,16 +72,16 @@ func (s *CoreDataService) claimsFlags(station string) []string {
 }
 
 // claimsFor is the heartbeat ack's Claims: process → digest for every report
-// row this station holds. nil for an Edge that does not speak feeds (it would
+// row station (the heartbeat's sender) holds. nil for an Edge that does not speak feeds (it would
 // not read them), and nil when the read fails, so the Edge sends nothing on a
 // read Core could not make; {} when Core holds none.
-func (s *CoreDataService) claimsFor(p *protocol.EdgeHeartbeat) map[string]string {
+func (s *CoreDataService) claimsFor(station string, p *protocol.EdgeHeartbeat) map[string]string {
 	if p.Feeds == nil {
 		return nil
 	}
-	claims, err := s.db.PlantClaimsReportDigests(p.StationID)
+	claims, err := s.db.PlantClaimsReportDigests(station)
 	if err != nil {
-		log.Printf("core_feeds: plant claims for %s: %v — claims left off the ack", p.StationID, err)
+		log.Printf("core_feeds: plant claims for %s: %v — claims left off the ack", station, err)
 		return nil
 	}
 	return claims

@@ -272,21 +272,21 @@ func (b *binsFeed) indexBuild(station, digest string, places map[string]*nodes.N
 }
 
 // binWatchFor is the heartbeat ack's BinWatch: the digest of the list Core
-// holds for this Edge, "" when none. nil for an Edge that sends no Feeds, which
+// holds for station (the heartbeat's sender), "" when none. nil for an Edge that sends no Feeds, which
 // would not read it.
 //
 // An Edge whose heartbeat names Feeds but not FeedBins does not speak this
 // feed (a binary from before it, or one rolled back to one): its list is
 // dropped, so no snapshot is pushed to an Edge with no handler for it.
-func (s *CoreDataService) binWatchFor(p *protocol.EdgeHeartbeat) *string {
+func (s *CoreDataService) binWatchFor(station string, p *protocol.EdgeHeartbeat) *string {
 	if p.Feeds == nil {
-		s.bins.forget(p.StationID)
+		s.bins.forget(station)
 		return nil
 	}
 	if _, quoted := p.Feeds[protocol.FeedBins]; !quoted {
-		s.bins.forget(p.StationID)
+		s.bins.forget(station)
 	}
-	d := s.bins.digestFor(p.StationID)
+	d := s.bins.digestFor(station)
 	return &d
 }
 

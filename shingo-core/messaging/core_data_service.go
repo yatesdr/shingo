@@ -438,7 +438,9 @@ func (s *CoreDataService) HandleLinesideBucketLevel(env *protocol.Envelope, l *p
 }
 
 func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
-	uid := p.StationID
+	// The station is the envelope's (HandleEdgeHeartbeat): the body's station_id,
+	// which an Edge still sends for an older Core, is not read.
+	uid := env.Src.Station
 	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s, schema_version=%d)",
 		uid, p.Hostname, p.Instance, p.Version, p.SchemaVersion)
 
@@ -506,8 +508,8 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 		// The register carries no catalog digest: its cells are kept with "",
 		// which matches no Edge's, so an Edge that quotes its cells digest is
 		// answered with a mismatch and sends its catalog once (EdgeCellsDigest).
-		if err := s.db.UpsertEdgeCells(p.StationID, edgeCellsOf(p.Catalog), ""); err != nil {
-			log.Printf("core_handler: upsert edge_cells for %s: %v", p.StationID, err)
+		if err := s.db.UpsertEdgeCells(uid, edgeCellsOf(p.Catalog), ""); err != nil {
+			log.Printf("core_handler: upsert edge_cells for %s: %v", uid, err)
 		}
 	}
 
@@ -528,8 +530,8 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 			" — enroll the second edge as its own station on Core and put ITS station_uid in that Pi's shingoedge.yaml"
 	}
 	s.resp.replyData(env, protocol.SubjectEdgeRegistered,
-		&protocol.EdgeRegistered{StationID: p.StationID, Message: msg, EphemeralTopic: s.ephemeralTopicName()})
-	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
+		&protocol.EdgeRegistered{StationID: uid, Message: msg, EphemeralTopic: s.ephemeralTopicName()})
+	s.resp.dbg("reply published: subject=edge.registered station=%s", uid)
 
 	// Derive demand_registry for this station from the Core-owned loader aggregate
 	// on (re)connect, so a plant configured entirely through the UI gets live
@@ -538,14 +540,14 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	// claim config over the wire; the aggregate is the sole source.)
 	// DeriveDemandRegistry prints the station's derive line, a failure included.
 	// Its change list is discarded: Resync below re-engages the station whole.
-	_, _, _ = s.db.DeriveDemandRegistry(p.StationID)
+	_, _, _ = s.db.DeriveDemandRegistry(uid)
 
 	// Re-engage the threshold monitor for this station's loader bindings: the
 	// monitor sweeps demand_registry once at Core startup, so a (re)connect after
 	// the seed above turns the freshly-derived registry into live monitor
 	// bindings. Without it a seeded UOP threshold never fires until Core restarts.
 	if s.thresholdMonitor != nil {
-		s.thresholdMonitor.Resync(p.StationID)
+		s.thresholdMonitor.Resync(uid)
 	}
 }
 
@@ -593,12 +595,16 @@ func edgeCellsOf(catalog []protocol.CellCatalogEntry) []store.EdgeCell {
 // Edge's /status shows the mirror reading from the ack. A heartbeat with no ts
 // leaves the last reading.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
+	// The station is the envelope's, as it is for every Edge-sent count
+	// (HandleProductionTicks): the body's station_id is not read. env is the
+	// router's and never nil.
+	station := env.Src.Station
 	var clockOffsetMS *int64
-	if env != nil && !env.Timestamp.IsZero() {
+	if !env.Timestamp.IsZero() {
 		ms := env.Timestamp.Sub(clock.Now()).Milliseconds()
 		clockOffsetMS = &ms
 	}
-	displayName, found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone,
+	displayName, found, err := s.db.UpdateHeartbeat(station, p.Timezone,
 		store.TickLag{Pending: p.TickPending, OldestUnsentAgeMS: p.TickOldestUnsentAgeMS}, clockOffsetMS)
 	if err != nil {
 		// Acked anyway. The ack is the Edge's evidence that Core is alive and
@@ -607,7 +613,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 		// outage and run its gap reconcile. What was not read is not claimed:
 		// the feeds answer only what could be read, and no register request
 		// goes out on a row Core could not check.
-		log.Printf("core_handler: update heartbeat for %s: %v — acking without the registry write", p.StationID, err)
+		log.Printf("core_handler: update heartbeat for %s: %v — acking without the registry write", station, err)
 	}
 
 	// Feeds: an Edge that names none (nil — an older binary) gets exactly the
@@ -615,17 +621,17 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	// that Core could read, and the feeds whose digests differ are sent to it.
 	// The ack always carries a map, so the Edge can tell this Core from an
 	// older one.
-	binWatch := s.binWatchFor(p)
+	binWatch := s.binWatchFor(station, p)
 	feeds := map[string]string{}
 	if p.Feeds != nil {
-		feeds = s.answerFeeds(p.StationID, p.Feeds)
+		feeds = s.answerFeeds(station, p.Feeds)
 	}
 	// Claims stay off an ack whose registry write failed: the Edge reads nil
 	// as "Core could not read them" and republishes nothing on the strength
 	// of a database that is failing.
 	var claims map[string]string
 	if err == nil {
-		claims = s.claimsFor(p)
+		claims = s.claimsFor(station, p)
 	}
 	// The station's name, read back by the registry write itself; none (nil)
 	// when that write failed or found no row, so the Edge keeps what it holds.
@@ -635,7 +641,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	}
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
 		&protocol.EdgeHeartbeatAck{
-			StationID:   p.StationID,
+			StationID:   station,
 			ServerTS:    clock.Now().UTC(),
 			Timezone:    s.plantTimezone,
 			DisplayName: name,
@@ -649,9 +655,9 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 		})
 
 	if err == nil && !found {
-		log.Printf("core_handler: heartbeat from unenrolled station %s, requesting registration", p.StationID)
-		s.resp.sendData(protocol.SubjectEdgeRegisterRequest, p.StationID,
-			&protocol.EdgeRegisterRequest{StationID: p.StationID, Reason: "station not enrolled"})
+		log.Printf("core_handler: heartbeat from unenrolled station %s, requesting registration", station)
+		s.resp.sendData(protocol.SubjectEdgeRegisterRequest, station,
+			&protocol.EdgeRegisterRequest{StationID: station, Reason: "station not enrolled"})
 	}
 }
 

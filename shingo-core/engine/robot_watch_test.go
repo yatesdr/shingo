@@ -49,8 +49,9 @@ func TestRobotWatches_LeaseRunsFifteenSecondsFromTheLastWatch(t *testing.T) {
 }
 
 // TestHandleRobotWatch_KeysOnTheEnvelopesStation pins the watch door: the
-// lease is the envelope's source station, its uuids sorted and each once; a
-// body naming another station is dropped.
+// lease is the envelope's source station, its uuids sorted and each once; the
+// body's station_id is not read, so a body naming another station renews the
+// sender's lease; a watch with no envelope station is dropped.
 func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 	t.Parallel()
 	e := &Engine{}
@@ -58,12 +59,17 @@ func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 		return &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: station}}
 	}
 	e.HandleRobotWatch(from("edge.a"), &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-2", "u-1", "u-2"}})
-	e.HandleRobotWatch(from("edge.a"), &protocol.RobotWatch{StationID: "edge.b", OrderUUIDs: []string{"u-9"}})
 	e.HandleRobotWatch(from(""), &protocol.RobotWatch{OrderUUIDs: []string{"u-8"}})
 
 	got := e.robotWatches.live(time.Now())
 	if len(got) != 1 || got[0].station != "edge.a" || !slices.Equal(got[0].uuids, []string{"u-1", "u-2"}) {
 		t.Fatalf("live = %+v, want edge.a alone watching [u-1 u-2]", got)
+	}
+
+	e.HandleRobotWatch(from("edge.a"), &protocol.RobotWatch{StationID: "edge.b", OrderUUIDs: []string{"u-9"}})
+	got = e.robotWatches.live(time.Now())
+	if len(got) != 1 || got[0].station != "edge.a" || !slices.Equal(got[0].uuids, []string{"u-9"}) {
+		t.Fatalf("after a watch from edge.a whose body names edge.b: live = %+v, want edge.a alone watching [u-9]", got)
 	}
 }
 

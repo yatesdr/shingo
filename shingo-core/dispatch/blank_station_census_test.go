@@ -332,7 +332,7 @@ var blankStationSites = map[string]bsSite{
 	"cmd/soakstat:claimsMirror":                           notOrder(`SQL station = '' ×2`, "process_styles and edge_registry stations, in the soak report"),
 	"cmd/soakstat:readEdge":                               notOrder(`station == "" ×1`, "an Edge database's lineside sample station, in the soak report"),
 	"domain:BuildCycleSeries":                             notOrder(`station == "" ×1, station == station ×1`, "a cycle event's station, read from bin_uop_ledger.actor on bin_uop_delta rows (store/audit cycle time): the reporting Edge's uid, which the uid-under-actor census moves"),
-	"engine:Engine.HandleRobotWatch":                      notOrder(`station == "" ×1, station == station ×1`, "the watching Edge's envelope against its body"),
+	"engine:Engine.HandleRobotWatch":                      notOrder(`station == "" ×1`, "the watching Edge's envelope station"),
 	"engine:Engine.RequestEdgeReregister":                 notOrder(`station == "" ×1`, "blank asks every Edge to re-register (the dashboard's re-sync)"),
 	"engine:KanbanKeeper.tickKanban":                      notOrder(`station == "" ×1`, "a kanban's station (kanbans.station_uid): no station, no keeper"),
 	"engine:SourceabilityMonitor.snapshotFor":             notOrder(`station == station ×2`, "a process's station against the station a sourceability report is for"),

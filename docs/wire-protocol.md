@@ -602,7 +602,7 @@ no longer lists is marked stale.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the station UID, which the edge mints at first start and keeps in its config. Core resolves the station by it and introduces a uid it has never seen as an unclaimed station. A station from before station UIDs carries its old station string as its uid. |
+| `station_id` | string |  | StationID is the station UID, which the edge mints at first start and keeps in its config. A station from before station UIDs carries its old station string as its uid. Core resolves the station by the envelope's Address.Station, which carries the same uid, and introduces a uid it has never seen as an unclaimed station; it does not read this copy, which the Edge still sends for a Core older than that. |
 | `hostname` | string |  | Hostname is the OS hostname: attribute data and a weak duplicate signal, since two Pis flashed from one SD image share it. |
 | `instance` | string | omitempty | Instance is a random id drawn once per process at boot; absent means "cannot judge". It is the only field that separates two clones of one SD card, and Core alarms when a displaced instance returns — one machine cannot produce that, because a reboot draws a value it has never used and a live process keeps the one it holds. |
 | `version` | string |  | Version is the edge application's software version. |
@@ -673,7 +673,7 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the heartbeating station's UID, as registered. |
+| `station_id` | string |  | StationID is the heartbeating station's UID, as registered. Core reads the envelope's Address.Station instead; the Edge still sends this copy for a Core older than that. |
 | `timezone` | string | omitempty | Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads it once at boot (not live), so the wire value flips only when a process that actually renders the new zone comes up — Core's table shows what each edge is ON, never "saved but not yet restarted". |
 | `tick_pending` | integer | omitempty | TickPending and TickOldestUnsentAgeMS are the production-tick shipper's lag at send time: shippable counter_snapshots rows past its cursor, and the age of the oldest of them in ms (0 when none). Core keeps the latest per station and flags one whose feed has stalled. Absent from an Edge without the shipper, or when the read failed — never a zero nobody measured. |
 | `tick_oldest_unsent_age_ms` | integer | omitempty | See `tick_pending`. |
@@ -798,7 +798,7 @@ composition root registers it behind `router.ReadEphemeral`.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the watching Edge's station uid. Core keys the watch on the envelope's source station and drops a watch whose StationID is another. |
+| `station_id` | string |  | StationID is the watching Edge's station uid. Core keys the watch on the envelope's source station and does not read this copy (a Core before that dropped a watch whose StationID was another station). |
 | `order_uuids` | string[] |  | OrderUUIDs are the Core order uuids this Edge's operator stations are showing, together, sorted and each once. Core honours only the ones whose order is this station's. Every watch replaces the one before it. |
 
 <!-- /generated -->

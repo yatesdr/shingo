@@ -75,9 +75,11 @@ type CellCatalog struct {
 // one wrong answer is not vestigial, it is a defect with a schema.
 type EdgeRegister struct {
 	// StationID is the station UID, which the edge mints at first start and
-	// keeps in its config. Core resolves the station by it and introduces a
-	// uid it has never seen as an unclaimed station. A station from before
-	// station UIDs carries its old station string as its uid.
+	// keeps in its config. A station from before station UIDs carries its old
+	// station string as its uid. Core resolves the station by the envelope's
+	// Address.Station, which carries the same uid, and introduces a uid it has
+	// never seen as an unclaimed station; it does not read this copy, which the
+	// Edge still sends for a Core older than that.
 	StationID string `json:"station_id"`
 	// Hostname is the OS hostname: attribute data and a weak duplicate signal,
 	// since two Pis flashed from one SD image share it.
@@ -115,7 +117,9 @@ type EdgeRegister struct {
 
 // EdgeHeartbeat is sent periodically by an edge.
 type EdgeHeartbeat struct {
-	// StationID is the heartbeating station's UID, as registered.
+	// StationID is the heartbeating station's UID, as registered. Core reads
+	// the envelope's Address.Station instead; the Edge still sends this copy
+	// for a Core older than that.
 	StationID string `json:"station_id"`
 	// Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads
 	// it once at boot (not live), so the wire value flips only when a

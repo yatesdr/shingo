@@ -237,7 +237,7 @@ func TestHeartbeatAck_CarriesTheConfiguredPlantTimezone(t *testing.T) {
 		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 		svc.SetPlantTimezone(configured)
 
-		svc.HandleEdgeHeartbeat(&protocol.Envelope{}, &protocol.EdgeHeartbeat{StationID: "stn-tz-test"})
+		svc.HandleEdgeHeartbeat(feedsPinEnv("stn-tz-test"), &protocol.EdgeHeartbeat{StationID: "stn-tz-test"})
 
 		for _, r := range resp.replies {
 			if r.subject != protocol.SubjectEdgeHeartbeatAck {
@@ -279,7 +279,7 @@ func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
 		t.Helper()
 		resp := &captureResponder{}
 		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
-		svc.HandleEdgeHeartbeat(&protocol.Envelope{}, &protocol.EdgeHeartbeat{StationID: uid})
+		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid})
 		for _, r := range resp.replies {
 			if ack, ok := r.payload.(*protocol.EdgeHeartbeatAck); ok && r.subject == protocol.SubjectEdgeHeartbeatAck {
 				return ack.DisplayName
@@ -376,7 +376,7 @@ func TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic(t *testing.T) {
 			svc.SetEphemeralTopic(func() string { return verified })
 		}
 		svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
-		svc.HandleEdgeHeartbeat(&protocol.Envelope{}, &protocol.EdgeHeartbeat{StationID: st, Feeds: map[string]string{}})
+		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{StationID: st, Feeds: map[string]string{}})
 		for _, r := range resp.replies {
 			switch p := r.payload.(type) {
 			case *protocol.EdgeRegistered:

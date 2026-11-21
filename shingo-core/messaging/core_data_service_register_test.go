@@ -126,7 +126,7 @@ func TestHandleEdgeRegister_UnresolvableNodeKeepsRows(t *testing.T) {
 // draws no second request and stamps the row.
 //
 // The envelope's source and the payload carry the same uid, as the Edge sends
-// them, so the pin holds whichever of the two Core reads the sender from.
+// them; Core reads the envelope's (TestHandlers_TheStationIsTheEnvelopes).
 func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -179,5 +179,48 @@ func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
 	testutil.MustNoErr(t, db.QueryRow(`SELECT last_heartbeat IS NOT NULL FROM edge_registry WHERE station_uid = $1`, uid).Scan(&beat), "read heartbeat")
 	if !beat || rowCount() != 1 {
 		t.Errorf("after the second heartbeat: last_heartbeat stamped %v, rows %d; want stamped, 1", beat, rowCount())
+	}
+}
+
+// TestHandlers_TheStationIsTheEnvelopes pins B0 for the register and the
+// heartbeat: Core takes the station from the envelope's source and never from
+// the body's station_id, which an Edge still sends for an older Core. Each
+// body here names a station that does not exist; were it read, the register
+// would introduce that one and the heartbeat would draw a register request
+// to it.
+func TestHandlers_TheStationIsTheEnvelopes(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	const sender, body = "stn-b0b0b0b0b0b0b0b0", "stn-not-the-sender"
+	resp := &feedsPinResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+	rows := func(uid string) int {
+		t.Helper()
+		var n int
+		testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM edge_registry WHERE station_uid = $1`, uid).Scan(&n), "count rows")
+		return n
+	}
+
+	svc.HandleEdgeRegister(registerEnv(sender), &protocol.EdgeRegister{StationID: body, Hostname: "h", Version: "v"})
+	if rows(sender) != 1 || rows(body) != 0 {
+		t.Fatalf("register from %s naming %s: rows %d for the sender, %d for the body's; want 1 and 0",
+			sender, body, rows(sender), rows(body))
+	}
+	if reg, ok := resp.events[0].payload.(*protocol.EdgeRegistered); !ok || reg.StationID != sender {
+		t.Errorf("register reply = %#v, want edge.registered echoing the sender %s", resp.events[0].payload, sender)
+	}
+
+	resp.events = nil
+	svc.HandleEdgeHeartbeat(feedsPinEnv(sender), &protocol.EdgeHeartbeat{StationID: body, Feeds: map[string]string{}})
+	if got, want := resp.trace(), []string{"reply " + protocol.SubjectEdgeHeartbeatAck}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("heartbeat from %s naming %s: trace = %v, want %v (the sender is known)", sender, body, got, want)
+	}
+	if ack, ok := resp.events[0].payload.(*protocol.EdgeHeartbeatAck); !ok || ack.StationID != sender {
+		t.Errorf("ack = %#v, want one echoing the sender %s", resp.events[0].payload, sender)
+	}
+	var beat bool
+	testutil.MustNoErr(t, db.QueryRow(`SELECT last_heartbeat IS NOT NULL FROM edge_registry WHERE station_uid = $1`, sender).Scan(&beat), "read heartbeat")
+	if !beat {
+		t.Errorf("the sender's last_heartbeat was not stamped")
 	}
 }
