@@ -78,9 +78,6 @@ func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 	if got.SequenceID != 1 {
 		t.Errorf("SequenceID = %d, want 1 (first flush)", got.SequenceID)
 	}
-	if got.Station != "ALN_001" {
-		t.Errorf("Station = %q, want %q", got.Station, "ALN_001")
-	}
 }
 
 // TestInventoryDeltaReporter_ZeroDeltaNoFlush pins a no-op invariant:

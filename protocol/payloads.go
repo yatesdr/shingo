@@ -1721,8 +1721,11 @@ const (
 // accumulator window the delta covers, in Edge time. Core records both on the
 // ledger row, and compares WindowEnd against the last applied window to tell a
 // rolled-back Edge (restore, reinstall) from a duplicate or a late message.
+//
+// The station is the envelope's Address.Station (Core's HandleBinUOPDelta); the
+// body names none. An Edge before this build also sends a "station" key, which
+// nothing read, and which now decodes to nothing.
 type BinUOPDelta struct {
-	Station     string            `json:"station"`
 	BinID       int64             `json:"bin_id"`
 	PayloadCode string            `json:"payload_code"`
 	Delta       int               `json:"delta"`

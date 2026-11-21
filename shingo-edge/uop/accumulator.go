@@ -502,7 +502,6 @@ func (r *accumulator) flushBins() {
 			protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
 			protocol.Address{Role: protocol.RoleCore},
 			&protocol.BinUOPDelta{
-				Station:     r.stationID,
 				BinID:       sBinID,
 				PayloadCode: sPayloadCode,
 				Delta:       sDelta,

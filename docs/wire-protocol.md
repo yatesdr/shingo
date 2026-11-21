@@ -663,10 +663,10 @@ no longer lists is marked stale.
 
 <!-- /generated -->
 
-The sending station is the envelope's `src.station`, which is what Core's handlers read. Two payloads also carry
-a `station` field: [`BinUOPDelta`](#binuopdelta)'s, which no handler reads, and
-[`LinesideLevelReport`](#linesidelevelreport)'s, which Core reads first, falling back to `src.station` when it is
-empty.
+The sending station is the envelope's `src.station`, which is what Core's handlers read. The register, the
+heartbeat and the robot watch also carry the uid as `station_id`, which an edge still sends for an older Core and
+Core does not read. [`LinesideLevelReport`](#linesidelevelreport) carries a `station`, which Core reads first,
+falling back to `src.station` when it is empty.
 
 #### CellCatalog
 
@@ -1812,7 +1812,6 @@ Sent on `inventory.bin_uop_delta`: a bin's UoP moved.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station` | string |  |  |
 | `bin_id` | integer |  |  |
 | `payload_code` | string |  |  |
 | `delta` | integer |  |  |

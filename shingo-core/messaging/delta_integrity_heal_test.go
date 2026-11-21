@@ -31,7 +31,7 @@ func TestCloseout_3_RefusedThenLandedDeltaIsRecovered(t *testing.T) {
 	apply := func(seq int64, payload string, d int, net int64) error {
 		n := net
 		return svc.ApplyBinUOPDelta(r.station, &protocol.BinUOPDelta{
-			Station: r.station, BinID: bin, PayloadCode: payload, Delta: d,
+			BinID: bin, PayloadCode: payload, Delta: d,
 			Reason: protocol.ReasonConsumeTick, SequenceID: seq, Epoch: epoch, Net: &n,
 			WindowStart: r.at, WindowEnd: r.at,
 		})
@@ -67,15 +67,15 @@ func TestCloseout_3_RefusedThenLandedDeltaIsRecovered(t *testing.T) {
 // TestCycleTime_PinACycleIsTheSendingStations pins the station the cycle-time
 // page attributes each applied tick to (audit.ListCycleEvents, the read
 // AuditService makes, keyed by domain.BuildCycleSeries): the station on the
-// count message's envelope, taken through the real door (HandleBinUOPDelta),
-// and not the one the message body asserts. Two Edges tick two carriers at one
+// count message's envelope, taken through the real door (HandleBinUOPDelta);
+// the body names no station. Two Edges tick two carriers at one
 // seat. Ticks come only from an Edge's counts, never from an order, so the
 // five order kinds of the actor split do not apply: no Core actor and no
 // Core-born path sends a BinUOPDelta.
 //
 // Red when a tick is attributed to anything but its envelope's station (the
-// read taking a column the station has left, or the body's claim), or when a
-// station's ticks are lost.
+// read taking a column the station has left), or when a station's ticks are
+// lost.
 func TestCycleTime_PinACycleIsTheSendingStations(t *testing.T) {
 	t.Parallel()
 	r := newDivergenceRig(t, "CYCLE")
@@ -87,7 +87,7 @@ func TestCycleTime_PinACycleIsTheSendingStations(t *testing.T) {
 		t.Helper()
 		net := -seq
 		r.svc.HandleBinUOPDelta(linesideEnvelope(station), &protocol.BinUOPDelta{
-			Station: "stn-body-only", BinID: bin, PayloadCode: "PART-A", Delta: -1,
+			BinID: bin, PayloadCode: "PART-A", Delta: -1,
 			Reason: protocol.ReasonConsumeTick, SequenceID: seq, Epoch: epoch, Net: &net,
 			WindowStart: r.at, WindowEnd: r.at,
 		})

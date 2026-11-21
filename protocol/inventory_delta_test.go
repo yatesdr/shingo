@@ -22,7 +22,7 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 		{
 			name: "consume_tick_negative",
 			d: BinUOPDelta{
-				Station: "ALN_001", BinID: 42, PayloadCode: "PART-A",
+				BinID: 42, PayloadCode: "PART-A",
 				Delta: -3, Reason: ReasonConsumeTick,
 				SequenceID: 17, WindowStart: t0, WindowEnd: t1,
 			},
@@ -30,7 +30,7 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 		{
 			name: "produce_tick_positive",
 			d: BinUOPDelta{
-				Station: "SMN_003", BinID: 99, PayloadCode: "PART-B",
+				BinID: 99, PayloadCode: "PART-B",
 				Delta: 12, Reason: ReasonProduceTick,
 				SequenceID: 1, WindowStart: t0, WindowEnd: t1,
 			},
@@ -38,7 +38,7 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 		{
 			name: "capture_reduction",
 			d: BinUOPDelta{
-				Station: "ALN_002", BinID: 7, PayloadCode: "PART-C",
+				BinID: 7, PayloadCode: "PART-C",
 				Delta: -47, Reason: ReasonCaptureReduction,
 				SequenceID: 999, WindowStart: t0, WindowEnd: t0,
 			},
@@ -46,7 +46,7 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 		{
 			name: "ab_fallthrough",
 			d: BinUOPDelta{
-				Station: "ALN_001", BinID: 11, PayloadCode: "PART-D",
+				BinID: 11, PayloadCode: "PART-D",
 				Delta: -1, Reason: ReasonABFallthrough,
 				SequenceID: 100, WindowStart: t0, WindowEnd: t1,
 			},

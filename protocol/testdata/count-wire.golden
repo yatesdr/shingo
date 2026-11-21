@@ -35,8 +35,8 @@ empty: {"id":0,"name":"","code":"","description":"","uop_capacity":0}
 full:  {"id":803,"name":"Name","code":"Code","description":"Description","uop_capacity":803,"catid":"CATID","manifest":[{"part_number":"PartNumber","parts_per_cycle":803,"description":"Description"}]}
 
 ## BinUOPDelta
-empty: {"station":"","bin_id":0,"payload_code":"","delta":0,"reason":"","sequence_id":0,"epoch":0,"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z"}
-full:  {"station":"Station","bin_id":803,"payload_code":"PayloadCode","delta":803,"reason":"Reason","sequence_id":803,"epoch":803,"window_start":"2026-11-19T12:00:00Z","window_end":"2026-11-19T12:00:00Z","net":803}
+empty: {"bin_id":0,"payload_code":"","delta":0,"reason":"","sequence_id":0,"epoch":0,"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z"}
+full:  {"bin_id":803,"payload_code":"PayloadCode","delta":803,"reason":"Reason","sequence_id":803,"epoch":803,"window_start":"2026-11-19T12:00:00Z","window_end":"2026-11-19T12:00:00Z","net":803}
 
 ## LinesideBucketLevel
 empty: {"core_node_name":"","payload_code":"","state":"","qty":0,"drained":0,"sequence_id":0,"window_end":"0001-01-01T00:00:00Z"}

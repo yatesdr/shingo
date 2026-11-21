@@ -96,7 +96,7 @@ func TestSystemUOPForPayload_StagedCarrierTakesAcceptedDeltas(t *testing.T) {
 	testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, carrier.ID).Scan(&epoch), "read epoch")
 
 	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta("stn-p0b", &protocol.BinUOPDelta{
-		Station: "stn-p0b", BinID: carrier.ID, PayloadCode: payload, Delta: -10,
+		BinID: carrier.ID, PayloadCode: payload, Delta: -10,
 		Reason: protocol.ReasonConsumeTick, SequenceID: 1, Epoch: epoch,
 	}), "apply consume delta to the staged carrier")
 

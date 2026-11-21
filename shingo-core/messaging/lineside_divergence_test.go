@@ -334,7 +334,7 @@ func (r *divergenceRig) delta(binID, epoch, seq int64, d int, net int64) {
 	svc := service.NewInventoryDeltaService(r.db, service.NewBinManifestService(r.db, service.EpochAnnounce{}), service.EpochAnnounce{})
 	n := net
 	err := svc.ApplyBinUOPDelta(r.station, &protocol.BinUOPDelta{
-		Station: r.station, BinID: binID, PayloadCode: "PART-A", Delta: d,
+		BinID: binID, PayloadCode: "PART-A", Delta: d,
 		Reason: protocol.ReasonConsumeTick, SequenceID: seq, Epoch: epoch, Net: &n,
 		WindowStart: r.at, WindowEnd: r.at.Add(time.Duration(seq) * time.Second),
 	})
