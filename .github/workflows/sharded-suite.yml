@@ -143,18 +143,30 @@ jobs:
 
       - name: Test — shard ${{ matrix.shard.id }}
         working-directory: ${{ inputs.module }}
-        # NOT -json, deliberately: shardplan reads plain output too, and a race
-        # report is a multi-page stack dump that JSON would make unreadable on
-        # the one run where somebody has to read it.
+        # -json INTO A FILE, TEXT ON THE LOG. The JSON is the test census's
+        # input (which tests ran); jq turns it back into the text go test
+        # prints (as -v would), so a race report stays readable on the one run
+        # where somebody has to read it, and shardplan reads the same
+        # `ok pkg Ns` lines from results-*.log as before. A line that is not an
+        # event (stderr) is passed through as text.
         #
         # pipefail so `tee` cannot mask a failing exit code. -p 1 because the
         # runner has 2-4 cores and in-package parallelism already uses them.
         run: |
           set -o pipefail
           mkdir -p ../.shard
-          go test -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
-            ${{ matrix.shard.pkgs }} \
+          go test -json -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
+            ${{ matrix.shard.pkgs }} 2>&1 \
+            | tee ../.shard/results-${{ matrix.shard.id }}.json \
+            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                | select(.Action == "output" or .Action == "build-output") | .Output' \
             | tee ../.shard/results-${{ matrix.shard.id }}.log
+
+      - if: always()
+        uses: ./.github/actions/test-census
+        with:
+          json: .shard/results-${{ matrix.shard.id }}.json
+          name: ${{ inputs.cache-prefix }}${{ matrix.shard.id }}
 
       # always(): a shard that went red still produced timings for whatever ran
       # before it, and losing those would unbalance the next run.

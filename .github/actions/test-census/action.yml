@@ -1,0 +1,45 @@
+name: Test census
+description: >
+  Count the tests a `go test -json` stream executed and keep their names, so a
+  change to how the suites are split across jobs can show it runs the same
+  tests: the names of every job's census, joined, are the run's test set.
+
+inputs:
+  json:
+    description: The `go test -json` file the step wrote.
+    required: true
+  name:
+    description: Artifact name for this job's census; unique within the run.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        JSON: ${{ inputs.json }}
+        NAME: ${{ inputs.name }}
+      run: |
+        set -uo pipefail
+        if [ ! -s "$JSON" ]; then
+          echo "TESTCENSUS name=$NAME none: $JSON is missing or empty"
+          exit 0
+        fi
+        # Every test and subtest that ended, as "package test action".
+        jq -rR 'try fromjson catch empty
+          | select(.Test != null and (.Action == "pass" or .Action == "fail" or .Action == "skip"))
+          | "\(.Package) \(.Test) \(.Action)"' "$JSON" | LC_ALL=C sort >"$JSON.names"
+        total=$(wc -l <"$JSON.names")
+        top=$(awk '$2 !~ /\//' "$JSON.names" | wc -l)
+        pass=$(awk '$3 == "pass"' "$JSON.names" | wc -l)
+        fail=$(awk '$3 == "fail"' "$JSON.names" | wc -l)
+        skip=$(awk '$3 == "skip"' "$JSON.names" | wc -l)
+        line="TESTCENSUS name=$NAME total=$total top=$top pass=$pass fail=$fail skip=$skip"
+        echo "$line"
+        echo "$line" >>"$GITHUB_STEP_SUMMARY"
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: testcensus-${{ inputs.name }}
+        path: ${{ inputs.json }}.names
+        if-no-files-found: ignore

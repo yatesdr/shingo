@@ -93,7 +93,20 @@ jobs:
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives; -timeout=10m accommodates
         # cold-runner container startup. Tighten once observed.
-        run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
+        # -json into a file for the test census, text on the log (see
+        # sharded-suite.yml's test step).
+        run: |
+          set -o pipefail
+          go test -json -tags=docker,lockcheck -timeout=10m -count=1 ./... 2>&1 \
+            | tee ../integration-docker.json \
+            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                | select(.Action == "output" or .Action == "build-output") | .Output'
+
+      - if: always()
+        uses: ./.github/actions/test-census
+        with:
+          json: integration-docker.json
+          name: integration-docker
 
       - name: Test (Docker integration, race)
         # Branches and PRs only. On main this suite runs as a gate of every
@@ -104,4 +117,15 @@ jobs:
         working-directory: integration
         # Promoted to gating in Phase 2 (2026-05-22), matching
         # core.yml / edge.yml.
-        run: go test -tags=docker,lockcheck -race -timeout=25m -count=1 ./...
+        run: |
+          set -o pipefail
+          go test -json -tags=docker,lockcheck -race -timeout=25m -count=1 ./... 2>&1 \
+            | tee ../integration-race.json \
+            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                | select(.Action == "output" or .Action == "build-output") | .Output'
+
+      - if: always() && github.ref != 'refs/heads/main'
+        uses: ./.github/actions/test-census
+        with:
+          json: integration-race.json
+          name: integration-race

@@ -219,7 +219,20 @@ jobs:
         working-directory: shingo-core
         # -p 1: the runner has 2-4 cores and in-package parallelism already
         # uses them. On a 20-core dev host the best setting measured nproc/4.
-        run: go test -tags=docker,lockcheck -timeout=10m -count=1 -p 1 ./...
+        # -json into a file for the test census, text on the log (see
+        # sharded-suite.yml's test step).
+        run: |
+          set -o pipefail
+          go test -json -tags=docker,lockcheck -timeout=10m -count=1 -p 1 ./... 2>&1 \
+            | tee ../core-docker.json \
+            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                | select(.Action == "output" or .Action == "build-output") | .Output'
+
+      - if: always()
+        uses: ./.github/actions/test-census
+        with:
+          json: core-docker.json
+          name: core-docker
 
   # THE SIM-ONLY TESTS, UNDER THE DETECTOR. The build job's `go build -tags
   # sim` compiles the sim files and runs none of their tests, so the sim-tagged
