@@ -15,7 +15,8 @@
 // they actually share is the DECISION, so that is what lives here; each modal
 // keeps only the four lines of its own idiom.
 
-import { postAction, showToast } from './operator-util.js';
+import { toast } from '/static/shared/notice.js';
+import { postAction, STATION_TOASTS } from './operator-util.js';
 
 // askConfirm is the HMI's own confirmation, not the browser's.
 //
@@ -84,7 +85,7 @@ function refusalURL(nodeID) {
 // surprises a cell that has already acted on being told. Either one is a single
 // tap on a screen being read from a forklift position.
 export function confirmRefuseSupply(nodeID, code, onDone) {
-    if (!code) { showToast('Pick a part first', 'warning'); return; }
+    if (!code) { toast('Pick a part first', 'warning', STATION_TOASTS); return; }
     askConfirm(
         'NO ' + code + ' AVAILABLE?',
         'The cell waiting on this part will be told, and asked whether to keep waiting or change over.',
@@ -146,9 +147,9 @@ function doUndo(nodeID, code, onDone) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payload_code: code }),
     }).then(function (res) {
-        if (!res.ok) { showToast('Could not withdraw the refusal', 'error'); return; }
+        if (!res.ok) { toast('Could not withdraw the refusal', 'error', STATION_TOASTS); return; }
         if (onDone) onDone();
-    }).catch(function () { showToast('Could not withdraw the refusal', 'error'); });
+    }).catch(function () { toast('Could not withdraw the refusal', 'error', STATION_TOASTS); });
 }
 
 // standingRefusalFor answers "is this card already refused" from the board data

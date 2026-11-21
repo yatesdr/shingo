@@ -158,7 +158,8 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// (Core sends them in that order). Its sibling already ended, so the
 		// station has been told — by the dead leg's toast, or by the operator's
 		// own abort of it — and a second sticky toast says the same thing
-		// longer. Stickies are not capped (operator-util.js makeRoomForToast);
+		// longer. Stickies are not capped (the station's three, operator-util.js
+		// STATION_TOASTS through notice.js makeRoom, never evict a sticky one);
 		// HK 2026-11-04 would have stacked fourteen (owner, 2026-11-05).
 		wasLive := !IsTerminal(order.Status)
 		if err := m.mirrorTransition(order.ID, StatusCancelled, statusDetail); err != nil {

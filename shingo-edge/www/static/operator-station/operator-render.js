@@ -1,5 +1,6 @@
-import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
+import { el, fillColor, postAction, STATION_TOASTS, fetchWithTimeout, formatETA } from './operator-util.js';
 import { formatClock } from '/static/shared/clock.js';
+import { toast } from '/static/shared/notice.js';
 import { countBracketed, typedNote } from '/static/shared/count-words.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
@@ -162,7 +163,7 @@ function confirmAutoReorderFlip(turnOn) {
     confirm.addEventListener('click', async () => {
         overlay.remove();
         const ok = await postAction('/api/operator-stations/' + sid + '/auto-reorder', { on: turnOn }, loadViewRef);
-        if (ok) showToast('Line auto-reorder ' + (turnOn ? 'on' : 'off'), 'success');
+        if (ok) toast('Line auto-reorder ' + (turnOn ? 'on' : 'off'), 'success', STATION_TOASTS);
     });
     panel.appendChild(confirm);
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
@@ -185,7 +186,7 @@ function confirmAutoReorderFlip(turnOn) {
 export function openComposerPicker(targetStyleID) {
     return ensureComposer().then(function (ui) {
         if (ui) ui.openPicker(getView(), targetStyleID || 0);
-        else showToast('The changeover screen did not load — tap CHANGEOVER again', 'error');
+        else toast('The changeover screen did not load — tap CHANGEOVER again', 'error', STATION_TOASTS);
     });
 }
 
@@ -205,7 +206,7 @@ async function confirmCancelChangeover() {
     confirm.addEventListener('click', async () => {
         overlay.remove();
         const ok = await postAction('/api/processes/' + pid + '/changeover/cancel', {}, loadViewRef);
-        if (ok) showToast('Changeover cancelled', 'success');
+        if (ok) toast('Changeover cancelled', 'success', STATION_TOASTS);
     });
     panel.appendChild(confirm);
 
@@ -231,7 +232,7 @@ async function confirmCutover() {
     confirm.addEventListener('click', async () => {
         overlay.remove();
         const ok = await postAction('/api/processes/' + pid + '/changeover/cutover', undefined, loadViewRef);
-        if (ok) showToast('Cutover complete', 'success');
+        if (ok) toast('Cutover complete', 'success', STATION_TOASTS);
     });
     panel.appendChild(confirm);
 
@@ -750,7 +751,7 @@ export function confirmClearLoaderHome(nodeID, home, spot, partial) {
         });
         if (refused) return;
         overlay.remove();
-        if (ok && said) showToast(said, 'success');
+        if (ok && said) toast(said, 'success', STATION_TOASTS);
     });
     panel.appendChild(confirm);
 

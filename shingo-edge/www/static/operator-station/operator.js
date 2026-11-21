@@ -11,7 +11,7 @@
 // reconnect or a gap, never a silence; a stream with no frame for 75 s is
 // treated as dead. An idle board makes no request at all.
 
-import { stationID, showToast, friendlyOrderError, postAction, el, fetchWithTimeout } from './operator-util.js';
+import { stationID, STATION_TOASTS, friendlyOrderError, postAction, el, fetchWithTimeout } from './operator-util.js';
 import {
     getView, setView, getSelectedNodeID,
     getLastViewJSON, setLastViewJSON,
@@ -31,7 +31,7 @@ import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
 import { syncRobotPanel, robotPanelToggle, robotPanelLinkBack } from './operator-robot-panel.js';
 import { serverNow } from '/static/shared/clock.js';
 import { onSSE, setSSEReloadOnBuild, setSSEQuery, setSSEWatchdog, sseStatus } from '/static/shared/bus.js';
-import { clearLostConnectionBanner, showLostConnectionBanner } from '/static/shared/notice.js';
+import { clearLostConnectionBanner, showLostConnectionBanner, toast } from '/static/shared/notice.js';
 
 let refreshTimer = null;
 // Wall-clock deadline of the pending refreshTimer, so armRefresh can tell
@@ -340,7 +340,7 @@ function handleOrderFailed(data) {
     if (data && data.order_id) {
         msg += ' (#' + data.order_id + ')';
     }
-    showToast(msg, 'error', { sticky: true });
+    toast(msg, 'error', Object.assign({ sticky: true }, STATION_TOASTS));
 }
 
 // handleOrderCancelled toasts a cancel this station did not ask for, in Core's
@@ -358,7 +358,7 @@ function handleOrderCancelled(data) {
     msg = msg.charAt(0).toUpperCase() + msg.slice(1);
     if (reason) msg += ': ' + reason;
     if (data && data.order_id) msg += ' (#' + data.order_id + ')';
-    showToast(msg, 'error', { sticky: true });
+    toast(msg, 'error', Object.assign({ sticky: true }, STATION_TOASTS));
 }
 
 // ─── Alerts: the post-cutover flag and the part-change alerts ───

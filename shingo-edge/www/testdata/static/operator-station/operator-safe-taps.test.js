@@ -257,6 +257,23 @@ const ctx = vm.createContext({
 });
 ctx.globalThis = ctx;
 
+// The notice, real, in a scope of its own (lend-notice.js): the station's
+// toasts are drawn by it, as on the kiosk. Their lifetimes run on real time,
+// not on fastTimers, which is for a request's deadline (a 5 min error toast
+// would go at once).
+require('./lend-notice.js')(ctx, { timers: {
+    setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
+    clearTimeout,
+} });
+// toastsUp is the toasts up, oldest first (none before the first toast makes
+// the notice's stack, and none once resetDOM has emptied the page); toastWords
+// is a toast's words, without its × or its button.
+function toastsUp() {
+    const stack = document.querySelector('.notice-stack');
+    return stack ? stack.children.filter(t => !t.removed) : [];
+}
+function toastWords(t) { return t.querySelector('.notice-text').textContent; }
+
 const mods = {};
 function loadModule(name) {
     let src = fs.readFileSync(path.join(SRC_DIR, name), 'utf8');
@@ -664,15 +681,13 @@ async function tap(node) { await node.click(); await flush(); }
     resetDOM();
     held = true;
     fastTimers = true;
-    const toasts = document.getElementById('os-toast');
-    toasts.children = [];
     const outcome = await Promise.race([
         ctx.postAction('/api/process-nodes/1/load-bin', {}, loadView),
         new Promise(r => setTimeout(() => r('still waiting'), 500)),
     ]);
     fastTimers = false;
     eq(outcome, false, 'a POST with no answer gives up: false');
-    eq(toasts.children.map(t => t.textContent), ['No answer — check the board before trying again'],
+    eq(toastsUp().map(toastWords), ['No answer — check the board before trying again'],
         'and says so');
     waiting = [];
 }
@@ -683,14 +698,12 @@ async function tap(node) { await node.click(); await flush(); }
     // sent, not that it failed, and holds that action on that node until Core
     // can no longer act on it; another action is not held.
     resetDOM();
-    const toasts = document.getElementById('os-toast');
-    toasts.children = [];
     pendingNext = 1;
     const before = posts().length;
     eq(await ctx.postAction('/api/process-nodes/1/record-count', { actual_uop: 3 }, loadView), true, 'a pending answer: true');
     eq(await ctx.postAction('/api/process-nodes/1/record-count', { actual_uop: 3 }, loadView), false, 'the same action again: held');
     eq(posts().length - before, 1, 'the held tap sent nothing');
-    eq(toasts.children.map(t => t.textContent), ['sent — waiting for Core', 'sent — waiting for Core'], 'both say it was sent');
+    eq(toastsUp().map(toastWords), ['sent — waiting for Core', 'sent — waiting for Core'], 'both say it was sent');
     eq(await ctx.postAction('/api/process-nodes/2/record-count', { actual_uop: 3 }, loadView), true, 'another node is not held');
 }
 
@@ -706,14 +719,14 @@ async function tap(node) { await node.click(); await flush(); }
     //
     // How this block reads the glass, in one place: the toasts up, oldest
     // first; a toast's words; whether it stays until closed; its button; its ×.
-    // These lines re-point when the station's toasts are drawn by something
-    // else. A browser fires no click on a disabled button, so press() does not.
-    const box = document.getElementById('os-toast');
-    const up = () => box.children.filter(t => !t.removed);
+    // These lines are what re-pointed when the notice took over drawing the
+    // station's toasts (its stack, .is-sticky, .notice-action, .notice-dismiss).
+    // A browser fires no click on a disabled button, so press() does not.
+    const up = () => toastsUp();
     const words = (t) => (t.children.length ? t.children[0].textContent : t.textContent);
-    const sticky = (t) => t.classList.contains('sticky');
-    const buttonOf = (t) => t.querySelector('.os-toast-action');
-    const closeOf = (t) => t.querySelector('.os-toast-close');
+    const sticky = (t) => t.classList.contains('is-sticky');
+    const buttonOf = (t) => t.querySelector('.notice-action');
+    const closeOf = (t) => t.querySelector('.notice-dismiss');
     const press = (b) => { if (b && !b.disabled) b.click(); return flush(); };
     const REQ = '/api/process-nodes/1/request';
     const EXIT = '/api/processes/1/changeover/cancel';
@@ -724,7 +737,6 @@ async function tap(node) { await node.click(); await flush(); }
 
     // The exit taken: disable, await the exit and the re-sent request, drop.
     resetDOM();
-    box.children = [];
     failNext = 1;
     refusals = [refusedWithExit()];
     eq(await ctx.postAction(REQ, { quantity: 1 }, loadView), false, 'a refusal with an exit: false');
@@ -749,7 +761,6 @@ async function tap(node) { await node.click(); await flush(); }
 
     // The exit refused: nothing re-sent, the toast goes, the refusal is said.
     resetDOM();
-    box.children = [];
     failNext = 1;
     refusals = [refusedWithExit()];
     await ctx.postAction(REQ, { quantity: 1 }, loadView);
@@ -764,7 +775,6 @@ async function tap(node) { await node.click(); await flush(); }
     // The ×: the toast goes and nothing is sent. Sticky, so later refusals do
     // not push it out first.
     resetDOM();
-    box.children = [];
     failNext = 4;
     refusals = [refusedWithExit(), { error: 'refused one' }, { error: 'refused two' }, { error: 'refused three' }];
     await ctx.postAction(REQ, { quantity: 1 }, loadView);
@@ -774,7 +784,6 @@ async function tap(node) { await node.click(); await flush(); }
     n = posts().length;
     await press(closeOf(up()[0]));
     eq([up().map(words), sentSince(n)], [['refused two', 'refused three'], []], 'its × takes it down and sends nothing');
-    box.children = [];
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

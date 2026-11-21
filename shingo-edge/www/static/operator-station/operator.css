@@ -929,9 +929,14 @@ body {
 .os-keypad-clear { background: #574820; }
 .os-keypad-ok { background: #1f6840; }
 
-/* ===== Toast ===== */
-
-#os-toast {
+/* ===== Toast (shared/notice.js) =====
+ * The station's toasts are the notice's, as every surface's are (style guide
+ * §11): `.notice-toast` in `.notice-stack`, inside the notice's region. This
+ * page links no components.css, so their rules are here. The region holds the
+ * banner too and lies over the footer (below); the stack is fixed apart from
+ * it, where the station's own toasts sat.
+ */
+.notice-stack {
     position: fixed;
     bottom: 56px;
     /* Was 200 — under the keypad's 1000, so a toast fired while the keypad
@@ -945,10 +950,10 @@ body {
      * Cancel/Clear/OK row as soon as a second toast is up — measured on the
      * station's own 1280x800, the row spans y=602..657 and the stack top
      * climbs to 632 at two toasts and 576 at three, so 81px of the row is
-     * buried. .os-toast-msg is pointer-events:auto, so it was not only
-     * covering the buttons but eating the taps: document.elementFromPoint
-     * over the OK button's centre returned the toast, not the button.
-     * Before D19 the toast painted behind the keypad and could not do that.
+     * buried. A toast body that took taps was not only covering the buttons
+     * but eating them: document.elementFromPoint over the OK button's centre
+     * returned the toast, not the button. Before D19 the toast painted behind
+     * the keypad and could not do that.
      *
      * Centring was never load-bearing. The touch modal is ~490px wide on a
      * 1280px screen, so the right gutter clears it with room to spare and the
@@ -960,55 +965,51 @@ body {
     pointer-events: none;
 }
 
-.os-toast-msg {
+.notice-toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     background: var(--os-surface);
     border: 1px solid var(--os-border);
     border-radius: 10px;
-    padding: 12px 24px;
+    padding: 12px 16px 12px 24px;
     font-size: 16px;
     font-weight: 600;
     color: #fff;
     margin-top: 8px;
-    animation: os-toast-in 0.2s ease-out, os-toast-out 0.3s ease-in 2.7s forwards;
+    /* IN, AND NO TIMED FADE OUT. notice.js takes a toast down when its
+     * lifetime ends (LIFETIME_MS, one table for every surface). A fade timed
+     * here cannot follow that table: this rule faded every plain toast out at
+     * 3 s, so a toast the notice keeps for 10 s would sit invisible for 7 and
+     * hold one of the station's three places. */
+    animation: os-toast-in 0.2s ease-out;
     /* TRANSPARENT TO TAPS, and this is the half of the fix that does not
      * depend on a layout. Docking the stack right moves it off the keypad on
      * the panel that was measured; it cannot speak for a panel with different
      * dimensions, a future modal that is wider, or a surface nobody has
-     * rendered yet. This rule holds on all of them: a toast body has nothing
-     * clickable in it, so a tap that lands on one should reach whatever is
+     * rendered yet. This rule holds on all of them: a toast's words have
+     * nothing to tap, so a tap that lands on them should reach whatever is
      * underneath rather than being swallowed by a message that had no use for
-     * it. The two exceptions take it back below. */
+     * it. A sticky toast's body does take a click on an admin page (it
+     * closes it); here only its × does. The two controls take taps back
+     * below. */
     pointer-events: none;
 }
-.os-toast-msg.error { border-color: var(--os-red); color: #ff8a8a; }
-.os-toast-msg.success { border-color: var(--os-green-bright); color: #8aff8a; }
-.os-toast-msg.warning { border-color: var(--os-amber); color: #ffd27a; }
-
-/* Sticky toasts don't auto-fade — they persist until the operator clicks
-   the close button. Used for async failure notifications where the operator
-   may not be watching the screen at the moment the failure arrives. */
-.os-toast-msg.sticky {
-    animation: os-toast-in 0.2s ease-out;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
+.notice-toast--error { border-color: var(--os-red); color: #ff8a8a; }
+.notice-toast--success { border-color: var(--os-green-bright); color: #8aff8a; }
+.notice-toast--warning { border-color: var(--os-amber); color: #ffd27a; }
+.notice-toast .notice-text { flex: 1; min-width: 0; }
 
 /* The only two interactive things a toast can contain, and therefore the only
- * two that take taps back. Both are real <button>s with their own listeners
- * (operator-util.js showToast / showExitToast); the toast BODY has no handler
- * on it at all, on sticky toasts either — the listeners are on the buttons and
- * they stopPropagation to a parent that was never listening. So the body is
- * inert by design and the rule above simply stops it pretending otherwise.
- * `cursor: pointer` came off .os-toast-msg.sticky with this: it advertised a
- * clickable body that has never existed, and pointer-events:none makes the
- * declaration dead as well as wrong. */
-.os-toast-msg .os-toast-close,
-.os-toast-msg .os-toast-action {
+ * two that take taps back: its ×, on every toast, and its one action (the exit
+ * toast's button). Both are real <button>s with their own listeners
+ * (notice.js); a tap on either stops there. */
+.notice-toast .notice-dismiss,
+.notice-toast .notice-action {
     pointer-events: auto;
 }
 
-.os-toast-msg.sticky .os-toast-close {
+.notice-toast .notice-dismiss {
     background: none;
     border: 1px solid currentColor;
     border-radius: 4px;
@@ -1019,17 +1020,13 @@ body {
     padding: 2px 8px;
     margin-left: auto;
 }
-.os-toast-msg.sticky .os-toast-close:hover {
+.notice-toast .notice-dismiss:hover {
     background: rgba(255, 255, 255, 0.1);
 }
 
 @keyframes os-toast-in {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
-}
-@keyframes os-toast-out {
-    from { opacity: 1; }
-    to { opacity: 0; }
 }
 
 /* ===== Footer ===== */
@@ -1069,7 +1066,8 @@ body {
    from the stream's drop to its next connect (operator.js). This page links no
    components.css, so the banner's rules are here, and they lay it over the
    footer, which is words only: the header's buttons and stale sign and the
-   tiles stay in sight. It has no control, so a tap goes through it. */
+   tiles stay in sight. It has no control, so a tap goes through it. The
+   region holds the toasts' stack too, fixed apart from it (Toast, above). */
 .notice-root {
     position: fixed; left: 0; right: 0; bottom: 0;
     z-index: var(--z-toast);

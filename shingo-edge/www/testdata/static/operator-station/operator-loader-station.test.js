@@ -251,6 +251,16 @@ const ctx = vm.createContext({
 });
 ctx.globalThis = ctx;
 
+// The notice, real, in a scope of its own (lend-notice.js): the station's
+// toasts are drawn by it, as on the kiosk. toastsUp is the toasts up, oldest
+// first, and toastWords a toast's words, without its ×.
+require('./lend-notice.js')(ctx);
+function toastsUp() {
+    const stack = document.querySelector('.notice-stack');
+    return stack ? stack.children.filter(t => !t.removed) : [];
+}
+function toastWords(t) { return t.querySelector('.notice-text').textContent; }
+
 // loadModule runs one ES module as a script: imports dropped (the names they
 // bind are this vm's globals), exports published as globals, and every
 // top-level function kept on mods[name] for the internal ones a test drives.
@@ -430,8 +440,10 @@ function barButtons() {
     const bar = grid.descendants().find(n => n.classList.contains('os-pc-bar'));
     return bar ? bar.children.filter(n => n.tagName === 'BUTTON') : [];
 }
+// overlay is the newest sheet on the page. The notice's region (its toasts)
+// is on the body too, and is not a sheet.
 function overlay() {
-    const live = body.children.filter(n => !n.removed);
+    const live = body.children.filter(n => !n.removed && !n.classList.contains('notice-root'));
     return live[live.length - 1] || null;
 }
 function overlayButtons() {
@@ -636,7 +648,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     // the none arm), and the confirm
     // closes as a done act does: the server's one sentence as the board's
     // success toast, the view refreshed.
-    const toasts = () => document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
+    const toasts = () => toastsUp().map(toastWords);
     await tap(h1);
     eq(overlayTexts()[0], 'Full bin off SMN_H1?', 'the clear\'s confirm names the home and the tote');
     eq(overlayTexts()[1], 'Take the full bin off the cart first. CONFIRM marks the cart empty: a robot takes it away and brings the partial from SMN_F1 here.',
@@ -912,7 +924,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     eq(headerButtons(), ['CHANGEOVER', 'REFRESH'], 'loader beside a press: the header keeps CHANGEOVER');
     render();
     await tap(headerButton('CHANGEOVER'));
-    const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
+    const toasts = toastsUp().map(toastWords);
     eq([posts(), overlayButtons(), toasts.slice(-1)],
         [[], [], ['The changeover screen did not load — tap CHANGEOVER again']],
         'CHANGEOVER with no composer: no picker, nothing posted');
@@ -1538,7 +1550,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     await document.getElementById('os-load-uop-display').click();
     await keypad.onOk(0, 0);
     await confirmLoad();
-    const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
+    const toasts = toastsUp().map(toastWords);
     eq([posts(), toasts.slice(-1)], [[], ['Type the count first: a LOAD needs 1 or more']], 'LOAD: a count of 0 posts nothing');
     ctx.openKeypad = realKeypad;
 }
@@ -1562,11 +1574,12 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
 // rejects: what the glass shows and does next. The station's postAction reads
 // a `notice` and an `exit` too; apiRequestEmptyBin writes neither.
 {
-    // The toasts shown since seen was taken (the container keeps three, so a
-    // count would miss one that pushed an older one out).
-    const toastEls = () => document.getElementById('os-toast').children.filter(n => !n.removed);
+    // The toasts shown since seen was taken (the station keeps three up, so a
+    // count would miss one that pushed an older one out), each as its level and
+    // its words.
+    const toastEls = () => toastsUp();
     const toastsSince = (seen) => toastEls().filter(n => seen.indexOf(n) < 0)
-        .map(n => [n.className.replace('os-toast-msg', '').trim(), n.textContent]);
+        .map(n => [(/notice-toast--(\w+)/.exec(n.className) || [])[1], toastWords(n)]);
     const reqActs = () => modalActions().map(a => a.dataset.action).filter(a => /request-(empty|full)/.test(a));
     const modalHTML = () => document.getElementById('node-modal-content').innerHTML;
     const cardWords = (html) => (html.match(/TAP TO REQUEST (EMPTY|FULL)/g) || []);
@@ -1849,7 +1862,7 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24 };
     await confirmLoad();
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/load-bin', body: loadBody }],
         'REPLACE PARTIAL: CONFIRM LOAD posts load-bin with the part and the count at the pack (24), as a LOAD');
-    const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
+    const toasts = toastsUp().map(toastWords);
     eq(toasts.slice(-1), ['Partial replaced'], 'REPLACE PARTIAL: the toast says the partial was replaced');
     await tap(showAllButton());
 

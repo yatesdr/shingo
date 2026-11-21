@@ -292,7 +292,6 @@ let reloads = 0;
 
 // ── load the shipping modules ────────────────────────────────────────────────
 
-const toasts = [];
 let composerOpens = 0;
 let composerTarget = null;
 const ctx = vm.createContext({
@@ -370,9 +369,12 @@ served = pressView();
 ['../../../../shared/clock.js', '../../../../shared/bus.js'].forEach(loadModule);
 ctx.serverNow = () => now;
 ctx.formatClock = (iso) => String(iso);
-// notice.js's two lost-connection calls, recorded: the banner itself is held
-// by shared/testdata/components/notice.test.js, and this vm's one scope would
-// hand notice.js the station's own el (operator-util.js) in place of dom.js's.
+// The notice, real, in a scope of its own (lend-notice.js): this vm's one
+// scope would hand notice.js the station's own el (operator-util.js) in place
+// of dom.js's. The station's toasts are drawn by it, on the fake clock. Its two
+// lost-connection calls are recorded instead: the banner itself is held by
+// shared/testdata/components/notice.test.js.
+require('./lend-notice.js')(ctx);
 const bannerCalls = [];
 ctx.showLostConnectionBanner = (server, lastFrameAt) => { bannerCalls.push('show ' + server + ' ' + lastFrameAt); };
 ctx.clearLostConnectionBanner = () => { bannerCalls.push('clear'); };
@@ -380,13 +382,19 @@ ctx.clearLostConnectionBanner = () => { bannerCalls.push('clear'); };
     'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js',
     'operator-release.js', 'operator-modal.js', 'operator-render.js', 'operator-robot-panel.js',
 ].forEach(loadModule);
-const showToastShipped = ctx.showToast;
 const OP = loadModule('operator.js');
-// Toasts are counted where operator.js makes them (its module scope bound the
-// shipping showToast; the toast container records what reached it).
-const toastBox = document.getElementById('os-toast');
-function toastTexts() { return toastBox.children.map(c => c.textContent); }
-void showToastShipped; void toasts;
+// The toasts up, oldest first, as the notice's stack holds them (none before
+// the first toast makes it), and clearToasts takes the notice's region off the
+// page, so the next toast starts a new one.
+function toastsUp() {
+    const stack = document.querySelector('.notice-stack');
+    return stack ? stack.children.filter(t => !t.removed) : [];
+}
+function toastTexts() { return toastsUp().map(c => c.textContent); }
+function clearToasts() {
+    const root = document.querySelector('.notice-root');
+    if (root) root.remove();
+}
 
 // gets counts the view GETs over the next ms of the fake clock.
 async function getsOver(ms) {
@@ -410,7 +418,7 @@ async function settle() {
     keepAlive();
     fire('material-refresh', { action: 'nudge' });
     await advance(5000);
-    viewGets = []; requests = []; toastBox.children = [];
+    viewGets = []; requests = []; clearToasts();
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1011,18 +1019,19 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
 {
     // How this block reads the glass, in one place: the toasts up, oldest
     // first; a toast's words; whether it stays until closed; its ×. These four
-    // lines re-point when the station's toasts are drawn by something else.
-    const up = () => toastBox.children.filter(t => !t.removed);
+    // lines are what re-pointed when the notice took over drawing the
+    // station's toasts (its stack, .is-sticky, .notice-dismiss).
+    const up = () => toastsUp();
     const words = (t) => (t.children.length ? t.children[0].textContent : t.textContent);
-    const sticky = (t) => t.classList.contains('sticky');
-    const closeOf = (t) => t.querySelector('.os-toast-close');
+    const sticky = (t) => t.classList.contains('is-sticky');
+    const closeOf = (t) => t.querySelector('.notice-dismiss');
     const glass = () => up().map(t => (sticky(t) ? 'sticky: ' : 'plain: ') + words(t));
     const refuse = async (said) => {
         refusals.push({ error: said });
         eq(await ctx.postAction('/api/process-nodes/1/request', { quantity: 1 }, null), false, 'refused: ' + said);
         await flush();
     };
-    toastBox.children = [];
+    clearToasts();
     refusals = [];
 
     fire('order-failed', { order_id: 501, order_type: 'retrieve', reason: 'no robot free' });
@@ -1064,7 +1073,7 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     await flush();
     eq(glass(), ['sticky: retrieve: no robot free (#501)', 'sticky: retrieve: lane blocked (#501)', 'plain: refused seven'],
         'the × takes its sticky toast down');
-    toastBox.children = [];
+    clearToasts();
     refusals = [];
 }
 

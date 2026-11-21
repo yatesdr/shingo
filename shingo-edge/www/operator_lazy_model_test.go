@@ -64,15 +64,16 @@ func TestStationTemplate_NoComposerModelTag(t *testing.T) {
 // files and no others. Each is small and has a job the station does: the
 // server clock (clock.js), the one event stream (bus.js), the quote-safe
 // escape its renderers concatenate attributes with (esc.js), and the notice's
-// lost-connection banner (notice.js, with the el it builds with, dom.js: S5,
-// ruling 4, one wording on every surface), and the note a typed count box
-// shows (count-words.js: the owner's one sentence for a count above the pack
-// on every typed box of both servers, 2026-11-19), and a count's arithmetic
-// (count.js, protocol/count.go's twin: a tile's cycles left, a LOAD's line
-// counts). The touch layer (toasts, press
-// guard, touch sheets) is the station's own and is not extracted, so a shared
-// UI module here is a decision to make, not a convenience: add it to the list
-// with the reason.
+// toasts and lost-connection banner (notice.js, with the el it builds with,
+// dom.js: S5, ruling 4, one wording on every surface; the toasts since
+// 2026-11-21, with the station's own options, operator-util.js
+// STATION_TOASTS), and the note a typed count box shows (count-words.js: the
+// owner's one sentence for a count above the pack on every typed box of both
+// servers, 2026-11-19), and a count's arithmetic (count.js, protocol/count.go's
+// twin: a tile's cycles left, a LOAD's line counts). The rest of the touch
+// layer (press guard, touch sheets) is the station's own and is not extracted,
+// so a shared UI module here is a decision to make, not a convenience: add it
+// to the list with the reason.
 //
 // The six scene modules (scene-geom.js, scene-net.js, scene-path.js,
 // scene-view.js, comet-layer.js, robot-motion.js) are the robot panel's map,

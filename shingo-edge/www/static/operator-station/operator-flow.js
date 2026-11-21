@@ -64,7 +64,8 @@
 // every position is a card in its own cell, a staging position included, and
 // only a lane that is not a position is a slot (in the band).
 
-import { el, showToast } from './operator-util.js';
+import { el, STATION_TOASTS } from './operator-util.js';
+import { toast } from '/static/shared/notice.js';
 // The QUOTE-SAFE escape, not operator-util's. This file builds attributes by
 // concatenation — data-pos, data-tap, transform — and the base's escaper
 // leaves `"` alone. See shared/esc.js.
@@ -1546,7 +1547,7 @@ function waitForModel() {
             if (!open) return;
             if (!model) {
                 closeFlowPanel();
-                showToast('The flow did not load — tap STYLE again', 'error');
+                toast('The flow did not load — tap STYLE again', 'error', STATION_TOASTS);
                 return;
             }
             syncFlowPanel(getView());

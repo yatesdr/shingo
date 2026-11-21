@@ -334,6 +334,9 @@ const ctx = vm.createContext({
     },
 });
 ctx.globalThis = ctx;
+// The notice, real, in a scope of its own (lend-notice.js): the station's
+// toasts and its lost-connection banner are drawn by it, on the fake clock.
+require('./lend-notice.js')(ctx);
 // Anything a picture function threw where a promise carried it.
 process.on('unhandledRejection', err => { errors.push('unhandled: ' + (err && err.stack || err)); });
 
@@ -384,7 +387,11 @@ function styleChip() {
 }
 function flowPanel() { return document.getElementById('os-flow'); }
 function flowSVG() { return document.getElementById('os-flow-svg'); }
-function toastTexts() { return document.getElementById('os-toast').children.map(c => c.textContent); }
+// toastTexts is the words of the toasts up, oldest first.
+function toastTexts() {
+    const stack = document.querySelector('.notice-stack');
+    return stack ? stack.children.map(c => c.querySelector('.notice-text').textContent) : [];
+}
 async function refreshes(n) {
     for (let i = 0; i < n; i++) {
         served = pressView(i + 1);

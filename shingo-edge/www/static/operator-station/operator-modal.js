@@ -2,7 +2,7 @@
 // this modal puts payload codes and node names inside attributes.
 import { esc } from '/static/shared/esc.js';
 import { UOP_WORD, countReading, countSaid } from '/static/shared/count-words.js';
-import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, showToast, stationID } from './operator-util.js';
+import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, stationID } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, confirmSkipChangeoverStep, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';

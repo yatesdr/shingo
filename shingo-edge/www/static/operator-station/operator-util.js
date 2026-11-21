@@ -1,8 +1,10 @@
-// Pure helpers — no DOM mutation outside showToast/postAction's container lookups.
+// The station's helpers: pure ones, and postAction, the one POST door, which
+// says what it was answered in a toast on the notice (shared/notice.js).
 
 // serverNow, not Date.now: formatETA below differences a SERVER instant, and
 // the two clocks are not the same one. See shared/clock.js.
 import { serverNow } from '/static/shared/clock.js';
+import { toast } from '/static/shared/notice.js';
 
 export const stationID = parseInt(document.body.dataset.stationId, 10);
 
@@ -77,85 +79,16 @@ export function friendlyOrderError(detail) {
     return s;
 }
 
-const toastContainer = document.getElementById('os-toast');
-
-// makeRoomForToast keeps the container to three toasts by dropping the oldest
-// plain one. A sticky toast is an alert someone has to see and close: no later
-// toast evicts it (a bug fixed: about 9 s of failed polls cleared an
-// order-failed alert). Pinned by operator-refresh.test.js.
-function makeRoomForToast() {
-    while (toastContainer.children.length >= 3) {
-        const plain = Array.prototype.find.call(toastContainer.children, function (t) {
-            return !t.classList.contains('sticky');
-        });
-        if (!plain) return;
-        plain.remove();
-    }
-}
-
-export function showToast(msg, type, opts) {
-    opts = opts || {};
-    const classes = ['os-toast-msg'];
-    if (type) classes.push(type);
-    if (opts.sticky) classes.push('sticky');
-
-    const toast = el('div', { className: classes.join(' ') });
-    makeRoomForToast();
-
-    if (opts.sticky) {
-        const text = el('span', { textContent: msg });
-        const close = el('button', {
-            className: 'os-toast-close',
-            textContent: '\u00D7',
-            type: 'button',
-        });
-        close.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toast.remove();
-        });
-        toast.appendChild(text);
-        toast.appendChild(close);
-    } else {
-        toast.textContent = msg;
-        setTimeout(() => toast.remove(), 3200);
-    }
-    toastContainer.appendChild(toast);
-    return toast;
-}
-
-// showExitToast renders a sticky refusal with an inline recovery button. The
-// button runs onAction — which typically takes the exit (e.g. abandon the
-// changeover) and retries the original request — then dismisses the toast. The
-// × lets the operator ignore the exit and leave the refusal on screen.
-export function showExitToast(msg, actionLabel, onAction) {
-    const toast = el('div', { className: 'os-toast-msg error sticky' });
-    makeRoomForToast();
-    const text = el('span', { textContent: msg });
-    const action = el('button', {
-        className: 'os-toast-action',
-        textContent: actionLabel,
-        type: 'button',
-    });
-    action.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        action.disabled = true;
-        try { await onAction(); } finally { toast.remove(); }
-    });
-    const close = el('button', {
-        className: 'os-toast-close',
-        textContent: '×',
-        type: 'button',
-    });
-    close.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toast.remove();
-    });
-    toast.appendChild(text);
-    toast.appendChild(action);
-    toast.appendChild(close);
-    toastContainer.appendChild(toast);
-    return toast;
-}
+// STATION_TOASTS are the notice's options (shared/notice.js) every toast on
+// the station passes, so they stack as they did before the notice drew them:
+//   - three up at most: the oldest plain toast goes to make room, and a
+//     sticky one never does (a bug fixed: about 9 s of failed polls cleared an
+//     order-failed alert), with a fourth shown when three sticky ones are up.
+//     Pinned by operator-refresh.test.js.
+//   - the same words twice are two toasts (a tap held while its ask is out
+//     says it was sent, beside the first). Pinned by operator-safe-taps.test.js.
+// A toast that stays until its × adds {sticky: true} to these.
+export const STATION_TOASTS = Object.freeze({ max: 3, fold: false });
 
 // fetchWithTimeout wraps fetch with an AbortController deadline so a silently
 // severed connection (edge restart mid-request, a Wi-Fi blip, a half-open TCP,
@@ -220,7 +153,7 @@ export async function postAction(url, body, loadView, opts) {
     // (ASK_HOLD_MS). The answer redraws the tile when it lands.
     const held = pendingAsks.get(url);
     if (held && held.until > Date.now()) {
-        showToast(held.notice, 'info');
+        toast(held.notice, 'info', STATION_TOASTS);
         return false;
     }
     pendingAsks.delete(url);
@@ -246,15 +179,19 @@ export async function postAction(url, body, loadView, opts) {
                 msg = 'Order not found — refresh and try again';
             }
             // A refusal may carry an inline exit (e.g. an armed changeover
-            // blocking a material request). Offer it as a button: taking it
-            // runs the exit action and then re-issues THIS same request, so the
-            // operator recovers without a page refresh or restart.
+            // blocking a material request). Offer it as a sticky toast's
+            // button: taking it runs the exit action and then re-issues THIS
+            // same request, so the operator recovers without a page refresh or
+            // restart. The button is dead while both are out and the toast goes
+            // when they are answered (notice.js awaits the promise); its ×
+            // leaves the refusal unanswered.
             const exit = parsed && parsed.exit;
             if (exit && exit.url && exit.label) {
-                showExitToast(msg, exit.label, async () => {
+                const takeExit = async () => {
                     const took = await postAction(exit.url, {}, null);
                     if (took) await postAction(url, body, loadView);
-                });
+                };
+                toast(msg, 'error', Object.assign({ sticky: true, action: { label: exit.label, onClick: takeExit } }, STATION_TOASTS));
                 return false;
             }
             // An ADVISORY refusal is the system working: the request was
@@ -263,7 +200,7 @@ export async function postAction(url, body, loadView, opts) {
             // correct action here is to wait — so a notice, and the view
             // still refreshes because the state it reports did change.
             if (parsed && parsed.notice) {
-                showToast(msg, 'info');
+                toast(msg, 'info', STATION_TOASTS);
                 if (loadView) await loadView();
                 return false;
             }
@@ -271,7 +208,7 @@ export async function postAction(url, body, loadView, opts) {
                 opts.onRefused(msg);
                 return false;
             }
-            showToast(msg, 'error');
+            toast(msg, 'error', STATION_TOASTS);
             return false;
         }
         // 202 pending: the tap went to Core as an ask and Core had not
@@ -282,7 +219,7 @@ export async function postAction(url, body, loadView, opts) {
             try { parsed = await res.clone().json(); } catch { parsed = null; }
             if (parsed && parsed.pending) {
                 pendingAsks.set(url, { notice: parsed.notice, until: Date.now() + ASK_HOLD_MS });
-                showToast(parsed.notice, 'info');
+                toast(parsed.notice, 'info', STATION_TOASTS);
                 if (loadView) await loadView();
                 return true;
             }
@@ -300,7 +237,7 @@ export async function postAction(url, body, loadView, opts) {
         return true;
     } catch (err) {
         console.error('postAction', url, err);
-        showToast(err && err.name === 'AbortError' ? 'No answer — check the board before trying again' : 'Network error', 'error');
+        toast(err && err.name === 'AbortError' ? 'No answer — check the board before trying again' : 'Network error', 'error', STATION_TOASTS);
         return false;
     }
 }

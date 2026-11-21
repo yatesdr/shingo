@@ -45,7 +45,8 @@ away.
 
 `shared/notice.js` draws both into one fixed region at the top of the page:
 the banners across it, the toasts stacked on the right below them, so a toast
-never covers a banner's button. Pages move onto it in wave C.
+never covers a banner's button. Core, Edge admin and the station all draw
+on it.
 
 - **`toast(message, level, opts)`** keeps the lifetimes above: an error
   5 min, every other level 10 s, `{ sticky: true }` until its × or a click on
@@ -56,10 +57,16 @@ never covers a banner's button. Pages move onto it in wave C.
   toast that is not sticky goes to make room, a sticky one never does, and a
   new toast is never refused. A message is text, never markup; an Error shows
   its message. `opts.action` is one control: `{ label, href }` (the HTTP
-  door's **Sign in**) or
-  `{ label, onClick }`. A click on it never takes the toast down; an `onClick`
-  that returns a promise disables the control until it settles, and then the
-  toast goes.
+  door's **Sign in**) or `{ label, onClick }`. A click on it never takes the
+  toast down; an `onClick` that returns a promise disables the control until
+  it settles, and then the toast goes.
+- **On the station** the stack is docked bottom-right above the footer
+  (`operator.css`), and a toast's words take no taps: only its × and its
+  action do. Every station toast passes `STATION_TOASTS`
+  (`operator-util.js`: `{ max: 3, fold: false }`, three up and the same words
+  twice two toasts). The exit toast, a refusal that carries a way out, is a
+  sticky error whose action takes the exit and then re-sends what was
+  refused.
 - **`banner(key, opts)`** is a line that stays until it is cleared or its ×
   is pressed: one per key, redrawn in place when shown again. It carries no
   words of its own.

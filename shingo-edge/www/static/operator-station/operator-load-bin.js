@@ -1,7 +1,8 @@
 import { esc } from '/static/shared/esc.js';
 import { countBoxLabel, typedNote } from '/static/shared/count-words.js';
 import { linePieces, uopRatio } from '/static/shared/count.js';
-import { postAction, showToast, fetchWithTimeout } from './operator-util.js';
+import { toast } from '/static/shared/notice.js';
+import { postAction, STATION_TOASTS, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
 import { findNodeByID, getView } from './operator-state.js';
 import {
@@ -289,13 +290,13 @@ async function submitLoadBin() {
     const state = loadBinState;
     if (!state || state.submitting) return;
     if (!state.payloadCode) {
-        showToast('Select a payload first', 'warning');
+        toast('Select a payload first', 'warning', STATION_TOASTS);
         return;
     }
     // No template shown (the fallback read failed or is still out): the
     // operator has had nothing to check the bin against.
     if (state.manifest.length === 0) {
-        showToast('No manifest loaded', 'warning');
+        toast('No manifest loaded', 'warning', STATION_TOASTS);
         return;
     }
     // This station always declares a count, so uop_count is always present on
@@ -303,7 +304,7 @@ async function submitLoadBin() {
     // The absence case comes from the production page, whose field is optional.
     if (state.uopCount <= 0) {
         // OWNER-WORDS (owner, 2026-11-19: keep refusing a LOAD of 0, reworded)
-        showToast('Type the count first: a LOAD needs 1 or more', 'warning');
+        toast('Type the count first: a LOAD needs 1 or more', 'warning', STATION_TOASTS);
         return;
     }
     // The part and the count, and no manifest: the Edge builds the bin's lines
@@ -317,7 +318,7 @@ async function submitLoadBin() {
     setSubmittingUI(true);
     const ok = await postAction('/api/process-nodes/' + nodeID + '/load-bin', body, loadViewRef);
     if (ok) {
-        showToast(state.replace ? 'Partial replaced' : 'Bin loaded', 'success');
+        toast(state.replace ? 'Partial replaced' : 'Bin loaded', 'success', STATION_TOASTS);
         closeLoadBin();
     } else {
         // postAction already toasted the server error — re-enable so the
