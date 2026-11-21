@@ -4,7 +4,9 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"shingocore/internal/testdb"
@@ -139,6 +141,56 @@ func TestV187_TheCatalogDigestColumn(t *testing.T) {
 			t.Errorf("boot %d: cells = %v, want the cell with no digest", boot, got)
 		}
 		if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 187`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestV188_NotesGoAndTheRegistryCommentsAreTrue: v188 drops
+// cms_transactions.notes and corrects edge_registry's comments (an Edge mints
+// its own uid; Core mints one only at enrollment). Down brings the column back
+// with its default and v185's comments; up again drops it and applies the true
+// text; a re-run of up changes nothing.
+func TestV188_NotesGoAndTheRegistryCommentsAreTrue(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	stationUID := func() string {
+		t.Helper()
+		var c sql.NullString
+		if err := db.QueryRow(`SELECT col_description('public.edge_registry'::regclass,
+			(SELECT attnum FROM pg_attribute WHERE attrelid = 'public.edge_registry'::regclass AND attname = 'station_uid'))`).Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c.String
+	}
+	check := func(when string, notes bool, mints string) {
+		t.Helper()
+		if got := schema.ColumnExists(db, "cms_transactions", "notes"); got != notes {
+			t.Errorf("%s: cms_transactions.notes there = %v, want %v", when, got, notes)
+		}
+		for what, c := range map[string]string{"table": tableComment(t, db.DB, "edge_registry"), "station_uid": stationUID()} {
+			if !strings.Contains(c, mints) {
+				t.Errorf("%s: edge_registry's %s comment does not say %q:\n%s", when, what, mints, c)
+			}
+		}
+	}
+	check("at this build", false, "by the Edge at its first boot")
+	if err := testdb.MigrateDownThrough(cfg, 188); err != nil {
+		t.Fatalf("down through 188: %v", err)
+	}
+	check("after down", true, "Core mints")
+	if _, err := db.Exec(`WITH n AS (INSERT INTO nodes (name) VALUES ('V188-N') RETURNING id)
+		INSERT INTO cms_transactions (node_id, cat_id, source_type) SELECT id, 'C1', 'movement' FROM n`); err != nil {
+		t.Fatalf("v0.18.0's insert, which names no notes: %v", err)
+	}
+	for boot := 1; boot <= 2; boot++ {
+		up, err := store.Open(cfg)
+		if err != nil {
+			t.Fatalf("up again (boot %d): %v", boot, err)
+		}
+		up.Close()
+		check(fmt.Sprintf("boot %d", boot), false, "by the Edge at its first boot")
+		if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 188`); err != nil {
 			t.Fatal(err)
 		}
 	}

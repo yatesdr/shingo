@@ -463,7 +463,6 @@ CREATE TABLE public.cms_transactions (
     payload_code text DEFAULT ''::text NOT NULL,
     source_type text NOT NULL,
     order_id bigint,
-    notes text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     posting_id bigint,
     robot_id text DEFAULT ''::text NOT NULL,
@@ -608,9 +607,9 @@ CREATE TABLE public.edge_registry (
     CONSTRAINT edge_registry_station_uid_nonblank CHECK ((station_uid <> ''::text))
 );
 
-COMMENT ON TABLE public.edge_registry IS 'The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope''s Address.Station carries. display_name is the operator''s label. Core mints the uid rather than the Pi because a Core-issued token is re-issuable: replace the hardware for an existing station and hand the new Pi the existing uid, and history does not move because identity did not move. Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm''s persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.';
+COMMENT ON TABLE public.edge_registry IS 'The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope''s Address.Station carries. display_name is the operator''s label, set on Core. The uid is minted once, by the Edge at its first boot (stn- and 16 hex) or by Core when a person enrolls a station, and never changes: replacement hardware keeps a station''s uid by restoring the old Edge''s backup (shingoedge --restore) or by an engineer setting it in the Edge''s yaml, so history does not move because identity did not move (v188). Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm''s persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.';
 
-COMMENT ON COLUMN public.edge_registry.station_uid IS 'What Core correlates all history to. Core mints it at enrollment and it never changes. Opaque on purpose: the moment an identifier is legible it acquires an editor.';
+COMMENT ON COLUMN public.edge_registry.station_uid IS 'What Core correlates all history to. Minted once, by the Edge at its first boot or by Core when a person enrolls a station, and it never changes (v188). Opaque on purpose: the moment an identifier is legible it acquires an editor.';
 
 COMMENT ON COLUMN public.edge_registry.display_name IS 'The operator''s label (PLANT / EDGE-2). Operator-owned, freely mutable, and it never crosses the wire as an identifier.';
 

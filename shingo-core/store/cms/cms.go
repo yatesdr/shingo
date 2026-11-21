@@ -104,11 +104,10 @@ type Transaction struct {
 	// PostingID is NULL until a posting claims this row. NULL is the queue:
 	// "recorded locally, not yet sent".
 	PostingID *int64    `json:"posting_id,omitempty"`
-	Notes     string    `json:"notes"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const selectCols = `id, node_id, node_name, location_node_id, location_node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id, posting_id, notes, created_at`
+const selectCols = `id, node_id, node_name, location_node_id, location_node_name, cat_id, delta, bin_id, bin_label, payload_code, source_type, order_id, storeroom, robot_id, posting_id, created_at`
 
 func scanTransaction(row interface{ Scan(...any) error }) (*Transaction, error) {
 	var t Transaction
@@ -120,7 +119,7 @@ func scanTransaction(row interface{ Scan(...any) error }) (*Transaction, error) 
 		&locationNodeID, &t.LocationNodeName, &t.CatID, &t.Delta,
 		&binID, &t.BinLabel, &t.PayloadCode,
 		&t.SourceType, &orderID, &t.Storeroom, &t.RobotID, &postingID,
-		&t.Notes, &t.CreatedAt)
+		&t.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -180,13 +179,6 @@ func CreateInTx(q helpers.QueryRower, txns []*Transaction) error {
 	for _, t := range txns {
 		// posting_id is deliberately not inserted: a new row is unsent by
 		// definition, and NULL is what the unposted index selects on.
-		//
-		// notes is not inserted either, and for a different reason: nothing
-		// stamps a note on a new row, so binding it wrote an empty string
-		// through twelve placeholders and made the column look like a field
-		// this path fills. The COLUMN stays — historical rows carry notes and
-		// the diagnostics table still reads them — and the default supplies
-		// the empty string for new ones.
 		var locationNodeID any
 		if t.LocationNodeID != 0 {
 			locationNodeID = t.LocationNodeID

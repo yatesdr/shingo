@@ -128,8 +128,7 @@ import { onSSE } from '/static/shared/bus.js';
       '<td class="' + qtyClass + '">' + deltaLabel + '</td>' +
       '<td>' + escapeHtml(t.bin_label || '-') + '</td>' +
       '<td>' + escapeHtml(t.payload_code || '') + '</td>' +
-      '<td>' + escapeHtml(t.source_type || '') + '</td>' +
-      '<td>' + escapeHtml(t.notes || '') + '</td>';
+      '<td>' + escapeHtml(t.source_type || '') + '</td>';
     return tr;
   }
 

@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Core v186–v187 (placeholder; the lead writes the full line).
+Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 
 - A count, load or clear from Core (the Bins page, the line's count, a press finishing a cart) that reaches a station late, or after the station took the cart's new life from an epoch refresh, keeps the parts the station counted since; it used to write over them, or be ignored and leave the station's number off Core's
 - A cart moved by hand on the Bins page is taken off the station it left in the same step as the move; a move whose notice cannot be written is refused, not made with the station never told
@@ -31,6 +31,7 @@ Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 - An Edge no longer rewrites its payload catalog and redraws its boards when Core sends the catalog it already holds
 - An Edge that re-registers (Core restarted, asked for it, or marked it stale) asks for its orders only when Core sends the node list and catalog by itself; against an older Core it still asks for both
 - The Edge Processes page's Setup tab no longer puts up an error every five seconds while it waits for a screen and the Edge does not answer; the lost-connection banner says it
+- Core Diagnostics: the CMS table drops its Notes column, which Core no longer fills
 
 ## v0.18.0 — 2026-11-21
 

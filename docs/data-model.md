@@ -470,7 +470,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`cleaning_missions`](#core-cleaning_missions) | 7 | `id` |  |
 | [`cleaning_opt_outs`](#core-cleaning_opt_outs) | 1 | `vehicle_id` |  |
 | [`cms_postings`](#core-cms_postings) | 13 | `id` |  |
-| [`cms_transactions`](#core-cms_transactions) | 17 | `id` | [`bins`](#core-bins), [`nodes`](#core-nodes), [`orders`](#core-orders) |
+| [`cms_transactions`](#core-cms_transactions) | 16 | `id` | [`bins`](#core-bins), [`nodes`](#core-nodes), [`orders`](#core-orders) |
 | [`dashboards`](#core-dashboards) | 9 | `id` |  |
 | [`demand_origins`](#core-demand_origins) | 27 | `origin_id` |  |
 | [`demand_registry`](#core-demand_registry) | 9 | `id` |  |
@@ -898,7 +898,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `payload_code` | `text` | yes | `''` |  |  |
 | `source_type` | `text` | yes |  |  | No DEFAULT: every writer sets it, and a default that silently supplies it is a place for a future writer to forget. Historical rows carry correction and stay browsable. |
 | `order_id` | `bigint` |  |  | → `orders(id)` |  |
-| `notes` | `text` | yes | `''` |  |  |
 | `created_at` | `timestamp with time zone` | yes | `now()` |  |  |
 | `posting_id` | `bigint` |  |  |  |  |
 | `robot_id` | `text` | yes | `''` |  |  |
@@ -1005,7 +1004,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | Column | Type | Not null | Default | Key | Comment |
 |---|---|---|---|---|---|
 | `id` | `bigint` | yes | `nextval('edge_registry_id_seq')` | PK |  |
-| `station_uid` | `text` | yes | `''` | unique | What Core correlates all history to. Core mints it at enrollment and it never changes. Opaque on purpose: the moment an identifier is legible it acquires an editor. |
+| `station_uid` | `text` | yes | `''` | unique | What Core correlates all history to. Minted once, by the Edge at its first boot or by Core when a person enrolls a station, and it never changes (v188). Opaque on purpose: the moment an identifier is legible it acquires an editor. |
 | `display_name` | `text` | yes | `''` |  | The operator's label (PLANT / EDGE-2). Operator-owned, freely mutable, and it never crosses the wire as an identifier. |
 | `hostname` | `text` | yes | `''` |  |  |
 | `version` | `text` | yes | `''` |  |  |
@@ -1028,7 +1027,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `tick_reported_at` | `timestamp with time zone` |  |  |  |  |
 | `tick_rejected` | `bigint` | yes | `0` |  |  |
 
-- The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope's Address.Station carries. display_name is the operator's label. Core mints the uid rather than the Pi because a Core-issued token is re-issuable: replace the hardware for an existing station and hand the new Pi the existing uid, and history does not move because identity did not move. Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm's persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.
+- The identity table, one row per Edge, keyed by station_uid (total and never blank since v185): what Core correlates all history to, and what an envelope's Address.Station carries. display_name is the operator's label, set on Core. The uid is minted once, by the Edge at its first boot (stn- and 16 hex) or by Core when a person enrolls a station, and never changes: replacement hardware keeps a station's uid by restoring the old Edge's backup (shingoedge --restore) or by an engineer setting it in the Edge's yaml, so history does not move because identity did not move (v188). Not the BIGSERIAL id either: it is real and it is read (registry.List scans it), but it is allocated by an INSERT ... ON CONFLICT driven by an Edge-supplied string, a consequence of the name, not independent of it. bound_hostname and conflict_* are the duplicate-edge detector (v64); bound_instance, prev_instance and bound_at are the binding lease (v66), for the case the hostname detector is blind to: two Pis flashed from one SD image share a hostname. See registry.Register for why recurrence, an instance coming back after being displaced, is the signature a restarting single Pi can never produce. The conflict_* columns are the alarm's persisted state, not a derived view: the question has this ever happened here has to be answerable in SQL months later.
 - Check `(station_uid <> '')`
 
 #### Core: `inbox`
