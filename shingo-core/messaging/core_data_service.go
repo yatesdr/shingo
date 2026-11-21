@@ -557,8 +557,18 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 // the station's cells, which the register's non-empty gate never could. The
 // catalog's digest is kept with the rows (EdgeCellsDigest reads it back). The
 // station is the envelope's sender; the body names none.
+//
+// A message with no sender is dropped: there is no station to apply it to, and
+// cells kept under "" would be live cells every production dashboard lists
+// (HeartbeatService.derivedCatalogCells reads every station's). No registry
+// check beside it: it would refuse a new Edge's catalog until its register
+// introduced the row, which the register does anyway.
 func (s *CoreDataService) HandleEdgeCells(env *protocol.Envelope, p *protocol.CellCatalog) {
 	station := env.Src.Station
+	if station == "" {
+		log.Printf("core_handler: edge.cells with no sending station (%d cells) — dropped", len(p.Cells))
+		return
+	}
 	if err := s.db.UpsertEdgeCells(station, edgeCellsOf(p.Cells), p.Digest); err != nil {
 		log.Printf("core_handler: apply edge.cells for %s (%d cells): %v", station, len(p.Cells), err)
 	}

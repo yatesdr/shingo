@@ -451,7 +451,8 @@ func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
 // sending station's whole catalog. Its cells are the station's, live; a cell it
 // no longer names goes stale; an empty catalog leaves none live, which the
 // register (non-empty gate) cannot do. The station is the envelope's, and
-// another station's cells are not touched.
+// another station's cells are not touched; a message with no sender keeps
+// nothing.
 func TestHandleEdgeCells_TheCatalogIsTheStationsWholeSet(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -491,6 +492,16 @@ func TestHandleEdgeCells_TheCatalogIsTheStationsWholeSet(t *testing.T) {
 	want("stn-cells-a", "PLC-2")
 	svc.HandleEdgeCells(from("stn-cells-a"), &protocol.CellCatalog{Cells: []protocol.CellCatalogEntry{}})
 	want("stn-cells-a")
+	want("stn-cells-b", "PLC-9")
+
+	// No sender: no station to apply it to, so nothing is kept, not even as
+	// the cells of station "".
+	svc.HandleEdgeCells(from(""), &protocol.CellCatalog{Cells: []protocol.CellCatalogEntry{cell("PLC-0", 3)}})
+	var unnamed int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM edge_cells WHERE station_uid = ''`).Scan(&unnamed), "count cells of no station")
+	if unnamed != 0 {
+		t.Errorf("an edge.cells with no sender left %d cells under station \"\", want none", unnamed)
+	}
 	want("stn-cells-b", "PLC-9")
 }
 
