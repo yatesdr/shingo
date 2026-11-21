@@ -73,11 +73,11 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	remainingUOP := 37
 	namedBin := int64(424242) // no foreign key: any id round-trips
 	probe := map[string]any{
-		"EdgeUUID":   "roundtrip-edge-uuid",
-		"StationUID": "roundtrip-station",
-		// A Core actor beside a station is no shape a door writes (SplitRequester
-		// gives one or the other); the probe only needs both columns to round-trip.
-		"RequestedBy":      "core-test",
+		"EdgeUUID": "roundtrip-edge-uuid",
+		// One requester per order (orders_one_requester): the passes below set
+		// these two, a station's uid in one and a Core actor in the other.
+		"StationUID":       "",
+		"RequestedBy":      "",
 		"OrderType":        protocol.OrderType("move"),
 		"Status":           protocol.Status("queued"),
 		"Quantity":         int64(9),
@@ -180,94 +180,109 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		}
 	}
 
-	o := &orders.Order{}
-	rv := reflect.ValueOf(o).Elem()
-	rt := rv.Type()
+	// The round trip runs once per requester shape, each on its own born-held
+	// bin, so each pass reads its own column back off a value that is not the
+	// column's default.
+	bin2 := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "RT-BIN-2")
+	for _, pass := range []struct {
+		name, uuid, station, actor string
+		binID                      int64
+	}{
+		{"a station's order", "roundtrip-edge-uuid", "roundtrip-station", "", bin.ID},
+		{"a Core actor's order", "roundtrip-edge-uuid-2", "", "core-test", bin2.ID},
+	} {
+		probe["EdgeUUID"] = pass.uuid
+		probe["StationUID"] = pass.station
+		probe["RequestedBy"] = pass.actor
+		o := &orders.Order{}
+		rv := reflect.ValueOf(o).Elem()
+		rt := rv.Type()
 
-	// Set the probe values, and fail on any field that has neither a probe nor
-	// an exclusion.
-	for i := range rt.NumField() {
-		name := rt.Field(i).Name
-		if _, ok := notFromTheStruct[name]; ok {
-			continue
+		// Set the probe values, and fail on any field that has neither a probe nor
+		// an exclusion.
+		for i := range rt.NumField() {
+			name := rt.Field(i).Name
+			if _, ok := notFromTheStruct[name]; ok {
+				continue
+			}
+			if _, ok := notAnOrdersColumn[name]; ok {
+				continue
+			}
+			want, ok := probe[name]
+			if !ok {
+				t.Fatalf("Order has field %s with no probe value and no exclusion.\n"+
+					"Add a distinctive value to probe (if Create should write it), or add the field to notFromTheStruct naming the column and who writes it instead.\n"+
+					"A field in neither place is one nothing checks.", name)
+			}
+			wv := reflect.ValueOf(want)
+			if !wv.Type().AssignableTo(rt.Field(i).Type) {
+				t.Fatalf("probe value for %s is %s, field is %s", name, wv.Type(), rt.Field(i).Type)
+			}
+			rv.Field(i).Set(wv)
 		}
-		if _, ok := notAnOrdersColumn[name]; ok {
-			continue
-		}
-		want, ok := probe[name]
-		if !ok {
-			t.Fatalf("Order has field %s with no probe value and no exclusion.\n"+
-				"Add a distinctive value to probe (if Create should write it), or add the field to notFromTheStruct naming the column and who writes it instead.\n"+
-				"A field in neither place is one nothing checks.", name)
-		}
-		wv := reflect.ValueOf(want)
-		if !wv.Type().AssignableTo(rt.Field(i).Type) {
-			t.Fatalf("probe value for %s is %s, field is %s", name, wv.Type(), rt.Field(i).Type)
-		}
-		rv.Field(i).Set(wv)
-	}
 
-	// Set an excluded field to a non-zero value too. Not to assert it survives —
-	// it must not — but so a future writer that starts binding one of these is
-	// caught by the read-back below instead of shipping silently.
-	o.QueueReason = "set at creation, and it should not stick"
-	o.VendorOrderID = "set at creation, and it should not stick"
-	o.CompletedAt = &completedAt
-	o.RemainingUOP = &remainingUOP
+		// Set an excluded field to a non-zero value too. Not to assert it survives —
+		// it must not — but so a future writer that starts binding one of these is
+		// caught by the read-back below instead of shipping silently.
+		o.QueueReason = "set at creation, and it should not stick"
+		o.VendorOrderID = "set at creation, and it should not stick"
+		o.CompletedAt = &completedAt
+		o.RemainingUOP = &remainingUOP
 
-	o.HoldFromBirth(bin.ID) // its born-held cart, written by Create as its row
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if o.ID == 0 {
-		t.Fatal("Create did not write the new id back onto the struct")
-	}
-
-	got, err := db.GetOrder(o.ID)
-	if err != nil {
-		t.Fatalf("read order %d back: %v", o.ID, err)
-	}
-
-	gv := reflect.ValueOf(got).Elem()
-	var lost []string
-	for i := range rt.NumField() {
-		name := rt.Field(i).Name
-		if _, ok := notFromTheStruct[name]; ok {
-			continue
+		o.HoldFromBirth(pass.binID) // its born-held cart, written by Create as its row
+		if err := db.CreateOrder(o); err != nil {
+			t.Fatalf("%s: create order: %v", pass.name, err)
 		}
-		if _, ok := notAnOrdersColumn[name]; ok {
-			continue
+		if o.ID == 0 {
+			t.Fatal("Create did not write the new id back onto the struct")
 		}
-		want := probe[name]
-		have := gv.Field(i).Interface()
-		if !equalMaybePointer(want, have) {
-			lost = append(lost, describeMismatch(name, want, have))
-		}
-	}
-	if len(lost) > 0 {
-		t.Errorf("values set before Create did not survive the round trip:\n  %s\n"+
-			"Each of these is a column the INSERT names but does not carry to the right field.",
-			strings.Join(lost, "\n  "))
-	}
-	// Carts: the born-held cart Create was handed is its one row, lifted at the
-	// plan's first pickup.
-	if len(got.Carts) != 1 || got.Carts[0].BinID != bin.ID {
-		t.Errorf("carts after create = %+v, want the one born-held cart %d", got.Carts, bin.ID)
-	}
 
-	// The exclusions, verified rather than assumed.
-	if got.QueueReason != "" {
-		t.Errorf("queue_reason = %q after create, want empty: it is written by the queueing transition (%s), not at creation. If that changed on purpose, move it out of deliberatelyNotWritten and give it a probe value.",
-			got.QueueReason, ownedByTransition["queue_reason"])
-	}
-	if got.VendorOrderID != "" {
-		t.Errorf("vendor_order_id = %q after create, want empty: it is minted at dispatch", got.VendorOrderID)
-	}
-	if got.CompletedAt != nil {
-		t.Errorf("completed_at = %v after create, want NULL: it is written at the terminal transition", got.CompletedAt)
-	}
-	if got.RemainingUOP != nil {
-		t.Errorf("remaining_uop = %v after create, want NULL: it is carried to the bin claim, not written here", *got.RemainingUOP)
+		got, err := db.GetOrder(o.ID)
+		if err != nil {
+			t.Fatalf("read order %d back: %v", o.ID, err)
+		}
+
+		gv := reflect.ValueOf(got).Elem()
+		var lost []string
+		for i := range rt.NumField() {
+			name := rt.Field(i).Name
+			if _, ok := notFromTheStruct[name]; ok {
+				continue
+			}
+			if _, ok := notAnOrdersColumn[name]; ok {
+				continue
+			}
+			want := probe[name]
+			have := gv.Field(i).Interface()
+			if !equalMaybePointer(want, have) {
+				lost = append(lost, describeMismatch(name, want, have))
+			}
+		}
+		if len(lost) > 0 {
+			t.Errorf("values set before Create did not survive the round trip:\n  %s\n"+
+				"Each of these is a column the INSERT names but does not carry to the right field.",
+				strings.Join(lost, "\n  "))
+		}
+		// Carts: the born-held cart Create was handed is its one row, lifted at the
+		// plan's first pickup.
+		if len(got.Carts) != 1 || got.Carts[0].BinID != pass.binID {
+			t.Errorf("%s: carts after create = %+v, want the one born-held cart %d", pass.name, got.Carts, pass.binID)
+		}
+
+		// The exclusions, verified rather than assumed.
+		if got.QueueReason != "" {
+			t.Errorf("queue_reason = %q after create, want empty: it is written by the queueing transition (%s), not at creation. If that changed on purpose, move it out of deliberatelyNotWritten and give it a probe value.",
+				got.QueueReason, ownedByTransition["queue_reason"])
+		}
+		if got.VendorOrderID != "" {
+			t.Errorf("vendor_order_id = %q after create, want empty: it is minted at dispatch", got.VendorOrderID)
+		}
+		if got.CompletedAt != nil {
+			t.Errorf("completed_at = %v after create, want NULL: it is written at the terminal transition", got.CompletedAt)
+		}
+		if got.RemainingUOP != nil {
+			t.Errorf("remaining_uop = %v after create, want NULL: it is carried to the bin claim, not written here", *got.RemainingUOP)
+		}
 	}
 }
 
