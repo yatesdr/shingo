@@ -21,6 +21,7 @@ Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 - A count, load or clear from Core (the Bins page, the line's count, a press finishing a cart) that reaches a station late, or after the station took the cart's new life from an epoch refresh, keeps the parts the station counted since; it used to write over them, or be ignored and leave the station's number off Core's
 - Two Edges that report the same process no longer re-send its claims every two minutes; the Edges page still flags the process on both until one of them stops reporting it, and the flag now stays through a Core restart
 - The Edge's Configuration page shows the Station UID as text and can no longer change it; a save from a page that still sends a different one is refused. A replacement box takes the old station's uid with shingoedge --restore
+- The Edge reads nothing from namespace, line_id or messaging.station_id in its config; a file that still has them loads, and the next save drops them. An Edge known only by messaging.station_id would start as a new station: put that value in station_uid before the upgrade
 
 ## v0.18.0 — 2026-11-21
 

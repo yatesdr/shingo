@@ -105,9 +105,6 @@ func TestComposerShots(t *testing.T) {
 	// "Preview OK · N orders". Nothing here calls Core: the preview reads bin
 	// types from SetPayloadBinTypes below and its preflight stays "unchecked".
 	cfg.StationUID = "shots.press400"
-	cfg.Namespace = "shots"
-	cfg.LineID = "press400"
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
 	// Core's catalog has arrived (empty): the press-index changeover's gate
 	// opens on it, as it opened on a configured Core address.

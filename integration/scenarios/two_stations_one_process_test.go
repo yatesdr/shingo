@@ -97,7 +97,7 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 			SwapMode: protocol.SwapModeSequential, PayloadCode: "SYN-TW-1", UOPCapacity: 10,
 		})
 		mustNil(t, err, "claim on "+uid)
-		cfg := &config.Config{StationUID: uid, Namespace: "test", LineID: uid, Messaging: config.MessagingConfig{StationID: uid}}
+		cfg := &config.Config{StationUID: uid}
 		eng := edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
 		pub := edgemessaging.NewPlantClaimsPublisher(db, uid, 0)
 		eng.SetClaimsAckFunc(func(claims map[string]string) { pub.ReconcileClaims(claims, eng) })

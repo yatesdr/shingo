@@ -21,8 +21,8 @@ func TestDevYAMLParses(t *testing.T) {
 	if !cfg.Sim.Enabled {
 		t.Error("sim.enabled should be true")
 	}
-	if cfg.Namespace != "edge1" || cfg.LineID != "line1" {
-		t.Errorf("station = %s.%s, want edge1.line1", cfg.Namespace, cfg.LineID)
+	if cfg.StationUID != "edge1.line1" {
+		t.Errorf("station_uid = %q, want edge1.line1", cfg.StationUID)
 	}
 	if cfg.WarLink.Enabled {
 		t.Error("warlink.enabled must be false in sim (sim starts the poller explicitly)")

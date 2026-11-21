@@ -100,7 +100,7 @@ func newUnreadTickRig(t *testing.T, em EventEmitter, pollRate time.Duration) *ti
 	t.Helper()
 	db := testdb.Open(t)
 	cfg := config.Defaults()
-	cfg.Messaging.StationID = "stn-test"
+	cfg.StationUID = "stn-test"
 	// A small threshold so a jump is cheap to produce.
 	cfg.Counter.JumpThreshold = 100
 	if pollRate > 0 {

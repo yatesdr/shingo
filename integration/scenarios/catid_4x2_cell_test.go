@@ -405,8 +405,7 @@ func (w6Preflight) PreflightInventory([]string) (*edgeservice.PreflightCoreResul
 func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient) (*edgeharness.Edge, *w6Tickers, *edgeuop.Mutator) {
 	t.Helper()
 	cfg := edgeconfig.Defaults()
-	cfg.StationUID, cfg.Namespace, cfg.LineID = w6Edge, "test", "edge-test"
-	cfg.Messaging.StationID = w6Edge
+	cfg.StationUID = w6Edge
 	// No WarLink poller: the scenario writes each read into the PLC cache
 	// (w6Cell.publish) and the poll reads it there; WarLink's own verbs (the
 	// tag lists, publishing, a direct read) answer from the line.

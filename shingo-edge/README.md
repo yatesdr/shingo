@@ -47,9 +47,6 @@ that it will mint a different uid on the next restart.
 `station_uid` by hand before the box first starts — so the station's history stays attached. A minted uid is
 always a new station. The `/config` page shows the uid as text and cannot change it.
 
-`namespace` and `line_id` are labels only; nothing derives an identity from them. `messaging.station_id` is an
-identity override for a bench Edge that has no `station_uid`.
-
 Every other setting is on the web UI's `/config` page. Saving there rewrites the whole YAML file from the live
 settings, so comments and hand formatting do not survive a save.
 
@@ -137,7 +134,6 @@ regenerates it. Durations take Go duration strings (`5s`, `1h0m0s`).
 | `database_path` | string | `shingoedge.db` | the SQLite database file |
 | `demand.hysteresis_percent` | float64 | _(unset)_ | HysteresisPercent is the recovery margin, as a percentage of the claim's reorder_point. A cell episode opens when remaining UOP falls to or below reorder_point and closes only once it climbs back ABOVE reorder_point + margin. |
 | `demand.idle_cancel_after` | duration | `1h0m0s` | IdleCancelAfter is how long a line counts no part before the Edge sends back the robots parked at its station waits and switches those positions' auto-reorder off (engine/idle_cancel.go). The owner's one number. <= 0 uses DefaultIdleCancelAfter. A sim run shortens it in its own config to watch the rule fire. |
-| `line_id` | string | _(empty)_ | Namespace / LineID are labels, not identity: nothing composes a station id from them, they have no defaults, and the engine only logs them at start. A plant config that carries them still loads. |
 | `logging.stderr_subsystems` | list of string | `[edge_handler engine heartbeat orders plant_claims plc production_ticks protocol release]` | StderrSubsystems is the allow-list of debuglog subsystems mirrored to stderr (under systemd, the journal). |
 | `messaging.dispatch_topic` | string | `shingo.dispatch` | the topic Core publishes to edges on |
 | `messaging.ephemeral_topic` | string | `shingo.ephemeral` | the live robot feed's short-lived topic (protocol/ephemeral.go): used only while Core names this same topic; empty turns the feed off on this edge |
@@ -145,8 +141,6 @@ regenerates it. Durations take Go duration strings (`5s`, `1h0m0s`).
 | `messaging.orders_topic` | string | `shingo.orders` | the topic this edge publishes to Core on |
 | `messaging.outbox_drain_interval` | duration | `5s` | how often the outbox drainer publishes pending messages |
 | `messaging.signing_key` | string | _(unset)_ | optional HMAC-SHA256 shared secret for envelope signing |
-| `messaging.station_id` | string | _(empty)_ | an identity override for a bench edge with no station_uid (Config.StationID) |
-| `namespace` | string | _(empty)_ | Namespace / LineID are labels, not identity: nothing composes a station id from them, they have no defaults, and the engine only logs them at start. A plant config that carries them still loads. |
 | `plant_claims.snapshot_interval` | duration | `1h0m0s` | SnapshotInterval is the safety snapshot's period: the full claims set is republished this often even when no edit triggered a publish, so a Core that missed one converges. It runs only while Core does not quote the digests back on the heartbeat ack; a Core that does is healed per process on the ack instead. <= 0 uses DefaultPlantClaimsSnapshotInterval. |
 | `poll_rate` | duration | `1s` | the PLC counter loop's poll period; read at boot |
 | `sim.anchor_wall` | timestamp | _(zero)_ | SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts). |

@@ -87,9 +87,7 @@ const testCoreURL = "http://127.0.0.1:1"
 func testEngine(t *testing.T, db *store.DB) *Engine {
 	t.Helper()
 	cfg := &config.Config{
-		Namespace: "test",
-		LineID:    "test-line",
-		Web:       config.WebConfig{AutoConfirm: true},
+		Web: config.WebConfig{AutoConfirm: true},
 	}
 	eng := &Engine{
 		cfg:      cfg,

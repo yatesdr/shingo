@@ -56,7 +56,7 @@ func TestAskWait_TheDefault(t *testing.T) {
 	if AskWait != 2*time.Second {
 		t.Errorf("AskWait = %v, want 2s", AskWait)
 	}
-	built := New(Config{AppConfig: &config.Config{Namespace: "test", LineID: "test-line"}, DB: testEngineDB(t)})
+	built := New(Config{AppConfig: &config.Config{}, DB: testEngineDB(t)})
 	for name, e := range map[string]*Engine{"New": built, "bare": {}} {
 		e.asks.mu.Lock()
 		got := e.asks.waitsOn()

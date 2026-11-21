@@ -91,7 +91,7 @@ func (k *tickerTaker) NewTicker(d time.Duration) clock.Ticker {
 // Not parallel: it installs a default clock and restores it before any
 // parallel test in this package runs.
 func TestDemandReconciler_TheDefaultClock(t *testing.T) {
-	cfg := &config.Config{Namespace: "test", LineID: "test-line"}
+	cfg := &config.Config{}
 	given := newTickerTaker()
 	built := New(Config{AppConfig: cfg, DB: testEngineDB(t)})
 	givenTo := New(Config{AppConfig: cfg, DB: testEngineDB(t), DemandReconcileClock: given})

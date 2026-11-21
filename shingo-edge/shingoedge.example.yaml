@@ -10,8 +10,6 @@
 # lists the station unclaimed until someone names it. Replacing the box of an
 # existing station? Put that station's uid here before the first start.
 station_uid: ""
-namespace: ""                           # a label only
-line_id: ""                             # a label only
 database_path: shingoedge.db            # the SQLite database file
 poll_rate: 1s                           # PLC counter loop period; read at boot
 timezone: ""                            # IANA zone, e.g. America/Chicago; empty takes the plant's zone from Core
@@ -38,7 +36,6 @@ messaging:
   orders_topic: shingo.orders           # Edge -> Core
   ephemeral_topic: shingo.ephemeral     # the live robot feed; used only while Core names the same topic; "" turns it off
   outbox_drain_interval: 5s             # how often the outbox publishes pending messages
-  station_id: ""                        # identity override for a bench edge with no station_uid
   signing_key: ""                       # optional HMAC-SHA256 envelope secret, shared with Core
 
 counter:

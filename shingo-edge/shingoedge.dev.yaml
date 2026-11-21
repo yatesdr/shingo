@@ -3,13 +3,10 @@
 # SHINGO_ALLOW_SIM=1 (T0.3). warlink.enabled:false on purpose — sim mode starts
 # the poll loop explicitly against the fake WarLink (T1.3).
 #
-# station_uid IS EXPLICIT NOW. Nothing composes a station id from namespace/line_id
-# any more — that composition was the fleet-wide shared identity the v66 work
-# removed — so the dev stack names its own, exactly as a plant Pi carries the uid
-# Core minted for it. namespace/line_id below are labels only.
+# station_uid IS EXPLICIT. Nothing composes a station id from other keys any more
+# (that composition was the fleet-wide shared identity the v66 work removed), so
+# the dev stack names its own, as a plant Pi carries the uid it minted or was given.
 station_uid: edge1.line1
-namespace: edge1
-line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083
 

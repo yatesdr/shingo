@@ -100,7 +100,7 @@ func TestOnCoreAck_AQuietAckReadsOnePlusTwoPerProcess(t *testing.T) {
 	for _, p := range []int{1, 3, 6} {
 		t.Run(fmt.Sprintf("P=%d", p), func(t *testing.T) {
 			db, counter := testEngineDBCounting(t)
-			e := New(Config{AppConfig: &config.Config{Namespace: "test", LineID: "test-line"}, DB: db})
+			e := New(Config{AppConfig: &config.Config{}, DB: db})
 			// Process i has i%3+1 live styles of two produce claims each.
 			for i := 0; i < p; i++ {
 				pid, err := db.CreateProcess(fmt.Sprintf("QA-PROC-%02d", i), "", "", "", false)

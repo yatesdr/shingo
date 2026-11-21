@@ -23,8 +23,6 @@
 # delays below — because that is where pacing belongs.
 
 station_uid: edge2.line1
-namespace: edge2
-line_id: line1
 database_path: /data/shingoedge.db
 core_api: http://core:8083
 

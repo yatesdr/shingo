@@ -33,14 +33,10 @@ type Config struct {
 	// Replacement hardware for an existing station takes THAT station's uid
 	// instead, put here by hand or restored with the backup archive
 	// (backup/snapshot.go includes the config), so the station's history
-	// stays attached. Nothing composes a default from other fields.
+	// stays attached. Nothing composes a default from other fields, and no
+	// screen sets it: the Configuration page shows it as text and refuses a
+	// save that carries a different one (PIN: TestPinEdgeConfig_StationID).
 	StationUID string `yaml:"station_uid"`
-
-	// Namespace / LineID are labels, not identity: nothing composes a station
-	// id from them, they have no defaults, and the engine only logs them at
-	// start. A plant config that carries them still loads.
-	Namespace string `yaml:"namespace"`
-	LineID    string `yaml:"line_id"`
 
 	DatabasePath string        `yaml:"database_path"` // the SQLite database file
 	PollRate     time.Duration `yaml:"poll_rate"`     // the PLC counter loop's poll period; read at boot
@@ -205,7 +201,6 @@ type MessagingConfig struct {
 	OrdersTopic         string        `yaml:"orders_topic"`          // the topic this edge publishes to Core on
 	EphemeralTopic      string        `yaml:"ephemeral_topic"`       // the live robot feed's short-lived topic (protocol/ephemeral.go): used only while Core names this same topic; empty turns the feed off on this edge
 	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"` // how often the outbox drainer publishes pending messages
-	StationID           string        `yaml:"station_id"`            // an identity override for a bench edge with no station_uid (Config.StationID)
 	SigningKey          string        `yaml:"signing_key"`           // optional HMAC-SHA256 shared secret for envelope signing
 }
 
@@ -494,12 +489,11 @@ func (l LoggingConfig) ResolveStderrSubsystems() []string {
 
 func Defaults() *Config {
 	return &Config{
-		// NO Namespace / LineID DEFAULTS. They were `plant-a` and `line-1`,
-		// and Config.stationID() composed them into the station identity every
-		// unenrolled edge in the fleet ran under — a value nobody typed and
-		// nobody chose. install-edge.sh writes a placeholder config containing
-		// only database_path, so a fresh install COULD NOT come up as anything
-		// else. The duplicate-edge failure was never somebody making a
+		// NO IDENTITY DEFAULT. StationUID starts empty and main.ensureIdentity
+		// mints one at first start. An identity once defaulted here, composed
+		// from two struct fields into `plant-a.line-1`, and every unenrolled
+		// edge in the fleet ran under that one value nobody typed and nobody
+		// chose. The duplicate-edge failure was never somebody making a
 		// mistake; it was the system having a default answer to a question
 		// that has no default.
 		DatabasePath: "shingoedge.db",
@@ -589,24 +583,16 @@ func (c *Config) Save(path string) error {
 
 // stationID returns the station identity without locking (for internal use).
 //
-// THE UID, OR THE EXPLICIT OVERRIDE, AND NOTHING COMPOSED. An edge with
-// neither returns ""; at boot main.ensureIdentity mints and persists a uid
-// before anything reads this, and refuses to start only when it cannot mint
-// one.
-//
-// Messaging.StationID is a deliberate operator override for a development or
-// bench edge with no station_uid. It is not a default: somebody has to write
-// it in the file.
+// THE UID AND NOTHING ELSE: nothing is composed and nothing stands in for
+// it. An edge without one returns ""; at boot main.ensureIdentity mints and
+// persists a uid before anything reads this, and refuses to start only when
+// it cannot mint one.
 func (c *Config) stationID() string {
-	if c.StationUID != "" {
-		return c.StationUID
-	}
-	return c.Messaging.StationID
+	return c.StationUID
 }
 
 // StationID returns this edge's identity as it appears on the wire —
-// protocol.Address.Station. Its value is the station uid, or the bench
-// override.
+// protocol.Address.Station. Its value is the station uid.
 func (c *Config) StationID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -657,25 +643,17 @@ func (c *Config) MessagingSettings() MessagingConfig {
 // while continuing to heartbeat, register and publish — no error anywhere.
 //
 // Deriving from the station uid means the group cannot collide unless the
-// identity does, and the identity cannot collide because Core mints it. What
-// made the old code unable to make that promise was not the derivation, which
-// was already right; it was the `if GroupID != "" { return GroupID }` ahead of
-// it, which let a persisted copy of a previous derivation outlive the value it
-// was derived from. See KafkaConfig.GroupID for the measurement.
+// identity does, and two edges should not draw one identity: a minted uid is
+// 64 random bits (NewStationUID), so only a copied one (a cloned SD card, a
+// restored or hand-edited config) can repeat. What made the old code unable
+// to make that promise was not the derivation, which was already right; it
+// was the `if GroupID != "" { return GroupID }` ahead of it, which let a
+// persisted copy of a previous derivation outlive the value it was derived
+// from. See KafkaConfig.GroupID for the measurement.
 func (c *Config) KafkaGroupID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return "shingo-edge-" + c.stationID()
-}
-
-// StationUIDOrEmpty reports the enrolled identity, "" when this edge has not
-// been enrolled. Distinct from StationID(), which falls back to the legacy
-// derivation — the guard needs to know whether an identity EXISTS, not what
-// string the edge would use in its absence.
-func (c *Config) StationUIDOrEmpty() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.StationUID
 }
 
 // Lock acquires the config mutex for multi-step mutations.
@@ -793,8 +771,6 @@ func allExported(t reflect.Type) bool {
 // a field added later is missing here.
 func (c *Config) assignFrom(from *Config) {
 	c.StationUID = from.StationUID
-	c.Namespace = from.Namespace
-	c.LineID = from.LineID
 	c.DatabasePath = from.DatabasePath
 	c.PollRate = from.PollRate
 	c.Timezone = from.Timezone

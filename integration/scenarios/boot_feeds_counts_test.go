@@ -95,8 +95,7 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 	// moved and what that heartbeat moved, and the engine (stopped by stop).
 	boot := func(t *testing.T) (atBoot, after bootCount, eng *edgeengine.Engine, stop func()) {
 		t.Helper()
-		cfg := &config.Config{StationUID: station, Namespace: "test", LineID: "edge-boot",
-			Messaging: config.MessagingConfig{StationID: station}}
+		cfg := &config.Config{StationUID: station}
 		eng = edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: edgeDB, LogFunc: func(string, ...any) {}})
 		eng.Start()
 		var once sync.Once

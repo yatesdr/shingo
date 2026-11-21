@@ -559,7 +559,7 @@ func (e *Engine) Start() {
 	e.startRobotWatchLoop(protocol.RobotWatchInterval)
 
 	e.startedAt = time.Now()
-	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
+	e.logFn("Engine started: station=%s", e.cfg.StationID())
 }
 
 // ── Accessors ───────────────────────────────────────────────────────

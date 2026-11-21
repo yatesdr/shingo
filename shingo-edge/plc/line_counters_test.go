@@ -59,7 +59,7 @@ func newLineRig(t *testing.T, counterEnabled bool) *lineRig {
 	t.Helper()
 	db := testdb.Open(t)
 	cfg := config.Defaults()
-	cfg.Messaging.StationID = "stn-test"
+	cfg.StationUID = "stn-test"
 	em := &lineRecorder{}
 	mgr := newTestManager(db, cfg, em, nil)
 	pid, err := db.CreateProcess("PROC-L", "", rigPLC, rigTag, counterEnabled)

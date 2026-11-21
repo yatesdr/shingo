@@ -36,7 +36,6 @@ func TestProcessesPage_FirstPaintRowsAreTheListRows(t *testing.T) {
 	// Started: the page reads the PLC manager, which Start builds.
 	cfg := config.Defaults()
 	cfg.StationUID = "test.firstpaint"
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
 	eng.Start()
 	t.Cleanup(eng.Stop)

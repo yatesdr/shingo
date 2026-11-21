@@ -542,9 +542,6 @@ func seedRealCell(t *testing.T, c realCell, opts seedOpts, mount func(mux *http.
 	// list and its scene delivered.
 	cfg := config.Defaults()
 	cfg.StationUID = "shots." + c.plant + strconv.FormatInt(c.station, 10)
-	cfg.Namespace = "shots"
-	cfg.LineID = c.plant + strconv.FormatInt(c.station, 10)
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
 	eng.SetPayloadBinTypes(nil)
 	eng.Start()

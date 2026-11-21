@@ -27,7 +27,7 @@ func newCountingCoverageEngine(t *testing.T) (*Engine, *store.QueryCounter) {
 		t.Fatalf("open counting store: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := &config.Config{Namespace: "test-ns", LineID: "line-1"}
+	cfg := &config.Config{}
 	eng := &Engine{
 		cfg:      cfg,
 		db:       db,

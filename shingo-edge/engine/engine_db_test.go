@@ -34,10 +34,7 @@ func newCoverageDB(t *testing.T) *store.DB {
 func newCoverageEngine(t *testing.T) *Engine {
 	t.Helper()
 	db := newCoverageDB(t)
-	cfg := &config.Config{
-		Namespace: "test-ns",
-		LineID:    "line-1",
-	}
+	cfg := &config.Config{}
 	eng := &Engine{
 		cfg:      cfg,
 		db:       db,
@@ -68,8 +65,8 @@ func TestEngine_Accessors(t *testing.T) {
 	if eng.AppConfig() == nil {
 		t.Error("AppConfig() returned nil")
 	}
-	if eng.AppConfig().Namespace != "test-ns" {
-		t.Errorf("AppConfig().Namespace = %q, want %q", eng.AppConfig().Namespace, "test-ns")
+	if eng.AppConfig() != eng.cfg {
+		t.Error("AppConfig() is not the engine's config")
 	}
 	eng.configPath = "/tmp/shingoedge.yaml"
 	if got := eng.ConfigPath(); got != "/tmp/shingoedge.yaml" {

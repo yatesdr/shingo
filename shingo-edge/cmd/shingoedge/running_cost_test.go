@@ -54,7 +54,6 @@ func TestRunningCost_ABoardRebuildsOnlyForItsOrders(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	cfg := config.Defaults()
 	cfg.StationUID = "running.edge"
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
 	eng.Start()
 	t.Cleanup(eng.Stop)

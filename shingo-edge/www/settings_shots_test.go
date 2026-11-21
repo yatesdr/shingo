@@ -68,9 +68,6 @@ func TestSettingsShots(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.StationUID = "shots.press400"
-	cfg.Namespace = "shots"
-	cfg.LineID = "press400"
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
 	// Core's catalog has arrived (empty): the press-index changeover's gate
 	// opens on it, as it opened on a configured Core address.

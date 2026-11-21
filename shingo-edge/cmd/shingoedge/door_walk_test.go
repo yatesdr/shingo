@@ -534,7 +534,6 @@ func newWalk(t *testing.T) *walk {
 
 	cfg := config.Defaults()
 	cfg.StationUID = "walk.edge"
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
 	// Core's catalog has arrived (empty): the press-index changeover's gate
 	// opens on it, as it opened on a configured Core address.

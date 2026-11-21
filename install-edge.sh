@@ -836,7 +836,8 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
         # only database_path, so a fresh install fell through to the config
         # defaults and came up as `plant-a.line-1` — a value nobody typed and
         # nobody could have typed differently. station_uid is now empty and
-        # commented, and an empty one is a startup refusal that names this step.
+        # commented, and an empty one is minted at first start
+        # (main.ensureIdentity in shingo-edge) and written back into this file.
         #
         # The timezone knob follows the same principle as station_uid: NEVER
         # INVENT ONE. Seeding the box's OS zone produces a plausible wrong

@@ -70,10 +70,7 @@ func TestConfigShots(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "shingoedge.yaml")
 	cfg := config.Defaults()
 	cfg.StationUID = "stn-5f0c2a9e41d7b3c8"
-	cfg.Namespace = "shots"
-	cfg.LineID = "press400"
 	cfg.Timezone = "America/Chicago"
-	cfg.Messaging.StationID = cfg.StationUID
 	cfg.Messaging.Kafka.Brokers = []string{"kafka-1.invalid:9092", "kafka-2.invalid:9092"}
 	cfg.WarLink = config.WarLinkConfig{Host: "warlink.invalid", Port: 8080, PollRate: 2 * time.Second, Enabled: true, Mode: "poll"}
 	cfg.Backup.Enabled = true

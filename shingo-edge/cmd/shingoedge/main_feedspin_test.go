@@ -200,7 +200,6 @@ func TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds(t *testing.T) {
 			t.Parallel()
 			cfg := config.Defaults()
 			cfg.StationUID = "edge.asks"
-			cfg.Messaging.StationID = cfg.StationUID
 			eng := engine.New(engine.Config{AppConfig: cfg, DB: testdb.Open(t), LogFunc: func(string, ...any) {}})
 			if tc.start {
 				eng.Start()

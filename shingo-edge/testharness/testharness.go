@@ -75,16 +75,8 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	t.Helper()
 	db := OpenDB(t)
 
-	// StationID is set explicitly on both fields: the harness hands a station
-	// id in, and nothing derives one from namespace/line_id any more.
-	cfg := &config.Config{
-		StationUID: stationID,
-		Namespace:  "test",
-		LineID:     "edge-test",
-		Messaging: config.MessagingConfig{
-			StationID: stationID,
-		},
-	}
+	// The harness hands the station uid in; nothing derives one.
+	cfg := &config.Config{StationUID: stationID}
 	ec := engine.Config{
 		AppConfig: cfg,
 		DB:        db,
