@@ -357,6 +357,23 @@ func TestCoreFeeds_EveryFeedHasARow(t *testing.T) {
 	}
 }
 
+// TestCoreOwned_EveryFamilyHasARow: every Edge-owned family has one coreOwned
+// row, in protocol.AllOwned's order, each with a read. A family with no row is
+// left off every ack in silence, and the Edge then sends nothing for it.
+func TestCoreOwned_EveryFamilyHasARow(t *testing.T) {
+	t.Parallel()
+	var rows []string
+	for _, f := range coreOwned {
+		rows = append(rows, f.key)
+		if f.held == nil {
+			t.Errorf("%s: no read of what Core holds", f.key)
+		}
+	}
+	if !reflect.DeepEqual(rows, protocol.AllOwned()) {
+		t.Errorf("coreOwned rows %v, want one per protocol.AllOwned key in its order %v", rows, protocol.AllOwned())
+	}
+}
+
 // TestCoreFeeds_OneSendPerCarrier: two feeds due on one carrier go in one
 // send (the node list carries the nodes and the scene), each other feed in its
 // own, in key order.

@@ -26,12 +26,13 @@ import (
 // for every Edge (or one Core works out for itself, like a station's node
 // list). This one is the rows for the names the Edge sent on bins.watch, so
 // Core keeps, per Edge, in memory: the list as it arrived, its digest (quoted
-// back on every heartbeat ack as EdgeHeartbeatAck.BinWatch, as Claims are),
-// and what the list was last found to point at — the node ids and bin ids of
-// its last snapshot (a watched group's members included) and the outbound
-// groups of the consume loaders with a window on it, with their windows
-// (bins_feed_groups.go). Nothing is written: after a Core restart the ack
-// quotes "" and the Edge publishes again.
+// back on every heartbeat ack, in the owned map's bins.watch family, owned.go,
+// or to an Edge that quotes no owned map as EdgeHeartbeatAck.BinWatch), and
+// what the list was last found to point at — the node ids and bin ids of its
+// last snapshot (a watched group's members included) and the outbound groups
+// of the consume loaders with a window on it, with their windows
+// (bins_feed_groups.go). Nothing is written: after a Core restart Core holds
+// no list, the ack says so, and the Edge publishes again.
 //
 // An Edge that never published a list is never sent a snapshot: its row's build
 // (buildBinsFeed) answers the key unknown for it, so nothing is logged,
@@ -272,12 +273,14 @@ func (b *binsFeed) indexBuild(station, digest string, places map[string]*nodes.N
 }
 
 // binWatchFor is the heartbeat ack's BinWatch: the digest of the list Core
-// holds for station (the heartbeat's sender), "" when none. nil for an Edge that sends no Feeds, which
-// would not read it.
+// holds for station (the heartbeat's sender), "" when none. nil for an Edge
+// that sends no Feeds, which would not read it, and for one that quotes the
+// owned map, answered there (heldBinWatch).
 //
 // An Edge whose heartbeat names Feeds but not FeedBins does not speak this
 // feed (a binary from before it, or one rolled back to one): its list is
-// dropped, so no snapshot is pushed to an Edge with no handler for it.
+// dropped, so no snapshot is pushed to an Edge with no handler for it. The
+// drop runs on both paths, before the owned map is answered.
 func (s *CoreDataService) binWatchFor(station string, p *protocol.EdgeHeartbeat) *string {
 	if p.Feeds == nil {
 		s.bins.forget(station)
@@ -285,6 +288,9 @@ func (s *CoreDataService) binWatchFor(station string, p *protocol.EdgeHeartbeat)
 	}
 	if _, quoted := p.Feeds[protocol.FeedBins]; !quoted {
 		s.bins.forget(station)
+	}
+	if p.Owned != nil {
+		return nil
 	}
 	d := s.bins.digestFor(station)
 	return &d

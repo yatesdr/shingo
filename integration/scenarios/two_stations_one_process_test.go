@@ -225,3 +225,236 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		}
 	})
 }
+
+// Every Edge-owned family on two Edges, both sides real: each Edge's plant
+// claims (its publisher), its bins watch list (a process node: every process
+// node is on the list, shingoedge service withClaimPlaces) and its cell catalog
+// (a reporting point on its process's counter, read as cmd/shingoedge main.go
+// reads it), quoted on its heartbeat (Engine.OwnedDigests) and taken by Core's
+// own handlers (HandleEdgeHeartbeat's owned answer, HandlePlantClaims,
+// HandleBinWatch, HandleEdgeCells), after the register a boot burst sends with
+// the catalog on it. Heartbeats every minute, the second Edge 30 s after the
+// first, for seven minutes: past the Edge's five-minute rebuild of every family
+// (engine ownedFloor).
+//
+// At the first ack Core holds none of an Edge's claims and none of its watch
+// list, and its cells with no digest (the register's: HandleEdgeRegister keeps
+// them unconfirmed), so every family differs and the Edge sends each once: its
+// report, its list, its catalog. From then on Core's digest for every family is
+// the Edge's quote and the answer carries no members, and nothing is sent
+// again, the floor's rebuild included. A family that never converges fails here
+// three ways: the last answer is not the quote, its carrier reaches Core again
+// (the resend guard's two minutes), and the Edge flags it not converging.
+func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
+	t.Parallel()
+
+	coreDB := coreharness.OpenDB(t)
+	// As in TestScenario_TwoStationsOneProcess_EachSendsOnce: no pool timer on
+	// the real clock, and the connections the run needs opened outside the
+	// bubble.
+	coreDB.SetConnMaxLifetime(0)
+	coreDB.SetConnMaxIdleTime(0)
+	coreDB.SetMaxIdleConns(8)
+	var conns []*sql.Conn
+	for i := 0; i < 6; i++ {
+		c, err := coreDB.Conn(context.Background())
+		mustNil(t, err, "open a Core connection")
+		conns = append(conns, c)
+	}
+	for _, c := range conns {
+		mustNil(t, c.Close(), "return a Core connection")
+	}
+
+	svc := coremessaging.NewCoreDataService(coreDB,
+		coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", nil), service.EpochAnnounce{})
+
+	type ownedEdge struct {
+		twinEdge
+		catalog func() ([]protocol.CellCatalogEntry, error)
+		quoted  map[string]string          // the last heartbeat's Owned
+		ack     *protocol.EdgeHeartbeatAck // the last ack
+	}
+	edges := make([]*ownedEdge, 2)
+	for i, uid := range []string{"edge.owned-a", "edge.owned-b"} {
+		_, err := coreDB.EnrollEdge(uid, "")
+		mustNil(t, err, "enroll "+uid)
+		db := edgeharness.OpenDB(t)
+		suffix := []string{"A", "B"}[i]
+		node, plc := "OWN-N"+suffix, "OWN-PLC-"+suffix
+		pid, err := db.CreateProcess("OWN-PROC-"+suffix, "", "", "", false)
+		mustNil(t, err, "create process on "+uid)
+		sid, err := db.CreateStyle("OWN-S1", "", pid)
+		mustNil(t, err, "create style on "+uid)
+		_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+			StyleID: sid, CoreNodeName: node, Role: protocol.ClaimRoleProduce,
+			SwapMode: protocol.SwapModeSequential, PayloadCode: "SYN-OWN-1", UOPCapacity: 10,
+		})
+		mustNil(t, err, "claim on "+uid)
+		_, err = db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: node, Code: "N1", Name: node, Enabled: true})
+		mustNil(t, err, "process node on "+uid)
+		_, err = db.CreateReportingPoint(plc, "COUNT", sid)
+		mustNil(t, err, "reporting point on "+uid)
+		mustNil(t, db.SetProcessCounter(pid, plc, "COUNT", true, "", true), "counter on "+uid)
+
+		cfg := &config.Config{StationUID: uid}
+		eng := edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
+		// As cmd/shingoedge main.go wires them: claims through the publisher,
+		// cells from the counted reporting points, and the engine's direct
+		// sends (the watch list) through the outbox to the bus.
+		pub := edgemessaging.NewPlantClaimsPublisher(db, uid, 0)
+		pub.Reported, pub.ReportedAll = eng.ClaimsReported, eng.ClaimsReportedAll
+		eng.SetClaimsSource(pub)
+		catalog := func() ([]protocol.CellCatalogEntry, error) {
+			pts, err := db.ListCountedReportingPoints()
+			if err != nil {
+				return nil, err
+			}
+			return edgemessaging.BuildCellCatalog(pts), nil
+		}
+		eng.SetCellCatalogFunc(catalog)
+		eng.SetSendFunc(func(env *protocol.Envelope) error {
+			data, err := env.Encode()
+			if err != nil {
+				return err
+			}
+			_, err = db.EnqueueOutbox(data, "data.send")
+			return err
+		})
+		edges[i] = &ownedEdge{twinEdge: twinEdge{uid: uid, eng: eng, db: db}, catalog: catalog}
+	}
+
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		carried := map[string]map[string]int{} // station → carrier subject → messages that reached Core
+		counted := func(env *protocol.Envelope, subject string) {
+			mu.Lock()
+			if carried[env.Src.Station] == nil {
+				carried[env.Src.Station] = map[string]int{}
+			}
+			carried[env.Src.Station][subject]++
+			mu.Unlock()
+		}
+
+		// Core: what a boot and its heartbeats send, as cmd/shingocore
+		// buildSubjectRouter routes it, each family's carrier counted.
+		coreSubjects := router.NewSubject()
+		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeRegister, svc.HandleEdgeRegister)
+		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeHeartbeat, svc.HandleEdgeHeartbeat)
+		router.RegisterSubject(coreSubjects, protocol.SubjectPlantClaims, func(env *protocol.Envelope, r *protocol.PlantClaimsReport) {
+			counted(env, protocol.SubjectPlantClaims)
+			svc.HandlePlantClaims(env, r)
+		})
+		router.RegisterSubject(coreSubjects, protocol.SubjectBinsWatch, func(env *protocol.Envelope, l *protocol.BinWatchList) {
+			counted(env, protocol.SubjectBinsWatch)
+			svc.HandleBinWatch(env, l)
+		})
+		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeCells, func(env *protocol.Envelope, c *protocol.CellCatalog) {
+			counted(env, protocol.SubjectEdgeCells)
+			svc.HandleEdgeCells(env, c)
+		})
+		coreRouter := router.New[string]()
+		router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { coreSubjects.Dispatch(env, p) })
+		coreIngestor := protocol.NewIngestor(nil)
+		coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+
+		// One Edge-side door for both: the ack goes to the station it names.
+		edgeSubjects := router.NewSubject()
+		router.RegisterSubject(edgeSubjects, protocol.SubjectEdgeHeartbeatAck, func(env *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
+			for _, x := range edges {
+				if x.uid == env.Dst.Station {
+					x.ack = ack
+					x.eng.OnCoreAck(ack)
+				}
+			}
+		})
+		edgeRouter := router.New[string]()
+		router.Register(edgeRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { edgeSubjects.Dispatch(env, p) })
+		edgeIngestor := protocol.NewIngestor(nil)
+		edgeIngestor.Dispatch = func(env *protocol.Envelope) { edgeRouter.Dispatch(env, env.Type) }
+
+		buses := map[string]*harness.Bus{}
+		for _, x := range edges {
+			buses[x.uid] = harness.NewBus(t,
+				harness.EdgeSide{EdgeStore: x.db, EdgeIngestor: edgeIngestor},
+				harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor})
+		}
+		// send is one message from x and everything it sets moving, until both
+		// sides are quiet.
+		send := func(x *ownedEdge, subject string, body any) {
+			env, err := protocol.NewDataEnvelope(subject,
+				protocol.Address{Role: protocol.RoleEdge, Station: x.uid}, protocol.Address{Role: protocol.RoleCore}, body)
+			mustNil(t, err, "build "+subject)
+			data, err := env.Encode()
+			mustNil(t, err, "encode "+subject)
+			_, err = x.db.EnqueueOutbox(data, "data."+subject)
+			mustNil(t, err, "enqueue "+subject)
+			buses[x.uid].PumpAll()
+		}
+		// A heartbeat's Feeds and Owned are the engine's own (FeedDigests,
+		// OwnedDigests, as cmd/shingoedge wires the heartbeater); the feeds Core
+		// sends back are not applied, which leaves each family as its Edge's
+		// store holds it.
+		beat := func(x *ownedEdge) {
+			x.quoted = x.eng.OwnedDigests()
+			send(x, protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{StationID: x.uid, Feeds: x.eng.FeedDigests(), Owned: x.quoted})
+		}
+
+		for _, x := range edges {
+			cells, err := x.catalog()
+			mustNil(t, err, "read the catalog of "+x.uid)
+			if len(cells) == 0 {
+				t.Fatalf("%s has no cell: its catalog family would converge on none, and show nothing", x.uid)
+			}
+			send(x, protocol.SubjectEdgeRegister, &protocol.EdgeRegister{StationID: x.uid, Hostname: "owned-host", Version: "v-test", Catalog: cells})
+			if d, held, err := coreDB.EdgeCellsDigest(x.uid); err != nil || !held || d != "" {
+				t.Fatalf("%s: after the register Core holds cells %v at digest %q (err %v), want held with none", x.uid, held, d, err)
+			}
+		}
+		for m := 0; m < 7; m++ {
+			beat(edges[0])
+			time.Sleep(30 * time.Second)
+			beat(edges[1])
+			time.Sleep(30 * time.Second)
+		}
+
+		none, err := protocol.OwnedDigest(nil)
+		mustNil(t, err, "digest of no members")
+		for _, x := range edges {
+			for _, family := range protocol.AllOwned() {
+				quote, named := x.quoted[family]
+				if !named || quote == none {
+					t.Errorf("%s's last heartbeat quotes %s as %q (named %v), want a family holding something: a family "+
+						"of none converges with nothing sent, which shows nothing", x.uid, family, quote, named)
+					continue
+				}
+				switch a, answered := x.ack.Owned[family]; {
+				case !answered:
+					t.Errorf("%s: the last ack does not answer %s (owned %v): Core left the family off", x.uid, family, x.ack.Owned)
+				case a.Digest != quote || a.Members != nil:
+					t.Errorf("%s: the last ack answers %s at %s with members %v, want the quote %s and no members: "+
+						"the family has not converged", x.uid, family, a.Digest, a.Members, quote)
+				}
+			}
+			if x.ack.Claims != nil || x.ack.BinWatch != nil {
+				t.Errorf("%s: the ack carries the old fields (claims %v, bin_watch %v) to an Edge quoting the owned map",
+					x.uid, x.ack.Claims, x.ack.BinWatch)
+			}
+			for _, subject := range []string{protocol.SubjectPlantClaims, protocol.SubjectBinsWatch, protocol.SubjectEdgeCells} {
+				if got := carried[x.uid][subject]; got != 1 {
+					t.Errorf("%s: %d %s messages reached Core in seven minutes, want 1: each family is sent once and then "+
+						"quoted back", x.uid, got, subject)
+				}
+			}
+			if got := x.eng.FeedFlags(); len(got) != 0 {
+				t.Errorf("%s's own flags are %v, want none", x.uid, got)
+			}
+			cells, err := x.catalog()
+			mustNil(t, err, "read the catalog of "+x.uid)
+			want, err := protocol.CellCatalogDigest(cells)
+			mustNil(t, err, "digest the catalog of "+x.uid)
+			if d, held, err := coreDB.EdgeCellsDigest(x.uid); err != nil || !held || d != want {
+				t.Errorf("%s: Core holds cells %v at digest %q (err %v), want the Edge's catalog at %s", x.uid, held, d, err, want)
+			}
+		}
+	})
+}

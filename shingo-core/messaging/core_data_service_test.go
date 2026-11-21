@@ -5,8 +5,11 @@ package messaging
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -306,6 +309,141 @@ func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
 	if got := ackName("stn-name-never-enrolled"); got != nil {
 		t.Errorf("ack display name for a station with no row = %q, want none (nil): Core has no "+
 			"answer for it, and the Edge must keep the name it holds", *got)
+	}
+}
+
+// TestHeartbeatAck_TheOwnedMapPerFamily: a heartbeat that quotes the owned map
+// is answered per family from what Core holds of that station, the digest
+// always and the members only where it differs from the quote, and never with
+// the old Claims and BinWatch; a heartbeat with no owned map is answered by
+// the old fields alone. A family the heartbeat leaves off is not answered; one
+// whose read fails is left off; a failed registry write leaves off the two
+// read from the database (claims, cells) and answers the watch list Core holds
+// in memory.
+func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	const st, bare = "stn-owned-held", "stn-owned-bare"
+	for _, uid := range []string{st, bare} {
+		_, err := db.EnrollEdge(uid, "")
+		testutil.MustNoErr(t, err, "enroll "+uid)
+	}
+	resp := &feedsPinResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+
+	// What Core holds of st: one process's report row, a watch list and a cell
+	// catalog, the last two through their handlers.
+	testutil.MustNoErr(t, db.RecordPlantClaimsReport("OWN-P1", st, "claims-d1", time.Now().UTC()), "record a report row")
+	svc.HandleBinWatch(feedsPinEnv(st), &protocol.BinWatchList{Digest: "watch-d1", Nodes: []string{"OWN-N1"}})
+	svc.HandleEdgeCells(feedsPinEnv(st), &protocol.CellCatalog{Digest: "cells-d1", Cells: []protocol.CellCatalogEntry{
+		{CellLabel: "OWN-PLC", Processes: []protocol.CellProcessBinding{{ProcessID: 1, StyleID: 1, PLCName: "OWN-PLC", TagName: "T"}}},
+	}})
+	heldMembers := map[string]map[string]string{
+		protocol.OwnedClaims:   {"OWN-P1": "claims-d1"},
+		protocol.OwnedBinWatch: {protocol.SingletonMember: "watch-d1"},
+		protocol.OwnedCells:    {protocol.SingletonMember: "cells-d1"},
+	}
+	digestOf := func(members map[string]string) string {
+		t.Helper()
+		d, err := protocol.OwnedDigest(members)
+		testutil.MustNoErr(t, err, "owned digest")
+		return d
+	}
+	holds := map[string]string{}
+	stale := map[string]string{}
+	for _, f := range protocol.AllOwned() {
+		holds[f] = digestOf(heldMembers[f])
+		stale[f] = "stale-" + f
+	}
+	none := digestOf(nil)
+
+	ack := func(uid string, owned map[string]string) *protocol.EdgeHeartbeatAck {
+		t.Helper()
+		resp.events = nil
+		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid,
+			Feeds: map[string]string{protocol.FeedBins: ""}, Owned: owned})
+		for _, e := range resp.events {
+			if a, ok := e.payload.(*protocol.EdgeHeartbeatAck); ok && e.kind == "reply" {
+				return a
+			}
+		}
+		t.Fatalf("no heartbeat ack in %v", resp.trace())
+		return nil
+	}
+	answered := func(a *protocol.EdgeHeartbeatAck) []string {
+		out := []string{}
+		for f := range a.Owned {
+			out = append(out, f)
+		}
+		sort.Strings(out)
+		return out
+	}
+	noOldFields := func(name string, a *protocol.EdgeHeartbeatAck) {
+		t.Helper()
+		if a.Claims != nil || a.BinWatch != nil {
+			t.Errorf("%s: claims %v, bin_watch %v on the ack, want neither to an Edge that quotes the owned map", name, a.Claims, a.BinWatch)
+		}
+	}
+
+	// Quoting what Core holds: each family converged, its digest alone.
+	a := ack(st, holds)
+	noOldFields("converged", a)
+	for _, f := range protocol.AllOwned() {
+		if got := a.Owned[f]; got.Digest != holds[f] || got.Members != nil {
+			t.Errorf("converged %s: answered %+v, want digest %s and no members", f, got, holds[f])
+		}
+	}
+	raw, err := json.Marshal(a)
+	testutil.MustNoErr(t, err, "marshal ack")
+	if s := string(raw); !strings.Contains(s, `"claims":null`) || strings.Contains(s, `"bin_watch"`) || strings.Contains(s, `"members"`) {
+		t.Errorf("converged: the ack on the wire is %s, want claims null, no bin_watch and no members", s)
+	}
+
+	// Quoting something else: the members Core holds, family by family.
+	a = ack(st, stale)
+	noOldFields("differs", a)
+	for _, f := range protocol.AllOwned() {
+		if got := a.Owned[f]; got.Digest != holds[f] || !reflect.DeepEqual(got.Members, heldMembers[f]) {
+			t.Errorf("differs %s: answered %+v, want digest %s and members %v", f, got, holds[f], heldMembers[f])
+		}
+	}
+
+	// A station Core holds nothing of: no members, at the digest of none.
+	a = ack(bare, stale)
+	for _, f := range protocol.AllOwned() {
+		if got, ok := a.Owned[f]; !ok || got.Digest != none || len(got.Members) != 0 {
+			t.Errorf("holds none %s: answered %+v (present %v), want digest %s and no members", f, got, ok, none)
+		}
+	}
+
+	// A family the heartbeat leaves off is not answered; none quoted is an
+	// empty answer, never nil, which would read as a Core without the map.
+	a = ack(st, map[string]string{protocol.OwnedClaims: holds[protocol.OwnedClaims]})
+	if got := answered(a); !reflect.DeepEqual(got, []string{protocol.OwnedClaims}) {
+		t.Errorf("one family quoted: answered %v, want only %s", got, protocol.OwnedClaims)
+	}
+	if a = ack(st, map[string]string{}); a.Owned == nil || len(a.Owned) != 0 {
+		t.Errorf("an empty owned map: answered %v, want {} (not nil)", a.Owned)
+	}
+
+	// No owned map: the old fields, as an older Edge has always been answered.
+	a = ack(st, nil)
+	if a.Owned != nil {
+		t.Errorf("no owned map: answered %v, want nil", a.Owned)
+	}
+	if !reflect.DeepEqual(a.Claims, heldMembers[protocol.OwnedClaims]) || a.BinWatch == nil || *a.BinWatch != "watch-d1" {
+		t.Errorf("no owned map: claims %v, bin_watch %v; want %v and watch-d1", a.Claims, a.BinWatch, heldMembers[protocol.OwnedClaims])
+	}
+
+	// A failed read leaves its family off; a failed registry write leaves off
+	// both families read from the database.
+	hideTable(t, db, "edge_cells")
+	if got := answered(ack(st, holds)); !reflect.DeepEqual(got, []string{protocol.OwnedBinWatch, protocol.OwnedClaims}) {
+		t.Errorf("cells unreadable: answered %v, want bins.watch and claims", got)
+	}
+	hideTable(t, db, "edge_registry")
+	if got := answered(ack(st, holds)); !reflect.DeepEqual(got, []string{protocol.OwnedBinWatch}) {
+		t.Errorf("registry write failed: answered %v, want bins.watch alone", got)
 	}
 }
 

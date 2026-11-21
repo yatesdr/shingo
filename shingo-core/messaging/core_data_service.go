@@ -628,10 +628,19 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	}
 	// Claims stay off an ack whose registry write failed: the Edge reads nil
 	// as "Core could not read them" and republishes nothing on the strength
-	// of a database that is failing.
+	// of a database that is failing. The owned map follows the same rule for
+	// every family it reads from the database.
+	//
+	// An Edge that quotes the owned map is answered on it alone, and one that
+	// quotes none on the old fields alone (claimsFor and binWatchFor are nil
+	// for it): never both, as protocol's EdgeHeartbeatAck.Claims says.
 	var claims map[string]string
 	if err == nil {
 		claims = s.claimsFor(station, p)
+	}
+	var owned map[string]protocol.OwnedAnswer
+	if p.Owned != nil {
+		owned = s.answerOwned(station, p.Owned, err == nil)
 	}
 	// The station's name, read back by the registry write itself; none (nil)
 	// when that write failed or found no row, so the Edge keeps what it holds.
@@ -646,6 +655,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			Timezone:    s.plantTimezone,
 			DisplayName: name,
 			Feeds:       feeds,
+			Owned:       owned,
 			Claims:      claims,
 			BinWatch:    binWatch,
 			Asks:        s.asksFor(p),
