@@ -15,9 +15,9 @@
 // Until the squash at v184 this package held the baseline DDL as a Go
 // constant that every boot replayed ahead of the versioned chain (Apply), and
 // the predicates below served the chain's steps. The constant and Apply went
-// with the chain; the predicates stay for the verify of each migration above
-// it (store.migration), whose post-conditions they read: v185Verify is the
-// first.
+// with the chain; the predicates stay for each migration above it
+// (store.migration): its verify, whose post-conditions they read, and the
+// guards that make it idempotent. v185 is the first.
 //
 // The predicates accept the Querier interface so they work equally well with
 // *sql.DB (the connection pool) and *sql.Tx (an in-flight transaction).
@@ -36,24 +36,31 @@ type Querier interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-// TableExists reports whether the named table exists in the database's
-// public schema. Returns false on any query error (the table also
-// "doesn't exist" if we can't read information_schema).
+// Every predicate below reads schema public only, the schema Core's tables
+// live in. A same-named table in another schema (a copy someone made with
+// CREATE TABLE pre185.orders AS TABLE public.orders, say) is not Core's: read
+// as Core's, it would make v185's verify fail on a migrated database, and the
+// re-run that follows would fail on public's renamed column every boot
+// (TestSchemaPredicates_ReadSchemaPublicOnly).
+
+// TableExists reports whether the named table exists in schema public.
+// Returns false on any query error (the table also "doesn't exist" if we
+// can't read information_schema).
 func TableExists(c Querier, table string) bool {
 	var exists bool
 	c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=$1)`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name=$1)`,
 		table,
 	).Scan(&exists)
 	return exists
 }
 
-// ColumnExists reports whether the named column exists on the named
-// table. Returns false on any query error or if either name is empty.
+// ColumnExists reports whether the named column exists on the named table in
+// schema public. Returns false on any query error or if either name is empty.
 func ColumnExists(c Querier, table, column string) bool {
 	var exists bool
 	c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name=$1 AND column_name=$2)`,
 		table, column,
 	).Scan(&exists)
 	return exists
@@ -80,7 +87,7 @@ func ColumnExists(c Querier, table, column string) bool {
 func ColumnAbsent(c Querier, table, column string) bool {
 	var exists bool
 	if err := c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name=$1 AND column_name=$2)`,
 		table, column,
 	).Scan(&exists); err != nil {
 		return false
@@ -95,7 +102,7 @@ func ColumnAbsent(c Querier, table, column string) bool {
 func TableAbsent(c Querier, table string) bool {
 	var exists bool
 	if err := c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=$1)`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name=$1)`,
 		table,
 	).Scan(&exists); err != nil {
 		return false
@@ -103,33 +110,38 @@ func TableAbsent(c Querier, table string) bool {
 	return !exists
 }
 
+// IndexAbsent is the absence form for a migration that DROPS an index in
+// schema public. Same direction as ColumnAbsent: false on a query error.
 func IndexAbsent(c Querier, indexName string) bool {
 	var exists bool
 	if err := c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname=$1)`, indexName,
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname=$1)`, indexName,
 	).Scan(&exists); err != nil {
 		return false
 	}
 	return !exists
 }
 
-// IndexExists reports whether the named index exists in the database's
-// public schema. Returns false on any query error or if the name is empty.
+// IndexExists reports whether the named index exists in schema public.
+// Returns false on any query error or if the name is empty.
 func IndexExists(c Querier, indexName string) bool {
 	var exists bool
 	c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname=$1)`,
+		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname=$1)`,
 		indexName,
 	).Scan(&exists)
 	return exists
 }
 
-// ConstraintExists reports whether the named constraint is on the table, valid
-// or not. Returns false on any query error.
+// ConstraintExists reports whether the named constraint is on the named table
+// in schema public, valid or not. Returns false on any query error.
 func ConstraintExists(c Querier, table, constraint string) bool {
 	var exists bool
 	c.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname=$2 AND conrelid=$1::regclass)`,
+		`SELECT EXISTS (SELECT 1 FROM pg_constraint k
+		   JOIN pg_class t ON t.oid = k.conrelid
+		   JOIN pg_namespace n ON n.oid = t.relnamespace
+		  WHERE n.nspname = 'public' AND t.relname = $1 AND k.conname = $2)`,
 		table, constraint,
 	).Scan(&exists)
 	return exists

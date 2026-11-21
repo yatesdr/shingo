@@ -450,9 +450,11 @@ func v185Relabel1(tx *sql.Tx, table, from, to string, constraint bool) error {
 	return v185Exec(tx, "rename index "+from, fmt.Sprintf(`ALTER INDEX %s RENAME TO %s`, from, to))
 }
 
-// v185RelabelChildren renames each index of parent's partitions that carries
-// the name Postgres gave it for its columns, with colNow in them read as
-// colBefore, to the name Postgres gives it for its columns as they are now.
+// v185RelabelChildren renames each index of the partitions of parent, in
+// schema public (a same-named table in another schema is not Core's, as for
+// the schema predicates), that carries the name Postgres gave it for its
+// columns, with colNow in them read as colBefore, to the name Postgres gives
+// it for its columns as they are now.
 // Up calls it after the column rename (colNow station_uid, colBefore cell_id),
 // down after the rename back: so a renamed child index is named as a partition
 // created after the rename would be, truncation included, and down restores
@@ -464,6 +466,7 @@ func v185RelabelChildren(tx *sql.Tx, parent, colNow, colBefore string) error {
 		          JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = k.attnum)
 		  FROM pg_inherits i
 		  JOIN pg_class p ON p.oid = i.inhparent AND p.relname = $1
+		  JOIN pg_namespace pn ON pn.oid = p.relnamespace AND pn.nspname = 'public'
 		  JOIN pg_class c ON c.oid = i.inhrelid
 		  JOIN pg_index x ON x.indrelid = i.inhrelid
 		  JOIN pg_class ic ON ic.oid = x.indexrelid
