@@ -23,6 +23,13 @@ type Vintage struct {
 	// Why says what the vintage stands for. A convergence failure is only
 	// diagnosable if you know what the vintage was chosen to prove.
 	Why string
+	// Current marks BuiltBy as a release past the retired chain: this build
+	// boots its database as it stands, with no refusal and no walk.
+	Current bool
+	// Drift, when set, is SQL applied after BuiltBy's boot: leftovers a plant's
+	// database carries and a new one does not, which this build's migrations
+	// must remove (DriftA, DriftB).
+	Drift string
 }
 
 // Vintages are the databases the convergence test brings up with this build.
@@ -54,6 +61,20 @@ var Vintages = []Vintage{
 		DDLRev: "v0.0.14",
 		Why: "born on the oldest tagged baseline DDL still readable (v0.0.14, 2026-03-21, at the pre-Phase-6.0a path), " +
 			"no chain run on it, then walked up by " + store.RetiredChainRelease + "'s replay: the deepest upgrade there is",
+	},
+	{
+		Name:    "v0.18.0-with-drift-a",
+		BuiltBy: "v0.18.0",
+		Current: true,
+		Drift:   DriftA,
+		Why:     "a v0.18.0 database (schema v185) carrying the leftovers its boot named at one plant: a payloads table an old copy rebuilt, nodes columns still integer, two stray tables",
+	},
+	{
+		Name:    "v0.18.0-with-drift-b",
+		BuiltBy: "v0.18.0",
+		Current: true,
+		Drift:   DriftB,
+		Why:     "a v0.18.0 database (schema v185) carrying the leftovers its boot named at the other plant: a hand-added orders column and table",
 	},
 }
 

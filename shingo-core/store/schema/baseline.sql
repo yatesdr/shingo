@@ -1,4 +1,4 @@
--- Core's schema at v189 with its seed rows: GENERATED, never edited by hand.
+-- Core's schema at v190 with its seed rows: GENERATED, never edited by hand.
 -- cmd/schemabaseline boots v0.17.1's chain (v1..v184) on an empty database, runs this
 -- tree's migrations above it (which apply store/schema/comments.sql), and dumps the result with
 -- pg_dump --inserts. Regenerate: make schema-baseline (go run ./cmd/schemabaseline), then make schema-snapshot.
@@ -2061,6 +2061,7 @@ INSERT INTO public.schema_migrations VALUES (186, now());
 INSERT INTO public.schema_migrations VALUES (187, now());
 INSERT INTO public.schema_migrations VALUES (188, now());
 INSERT INTO public.schema_migrations VALUES (189, now());
+INSERT INTO public.schema_migrations VALUES (190, now());
 
 SELECT pg_catalog.setval('public.admin_users_id_seq', 1, false);
 

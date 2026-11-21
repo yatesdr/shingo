@@ -117,7 +117,8 @@ func TestSchemaSnapshotIsCurrent(t *testing.T) {
 //	fresh   — an empty database, born on the baseline (store.migrate)
 //	vintage — a database made by a released binary built from git
 //	          (schemadump.BuildRelease): that release's own store.Open, the
-//	          code the plant ran; or born on an old baseline DDL
+//	          code the plant ran; or born on an old baseline DDL; or a
+//	          current release's carrying a plant's leftovers (Vintage.Drift)
 //
 // This build refuses a vintage below the retired chain, by design: the test
 // asserts that refusal, and that it wrote nothing, then walks the vintage up
@@ -177,9 +178,14 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 			if v.BuiltBy != "" {
 				bootRelease(ctx, t, inst, root, v.BuiltBy, name, v.Why)
 			}
-			if v.BuiltBy != store.RetiredChainRelease {
+			if v.BuiltBy != store.RetiredChainRelease && !v.Current {
 				assertRefusedWritingNothing(ctx, t, inst, name, v)
 				bootRelease(ctx, t, inst, root, store.RetiredChainRelease, name, v.Why)
+			}
+			if v.Drift != "" {
+				if err := inst.ApplyRaw(ctx, name, v.Drift); err != nil {
+					t.Fatalf("apply the vintage's leftovers: %v\n(%s)", err, v.Why)
+				}
 			}
 			if err := inst.Reboot(ctx, name); err != nil {
 				t.Fatalf("this build's boot of the vintage: %v\n(%s)", err, v.Why)
