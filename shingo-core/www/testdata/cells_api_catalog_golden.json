@@ -1,0 +1,566 @@
+{
+  "board_plant_cells": [
+    {
+      "cell_id": "PLC-ALPHA",
+      "display_name": "PLC-ALPHA",
+      "primary_process_id": 7,
+      "station": "stn-cellpin-a",
+      "sub_process_ids": [
+        9
+      ],
+      "updated_at": "0001-01-01T00:00:00Z"
+    },
+    {
+      "cell_id": "PLC-BRAVO",
+      "display_name": "PLC-BRAVO",
+      "primary_process_id": 11,
+      "station": "stn-cellpin-a",
+      "sub_process_ids": [],
+      "updated_at": "0001-01-01T00:00:00Z"
+    },
+    {
+      "cell_id": "PLC-ALPHA",
+      "display_name": "PLC-ALPHA",
+      "primary_process_id": 31,
+      "station": "stn-cellpin-b",
+      "sub_process_ids": [],
+      "updated_at": "0001-01-01T00:00:00Z"
+    },
+    {
+      "cell_id": "PLC-CHARLIE",
+      "display_name": "PLC-CHARLIE",
+      "primary_process_id": 21,
+      "station": "stn-cellpin-b",
+      "sub_process_ids": [
+        22,
+        23
+      ],
+      "updated_at": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "board_station_cells": [
+    {
+      "cell_id": "PLC-ALPHA",
+      "display_name": "Alpha line",
+      "primary_process_id": 7,
+      "station": "stn-cellpin-a",
+      "sub_process_ids": [
+        9
+      ],
+      "updated_at": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "cells": [
+    {
+      "cell_id": "PLC-ALPHA",
+      "display_name": "PLC-ALPHA",
+      "primary_process_id": 7,
+      "station": "stn-cellpin-a",
+      "sub_process_ids": [
+        9
+      ],
+      "updated_at": "0001-01-01T00:00:00Z"
+    },
+    {
+      "cell_id": "PLC-BRAVO",
+      "display_name": "PLC-BRAVO",
+      "primary_process_id": 11,
+      "station": "stn-cellpin-a",
+      "sub_process_ids": [],
+      "updated_at": "0001-01-01T00:00:00Z"
+    },
+    {
+      "cell_id": "PLC-ALPHA",
+      "display_name": "PLC-ALPHA",
+      "primary_process_id": 31,
+      "station": "stn-cellpin-b",
+      "sub_process_ids": [],
+      "updated_at": "0001-01-01T00:00:00Z"
+    },
+    {
+      "cell_id": "PLC-CHARLIE",
+      "display_name": "PLC-CHARLIE",
+      "primary_process_id": 21,
+      "station": "stn-cellpin-b",
+      "sub_process_ids": [
+        22,
+        23
+      ],
+      "updated_at": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "drill_PLC-ALPHA": {
+    "cell_id": "PLC-ALPHA",
+    "display_name": "PLC-ALPHA",
+    "processes": [
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 100,
+            "delta": 1,
+            "edge_snapshot_id": 1,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:00:00Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 101,
+            "delta": 1,
+            "edge_snapshot_id": 2,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:00:20Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 102,
+            "delta": 3,
+            "edge_snapshot_id": 3,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:00:40Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 103,
+            "delta": 1,
+            "edge_snapshot_id": 4,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:01:00Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "jump",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 104,
+            "delta": 700,
+            "edge_snapshot_id": 5,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:01:20Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 105,
+            "delta": 1,
+            "edge_snapshot_id": 6,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:06:40Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 106,
+            "delta": 1,
+            "edge_snapshot_id": 7,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:07:00Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "counter_offline_count": 1,
+          "counter_offline_ms": 20000,
+          "effective_parts_per_hour": 89.49438202247191,
+          "longest_stop_ms": 320000,
+          "mtbf_minutes": 474.6666666666667,
+          "mttr_minutes": 5.333333333333333,
+          "parts": 708,
+          "parts_lost": 732,
+          "run_minutes": 474.6666666666667,
+          "stop_count": 1,
+          "total_downtime_ms": 320000
+        },
+        "primary": true,
+        "process_id": 7
+      },
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 107,
+            "delta": 1,
+            "edge_snapshot_id": 8,
+            "process_id": 9,
+            "recorded_at": "2026-01-20T08:00:05Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 108,
+            "delta": 2,
+            "edge_snapshot_id": 9,
+            "process_id": 9,
+            "recorded_at": "2026-01-20T08:00:50Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 109,
+            "delta": 1,
+            "edge_snapshot_id": 10,
+            "process_id": 9,
+            "recorded_at": "2026-01-20T08:01:35Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 0.5,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 4,
+          "parts_lost": 636,
+          "run_minutes": 480,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": false,
+        "process_id": 9
+      }
+    ],
+    "since": "2026-01-20T00:07:10Z",
+    "station": "stn-cellpin-a",
+    "until": "2026-01-20T08:07:10Z"
+  },
+  "drill_PLC-CHARLIE": {
+    "cell_id": "PLC-CHARLIE",
+    "display_name": "PLC-CHARLIE",
+    "processes": [
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-b",
+            "count_value": 113,
+            "delta": 1,
+            "edge_snapshot_id": 14,
+            "process_id": 21,
+            "recorded_at": "2026-01-20T08:00:00Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-b",
+            "count_value": 114,
+            "delta": 1,
+            "edge_snapshot_id": 15,
+            "process_id": 21,
+            "recorded_at": "2026-01-20T08:00:30Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-b",
+            "count_value": 115,
+            "delta": 1,
+            "edge_snapshot_id": 16,
+            "process_id": 21,
+            "recorded_at": "2026-01-20T08:01:00Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 0.375,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 3,
+          "parts_lost": 957,
+          "run_minutes": 480,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": true,
+        "process_id": 21
+      },
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-b",
+            "count_value": 116,
+            "delta": 1,
+            "edge_snapshot_id": 17,
+            "process_id": 22,
+            "recorded_at": "2026-01-20T08:00:15Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 0.125,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 1,
+          "parts_lost": 0,
+          "run_minutes": 480,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": false,
+        "process_id": 22
+      },
+      {
+        "events": [],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 0,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 0,
+          "parts_lost": 0,
+          "run_minutes": 480,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": false,
+        "process_id": 23
+      }
+    ],
+    "since": "2026-01-20T00:07:10Z",
+    "station": "stn-cellpin-b",
+    "until": "2026-01-20T08:07:10Z"
+  },
+  "drill_PLC-RETIRED": {
+    "cell_id": "PLC-RETIRED",
+    "display_name": "PLC-RETIRED",
+    "processes": [
+      {
+        "events": [],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 0,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 0,
+          "parts_lost": 0,
+          "run_minutes": 480,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": true,
+        "process_id": 0
+      }
+    ],
+    "since": "2026-01-20T00:07:10Z",
+    "station": "PLC-RETIRED",
+    "until": "2026-01-20T08:07:10Z"
+  },
+  "stops_PLC-ALPHA": {
+    "cell_id": "PLC-ALPHA",
+    "stops": [
+      {
+        "duration_ms": 305000,
+        "end": "2026-01-20T08:06:40Z",
+        "kind": "stopped",
+        "start": "2026-01-20T08:01:35Z"
+      }
+    ]
+  },
+  "tile_state_PLC-ALPHA": {
+    "cell_id": "PLC-ALPHA",
+    "display_name": "PLC-ALPHA",
+    "primary": {
+      "current_cycle_ms": 20000,
+      "last_fire": "2026-01-20T08:07:00Z",
+      "parts_last_hour": 708,
+      "process_id": 7,
+      "since_last_ms": 10000,
+      "state": "running",
+      "target_cycle_ms": 20000
+    },
+    "station": "stn-cellpin-a",
+    "sub_processes": [
+      {
+        "current_cycle_ms": 45000,
+        "last_fire": "2026-01-20T08:01:35Z",
+        "parts_last_hour": 4,
+        "process_id": 9,
+        "since_last_ms": 335000,
+        "state": "micro-stop",
+        "stop_active": {
+          "duration_ms": 335000,
+          "end": "2026-01-20T08:07:10Z",
+          "kind": "micro-stop",
+          "start": "2026-01-20T08:01:35Z"
+        },
+        "target_cycle_ms": 45000
+      }
+    ]
+  },
+  "tile_state_PLC-BRAVO": {
+    "cell_id": "PLC-BRAVO",
+    "display_name": "PLC-BRAVO",
+    "primary": {
+      "current_cycle_ms": 20000,
+      "last_fire": "2026-01-20T08:00:30Z",
+      "parts_last_hour": 2,
+      "process_id": 11,
+      "since_last_ms": 400000,
+      "state": "micro-stop",
+      "stop_active": {
+        "duration_ms": 400000,
+        "end": "2026-01-20T08:07:10Z",
+        "kind": "micro-stop",
+        "start": "2026-01-20T08:00:30Z"
+      },
+      "target_cycle_ms": 20000
+    },
+    "station": "stn-cellpin-a",
+    "sub_processes": []
+  },
+  "tile_state_PLC-CHARLIE": {
+    "cell_id": "PLC-CHARLIE",
+    "display_name": "PLC-CHARLIE",
+    "primary": {
+      "current_cycle_ms": 30000,
+      "last_fire": "2026-01-20T08:01:00Z",
+      "parts_last_hour": 3,
+      "process_id": 21,
+      "since_last_ms": 370000,
+      "state": "micro-stop",
+      "stop_active": {
+        "duration_ms": 370000,
+        "end": "2026-01-20T08:07:10Z",
+        "kind": "micro-stop",
+        "start": "2026-01-20T08:01:00Z"
+      },
+      "target_cycle_ms": 30000
+    },
+    "station": "stn-cellpin-b",
+    "sub_processes": [
+      {
+        "current_cycle_ms": 0,
+        "parts_last_hour": 0,
+        "process_id": 22,
+        "since_last_ms": 0,
+        "state": "no-data",
+        "target_cycle_ms": 0
+      },
+      {
+        "current_cycle_ms": 0,
+        "parts_last_hour": 0,
+        "process_id": 23,
+        "since_last_ms": 0,
+        "state": "no-data",
+        "target_cycle_ms": 0
+      }
+    ]
+  },
+  "tile_state_PLC-RETIRED": {
+    "cell_id": "PLC-RETIRED",
+    "display_name": "PLC-RETIRED",
+    "primary": {
+      "current_cycle_ms": 0,
+      "parts_last_hour": 0,
+      "process_id": 0,
+      "since_last_ms": 0,
+      "state": "no-data",
+      "target_cycle_ms": 0
+    },
+    "station": "PLC-RETIRED",
+    "sub_processes": []
+  },
+  "tile_state_PLC-UNBOUND": {
+    "cell_id": "PLC-UNBOUND",
+    "display_name": "PLC-UNBOUND",
+    "primary": {
+      "current_cycle_ms": 0,
+      "parts_last_hour": 0,
+      "process_id": 0,
+      "since_last_ms": 0,
+      "state": "no-data",
+      "target_cycle_ms": 0
+    },
+    "station": "PLC-UNBOUND",
+    "sub_processes": []
+  },
+  "wall_seed_PLC-ALPHA": {
+    "cell_id": "PLC-ALPHA",
+    "display_name": "PLC-ALPHA",
+    "processes": [
+      {
+        "events": [
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 105,
+            "delta": 1,
+            "edge_snapshot_id": 6,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:06:40Z",
+            "style_id": 3
+          },
+          {
+            "anomaly": "",
+            "cell_id": "stn-cellpin-a",
+            "count_value": 106,
+            "delta": 1,
+            "edge_snapshot_id": 7,
+            "process_id": 7,
+            "recorded_at": "2026-01-20T08:07:00Z",
+            "style_id": 3
+          }
+        ],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 60,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 2,
+          "parts_lost": 4,
+          "run_minutes": 2,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": true,
+        "process_id": 7
+      },
+      {
+        "events": [],
+        "metrics": {
+          "counter_offline_count": 0,
+          "counter_offline_ms": 0,
+          "effective_parts_per_hour": 0,
+          "longest_stop_ms": 0,
+          "mtbf_minutes": 0,
+          "mttr_minutes": 0,
+          "parts": 0,
+          "parts_lost": 0,
+          "run_minutes": 2,
+          "stop_count": 0,
+          "total_downtime_ms": 0
+        },
+        "primary": false,
+        "process_id": 9
+      }
+    ],
+    "since": "2026-01-20T08:05:10Z",
+    "station": "stn-cellpin-a",
+    "until": "2026-01-20T08:07:10Z"
+  }
+}
