@@ -541,16 +541,29 @@ else
     fi
 fi
 
-# print_rollback prints the way back to the previous build, from what this run
-# does to the database (DB_FROM -> DB_TO, from migrate check). It runs at the end
-# of a good install, and from the EXIT trap when the install fails after the
-# binary swap, which is when the operator needs it most. Its argument says
-# whether Core has been started on the new build: before that the database is
-# still at DB_FROM and there is no down step to run.
+# print_rollback prints the way back to the build in the rollback slot
+# (/opt/shingo/shingocore.previous; THE ROLLBACK SLOT, below, fills it). It reads
+# the slot's record and where the database stands, not what this run did: a
+# rerun of the same build leaves the slot holding the release it replaced, and
+# the way back is still that release's. The database stands at this run's DB_TO
+# once Core has started on the new build (its argument: yes), else where migrate
+# check found it (DB_FROM). The down steps go from there to the version the
+# record says the slot's build was serving, newest first, then the mv, the start,
+# and last the record's removal, so a record never outlives its binary. A slot
+# with no record, or with a record whose sha256 is not the slot's (saved by an
+# older installer, or a write that failed), gets the recipe from this run's
+# versions and a line saying the version it needs is not recorded. It runs at
+# the end of a good install, and from the EXIT trap when the install fails after
+# the binary swap, which is when the operator needs it most.
 SWAPPED=no
 STARTED=no
+rollback_down_note() {
+    echo "   Run the down step(s) before the mv: they are in shingocore.next only. If Core stopped before it"
+    echo "   finished migrating, \`shingocore.next migrate -config /etc/shingo/shingocore.yaml check\` says where the"
+    echo "   database stands; a down step for a version it has not reached refuses and changes nothing."
+}
 print_rollback() {
-    local started="$1"
+    local started="$1" cur="$DB_FROM" rec_db="" rec_ver="" rec_at="" rec_sha="" prev_sha="" v
     if [ ! -f /opt/shingo/shingocore.previous ]; then
         echo " Rollback: there is no /opt/shingo/shingocore.previous to go back to."
         return
@@ -559,26 +572,46 @@ print_rollback() {
         echo " Rollback: this run created the database (born at v${DB_TO}); the previous build has none to return to."
         return
     fi
-    if [ "$started" = yes ] && [ -n "$DB_FROM" ] && [ "$DB_TO" -gt "$DB_FROM" ]; then
-        echo " Rollback (this run takes the database from v${DB_FROM} to v${DB_TO}):"
-    else
-        echo " Rollback (the database was not migrated by this run):"
+    [ "$started" = yes ] && cur="$DB_TO"
+    if [ -f /opt/shingo/shingocore.previous.info ]; then
+        rec_db=$(sed -n 's/^db_version=//p' /opt/shingo/shingocore.previous.info | head -1)
+        rec_ver=$(sed -n 's/^version=//p' /opt/shingo/shingocore.previous.info | head -1)
+        rec_at=$(sed -n 's/^saved_at=//p' /opt/shingo/shingocore.previous.info | head -1)
+        rec_sha=$(sed -n 's/^sha256=//p' /opt/shingo/shingocore.previous.info | head -1)
+        prev_sha=$(sha256sum /opt/shingo/shingocore.previous 2>/dev/null | cut -d' ' -f1 || true)
     fi
-    echo "   sudo systemctl stop shingo-core"
-    if [ "$started" = yes ] && [ -n "$DB_FROM" ]; then
-        local v=$DB_TO
-        while [ "$v" -gt "$DB_FROM" ]; do
+    if [[ "$rec_db" =~ ^[0-9]+$ ]] && [[ "$cur" =~ ^[0-9]+$ ]] && [ -n "$rec_sha" ] && [ "$rec_sha" = "$prev_sha" ]; then
+        echo " Rollback to ${rec_ver:-the build in /opt/shingo/shingocore.previous} (saved ${rec_at:-at an unknown time}; it was serving the database at v${rec_db}, which stands at v${cur}):"
+        if [ "$cur" -gt "$rec_db" ]; then rollback_down_note; fi
+        echo "   sudo systemctl stop shingo-core"
+        v=$cur
+        while [ "$v" -gt "$rec_db" ]; do
             echo "   sudo -u shingo /opt/shingo/shingocore.next migrate -config /etc/shingo/shingocore.yaml down $v"
             v=$((v - 1))
         done
+    else
+        if [ "$started" = yes ] && [ -n "$DB_FROM" ] && [ "$DB_TO" -gt "$DB_FROM" ]; then
+            echo " Rollback (this run takes the database from v${DB_FROM} to v${DB_TO}):"
+        else
+            echo " Rollback (the database was not migrated by this run):"
+        fi
+        echo "   The database version /opt/shingo/shingocore.previous needs is not recorded (no record beside it, or one"
+        echo "   that is not its own): the down steps below are this run's only. Check that release's schema first."
+        if [ "$started" = yes ] && [ -n "$DB_FROM" ] && [ "$DB_TO" -gt "$DB_FROM" ]; then
+            rollback_down_note
+        fi
+        echo "   sudo systemctl stop shingo-core"
+        if [ "$started" = yes ] && [ -n "$DB_FROM" ]; then
+            v=$DB_TO
+            while [ "$v" -gt "$DB_FROM" ]; do
+                echo "   sudo -u shingo /opt/shingo/shingocore.next migrate -config /etc/shingo/shingocore.yaml down $v"
+                v=$((v - 1))
+            done
+        fi
     fi
     echo "   sudo mv /opt/shingo/shingocore.previous /opt/shingo/shingocore"
     echo "   sudo systemctl start shingo-core"
-    if [ "$started" = yes ] && [ -n "$DB_FROM" ] && [ "$DB_TO" -gt "$DB_FROM" ]; then
-        echo "   Run the down step(s) before the mv: they are in shingocore.next only. If Core stopped before it"
-        echo "   finished migrating, \`shingocore.next migrate -config /etc/shingo/shingocore.yaml check\` says where the"
-        echo "   database stands; a down step for a version it has not reached refuses and changes nothing."
-    fi
+    echo "   sudo rm -f /opt/shingo/shingocore.previous.info"
 }
 
 # ----------------------------------------------------------------------
@@ -613,8 +646,9 @@ fi
 DEPLOY_MARKER=/run/shingo-deploy-in-progress
 touch "$DEPLOY_MARKER"
 # The trap also prints the way back when the install fails after the binary
-# swap (print_rollback above): re-running the installer then would copy the new
-# build over .previous and lose the previous one.
+# swap (print_rollback above). A rerun of the same build keeps the rollback slot,
+# but a run of another build would fill it with this one, so the recipe printed
+# here is the one to keep.
 trap 'rc=$?; rm -f "$DEPLOY_MARKER"; if [ "$rc" -ne 0 ] && [ "$SWAPPED" = yes ]; then echo ""; echo "The install stopped after the new binary went in (exit $rc). To go back to the previous build:"; print_rollback "$STARTED"; fi' EXIT
 
 # ----------------------------------------------------------------------
@@ -694,29 +728,56 @@ fi
 # Install binary
 # ----------------------------------------------------------------------
 
-# One-slot rollback: save the live binary as shingocore.previous before
-# overwriting, and keep the new one as shingocore.next. The recipe, printed by
-# print_rollback with this run's versions (at the end, or from the EXIT trap
-# when the install fails after the swap):
-#   sudo systemctl stop shingo-core
-#   sudo -u shingo /opt/shingo/shingocore.next migrate -config /etc/shingo/shingocore.yaml down <N>
-#     (once per version this run's migrations added, newest first; none when it added none)
-#   sudo mv /opt/shingo/shingocore.previous /opt/shingo/shingocore
-#   sudo systemctl start shingo-core
-# The down runs with the NEW binary, before the mv: only it carries the down step
-# for its own migrations, and the mv overwrites /opt/shingo/shingocore. Nothing
-# stops the previous binary from starting on a database a newer migration has
-# changed (a build accepts a database newer than itself), so the order matters.
-# .previous always reflects the binary that was running just before this
-# install — overwritten on every successful run, so a second install
-# replaces the snapshot. For multi-version recovery use the
-# timestamped /tmp/shingo-pre-install-*.tar.gz (config + DB only) plus
-# git checkout + reinstall.
+# THE ROLLBACK SLOT: /opt/shingo/shingocore.previous and its record,
+# /opt/shingo/shingocore.previous.info. The way back is a fact about the binary
+# in that slot (which release it is, and the database version it was serving),
+# not about this run, so it is written once, when the slot is filled, and read by
+# print_rollback on every run after.
+#   - The live binary is this build (sha256 equal), a rerun: the slot and its
+#     record are left as they are. Copying the live binary into the slot here on
+#     every run is what lost the release a second run replaced: the slot became
+#     the new build, the recipe went v185 -> v185 with no down step, and its mv
+#     put the new build back (closing step 5f's log, 2026-11-21).
+#   - Another build: the live binary goes into the slot (copied to a temp name,
+#     then renamed, so a failed copy leaves the old slot and record as they
+#     were), and its record is written beside it the same way: db_version (this
+#     run's DB_FROM, which migrate check read before anything stopped), version
+#     (its -version line), saved_at, sha256. A failed snapshot writes no record;
+#     a failed record is a WARNING, like a failed snapshot, and print_rollback
+#     then says the version is not recorded.
+#   - A fresh install (no live binary) writes neither.
+# The new binary is kept as shingocore.next: the down steps run with it, before
+# the mv, because only it carries the down steps for its own migrations and the
+# mv overwrites /opt/shingo/shingocore. Nothing stops a build from starting on a
+# database a newer migration changed (a build accepts a database newer than
+# itself), so the order matters. For a release older than the slot's: the
+# config backup in /tmp/shingo-pre-install-*.tar.gz plus a checkout of that
+# release's tag and a reinstall.
 if [ -f /opt/shingo/shingocore ]; then
-    if cp -p /opt/shingo/shingocore /opt/shingo/shingocore.previous; then
-        echo "==> Saved previous binary to /opt/shingo/shingocore.previous"
+    NEW_SHA=$(sha256sum /tmp/shingocore 2>/dev/null | cut -d' ' -f1 || true)
+    LIVE_SHA=$(sha256sum /opt/shingo/shingocore 2>/dev/null | cut -d' ' -f1 || true)
+    if [ -n "$LIVE_SHA" ] && [ "$LIVE_SHA" = "$NEW_SHA" ]; then
+        echo "==> The live binary is this build (sha256 ${LIVE_SHA:0:16}): /opt/shingo/shingocore.previous and its record are kept as they are"
     else
-        echo "    WARNING: failed to snapshot previous binary; install will continue"
+        LIVE_VERSION=$(/opt/shingo/shingocore -version 2>/dev/null | head -1 || true)
+        if cp -p /opt/shingo/shingocore /opt/shingo/shingocore.previous.tmp \
+            && mv -f /opt/shingo/shingocore.previous.tmp /opt/shingo/shingocore.previous; then
+            echo "==> Saved previous binary to /opt/shingo/shingocore.previous (${LIVE_VERSION:-its version unknown})"
+            if { echo "db_version=$DB_FROM"
+                 echo "version=$LIVE_VERSION"
+                 echo "saved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                 echo "sha256=$LIVE_SHA"
+               } > /opt/shingo/shingocore.previous.info.tmp \
+                && mv -f /opt/shingo/shingocore.previous.info.tmp /opt/shingo/shingocore.previous.info; then
+                echo "    and its record, /opt/shingo/shingocore.previous.info: it was serving the database at v${DB_FROM:-?}"
+            else
+                rm -f /opt/shingo/shingocore.previous.info.tmp /opt/shingo/shingocore.previous.info
+                echo "    WARNING: failed to write /opt/shingo/shingocore.previous.info; the rollback will not know the database version it needs"
+            fi
+        else
+            rm -f /opt/shingo/shingocore.previous.tmp
+            echo "    WARNING: failed to snapshot previous binary; install will continue"
+        fi
     fi
 fi
 
