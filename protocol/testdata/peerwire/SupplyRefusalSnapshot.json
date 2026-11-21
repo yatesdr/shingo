@@ -1,0 +1,1 @@
+{"digest":"d-refusals","open":[{"action":"opened","loader_node":"SYN-LOADER","payload_code":"SYN-PART-A","refused_at":"2026-01-02T03:04:05Z","refused_by":"stn-0e0e0e0e0e0e0e0e","ack_at":"2026-01-02T03:06:07Z","ack_choice":"wait","ack_process_id":"SYN-PROC"}]}

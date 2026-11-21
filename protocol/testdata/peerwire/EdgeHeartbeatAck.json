@@ -1,0 +1,1 @@
+{"station_id":"stn-0e0e0e0e0e0e0e0e","server_ts":"2026-01-02T03:04:05Z","timezone":"America/Chicago","feeds":{"nodes":"d-nodes"},"claims":{"SYN-PROC":"d-claims"},"bin_watch":"d-watch","asks":["bin.count"],"ephemeral_topic":"syn.ephemeral"}
