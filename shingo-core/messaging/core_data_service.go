@@ -508,7 +508,10 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 			}
 			cells = append(cells, store.EdgeCell{CellLabel: e.CellLabel, Bindings: bindings})
 		}
-		if err := s.db.UpsertEdgeCells(p.StationID, cells); err != nil {
+		// The register carries no catalog digest: its cells are kept with "",
+		// which matches no Edge's, so an Edge that quotes its cells digest is
+		// answered with a mismatch and sends its catalog once (EdgeCellsDigest).
+		if err := s.db.UpsertEdgeCells(p.StationID, cells, ""); err != nil {
 			log.Printf("core_handler: upsert edge_cells for %s: %v", p.StationID, err)
 		}
 	}

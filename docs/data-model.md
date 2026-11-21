@@ -474,7 +474,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`dashboards`](#core-dashboards) | 9 | `id` |  |
 | [`demand_origins`](#core-demand_origins) | 27 | `origin_id` |  |
 | [`demand_registry`](#core-demand_registry) | 9 | `id` |  |
-| [`edge_cells`](#core-edge_cells) | 6 | `station_uid`, `cell_label` |  |
+| [`edge_cells`](#core-edge_cells) | 7 | `station_uid`, `cell_label` |  |
 | [`edge_lineside_reports`](#core-edge_lineside_reports) | 5 | `station_uid`, `core_node_name`, `payload_code` |  |
 | [`edge_registry`](#core-edge_registry) | 23 | `id` |  |
 | [`inbox`](#core-inbox) | 4 | `msg_id` |  |
@@ -976,14 +976,15 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 #### Core: `edge_cells`
 
-| Column | Type | Not null | Default | Key |
-|---|---|---|---|---|
-| `station_uid` | `text` | yes |  |  |
-| `cell_label` | `text` | yes |  |  |
-| `bindings` | `jsonb` | yes | `'[]'::jsonb` |  |
-| `first_seen` | `timestamp with time zone` | yes | `now()` |  |
-| `last_seen` | `timestamp with time zone` | yes | `now()` |  |
-| `stale` | `boolean` | yes | `false` |  |
+| Column | Type | Not null | Default | Key | Comment |
+|---|---|---|---|---|---|
+| `station_uid` | `text` | yes |  |  |  |
+| `cell_label` | `text` | yes |  |  |  |
+| `bindings` | `jsonb` | yes | `'[]'::jsonb` |  |  |
+| `first_seen` | `timestamp with time zone` | yes | `now()` |  |  |
+| `last_seen` | `timestamp with time zone` | yes | `now()` |  |  |
+| `stale` | `boolean` | yes | `false` |  |  |
+| `catalog_digest` | `text` | yes | `''` |  | The digest the cell catalog that made this row live carried (v187): an apply marks every cell of the station stale and makes each listed one live in one transaction, so every live row of a station holds the digest of the catalog it last applied, which Core quotes back to that Edge. No live row is no catalog held. Empty: made live before v187, or by a catalog that carried no digest; it matches no Edge's, so the Edge re-sends. A stale row keeps the digest it was last live under; nothing reads it. |
 
 - Primary key (station_uid, cell_label)
 

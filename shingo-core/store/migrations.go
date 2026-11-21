@@ -227,6 +227,7 @@ func migrationList() []migration {
 	return []migration{
 		{185, "the clean column model: station_uid wherever a station's uid is held, requested_by for Core's actors, dst_station, rds_station; the columns and tables nothing reads dropped", v185Up, v185Verify, v185Down},
 		{186, "plant_claims_reports keyed by station and process: each station is quoted its own digest", v186Up, v186Verify, v186Down},
+		{187, "edge_cells.catalog_digest: the digest of the cell catalog that made a row live, kept with the rows", v187Up, v187Verify, v187Down},
 	}
 }
 

@@ -108,3 +108,38 @@ func TestV186_ReportRowsPerStationAndProcess(t *testing.T) {
 		}
 	}
 }
+
+// TestV187_TheCatalogDigestColumn: v187 adds edge_cells.catalog_digest with
+// an empty default; down drops it and keeps every cell; up again brings it back
+// empty on every row (the next catalog an Edge sends writes it), and a re-run
+// of up changes nothing.
+func TestV187_TheCatalogDigestColumn(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	if err := db.UpsertEdgeCells("stn-a", []store.EdgeCell{{CellLabel: "PLC-1"}}, "d1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := testdb.MigrateDownThrough(cfg, 187); err != nil {
+		t.Fatalf("down through 187: %v", err)
+	}
+	if !schema.ColumnAbsent(db, "edge_cells", "catalog_digest") {
+		t.Fatal("edge_cells.catalog_digest is there after down 187")
+	}
+	const cellsQ = `SELECT station_uid || ':' || cell_label || ':' || stale::text FROM edge_cells ORDER BY station_uid, cell_label`
+	if got := rowsOf(t, db.DB, cellsQ); !reflect.DeepEqual(got, []string{"stn-a:PLC-1:false"}) {
+		t.Errorf("cells after down = %v, want the one live cell", got)
+	}
+	for boot := 1; boot <= 2; boot++ {
+		up, err := store.Open(cfg)
+		if err != nil {
+			t.Fatalf("up again (boot %d): %v", boot, err)
+		}
+		up.Close()
+		if got := rowsOf(t, db.DB, `SELECT cell_label || ':' || catalog_digest FROM edge_cells ORDER BY cell_label`); !reflect.DeepEqual(got, []string{"PLC-1:"}) {
+			t.Errorf("boot %d: cells = %v, want the cell with no digest", boot, got)
+		}
+		if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = 187`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

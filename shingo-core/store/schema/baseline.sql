@@ -1,4 +1,4 @@
--- Core's schema at v186 with its seed rows: GENERATED, never edited by hand.
+-- Core's schema at v187 with its seed rows: GENERATED, never edited by hand.
 -- cmd/schemabaseline boots v0.17.1's chain (v1..v184) on an empty database, runs this
 -- tree's migrations above it (which apply store/schema/comments.sql), and dumps the result with
 -- pg_dump --inserts. Regenerate: make schema-baseline (go run ./cmd/schemabaseline), then make schema-snapshot.
@@ -573,8 +573,11 @@ CREATE TABLE public.edge_cells (
     bindings jsonb DEFAULT '[]'::jsonb NOT NULL,
     first_seen timestamp with time zone DEFAULT now() NOT NULL,
     last_seen timestamp with time zone DEFAULT now() NOT NULL,
-    stale boolean DEFAULT false NOT NULL
+    stale boolean DEFAULT false NOT NULL,
+    catalog_digest text DEFAULT ''::text NOT NULL
 );
+
+COMMENT ON COLUMN public.edge_cells.catalog_digest IS 'The digest the cell catalog that made this row live carried (v187): an apply marks every cell of the station stale and makes each listed one live in one transaction, so every live row of a station holds the digest of the catalog it last applied, which Core quotes back to that Edge. No live row is no catalog held. Empty: made live before v187, or by a catalog that carried no digest; it matches no Edge''s, so the Edge re-sends. A stale row keeps the digest it was last live under; nothing reads it.';
 
 CREATE TABLE public.edge_lineside_reports (
     station_uid text NOT NULL,
@@ -2067,6 +2070,7 @@ INSERT INTO public.schema_migrations VALUES (183, now());
 INSERT INTO public.schema_migrations VALUES (184, now());
 INSERT INTO public.schema_migrations VALUES (185, now());
 INSERT INTO public.schema_migrations VALUES (186, now());
+INSERT INTO public.schema_migrations VALUES (187, now());
 
 SELECT pg_catalog.setval('public.admin_users_id_seq', 1, false);
 
