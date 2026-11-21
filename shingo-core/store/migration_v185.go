@@ -527,9 +527,16 @@ func pgObjectName(name1, name2, label string) string {
 // no identity to keep). Two kinds: a blank-uid row whose station_id is another
 // row's uid (the fold collision: the row that holds the uid is kept), and a
 // row whose uid and station_id are both blank.
+//
+// A row whose uid is set and differs from its station_id is left as it is,
+// and logged too (v185LogReaddressed): it is the one change of meaning the
+// fold cannot see.
 func v185FoldRegistry(tx *sql.Tx) error {
 	if !schema.ColumnExists(tx, "edge_registry", "station_id") {
 		return nil
+	}
+	if err := v185LogReaddressed(tx); err != nil {
+		return err
 	}
 	rows, err := tx.Query(`SELECT r.id, r.station_id FROM edge_registry r
 		 WHERE r.station_uid = ''
@@ -560,12 +567,41 @@ func v185FoldRegistry(tx *sql.Tx) error {
 		if g.stationID == "" {
 			why = "its station_uid and station_id are both blank"
 		}
-		log.Printf("v185: edge_registry row id=%d station_id=%q deleted by the fold: %s", g.id, g.stationID, why)
+		log.Printf("v185: the fold deletes edge_registry row id=%d station_id=%q: %s (the delete stands once v185 commits)", g.id, g.stationID, why)
 		if _, err := tx.Exec(`DELETE FROM edge_registry WHERE id = $1`, g.id); err != nil {
 			return fmt.Errorf("v185 delete registry row %d: %w", g.id, err)
 		}
 	}
 	return v185Exec(tx, "fold the registry", `UPDATE edge_registry SET station_uid = station_id WHERE station_uid = ''`)
+}
+
+// v185LogReaddressed logs each edge_registry row whose station_uid is set and
+// differs from its station_id, and changes none of them. Until v185 the
+// registry's readers that address or route an Edge read station_id; they read
+// station_uid from v185 on, so such a row is addressed by a different name
+// after the deploy, and an Edge that still answers to its old station_id
+// stops hearing Core (a station rename's class: replies dropped, every ask
+// waiting on Core). The person deploying reads the line in Core's journal at
+// the first boot; the rows are the ones a pre-deploy read lists, every row
+// whose station_uid is set and is not its station_id.
+func v185LogReaddressed(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, station_uid, station_id FROM edge_registry
+		 WHERE station_uid <> '' AND station_id <> station_uid ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("v185 find the registry rows read by another name: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var uid, stationID string
+		if err := rows.Scan(&id, &uid, &stationID); err != nil {
+			return err
+		}
+		log.Printf("v185: edge_registry row id=%d is read by its station_uid %q from now on, not its station_id %q: "+
+			"if that Edge still answers to %q, what Core sends it through the registry stops reaching it (the row is unchanged)",
+			id, uid, stationID, stationID)
+	}
+	return rows.Err()
 }
 
 // v185Verify is v185's post-condition, and only the part a re-run of

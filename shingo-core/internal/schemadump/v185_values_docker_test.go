@@ -3,8 +3,11 @@
 package schemadump_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"io"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -116,10 +119,21 @@ func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 	original := v184Rows(t, seeded)
 	seeded.Close()
 	t0 := time.Now()
+	bootLog := captureLog(t)
 	if err := inst.Reboot(ctx, name); err != nil {
 		t.Fatalf("this build's boot (v185): %v", err)
 	}
 	t.Logf("v185 up on the seeded database: %v", time.Since(t0).Round(time.Millisecond))
+	// The fold changes no row whose uid is set, but row 3's station_id is not
+	// its uid, and the readers v185 moves address it by the uid from now on:
+	// the boot names it, and names no row whose two agree.
+	logged := bootLog()
+	if want := `edge_registry row id=3 is read by its station_uid "uid-r4" from now on, not its station_id "legacy-x"`; !strings.Contains(logged, want) {
+		t.Errorf("the boot's log does not name the readdressed registry row; want a line with %q in:\n%s", want, logged)
+	}
+	if strings.Contains(logged, "edge_registry row id=1 is read by") {
+		t.Errorf("the boot's log names registry row 1, whose station_id is its uid:\n%s", logged)
+	}
 
 	db := openTest(t, inst, name)
 	assertV185Rows(t, db)
@@ -192,6 +206,27 @@ func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 			t.Errorf("%s boot %d after down re-ran a migration whose verify failed:\n%s", store.RetiredChainRelease, boot, out)
 		}
 	}
+}
+
+// captureLog copies the standard logger's output (where store's migrations
+// log) into a buffer as well, until the returned func is called: it puts the
+// output back and returns what was written. Lines other parallel tests log
+// land in it too; the caller looks for its own.
+func captureLog(t *testing.T) func() string {
+	t.Helper()
+	was := log.Writer()
+	var buf bytes.Buffer
+	log.SetOutput(io.MultiWriter(was, &buf))
+	done := false
+	stop := func() string {
+		if !done {
+			log.SetOutput(was)
+			done = true
+		}
+		return buf.String()
+	}
+	t.Cleanup(func() { stop() })
+	return stop
 }
 
 // v184Rows reads the seeded tables on their v184 names, one string per table,

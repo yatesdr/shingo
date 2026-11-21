@@ -376,11 +376,12 @@ var blankStationSites = map[string]bsSite{
 	"www:robotsAtNodes":                                   notOrder(`alias == "" ×1`, "an RDS map point (robot CurrentStation)"),
 
 	// ── Migration text ─────────────────────────────────────────────────────
-	"store:v185Actors":       history(`Core actor name ×3`, "v185's three actors, which it moves out of the station columns into requested_by"),
-	"store:v185Ops":          history(`SQL station = '' ×5, SQL station IN (…) ×2`, "v185's CHECKs: every edge_registry row has its uid, no Core actor stands in orders' or mission_telemetry's station_uid, and an order or a mission has one requester, its station or a Core actor"),
-	"store:v185Moves":        history(`SQL station = '' ×12, SQL station IN (…) ×3`, "v185's data moves and their inverses: the actors out of the station columns, the uid out of actor, and back"),
-	"store:v185Down":         history(`SQL station = '' ×1`, "v185's down step: it puts back the partial uid index, which leaves out a blank uid"),
-	"store:v185FoldRegistry": history(`station == "" ×1, SQL station = '' ×3`, "v185's registry fold: a blank uid takes the row's station_id; a colliding or both-blank row is deleted"),
+	"store:v185Actors":         history(`Core actor name ×3`, "v185's three actors, which it moves out of the station columns into requested_by"),
+	"store:v185Ops":            history(`SQL station = '' ×5, SQL station IN (…) ×2`, "v185's CHECKs: every edge_registry row has its uid, no Core actor stands in orders' or mission_telemetry's station_uid, and an order or a mission has one requester, its station or a Core actor"),
+	"store:v185Moves":          history(`SQL station = '' ×12, SQL station IN (…) ×3`, "v185's data moves and their inverses: the actors out of the station columns, the uid out of actor, and back"),
+	"store:v185Down":           history(`SQL station = '' ×1`, "v185's down step: it puts back the partial uid index, which leaves out a blank uid"),
+	"store:v185FoldRegistry":   history(`station == "" ×1, SQL station = '' ×3`, "v185's registry fold: a blank uid takes the row's station_id; a colliding or both-blank row is deleted"),
+	"store:v185LogReaddressed": history(`SQL station = '' ×1`, "v185's registry log: a row whose uid is set and is not its station_id is named, since the moved readers address it by the uid; it changes no row"),
 }
 
 // TestCensus_BlankStationSites holds blankStationSites to the tree: every
