@@ -2908,7 +2908,13 @@ The `v` field in the envelope is an integer protocol version. The current versio
 - New optional payload fields may be added in a minor update without incrementing `v`.
 - New message types (new `type` strings) may be added without incrementing `v`. Consumers should log and ignore unknown types.
 - New data channel subjects may be added without incrementing `v`. Handlers should log and ignore unknown subjects.
-- Changes to existing field semantics, field removals, or envelope structure changes require incrementing `v`.
+- A payload key may be removed without incrementing `v` once no peer at or above the floor (below) reads it.
+  Consumers ignore unknown keys, so a peer that still sends it loses nothing; one that read it would see the zero
+  value, which is why the removal waits for a reader search, of this tree and of the floor's two releases, that
+  finds none. A key a peer at the floor reads stays, however little this build uses it. The peer-wire pins
+  (`TestPeerWire_APeersBodyDecodesOnTodaysType`, `TestPeerWire_TodaysBodyDecodesOnAPeersType`) hold every other
+  key both ways.
+- Changes to existing field semantics, or envelope structure changes, require incrementing `v`.
 
 **The peer floor.** `FloorCore` and `FloorEdge` (`protocol/peer_floor.go`) name the oldest Core and Edge releases
 this build supports. The floor is reported, never enforced: nothing is refused, and a path kept only for a peer
