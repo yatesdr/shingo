@@ -203,6 +203,12 @@ type censusFunc struct {
 	push     string            // the push primitive the body makes, if any
 	bumpSQL  bool              // the body carries delta_epoch = delta_epoch + …
 	bumps    int               // s.bumpEpoch calls in the body
+	// The change doors census (feed_doors_census_test.go): the body writes a
+	// table a feed reads, calls a change door, and the methods it calls on a
+	// store-shaped receiver.
+	feedSQL bool
+	door    bool
+	dbCalls map[string]bool
 }
 
 func parseCoreCallGraph(t *testing.T, root string) *coreCallGraph {
@@ -284,9 +290,11 @@ func (g *coreCallGraph) addFile(dir string, f *ast.File) {
 			switch e := n.(type) {
 			case *ast.BasicLit:
 				cf.bumpSQL = cf.bumpSQL || (e.Kind == token.STRING && bumpSQL.MatchString(e.Value))
+				cf.feedSQL = cf.feedSQL || (e.Kind == token.STRING && feedWriteSQL.MatchString(e.Value))
 			case *ast.CallExpr:
 				if s, ok := e.Fun.(*ast.SelectorExpr); ok {
 					cf.notePrimitive(s.Sel.Name, e)
+					cf.noteFeedCall(s)
 				}
 			}
 			return true

@@ -43,7 +43,8 @@ const (
 	// which forgets the memos and pushes the stations their new copies, and a
 	// reply forgets its station's (HandleNodeListRequest). So this is the
 	// backstop for a write that reaches no door: it reaches the Edge up to two
-	// minutes and a heartbeat later.
+	// minutes and a heartbeat later (those writers are named in
+	// TestFeedWrites_EveryWriterReachesADoorOrIsNamed).
 	feedMemoStation = 2 * time.Minute
 )
 

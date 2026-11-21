@@ -18,7 +18,8 @@ import "sync/atomic"
 // write made stale at once and pushes each Edge its new copy a moment later.
 // Unset (a test, a tool), nothing is called, and the heartbeat compare carries
 // the change once the memo ages out. Pinned by
-// TestFeedsChanged_PushesWhatTheWriteChanged.
+// TestFeedsChanged_PushesWhatTheWriteChanged; every writer reaches a door or is
+// named in TestFeedWrites_EveryWriterReachesADoorOrIsNamed.
 //
 // Atomic because the composition root sets it after the services are built,
 // while HTTP handlers may already be writing.
