@@ -486,6 +486,10 @@ echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
 (cd "$REPO_ROOT/shingo-core" && "$GO_BIN" build \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \
     -o /tmp/shingocore ./cmd/shingocore)
+# The check below runs it as the shingo user: a root umask of 077 would leave
+# it 0700 and the check would fail to start for a reason that is not the
+# database's.
+chmod 755 /tmp/shingocore
 echo "==> Build succeeded"
 
 # ----------------------------------------------------------------------
@@ -515,13 +519,15 @@ else
     check_out=$(cd /tmp && runuser -u shingo -- /tmp/shingocore migrate -config "$CHECK_CONFIG" check 2>&1) || check_rc=$?
     printf '%s\n' "$check_out" | sed 's/^/    /'
     if [ "$check_rc" -ne 0 ]; then
-        echo "ERROR: the new build would not start on this database (migrate check exit $check_rc)."
+        case "$check_rc" in
+            1) echo "ERROR: the new build would not start on this database (migrate check refused it)."
+               echo "       Do what the sentence above says (it names the release to install first), then rerun." ;;
+            2) echo "ERROR: migrate check could not read the database or its config (exit 2; the reason is above)."
+               echo "       Fix that (connection, credentials, $CHECK_CONFIG readable by the shingo user), then rerun." ;;
+            *) echo "ERROR: migrate check did not run (exit $check_rc): the reason is above, not the database."
+               echo "       (126: /tmp/shingocore could not be executed, e.g. a noexec /tmp; 127: runuser missing.)" ;;
+        esac
         echo "       Nothing was stopped or changed: Core is still running the previous build."
-        if [ "$check_rc" -eq 1 ]; then
-            echo "       Do what the sentence above says (it names the release to install first), then rerun."
-        else
-            echo "       The check could not read the database: fix the connection, then rerun."
-        fi
         rm -f /tmp/shingocore
         exit 1
     fi
@@ -534,6 +540,46 @@ else
         exit 1
     fi
 fi
+
+# print_rollback prints the way back to the previous build, from what this run
+# does to the database (DB_FROM -> DB_TO, from migrate check). It runs at the end
+# of a good install, and from the EXIT trap when the install fails after the
+# binary swap, which is when the operator needs it most. Its argument says
+# whether Core has been started on the new build: before that the database is
+# still at DB_FROM and there is no down step to run.
+SWAPPED=no
+STARTED=no
+print_rollback() {
+    local started="$1"
+    if [ ! -f /opt/shingo/shingocore.previous ]; then
+        echo " Rollback: there is no /opt/shingo/shingocore.previous to go back to."
+        return
+    fi
+    if [ "$DB_FROM" = "0" ]; then
+        echo " Rollback: this run created the database (born at v${DB_TO}); the previous build has none to return to."
+        return
+    fi
+    if [ "$started" = yes ] && [ -n "$DB_FROM" ] && [ "$DB_TO" -gt "$DB_FROM" ]; then
+        echo " Rollback (this run takes the database from v${DB_FROM} to v${DB_TO}):"
+    else
+        echo " Rollback (the database was not migrated by this run):"
+    fi
+    echo "   sudo systemctl stop shingo-core"
+    if [ "$started" = yes ] && [ -n "$DB_FROM" ]; then
+        local v=$DB_TO
+        while [ "$v" -gt "$DB_FROM" ]; do
+            echo "   sudo -u shingo /opt/shingo/shingocore.next migrate -config /etc/shingo/shingocore.yaml down $v"
+            v=$((v - 1))
+        done
+    fi
+    echo "   sudo mv /opt/shingo/shingocore.previous /opt/shingo/shingocore"
+    echo "   sudo systemctl start shingo-core"
+    if [ "$started" = yes ] && [ -n "$DB_FROM" ] && [ "$DB_TO" -gt "$DB_FROM" ]; then
+        echo "   Run the down step(s) before the mv: they are in shingocore.next only. If Core stopped before it"
+        echo "   finished migrating, \`shingocore.next migrate -config /etc/shingo/shingocore.yaml check\` says where the"
+        echo "   database stands; a down step for a version it has not reached refuses and changes nothing."
+    fi
+}
 
 # ----------------------------------------------------------------------
 # FHS directories
@@ -566,7 +612,10 @@ fi
 # crash alerts while the install is restarting the service.
 DEPLOY_MARKER=/run/shingo-deploy-in-progress
 touch "$DEPLOY_MARKER"
-trap 'rm -f "$DEPLOY_MARKER"' EXIT
+# The trap also prints the way back when the install fails after the binary
+# swap (print_rollback above): re-running the installer then would copy the new
+# build over .previous and lose the previous one.
+trap 'rc=$?; rm -f "$DEPLOY_MARKER"; if [ "$rc" -ne 0 ] && [ "$SWAPPED" = yes ]; then echo ""; echo "The install stopped after the new binary went in (exit $rc). To go back to the previous build:"; print_rollback "$STARTED"; fi' EXIT
 
 # ----------------------------------------------------------------------
 # Stop existing core
@@ -646,16 +695,18 @@ fi
 # ----------------------------------------------------------------------
 
 # One-slot rollback: save the live binary as shingocore.previous before
-# overwriting, and keep the new one as shingocore.next. The recipe, printed at
-# the end with this run's versions:
+# overwriting, and keep the new one as shingocore.next. The recipe, printed by
+# print_rollback with this run's versions (at the end, or from the EXIT trap
+# when the install fails after the swap):
 #   sudo systemctl stop shingo-core
 #   sudo -u shingo /opt/shingo/shingocore.next migrate -config /etc/shingo/shingocore.yaml down <N>
 #     (once per version this run's migrations added, newest first; none when it added none)
 #   sudo mv /opt/shingo/shingocore.previous /opt/shingo/shingocore
 #   sudo systemctl start shingo-core
 # The down runs with the NEW binary, before the mv: only it carries the down step
-# for its own migrations, and the mv overwrites /opt/shingo/shingocore. The
-# previous binary does not start on a database a newer migration has run on.
+# for its own migrations, and the mv overwrites /opt/shingo/shingocore. Nothing
+# stops the previous binary from starting on a database a newer migration has
+# changed (a build accepts a database newer than itself), so the order matters.
 # .previous always reflects the binary that was running just before this
 # install — overwritten on every successful run, so a second install
 # replaces the snapshot. For multi-version recovery use the
@@ -671,10 +722,20 @@ fi
 
 echo "==> Installing binary to /opt/shingo/shingocore..."
 mv /tmp/shingocore /opt/shingo/shingocore
+SWAPPED=yes
 chown shingo:shingo /opt/shingo/shingocore
 chmod 755 /opt/shingo/shingocore
-cp -p /opt/shingo/shingocore /opt/shingo/shingocore.next
-echo "==> Kept the new binary as /opt/shingo/shingocore.next (its migrate down is the rollback)"
+# A hard link, not a copy: it costs no space, so it cannot fail on a full disk
+# between the stop and the start (the next install's mv replaces the name, and
+# the link keeps this binary). The copy is only the fallback, and failing both
+# is a warning, not an exit: the rollback then needs this release rebuilt.
+if ln -f /opt/shingo/shingocore /opt/shingo/shingocore.next 2>/dev/null \
+    || cp -p /opt/shingo/shingocore /opt/shingo/shingocore.next; then
+    echo "==> Kept the new binary as /opt/shingo/shingocore.next (its migrate down is the rollback)"
+else
+    echo "    WARNING: could not keep /opt/shingo/shingocore.next; a rollback's down step needs this release's"
+    echo "             binary (install-core.sh --tag of this release rebuilds it, but also starts it)"
+fi
 
 echo "==> Installing alert-on-stop.sh to /opt/shingo/..."
 cp "$REPO_ROOT/scripts/alert-on-stop.sh" /opt/shingo/alert-on-stop.sh
@@ -870,50 +931,74 @@ fi
 # Start service
 # ----------------------------------------------------------------------
 echo "==> Starting shingo-core..."
-RESTARTS_BEFORE=$(systemctl show shingo-core -p NRestarts --value 2>/dev/null || echo 0)
+STARTED=yes
 systemctl start shingo-core
+# The restart counter is read AFTER the start: a manual start resets NRestarts
+# to 0 (systemd's service_start), so a value read before it, on a box whose Core
+# once restarted itself, would read as a restart on the first pass. Only a rise
+# from here is one.
+RESTARTS_BEFORE=$(systemctl show shingo-core -p NRestarts --value 2>/dev/null || echo 0)
 
-# WAIT FOR HEALTH, NOT is-active. The unit is Type=simple, so it reads active
-# the moment the process exists, while Core is still migrating the database
-# (the column-model migration takes a minute or more on a large plant
-# database; the web server starts after migrate) or already crash-looping on
-# a refused one (Restart=always brings it
-# back every 5 s, active each time). Core answers /api/health only once it is
-# up and has its database. A restart counter that moves while waiting is a
+# WAIT FOR CORE TO ANSWER, NOT FOR is-active. The unit is Type=simple, so it
+# reads active the moment the process exists, while Core is still migrating the
+# database (the column-model migration takes minutes on a large plant database)
+# or already crash-looping on a refused one (Restart=always brings it back every
+# 5 s, active each time). Any HTTP answer counts, not only a healthy one: the
+# web server starts after migrate (cmd/shingocore/main.go: store.Open, then
+# startHTTPServer), so an answer means the migration is done, while
+# /api/health's own verdict pings the fleet and reads reconciliation and can be
+# slow or a 500 for reasons outside this install (RDS dark, for one). The wait
+# is a wall-clock deadline. A restart counter that rises while waiting is a
 # crash loop: stop there and show why.
 WEB_PORT=8083
+WEB_HOST=127.0.0.1
 if [ -f /etc/shingo/shingocore.yaml ]; then
-    cfg_port=$(awk '/^web:/{w=1; next} /^[^[:space:]#]/{w=0} w && $1=="port:" {print $2; exit}' \
-               /etc/shingo/shingocore.yaml | tr -d "\"' ")
+    # The web block's port and host, CRLF-tolerant. A host bound to every
+    # address (or none named) is reached on loopback; a named one, on itself.
+    cfg_port=$(tr -d '\r' < /etc/shingo/shingocore.yaml \
+               | awk '/^web:/{w=1; next} /^[^[:space:]#]/{w=0} w && $1=="port:" {print $2; exit}' | tr -d "\"' ")
     case "$cfg_port" in ''|*[!0-9]*) ;; *) WEB_PORT="$cfg_port" ;; esac
+    cfg_host=$(tr -d '\r' < /etc/shingo/shingocore.yaml \
+               | awk '/^web:/{w=1; next} /^[^[:space:]#]/{w=0} w && $1=="host:" {print $2; exit}' | tr -d "\"' ")
+    case "$cfg_host" in ''|0.0.0.0|::|'[::]'|localhost) ;; *) WEB_HOST="$cfg_host" ;; esac
 fi
+WEB_URL="http://${WEB_HOST}:${WEB_PORT}/api/health"
 HEALTH_WAIT_S=900
-echo "==> Waiting up to ${HEALTH_WAIT_S}s for Core to answer http://127.0.0.1:${WEB_PORT}/api/health"
+echo "==> Waiting up to ${HEALTH_WAIT_S}s for Core to answer ${WEB_URL}"
 echo "    (a release that migrates the database starts serving only when the migration is done)"
 HEALTHY=no
-for i in $(seq 1 "$HEALTH_WAIT_S"); do
+HEALTH_CODE=""
+wait_start=$SECONDS
+next_note=$((SECONDS + 30))
+while [ $((SECONDS - wait_start)) -lt "$HEALTH_WAIT_S" ]; do
     if [ "$MODE" = "FRESH" ]; then
         # A fresh box's config is a placeholder with no database: Core cannot
         # serve until the operator sets one (see IMPORTANT below). Active is all
         # there is to wait for.
-        systemctl is-active --quiet shingo-core && { HEALTHY=active; break; }
-    elif curl -fsS -m 3 -o /dev/null "http://127.0.0.1:${WEB_PORT}/api/health" 2>/dev/null; then
-        HEALTHY=yes
-        break
+        if systemctl is-active --quiet shingo-core; then HEALTHY=active; break; fi
+    else
+        HEALTH_CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$WEB_URL" 2>/dev/null || true)
+        if [ -n "$HEALTH_CODE" ] && [ "$HEALTH_CODE" != "000" ]; then
+            HEALTHY=yes
+            break
+        fi
     fi
     restarts_now=$(systemctl show shingo-core -p NRestarts --value 2>/dev/null || echo 0)
-    if [ "${restarts_now:-0}" != "${RESTARTS_BEFORE:-0}" ]; then
+    if [ "${restarts_now:-0}" -gt "${RESTARTS_BEFORE:-0}" ]; then
         echo "ERROR: shingo-core restarted while starting (NRestarts ${RESTARTS_BEFORE} -> ${restarts_now}): it is crash-looping."
         echo "Recent journal:"
         journalctl -u shingo-core -n 50 --no-pager || true
         exit 1
     fi
-    [ $((i % 30)) -eq 0 ] && echo "    still starting after ${i}s: $(journalctl -u shingo-core -n 1 --no-pager -o cat 2>/dev/null || true)"
+    if [ "$SECONDS" -ge "$next_note" ]; then
+        echo "    still starting after $((SECONDS - wait_start))s: $(journalctl -u shingo-core -n 1 --no-pager -o cat 2>/dev/null || true)"
+        next_note=$((SECONDS + 30))
+    fi
     sleep 1
 done
 
 if [ "$HEALTHY" = "no" ]; then
-    echo "ERROR: shingo-core did not answer /api/health within ${HEALTH_WAIT_S}s."
+    echo "ERROR: shingo-core did not answer ${WEB_URL} within ${HEALTH_WAIT_S}s."
     echo "Recent journal:"
     journalctl -u shingo-core -n 50 --no-pager || true
     exit 1
@@ -972,7 +1057,7 @@ echo "============================================================"
 echo " shingo-core install complete"
 echo "============================================================"
 if [ "$HEALTHY" = "yes" ]; then
-    echo " Service status: serving (/api/health answered)"
+    echo " Service status: serving (Core answered HTTP ${HEALTH_CODE})"
 else
     echo " Service status: active (no database configured yet)"
 fi
@@ -982,19 +1067,8 @@ echo " Backup:  $BACKUP_PATH"
 echo " Version: ${BUILD_VERSION} (${BUILD_COMMIT})"
 sync_checkout_source_line
 echo " Logs:    sudo journalctl -u shingo-core -f"
-if [ "$DB_FROM" = "0" ]; then
-    echo " Rollback: this run created the database (born at v${DB_TO}); the previous build has none to return to."
-elif [ -n "$DB_FROM" ] && [ -f /opt/shingo/shingocore.previous ]; then
-    echo " Rollback (this run took the database from v${DB_FROM} to v${DB_TO}):"
-    echo "   sudo systemctl stop shingo-core"
-    v=$DB_TO
-    while [ "$v" -gt "$DB_FROM" ]; do
-        echo "   sudo -u shingo /opt/shingo/shingocore.next migrate -config /etc/shingo/shingocore.yaml down $v"
-        v=$((v - 1))
-    done
-    echo "   sudo mv /opt/shingo/shingocore.previous /opt/shingo/shingocore"
-    echo "   sudo systemctl start shingo-core"
-    echo "   Run the down step(s) before the mv: they are in shingocore.next only."
+if [ -n "$DB_FROM" ]; then
+    print_rollback yes
 fi
 # Journal retention is host-wide (journald has no per-unit retention), but it
 # ships with the product: unconfigured retention is how Springfield ended up
