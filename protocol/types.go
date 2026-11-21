@@ -311,6 +311,24 @@ const (
 	// next ack, which still quotes the old digest.
 	SubjectBinsWatch = "bins.watch"
 
+	// SubjectEdgeCells — Edge → Core: this Edge's whole cell catalog
+	// (CellCatalog), its reporting points grouped by PLC. Core applies it as
+	// authoritative: the cells it names are the station's and every other cell
+	// of the station's goes stale, so an empty catalog empties the station's
+	// cells, which the register's catalog (EdgeRegister.Catalog) cannot do. The
+	// body names no station: the sender is the envelope's Address.Station.
+	//
+	// The Edge should send it on a reporting-point or process-counter save and
+	// when the ack's digest for its cells differs from its own, and only to a
+	// Core whose ack answers for the cells: an older Core has no handler and
+	// logs and drops it. Never through a register, whose handling re-runs the
+	// Edge's claims publish and loader sweeps.
+	//
+	// A snapshot healed by the ack, so a plain data TTL (subjectTTLs), not a
+	// must-arrive one: a lost or expired copy shows as a differing cells digest
+	// on the next ack, which sends the catalog again.
+	SubjectEdgeCells = "edge.cells"
+
 	// SubjectBinsSnapshot — Core → one Edge: the bins at the nodes that Edge
 	// watches (NodeBinsSnapshot), under feed key FeedBins. Sent on receipt of
 	// a watch list, after a change at a watched node, and when the Edge's
@@ -370,6 +388,7 @@ func CoreInboundSubjects() []string {
 		SubjectHoldDropped,
 		SubjectBinsWatch,
 		SubjectEdgeAsk,
+		SubjectEdgeCells,
 	}
 }
 

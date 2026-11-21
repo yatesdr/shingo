@@ -309,6 +309,53 @@ func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
 	}
 }
 
+// TestHandleEdgeCells_TheCatalogIsTheStationsWholeSet: an edge.cells is the
+// sending station's whole catalog. Its cells are the station's, live; a cell it
+// no longer names goes stale; an empty catalog leaves none live, which the
+// register (non-empty gate) cannot do. The station is the envelope's, and
+// another station's cells are not touched.
+func TestHandleEdgeCells_TheCatalogIsTheStationsWholeSet(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
+	from := func(st string) *protocol.Envelope {
+		return &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: st}}
+	}
+	cell := func(label string, proc int64) protocol.CellCatalogEntry {
+		return protocol.CellCatalogEntry{CellLabel: label,
+			Processes: []protocol.CellProcessBinding{{ProcessID: proc, StyleID: 1, PLCName: label, TagName: "T"}}}
+	}
+	live := func(st string) []string {
+		t.Helper()
+		cells, err := db.ListEdgeCells(st)
+		testutil.MustNoErr(t, err, "list edge cells")
+		var out []string
+		for _, c := range cells {
+			if !c.Stale {
+				out = append(out, c.CellLabel)
+			}
+		}
+		return out
+	}
+	want := func(st string, labels ...string) {
+		t.Helper()
+		if got := live(st); strings.Join(got, ",") != strings.Join(labels, ",") {
+			t.Errorf("%s's live cells = %v, want %v", st, got, labels)
+		}
+	}
+
+	svc.HandleEdgeCells(from("stn-cells-a"), &protocol.CellCatalog{Cells: []protocol.CellCatalogEntry{cell("PLC-1", 1), cell("PLC-2", 2)}})
+	svc.HandleEdgeCells(from("stn-cells-b"), &protocol.CellCatalog{Cells: []protocol.CellCatalogEntry{cell("PLC-9", 9)}})
+	want("stn-cells-a", "PLC-1", "PLC-2")
+	want("stn-cells-b", "PLC-9")
+
+	svc.HandleEdgeCells(from("stn-cells-a"), &protocol.CellCatalog{Cells: []protocol.CellCatalogEntry{cell("PLC-2", 2)}})
+	want("stn-cells-a", "PLC-2")
+	svc.HandleEdgeCells(from("stn-cells-a"), &protocol.CellCatalog{Cells: []protocol.CellCatalogEntry{}})
+	want("stn-cells-a")
+	want("stn-cells-b", "PLC-9")
+}
+
 // TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic pins D2's advertising
 // half: the registration reply and every heartbeat ack name the ephemeral
 // topic the messaging client verified, read at send time, and name nothing

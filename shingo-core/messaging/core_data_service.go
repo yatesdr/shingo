@@ -499,19 +499,14 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	// Q-034: persist the auto-derived cell catalog so heartbeats populate
 	// without manual setup. Additive — an old edge sends no catalog (len 0) and
 	// we leave edge_cells untouched. Non-fatal: registration succeeds regardless.
+	// The non-empty gate stays: on this field absent and empty are the same
+	// bytes, so a register cannot empty a station's cells; edge.cells
+	// (HandleEdgeCells) is the message that can.
 	if len(p.Catalog) > 0 {
-		cells := make([]store.EdgeCell, 0, len(p.Catalog))
-		for _, e := range p.Catalog {
-			bindings, err := json.Marshal(e.Processes)
-			if err != nil {
-				continue
-			}
-			cells = append(cells, store.EdgeCell{CellLabel: e.CellLabel, Bindings: bindings})
-		}
 		// The register carries no catalog digest: its cells are kept with "",
 		// which matches no Edge's, so an Edge that quotes its cells digest is
 		// answered with a mismatch and sends its catalog once (EdgeCellsDigest).
-		if err := s.db.UpsertEdgeCells(p.StationID, cells, ""); err != nil {
+		if err := s.db.UpsertEdgeCells(p.StationID, edgeCellsOf(p.Catalog), ""); err != nil {
 			log.Printf("core_handler: upsert edge_cells for %s: %v", p.StationID, err)
 		}
 	}
@@ -552,6 +547,34 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.Resync(p.StationID)
 	}
+}
+
+// HandleEdgeCells applies an Edge's whole cell catalog (protocol.SubjectEdgeCells)
+// as authoritative: the cells it names are the station's and every other cell
+// of the station's goes stale (UpsertEdgeCells), so an empty catalog empties
+// the station's cells, which the register's non-empty gate never could. The
+// catalog's digest is kept with the rows (EdgeCellsDigest reads it back). The
+// station is the envelope's sender; the body names none.
+func (s *CoreDataService) HandleEdgeCells(env *protocol.Envelope, p *protocol.CellCatalog) {
+	station := env.Src.Station
+	if err := s.db.UpsertEdgeCells(station, edgeCellsOf(p.Cells), p.Digest); err != nil {
+		log.Printf("core_handler: apply edge.cells for %s (%d cells): %v", station, len(p.Cells), err)
+	}
+}
+
+// edgeCellsOf is a wire cell catalog as edge_cells rows: a cell's process
+// bindings kept as the JSON the API serves back. A cell whose bindings do not
+// marshal is skipped.
+func edgeCellsOf(catalog []protocol.CellCatalogEntry) []store.EdgeCell {
+	cells := make([]store.EdgeCell, 0, len(catalog))
+	for _, e := range catalog {
+		bindings, err := json.Marshal(e.Processes)
+		if err != nil {
+			continue
+		}
+		cells = append(cells, store.EdgeCell{CellLabel: e.CellLabel, Bindings: bindings})
+	}
+	return cells
 }
 
 // HandleEdgeHeartbeat marks an enrolled station alive.

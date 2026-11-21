@@ -275,6 +275,39 @@ func BinWatchDigest(nodes []string) (string, error) {
 	return Digest(out)
 }
 
+// CellCatalogDigest is the digest of an Edge's cell catalog: cells by label,
+// nil as empty. A cell's binding order is data where Core reads it: the first
+// binding's process is the cell's primary and the rest its satellites
+// (service.deriveCellConfig), so the order of processes is kept. Bindings of
+// one process side by side differ only in what Core does not order by, and the
+// Edge's builder leaves them in an unstable order (it sorts by process alone),
+// so the copy sorts each such run by (style, tag): a rebuild of the same points
+// digests the same. The Edge sets CellCatalog.Digest from it; Core quotes that
+// back.
+func CellCatalogDigest(cells []CellCatalogEntry) (string, error) {
+	out := make([]CellCatalogEntry, len(cells))
+	for i, c := range cells {
+		procs := append([]CellProcessBinding{}, c.Processes...)
+		for start := 0; start < len(procs); {
+			end := start + 1
+			for end < len(procs) && procs[end].ProcessID == procs[start].ProcessID {
+				end++
+			}
+			run := procs[start:end]
+			sort.Slice(run, func(i, j int) bool {
+				if run[i].StyleID != run[j].StyleID {
+					return run[i].StyleID < run[j].StyleID
+				}
+				return run[i].TagName < run[j].TagName
+			})
+			start = end
+		}
+		out[i] = CellCatalogEntry{CellLabel: c.CellLabel, Processes: procs}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CellLabel < out[j].CellLabel })
+	return Digest(out)
+}
+
 // NodeBinsDigest is the FeedBins digest over a snapshot's list digest, rows
 // and groups: rows by node, groups by name, a group's wants by (bin type,
 // layers) and its assignments by (node, bin type); a row's members and inbound

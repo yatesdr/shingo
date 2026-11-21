@@ -298,6 +298,58 @@ func TestClaimsDigest_Golden(t *testing.T) {
 	}
 }
 
+// TestCellCatalogDigest_Golden: the cells digest is fixed for a fixed catalog;
+// the order of cells, nil against empty, and the order of one process's
+// bindings (which the Edge's builder leaves unstable) do not move it; the order
+// of processes (the first is the cell's primary at Core) and any binding field
+// do.
+func TestCellCatalogDigest_Golden(t *testing.T) {
+	t.Parallel()
+	d := digester(t)
+	bind := func(proc, style int64, tag string) CellProcessBinding {
+		return CellProcessBinding{ProcessID: proc, StyleID: style, PLCName: "PLC-1", TagName: tag}
+	}
+	cell := CellCatalogEntry{CellLabel: "PLC-1", Processes: []CellProcessBinding{bind(1, 10, "T1")}}
+	// [{"cell_label":"PLC-1","processes":[{"process_id":1,"style_id":10,"plc_name":"PLC-1","tag_name":"T1"}]}]
+	base := d(CellCatalogDigest([]CellCatalogEntry{cell}))
+	if base != "2eb893ce87cd8586" {
+		t.Errorf("CellCatalogDigest = %s, want 2eb893ce87cd8586", base)
+	}
+	if a, b := d(CellCatalogDigest(nil)), d(CellCatalogDigest([]CellCatalogEntry{})); a != b {
+		t.Errorf("nil vs empty catalog: %s != %s", a, b)
+	}
+	if a, b := d(CellCatalogDigest([]CellCatalogEntry{{CellLabel: "PLC-2"}})),
+		d(CellCatalogDigest([]CellCatalogEntry{{CellLabel: "PLC-2", Processes: []CellProcessBinding{}}})); a != b {
+		t.Errorf("nil vs empty bindings: %s != %s", a, b)
+	}
+	other := CellCatalogEntry{CellLabel: "PLC-2", Processes: []CellProcessBinding{bind(2, 20, "T2")}}
+	if a, b := d(CellCatalogDigest([]CellCatalogEntry{cell, other})),
+		d(CellCatalogDigest([]CellCatalogEntry{other, cell})); a != b {
+		t.Errorf("reordered cells: %s != %s", a, b)
+	}
+	oneProc := func(bs ...CellProcessBinding) string {
+		return d(CellCatalogDigest([]CellCatalogEntry{{CellLabel: "PLC-1", Processes: bs}}))
+	}
+	if a, b := oneProc(bind(1, 10, "T1"), bind(1, 11, "T1"), bind(2, 10, "T2")),
+		oneProc(bind(1, 11, "T1"), bind(1, 10, "T1"), bind(2, 10, "T2")); a != b {
+		t.Errorf("one process's bindings reordered: %s != %s", a, b)
+	}
+	if a, b := oneProc(bind(1, 10, "T1"), bind(2, 10, "T2")), oneProc(bind(2, 10, "T2"), bind(1, 10, "T1")); a == b {
+		t.Errorf("reordered processes (a new primary) left the digest at %s", a)
+	}
+	for name, changed := range map[string]string{
+		"label":   d(CellCatalogDigest([]CellCatalogEntry{{CellLabel: "PLC-9", Processes: cell.Processes}})),
+		"process": oneProc(bind(3, 10, "T1")),
+		"style":   oneProc(bind(1, 12, "T1")),
+		"tag":     oneProc(bind(1, 10, "T9")),
+		"a cell":  d(CellCatalogDigest([]CellCatalogEntry{cell, other})),
+	} {
+		if changed == base {
+			t.Errorf("%s change left the digest at %s", name, base)
+		}
+	}
+}
+
 // TestAllFeeds_NamesEveryFeedConst: AllFeeds lists every Feed* constant in
 // feeds.go once, so a seventh feed declared without joining it fails here, and
 // through AllFeeds each side's coverage test fails where its row is missing.

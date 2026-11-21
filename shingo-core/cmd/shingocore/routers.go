@@ -66,6 +66,7 @@ func buildSubjectRouter(svc *messaging.CoreDataService, askServer *asks.Server) 
 	router.RegisterSubject(r, protocol.SubjectHoldDropped, svc.HandleHoldDropped)
 	router.RegisterSubject(r, protocol.SubjectBinsWatch, svc.HandleBinWatch)
 	router.RegisterSubject(r, protocol.SubjectEdgeAsk, askServer.Handle)
+	router.RegisterSubject(r, protocol.SubjectEdgeCells, svc.HandleEdgeCells)
 
 	for _, s := range protocol.CoreInboundSubjects() {
 		if !r.Has(s) {

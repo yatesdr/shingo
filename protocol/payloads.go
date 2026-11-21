@@ -36,6 +36,18 @@ type CellCatalogEntry struct {
 	Processes []CellProcessBinding `json:"processes"`
 }
 
+// CellCatalog is SubjectEdgeCells' body: an Edge's whole cell catalog. It
+// names no station; the sender is the envelope's Address.Station.
+type CellCatalog struct {
+	// Digest is CellCatalogDigest(Cells), set by the Edge where it builds the
+	// catalog. Core should keep it with the station's cells and quote it back on
+	// the heartbeat ack, never recomputing it.
+	Digest string `json:"digest"`
+	// Cells is every cell the Edge reports. NOT omitempty: an empty catalog is a
+	// value, and Core empties the station's cells on it.
+	Cells []CellCatalogEntry `json:"cells"`
+}
+
 // EdgeRegister is sent by an edge on startup.
 //
 // StationID CARRIES THE STATION UID, and the field is deliberately NOT

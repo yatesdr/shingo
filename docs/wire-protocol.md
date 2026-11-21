@@ -406,6 +406,7 @@ The direction is which side's inbound list names the subject (`protocol.CoreInbo
 | `demand.origin` | `SubjectDemandOrigin` | Edge → Core | [`DemandOriginState`](#demandoriginstate) |
 | `edge.answer` | `SubjectEdgeAnswer` | Core → Edge | [`EdgeAnswer`](#edgeanswer) |
 | `edge.ask` | `SubjectEdgeAsk` | Edge → Core | [`EdgeAsk`](#edgeask) |
+| `edge.cells` | `SubjectEdgeCells` | Edge → Core | [`CellCatalog`](#cellcatalog) |
 | `edge.heartbeat` | `SubjectEdgeHeartbeat` | Edge → Core | [`EdgeHeartbeat`](#edgeheartbeat) |
 | `edge.heartbeat_ack` | `SubjectEdgeHeartbeatAck` | Core → Edge | [`EdgeHeartbeatAck`](#edgeheartbeatack) |
 | `edge.register` | `SubjectEdgeRegister` | Edge → Core | [`EdgeRegister`](#edgeregister) |
@@ -462,6 +463,7 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `demand.origin` | 5 min |
 | `edge.answer` | **none** |
 | `edge.ask` | 25 s |
+| `edge.cells` | 5 min |
 | `edge.heartbeat` | 5 min |
 | `edge.heartbeat_ack` | 5 min |
 | `edge.register` | 5 min |
@@ -638,6 +640,23 @@ The sending station is the envelope's `src.station`, which is what Core's handle
 a `station` field: [`BinUOPDelta`](#binuopdelta)'s, which no handler reads, and
 [`LinesideLevelReport`](#linesidelevelreport)'s, which Core reads first, falling back to `src.station` when it is
 empty.
+
+#### CellCatalog
+
+Sent on `edge.cells`: an edge's whole cell catalog, with its digest (`CellCatalogDigest` in `protocol/feeds.go`).
+Core applies it as the sending station's whole set (`HandleEdgeCells`): the cells it names are live and every other
+cell of that station's goes stale, so an empty catalog leaves none, which the register's `catalog` cannot do. The
+body names no station; the sender is the envelope's `src.station`. It is a snapshot the heartbeat ack heals, so it
+takes the data channel's TTL.
+
+<!-- generated: protocol struct CellCatalog -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `digest` | string |  | Digest is CellCatalogDigest(Cells), set by the Edge where it builds the catalog. Core should keep it with the station's cells and quote it back on the heartbeat ack, never recomputing it. |
+| `cells` | [`CellCatalogEntry`](#cellcatalogentry)[] |  | Cells is every cell the Edge reports. NOT omitempty: an empty catalog is a value, and Core empties the station's cells on it. |
+
+<!-- /generated -->
 
 #### EdgeHeartbeat
 

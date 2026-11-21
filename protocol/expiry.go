@@ -149,6 +149,12 @@ var subjectTTLs = map[string]time.Duration{
 	SubjectOrderStatusRequest:  5 * time.Minute,
 	SubjectOrderStatusResponse: 5 * time.Minute,
 
+	// The cell catalog is a whole snapshot that the heartbeat ack heals: a copy
+	// lost or expired shows as a differing cells digest on the next ack, which
+	// sends the catalog again. So it takes the data channel's TTL and is not
+	// must-arrive.
+	SubjectEdgeCells: 5 * time.Minute,
+
 	// The ask pair (ask.go): an ask stays answerable for AskTTL, and Core
 	// answers one that arrives late instead of the ingestor dropping it
 	// (Ingestor.OnExpired); an answer is a fact already true at Core and never
