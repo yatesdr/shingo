@@ -44,3 +44,7 @@ func ResetPublicObjectsForTest(cfg *config.DatabaseConfig) error {
 	defer db.Close()
 	return resetPublicObjects(db)
 }
+
+// V185JSONGuardOnForTest is the statement v185 makes its JSON guard with, for
+// the test that reads which schema the guard lands in.
+const V185JSONGuardOnForTest = v185JSONGuardOn

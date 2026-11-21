@@ -242,3 +242,73 @@ func resetThenBootTwice(t *testing.T, reset func(*config.DatabaseConfig) error) 
 		}
 	}
 }
+
+// TestV185_TheJSONGuardNeedsNoTempPrivilege: v185's audit_log move reads
+// new_value through a guard function it makes inside its transaction. Made in
+// pg_temp it needed the TEMP privilege, and a Core role without TEMP failed
+// v185, up and down, on every boot. It is made in schema public and dropped
+// before the commit: here a role that holds no TEMP, may CREATE in public and
+// owns every table there (it births the database) runs down 185 and the boot
+// that brings v185 back, and afterwards no v185_jsonb is left in any schema.
+func TestV185_TheJSONGuardNeedsNoTempPrivilege(t *testing.T) {
+	t.Parallel()
+	cfg := testdb.OpenEmpty(t)
+	su := openRaw(t, cfg)
+
+	tx, err := su.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(store.V185JSONGuardOnForTest); err != nil {
+		tx.Rollback()
+		t.Fatalf("make the JSON guard: %v", err)
+	}
+	var where string
+	err = tx.QueryRow(`SELECT n.nspname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.proname = 'v185_jsonb'`).Scan(&where)
+	tx.Rollback()
+	if err != nil || where != "public" {
+		t.Fatalf("the JSON guard is made in schema %q (err %v), want public", where, err)
+	}
+
+	role := "notemp_" + cfg.Postgres.Database
+	for _, q := range []string{
+		`CREATE ROLE ` + role + ` LOGIN PASSWORD 'notemp' NOSUPERUSER NOCREATEDB NOCREATEROLE`,
+		`GRANT CREATE ON SCHEMA public TO ` + role,
+		`REVOKE TEMPORARY ON DATABASE ` + cfg.Postgres.Database + ` FROM PUBLIC`,
+	} {
+		if _, err := su.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	t.Cleanup(func() {
+		su.Exec(`DROP OWNED BY ` + role)
+		su.Exec(`DROP ROLE ` + role)
+	})
+	var temp bool
+	if err := su.QueryRow(`SELECT has_database_privilege($1, current_database(), 'TEMP')`, role).Scan(&temp); err != nil || temp {
+		t.Fatalf("the role holds TEMP %v (err %v): this test would pass whichever schema the guard is made in", temp, err)
+	}
+	asRole := *cfg
+	asRole.Postgres.User, asRole.Postgres.Password = role, "notemp"
+
+	born, err := store.Open(&asRole)
+	if err != nil {
+		t.Fatalf("birth on the baseline as a role without TEMP: %v", err)
+	}
+	born.Close()
+	if err := store.MigrateDown(&asRole, 185); err != nil {
+		t.Fatalf("migrate down 185 as a role without TEMP: %v", err)
+	}
+	up, err := store.Open(&asRole)
+	if err != nil {
+		t.Fatalf("v185 up as a role without TEMP: %v", err)
+	}
+	up.Close()
+	var head, guards int
+	if err := su.QueryRow(`SELECT (SELECT max(version) FROM schema_migrations), (SELECT count(*) FROM pg_proc WHERE proname = 'v185_jsonb')`).Scan(&head, &guards); err != nil {
+		t.Fatal(err)
+	}
+	if head != 185 || guards != 0 {
+		t.Errorf("after down and up as a role without TEMP: head v%d, %d v185_jsonb functions left; want v185 and none", head, guards)
+	}
+}

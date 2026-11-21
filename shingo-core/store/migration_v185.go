@@ -722,19 +722,24 @@ func v185CommentsOff(comments string) string {
 
 // v185AuditKeyMove renames the from key of audit_log's floor_create rows to
 // to. new_value is text a writer wrote as JSON; a row that does not parse as
-// a JSON object is left as it was (v185JSONGuard counts it), so one bad row
+// a JSON object is left as it was (v185JSONGuardOff counts it), so one bad row
 // cannot fail the migration on every boot.
 func v185AuditKeyMove(from, to string) string {
 	return `UPDATE audit_log a SET new_value = ((p.j - '` + from + `') || jsonb_build_object('` + to + `', p.j -> '` + from + `'))::text
-		  FROM (SELECT id, pg_temp.v185_jsonb(new_value) AS j FROM audit_log
+		  FROM (SELECT id, public.v185_jsonb(new_value) AS j FROM audit_log
 		         WHERE entity_type = 'payload' AND action = 'floor_create') p
 		 WHERE a.id = p.id AND jsonb_typeof(p.j) = 'object' AND p.j ? '` + from + `'`
 }
 
-// v185JSONGuardOn creates, for this transaction's session, the function the
+// v185JSONGuardOn creates, inside up's or down's transaction, the function the
 // audit_log move reads new_value through: the text as jsonb, or NULL where
-// the cast fails, in place of the cast's error.
-const v185JSONGuardOn = `CREATE OR REPLACE FUNCTION pg_temp.v185_jsonb(t text) RETURNS jsonb LANGUAGE plpgsql AS $$
+// the cast fails, in place of the cast's error. It is made in schema public,
+// where Core's user made every table (the baseline and each migration create
+// there), not in pg_temp, which needs the TEMP privilege a plant's role may
+// not hold: without it v185 failed on every boot. v185JSONGuardOff drops it before the
+// commit and a rollback takes it with the rest, so no other session sees it
+// (TestV185_TheJSONGuardNeedsNoTempPrivilege).
+const v185JSONGuardOn = `CREATE OR REPLACE FUNCTION public.v185_jsonb(t text) RETURNS jsonb LANGUAGE plpgsql AS $$
 BEGIN
 	RETURN t::jsonb;
 EXCEPTION WHEN others THEN
@@ -746,11 +751,11 @@ END $$`
 func v185JSONGuardOff(tx *sql.Tx) error {
 	var left int
 	if err := tx.QueryRow(`SELECT count(*) FROM audit_log WHERE entity_type = 'payload' AND action = 'floor_create'
-		AND jsonb_typeof(pg_temp.v185_jsonb(new_value)) IS DISTINCT FROM 'object'`).Scan(&left); err != nil {
+		AND jsonb_typeof(public.v185_jsonb(new_value)) IS DISTINCT FROM 'object'`).Scan(&left); err != nil {
 		return fmt.Errorf("v185 count the floor_create rows that are not JSON: %w", err)
 	}
 	if left > 0 {
 		log.Printf("v185: %d audit_log floor_create rows whose new_value is not a JSON object were left as they were", left)
 	}
-	return v185Exec(tx, "drop the JSON guard", `DROP FUNCTION pg_temp.v185_jsonb(text)`)
+	return v185Exec(tx, "drop the JSON guard", `DROP FUNCTION public.v185_jsonb(text)`)
 }
