@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"slices"
@@ -12,11 +14,15 @@ import (
 // The drift report: at boot, after migrate, the live schema read in one
 // catalog query and compared with the snapshot this build ships
 // (store/schema/schema.snapshot.sql, embedded): its tables, columns (type,
-// default, NOT NULL), indexes and constraints, runtime partitions skipped.
-// Each difference is a log line and a Core Health reason naming the object.
-// It refuses nothing: since the squash at v184 a boot no longer repairs a
-// hand-dropped index or column as the replay did, and this is how one is
-// seen.
+// default, NOT NULL), indexes, constraints and triggers, each as pg_dump
+// spells it, and its functions by name, arguments, result and body (the
+// body as a digest of its text with whitespace folded). Runtime partitions
+// are skipped, and so are an extension's functions. Each difference is a log
+// line and a Core Health reason naming the object. It refuses nothing: since
+// the squash at v184 a boot no longer repairs a hand-dropped index, column or
+// trigger as the replay did, and this is how one is seen. What it does not
+// read: sequences, views, types, a function's volatility, security and
+// settings, and grants.
 
 var (
 	driftTableRe     = regexp.MustCompile(`(?s)^CREATE TABLE public\.(\w+) \(\n(.*?)\n\)(\nPARTITION BY .*)?;$`)
@@ -25,7 +31,20 @@ var (
 	driftConRe       = regexp.MustCompile(`(?s)^ALTER TABLE (?:ONLY )?public\.(\w+)\s+ADD CONSTRAINT (\w+) (.*);$`)
 	driftDefaultRe   = regexp.MustCompile(`^ALTER TABLE ONLY public\.(\w+) ALTER COLUMN (\w+) SET DEFAULT (.*);$`)
 	driftAttachRe    = regexp.MustCompile(`ATTACH PARTITION public\.(\w+)`)
+	driftTriggerRe   = regexp.MustCompile(`(?s)^(CREATE (?:CONSTRAINT )?TRIGGER (\w+) .*? ON public\.(\w+) .*);$`)
+	// pg_dump's CREATE FUNCTION: the signature and result on the first line,
+	// then LANGUAGE and the rest, then AS and the body between dollar quotes.
+	driftFunctionRe = regexp.MustCompile(`(?s)^CREATE FUNCTION public\.(\w+\(.*?\)) RETURNS ([^\n]*)\n.*?\bAS (\$\w*\$)(.*)$`)
 )
+
+// functionDef is a function's definition as the drift report compares it: its
+// result, and a digest of its body with whitespace folded (a body re-indented
+// by an old release's migration is the same body). liveObjectsSQL computes the
+// same value in SQL.
+func functionDef(result, body string) string {
+	sum := md5.Sum([]byte(strings.Join(strings.Fields(body), " ")))
+	return "RETURNS " + result + ", body md5 " + hex.EncodeToString(sum[:])
+}
 
 // snapshotObjects parses a pg_dump --schema-only text into its shape: each
 // object keyed by its kind and name ("column orders.status"), with its
@@ -43,6 +62,24 @@ func snapshotObjects(dump string) (map[string]string, error) {
 		switch {
 		case driftPartitionRe.MatchString(stmt):
 			continue
+		case strings.HasPrefix(stmt, "CREATE FUNCTION "):
+			m := driftFunctionRe.FindStringSubmatch(stmt)
+			body, ok := "", false
+			if m != nil {
+				body, ok = strings.CutSuffix(m[4], m[3]+";")
+			}
+			if !ok {
+				return nil, fmt.Errorf("the snapshot has a CREATE FUNCTION the drift report cannot read: %.80s", stmt)
+			}
+			out["function "+m[1]] = functionDef(m[2], body)
+		case strings.HasPrefix(stmt, "CREATE TRIGGER "), strings.HasPrefix(stmt, "CREATE CONSTRAINT TRIGGER "):
+			m := driftTriggerRe.FindStringSubmatch(stmt)
+			if m == nil {
+				return nil, fmt.Errorf("the snapshot has a CREATE TRIGGER the drift report cannot read: %.80s", stmt)
+			}
+			if !children[m[3]] {
+				out["trigger "+m[3]+"."+m[2]] = m[1]
+			}
 		case strings.HasPrefix(stmt, "CREATE TABLE "):
 			m := driftTableRe.FindStringSubmatch(stmt)
 			if m == nil {
@@ -118,10 +155,13 @@ func splitSchemaStatements(dump string) []string {
 
 // liveObjectsSQL reads the live shape in pg_dump's own spelling: the same
 // catalog functions pg_dump calls (format_type, pg_get_expr, pg_get_indexdef,
-// pg_get_constraintdef), under the empty search_path pg_dump sets, so every
+// pg_get_constraintdef, pg_get_triggerdef, pg_get_function_arguments and
+// pg_get_function_result), under the empty search_path pg_dump sets, so every
 // name comes back schema-qualified as the snapshot has it. Partitions and
-// their indexes and constraints are skipped; an index that backs a
-// constraint is the constraint's.
+// their indexes, constraints and triggers are skipped, as are the triggers
+// Postgres makes for a foreign key (tgisinternal) and an extension's
+// functions; an index that backs a constraint is the constraint's. A
+// function's body is folded and digested as functionDef does.
 const liveObjectsSQL = `
 SELECT 'table ' || c.relname, ''
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -151,7 +191,22 @@ SELECT 'constraint ' || t.relname || '.' || k.conname, pg_catalog.pg_get_constra
   FROM pg_catalog.pg_constraint k
   JOIN pg_catalog.pg_class t ON t.oid = k.conrelid
   JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
- WHERE n.nspname = 'public' AND NOT t.relispartition AND k.contype IN ('c', 'f', 'p', 'u', 'x')`
+ WHERE n.nspname = 'public' AND NOT t.relispartition AND k.contype IN ('c', 'f', 'p', 'u', 'x')
+UNION ALL
+SELECT 'trigger ' || c.relname || '.' || g.tgname, pg_catalog.pg_get_triggerdef(g.oid)
+  FROM pg_catalog.pg_trigger g
+  JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND NOT g.tgisinternal AND NOT c.relispartition
+UNION ALL
+SELECT 'function ' || p.proname || '(' || pg_catalog.pg_get_function_arguments(p.oid) || ')',
+       'RETURNS ' || pg_catalog.pg_get_function_result(p.oid) || ', body md5 '
+       || pg_catalog.md5(pg_catalog.btrim(pg_catalog.regexp_replace(p.prosrc, '\s+', ' ', 'g'), ' '))
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname = 'public'
+   AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d
+                    WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid AND d.deptype = 'e')`
 
 // liveObjects reads the live shape in one query, on one connection, under the
 // empty search_path for that query only.
@@ -249,7 +304,7 @@ func objectTable(key, def string) string {
 	switch kind {
 	case "table":
 		return name
-	case "column", "constraint":
+	case "column", "constraint", "trigger":
 		t, _, _ := strings.Cut(name, ".")
 		return t
 	case "index":

@@ -60,6 +60,46 @@ func TestSchemaDrift_NamesAHandDroppedIndexAnAddedColumnAndAMissingTable(t *test
 	}
 }
 
+// TestSchemaDrift_NamesAHandDroppedTriggerAndAChangedFunction: the report
+// reads triggers and functions too. Since the squash nothing replays
+// bin_types_family_of_one, the trigger that gives a new bin type its carrier
+// family, so a hand-dropped one would otherwise go unseen: it is one line, as
+// are a hand-edited body of its function and a function added by hand. An
+// extension's functions are not Core's schema and are not named.
+func TestSchemaDrift_NamesAHandDroppedTriggerAndAChangedFunction(t *testing.T) {
+	t.Parallel()
+	raw, cfg := testdb.OpenWithConfig(t)
+	for _, q := range []string{
+		`DROP TRIGGER bin_types_family_of_one ON bin_types`,
+		`CREATE OR REPLACE FUNCTION bin_types_family_of_one() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`,
+		`CREATE FUNCTION zz_hand_added(n integer) RETURNS integer LANGUAGE sql AS $$ SELECT n $$`,
+		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
+	} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	db, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("the boot refused a drifted database; the report refuses nothing: %v", err)
+	}
+	defer db.Close()
+	got := db.DriftAtBoot()
+	want := []string{
+		"schema drift: function bin_types_family_of_one() differs: the database has RETURNS trigger, body md5 ",
+		"schema drift: function zz_hand_added(n integer) is in the database and not in this build's schema",
+		"schema drift: trigger bin_types.bin_types_family_of_one is missing (this build ships it)",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("the boot's drift report:\n  got  %q\n  want lines starting %q", got, want)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Errorf("drift line %d:\n  got  %q\n  want it to start %q", i+1, got[i], want[i])
+		}
+	}
+}
+
 // TestV185_AHandDroppedIndexIsDriftNotARerun: v185's verify asserts only what
 // a re-run of v185 restores, so an index dropped by hand after it ran does not
 // make the next boot re-run it (which would take every table's lock and still
