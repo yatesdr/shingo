@@ -469,7 +469,7 @@ func buildRefusalsFeed(s *CoreDataService, _ string) (string, any, bool, error) 
 	if err != nil {
 		return "", nil, true, err
 	}
-	return digest, protocol.SupplyRefusalSnapshot{Digest: digest, Open: open}, true, nil
+	return digest, protocol.SupplyRefusalSnapshot{Open: open}, true, nil
 }
 
 func buildNodesFeed(s *CoreDataService, station string) (string, any, bool, error) {

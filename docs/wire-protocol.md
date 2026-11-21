@@ -1539,7 +1539,6 @@ from Core's. The Edge merges it per field and re-sends what it owns that Core is
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `digest` | string |  |  |
 | `open` | [`SupplyRefusalState`](#supplyrefusalstate)[] |  |  |
 
 <!-- /generated -->

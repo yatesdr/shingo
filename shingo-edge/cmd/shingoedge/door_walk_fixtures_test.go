@@ -496,7 +496,7 @@ func subjectFixtures() map[string]subjectFixture {
 				LoaderNode: "SMN_W1", PayloadCode: "PART-W", RefusedAt: time.Now().UTC(), RefusedBy: "Another Edge"})
 		}},
 		"data:" + protocol.SubjectSupplyRefusalSnapshot: {env: func(w *walk) *protocol.Envelope {
-			return w.dataEnv(protocol.SubjectSupplyRefusalSnapshot, protocol.SupplyRefusalSnapshot{Digest: w.uniq("ref")})
+			return w.dataEnv(protocol.SubjectSupplyRefusalSnapshot, protocol.SupplyRefusalSnapshot{})
 		}},
 		"data:" + protocol.SubjectOrderProjected: {moves: true, env: func(w *walk) *protocol.Envelope {
 			return w.dataEnv(protocol.SubjectOrderProjected, protocol.OrderProjection{OrderUUID: w.uniq("projected"),

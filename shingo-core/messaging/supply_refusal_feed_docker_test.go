@@ -103,8 +103,8 @@ func TestRefusalsFeed_BuildAndSend(t *testing.T) {
 			// The value sent is the value digested, and the ack quotes the same digest.
 			recomputed, err := protocol.RefusalsDigest(snap.Open)
 			testutil.MustNoErr(t, err, "recompute")
-			if snap.Digest != digest || recomputed != digest {
-				t.Errorf("snapshot digest %q, recomputed %q, ack %q: want all equal", snap.Digest, recomputed, digest)
+			if recomputed != digest {
+				t.Errorf("the snapshot's rows digest to %q, the ack quotes %q: want them equal", recomputed, digest)
 			}
 			if len(snap.Open) != tc.wantOpenNo {
 				t.Errorf("snapshot open = %d rows, want %d", len(snap.Open), tc.wantOpenNo)

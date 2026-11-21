@@ -517,11 +517,7 @@ var feedGoldens = map[string]feedGolden{
 		},
 		fromWire: func(t *testing.T, sent any) string {
 			snap := decodeWire[protocol.SupplyRefusalSnapshot](t, sent)
-			d := goldenDigest(t)(protocol.RefusalsDigest(snap.Open))
-			if snap.Digest != d {
-				t.Errorf("refusals: the snapshot names digest %s, its rows digest to %s", snap.Digest, d)
-			}
-			return d
+			return goldenDigest(t)(protocol.RefusalsDigest(snap.Open))
 		},
 	},
 	// {"nodes":[{"name":"LN-1","node_type":""}],"loaders":[],

@@ -162,7 +162,7 @@ func TestApplySupplyRefusalSnapshot_Ownership(t *testing.T) {
 			digest, err := protocol.RefusalsDigest(tc.core)
 			testutil.MustNoErr(t, err, "core digest")
 
-			testutil.MustNoErr(t, f.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: digest, Open: tc.core}), "apply")
+			testutil.MustNoErr(t, f.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Open: tc.core}), "apply")
 
 			if got := refusalTable(t, f.db); strings.Join(got, "\n") != strings.Join(tc.wantRows, "\n") {
 				t.Errorf("rows:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.wantRows, "\n"))
@@ -192,12 +192,9 @@ func TestApplySupplyRefusalSnapshot_ClaimReadFails_FailsClosed(t *testing.T) {
 	f := seedLoaderCard(t)
 	testutil.MustNoErr(t, f.db.OpenSupplyRefusal(f.core, "PART-A", "Bin Loader"), "seed own refusal")
 	snap := protocol.SupplyRefusalSnapshot{Open: []protocol.SupplyRefusalState{coreRefusal("LN-OTHER", "PART-B", "edge.b", "")}}
-	var err error
-	snap.Digest, err = protocol.RefusalsDigest(snap.Open)
-	testutil.MustNoErr(t, err, "core digest")
 	rowsBefore, emitsBefore := refusalTable(t, f.db), refusalEmits(t, f.db)
 
-	_, err = f.db.Exec(`ALTER TABLE style_node_claims RENAME TO style_node_claims_hidden`)
+	_, err := f.db.Exec(`ALTER TABLE style_node_claims RENAME TO style_node_claims_hidden`)
 	testutil.MustNoErr(t, err, "hide claims")
 	if err := f.eng.ApplySupplyRefusalSnapshot(snap); err == nil {
 		t.Fatal("apply with the claim read failing returned nil, want the read error")
@@ -294,9 +291,7 @@ func TestHandleSupplyRefusalState_OwnWindowExistenceIsLocal(t *testing.T) {
 	testutil.MustNoErr(t, f.eng.UndoSupplyRefusal(f.nodeID, "PART-A"), "undo")
 	f.eng.HandleSupplyRefusalState(opened(f.core))
 	stale := []protocol.SupplyRefusalState{coreRefusal(f.core, "PART-A", "Bin Loader", "")}
-	d, err := protocol.RefusalsDigest(stale)
-	testutil.MustNoErr(t, err, "digest")
-	testutil.MustNoErr(t, f.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: d, Open: stale}), "apply")
+	testutil.MustNoErr(t, f.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Open: stale}), "apply")
 	if got := refusalEmits(t, f.db); strings.Join(got, ",") != "closed "+f.core+"/PART-A,closed "+f.core+"/PART-A" {
 		t.Errorf("after the undo and the snapshot: outbox = %v, want the undo's Closed and the re-sent Closed", got)
 	}

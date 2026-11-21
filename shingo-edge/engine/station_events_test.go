@@ -43,7 +43,7 @@ func TestSupplyRefusalChanged_EveryDoorThatWritesTheTable(t *testing.T) {
 	})
 	testutil.MustNoErr(t, f.eng.RefuseSupply(f.nodeID, "PART-B", "Bin Loader"), "refuse PART-B")
 	f.eng.clearRefusalOnLoad(f.core, "PART-B")
-	testutil.MustNoErr(t, f.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: "d"}), "snapshot")
+	testutil.MustNoErr(t, f.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{}), "snapshot")
 
 	want := []string{"SMN_014/PART-A", "SMN_014/PART-A", "SMN_014/PART-A", "SMN_099/PART-Z",
 		"SMN_014/PART-B", "SMN_014/PART-B", "/"}

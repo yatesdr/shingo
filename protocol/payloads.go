@@ -2386,9 +2386,12 @@ type SupplyRefusalState struct {
 // The Edge does not simply replace its table with it: a refusal has two authors,
 // and an Edge keeps (and re-sends) the facts it authored that Core has not
 // recorded. See the Edge's ApplySupplyRefusalSnapshot.
+//
+// It carries no digest: the Edge digests its own table after applying it
+// (RefusalsDigest), which is what its next heartbeat quotes. A Core before this
+// build also sent a "digest", which no Edge read.
 type SupplyRefusalSnapshot struct {
-	Digest string               `json:"digest"`
-	Open   []SupplyRefusalState `json:"open"`
+	Open []SupplyRefusalState `json:"open"`
 }
 
 // --- Containment: Core -> Edge ---

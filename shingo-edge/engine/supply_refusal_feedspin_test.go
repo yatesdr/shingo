@@ -348,13 +348,13 @@ func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 	if engB.FeedDigests()[protocol.FeedRefusals] == coreDigest() {
 		t.Fatal("B's refusals digest equals Core's although Core lacks B's answer")
 	}
-	testutil.MustNoErr(t, engB.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: coreDigest(), Open: coreOpen}), "B applies")
+	testutil.MustNoErr(t, engB.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Open: coreOpen}), "B applies")
 	healed := refusalOutbox(t, dbB)
 	if len(healed) != 2 || healed[1].Action != protocol.SupplyRefusalAcked {
 		t.Fatalf("B's outbox after the snapshot = %+v, want the lost Acked re-emitted", healed)
 	}
 	coreOpen[0].AckAt, coreOpen[0].AckChoice, coreOpen[0].AckProcessID = healed[1].AckAt, healed[1].AckChoice, healed[1].AckProcessID
-	testutil.MustNoErr(t, a.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: coreDigest(), Open: coreOpen}), "A applies")
+	testutil.MustNoErr(t, a.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Open: coreOpen}), "A applies")
 
 	cases := []struct {
 		name, got, want, after, label string
