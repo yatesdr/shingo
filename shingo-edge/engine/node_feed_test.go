@@ -69,6 +69,43 @@ func TestApplyCatalog_HoldsTheDigest(t *testing.T) {
 	}
 }
 
+// TestApplyCatalog_TheHeldDigestWritesNothing: a catalog whose digest is the
+// one held applies none of its rows (here a row that differs, so a write would
+// show) and keeps the digest and its received time; one with no digest (an
+// older Core) still applies.
+func TestApplyCatalog_TheHeldDigestWritesNothing(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	e := testEngine(t, db)
+	e.ApplyCatalog(&protocol.CatalogPayloadsResponse{Digest: "c1",
+		Payloads: []protocol.CatalogPayloadInfo{{ID: 1, Name: "PART-A", Code: "PART-A", UOPCapacity: 24}}})
+	first, _ := e.FeedTimes(protocol.FeedCatalog)
+	capacity := func() int {
+		t.Helper()
+		row, err := db.GetPayloadCatalogByCode("PART-A")
+		testutil.MustNoErr(t, err, "read PART-A")
+		return row.UOPCapacity
+	}
+
+	e.ApplyCatalog(&protocol.CatalogPayloadsResponse{Digest: "c1",
+		Payloads: []protocol.CatalogPayloadInfo{{ID: 1, Name: "PART-A", Code: "PART-A", UOPCapacity: 99}}})
+	if got := capacity(); got != 24 {
+		t.Errorf("PART-A capacity after the held digest = %d, want 24: the rows were written", got)
+	}
+	if got := e.heldDigest(protocol.FeedCatalog); got != "c1" {
+		t.Errorf("held catalog digest = %q, want c1", got)
+	}
+	if again, _ := e.FeedTimes(protocol.FeedCatalog); first.IsZero() || again.Before(first) {
+		t.Errorf("received time %v after %v: the held digest must still be received (the screens' as-of)", again, first)
+	}
+
+	e.ApplyCatalog(&protocol.CatalogPayloadsResponse{
+		Payloads: []protocol.CatalogPayloadInfo{{ID: 1, Name: "PART-A", Code: "PART-A", UOPCapacity: 99}}})
+	if got := capacity(); got != 99 {
+		t.Errorf("PART-A capacity after an older Core's reply = %d, want 99: a reply with no digest applies", got)
+	}
+}
+
 // TestApplyCatalog_StaleDigestTakesTheManifestLines: an Edge holding an older
 // catalog (no lines, digest c1) is sent the current one, whose row carries its
 // manifest template lines (digest c2). The lines land in the Edge's catalog

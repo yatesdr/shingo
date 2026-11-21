@@ -54,7 +54,22 @@ func (e *Engine) ApplyNodeList(resp *protocol.NodeListResponse) {
 
 // ApplyCatalog applies one catalog message from Core and, when it carries a
 // digest and the rows landed, holds that digest.
+//
+// A DIGEST EQUAL TO THE ONE HELD WRITES NOTHING, as ApplyNodeList's: the rows
+// it covers are the ones held, and the sync would still commit a transaction,
+// move the catalog generation (every reader of the rows reads again) and
+// redraw the boards. Only the received time moves (holdFeed), as for an
+// identical re-send of any feed. A reply with no digest (an older Core)
+// applies as it always did. The digest is held only after the rows landed, so
+// a held digest is rows this Edge has; the one writer of catalog rows beside
+// the feed, a new part's answer (applyNewPart), holds no digest. PIN:
+// TestApplyCatalog_TheHeldDigestWritesNothing,
+// TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts.
 func (e *Engine) ApplyCatalog(resp *protocol.CatalogPayloadsResponse) {
+	if resp.Digest != "" && resp.Digest == e.heldDigest(protocol.FeedCatalog) {
+		e.holdFeed(protocol.FeedCatalog, resp.Digest, "")
+		return
+	}
 	if err := e.HandlePayloadCatalog(resp.Payloads); err == nil && resp.Digest != "" {
 		e.holdFeed(protocol.FeedCatalog, resp.Digest, "")
 	}
