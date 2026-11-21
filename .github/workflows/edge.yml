@@ -135,7 +135,10 @@ jobs:
   # can. split-package takes engine out of the packing and runs it as three
   # slices by the letter after "Test" (A-C, D-P, the rest), sized from the
   # package's per-test times so each is about a third. The other packages keep
-  # the three shards they already filled.
+  # the three shards they already filled. MEASURED on ci-speed (run
+  # 44862808679, census off): the slices took 250s, 185s and 233s and the
+  # other shards 164-275s, so the workflow went from 670s to 310s, running
+  # the same tests (the census, runs 44858100586 and 44861630657).
   #
   # No Postgres: edge is SQLite throughout.
 

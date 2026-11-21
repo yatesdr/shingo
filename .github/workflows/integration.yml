@@ -111,6 +111,9 @@ jobs:
   # matrix; c = every other test, by -skip of a's and b's patterns together, so
   # each test runs in exactly one slice. A first cut of two (S1-S5 against the
   # rest) put 25% of the time on one side and ran its other slice for 801s.
+  # MEASURED with the three (run 44862808560, census off): docker slices 176-
+  # 256s, race slices 330-450s, the workflow 455s against 1,241s as one job,
+  # running the same tests (the census, runs 44858100662 and 44861630659).
   # testcontainers starts each job's own Postgres.
   docker:
     runs-on: ubuntu-latest
