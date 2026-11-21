@@ -180,59 +180,27 @@ jobs:
   # Six shards for core: 49 packages with a long tail, and the floor is the
   # single longest package (shingocore/engine, ~20s).
 
-  # THE PLAIN SUITE IS ONE JOB, AND IT WAS SHARDED FOR EXACTLY ONE RUN.
+  # THE PLAIN SUITE IS SHARDED AGAIN, TWO WAYS, BECAUSE IT IS NOW THE LONG POLE.
   #
-  # Sharding it looked free — its own chain went 174s to 103s. It was not.
-  # MEASURED across two runs, the workflow got SLOWER, 212s to 250s, because
-  # six extra shards plus their plan and record push the run to 17 concurrent
-  # jobs against a 20-slot limit, and the race shards they compete with went
-  # from 123-156s to 124-175s. The wall clock is set by the race chain, so
-  # speeding up the plain chain at its expense is a straight loss.
-  #
-  # The general rule this leaves: shard a suite when it is long enough that a
-  # shard still dominates its own job entry cost, and when the slots it takes
-  # are not wanted by a longer chain. Race qualifies at ~322s. This does not
-  # at ~174s, and neither does edge's ~30s plain run.
-
+  # It was sharded once and reverted: at ~174s the plain chain was shorter than
+  # the race chain, and six extra shards took slots the race shards wanted
+  # (212s -> 250s for the workflow). The rule that left still holds: shard a
+  # suite when a shard still dominates its job entry cost and its slots are not
+  # wanted by a longer chain. MEASURED over the last 20 Auto Release runs on main
+  # (2026-11-20), this one job is the longest in the run: 586s median, 754s
+  # worst, against 234-264s for core's race shards and 536s for edge's engine
+  # race shard. Its test step was 390s, of which 278s were package test times
+  # and the rest compiling. Two shards, not six: each still sits under the race
+  # chain, and two take the fewest slots that do.
   docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Full history: TestSchemaConvergesAcrossVintages reads pinned
-          # revisions out of git. See the note in the build job.
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.25.0"
-          cache-dependency-path: |
-            shingo-core/go.sum
-            protocol/go.sum
-
-      - name: Start shared Postgres
-        uses: ./.github/actions/shared-postgres
-        with:
-          template: template_ci_${{ github.run_id }}_docker
-
-      - name: Test (Docker integration)
-        working-directory: shingo-core
-        # -p 1: the runner has 2-4 cores and in-package parallelism already
-        # uses them. On a 20-core dev host the best setting measured nproc/4.
-        # -json into a file for the test census, text on the log (see
-        # sharded-suite.yml's test step).
-        run: |
-          set -o pipefail
-          go test -json -tags=docker,lockcheck -timeout=10m -count=1 -p 1 ./... 2>&1 \
-            | tee ../core-docker.json \
-            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
-                | select(.Action == "output" or .Action == "build-output") | .Output'
-
-      - if: always()
-        uses: ./.github/actions/test-census
-        with:
-          json: core-docker.json
-          name: core-docker
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-core
+      shards: 2
+      test-flags: "-timeout=10m"
+      # Its own timings: plain durations are a fraction of the race ones.
+      cache-prefix: shard-timings-core-plain-
+      needs-postgres: true
 
   # THE SIM-ONLY TESTS, UNDER THE DETECTOR. The build job's `go build -tags
   # sim` compiles the sim files and runs none of their tests, so the sim-tagged

@@ -45,6 +45,24 @@ on:
         required: false
         default: false
         type: boolean
+      split-package:
+        description: >
+          One package run as slices of its tests instead of as one shard's
+          package, when the package alone is longer than every other shard
+          (edge's engine under -race). Blank: no split.
+        required: false
+        default: ""
+        type: string
+      split-ranges:
+        description: >
+          The slices of split-package, as space-separated letter ranges for the
+          character after "Test" ("A-C D-P"). Each range is a slice run with
+          -run '^Test[<range>]', and one more slice runs with -skip over all of
+          them, so every test of the package (Test_x, Test1, examples and fuzz
+          seeds included) runs in exactly one slice.
+        required: false
+        default: ""
+        type: string
 
 jobs:
   plan:
@@ -77,15 +95,36 @@ jobs:
       # stdin so it neither knows nor cares whose packages they are. Running it
       # from edge's directory would mean `go run` reaching across modules,
       # which go.work may tolerate and which there is no reason to rely on.
+      # THE SPLIT PACKAGE IS TAKEN OUT OF THE PACKING and appended as its own
+      # slices, ids 100 and up (digits only: the id is spliced into a database
+      # name). pkgs.txt keeps every package, so record still prunes against the
+      # whole list. A split package missing from the list fails here rather
+      # than running nothing.
       - id: plan
+        env:
+          SPLIT_PKG: ${{ inputs.split-package }}
+          SPLIT_RANGES: ${{ inputs.split-ranges }}
         run: |
           set -euo pipefail
           mkdir -p .shard
           ( cd "${{ inputs.module }}" && go list -tags=docker ./... ) > .shard/pkgs.txt
+          if [ -n "$SPLIT_PKG" ]; then
+            grep -qxF "$SPLIT_PKG" .shard/pkgs.txt || { echo "::error::split-package $SPLIT_PKG is not in the module"; exit 1; }
+          fi
+          grep -vxF "${SPLIT_PKG:-//none//}" .shard/pkgs.txt > .shard/pack.txt
           matrix=$( cd shingo-core && go run ./scripts/shardplan plan \
             -shards ${{ inputs.shards }} \
             -timings "$GITHUB_WORKSPACE/.shard/timings.json" \
-            < "$GITHUB_WORKSPACE/.shard/pkgs.txt" )
+            < "$GITHUB_WORKSPACE/.shard/pack.txt" )
+          if [ -n "$SPLIT_PKG" ]; then
+            id=100 all=""
+            for r in $SPLIT_RANGES; do
+              matrix=$(jq -c --argjson id "$id" --arg p "$SPLIT_PKG" --arg run "^Test[$r]" '. + [{id: $id, pkgs: $p, run: $run}]' <<<"$matrix")
+              all="$all$r"; id=$((id + 1))
+            done
+            matrix=$(jq -c --argjson id "$id" --arg p "$SPLIT_PKG" --arg skip "^Test[$all]" '. + [{id: $id, pkgs: $p, skip: $skip}]' <<<"$matrix")
+          fi
+          echo "$matrix" | jq .
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
       # The record job runs this binary instead of `go run`-ing the source,
@@ -152,10 +191,16 @@ jobs:
         #
         # pipefail so `tee` cannot mask a failing exit code. -p 1 because the
         # runner has 2-4 cores and in-package parallelism already uses them.
+        env:
+          SLICE_RUN: ${{ matrix.shard.run }}
+          SLICE_SKIP: ${{ matrix.shard.skip }}
         run: |
           set -o pipefail
           mkdir -p ../.shard
-          go test -json -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
+          slice=()
+          [ -n "$SLICE_RUN" ] && slice+=(-run "$SLICE_RUN")
+          [ -n "$SLICE_SKIP" ] && slice+=(-skip "$SLICE_SKIP")
+          go test -json -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} "${slice[@]}" \
             ${{ matrix.shard.pkgs }} 2>&1 \
             | tee ../.shard/results-${{ matrix.shard.id }}.json \
             | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})

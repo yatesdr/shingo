@@ -123,17 +123,19 @@ jobs:
         working-directory: shingo-edge
         run: go test -run NONE -count=1 ./...
 
-  # THE PLAIN SUITE STAYS ONE JOB; ONLY THE RACE SUITE IS SHARDED.
+  # THE PLAIN SUITE STAYS ONE JOB; THE RACE SUITE IS SHARDED, AND ITS ENGINE
+  # PACKAGE IS SPLIT BY TEST NAME.
   #
-  # Edge's plain docker run is ~30s — less than the per-job entry cost, so
-  # sharding it would make it slower, not faster. Its race run is ~294s, nearly
-  # 10x, and that is the one worth splitting.
-  #
-  # FOUR SHARDS, NOT SIX. Edge's weight is concentrated: engine 19.6s, store
-  # 13.0s, www 9.6s of a 52.9s serial total — three packages are 80% of it, and
-  # eleven others share the rest. The floor is the longest package, so beyond
-  # about four shards the extra jobs pay startup to run nothing much. Getting
-  # under that floor means making engine itself cheaper, not splitting further.
+  # MEASURED over the last 20 Auto Release runs on main (2026-11-20): the plain
+  # job is 156s median, under the race chain, so it stays whole. The race shards
+  # are 242-259s median, except the one that holds shingoedge/engine alone: 536s
+  # median, 654s worst, the second-longest job in the run (its test step was
+  # 459s, 395s of it the package). A package is the smallest unit shardplan
+  # packs, so more shards could not get under it; slicing the package's tests
+  # can. split-package takes engine out of the packing and runs it as three
+  # slices by the letter after "Test" (A-C, D-P, the rest), sized from the
+  # package's per-test times so each is about a third. The other packages keep
+  # the three shards they already filled.
   #
   # No Postgres: edge is SQLite throughout.
 
@@ -180,7 +182,9 @@ jobs:
     uses: ./.github/workflows/sharded-suite.yml
     with:
       module: shingo-edge
-      shards: 4
+      shards: 3
       test-flags: "-race -timeout=25m"
       cache-prefix: shard-timings-edge-race-
       needs-postgres: false
+      split-package: shingoedge/engine
+      split-ranges: "A-C D-P"
