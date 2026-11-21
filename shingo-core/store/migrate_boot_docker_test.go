@@ -124,7 +124,7 @@ func TestMigrate_RefusesTablesWithoutSchemaMigrations(t *testing.T) {
 		t.Fatalf("create a lone table: %v", err)
 	}
 	_, err := store.Open(cfg)
-	if err == nil || !strings.Contains(err.Error(), "Core tables present but no schema_migrations: restore the whole dump") {
+	if err == nil || !strings.Contains(err.Error(), "objects in schema public but no schema_migrations: restore the whole dump") {
 		t.Fatalf("boot on tables without schema_migrations: err %v, want the partial-restore refusal", err)
 	}
 	if n := publicTables(t, db.DB); n != 1 {
@@ -134,6 +134,43 @@ func TestMigrate_RefusesTablesWithoutSchemaMigrations(t *testing.T) {
 	if err := db.QueryRow(`SELECT to_regclass('public.schema_migrations') IS NOT NULL`).Scan(&sm); err != nil || sm {
 		t.Fatalf("after the refusal schema_migrations exists=%v (err %v): a refusal writes nothing", sm, err)
 	}
+}
+
+// TestMigrate_RefusesAnyObjectWithoutSchemaMigrations: the partial-restore
+// refusal is not about tables only. A public schema holding a function or a
+// sequence and no schema_migrations was read as new, and the baseline then
+// failed on "already exists" at every boot; it is refused, writing nothing.
+// An extension's objects are not Core's and not a restore: a database holding
+// only pgcrypto is born.
+func TestMigrate_RefusesAnyObjectWithoutSchemaMigrations(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ name, sql string }{
+		{"a function the baseline makes", `CREATE FUNCTION public.bin_types_family_of_one() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`},
+		{"a sequence the baseline makes", `CREATE SEQUENCE public.orders_id_seq`},
+	} {
+		cfg := testdb.OpenEmpty(t)
+		db := openRaw(t, cfg)
+		if _, err := db.Exec(c.sql); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		_, err := store.Open(cfg)
+		if err == nil || !strings.Contains(err.Error(), "no schema_migrations: restore the whole dump") {
+			t.Errorf("boot on %s without schema_migrations: err %v, want the partial-restore refusal", c.name, err)
+		}
+		if n := publicTables(t, db.DB); n != 0 {
+			t.Errorf("the refused boot on %s left %d tables in public: a refusal writes nothing", c.name, n)
+		}
+	}
+
+	cfg := testdb.OpenEmpty(t)
+	if _, err := openRaw(t, cfg).Exec(`CREATE EXTENSION pgcrypto`); err != nil {
+		t.Fatalf("install pgcrypto in public: %v", err)
+	}
+	db, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("boot on a database holding only an extension: %v; an extension is not a partial restore", err)
+	}
+	db.Close()
 }
 
 // TestMigrate_RefusesAHoleNamingItsVersions: a database missing a version of

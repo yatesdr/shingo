@@ -226,7 +226,7 @@ func assertRefusedWritingNothing(ctx context.Context, t *testing.T, inst *schema
 	}
 	want := "start " + store.RetiredChainRelease + " on this database first"
 	if v.BuiltBy == "" {
-		want = "Core tables present but no schema_migrations: restore the whole dump"
+		want = "objects in schema public but no schema_migrations: restore the whole dump"
 	}
 	err = inst.Reboot(ctx, dbName)
 	if err == nil || !strings.Contains(err.Error(), want) {

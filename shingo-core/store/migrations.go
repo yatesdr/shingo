@@ -24,13 +24,17 @@ const (
 
 // migrate brings the database to this build's schema, or refuses it.
 //
-//   - No schema_migrations and no table in schema public: a new database. It
+//   - No schema_migrations and nothing in schema public: a new database. It
 //     is born on the baseline (store/schema/baseline.sql), applied as one
 //     statement by applyBaseline: every table, index, constraint, comment and
-//     seed row, and schema_migrations 1..RetiredChain.
-//   - No schema_migrations, but tables: refused. That is a partial restore (a
-//     dump restored without schema_migrations, or a hand-made schema), and
-//     nothing can tell what shape it is.
+//     seed row, and schema_migrations 1..RetiredChain. An extension's objects
+//     do not count (the baseline creates no extension and collides with
+//     none).
+//   - No schema_migrations, but a table, view, sequence or function in
+//     public: refused. That is a partial restore (a dump restored without
+//     schema_migrations, or a hand-made schema), and nothing can tell what
+//     shape it is; born on the baseline it would fail on "already exists" at
+//     every boot.
 //   - schema_migrations without some version of 1..RetiredChain: refused,
 //     naming the versions and RetiredChainRelease, the release that applies
 //     them. This build no longer carries the chain that did; a database
@@ -92,18 +96,29 @@ func (r *Refusal) Error() string { return r.msg }
 
 // checkRetiredChain reads the two facts migrate decides on and returns whether
 // the database is new, or the refusal. It only reads.
+//
+// The objects counted are every relation in public but an index (a table,
+// partition, view, sequence or composite type) and every function there,
+// leaving out an extension's (pg_depend 'e'): a public schema holding only a
+// function or a sequence is a partial restore too, and was read as new.
 func checkRetiredChain(q *sql.DB) (fresh bool, err error) {
 	var hasMigrations bool
-	var tables int
+	var objects int
 	if err := q.QueryRow(`SELECT to_regclass('public.schema_migrations') IS NOT NULL,
 		(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-		  WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p'))`).Scan(&hasMigrations, &tables); err != nil {
+		  WHERE n.nspname = 'public' AND c.relkind NOT IN ('i', 'I')
+		    AND NOT EXISTS (SELECT 1 FROM pg_depend d
+		                     WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
+		+ (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+		  WHERE n.nspname = 'public'
+		    AND NOT EXISTS (SELECT 1 FROM pg_depend d
+		                     WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))`).Scan(&hasMigrations, &objects); err != nil {
 		return false, fmt.Errorf("read the schema's state: %w", err)
 	}
 	if !hasMigrations {
-		if tables > 0 {
-			return false, &Refusal{fmt.Sprintf("Core tables present but no schema_migrations: restore the whole dump "+
-				"(schema public holds %d tables and no schema_migrations; Core changed nothing)", tables)}
+		if objects > 0 {
+			return false, &Refusal{fmt.Sprintf("objects in schema public but no schema_migrations: restore the whole dump "+
+				"(public holds %d tables, views, sequences or functions and no schema_migrations; Core changed nothing)", objects)}
 		}
 		return true, nil
 	}

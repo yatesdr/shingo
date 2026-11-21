@@ -68,8 +68,9 @@ When ShinGo Core connects to an empty database, it:
 3. Creates a default admin user (`admin` / `admin`) on a fresh install — `ensureDefaultAdmin` in `www/auth.go`. Idempotent, and it fires from the web layer rather than the migration. **Change this password before the station goes live.**
 
 On subsequent startups only the migrations above v184 that the database lacks run. Core refuses to start on a
-database missing any of v1 to v184 (an install older than v0.17.1: start v0.17.1 on it once first), and on tables
-restored without their `schema_migrations` rows (restore the whole dump).
+database missing any of v1 to v184 (an install older than v0.17.1: start v0.17.1 on it once first), and on tables,
+sequences or functions in schema `public` restored without their `schema_migrations` rows (restore the whole dump).
+An extension's objects in `public` do not count.
 
 ### Why ownership matters
 
@@ -205,8 +206,8 @@ pg_dump -h localhost -U shingocore shingocore > shingocore_backup.sql
 psql -h localhost -U shingocore shingocore < shingocore_backup.sql
 ```
 
-Restore into an empty database, and restore the whole dump: Core refuses to start on tables that arrived without
-their `schema_migrations` rows, because nothing can then tell what shape they are.
+Restore into an empty database, and restore the whole dump: Core refuses to start on tables, sequences or functions
+that arrived without their `schema_migrations` rows, because nothing can then tell what shape they are.
 
 **A dump from an older release.** This release carries no migration below v184; a database is born on the baseline
 or already holds v1 to v184. A dump taken from a Core older than v0.17.1 (a `schema_migrations` that stops below
