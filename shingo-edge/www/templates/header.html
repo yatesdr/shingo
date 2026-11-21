@@ -30,6 +30,10 @@
       <div class="nav-inner">
         <div class="nav-brand">
             <a href="/">Shingo Edge</a>{{ simBadge }}
+            {{- /* Who this Edge is: its name from Core with the uid beside it,
+                   the uid alone until Core has sent a name (router.go
+                   stationIdentity). The name is set on Core, never here. */}}
+            {{with .StationUID}}<span class="nav-station">{{with $.StationName}}<span class="nav-station-name">{{.}}</span>{{end}}<span class="nav-station-uid">{{.}}</span></span>{{end}}
         </div>
         <div class="nav-links">
             <a href="/production" class="{{if eq .Page "production"}}active{{end}}">Production</a>

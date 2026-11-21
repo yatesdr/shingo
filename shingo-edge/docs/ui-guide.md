@@ -2,7 +2,9 @@
 
 Verified against: 4f4870c3
 
-Shingo Edge serves its browser interface at `http://<host>:8081` (`web.port`). The navigation bar carries
+Shingo Edge serves its browser interface at `http://<host>:8081` (`web.port`). The navigation bar names the
+station after the brand: its name as Core sends it, with the uid beside it (the uid alone until Core has answered a
+heartbeat with a name; the name is set on Core's Stations page). It carries
 **Production**, an **Operations** menu (Orders, Changeover, Processes, Quality Containment) and,
 once logged in, an **Admin** menu (Kafka Direct, Config, Logs). Every page but the operator station display has
 a light/dark theme toggle in the bar; the station display is a fixed dark kiosk screen.
@@ -177,7 +179,8 @@ These pages require login.
 
 The station's settings, in sections:
 
-- **Station**: the Station UID, shown as text (it is set on the box, not on this page: see the
+- **Station**: the station's name, as Core sends it (it is set on Core's Stations page; shown once Core has
+  answered a heartbeat), the Station UID, shown as text (it is set on the box, not on this page: see the
   [README](../README.md)), plant timezone (blank takes the plant's zone from Core), and whether deliveries
   confirm themselves.
 - **Core connection**: the link's state, and **Refresh nodes** / **Refresh catalog** to pull Core's node list

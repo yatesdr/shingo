@@ -23,6 +23,7 @@ Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 - The Edge's Configuration page shows the Station UID as text and can no longer change it; a save from a page that still sends a different one is refused. A replacement box takes the old station's uid with shingoedge --restore
 - The Edge reads nothing from namespace, line_id or messaging.station_id in its config; a file that still has them loads, and the next save drops them. An Edge known only by messaging.station_id would start as a new station: put that value in station_uid before the upgrade
 - A sim plant file names its own Edge with one station_uid key in place of namespace and line_id, and a process's edge may be any station uid, a minted stn-… one included; seeddev names the dev stations EDGE 1 and EDGE 2 on Core
+- The Edge names its station at the top of every page and on its Configuration page, as named on Core's Stations page, with the uid beside it; after a restart it shows the uid alone until Core answers its first heartbeat. A rename on Core reaches the Edge with the next heartbeat
 - An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence, a stale notice or Core's re-register request it asks for its orders only
 - An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence it asks for its orders only
 - An Edge no longer rewrites its payload catalog and redraws its boards when Core sends the catalog it already holds

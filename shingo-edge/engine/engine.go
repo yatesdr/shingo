@@ -117,6 +117,12 @@ type Engine struct {
 	// watched nodes (node_bins.go); nil until a snapshot is applied. Memory
 	// only: after a restart nothing is held and Core sends it again.
 	nodeBins atomic.Pointer[nodeBinsCopy]
+	// stationName is this station's name for people as Core last sent it on
+	// a heartbeat ack (StationName, takeStationName); nil until one carries
+	// it. Memory only (owner ruling): the Edge runs on its uid and the name is
+	// for people, so after a restart the screens show the uid alone until
+	// Core's first ack.
+	stationName atomic.Pointer[string]
 	// binWatchSource is the bins watch list: the names this Edge's operator
 	// stations draw (StationService.WatchedBinNodes). Nil publishes an empty
 	// list.
@@ -572,6 +578,29 @@ func (e *Engine) Frozen() []string {
 // Uptime returns the number of seconds since the engine started.
 func (e *Engine) Uptime() int64 {
 	return int64(time.Since(e.startedAt).Seconds())
+}
+
+// StationName is this station's name for people as Core holds it, from the
+// last heartbeat ack that carried one; "" when Core has sent none since boot
+// or holds none, and then the screens show the uid alone. Core owns the name
+// (its Stations page); nothing on the Edge sets it.
+func (e *Engine) StationName() string {
+	if p := e.stationName.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// takeStationName holds the name an ack carries
+// (protocol.EdgeHeartbeatAck.DisplayName): nil is no answer and keeps the one
+// held, "" is Core holding none, anything else is the name. Memory only: no
+// statement and no write, and an ack repeating the held name stores nothing.
+func (e *Engine) takeStationName(name *string) {
+	if name == nil || *name == e.StationName() {
+		return
+	}
+	held := *name
+	e.stationName.Store(&held)
 }
 
 // StartedAt returns the engine's startup wall-clock time. Used by

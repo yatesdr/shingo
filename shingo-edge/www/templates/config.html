@@ -14,6 +14,10 @@
         <h2>Station</h2>
         {{if not .Config.Timezone}}<span class="set-cnt warn"><i></i>no timezone set · showing {{.DisplayZone}}</span>{{end}}
     </div>
+    {{with .StationName}}<div class="set-fld">
+        <label>Station name<small>set on Core's Stations page</small></label>
+        <div class="v"><span id="cf-name">{{.}}</span></div>
+    </div>{{end}}
     <div class="set-fld">
         <label>Station UID<small>minted by this Edge at first start</small></label>
         <div class="v"><span id="cf-uid">{{.StationID}}</span></div>

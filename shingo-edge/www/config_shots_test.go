@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	"shingo/shared/scenefixtures"
 	"shingoedge/backup"
@@ -44,6 +45,11 @@ import (
 //
 // CONFIG_SHOTS_PLCS=<n> points WarLink at a fake that reports n PLCs, so the
 // "PLCs WarLink can see" chip row is full (it wraps at 800 wide).
+//
+// CONFIG_SHOTS_NAME=<name> has the engine take a heartbeat ack naming the
+// station <name> before the shots, as Core's first ack does: the header and
+// the Station section then show the name with the uid beside it. Unset, the
+// page is as before Core's first ack: the uid alone.
 func TestConfigShots(t *testing.T) {
 	out := os.Getenv("CONFIG_SHOTS_OUT")
 	if out == "" {
@@ -94,6 +100,12 @@ func TestConfigShots(t *testing.T) {
 			t.Fatalf("the fake WarLink's %d PLCs never reached the manager", plcs)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if name, ok := os.LookupEnv("CONFIG_SHOTS_NAME"); ok {
+		eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, DisplayName: &name})
+		if got := eng.StationName(); got != name {
+			t.Fatalf("the engine holds the name %q after an ack naming %q", got, name)
+		}
 	}
 
 	dbg, err := debuglog.New(64, nil)

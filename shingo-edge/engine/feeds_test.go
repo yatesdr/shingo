@@ -250,6 +250,38 @@ func TestOnCoreAck_TellsTheObserverAfterTheAckMoved(t *testing.T) {
 	}
 }
 
+// The station's name is the one the last ack that carried it named: nothing
+// before the first such ack, kept through an ack that carries none (an older
+// Core, or no registry answer), "" when Core holds none, and a new one when
+// Core renames the station.
+func TestOnCoreAck_HoldsTheStationName(t *testing.T) {
+	t.Parallel()
+	e := testEngine(t, testEngineDB(t))
+	name := func(s string) *string { return &s }
+	steps := []struct {
+		say  string
+		sent *string
+		want string
+	}{
+		{"an ack with no name before any", nil, ""},
+		{"the name", name("EDGE 7"), "EDGE 7"},
+		{"an ack with no name keeps it", nil, "EDGE 7"},
+		{"the same name again", name("EDGE 7"), "EDGE 7"},
+		{"a rename on Core", name("PRESS 4 EDGE"), "PRESS 4 EDGE"},
+		{"Core holding none", name(""), ""},
+		{"an ack with no name after none", nil, ""},
+	}
+	if got := e.StationName(); got != "" {
+		t.Fatalf("before any ack: StationName = %q, want none", got)
+	}
+	for _, s := range steps {
+		e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, DisplayName: s.sent})
+		if got := e.StationName(); got != s.want {
+			t.Errorf("%s: StationName = %q, want %q", s.say, got, s.want)
+		}
+	}
+}
+
 // The first ack after more than four minutes without one reconciles orders;
 // acks a minute apart do not, and the first ack since boot does not.
 func TestOnCoreAck_GapReconciles(t *testing.T) {

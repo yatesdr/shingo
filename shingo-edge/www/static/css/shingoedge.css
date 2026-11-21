@@ -61,6 +61,29 @@ body {
    names, both apps. css_collision_drift_test fails if it is re-declared
    here. */
 
+/* Who this Edge is, after the brand (header.html): the station's name from
+   Core, then its uid; the uid alone until Core has sent a name. Edge only:
+   Core's bar names no station. */
+.nav-station {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    margin-left: 0.6rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.nav-station-name {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.nav-station-uid {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+}
+
 /* Theme Toggle */
 .theme-toggle {
     display: inline-flex;

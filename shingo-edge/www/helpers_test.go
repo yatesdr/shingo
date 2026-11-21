@@ -74,6 +74,9 @@ type stubEngine struct {
 	// nodeBins is what LocalNodeBins answers: nothing held and a Core without
 	// the feed unless a test sets it.
 	nodeBins engine.NodeBinsState
+	// stationName is what StationName answers: the name from Core's last
+	// ack, "" (none yet) unless a test sets it.
+	stationName string
 
 	// Spy fields — populated by stub methods so handler tests can assert on
 	// the values that flowed through. Add new fields here as needed; keep
@@ -161,6 +164,7 @@ type stubEngine struct {
 func (s *stubEngine) AppConfig() *config.Config           { return s.cfg }
 func (s *stubEngine) ConfigPath() string                  { return s.cfgPath }
 func (s *stubEngine) LocalNodeBins() engine.NodeBinsState { return s.nodeBins }
+func (s *stubEngine) StationName() string                 { return s.stationName }
 func (s *stubEngine) PLCManager() *plc.Manager            { return s.plcMgr }
 func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
 

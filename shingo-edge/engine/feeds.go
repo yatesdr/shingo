@@ -477,8 +477,8 @@ func (e *Engine) CoreSpeaksFeeds() bool {
 // OnCoreAck takes Core's answer to a heartbeat: whether Core speaks feeds,
 // for each feed whose digest equals the one held, the confirmation, the
 // plant-claims digests Core holds for this station (feeds_claims.go), the bins
-// watch digest, the ask kinds, and the ephemeral topic Core names; then it
-// tells the ack observer (SetCoreAckObserver).
+// watch digest, the ask kinds, the ephemeral topic Core names and the
+// station's name; then it tells the ack observer (SetCoreAckObserver).
 func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	if ack == nil {
 		return
@@ -518,6 +518,8 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	// Core's verified ephemeral topic, or none (an older Core, or one that
 	// could not verify it), which closes the live robot feed (robot_watch.go).
 	e.OfferEphemeralTopic(ack.EphemeralTopic)
+	// The station's name for people, held in memory (takeStationName).
+	e.takeStationName(ack.DisplayName)
 	if observer != nil {
 		observer()
 	}

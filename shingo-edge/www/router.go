@@ -819,6 +819,7 @@ func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name s
 	if m, ok := data.(map[string]any); ok {
 		_, isAuth := h.sessions.getUser(r)
 		m["Authenticated"] = isAuth
+		m["StationUID"], m["StationName"] = h.stationIdentity()
 	}
 	// Before the first write: the compression middleware reads Content-Type at
 	// WriteHeader and skips compression when it is empty. See shared.SetHTMLContentType.
@@ -826,4 +827,21 @@ func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name s
 	if err := h.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// stationIdentity is who this Edge is, for the page header and the
+// Configuration page: its uid, and its name for people as Core last sent it
+// on a heartbeat ack (engine.Engine.StationName), "" when Core has sent none
+// since boot or holds none, and then the pages show the uid alone. Memory
+// reads only: a page render asks the database nothing for it.
+func (h *Handlers) stationIdentity() (uid, name string) {
+	if h.engine != nil {
+		if cfg := h.engine.AppConfig(); cfg != nil {
+			uid = cfg.StationID()
+		}
+	}
+	if n, ok := h.orchestration.(interface{ StationName() string }); ok {
+		name = n.StationName()
+	}
+	return uid, name
 }

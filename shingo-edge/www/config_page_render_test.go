@@ -32,6 +32,13 @@ func renderConfigPage(t *testing.T, seed func(c *config.Config), boot bool, afte
 		f(stub.cfg)
 		stub.cfg.Unlock()
 	}
+	return renderConfig(t, h, stub)
+}
+
+// renderConfig renders GET /config through handleConfig over h, whose engine
+// is stub, with the real templates.
+func renderConfig(t *testing.T, h *Handlers, stub *stubEngine) string {
+	t.Helper()
 	stub.plcMgr = plc.NewManager(nil, stub.cfg.WarLink, stub.cfg.PollRate, stub.cfg.Counter.JumpThreshold, nil, nil)
 	h.tmpl = template.Must(template.New("").Funcs(templateFuncs()).
 		ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
@@ -144,6 +151,44 @@ func TestConfigPage_RestartNoticeRendered(t *testing.T) {
 		func(c *config.Config) { c.Timezone = "America/New_York" })
 	if !strings.Contains(html, `data-restart="[&#34;Plant timezone&#34;]"`) {
 		t.Errorf("Plant timezone changed since boot: notice not rendered")
+	}
+}
+
+// TestConfigPage_ShowsTheNameFromCore: the page header and the Station
+// section show the station's name from Core with the uid beside it, and the
+// uid alone while no name is held (before Core's first ack, or Core holding
+// none). No control carries the name: it is set on Core.
+func TestConfigPage_ShowsTheNameFromCore(t *testing.T) {
+	t.Parallel()
+	const uid = "stn-0123456789abcdef"
+	render := func(name string) string {
+		h, _ := newTestHandlers(t)
+		stub := h.engine.(*stubEngine)
+		stub.cfg.Lock()
+		stub.cfg.StationUID = uid
+		stub.cfg.Unlock()
+		stub.stationName = name
+		return renderConfig(t, h, stub)
+	}
+
+	unnamed := render("")
+	if !strings.Contains(unnamed, `<span class="nav-station"><span class="nav-station-uid">`+uid+`</span></span>`) {
+		t.Error("no name held: the header does not show the uid alone")
+	}
+	if strings.Contains(unnamed, "nav-station-name") || strings.Contains(unnamed, `id="cf-name"`) {
+		t.Error("no name held: a name is shown")
+	}
+
+	named := render("EDGE 7")
+	if !strings.Contains(named, `<span class="nav-station"><span class="nav-station-name">EDGE 7</span><span class="nav-station-uid">`+uid+`</span></span>`) {
+		t.Error("named: the header does not show the name with the uid beside it")
+	}
+	body := configPageBody(t, named)
+	if !strings.Contains(body, `<span id="cf-name">EDGE 7</span>`) || !strings.Contains(body, `<span id="cf-uid">`+uid+`</span>`) {
+		t.Error("named: the Station section does not show the name and the uid as text")
+	}
+	if strings.Contains(body, `value="EDGE 7"`) || regexp.MustCompile(`data-field="(station_name|display_name)"`).MatchString(body) {
+		t.Error("named: the name is rendered as a field the page could post")
 	}
 }
 

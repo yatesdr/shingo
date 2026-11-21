@@ -198,7 +198,7 @@ A Shingo Edge instance's identity, held as three things:
 | | What it is | Owner | Mutable? |
 |---|---|---|---|
 | `station_uid` | the identity Core correlates all history to | minted once, by the edge or by Core | **never** |
-| `display_name` | e.g. `SPRINGFIELD / EDGE-2` | operator, edited on Core | freely |
+| `display_name` | e.g. `SPRINGFIELD / EDGE-2` | operator, edited on Core; the Edge shows it as the heartbeat ack carries it and cannot change it | freely |
 | `Address.Station` | the transport routing selector | derived — its value *is* the `station_uid` | never |
 
 An edge with no uid mints its own on first boot and writes it to its config (`main.ensureIdentity`); Core records a
