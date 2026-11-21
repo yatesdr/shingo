@@ -182,6 +182,10 @@ var neverDeadLetterWant = map[string]string{
 	// Added by the must-arrive table: a lost episode state is missing at Core until
 	// the episode next changes; a late one loses Core's revision compare.
 	"demand.origin": "Edge (demand episode)",
+	// Added by the must-arrive table once every count Core states is fenced per
+	// addressed station (C6): a lost declaration is a count the station never
+	// hears; a late one is rebased on its stream.
+	"data.inventory.uop_adjustment": "Core (bin service and manifest, the count declarations)",
 }
 
 // msgTypeUniverse is every spelling a row's msg_type can take for a protocol

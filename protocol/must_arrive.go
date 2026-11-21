@@ -126,9 +126,9 @@ var mustArrive = []MustArrive{
 	// (shingo-edge's Engine.fencedCount). Only an unfenced copy, an older
 	// Core's, writes its count as sent over the ticks counted since.
 	{
-		Name: SubjectUOPAdjustment, Sender: SentByCore, NeverExpires: true,
+		Name: SubjectUOPAdjustment, Sender: SentByCore, NeverExpires: true, NeverDeadLetters: true,
 		Lost: "a reset's number never reaches the station, and a person's count is never recovered on it",
-		Late: "a count Core states is fenced per addressed station and rebased on its stream; a Released clears only a seat still bound to its bin",
+		Late: "a count Core states is fenced per addressed station and rebased on its stream; a Released clears only a seat still bound to its bin by a landing the move ended (PlacedSeq)",
 	},
 	{
 		Name: SubjectBinEpochRefresh, Sender: SentByCore, NeverExpires: true, NeverDeadLetters: true,

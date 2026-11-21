@@ -7,7 +7,7 @@
 // then moved by the info-flow build: its lane C6 fences every count Core
 // states per addressed station (row (d) changed then: both declarers rebase),
 // and lane B2 puts the adjustment and the refresh on the must-arrive list
-// (rows (a) and (b) are expected to change then, and each test says how). A
+// (rows (a) and (b) changed then: both declarations outlive the outage). A
 // changed precondition (the declaration's shape, the loss) is reported and the
 // test runs on, so its books say what the row now does.
 //
@@ -387,20 +387,20 @@ var declResets = []struct {
 	}},
 }
 
-// TestScenario_CountDecl_APersonsCountLostEachSideKeepsItsOwn is row (a). The
-// station has counted 3 (both books 97) when a person counts 50 at Core. Core
-// fences the count at the station's cursor (net -3, seq 1) and queues it; an
-// outage longer than the retry budget follows and Core's drainer dead-letters
-// it (inventory.uop_adjustment is not on the never-dead-letter list). A count
-// ends no generation, so the station's next 5 land at Core, nothing is stale,
-// and no refresh is sent: Core reads 45, the Edge 92, and nothing Core sends
-// afterwards brings the person's number to the Edge.
+// TestScenario_CountDecl_APersonsCountOutlivesTheOutageAndIsRebased is row
+// (a). The station has counted 3 (both books 97) when a person counts 50 at
+// Core. Core fences the count at the station's cursor (net -3, seq 1) and
+// queues it; an outage longer than the retry budget follows, and Core's
+// drainer keeps the declaration (inventory.uop_adjustment never dead-letters:
+// its row in protocol's must-arrive table). A count ends no generation, so the
+// station's next 5 land at Core and nothing is stale. The declaration then
+// reaches the Edge late, fenced, and is rebased on the 5 counted since:
+// 50 + (-8 - -3) = 45, both books.
 //
-// Expected to change when the adjustment joins the must-arrive list: the
-// count then survives the outage, arrives late and fenced, and is rebased
-// (both books 45). Fencing every count per station (C6) did not change it:
-// the count was already fenced at the station's one cursor.
-func TestScenario_CountDecl_APersonsCountLostEachSideKeepsItsOwn(t *testing.T) {
+// It was TestScenario_CountDecl_APersonsCountLostEachSideKeepsItsOwn, pinned
+// at the base, where the drainer dead-lettered the declaration and each side
+// kept its own number (Edge 92, Core 45).
+func TestScenario_CountDecl_APersonsCountOutlivesTheOutageAndIsRebased(t *testing.T) {
 	t.Parallel()
 	w := newDeclRig(t, "CD-A", 100)
 	w.strokes(3)
@@ -419,47 +419,45 @@ func TestScenario_CountDecl_APersonsCountLostEachSideKeepsItsOwn(t *testing.T) {
 		f.AsOfStation != handoffStation || f.Epoch != epoch || f.NewRemaining != 50 {
 		t.Errorf("the count's declaration is %s, want 50 at epoch %d fenced at net -3 seq 1 for %s", declText(decl.adj), epoch, handoffStation)
 	}
-	if !w.outage(decl) {
-		t.Errorf("Core's drainer kept the count's declaration through the outage (offered %d times): "+
-			"row (a) has changed, as the must-arrive list predicts", w.broker.offered(decl.payload))
+	if w.outage(decl) {
+		t.Errorf("Core's drainer dead-lettered the count's declaration in the outage: it never dead-letters")
 	}
 
 	w.strokes(5)
 	w.shipEdgeDeltas()
-	w.edgeReads(w.pass())
-
-	if got := w.readByEdge(); len(got) != 0 {
-		t.Errorf("the Edge was given %v for the bin, want nothing: the count was lost and no generation ended", got)
-	}
 	if n := len(w.coreRows(protocol.SubjectBinEpochRefresh)); n != 0 {
 		t.Errorf("Core queued %d epoch refreshes, want 0: a count ends no generation", n)
 	}
 	if n := w.staleDrops(); n != 0 {
 		t.Errorf("stale_epoch_dropped = %d, want 0", n)
 	}
+	w.edgeReads(w.pass())
+	if got := w.readByEdge(); len(got) != 1 || got[0] != protocol.SubjectUOPAdjustment {
+		t.Errorf("the Edge was given %v for the bin, want the count's declaration, late", got)
+	}
 	edge, edgeEpoch, core, coreEpoch := w.books()
-	if core != 45 || coreEpoch != epoch || edge != 92 || edgeEpoch != epoch {
-		t.Errorf("books: Edge %d at %d, Core %d at %d; want Edge 92 and Core 45, both at %d: "+
-			"each side keeps its own number", edge, edgeEpoch, core, coreEpoch, epoch)
+	if core != 45 || coreEpoch != epoch || edge != 45 || edgeEpoch != epoch {
+		t.Errorf("books: Edge %d at %d, Core %d at %d; want both 45 at %d: "+
+			"the person's count rebased on the parts counted since", edge, edgeEpoch, core, coreEpoch, epoch)
 	}
 }
 
-// TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp is
-// row (b), for each declarer. The station has counted 2 (98 at E) when Core
-// resets the carrier to 60 at E+1; the declaration (fenced at net 0, seq 0 of
-// E+1 since C6; unfenced at the base) is dead-lettered by an outage. The
-// station counts 4 under E: Core drops them as stale and answers with the
-// epoch refresh, which carries no count. The Edge adopts E+1 and keeps 94; its
-// next 3 land at Core. Core reads 57, the Edge 91: the reset's 60 never
-// reaches the Edge, and the 4 parts counted under the ended generation are in
-// the Edge's number and discarded at Core.
+// TestScenario_CountDecl_AResetsDeclarationOutlivesTheOutage is row (b), for
+// each declarer. The station has counted 2 (98 at E) when Core resets the
+// carrier to 60 at E+1; the declaration, fenced at net 0, seq 0 of E+1, is
+// kept through an outage (inventory.uop_adjustment never dead-letters). The
+// station counts 4 under E: Core drops them as stale and queues the epoch
+// refresh behind the declaration. The drainer sends both in id order, so the
+// declaration reaches the Edge while it still holds E; the fence declines on
+// the epoch and the count is written as declared, 60 at E+1, and the refresh
+// then moves nothing. The next 3 land at Core: both books read 57. The 4 parts
+// counted under the ended generation are discarded at Core and gone from the
+// Edge's number too.
 //
-// Expected to change when the adjustment joins the must-arrive list: the
-// declaration survives the outage, reaches the Edge ahead of the refresh (the
-// outbox goes in id order) while the Edge still holds E, and is written as is
-// at E+1 (the fence declines on the epoch), so both books read 57.
-// Fencing resets (C6) changed only the declaration's shape here.
-func TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp(t *testing.T) {
+// It was TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp,
+// pinned at the base, where the declaration was dead-lettered, the Edge got
+// only the refresh and kept its own number (Edge 91, Core 57).
+func TestScenario_CountDecl_AResetsDeclarationOutlivesTheOutage(t *testing.T) {
 	t.Parallel()
 	for _, tc := range declResets {
 		t.Run(tc.name, func(t *testing.T) {
@@ -477,9 +475,8 @@ func TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp(t 
 				t.Errorf("the reset's declaration is %s, want 60 at epoch %d by %q, fenced at net 0 seq 0 for %s",
 					declText(decl.adj), e+1, tc.actor, handoffStation)
 			}
-			if !w.outage(decl) {
-				t.Errorf("Core's drainer kept the reset's declaration through the outage (offered %d times): "+
-					"row (b) has changed, as the must-arrive list predicts", w.broker.offered(decl.payload))
+			if w.outage(decl) {
+				t.Errorf("Core's drainer dead-lettered the reset's declaration in the outage: it never dead-letters")
 			}
 
 			w.strokes(4)
@@ -488,20 +485,20 @@ func TestScenario_CountDecl_AResetsDeclarationLostTheRefreshMovesOnlyTheStamp(t 
 				t.Fatal("no stale drop: the 4 parts under the ended generation were applied at Core")
 			}
 			w.edgeReads(w.pass())
-			if got := w.readByEdge(); len(got) != 1 || got[0] != protocol.SubjectBinEpochRefresh {
-				t.Errorf("the Edge was given %v for the bin, want only the epoch refresh", got)
+			if got := w.readByEdge(); len(got) != 2 || got[0] != protocol.SubjectUOPAdjustment || got[1] != protocol.SubjectBinEpochRefresh {
+				t.Errorf("the Edge was given %v for the bin, want the declaration and then the epoch refresh", got)
 			}
-			if edge, edgeEpoch, _, _ := w.books(); edge != 94 || edgeEpoch != e+1 {
-				t.Errorf("after the refresh the Edge reads %d at %d, want 94 at %d: the refresh moves the stamp only",
+			if edge, edgeEpoch, _, _ := w.books(); edge != 60 || edgeEpoch != e+1 {
+				t.Errorf("after the declaration and the refresh the Edge reads %d at %d, want 60 at %d",
 					edge, edgeEpoch, e+1)
 			}
 
 			w.strokes(3)
 			w.shipEdgeDeltas()
 			edge, edgeEpoch, core, coreEpoch := w.books()
-			if core != 57 || coreEpoch != e+1 || edge != 91 || edgeEpoch != e+1 {
-				t.Errorf("books: Edge %d at %d, Core %d at %d; want Edge 91 and Core 57, both at %d: "+
-					"the reset's number never reached the Edge", edge, edgeEpoch, core, coreEpoch, e+1)
+			if core != 57 || coreEpoch != e+1 || edge != 57 || edgeEpoch != e+1 {
+				t.Errorf("books: Edge %d at %d, Core %d at %d; want both 57 at %d: "+
+					"the reset's number reached the Edge", edge, edgeEpoch, core, coreEpoch, e+1)
 			}
 		})
 	}
