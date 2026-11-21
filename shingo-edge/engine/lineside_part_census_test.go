@@ -30,6 +30,7 @@ func TestCensus_NoLegIsAimedByTheLinesidePart(t *testing.T) {
 		"engine/handler_bin_landed.go:HandleBinLanded":          "a landing: records what Core says the carrier is",
 		"engine/handler_bin_picked_up.go:takeTicksAfterLift":    "the tick: counts against the carrier that left",
 		"engine/handler_uop_adjustment.go:HandleUOPAdjustment":  "a count adjustment: against the carrier's own part",
+		"engine/handler_uop_adjustment.go:recordDeclaredPart":   "a person's load or clear: records the part it names",
 		"engine/lineside_carrier_doorway.go:recordBoundCarrier": "the doorway's writer",
 		"engine/lineside_carrier_doorway.go:recordedAs":         "the doorway's reader",
 		"engine/operator_bin_ops.go:afterLoad":                  "a manual load: records the part loaded",

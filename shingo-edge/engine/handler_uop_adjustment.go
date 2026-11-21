@@ -226,6 +226,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	// below must not run.
 	if handled, applied, remaining := e.fencedCount(node.ID, rt, adj); handled {
 		if applied {
+			e.recordDeclaredPart(node, adj)
 			e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 				ProcessNodeID: node.ID,
 				CoreNodeName:  adj.CoreNodeName,
@@ -300,15 +301,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		log.Printf("uop_adjustment: write remaining_uop=%d epoch=%d for node %s: %v", adj.NewRemaining, adj.Epoch, adj.CoreNodeName, err)
 		return
 	}
-	// A PERSON'S LOAD OR CLEAR NAMES WHAT THIS CARRIER NOW HOLDS
-	// (UOPAdjustment.PayloadKnown), and the line's counts carry that part from
-	// here. Without it a carrier restamped in Core kept its old part at the
-	// station, and Core refused every count as a payload mismatch for the rest
-	// of its stay (Hopkinsville 4x2, 2026-10-26). A count names nothing.
-	if adj.PayloadKnown {
-		e.recordLinesideCarrier(node.ID, node.CoreNodeName,
-			domain.KnownCarrier(domain.LinesidePayloadCode(adj.PayloadCode)), domain.CarrierFromOperator)
-	}
+	e.recordDeclaredPart(node, adj)
 
 	e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 		ProcessNodeID: node.ID,
@@ -348,6 +341,24 @@ func (e *Engine) writeCoreCount(node *processes.Node, rt *processes.RuntimeState
 		return true, e.inventoryDelta.BindFromCore(ex, node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining)
 	})
 	return err
+}
+
+// recordDeclaredPart records what a person's load or clear says the carrier
+// bound here now holds (UOPAdjustment.PayloadKnown), once its count has landed
+// at the seat, through either arm that lands one: the as-is write, or the
+// fence, which takes a person's reset when the slot already holds the
+// generation it starts (an epoch refresh overtook the declaration). The
+// line's counts carry that part from here. Without it a carrier restamped in
+// Core kept its old part at the station, and Core refused every count as a
+// payload mismatch for the rest of its stay (Hopkinsville 4x2, 2026-10-26). A
+// count names nothing. Cost: one statement, on a declaration that names a part.
+// PIN: TestScenario_CountDecl_ALatePersonsLoadRecordsItsPart (integration).
+func (e *Engine) recordDeclaredPart(node *processes.Node, adj protocol.UOPAdjustment) {
+	if !adj.PayloadKnown {
+		return
+	}
+	e.recordLinesideCarrier(node.ID, node.CoreNodeName,
+		domain.KnownCarrier(domain.LinesidePayloadCode(adj.PayloadCode)), domain.CarrierFromOperator)
 }
 
 // bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: an older Core

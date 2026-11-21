@@ -43,7 +43,9 @@ import (
 	"shingo/protocol/router"
 
 	corestore "shingocore/store"
+	corepayloads "shingocore/store/payloads"
 
+	edgedomain "shingoedge/domain"
 	edgeengine "shingoedge/engine"
 	edgeuop "shingoedge/uop"
 )
@@ -626,6 +628,75 @@ func TestScenario_CountDecl_ALateResetIsRebasedToCores(t *testing.T) {
 					tc.actor, edge, edgeEpoch, core, e+1)
 			}
 		})
+	}
+}
+
+// TestScenario_CountDecl_ALatePersonsLoadRecordsItsPart is row (d)'s person's
+// declaration naming another part. The station has counted 2 (98 at E) when a
+// person loads the carrier at Core's bins page with a part the station's claim
+// does not take, 60 at E+1. The declaration says what the carrier now holds
+// (PayloadKnown) and is fenced at net 0, seq 0 of E+1. The broker refuses it
+// while it takes the rest, the station's 4 strokes under E are stale-dropped
+// and the epoch refresh gives the slot E+1. Then the declaration lands and is
+// taken by the fence (60: nothing counted under E+1 yet), and the station
+// records the carrier as that part, known, by the operator, as the as-is arm
+// always did. The station's next stroke is of its claim's part and the cart is
+// another part's, so it is logged, not charged: both books stay 60.
+//
+// C6 left the fenced arm recording no part: the slot kept saying nothing of the
+// load, the stroke was charged to the cart as the claim's part, and Core
+// refused it as a payload mismatch.
+func TestScenario_CountDecl_ALatePersonsLoadRecordsItsPart(t *testing.T) {
+	t.Parallel()
+	w := newDeclRig(t, "CD-D-PART", 100)
+	const other = "PART-CD-OTHER"
+	if err := w.core.CreatePayload(&corepayloads.Payload{Code: other, UOPCapacity: 100}); err != nil {
+		t.Fatalf("the other part: %v", err)
+	}
+	w.strokes(2)
+	w.shipEdgeDeltas()
+	_, _, _, e := w.books()
+
+	n := 60
+	if err := w.bins.LoadPayload(w.binID, other, &n, protocol.DeclaredByPerson); err != nil {
+		t.Fatalf("a person's Load Payload of %s: %v", other, err)
+	}
+	decl := w.declaration()
+	if !fencedAtTheStart(decl.adj, 60, e+1, protocol.AuditActorUI) || !decl.adj.PayloadKnown || decl.adj.PayloadCode != other {
+		t.Errorf("the load's declaration is %s naming %q (known %t), want 60 at epoch %d by %q naming %s, fenced at net 0 seq 0 for %s",
+			declText(decl.adj), decl.adj.PayloadCode, decl.adj.PayloadKnown, e+1, protocol.AuditActorUI, other, handoffStation)
+	}
+	w.strokes(4)
+	w.shipEdgeDeltas()
+	w.broker.set(func(b *declBroker) { b.refused[string(decl.payload)] = true })
+	w.edgeReads(w.pass())
+	if got := w.readByEdge(); len(got) != 1 || got[0] != protocol.SubjectBinEpochRefresh {
+		t.Fatalf("the Edge was given %v for the bin, want only the epoch refresh", got)
+	}
+	if rt := w.edgeRuntime(); rt.ActiveBinEpoch != e+1 {
+		t.Fatalf("after the refresh the slot holds epoch %d, want %d: the late declaration would not reach the fence", rt.ActiveBinEpoch, e+1)
+	}
+
+	w.broker.set(func(b *declBroker) { delete(b.refused, string(decl.payload)) })
+	w.edgeReads(w.pass())
+	if got := w.readByEdge(); len(got) != 1 || got[0] != protocol.SubjectUOPAdjustment {
+		t.Fatalf("the Edge was given %v for the bin, want the late declaration", got)
+	}
+	rt := w.edgeRuntime()
+	if string(rt.LinesidePayloadCode) != other || !rt.LinesidePayloadKnown || rt.LinesideSource != string(edgedomain.CarrierFromOperator) {
+		t.Errorf("after the late load the slot records the carrier as %q (known %t, from %q), want %s, known, from %q: "+
+			"the person's load names what the carrier holds", rt.LinesidePayloadCode, rt.LinesidePayloadKnown,
+			rt.LinesideSource, other, edgedomain.CarrierFromOperator)
+	}
+	if edge, edgeEpoch, core, _ := w.books(); edge != 60 || edgeEpoch != e+1 || core != 60 {
+		t.Errorf("after the late load: Edge %d at %d, Core %d; want both 60 at %d", edge, edgeEpoch, core, e+1)
+	}
+
+	w.strokes(1)
+	w.shipEdgeDeltas()
+	if edge, _, core, _ := w.books(); edge != 60 || core != 60 {
+		t.Errorf("after a stroke of the claim's part: Edge %d, Core %d; want both 60: the cart is %s's, "+
+			"so the stroke is logged and not charged to it", edge, core, other)
 	}
 }
 
