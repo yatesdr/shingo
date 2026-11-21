@@ -87,7 +87,7 @@ jobs:
         # and any non-tagged tests added in the future.
         run: go test -tags lockcheck -count=1 ./...
 
-  # THE DOCKER SUITES ARE THEIR OWN JOBS, EACH IN TWO SLICES BY TEST NAME.
+  # THE DOCKER SUITES ARE THEIR OWN JOBS, EACH IN THREE SLICES BY TEST NAME.
   #
   # They were steps of the build job, after the builds, the vet and the unit
   # run, and the race suite after the plain one: one serial job that MEASURED
@@ -95,18 +95,25 @@ jobs:
   # plain docker step 391s of it, the third-longest job in the run. Nothing in
   # the race run depends on the plain one, nor either on the build steps.
   #
-  # integration/scenarios is one package, so the slices are by test name: the
-  # catid 4x2 family's S1-S5 in one (S5 is the longest scenario), every other
-  # test in the other, by -skip of the same pattern, so each test runs in
-  # exactly one slice. testcontainers starts each job's own Postgres.
+  # integration/scenarios is one package, so the slices are by test name. EVERY
+  # scenario test is t.Parallel, so the package is bound by its total test time
+  # over -parallel (GOMAXPROCS, 4 on the runner): the race run's 2,522 summed
+  # test-seconds took 707s. The slices are cut by those summed seconds, about a
+  # third each (ci-speed run 44858100662): a = catid 4x2 S1-S5 + the produce
+  # partials pins + the changeover pins; b = catid 4x2 S6-S9 + the press
+  # matrix; c = every other test, by -skip of a's and b's patterns together, so
+  # each test runs in exactly one slice. A first cut of two (S1-S5 against the
+  # rest) put 25% of the time on one side and ran its other slice for 801s.
+  # testcontainers starts each job's own Postgres.
   docker:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         slice:
-          - { id: a, run: "^TestCatid4x2_S[1-5]", skip: "" }
-          - { id: b, run: "", skip: "^TestCatid4x2_S[1-5]" }
+          - { id: a, run: "^Test(Catid4x2_S[1-5]|ProducePartials|Pin)", skip: "" }
+          - { id: b, run: "^Test(Catid4x2_S[6-9]|Scenario_PressMatrix)", skip: "" }
+          - { id: c, run: "", skip: "^Test(Catid4x2_S[1-9]|ProducePartials|Pin|Scenario_PressMatrix)" }
     steps:
       - uses: actions/checkout@v7
 
@@ -156,8 +163,9 @@ jobs:
       fail-fast: false
       matrix:
         slice:
-          - { id: a, run: "^TestCatid4x2_S[1-5]", skip: "" }
-          - { id: b, run: "", skip: "^TestCatid4x2_S[1-5]" }
+          - { id: a, run: "^Test(Catid4x2_S[1-5]|ProducePartials|Pin)", skip: "" }
+          - { id: b, run: "^Test(Catid4x2_S[6-9]|Scenario_PressMatrix)", skip: "" }
+          - { id: c, run: "", skip: "^Test(Catid4x2_S[1-9]|ProducePartials|Pin|Scenario_PressMatrix)" }
     steps:
       - uses: actions/checkout@v7
 

@@ -82,7 +82,10 @@ jobs:
       # Rolling key: cache entries are immutable once written, so the key
       # carries the run id and restore-keys picks up the most recent previous
       # one. A miss is fine — shardplan falls back to equal weights and the run
-      # is merely less balanced.
+      # is merely less balanced. How much less, MEASURED on the first run of a
+      # new cache-prefix (core's plain suite, ci-speed run 44859918647): two
+      # shards of 4,874 and 2,550 test results, 443s and 462s, against one 624s
+      # job before. The balanced split starts with the second run.
       - uses: actions/cache/restore@v4
         with:
           path: .shard/timings.json
