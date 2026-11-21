@@ -223,11 +223,8 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 				protocol.SubjectNodeStructureChanged,
 				protocol.StationBroadcast,
 				&protocol.NodeStructureChanged{
-					NodeID:      req.NodeID,
-					NodeName:    node.Name,
-					OldParentID: node.ParentID,
-					NewParentID: req.ParentID,
-					Action:      "reparented",
+					NodeName: node.Name,
+					Action:   "reparented",
 				},
 			)
 		}
@@ -375,7 +372,6 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 			protocol.SubjectNodeStructureChanged,
 			protocol.StationBroadcast,
 			&protocol.NodeStructureChanged{
-				NodeID:   group.ID,
 				NodeName: group.Name,
 				Action:   "group_deleted",
 			},

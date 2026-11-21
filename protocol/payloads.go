@@ -1651,13 +1651,12 @@ type OrderStatusResponse struct {
 }
 
 // NodeStructureChanged is sent Core→Edge when a node group's structure changes
-// (reparent or group deletion). Edge uses this to refresh its node cache.
+// (reparent or group deletion). Edge uses this to refresh its node cache, and
+// logs the node's name and the action. A Core before this build also sent the
+// node's id and its old and new parent ids, which no Edge read.
 type NodeStructureChanged struct {
-	NodeID      int64  `json:"node_id"`
-	NodeName    string `json:"node_name"`
-	OldParentID *int64 `json:"old_parent_id,omitempty"`
-	NewParentID *int64 `json:"new_parent_id,omitempty"`
-	Action      string `json:"action"` // "reparented" or "group_deleted"
+	NodeName string `json:"node_name"`
+	Action   string `json:"action"` // "reparented" or "group_deleted"
 }
 
 // ─── Phase 1 — inventory delta envelopes ─────────────────────────────────

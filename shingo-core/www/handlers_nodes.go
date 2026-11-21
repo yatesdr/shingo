@@ -401,7 +401,6 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 			protocol.SubjectNodeStructureChanged,
 			protocol.StationBroadcast,
 			&protocol.NodeStructureChanged{
-				NodeID:   node.ID,
 				NodeName: node.Name,
 				Action:   "group_deleted",
 			},

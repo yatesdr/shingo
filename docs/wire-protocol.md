@@ -1646,10 +1646,7 @@ Sent on `node.structure_changed`: a node was reparented or deleted, so the Edge'
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `node_id` | integer |  |  |
 | `node_name` | string |  |  |
-| `old_parent_id` | integer | omitempty |  |
-| `new_parent_id` | integer | omitempty |  |
 | `action` | string |  | "reparented" or "group_deleted" |
 
 <!-- /generated -->
