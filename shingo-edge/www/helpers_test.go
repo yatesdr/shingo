@@ -154,9 +154,8 @@ type stubEngine struct {
 	pinSavedCalls      int
 
 	// The containment feed as the containment page reads it: the held copy
-	// (nil = nothing held), and what the last heartbeat ack said about Core
-	// (statusCoreLink.ackLocal zero = no ack yet; speaksFeeds false after one
-	// = an older Core).
+	// (nil = nothing held). speaksFeeds is CoreSpeaksFeeds, which the station
+	// catalog stamp reads (catalogFeedClock).
 	containment *engine.ContainmentState
 	speaksFeeds bool
 }

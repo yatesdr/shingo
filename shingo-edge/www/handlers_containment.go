@@ -35,23 +35,13 @@ import (
 	"shingoedge/engine"
 )
 
-// The page's lines for a missing copy. With nothing held, the page says why:
-// no snapshot has arrived yet, or the last ack came from a Core that does not
-// send the feed at all, which no amount of waiting will fix.
+// The page's lines for a missing copy: with nothing held, no snapshot has
+// arrived yet (every Core at or above protocol.FloorCore sends the feed), and
+// for a copy whose times are unknown.
 const (
 	containmentNoData   = "No data from Core yet"
-	containmentOldCore  = "Core does not send containment (older Core)"
 	containmentAsOfZero = "an unknown time"
 )
-
-// containmentFeedEngine is what the page reads about the feed beyond the copy:
-// whether the last heartbeat ack came from a Core that sends feeds. Asserted on
-// the orchestration surface, as /status asserts statusEngine, so neither
-// interface widens for it.
-type containmentFeedEngine interface {
-	CoreSpeaksFeeds() bool
-	LastCoreAck() (local, server time.Time)
-}
 
 // containmentFlagRow and containmentHeldRow are the feed's rows as the page and
 // its JSON twin render them: the times as the RFC 3339 text Core's JSON
@@ -165,7 +155,7 @@ func (h *Handlers) containmentPicture() (containmentView, error) {
 		}
 		v.AsOf = containmentAsOf(state, time.Now())
 	} else {
-		v.Notice = h.containmentNotice()
+		v.Notice = containmentNoData
 	}
 	v.Sections = containmentSections(claimRows, dests)
 	return v, nil
@@ -205,17 +195,6 @@ func containmentSections(claimRows []domain.NodeClaim, dests map[string]protocol
 		sections = append(sections, *sec)
 	}
 	return sections
-}
-
-// containmentNotice says why nothing is held: an older Core (the last ack
-// carried no feeds map) or no snapshot yet.
-func (h *Handlers) containmentNotice() string {
-	if fe, ok := h.orchestration.(containmentFeedEngine); ok {
-		if local, _ := fe.LastCoreAck(); !local.IsZero() && !fe.CoreSpeaksFeeds() {
-			return containmentOldCore
-		}
-	}
-	return containmentNoData
 }
 
 // containmentAsOf is the "as of" time for a held copy, or "" while it is

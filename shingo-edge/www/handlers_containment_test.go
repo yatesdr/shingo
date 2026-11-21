@@ -10,21 +10,18 @@ import (
 	"shingoedge/engine"
 )
 
-// The containment feed as the stub engine serves it: the held copy, and what
-// the last heartbeat ack said about Core (containmentFeedEngine).
+// The containment feed as the stub engine serves it: the held copy. Whether
+// Core speaks feeds is the station catalog stamp's question
+// (catalogFeedClock), not the page's.
 func (s *stubEngine) LocalContainment() (*engine.ContainmentState, bool) {
 	return s.containment, s.containment != nil
 }
 func (s *stubEngine) CoreSpeaksFeeds() bool { return s.speaksFeeds }
 
-// LastCoreAck is shared with /status (core_link_status_test.go): the page reads
-// statusCoreLink.ackLocal.
-
-// The page under each state of the feed: nothing held before any ack, nothing
-// held after an ack from an older Core (a new Edge on an old Core), a held copy
-// Core has confirmed recently, and one it has not confirmed for longer than
-// FeedAsOfAfter. Nothing blanks for age: the old copy renders whole, with the
-// time beside it.
+// The page under each state of the feed: nothing held, a held copy Core has
+// confirmed recently, one it has not confirmed for longer than FeedAsOfAfter,
+// and one never confirmed since it arrived. Nothing blanks for age: the old
+// copy renders whole, with the time beside it.
 func TestContainmentPage_FeedStates(t *testing.T) {
 	t.Parallel()
 	old := time.Now().Add(-engine.FeedAsOfAfter - time.Minute)
@@ -32,31 +29,25 @@ func TestContainmentPage_FeedStates(t *testing.T) {
 	cases := []struct {
 		name     string
 		held     func() *engine.ContainmentState
-		lastAck  time.Time
-		speaks   bool
 		contains []string
 		absent   []string
 	}{
-		{"nothing held, no ack yet", nil, time.Time{}, false,
-			[]string{containmentNoData, "FP-GRP"}, []string{containmentOldCore, "as of ", "FP-BIN-9"}},
-		{"nothing held, ack from an older Core", nil, time.Now(), false,
-			[]string{containmentOldCore, "FP-GRP"}, []string{containmentNoData, "as of "}},
-		{"nothing held, ack from a newer Core", nil, time.Now(), true,
-			[]string{containmentNoData}, []string{containmentOldCore}},
-		{"held, confirmed now", func() *engine.ContainmentState { return containmentPinHeld(t) }, time.Now(), true,
+		{"nothing held", nil,
+			[]string{containmentNoData, "FP-GRP"}, []string{"as of ", "FP-BIN-9"}},
+		{"held, confirmed now", func() *engine.ContainmentState { return containmentPinHeld(t) },
 			[]string{"FP-BIN-9", "FP-BIN-11"}, []string{"as of ", containmentNoData}},
 		{"held, last confirmed long ago", func() *engine.ContainmentState {
 			st := containmentPinHeld(t)
 			st.ReceivedAt, st.ConfirmedAt = old.Add(-time.Hour), old
 			return st
-		}, time.Now(), true,
+		},
 			[]string{"as of " + oldText, "FP-BIN-9", "FP-BIN-11", `data-payload="FP-PART"`}, []string{containmentNoData}},
-		{"held, older Core since (the copy still renders)", func() *engine.ContainmentState {
+		{"held, never confirmed since it arrived (the copy still renders)", func() *engine.ContainmentState {
 			st := containmentPinHeld(t)
 			st.ReceivedAt, st.ConfirmedAt = old, time.Time{}
 			return st
-		}, time.Now(), false,
-			[]string{"as of " + oldText, "FP-BIN-9"}, []string{containmentOldCore}},
+		},
+			[]string{"as of " + oldText, "FP-BIN-9"}, []string{containmentNoData}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,7 +57,6 @@ func TestContainmentPage_FeedStates(t *testing.T) {
 			if tc.held != nil {
 				stub.containment = tc.held()
 			}
-			stub.statusCoreLink.ackLocal, stub.speaksFeeds = tc.lastAck, tc.speaks
 
 			rec := httptest.NewRecorder()
 			h.handleContainmentPage(rec, httptest.NewRequest(http.MethodGet, "/containment", nil))
