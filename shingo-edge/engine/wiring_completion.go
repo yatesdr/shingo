@@ -335,7 +335,7 @@ func matchOrderBSimple(ctx *orderCompletionCtx) bool {
 func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
 	rt, ob := ctx.runtime.ActiveBinID, ctx.order.BinID
 	if rt != nil && ob != nil && *rt == *ob {
-		left, err := e.carrierLeftIfBound(ctx.node.ID, ctx.node.CoreNodeName, *ob)
+		left, err := e.carrierLeftIfBound(ctx.node.ID, ctx.node.CoreNodeName, *ob, 0)
 		if err != nil {
 			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 		} else if !left {

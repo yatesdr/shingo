@@ -176,6 +176,53 @@ func TestHandleUOPAdjustment_ReleasedClearsActiveBin(t *testing.T) {
 	}
 }
 
+// TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain: the
+// carrier landed on the seat at placement stamp 70. A Released carrying a
+// stamp older than that is a move that ended an earlier stay, delivered late,
+// after the carrier came back: the seat keeps the carrier and its count. A
+// Released at a newer stamp is the move that ends this stay and clears it,
+// and one with no stamp (an older Core) clears as it always did. The refusal
+// is the clear's own WHERE, so the Released costs what it did
+// (TestEmptySlotGuard_CostsNoStatement).
+func TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		stamp    int64
+		clearsIt bool
+	}{
+		{"a move before the landing, late", 60, false},
+		{"the move that ends the stay", 80, true},
+		{"an older Core's, with no stamp", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			_, nodeID, _, _ := emptySeat(t, eng, "RLS", "PART-RLS", 100)
+			const bin = int64(8901)
+			eng.HandleBinLanded(protocol.BinLanded{BinID: bin, CoreNodeName: "RLS-NODE", Count: 40, Epoch: 3,
+				PayloadCode: "PART-RLS", PayloadKnown: true, PlacedSeq: 70})
+			if rt := runtimeOf(t, eng, nodeID); rt.ActiveBinID == nil || *rt.ActiveBinID != bin {
+				t.Fatalf("the landing bound %v, want bin %d", rt.ActiveBinID, bin)
+			}
+
+			eng.HandleUOPAdjustment(protocol.UOPAdjustment{BinID: bin, CoreNodeName: "RLS-NODE", Released: true,
+				PlacedSeq: tc.stamp, Actor: protocol.AuditActorUI})
+
+			rt := runtimeOf(t, eng, nodeID)
+			switch {
+			case tc.clearsIt && rt.ActiveBinID != nil:
+				t.Errorf("a Released at stamp %d left bin %v bound at 40: the move ended the stay landed at 70",
+					tc.stamp, rt.ActiveBinID)
+			case !tc.clearsIt && (rt.ActiveBinID == nil || *rt.ActiveBinID != bin || rt.RemainingUOPCached != 40):
+				t.Errorf("a Released at stamp %d left the seat bound to %v at %d, want bin %d at 40: "+
+					"the carrier landed again at 70, after that move", tc.stamp, rt.ActiveBinID, rt.RemainingUOPCached, bin)
+			}
+		})
+	}
+}
+
 // TestHandleUOPAdjustment_StagedUnboundBinBindsOnCorrection pins P2-C5: a count
 // correction addressed to a node with NO bin bound binds the named bin with the
 // corrected value (via the Bound=true machinery) instead of throwing the

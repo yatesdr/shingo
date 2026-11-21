@@ -67,7 +67,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
 	ClearProcessNodeCarrier(processNodeID int64) (bool, error)
-	ClearProcessNodeCarrierIfBound(processNodeID, binID int64) (bool, error)
+	ClearProcessNodeCarrierIfBound(processNodeID, binID, endedSeq int64) (bool, error)
 	LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
@@ -143,13 +143,13 @@ func (s *fakeDeltaSink) BindActiveBin(nodeID, binID int64, deltaEpoch int64) err
 
 // ClearActiveBinIfBound with no db reports the named carrier cleared, as
 // ClearActiveBin reports one bound.
-func (s *fakeDeltaSink) ClearActiveBinIfBound(nodeID, binID int64) (bool, error) {
+func (s *fakeDeltaSink) ClearActiveBinIfBound(nodeID, binID, endedSeq int64) (bool, error) {
 	s.mu.Lock()
 	s.clearActiveCalls = append(s.clearActiveCalls, nodeID)
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.ClearProcessNodeCarrierIfBound(nodeID, binID)
+		return db.ClearProcessNodeCarrierIfBound(nodeID, binID, endedSeq)
 	}
 	return true, nil
 }

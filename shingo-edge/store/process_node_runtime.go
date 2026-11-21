@@ -81,9 +81,10 @@ func (db *DB) ClearProcessNodeCarrier(processNodeID int64) (wasBound bool, err e
 }
 
 // ClearProcessNodeCarrierIfBound is ClearProcessNodeCarrier for one named
-// carrier: see processes.ClearActiveBinIfBound.
-func (db *DB) ClearProcessNodeCarrierIfBound(processNodeID, binID int64) (cleared bool, err error) {
-	return processes.ClearActiveBinIfBound(db.DB, processNodeID, binID)
+// carrier, not past a seat bound at a placement stamp newer than endedSeq: see
+// processes.ClearActiveBinIfBound.
+func (db *DB) ClearProcessNodeCarrierIfBound(processNodeID, binID, endedSeq int64) (cleared bool, err error) {
+	return processes.ClearActiveBinIfBound(db.DB, processNodeID, binID, endedSeq)
 }
 
 // LeaveProcessNodeAtPickup is the pickup's carrier-left statement (Lane H,

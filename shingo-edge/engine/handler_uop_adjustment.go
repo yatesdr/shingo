@@ -22,7 +22,9 @@ import (
 // When adj.Released is set (Core moved the bin off this node via admin
 // Move), Edge instead CLEARS the node's active_bin_id so its PLC ticks stop
 // attributing consumption to a bin that has left — fixing the "moved bin
-// keeps counting down" bug. NewRemaining is ignored in that case.
+// keeps counting down" bug — unless the seat was bound at a placement stamp
+// newer than the move's (adj.PlacedSeq): the carrier landed there again.
+// NewRemaining is ignored in that case.
 //
 // When adj.Bound is set, an older Core moved a bin ONTO this node: an admin
 // Move, or a mid-order set-down (wiring_block_completed), sent as a Bound
@@ -200,7 +202,15 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// count lock, and only while this bin is still the one bound: the check
 		// above read the seat before the lock, and a carrier landing since keeps
 		// its pointer and count (carrierLeftIfBound).
-		left, err := e.carrierLeftIfBound(node.ID, adj.CoreNodeName, adj.BinID)
+		//
+		// NOT THE SAME CARRIER LANDED AGAIN. The Released carries the move's
+		// placement stamp (PlacedSeq). A seat bound at a newer stamp holds a
+		// landing that move did not end, the carrier brought back, and is left
+		// as it stands, in the clear's own statement: a copy delayed through an
+		// outage used to clear it, and the line stopped counting a carrier
+		// standing on it. 0 (an older Core) clears as before. PIN:
+		// TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain.
+		left, err := e.carrierLeftIfBound(node.ID, adj.CoreNodeName, adj.BinID, adj.PlacedSeq)
 		if err != nil {
 			log.Printf("uop_adjustment: release active bin %d from node %s: %v", adj.BinID, adj.CoreNodeName, err)
 			return

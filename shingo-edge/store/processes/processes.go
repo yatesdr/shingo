@@ -1294,12 +1294,21 @@ func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) (wasBound bool, err
 // bound to another carrier, or to none, is not written. cleared reports
 // whether binID was the one bound. Pinned by
 // TestCarrierLeftIfBound_ALandingInTheWindowStands.
-func ClearActiveBinIfBound(db *sql.DB, processNodeID, binID int64) (cleared bool, err error) {
+//
+// endedSeq is the placement stamp of the move that ended the carrier's stay
+// (protocol.UOPAdjustment.PlacedSeq on a Released), 0 for none. A seat bound at
+// a newer stamp holds a landing that move did not end, the same carrier
+// brought back, and is not written: a late Released no longer clears it. The
+// refusal is the statement's WHERE, +0 statements. A seat with no stamp (bound
+// by a path that sends none) is cleared as before. Pinned by
+// TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain.
+func ClearActiveBinIfBound(db *sql.DB, processNodeID, binID, endedSeq int64) (cleared bool, err error) {
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET
 		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0, released_empty=0,
 		updated_at=datetime('now')
-		WHERE process_node_id=? AND active_bin_id=?`,
-		processNodeID, binID)
+		WHERE process_node_id=? AND active_bin_id=?
+		  AND (? = 0 OR placed_seq IS NULL OR placed_seq <= ?)`,
+		processNodeID, binID, endedSeq, endedSeq)
 	return oneRow(res, err)
 }
 

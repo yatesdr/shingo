@@ -79,13 +79,18 @@ func (e *Engine) carrierLeftLocked(nodeID int64, nodeName string) error {
 // count (owner, 2026-11-19: the check and the clear are one statement), at no
 // statement of its own (TestEmptySlotGuard_CostsNoStatement). Reports whether
 // it cleared. Pinned by TestCarrierLeftIfBound_ALandingInTheWindowStands.
-func (e *Engine) carrierLeftIfBound(nodeID int64, nodeName string, binID int64) (bool, error) {
+//
+// endedSeq is the placement stamp of the move that ended the carrier's stay
+// (the Released's PlacedSeq), 0 when the caller has none (Order B, an older
+// Core): a seat bound at a newer stamp is the carrier landed again, and keeps
+// it, in the same statement.
+func (e *Engine) carrierLeftIfBound(nodeID int64, nodeName string, binID, endedSeq int64) (bool, error) {
 	if e.inventoryDelta == nil {
 		return false, nil
 	}
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
-	cleared, err := e.inventoryDelta.ClearActiveBinIfBound(nodeID, binID)
+	cleared, err := e.inventoryDelta.ClearActiveBinIfBound(nodeID, binID, endedSeq)
 	if cleared || err != nil {
 		e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
 	}

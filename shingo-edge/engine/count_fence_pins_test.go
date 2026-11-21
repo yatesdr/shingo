@@ -414,7 +414,7 @@ func TestCarrierLeftIfBound_ALandingInTheWindowStands(t *testing.T) {
 			binID, rt.ActiveBinID, rt.RemainingUOPCached, landed)
 	}
 	// With the named carrier still bound, the same verb clears it.
-	left, err := eng.carrierLeftIfBound(nodeID, coreNode, landed)
+	left, err := eng.carrierLeftIfBound(nodeID, coreNode, landed, 0)
 	testutil.MustNoErr(t, err, "clear the bound carrier")
 	rt, err = eng.db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read the seat")

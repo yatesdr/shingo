@@ -212,11 +212,12 @@ func (m *Mutator) ClearActiveBin(nodeID int64) (wasBound bool, err error) {
 }
 
 // ClearActiveBinIfBound is ClearActiveBin for one named carrier, in one
-// statement: the pointer and the count go only while binID is the one bound
-// (processes.ClearActiveBinIfBound). Its one production caller is
+// statement: the pointer and the count go only while binID is the one bound,
+// and not on a seat bound at a placement stamp newer than endedSeq (0: no
+// stamp; processes.ClearActiveBinIfBound). Its one production caller is
 // Engine.carrierLeftIfBound (engine/carrier_left.go).
-func (m *Mutator) ClearActiveBinIfBound(nodeID, binID int64) (cleared bool, err error) {
-	return m.rw.ClearProcessNodeCarrierIfBound(nodeID, binID)
+func (m *Mutator) ClearActiveBinIfBound(nodeID, binID, endedSeq int64) (cleared bool, err error) {
+	return m.rw.ClearProcessNodeCarrierIfBound(nodeID, binID, endedSeq)
 }
 
 // SetClaim points the slot at a claim and writes nothing else: not the count,
