@@ -1,18 +1,16 @@
 package plantspec
 
-import "strings"
-
 // One plant file, one Core, and the Edges that run its processes.
 //
 // Core's half of a plant (storage, stations, bins, payloads, loaders, kanbans)
 // has no Edge: every Edge on a Core shares it. The Edge's half (processes and
 // what hangs off them) belongs to one station. A process names its station in
-// Process.Edge; blank is the plant's own namespace.line_id. seeddev seeds Core
+// Process.Edge; blank is the plant's own, StationUID. seeddev seeds Core
 // from the whole file and an Edge from ForEdge(its station).
 
-// Station is the plant's own Edge station uid, namespace.line_id: the Edge a
+// Station is the plant's own Edge station uid (StationUID): the Edge a
 // process with no edge of its own runs on.
-func (p *Plant) Station() string { return p.Namespace + "." + p.LineID }
+func (p *Plant) Station() string { return p.StationUID }
 
 // EdgeOf is the station a process runs on; blank for a process the plant does
 // not declare.
@@ -43,11 +41,11 @@ func (p *Plant) Edges() []string {
 }
 
 // ForEdge is the plant as one Edge seeds it: Core's half whole, and of the
-// Edge's half only what belongs to the processes on station. The namespace and
-// line are the station's. The plant itself is not changed.
+// Edge's half only what belongs to the processes on station. Its own station
+// uid is station. The plant itself is not changed.
 func (p *Plant) ForEdge(station string) *Plant {
 	out := *p
-	out.Namespace, out.LineID = splitStation(station)
+	out.StationUID = station
 	procs := map[string]bool{}
 	out.Processes = nil
 	for _, pr := range p.Processes {
@@ -101,13 +99,4 @@ func (p *Plant) ForEdge(station string) *Plant {
 		}
 	}
 	return &out
-}
-
-// splitStation is a station uid's namespace and line: the part before the
-// first dot and the rest.
-func splitStation(station string) (namespace, line string) {
-	if i := strings.Index(station, "."); i >= 0 {
-		return station[:i], station[i+1:]
-	}
-	return station, ""
 }

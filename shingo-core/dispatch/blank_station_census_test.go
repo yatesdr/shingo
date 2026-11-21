@@ -347,7 +347,7 @@ var blankStationSites = map[string]bsSite{
 	"messaging:loadersNameAnEdge":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),
 	"messaging:nameLoaderEdges":                           notOrder(`alias == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),
 	"plantspec:Plant.ForEdge":                             notOrder(`station == "" ×1`, "a plant-spec claim's operator station"),
-	"plantspec:Plant.Validate":                            notOrder(`station == "" ×2, alias == "" ×1`, "plant-spec stations: a process's Edge, a claim's operator station, a kanban's station"),
+	"plantspec:Plant.Validate":                            notOrder(`station == "" ×3`, "plant-spec stations: the plant's own Edge (station_uid), a claim's operator station, a kanban's station"),
 	"service:BinManifestService.syncOrClearForReleased":   notOrder(`station == "" ×1`, "a release's stream fence, the releasing Edge's own statement"),
 	"service:CountResult.FenceFor":                        notOrder(`station == "" ×1`, "a count's fence for the asking Edge's stream (Doors.binCount); no station is a count made at Core's bins page, which asks about no stream"),
 	"service:KanbanConfig.isKanban":                       notOrder(`station == "" ×1`, "a kanban's maintenance station"),

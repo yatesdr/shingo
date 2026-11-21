@@ -56,11 +56,8 @@ func (p *Plant) Validate() error {
 		}
 	}
 
-	if strings.TrimSpace(p.Namespace) == "" {
-		add("namespace is required")
-	}
-	if strings.TrimSpace(p.LineID) == "" {
-		add("line_id is required")
+	if strings.TrimSpace(p.StationUID) == "" {
+		add("station_uid is required")
 	}
 
 	// --- bin types + payloads ---
@@ -271,11 +268,6 @@ func (p *Plant) Validate() error {
 			if !payloads[code] {
 				add("process %q parts names unknown payload %q", pr.Name, code)
 			}
-		}
-		// A station uid is namespace.line_id; anything else seeds an Edge nothing
-		// will ever run as.
-		if ns, line := splitStation(pr.Edge); pr.Edge != "" && (ns == "" || line == "") {
-			add("process %q edge %q is not a station uid (namespace.line_id)", pr.Name, pr.Edge)
 		}
 	}
 	// A pin is the CATID values the PLC reports for the style's part: integers,

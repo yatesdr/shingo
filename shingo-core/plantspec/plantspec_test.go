@@ -13,9 +13,8 @@ import (
 // to exercise each failure mode.
 func validPlant() *Plant {
 	return &Plant{
-		Namespace: "edge1",
-		LineID:    "line1",
-		BinTypes:  []string{"STANDARD"},
+		StationUID: "edge1.line1",
+		BinTypes:   []string{"STANDARD"},
 		Payloads: []Payload{
 			{Code: "PART-A", UOPCapacity: 1000, BinType: "STANDARD"},
 		},
@@ -164,8 +163,7 @@ func TestValidate_KeepStagedAlonePasses(t *testing.T) {
 
 func TestLoad_RoundTrip(t *testing.T) {
 	yaml := `
-namespace: edge1
-line_id: line1
+station_uid: edge1.line1
 bin_types: [STANDARD]
 payloads:
   - {code: PART-A, uop_capacity: 1000, bin_type: STANDARD}
@@ -189,7 +187,7 @@ stations:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if p.Namespace != "edge1" || p.LineID != "line1" {
+	if p.StationUID != "edge1.line1" {
 		t.Fatalf("header not parsed: %+v", p)
 	}
 	if len(p.Zones) != 1 || len(p.Zones[0].Lanes) != 1 || len(p.Zones[0].Lanes[0].Slots) != 1 {
@@ -391,7 +389,7 @@ func TestValidate_SourceKindRefusals(t *testing.T) {
 func TestLoad_UnknownKeyRefusesNamed(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "plant.yaml")
-	if err := os.WriteFile(path, []byte("namespace: x\nzones:\n  - name: Z\n    no_such_key: on\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("station_uid: x\nzones:\n  - name: Z\n    no_such_key: on\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(path)

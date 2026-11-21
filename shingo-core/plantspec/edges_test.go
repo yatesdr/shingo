@@ -14,7 +14,7 @@ import (
 
 func twoEdgePlant() *Plant {
 	return &Plant{
-		Namespace: "edge1", LineID: "line1",
+		StationUID: "edge1.line1",
 		Processes: []Process{
 			{Name: "P1", ActiveStyle: "P1-RUN"},
 			{Name: "P2", ActiveStyle: "P2-RUN", Edge: "edge2.line1"},
@@ -57,8 +57,8 @@ func TestForEdge_SplitsTheEdgesHalfAndKeepsCoresWhole(t *testing.T) {
 	t.Parallel()
 	p := twoEdgePlant()
 	two := p.ForEdge("edge2.line1")
-	if two.Namespace != "edge2" || two.LineID != "line1" {
-		t.Errorf("edge2's view is %s.%s", two.Namespace, two.LineID)
+	if two.StationUID != "edge2.line1" || two.Station() != "edge2.line1" {
+		t.Errorf("edge2's view is %s", two.StationUID)
 	}
 	if len(two.Processes) != 1 || two.Processes[0].Name != "P2" || len(two.Styles) != 1 || len(two.Claims) != 1 ||
 		len(two.ReportingPoints) != 1 || len(two.StationCounters) != 1 || len(two.CellConfigs) != 1 {
@@ -79,12 +79,21 @@ func TestForEdge_SplitsTheEdgesHalfAndKeepsCoresWhole(t *testing.T) {
 	}
 }
 
+// A station uid is opaque: a process's edge may be a minted stn-… uid, which
+// has no dot, as well as a dev one; the plant's own must be set.
 func TestValidate_AnEdgeIsAStationUID(t *testing.T) {
 	t.Parallel()
 	p := twoEdgePlant()
-	p.Processes[1].Edge = "edge2"
-	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), `edge "edge2" is not a station uid`) {
-		t.Errorf("Validate = %v, want the edge refused by name", err)
+	p.Processes[1].Edge = "stn-0123456789abcdef"
+	if err := p.Validate(); err != nil && strings.Contains(err.Error(), "stn-0123456789abcdef") {
+		t.Errorf("Validate = %v, want a minted uid accepted as a process's edge", err)
+	}
+	if got := p.ForEdge("stn-0123456789abcdef"); got.Station() != "stn-0123456789abcdef" || len(got.Processes) != 1 {
+		t.Errorf("the minted uid's view is %s with %d processes, want its own and P2", got.Station(), len(got.Processes))
+	}
+	p.StationUID = ""
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "station_uid is required") {
+		t.Errorf("Validate = %v, want a plant with no station_uid refused", err)
 	}
 }
 
@@ -110,9 +119,9 @@ var updateEdgesGolden = flag.Bool("update-edges-golden", false,
 // point, station counter, cell config and operator station it keeps, and the
 // size of Core's half it carries whole. The goldens are today's split.
 //
-// The station uid's spelling in the file may change (one key in place of
-// namespace and line_id); the split must not: a diff here is an Edge seeded
-// with something other than what it was.
+// The station uid is one key in the file (station_uid); how it is spelled
+// does not move the split: a diff here is an Edge seeded with something other
+// than what it was.
 func TestEdges_TheCommittedSpecsSplitAsTheyDo(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ golden, spec string }{

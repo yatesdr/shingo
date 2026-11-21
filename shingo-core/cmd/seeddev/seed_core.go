@@ -286,19 +286,19 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 	// process on a second Edge (plantspec.Process.Edge), and that Edge registers
 	// against this Core, so it is enrolled and given its registry here too.
 	//
-	// ENROLL THE STATION. This is the sim's stand-in for the production
-	// enrollment step, and without it the dev stack is permanently broken after
-	// the enrollment deploy: a register from an unenrolled uid is REFUSED and
-	// writes nothing, so the Edge would heartbeat, publish, and never appear.
+	// ENROLL THE STATION, NAMED. An Edge whose uid Core has no row for is
+	// introduced unclaimed at its first register (registry.Introduce) and works
+	// unnamed; enrolling here gives each dev station a claimed row and a name,
+	// as a person naming it on Core's Stations page would. The name is the
+	// Edge's place in Edges(): the plant's own is EDGE 1, the next EDGE 2.
 	//
-	// The uid is the composed edge1.line1 rather than a minted stn-… for the
-	// same reason both live plants keep theirs: it is what shingoedge.dev.yaml
-	// carries, it never changes, and readable-but-immutable is not the defect —
-	// self-asserted-and-mutable was.
+	// The uids are what the dev yamls carry (shingoedge.dev.yaml's station_uid
+	// is the plant file's). They are opaque: nothing reads a part of one, and
+	// a minted stn-… uid would do as well.
 	//
 	// Already-enrolled is the normal case on a re-seed and is not an error.
-	for _, stationID := range p.Edges() {
-		if _, err := db.EnrollEdge(stationID, strings.Replace(stationID, ".", " ", 1)); err != nil &&
+	for i, stationID := range p.Edges() {
+		if _, err := db.EnrollEdge(stationID, fmt.Sprintf("EDGE %d", i+1)); err != nil &&
 			!errors.Is(err, registry.ErrAlreadyEnrolled) {
 			return fmt.Errorf("enroll station %s: %w", stationID, err)
 		}

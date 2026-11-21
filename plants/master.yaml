@@ -59,8 +59,7 @@
 # PRESS-1 block), and the measured tick rates are not retuned to the model.
 # plants/README.md has the figures.
 
-namespace: edge1
-line_id: line1
+station_uid: edge1.line1
 
 # [corridor] Two lanes' worth of free slots per storage group, not one: a group that can
 # run two digs at once needs room for both (the lane-stress closing run of 2026-08-13
