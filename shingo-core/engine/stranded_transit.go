@@ -572,6 +572,8 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 		}
 		return nil, err
 	}
+	// A root node with no station: the plant-wide node list carries it.
+	e.feedDoors.FeedsChangedPlantWide()
 	return node, nil
 }
 
@@ -708,10 +710,15 @@ func (e *Engine) retireEmptyCarrierNodes() {
 	if err == nil {
 		if n > 0 {
 			e.dbg("engine: carried bins: retired %d empty carrier node(s)", n)
+			// The plant-wide node list carried them.
+			e.feedDoors.FeedsChangedPlantWide()
 		}
 		e.carriersClear.Store(left == 0)
 		return
 	}
+	// Deletes that may have removed a carrier node: the plant-wide node list
+	// carried it.
+	defer e.feedDoors.FeedsChangedPlantWide()
 	e.carriersClear.Store(false)
 	e.logFn("engine: carried bins: bulk retire of empty carrier nodes failed (%v) — "+
 		"retrying one at a time, because one row pinned by a foreign key must not "+
@@ -868,7 +875,10 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 	// so a robot carrying two is unaffected.
 	if err := e.db.DeleteCarrierNodeIfEmpty(bin.NodeName); err != nil {
 		e.dbg("engine: carried bins: retire %s: %v", bin.NodeName, err)
+		return
 	}
+	// The plant-wide node list carried it, if it went.
+	e.feedDoors.FeedsChangedPlantWide()
 }
 
 // sweepStrandedBins is the reconciliation half: ask the world, not an event.

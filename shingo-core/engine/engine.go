@@ -149,6 +149,10 @@ type Engine struct {
 	// binChanged pushes the bins feed after a station door's CLEAR
 	// (SetBinChangedFunc). Atomic for the same reason as edgeFeedFlags.
 	binChanged atomic.Pointer[func(binID int64)]
+	// feedDoors are the change doors of the engine's own writers of the node
+	// list and the scene: the scene sync and the robot carrier nodes
+	// (SetFeedsChangedFunc).
+	feedDoors service.FeedDoors
 	// cmsBuildFailures counts movements whose CMS rows could not be built.
 	//
 	// A COUNTER rather than only a log line, because the loss is otherwise

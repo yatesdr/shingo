@@ -72,9 +72,11 @@ func (e *Engine) SetContainmentChangedFunc(fn func()) {
 // and pushes each Edge its new copies: the payload service (payloads, their
 // carrier types, manifests and part cat ids, desktop and floor alike), the
 // node service (nodes, groups, lanes, a node's stations, kanban levels, an
-// Edge's name), the loader service and the bin service's bin types and
-// families. Set once at the composition root.
+// Edge's name), the loader service, the bin service's bin types and
+// families, and the engine's own scene sync and robot carrier nodes. Set once
+// at the composition root.
 func (e *Engine) SetFeedsChangedFunc(fn func(stations []string)) {
+	e.feedDoors.SetFeedsChangedFunc(fn)
 	e.payloadService.SetFeedsChangedFunc(fn)
 	e.nodeService.SetFeedsChangedFunc(fn)
 	e.loaderService.SetFeedsChangedFunc(fn)

@@ -43,6 +43,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - An Edge that asks Core for its node list or the parts catalog is no longer sent an older copy back on its next heartbeats: after a group was moved or deleted, the map synced or a part edited, the old list, map or catalog could come back for up to two minutes
 - A part edited on Core (its carrier types, its manifest, a cat id), from the desktop or the floor, reaches each Edge within a second; it waited for that Edge's next heartbeat
 - A node, group, lane, a node's stations, a loader, a kanban level, a carrier type or family, or an Edge's name edited on Core reaches each Edge's node list within a second; it waited up to two minutes, and a group moved or deleted could flicker back
+- A changed robot map synced from the fleet, and the fleet's locations it adds or removes as nodes, reach each Edge within a second; they waited up to two minutes
 - Core no longer sends every Edge the whole robot map again each time it re-reads an unchanged map from the fleet (each fleet reconnect and the daily map check). Each Edge is sent the map once more after this upgrade
 
 ## v0.18.0 — 2026-11-21

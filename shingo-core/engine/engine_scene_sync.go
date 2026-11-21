@@ -31,11 +31,14 @@ func (e *Engine) emitNodeChange(nodeID int64, nodeName, action string) {
 // free at runtime.
 //
 // Robot routes are named from the scene this writes, so the route index is
-// rebuilt after it (rebuildPointIndex).
+// rebuilt after it (rebuildPointIndex). The Edges hold the scene, so it goes
+// through the plant-wide change door after; an area written again unchanged
+// keeps its revision (scene.Revision), and nothing is sent for it.
 func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]string) {
 	gate, prev := e.sceneGate()
 	total, locations := scenesync.SyncScenePoints(e.db, scenesync.LogFn(e.logFn), areas, gate, prev)
 	e.rebuildPointIndex()
+	e.feedDoors.FeedsChangedPlantWide()
 	return total, locations
 }
 
@@ -76,9 +79,14 @@ func (e *Engine) sceneGate() (string, *time.Time) {
 }
 
 // SyncFleetNodes creates nodes for new scene locations and removes
-// nodes no longer in the scene.
+// nodes no longer in the scene, then goes through the plant-wide change door
+// when it did either: a station with no nodes of its own is sent every root.
 func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted int) {
-	return scenesync.SyncFleetNodes(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, locationSet)
+	created, deleted = scenesync.SyncFleetNodes(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, locationSet)
+	if created+deleted > 0 {
+		e.feedDoors.FeedsChangedPlantWide()
+	}
+	return created, deleted
 }
 
 // UpdateNodeZones updates node zones from a location→area map.
@@ -90,8 +98,10 @@ func (e *Engine) UpdateNodeZones(locationSet map[string]string, overwrite bool) 
 
 // SceneSync loads scene data from the fleet backend and syncs nodes.
 // It is guarded by an atomic bool to prevent concurrent runs. A sync that
-// wrote rebuilds the robot-route index (rebuildPointIndex); one that failed
-// before writing (no scene from the fleet, a sync already running) leaves it.
+// wrote rebuilds the robot-route index (rebuildPointIndex) and goes through
+// the plant-wide change door (the scene and the nodes it made or removed);
+// one that failed before writing (no scene from the fleet, a sync already
+// running) does neither.
 func (e *Engine) SceneSync() (int, int, int, error) {
 	syncer, ok := e.fleet.(fleet.SceneSyncer)
 	if !ok {
@@ -101,6 +111,7 @@ func (e *Engine) SceneSync() (int, int, int, error) {
 	total, created, deleted, err := scenesync.Sync(e.db, scenesync.LogFn(e.logFn), e.emitNodeChange, syncer, &e.sceneSyncing, gate, prev)
 	if err == nil {
 		e.rebuildPointIndex()
+		e.feedDoors.FeedsChangedPlantWide()
 	}
 	return total, created, deleted, err
 }
