@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.18.0 — 2026-11-21
+
 Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on v0.17.1 installs v0.17.1 first. Rollback: migrate down 185 with this release's binary, then the previous binary.
 
 - The shared migration runner records an adopted chain's first version on Postgres too (it sent SQLite's placeholder)
