@@ -35,7 +35,7 @@ Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on 
 - shingocore migrate down 185 puts the previous shape back for a rollback, before the previous binary goes back in
 - shingocore migrate check says, before a deploy, whether Core will start on the database and at which version it stands, and changes nothing
 - install-core.sh asks the new build whether it will start on the database before it stops Core, and stops there, with Core still running, when it will not; it keeps the new binary as shingocore.next, prints the rollback (stop, shingocore.next migrate down, then .previous back, start), also when it stops after the new binary is in, and waits until Core answers on its web port (up to 15 minutes while it migrates), not just until the service is up, whether the RDS answers or not
-- install-core.sh on a fresh box with systemd 255 or later no longer stops with "running an unexpected binary" while systemd is still starting Core
+- install-core.sh on a fresh box no longer stops with "running an unexpected binary" (systemd 255 or later) or "could not determine shingo-core MainPID" while Core waits for its database: it checks the binary it installed
 - install-core.sh run again with the same build keeps the release it replaced as shingocore.previous, and the rollback it prints names that release and every down step back to the version it served
 - install-edge.sh run again with the same build keeps the release it replaced as shingoedge.previous
 - install-edge.sh on a box with systemd 255 or later no longer stops with "running an unexpected binary" while systemd is still starting the Edge

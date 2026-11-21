@@ -490,7 +490,10 @@ echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
 # it 0700 and the check would fail to start for a reason that is not the
 # database's.
 chmod 755 /tmp/shingocore
-echo "==> Build succeeded"
+# What this run built, by content: the rollback slot compares the live binary with it, and a
+# fresh install verifies the installed file against it.
+BUILD_SHA=$(sha256sum /tmp/shingocore | cut -d' ' -f1)
+echo "==> Build succeeded (sha256 ${BUILD_SHA:0:16})"
 
 # ----------------------------------------------------------------------
 # Can the new build start on this database? Asked before anything stops.
@@ -754,7 +757,7 @@ fi
 # config backup in /tmp/shingo-pre-install-*.tar.gz plus a checkout of that
 # release's tag and a reinstall.
 if [ -f /opt/shingo/shingocore ]; then
-    NEW_SHA=$(sha256sum /tmp/shingocore 2>/dev/null | cut -d' ' -f1 || true)
+    NEW_SHA="$BUILD_SHA"
     LIVE_SHA=$(sha256sum /opt/shingo/shingocore 2>/dev/null | cut -d' ' -f1 || true)
     if [ -n "$LIVE_SHA" ] && [ "$LIVE_SHA" = "$NEW_SHA" ]; then
         echo "==> The live binary is this build (sha256 ${LIVE_SHA:0:16}): /opt/shingo/shingocore.previous and its record are kept as they are"
@@ -1084,64 +1087,82 @@ fi
 # executing via /proc/<pid>/exe: after the binary is replaced, a stale process's
 # exe link resolves to the unlinked inode and Linux marks it "(deleted)".
 #
-# ON systemd 255 AND LATER, MainPID IS systemd-executor FOR A MOMENT. systemd
-# starts a service through systemd-executor, which then execs the binary, and a
-# Type=simple unit reads active before that exec. A fresh install waits only for
-# active, so it read the executor here and stopped with "running an unexpected
-# binary" (measured 2026-11-21 on systemd 259, Ubuntu 26.04 under WSL: v0.17.3's
-# installer and this one's, each on a fresh box). A fresh Core, with no database
-# yet, also restarts every 5 s and has no MainPID in between. So the check looks
-# again, for up to 15 s, while MainPID is missing or is the executor; a deleted
-# or foreign binary still fails at once below. Do not drop the look-again for a
-# single read: that is the version that failed. Expiry: when no box this installs
-# on runs a systemd that starts services through an executor.
-echo "==> Verifying the running process is the binary we installed..."
-verify_until=$((SECONDS + 15))
-while :; do
-    RUN_PID=$(systemctl show shingo-core -p MainPID --value 2>/dev/null || echo "")
-    RUN_EXE=""
-    if [ -n "$RUN_PID" ] && [ "$RUN_PID" != "0" ]; then
-        RUN_EXE=$(readlink "/proc/$RUN_PID/exe" 2>/dev/null || echo "")
+# A FRESH INSTALL VERIFIES THE FILE, NOT A PROCESS. There was no binary before
+# it, so no process can be running a stale one, and a fresh Core on the
+# placeholder config cannot stay up: it exits at once and systemd restarts it
+# every 5 s, so reading its MainPID is a race. The look-again below was first
+# meant to cover that as well; measured 2026-11-21 on systemd 259 (Ubuntu 26.04
+# under WSL), with nothing answering on localhost:5432, a fresh install still
+# stopped with "could not determine shingo-core MainPID" (NRestarts 2), while an
+# earlier run, where localhost:5432 refused the login slowly, had caught a live
+# process. So a fresh install checks that /opt/shingo/shingocore is the binary
+# this run built (sha256) and says why no process is checked.
+#
+# Every other install reads the process after Core has answered on its web
+# port, so MainPID is past systemd-executor (systemd 255 and later start a
+# service through it, and a Type=simple unit reads active before it execs the
+# binary). The look-again, up to 15 s while MainPID is missing or is the
+# executor, covers a restart just after that answer; a deleted or foreign binary
+# still fails at once. Expiry: when no box this installs on runs a systemd that
+# starts services through an executor.
+if [ "$MODE" = "FRESH" ]; then
+    echo "==> Verifying the installed binary is the one this run built..."
+    INSTALLED_SHA=$(sha256sum /opt/shingo/shingocore 2>/dev/null | cut -d' ' -f1 || true)
+    if [ -z "$INSTALLED_SHA" ] || [ "$INSTALLED_SHA" != "$BUILD_SHA" ]; then
+        echo "ERROR: /opt/shingo/shingocore (sha256 ${INSTALLED_SHA:-unreadable}) is not the binary this run built (sha256 $BUILD_SHA)."
+        exit 1
+    fi
+    echo "    verified: /opt/shingo/shingocore is this build (sha256 ${BUILD_SHA:0:16}). No process is checked: a fresh box"
+    echo "    had no earlier binary to run stale, and Core restarts until a database is set (NRestarts $(systemctl show shingo-core -p NRestarts --value 2>/dev/null || echo '?'))."
+else
+    echo "==> Verifying the running process is the binary we installed..."
+    verify_until=$((SECONDS + 15))
+    while :; do
+        RUN_PID=$(systemctl show shingo-core -p MainPID --value 2>/dev/null || echo "")
+        RUN_EXE=""
+        if [ -n "$RUN_PID" ] && [ "$RUN_PID" != "0" ]; then
+            RUN_EXE=$(readlink "/proc/$RUN_PID/exe" 2>/dev/null || echo "")
+        fi
+        case "$RUN_EXE" in
+            ""|*/systemd-executor) ;;
+            *) break ;;
+        esac
+        [ "$SECONDS" -ge "$verify_until" ] && break
+        sleep 0.5
+    done
+    if [ -z "$RUN_PID" ] || [ "$RUN_PID" = "0" ]; then
+        echo "ERROR: could not determine shingo-core MainPID; cannot verify the build."
+        exit 1
     fi
     case "$RUN_EXE" in
-        ""|*/systemd-executor) ;;
-        *) break ;;
+        *"(deleted)"*)
+            echo "ERROR: shingo-core (pid=$RUN_PID) is running a DELETED binary:"
+            echo "       $RUN_EXE"
+            echo "       The service was relaunched before the binary swap — this is the"
+            echo "       stale-binary deploy failure. Run: systemctl restart shingo-core"
+            exit 1
+            ;;
+        /opt/shingo/shingocore) : ;;
+        "")
+            echo "ERROR: could not read /proc/$RUN_PID/exe; cannot verify the build."
+            exit 1
+            ;;
+        *)
+            echo "ERROR: shingo-core (pid=$RUN_PID) is running an unexpected binary:"
+            echo "       $RUN_EXE (expected /opt/shingo/shingocore)"
+            exit 1
+            ;;
     esac
-    [ "$SECONDS" -ge "$verify_until" ] && break
-    sleep 0.5
-done
-if [ -z "$RUN_PID" ] || [ "$RUN_PID" = "0" ]; then
-    echo "ERROR: could not determine shingo-core MainPID; cannot verify the build."
-    exit 1
+    # Same inode, not just the same path — catches a swap that happened between the
+    # start and this check.
+    if ! [ "/proc/$RUN_PID/exe" -ef /opt/shingo/shingocore ]; then
+        echo "ERROR: shingo-core (pid=$RUN_PID) exe is not the installed binary"
+        echo "       (path matches but inode differs — stale process)."
+        echo "       Run: systemctl restart shingo-core"
+        exit 1
+    fi
+    echo "    verified: pid=$RUN_PID running /opt/shingo/shingocore"
 fi
-case "$RUN_EXE" in
-    *"(deleted)"*)
-        echo "ERROR: shingo-core (pid=$RUN_PID) is running a DELETED binary:"
-        echo "       $RUN_EXE"
-        echo "       The service was relaunched before the binary swap — this is the"
-        echo "       stale-binary deploy failure. Run: systemctl restart shingo-core"
-        exit 1
-        ;;
-    /opt/shingo/shingocore) : ;;
-    "")
-        echo "ERROR: could not read /proc/$RUN_PID/exe; cannot verify the build."
-        exit 1
-        ;;
-    *)
-        echo "ERROR: shingo-core (pid=$RUN_PID) is running an unexpected binary:"
-        echo "       $RUN_EXE (expected /opt/shingo/shingocore)"
-        exit 1
-        ;;
-esac
-# Same inode, not just the same path — catches a swap that happened between the
-# start and this check.
-if ! [ "/proc/$RUN_PID/exe" -ef /opt/shingo/shingocore ]; then
-    echo "ERROR: shingo-core (pid=$RUN_PID) exe is not the installed binary"
-    echo "       (path matches but inode differs — stale process)."
-    echo "       Run: systemctl restart shingo-core"
-    exit 1
-fi
-echo "    verified: pid=$RUN_PID running /opt/shingo/shingocore"
 
 # Service is back up — clear the deploy marker so crash alerts resume.
 rm -f "$DEPLOY_MARKER"
