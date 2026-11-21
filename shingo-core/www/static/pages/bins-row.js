@@ -103,7 +103,7 @@ export function binRowView(detail, auth, ratios) {
   }
   if (t.carriedBy) {
     loc += '<div class="text-muted-xs">on ' + esc(t.carriedBy) + '</div>';
-    if (b.anomaly_note) loc += '<div class="text-muted-xs bin-loc-note" title="' + esc(b.anomaly_note) + '">' + esc(b.anomaly_note) + '</div>';
+    if (b.anomaly_note) loc += '<div class="text-muted-xs bin-loc-note cell-clip" title="' + esc(b.anomaly_note) + '">' + esc(b.anomaly_note) + '</div>';
   }
   if (t.stranded) loc += '<div class="text-muted-xs">stranded' + (b.anomaly_note ? ' &mdash; ' + esc(b.anomaly_note) : '') + '</div>';
 

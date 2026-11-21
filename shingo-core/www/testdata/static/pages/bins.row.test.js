@@ -159,7 +159,7 @@ console.log('on a robot deck: the robot, and the Return button');
     const v = m.binRowView(d, true);
     eq('location', v.location.html,
         '<span title="In transit">A &rarr; B</span><div class="text-muted-xs">on AMR-04</div>' +
-        '<div class="text-muted-xs bin-loc-note" title="by &quot;B&quot; aisle">by &quot;B&quot; aisle</div>');
+        '<div class="text-muted-xs bin-loc-note cell-clip" title="by &quot;B&quot; aisle">by &quot;B&quot; aisle</div>');
     eq('Return button', v.flags.returnHTML,
         '<span data-action="stopPropagation"><button class="btn btn-sm" data-action="askRobotToSetDown:44:AMR-04" title="Return this bin to where it is used from">Return</button></span>');
     eq('no Return button when signed out', m.binRowView(d, false).flags.returnHTML, '');

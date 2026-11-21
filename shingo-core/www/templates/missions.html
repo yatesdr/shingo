@@ -15,7 +15,9 @@
                border-bottom:1px solid var(--sub-3); white-space:nowrap; }
   .u3-tbl td { padding:0.35rem 0.5rem; border-bottom:1px solid var(--sub-1); }
   .u3-tbl tbody tr:last-child td { border-bottom:none; }
-  .u3-tbl td:first-child { max-width:16rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The label's cap; the one-line cut is shared .cell-clip (missions.js
+     breakdownTable wraps the first cell's text in it). */
+  .u3-tbl td:first-child > .cell-clip { max-width:16rem; }
   .u3-row { cursor:pointer; }
   .u3-row:hover { background:var(--elev-raised); }
   /* An index over too few missions is greyed AND prints its n. Greying alone

@@ -867,7 +867,8 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Bin flags column */
 .bin-flags { font-size:0.85rem; white-space:nowrap; }
-.bin-loc-note { max-width:18rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* The anomaly note's cap; the one-line cut is shared .cell-clip. */
+.bin-loc-note { max-width:18rem; }
 .bin-flags span { margin-right:0.2rem; cursor:help; }
 
 /* Clickable bin rows */
@@ -1013,8 +1014,6 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .orders-subtext { font-size:var(--font-xs); color:var(--text-muted); }
 .orders-reason { max-width:22rem; white-space:normal; }
-/* An ended order's reason: one line on the board, the whole of it on hover. */
-.orders-reason-clip { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .orders-actions { white-space:nowrap; }
 
 .manifest-footer {

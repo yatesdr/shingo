@@ -1303,12 +1303,6 @@ textarea.form-input {
 .table-compact th, .table-compact td { padding: 0.3rem 0.6rem; }
 .table-compact th { font-size: 0.72rem; }
 
-/* Force a table to fit its container regardless of content width.
- * table-layout: fixed distributes width equally across columns; the
- * break-word fallback lets long unbroken tokens (node names, payload
- * codes) wrap inside their cell instead of pushing the table wide. */
-.table-fit { table-layout: fixed; word-break: break-word; }
-
 .orders-table thead th {
     position: sticky;
     top: 0;

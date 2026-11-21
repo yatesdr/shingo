@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Core and Edge both carry it (a shared stylesheet), in either order; only Core's pages change.
+
+- The Orders table no longer runs off the right side of its card: a cancelled or failed order's one-line reason held the Status column at full width and pushed Robot, Created and Actions past the edge. The reason line still ends in "…" with the whole of it on hover, and a row that still cannot fit now scrolls sideways inside the card. The Bins page's anomaly note and the Missions page's label column use the same one-line cut, so a long note or fault name no longer widens those tables either
+
 ## v0.17.2 — 2026-11-20
 
 Deploy: no migration. Core only; the Edges are unchanged and need no install.

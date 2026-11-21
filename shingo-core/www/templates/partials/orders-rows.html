@@ -62,7 +62,7 @@
     {{/* Why an ended order ended (orders.error_detail): one clipped line, the
          whole of it on hover and in the order's pop-up. Before 2026-11-05 a
          cancelled row said "cancelled" and nothing else. */}}
-    {{if and .ErrorDetail (or (eq .Status "cancelled") (eq .Status "failed"))}}<div class="orders-subtext orders-reason orders-reason-clip" title="{{.ErrorDetail}}">{{.ErrorDetail}}</div>{{end}}
+    {{if and .ErrorDetail (or (eq .Status "cancelled") (eq .Status "failed"))}}<div class="orders-subtext orders-reason cell-clip" title="{{.ErrorDetail}}">{{.ErrorDetail}}</div>{{end}}
   </td>
   <td class="orders-robot">{{.RobotID}}</td>
   {{/* Seconds: orders are created several a minute, and a minute-only stamp

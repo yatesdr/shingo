@@ -335,12 +335,40 @@
  * compose a tighter limit by setting `--table-scroll-max` on the
  * wrapper itself.
  *
+ * It also scrolls SIDEWAYS when the table is wider than the wrapper, so
+ * a wide row scrolls inside the card instead of painting past it. The
+ * overflow-x is written out because pages rely on it (Core's Orders);
+ * overflow-y: auto alone would compute it to auto anyway.
+ *
  * Pair with a sticky-headered table by giving `<thead>` `position:
  * sticky; top: 0;` from page CSS — the wrapper is the scrolling
  * ancestor it needs. */
 .table-scroll-y {
   max-height: var(--table-scroll-max, calc(100vh - 16rem));
+  overflow-x: auto;
   overflow-y: auto;
+}
+
+/* One line of text in a table cell, cut with "…". Put it on an element
+ * INSIDE the <td>, give that element its cap (max-width), and put the
+ * whole text in a title.
+ *
+ * Not nowrap + text-overflow: in an auto-layout table a nowrap line
+ * makes its cap the column's FLOOR, so one long line widens the table.
+ * Core's .orders-reason-clip did that: it held the Orders Status column
+ * at 22rem and pushed the table 295 px past its card (SPR, 2026-11-20).
+ * A one-line clamp sizes like wrapping text — the column can shrink to
+ * the longest word, and grows toward the cap when the row has room —
+ * and still draws one line ending in "…". Measured in Chromium the same
+ * day: the same 22rem line held its column at 369 px under nowrap and
+ * 89 px clamped. (width: 0 + min-width: 100% also fits, but the line
+ * then gets no share of spare room: 63–115 px, unreadable.) */
+.cell-clip {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden;
 }
 
 /* ─── Sortable tables ────────────────────────────────────────────────── */

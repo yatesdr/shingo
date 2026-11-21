@@ -195,7 +195,7 @@
                  excludes carrier nodes, so this row is the only place the jack
                  watch's reason is ever shown. One line, truncated; the whole
                  sentence is the tooltip. */}}
-            {{if .AnomalyNote}}<div class="text-muted-xs bin-loc-note" title="{{.AnomalyNote}}">{{.AnomalyNote}}</div>{{end}}
+            {{if .AnomalyNote}}<div class="text-muted-xs bin-loc-note cell-clip" title="{{.AnomalyNote}}">{{.AnomalyNote}}</div>{{end}}
           {{end}}
           {{if .Stranded}}<div class="text-muted-xs">stranded{{if .AnomalyNote}} &mdash; {{.AnomalyNote}}{{end}}</div>{{end}}
         </td>

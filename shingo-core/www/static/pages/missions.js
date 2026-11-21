@@ -474,10 +474,12 @@ function breakdownTable(container, rows, opts) {
         const cHead = '<thead><tr>' + opts.columns.map((c) =>
             '<th' + (c.num ? ' class="col-num"' : '') + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '')
             + '>' + escapeHtml(c.head) + '</th>').join('') + '</tr></thead>';
-        const cBody = rows.map((r) => '<tr>' + opts.columns.map((c) => {
+        // The first column is the label, cut to one line (.cell-clip); the
+        // whole of it is the cell's title.
+        const cBody = rows.map((r) => '<tr>' + opts.columns.map((c, i) => {
             const v = c.value(r);
             return '<td class="' + (c.num ? 'col-num tnum' : '') + '" title="' + escapeHtml(String(v)) + '">'
-                + escapeHtml(v) + '</td>';
+                + (i === 0 ? '<div class="cell-clip">' + escapeHtml(v) + '</div>' : escapeHtml(v)) + '</td>';
         }).join('') + '</tr>').join('');
         container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeHtml(opts.note) + '</p>' : '')
             + '<table class="u3-tbl">' + cHead + '<tbody>' + cBody + '</tbody></table>';
@@ -510,7 +512,7 @@ function breakdownTable(container, rows, opts) {
             }
         }
         return '<tr' + (opts.onClick ? ' class="u3-row" data-label="' + escapeHtml(label) + '"' : '') + '>'
-            + '<td title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</td>'
+            + '<td title="' + escapeHtml(label) + '"><div class="cell-clip">' + escapeHtml(label) + '</div></td>'
             + '<td class="col-num tnum">' + r.count + '</td>'
             + '<td class="col-num tnum">' + escapeHtml(formatDuration(r.avg_duration_ms)) + '</td>'
             + idxCell

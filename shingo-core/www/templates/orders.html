@@ -60,7 +60,14 @@
   <div class="card orders-card">
     {{/* Always drawn, empty or not: the search re-reads the rows into this
          table, and a view that started empty has to have one to fill. The
-         empty state is a row of the partial. */}}
+         empty state is a row of the partial.
+
+         The scroll wrapper keeps a table wider than the card inside it: a row
+         that cannot fit scrolls sideways in the card instead of painting past
+         its edge (it did, 2026-11-20, a long route plus a long ended-order
+         reason). It is also the sticky header's scrolling ancestor, as on Bins
+         and Payloads. */}}
+    <div class="table-scroll-y">
     <table class="table-compact orders-table" id="orders-table" data-sortable>
       <thead>
         <tr>
@@ -80,6 +87,7 @@
 {{template "orders-rows" .}}
       </tbody>
     </table>
+    </div>
   </div>
 </div>
 
