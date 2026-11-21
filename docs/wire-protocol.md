@@ -124,10 +124,9 @@ The part to design against: once a message has failed `outbox.MaxRetries` (10) p
 and the `retries < N` filter drops it from the stream **permanently** while everything behind it keeps flowing.
 That is not a delay, it is a hole.
 
-- **Exempt subjects.** The messages in `neverDeadLetter` — the bin UoP delta, the lineside bucket level, the
-  ingest, the bin pickup and landing, the release, the dropped hold, the ask's answer, Core's status tell
-  (`order.update`) and the edge's cancel — spend no retry on a failed publish; they are offered on every pass
-  until the broker takes them. A message that panics the publisher is still dead-lettered, exempt or not.
+- **Exempt messages.** The must-arrive table's never-dead-letter rows (below) spend no retry on a failed publish;
+  they are offered on every pass until the broker takes them. A message that panics the publisher is still
+  dead-lettered, exempt or not.
 - **The wake arm mutes on failure.** `(*Drainer).Notify` drains on each enqueue after a 50 ms settle
   (`wakeSettle`), and a drain retries every pending row. After a failed publish the wake arm stands down until a
   ticker pass succeeds, so a transport failure costs a row at most one retry per tick
@@ -136,6 +135,34 @@ That is not a delay, it is a hole.
   failing rows share its passes, since each failed publish can take the client's timeout.
 - **Dead letters are kept seven days** (`DeadLetterRetentionPeriod`), delivered rows one
   (`MessageRetentionPeriod`); the purge runs every `PurgeCycleInterval` ticker passes.
+
+### Must arrive
+
+The messages whose loss costs more than a late copy, one row each in `protocol/must_arrive.go`. The
+never-expire set (`DataTTLFor`, `DefaultTTLFor`) and the drainer's never-dead-letter set (`neverDeadLetter`)
+are both derived from it, the latter by the key the sending side's outbox row carries. A row is added only with
+what makes a late copy safe at its receiver. Guards: `TestNoExpiry_ExactMembership`,
+`TestNeverDeadLetter_ExactMembership`, `TestMustArrive_EveryRowIsAMessageAndSaysWhy`.
+
+<!-- generated: protocol/must_arrive.go MustArriveTable -->
+
+| Message | From | Never expires | Never dead-letters | Outbox key | A lost copy | A late copy is safe because |
+|---|---|---|---|---|---|---|
+| `inventory.bin_uop_delta` | Edge | yes | yes | `inventory.bin_uop_delta` | parts counted that Core never hears of: a permanently wrong count, with no record of it | Core dedups on the scope's high-water sequence; a delta from an ended generation goes to the discrepancy audit, not the count |
+| `inventory.lineside_bucket_level` | Edge | yes | yes | `inventory.lineside_bucket_level` | Core's mirror of the pile is wrong until the pile next changes, which for a stranded pile is never | Core applies a level only above the row's high-water sequence |
+| `production.ticks` | Edge | yes | no | — | a fake stop in the cell's MTBF and lost time | Core keys each tick on (cell, edge snapshot id, recorded at), so a late or repeated copy is a no-op |
+| `inventory.hold_dropped` | Edge | yes | yes | `inventory.hold_dropped` | parts that left the count with no row anywhere saying so | Core keys the row on the envelope id, so a late copy writes it late and a redelivered one writes nothing |
+| `inventory.uop_adjustment` | Core | yes | no | — | a reset's number never reaches the station, and a person's count is never recovered on it | a count Core states is fenced per addressed station and rebased on its stream; a Released clears only a seat still bound to its bin |
+| `inventory.bin_epoch_refresh` | Core | yes | no | — | the station keeps counting under a generation that has ended, and Core discards every count it reports | a bound carrier's stamp only moves forward (epochAssignOnBind) |
+| `transit.bin_picked_up` | Core | yes | yes | `data.transit.bin_picked_up` | strands what only the lift triggers: the slot's flush and clear, a changeover supply deferred to it, the re-pull | each branch is idempotent or gated on the bin still bound at the slot (HandleBinPickedUp) |
+| `transit.bin_landed` | Core | yes | yes | `data.transit.bin_landed` | a seat left empty while a carrier stands on it, and every tick there held | the bind refuses a landing not newer than the seat's placed_seq |
+| `edge.answer` | Core | yes | yes | `data.reply.edge.answer` | the asking Edge's table and seat stay wrong until something else heals them | an answer is a fact already true at Core |
+| `order.ingest` | Edge | yes | yes | `order.ingest` | a full produce bin left unconfirmed and invisible to sourcing | Core fences a late ingest by its bin_epoch |
+| `order.release` | Edge | yes | yes | `order.release` | a robot Core holds staged that nobody can release | the release echoes the wait it was pressed for (OrderRelease.StationWait), so a copy for a wait already passed is a no-op |
+| `order.cancel` | Edge | yes | yes | `order.cancel` | a robot keeps working an order its operator ended | it cancels what is still live, and is a no-op at Core on an order that has ended (dispatch.HandleOrderCancel) |
+| `order.update` | Core | no | yes | `order.update` | the station shows a status Core has left, and nothing repairs it on a healthy link | it carries the order's version, and a station applies only a newer one |
+
+<!-- /generated -->
 
 ### Two smaller caveats
 

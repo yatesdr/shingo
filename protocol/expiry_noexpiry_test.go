@@ -266,3 +266,50 @@ func TestNoExpiry_ExactMembership(t *testing.T) {
 			"noExpiryAtV0180 in the same commit and say why in the body", got, want)
 	}
 }
+
+// TestMustArrive_EveryRowIsAMessageAndSaysWhy holds the must-arrive table's
+// rows to what the two derived lists rely on: each names a real subject or
+// type, once; it takes at least one of the two mechanisms; it says what a
+// lost copy costs and what makes a late one safe; and a data subject's sender
+// is the side its direction says (a subject Core handles is the Edge's, one the
+// Edge handles is Core's), which is what makes its outbox key the spelling that
+// side's row carries. Envelope types are keyed bare on either side, so their
+// sender decides nothing and is not checked here.
+func TestMustArrive_EveryRowIsAMessageAndSaysWhy(t *testing.T) {
+	t.Parallel()
+	in := func(list []string, s string) bool {
+		for _, x := range list {
+			if x == s {
+				return true
+			}
+		}
+		return false
+	}
+	rows := MustArriveTable()
+	if len(rows) == 0 {
+		t.Fatal("the must-arrive table is empty: nothing below was checked")
+	}
+	seen := map[string]bool{}
+	for _, m := range rows {
+		if seen[m.Name] {
+			t.Errorf("%s has two rows", m.Name)
+		}
+		seen[m.Name] = true
+		switch {
+		case m.Type && !in(AllTypes(), m.Name):
+			t.Errorf("%s is marked a type but is not in AllTypes", m.Name)
+		case !m.Type && !in(AllSubjects(), m.Name):
+			t.Errorf("%s is marked a data subject but is not in AllSubjects", m.Name)
+		case !m.Type && in(CoreInboundSubjects(), m.Name) && m.Sender != SentByEdge:
+			t.Errorf("%s is a subject Core handles, so the Edge sends it; its row says sender %d", m.Name, m.Sender)
+		case !m.Type && in(EdgeInboundSubjects(), m.Name) && m.Sender == SentByEdge:
+			t.Errorf("%s is a subject the Edge handles, so Core sends it; its row says the Edge", m.Name)
+		}
+		if !m.NeverExpires && !m.NeverDeadLetters {
+			t.Errorf("%s takes neither mechanism: it is not must-arrive, so it has no row", m.Name)
+		}
+		if strings.TrimSpace(m.Lost) == "" || strings.TrimSpace(m.Late) == "" {
+			t.Errorf("%s does not say what a lost copy costs (%q) and what makes a late one safe (%q)", m.Name, m.Lost, m.Late)
+		}
+	}
+}

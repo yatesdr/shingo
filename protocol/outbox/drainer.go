@@ -274,46 +274,14 @@ func (d *Drainer) drain() (failed bool) {
 	return failed
 }
 
-// neverDeadLetter holds the subjects whose failed publishes do not spend a
-// retry, so they are offered on every pass until the broker takes them.
-//
-// They are the messages whose loss costs more than a late copy, each safe late
-// by its receiver's guard. A dead-lettered bin delta is parts
-// that happened and that Core never hears of; a dead-lettered pile level leaves
-// Core's mirror of the pile wrong until the pile next changes; a dead-lettered
-// ingest leaves a full produce bin with no confirmed manifest (its bin_epoch
-// fences a late one at Core); a dead-lettered bin pickup strands the slot's
-// clear and a changeover supply deferred to it; a dead-lettered release strands
-// a robot Core holds staged (see protocol/expiry.go). The order messages below
-// are safe late by their own guards and say why at their entries. The panic
-// path still exhausts them: a payload that panics the publisher on every pass
-// must be stood down.
-var neverDeadLetter = map[string]bool{
-	protocol.SubjectBinUOPDelta:         true,
-	protocol.SubjectLinesideBucketLevel: true,
-	protocol.TypeOrderIngest:            true,
-	// Core writes its data rows as "data."+subject (store/messaging).
-	"data." + protocol.SubjectBinPickedUp: true,
-	// A dead-lettered landing leaves a carrier unbound at its seat (H.6).
-	"data." + protocol.SubjectBinLanded: true,
-	protocol.TypeOrderRelease:           true,
-	// A dead-lettered hold drop is parts that left the count with no row
-	// anywhere saying so.
-	protocol.SubjectHoldDropped: true,
-	// An ask's answer is a fact already true at Core; one dead-lettered leaves
-	// the asking Edge's table and seat wrong until something else heals them.
-	"data.reply." + protocol.SubjectEdgeAnswer: true,
-	// Core's status tell (Core writes the row as "order.update"). A lost one
-	// leaves the station showing a status Core has left, and nothing repairs
-	// it on a healthy link. A late copy is safe: it carries the order's
-	// version, and a station applies only a newer one.
-	protocol.TypeOrderUpdate: true,
-	// The Edge's cancel (the Edge writes the row as "order.cancel"). A lost
-	// one leaves a robot working an order its operator ended. It never
-	// expires (protocol/expiry.go); a late copy is a no-op at Core on an order
-	// that has ended.
-	protocol.TypeOrderCancel: true,
-}
+// neverDeadLetter holds the outbox keys whose failed publishes do not spend a
+// retry, so they are offered on every pass until the broker takes them. It is
+// the must-arrive table's never-dead-letter rows, each keyed as its sending
+// side writes the row (protocol.NeverDeadLetterKeys); what a lost copy costs
+// and what makes a late one safe are on each row (protocol/must_arrive.go). The
+// panic path still exhausts them: a payload that panics the publisher on every
+// pass must be stood down.
+var neverDeadLetter = protocol.NeverDeadLetterKeys()
 
 // publishOne reports whether the message was acked. False means the publish
 // errored (retry incremented unless the subject is in neverDeadLetter,

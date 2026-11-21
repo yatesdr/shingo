@@ -20,8 +20,8 @@ import "time"
 // older Core are lost: deploy Core first.
 //
 // A DISCRETE EVENT, so it is neither coalesced nor allowed to expire: it
-// carries NoExpiry (subjectTTLs) and never dead-letters (the outbox drainer's
-// neverDeadLetter), the treatment TypeOrderIngest gets. A late copy is
+// never expires and never dead-letters (its row in the must-arrive table,
+// must_arrive.go), the treatment TypeOrderIngest gets. A late copy is
 // harmless and a redelivered one writes nothing: Core keys the row on the
 // envelope id, which the outbox row and every Kafka redelivery carry
 // unchanged.

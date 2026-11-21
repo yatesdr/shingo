@@ -6,33 +6,13 @@ import (
 	"shingo/protocol/clock"
 )
 
-// Default TTLs by message type.
-var defaultTTLs = map[string]time.Duration{
+// Default TTLs by message type. A type that never expires is a row of the
+// must-arrive table (must_arrive.go), which adds it here.
+var defaultTTLs = withNeverExpires(map[string]time.Duration{
 	TypeData: 5 * time.Minute,
 
 	TypeOrderRequest:  10 * time.Minute,
 	TypeOrderRedirect: 10 * time.Minute,
-	// A cancel. It fell to 10 minutes, and one dropped after a longer outage
-	// left the Edge's row cancelled (the Edge ends it itself,
-	// orders.Manager.AbortOrderWithReason) and Core's live: robots parked that
-	// nothing on the Edge ever asks about again, since its status sync lists
-	// only live rows. A late copy cancels what is still live, and is a no-op
-	// on an order Core has already ended (dispatch.HandleOrderCancel). The
-	// Edge stamps the exp at enqueue and Core only reads it, so this is the
-	// Edge's release: an older Core reads no exp as never expiring
-	// (IsExpiredHeader).
-	TypeOrderCancel: NoExpiry,
-	// An ingest is a produced bin's count. A dropped one leaves a full bin
-	// unconfirmed and invisible to sourcing; a late one is fenced by its
-	// bin_epoch at Core. So it never expires.
-	TypeOrderIngest: NoExpiry,
-	// A release (R4-8). It fell to the 10-minute fallback, and one dropped
-	// after a longer outage left the Edge's leg in_transit (the Edge marks it
-	// so itself) and Core's staged: a robot nobody can release. A late copy
-	// releases the wait it was pressed for, because the robot cannot pass a
-	// station wait without it; the echo (OrderRelease.StationWait) makes a
-	// late copy for a wait already passed a no-op.
-	TypeOrderRelease: NoExpiry,
 
 	TypeOrderAck:    10 * time.Minute,
 	TypeOrderUpdate: 10 * time.Minute,
@@ -48,7 +28,7 @@ var defaultTTLs = map[string]time.Duration{
 	// The ephemeral topic's two (ephemeral.go): worth reading for seconds.
 	TypeRobotWatch:     EphemeralTTL,
 	TypeRobotPositions: EphemeralTTL,
-}
+}, true)
 
 // NoExpiry marks a subject whose envelopes carry NO `exp` on the wire.
 //
@@ -58,82 +38,15 @@ var defaultTTLs = map[string]time.Duration{
 // to produce — stamps exp = now, which expires on the very next clock tick and
 // is the exact opposite of the intent.
 //
-// Reserve it for subjects where a DROPPED copy costs more than a LATE one.
-// That is a property of the receiving handler, not of the sender, so do not add
-// a subject here without checking what the receiving side's handler does with
-// a copy that arrives after newer ones (its dedup key and ordering guard).
+// Reserve it for messages where a DROPPED copy costs more than a LATE one, and
+// give it only through a row of the must-arrive table (must_arrive.go), which
+// says what makes a late copy safe at its receiver.
 const NoExpiry time.Duration = 0
 
-// Subject-specific TTLs for data channel messages.
-var subjectTTLs = map[string]time.Duration{
-	// The sequenced inventory counts carry information nothing else
-	// resupplies. Most other data subjects are snapshots whose successor
-	// carries the same truth a few seconds later, so dropping a late copy costs
-	// nothing; these are increments, and a dropped one is a permanently wrong
-	// count that never self-corrects.
-	//
-	// A late copy is not always harmless. Core dedups on a per-scope high-water
-	// SequenceID, so a replay is a no-op, but a delta that arrives after a
-	// higher seq of its scope is skipped with no ledger row; and a delta from a
-	// superseded epoch goes to the discrepancy audit, not the count. Expiring
-	// them would lose more: a dropped delta is lost with no record at all.
-	//
-	// Measured at Springfield 2026-08-21, before the edge was hardwired: ~17
-	// bin_uop_delta a day arrived past the 5-minute default and were discarded
-	// by the ingestor before any handler ran, averaging 142 minutes late and
-	// peaking at 23 hours. The edge marked every one of them sent.
-	//
-	// The lineside bucket level is a snapshot, but of one row, and its successor
-	// comes only when the pile next changes, which for a stranded row is never.
-	// A late copy is harmless: Core applies it only above the row's high-water
-	// seq.
-	SubjectBinUOPDelta:         NoExpiry,
-	SubjectLinesideBucketLevel: NoExpiry,
-	SubjectProductionTicks:     NoExpiry, // keyed on (cell_id, edge_snapshot_id, recorded_at) at Core
-	// A dropped hold's row is the only record that those parts left the
-	// count. A late copy writes it late; a redelivered one writes nothing,
-	// because Core keys the row on the envelope id.
-	SubjectHoldDropped: NoExpiry,
-
-	// Core's count announcements to the Edge. One dropped after an outage
-	// longer than TypeData's 5 minutes leaves the station holding a carrier
-	// under a generation that has ended, so every count it reports is
-	// discarded at Core. A late copy cannot walk a carrier's epoch backward:
-	// every Edge write they reach goes through the store's epochAssignOnBind,
-	// which moves a bound carrier's stamp forward only, and a bind into an
-	// empty slot is refused for the carrier that last left it at an older
-	// stamp (BindEmptySlotUnlessDeparted). A late UOPAdjustment's count is
-	// safe when it carries a fence, which every count this Core states does,
-	// per addressed station: the station rebases it on its own stream
-	// (shingo-edge's Engine.fencedCount). Only an unfenced copy, an older
-	// Core's, writes its count as sent over the ticks counted since.
-	SubjectUOPAdjustment:   NoExpiry,
-	SubjectBinEpochRefresh: NoExpiry,
-
-	// The lift of a bin (R4-7). Dropped, it strands what only it triggers on
-	// the Edge: the slot's flush and clear, a changeover supply deferred to
-	// this lift, the drop's line-cleared advance, the departure stamp, the
-	// auto-push re-pull and a consolidation's Order B. Each branch was audited
-	// for a late copy (HandleBinPickedUp): the stamp, the flush and the
-	// line-cleared advance are idempotent; the deferred supply is released
-	// only if it was never released past a wait and Core still takes it; the
-	// re-pull asks Core's occupancy first; Order B's intent is taken once. The
-	// clear is gated on the bin still bound at the slot, so the one shape a
-	// late copy can still hurt is the SAME bin brought back to the SAME slot
-	// (a carryover round trip) before the copy lands — a window the 5-minute
-	// TTL already allowed for five minutes.
-	SubjectBinPickedUp: NoExpiry,
-
-	// The drop of a bin (Lane H, H.6): the only door that binds a carrier Core
-	// placed, so a dropped copy leaves a seat empty while a carrier stands on
-	// it, and every tick there is held. A late copy is safe by the receiving
-	// side's guard, which is what the rule above asks for: the seat keeps the
-	// placement stamp of the landing it last bound (placed_seq, DECISIONS
-	// D10), and the bind's WHERE refuses one not newer, so a redelivered or
-	// overtaken landing binds nothing; the same bin at an equal or newer
-	// generation keeps its count (H.4).
-	SubjectBinLanded: NoExpiry,
-
+// Subject-specific TTLs for data channel messages. A subject that never
+// expires is a row of the must-arrive table (must_arrive.go), which adds it
+// here.
+var subjectTTLs = withNeverExpires(map[string]time.Duration{
 	// The heartbeat and its ack carry the feed digests, and the ack drives the
 	// Edge's reconcile after a gap. Both are stamped on one clock and checked
 	// on the other, so the TTL is also the clock skew a station tolerates: at
@@ -159,11 +72,9 @@ var subjectTTLs = map[string]time.Duration{
 
 	// The ask pair (ask.go): an ask stays answerable for AskTTL, and Core
 	// answers one that arrives late instead of the ingestor dropping it
-	// (Ingestor.OnExpired); an answer is a fact already true at Core and never
-	// expires.
-	SubjectEdgeAsk:    AskTTL,
-	SubjectEdgeAnswer: NoExpiry,
-}
+	// (Ingestor.OnExpired); the answer never expires (must_arrive.go).
+	SubjectEdgeAsk: AskTTL,
+}, false)
 
 // FallbackTTL is used when no specific TTL is configured.
 const FallbackTTL = 10 * time.Minute

@@ -47,6 +47,7 @@ func init() {
 	register(Generator{Name: "protocol/expiry.go DataTTLFor", Emit: emitSubjectTTLs})
 	register(Generator{Name: "protocol struct", Emit: emitStruct})
 	register(Generator{Name: "protocol/status.go AllStatuses", Emit: emitStatuses})
+	register(Generator{Name: "protocol/must_arrive.go MustArriveTable", Emit: emitMustArrive})
 }
 
 // The composition roots whose registrations say which struct each message
@@ -608,6 +609,40 @@ func emitSubjectTTLs(root string, args []string) (string, error) {
 	}
 	fmt.Fprintf(&b, "\nA subject not listed gets the `data` type's TTL (%s).\n",
 		ttlText(protocol.DefaultTTLFor(protocol.TypeData)))
+	return b.String(), nil
+}
+
+// ---------------------------------------------------------------------------
+// The must-arrive table.
+
+// emitMustArrive renders protocol's must-arrive table, row for row: the
+// message, the side that sends it, the two mechanisms it takes, the key its
+// outbox row carries when it never dead-letters, and why.
+func emitMustArrive(root string, args []string) (string, error) {
+	if len(args) > 0 {
+		return "", fmt.Errorf("takes no arguments")
+	}
+	yes := func(v bool) string {
+		if v {
+			return "yes"
+		}
+		return "no"
+	}
+	var b strings.Builder
+	b.WriteString("| Message | From | Never expires | Never dead-letters | Outbox key | A lost copy | A late copy is safe because |\n")
+	b.WriteString("|---|---|---|---|---|---|---|\n")
+	for _, m := range protocol.MustArriveTable() {
+		from := "Core"
+		if m.Sender == protocol.SentByEdge {
+			from = "Edge"
+		}
+		key := "—"
+		if m.NeverDeadLetters {
+			key = "`" + m.OutboxKey() + "`"
+		}
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s |\n", m.Name, from, yes(m.NeverExpires),
+			yes(m.NeverDeadLetters), key, cell(m.Lost), cell(m.Late))
+	}
 	return b.String(), nil
 }
 
