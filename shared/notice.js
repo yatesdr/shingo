@@ -3,11 +3,12 @@
 // first use: the banners across it, the toasts stacked below them on the
 // right, so a toast never covers a banner's button.
 //
-// TOAST LIFETIMES are the ones the three copies agreed on (the P0 helper
-// pins): an error 5 s, every other level 3.2 s, and {sticky:true} until it is
-// clicked. {sticky:false} is the level's own lifetime. utils.js gave an error
-// with {sticky:false} 3.2 s, because its test read "not explicitly false"
-// where it meant "not sticky"; here sticky is the only switch.
+// TOAST LIFETIMES are one table, LIFETIME_MS, and no setting (the owner,
+// 2026-11-21): a success, an info and a warning 10 s, an error 5 min, and
+// {sticky:true} until it is closed. {sticky:false} is the level's own lifetime.
+// utils.js gave an error with {sticky:false} the short lifetime, because its
+// test read "not explicitly false" where it meant "not sticky"; here sticky is
+// the only switch.
 //
 // EVERY TOAST HAS A ×, which takes it down at once. A sticky toast goes only
 // by its × or by a click on its body.
@@ -42,8 +43,7 @@ import { el } from '/static/shared/dom.js';
 import { formatClock, formatTime, serverNow, simSpeed } from '/static/shared/clock.js';
 
 const LEVELS = ['info', 'success', 'warning', 'error'];
-const LIFETIME_MS = { error: 5000 };
-const DEFAULT_LIFETIME_MS = 3200;
+const LIFETIME_MS = { success: 10000, info: 10000, warning: 10000, error: 5 * 60 * 1000 };
 
 let region = null;
 const banners = new Map();
@@ -133,7 +133,7 @@ export function toast(message, level, opts) {
     const note = { text, level: lvl, timer: null, sticky: !!o.sticky };
     live.set(t, note);
     if (o.sticky) t.addEventListener('click', () => drop(t));
-    else note.timer = setTimeout(() => drop(t), LIFETIME_MS[lvl] || DEFAULT_LIFETIME_MS);
+    else note.timer = setTimeout(() => drop(t), LIFETIME_MS[lvl]);
     stack.appendChild(t);
     return t;
 }

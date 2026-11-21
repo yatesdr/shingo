@@ -26,12 +26,17 @@ if (count === null) return;
 
 ### Toast levels
 
-| Level | Use for | Default duration |
+| Level | Use for | Lifetime |
 |---|---|---|
-| `success` | Mutation succeeded | 3.2s |
-| `error` | Mutation failed, network error | sticky if `{ sticky: true }`, else 5s |
-| `warning` | Validation failure, soft block | 3.2s |
-| `info` | Background event the user should know about | 3.2s |
+| `success` | Mutation succeeded | 10 s |
+| `error` | Mutation failed, network error | 5 min, or until its × |
+| `warning` | Validation failure, soft block | 10 s |
+| `info` | Background event the user should know about | 10 s |
+
+The lifetimes are one table in `notice.js` (`LIFETIME_MS`), and nothing sets
+them: a page picks the level, and `{ sticky: true }` for a toast that stays
+until it is closed. Say a success as `success` and a refused input as
+`warning`: at `error` a typo stays up for five minutes.
 
 Make an async or SSE-delivered failure sticky: the operator might have looked
 away.
@@ -42,8 +47,9 @@ away.
 the banners across it, the toasts stacked on the right below them, so a toast
 never covers a banner's button. Pages move onto it in wave C.
 
-- **`toast(message, level, opts)`** keeps the lifetimes above: an error 5 s,
-  every other level 3.2 s, `{ sticky: true }` until its × or a click on it.
+- **`toast(message, level, opts)`** keeps the lifetimes above: an error
+  5 min, every other level 10 s, `{ sticky: true }` until its × or a click on
+  it.
   Every toast has a ×. `{ sticky: false }` is the level's own lifetime. The
   same words at the same level already up are one toast, its lifetime started
   again, so a read that fails every ten seconds says so once. A message is

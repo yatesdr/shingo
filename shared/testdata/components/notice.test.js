@@ -31,18 +31,18 @@ test('nothing happens at import: no element, no listener, no timer', async () =>
     eq([f.r.doc.body.children.length, f.r.doc.listenerTypes(), f.r.clock.timers.length], [0, [], 0]);
 });
 
-test('lifetimes are the goldens\': an error 5 s, every other level 3.2 s', async () => {
+test('lifetimes are one table (the owner, 2026-11-21): a success, an info and a warning 10 s, an error 5 min', async () => {
     const out = {};
     for (const lvl of ['info', 'success', 'warning', 'error', undefined, 'bogus']) {
         const f = notice();
-        out[String(lvl)] = await gone(f.r, f.N.toast('Msg', lvl), 8000);
+        out[String(lvl)] = await gone(f.r, f.N.toast('Msg', lvl), 301000);
     }
-    eq(out, { info: 3200, success: 3200, warning: 3200, error: 5000, undefined: 3200, bogus: 3200 });
+    eq(out, { info: 10000, success: 10000, warning: 10000, error: 300000, undefined: 10000, bogus: 10000 });
 });
 
-test('cannot happen: an error toast with {sticky:false} lives 3.2 s, not 5 s (shared/utils.js:753)', async () => {
+test('cannot happen: an error toast with {sticky:false} lives a plain toast\'s 10 s, not 5 min (shared/utils.js:753)', async () => {
     const f = notice();
-    eq(await gone(f.r, f.N.toast('Msg', 'error', { sticky: false }), 8000), 5000);
+    eq(await gone(f.r, f.N.toast('Msg', 'error', { sticky: false }), 301000), 300000);
 });
 
 test('{sticky:true} stays until it is clicked, and arms no timer', async () => {
@@ -58,7 +58,7 @@ test('{sticky:true} stays until it is clicked, and arms no timer', async () => {
 test('a toast that goes takes its timer with it', async () => {
     const f = notice();
     f.N.toast('a');
-    await f.r.advance(3200);
+    await f.r.advance(10000);
     eq(f.r.clock.timers.length, 0);
 });
 
@@ -69,7 +69,7 @@ test('the same words at the same level are one toast, its lifetime restarted', a
     const t = f.N.toast('Could not reach this edge', 'error');
     f.N.toast('Could not reach this edge', 'warning');
     eq([f.stack().children.length, f.r.clock.timers.length], [2, 2], 'one per level');
-    eq(await gone(f.r, t, 8000), 5000, 'the refreshed one lives its full 5 s');
+    eq(await gone(f.r, t, 301000), 300000, 'the refreshed one lives its full 5 min');
 });
 
 // A lapsed session on a Core page: the door puts its sticky "Signed out" with

@@ -385,7 +385,9 @@ function toastBox(r) {
 function toastsIn(r) { const b = toastBox(r); return b ? b.children : []; }
 
 // lifetime steps the fake clock 100 ms at a time and says when the toast went
-// transparent and when it left the DOM.
+// transparent and when it left the DOM. LIFETIME_WALK_MS reaches past the
+// longest lifetime a toast has (an error's 5 min, shared/notice.js LIFETIME_MS).
+const LIFETIME_WALK_MS = 310000;
 async function lifetime(r, t, maxMs) {
     let faded = null, gone = null;
     for (let ms = 100; ms <= maxMs && gone === null; ms += 100) {
@@ -413,9 +415,9 @@ async function toastPins(surface) {
         await run('level ' + (lvl === undefined ? '(none)' : JSON.stringify(lvl)) + ': the toast node', async (p) => { p.s.toast('Msg', lvl); return '\n' + dump(last(p), '    '); });
     }
     for (const lvl of [undefined, 'success', 'warning', 'error', 'bogus']) {
-        await run('lifetime, level ' + (lvl === undefined ? '(none)' : JSON.stringify(lvl)), async (p) => { p.s.toast('Msg', lvl); return lifetime(p.r, last(p), 8000); });
+        await run('lifetime, level ' + (lvl === undefined ? '(none)' : JSON.stringify(lvl)), async (p) => { p.s.toast('Msg', lvl); return lifetime(p.r, last(p), LIFETIME_WALK_MS); });
     }
-    await run('lifetime, "error", {sticky:false}', async (p) => { p.s.toast('Msg', 'error', { sticky: false }); return lifetime(p.r, last(p), 8000); });
+    await run('lifetime, "error", {sticky:false}', async (p) => { p.s.toast('Msg', 'error', { sticky: false }); return lifetime(p.r, last(p), LIFETIME_WALK_MS); });
     await run('{sticky:true}, "error": the node, after 60 s, then a click on it', async (p) => {
         p.s.toast('Msg', 'error', { sticky: true });
         const t = last(p);
