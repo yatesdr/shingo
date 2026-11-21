@@ -35,7 +35,7 @@ Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on 
 - shingocore migrate check says, before a deploy, whether Core will start on the database and at which version it stands, and changes nothing
 - Core Health names any table, column, index or constraint that differs from the shape this build ships; it stops nothing
 - install-core.sh asks the new build whether it will start on the database before it stops Core, and stops there, with Core still running, when it will not; it keeps the new binary as shingocore.next, prints the rollback (stop, shingocore.next migrate down, then .previous back, start), and waits until Core answers its health page (up to 15 minutes while it migrates), not just until the service is up
-- The move takes Core's tables for its run: on a seeded test database up took about 0.2 s and down 0.2 s; a plant's time grows with its orders, telemetry and ledger rows
+- The column change runs once as Core starts, in one transaction, and Core serves when it is done: on a 7 GB test database (3M orders, 3M telemetry rows, 10M ledger rows) it took about three minutes, and migrate down about three; a plant's time grows with those three tables. Close other clients of Core's database first: one holding a lock stops it within 3 s with nothing changed, and Core tries again every 5 s. If Core is killed part-way, the database still finishes the statement it was in (about two minutes at most at that size) and changes nothing, and Core refuses to start until then. The database grows by about a quarter until a VACUUM FULL
 
 ## v0.17.3 — 2026-11-21
 
