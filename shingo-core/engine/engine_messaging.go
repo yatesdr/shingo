@@ -66,13 +66,14 @@ func (e *Engine) SetContainmentChangedFunc(fn func()) {
 	e.payloadService.SetContainmentChangedFunc(fn)
 }
 
-// SetPayloadsChangedFunc wires the memo drop that follows a payload write (the
-// payload service's creates, updates, deletes, carrier-type sets, manifests and
-// part cat ids, desktop and floor alike) to the messaging layer, which forgets
-// the catalog and node-list builds so the next heartbeats compare against the
-// write. Set once at the composition root.
-func (e *Engine) SetPayloadsChangedFunc(fn func()) {
-	e.payloadService.SetPayloadsChangedFunc(fn)
+// SetFeedsChangedFunc wires the change doors (service.FeedDoors) of every
+// writer of what the node list, the scene and the catalog are built from to
+// the messaging layer's one body, which forgets the builds a write made stale
+// and pushes each Edge its new copies: the payload service's creates,
+// updates, deletes, carrier-type sets, manifests and part cat ids, desktop and
+// floor alike. Set once at the composition root.
+func (e *Engine) SetFeedsChangedFunc(fn func(stations []string)) {
+	e.payloadService.SetFeedsChangedFunc(fn)
 }
 
 // SetCatalogRowFunc wires the read of one part's catalog row and carrier rows,

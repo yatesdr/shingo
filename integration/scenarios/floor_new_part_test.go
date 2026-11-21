@@ -67,7 +67,7 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 	mustNil(t, coreDB.CreateBin(empty), "an empty carrier at the source")
 	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", core.eng.Dispatcher())
 	coreData := coremessaging.NewCoreDataService(coreDB, coreHandler, coreservice.EpochAnnounce{})
-	core.eng.SetPayloadsChangedFunc(coreData.PayloadsChanged)
+	core.eng.SetFeedsChangedFunc(coreData.FeedsChanged)
 	core.eng.SetCatalogRowFunc(coreData.CatalogRow)
 
 	// ── Edge: one produce line running SYN-FNP-RUN, HMI setup on, its recipe named ──

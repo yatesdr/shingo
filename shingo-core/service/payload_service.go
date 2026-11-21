@@ -28,11 +28,11 @@ type PayloadService struct {
 	// while HTTP handlers may already be writing. Nil: nothing is pushed and
 	// the heartbeat carries the change.
 	containmentChanged atomic.Pointer[func()]
-	// payloadsChanged is called after every successful payload write this
-	// service makes (a create, an update, a delete, a carrier-type set, a
-	// manifest or a part's cat id), so the Edges' feeds compare against a build
-	// made after it. Atomic, and nil, as containmentChanged.
-	payloadsChanged atomic.Pointer[func()]
+	// FeedDoors: every successful payload write this service makes (a create,
+	// an update, a delete, a carrier-type set, a manifest or a part's cat id)
+	// goes through the plant-wide door after it (payloadsWritten), so the
+	// Edges are pushed the catalog and node lists it changed.
+	FeedDoors
 	// catalogRow reads one part's catalog row and carrier rows as the feeds
 	// build them, for the floor create's answer (CatalogRow). Atomic, as the
 	// hooks above.
@@ -51,21 +51,13 @@ func (s *PayloadService) notifyContainmentChanged() {
 	}
 }
 
-// SetPayloadsChangedFunc installs the hook called after a successful payload
-// write. Set once, through Engine.SetPayloadsChangedFunc.
-func (s *PayloadService) SetPayloadsChangedFunc(fn func()) {
-	s.payloadsChanged.Store(&fn)
-}
-
-// payloadsWritten calls the payload hook after a write that succeeded, and
-// returns err untouched: a failed write calls nothing.
+// payloadsWritten goes through the plant-wide door after a write that
+// succeeded, and returns err untouched: a failed write calls nothing.
 func (s *PayloadService) payloadsWritten(err error) error {
 	if err != nil {
 		return err
 	}
-	if fn := s.payloadsChanged.Load(); fn != nil && *fn != nil {
-		(*fn)()
-	}
+	s.FeedsChangedPlantWide()
 	return nil
 }
 

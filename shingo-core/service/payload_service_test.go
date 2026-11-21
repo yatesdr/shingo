@@ -240,16 +240,21 @@ func TestPayloadService_CompatibleNodeNamesByPayload_EmptyByDefault(t *testing.T
 	}
 }
 
-// TestPayloadService_PayloadsChangedHook: every payload write the service
-// makes calls the payloads hook once, after it succeeded, so the feeds drop
-// their memos for a desktop edit as for a floor create; a refused write calls
-// nothing.
-func TestPayloadService_PayloadsChangedHook(t *testing.T) {
+// TestPayloadService_EveryPayloadWriteGoesThroughTheDoor: every payload write
+// the service makes goes through the plant-wide change door once, after it
+// succeeded, so the Edges are pushed the catalog and node lists for a desktop
+// edit as for a floor create; a refused write calls nothing.
+func TestPayloadService_EveryPayloadWriteGoesThroughTheDoor(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	calls := 0
-	svc.SetPayloadsChangedFunc(func() { calls++ })
+	svc.SetFeedsChangedFunc(func(stations []string) {
+		calls++
+		if stations != nil {
+			t.Errorf("a payload write went through the per-station door for %v, want the plant-wide one", stations)
+		}
+	})
 
 	bt := &bins.BinType{Code: "SYN-HOOK-BT"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")

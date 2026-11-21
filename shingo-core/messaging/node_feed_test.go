@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
@@ -253,8 +254,9 @@ func TestNodeFeed_AReAskedListIsNotSentBack(t *testing.T) {
 // not:
 //
 //   - through the payload service, the door every runtime catalog writer goes
-//     through, its hook wired as the composition root wires it, the hook drops
-//     the memo (PayloadsChanged);
+//     through, its change doors wired as the composition root wires them, the
+//     door drops the memo (FeedsChanged; no Edge here was ever sent a feed, so
+//     none is pushed);
 //   - a write that calls no hook (the store's own writer, which cmd/seeddev
 //     uses) leaves the memo's build from before the edit, and the reply drops
 //     it (HandleCatalogPayloadsRequest). Before it did, the heartbeat sent the
@@ -278,7 +280,7 @@ func TestNodeFeed_ACatalogReplyAfterAnEdit(t *testing.T) {
 			resp := &feedsPinResponder{}
 			svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 			ps := service.NewPayloadService(db)
-			ps.SetPayloadsChangedFunc(svc.PayloadsChanged)
+			ps.SetFeedsChangedFunc(svc.FeedsChanged)
 			p := &payloads.Payload{Code: "SYN-CE-1", Description: "before", UOPCapacity: 10}
 			testutil.MustNoErr(t, ps.CreateWithSets(p, service.PayloadSets{}), "create the part")
 
@@ -560,103 +562,119 @@ func TestNodeFeed_LoaderNamesItsEdge(t *testing.T) {
 	}
 }
 
-// TestPayloadsChanged_DropsTheMemos: a payload write through the payload
-// service, wired as the composition root wires it, drops the catalog memo and
-// every station's node-list memo, and a heartbeat right after it compares
-// against a build made after the write. An Edge whose catalog digest differs
-// from the build before the write (one that restarted, holding nothing) is
-// sent the catalog with the new row, not that older build, and its node list
-// carries the part's carrier row; an Edge holding the old digest is sent the
-// new catalog at once rather than when the memo ages out.
-func TestPayloadsChanged_DropsTheMemos(t *testing.T) {
+// TestFeedsChanged_PushesWhatTheWriteChanged: a payload write through the
+// payload service, its doors wired as the composition root wires them,
+// forgets the catalog memo and every station's node-list memo at once, and a
+// moment later pushes each Edge Core has sent a feed to its new catalog (with
+// the new part) and its new node list (with the part's carrier row), one of
+// each. An Edge quoting what it was pushed is sent nothing more. An Edge whose
+// heartbeats name the catalog alone is pushed the catalog alone, as its compare
+// would send. An Edge Core never sent anything is not pushed; its next
+// heartbeat compares against a build made after the write and is sent both.
+func TestFeedsChanged_PushesWhatTheWriteChanged(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	stations := []string{"edge.test", "edge.other"}
-	for _, st := range stations {
+	pushed := []string{"edge.test", "edge.other"}
+	for _, st := range append([]string{"edge.quiet", "edge.catalog"}, pushed...) {
 		_, err := db.EnrollEdge(st, "")
 		testutil.MustNoErr(t, err, "enroll "+st)
 	}
 	seedFeedsPinNodes(t, db)
 	resp := &feedsPinResponder{}
 	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+	svc.feeds.pushDelay = 100 * time.Millisecond
 	ps := service.NewPayloadService(db)
-	ps.SetPayloadsChangedFunc(svc.PayloadsChanged)
+	ps.SetFeedsChangedFunc(svc.FeedsChanged)
 	bt := &bins.BinType{Code: "SYN-PC-BT"}
 	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
 
-	heartbeat := func(station string, feeds map[string]string) (*protocol.EdgeHeartbeatAck, *protocol.CatalogPayloadsResponse, *protocol.NodeListResponse) {
-		t.Helper()
-		before := len(resp.events)
-		svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{StationID: station, Feeds: feeds})
-		var ack *protocol.EdgeHeartbeatAck
-		var cat *protocol.CatalogPayloadsResponse
-		var nl *protocol.NodeListResponse
-		for _, e := range resp.events[before:] {
-			switch p := e.payload.(type) {
-			case *protocol.EdgeHeartbeatAck:
-				ack = p
-			case *protocol.CatalogPayloadsResponse:
-				cat = p
-			case *protocol.NodeListResponse:
-				nl = p
-			}
+	for _, st := range pushed {
+		if _, sends := heartbeatFrom(svc, resp, st, map[string]string{protocol.FeedNodes: "", protocol.FeedCatalog: ""}); len(sends) != 2 {
+			t.Fatalf("%s holding nothing was sent %d messages, want its node list and the catalog", st, len(sends))
 		}
-		if ack == nil {
-			t.Fatalf("%s: no ack", station)
-		}
-		return ack, cat, nl
 	}
-	held := map[string]map[string]string{}
-	for _, st := range stations {
-		ack, _, _ := heartbeat(st, map[string]string{protocol.FeedNodes: "", protocol.FeedCatalog: ""})
-		held[st] = ack.Feeds
-	}
-	now := clock.Now()
-	if _, ok := svc.feeds.lookup("", protocol.FeedCatalog, now); !ok {
-		t.Fatal("no catalog memo after the heartbeats")
-	}
-	for _, st := range stations {
-		if _, ok := svc.feeds.lookup(st, protocol.FeedNodes, now); !ok {
-			t.Fatalf("no node-list memo for %s after its heartbeat", st)
-		}
+	if _, sends := heartbeatFrom(svc, resp, "edge.catalog", map[string]string{protocol.FeedCatalog: ""}); len(sends) != 1 {
+		t.Fatalf("edge.catalog holding nothing was sent %d messages, want the catalog", len(sends))
 	}
 
 	p := &payloads.Payload{Code: "SYN-PC-NEW", UOPCapacity: 10}
+	before := len(resp.events)
 	testutil.MustNoErr(t, ps.CreateWithSets(p, service.PayloadSets{BinTypeIDs: &[]int64{bt.ID}}), "create the part")
-
-	now = clock.Now()
+	now := clock.Now()
 	if _, ok := svc.feeds.lookup("", protocol.FeedCatalog, now); ok {
 		t.Error("the catalog memo survived a payload create")
 	}
-	for _, st := range stations {
+	for _, st := range pushed {
 		if _, ok := svc.feeds.lookup(st, protocol.FeedNodes, now); ok {
 			t.Errorf("%s's node-list memo survived a payload create", st)
 		}
 	}
 
+	settleFeedPushes(t, svc)
 	hasRow := func(cat *protocol.CatalogPayloadsResponse) bool {
-		for _, r := range cat.Payloads {
-			if r.Code == "SYN-PC-NEW" {
-				return true
-			}
+		return cat != nil && slices.ContainsFunc(cat.Payloads, func(r protocol.CatalogPayloadInfo) bool { return r.Code == "SYN-PC-NEW" })
+	}
+	carrier := protocol.PayloadBinTypeInfo{PayloadCode: "SYN-PC-NEW", BinTypeCode: "SYN-PC-BT"}
+	type copies struct {
+		cat *protocol.CatalogPayloadsResponse
+		nl  *protocol.NodeListResponse
+		n   int
+	}
+	got := map[string]*copies{}
+	for _, e := range resp.events[before:] {
+		c := got[e.station]
+		if c == nil {
+			c = &copies{}
+			got[e.station] = c
 		}
-		return false
+		c.n++
+		switch v := e.payload.(type) {
+		case *protocol.CatalogPayloadsResponse:
+			c.cat = v
+		case *protocol.NodeListResponse:
+			c.nl = v
+		}
 	}
-	ack, cat, nl := heartbeat("edge.other", map[string]string{protocol.FeedCatalog: "", protocol.FeedNodes: ""})
-	if cat == nil || !hasRow(cat) {
-		t.Errorf("an Edge holding nothing was sent a catalog without the new part: %+v", cat)
+	for _, st := range pushed {
+		c := got[st]
+		if c == nil || c.n != 2 || !hasRow(c.cat) || c.nl == nil || !slices.Contains(c.nl.PayloadBinTypes, carrier) {
+			t.Fatalf("%s was pushed %+v; want one catalog with the new part and one node list with its carrier row", st, c)
+		}
+		ack, sends := heartbeatFrom(svc, resp, st, map[string]string{protocol.FeedNodes: c.nl.Digest, protocol.FeedCatalog: c.cat.Digest})
+		if len(sends) != 0 || ack.Feeds[protocol.FeedCatalog] != c.cat.Digest || ack.Feeds[protocol.FeedNodes] != c.nl.Digest {
+			t.Errorf("%s quoting what it was pushed: sent %d messages, ack %v; want nothing and the pushed digests", st, len(sends), ack.Feeds)
+		}
 	}
-	if ack.Feeds[protocol.FeedCatalog] == held["edge.other"][protocol.FeedCatalog] {
-		t.Errorf("the ack quotes the catalog digest from before the create (%s)", ack.Feeds[protocol.FeedCatalog])
+	if c := got["edge.catalog"]; c == nil || c.n != 1 || !hasRow(c.cat) {
+		t.Errorf("edge.catalog, naming the catalog alone, was pushed %+v; want the catalog with the new part and nothing else", c)
 	}
-	want := protocol.PayloadBinTypeInfo{PayloadCode: "SYN-PC-NEW", BinTypeCode: "SYN-PC-BT"}
-	if nl == nil || !slices.Contains(nl.PayloadBinTypes, want) {
-		t.Errorf("the node list after the create does not carry %+v", want)
+	if c := got["edge.quiet"]; c != nil {
+		t.Errorf("edge.quiet, never sent a feed, was pushed %d messages, want none", c.n)
 	}
 
-	_, cat, _ = heartbeat("edge.test", held["edge.test"])
-	if cat == nil || !hasRow(cat) {
-		t.Errorf("an Edge holding the old digest was not sent the catalog with the new part: %+v", cat)
+	_, sends := heartbeatFrom(svc, resp, "edge.quiet", map[string]string{protocol.FeedNodes: "", protocol.FeedCatalog: ""})
+	var cat *protocol.CatalogPayloadsResponse
+	for _, s := range sends {
+		if v, ok := s.payload.(*protocol.CatalogPayloadsResponse); ok {
+			cat = v
+		}
+	}
+	if !hasRow(cat) {
+		t.Errorf("edge.quiet's first heartbeat after the create was sent the catalog %+v, want it with the new part", cat)
+	}
+}
+
+// settleFeedPushes waits until no change door push is armed or running: every
+// push a write armed has built and sent. The wait reads the pushes' own book
+// under its lock, so what they sent is read after them.
+func settleFeedPushes(t *testing.T, svc *CoreDataService) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !svc.feeds.pushesSettled() {
+		if time.Now().After(deadline) {
+			t.Fatal("change door pushes still armed or running after 5 s")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

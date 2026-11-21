@@ -2194,3 +2194,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row (the same function runs under the new name)
 - citations rewritten: `TestNodeFeed_TheSameSceneReSyncedIsNotSentAgain`'s header
 - verified at: the commit that adds this row
+
+### STRENGTHEN — `TestPayloadsChanged_DropsTheMemos`
+- test: `TestPayloadsChanged_DropsTheMemos` · pkg `shingocore/messaging` · run `-run '^TestPayloadsChanged_DropsTheMemos$'` · `shingo-core/messaging/node_feed_test.go:351` @ `d2686a1d` · tags `docker`
+- code: STRENGTHEN
+- assertion map: renamed `TestFeedsChanged_PushesWhatTheWriteChanged` (`shingo-core/messaging/node_feed_test.go`) when the payload service's memo-drop hook (`PayloadsChanged`, gone) became the change doors' body (`CoreDataService.FeedsChanged`): a payload write through the service, wired as the composition root wires it, leaves no catalog memo and no station's node-list memo (kept); an Edge holding nothing is sent the catalog with the new part and a node list with its carrier row on its next heartbeat (kept, for the Edge Core never sent a feed). The heartbeat that sent an Edge holding the old digest the new catalog is now the push: each Edge Core has sent a feed to is pushed one catalog with the new part and one node list with its carrier row, and a heartbeat quoting what it was pushed is sent nothing; the Edge Core never sent anything is pushed nothing.
+- mutation: `FeedsChanged` arms no push · rewritten red: `SHINGO_TEST_REQUIRE_DOCKER=1 go test -tags=docker,lockcheck -count=1 -p 1 -run 'TestFeedsChanged_' ./messaging/` → `node_feed_test.go:637: edge.test was pushed <nil>; want one catalog with the new part and one node list with its carrier row`, `--- FAIL: TestFeedsChanged_PushesWhatTheWriteChanged`
+- coverage Δ: not measured for this row (the drop runs under the new name; the push is new)
+- citations rewritten: `PayloadsChanged`'s doc, moved to `feed_doors.go`'s header
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestPayloadService_PayloadsChangedHook`
+- test: `TestPayloadService_PayloadsChangedHook` · pkg `shingocore/service` · run `-run '^TestPayloadService_PayloadsChangedHook$'` · `shingo-core/service/payload_service_test.go:247` @ `d2686a1d` · tags `docker`
+- code: STRENGTHEN
+- assertion map: renamed `TestPayloadService_EveryPayloadWriteGoesThroughTheDoor` (`shingo-core/service/payload_service_test.go`) when the hook became the change doors (`service.FeedDoors`): every payload write calls it once, after it succeeded, and a refused write calls nothing (kept). Added: each call is the plant-wide door (no stations).
+- mutation: none run for this row; the assertions are the old test's on the renamed hook, and the door's red-before is `TestFeedsChanged_PushesWhatTheWriteChanged`'s row
+- coverage Δ: not measured for this row (the same writes run under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row

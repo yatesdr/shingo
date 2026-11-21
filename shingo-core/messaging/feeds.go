@@ -29,23 +29,21 @@ import (
 
 const (
 	// feedMemoPlant bounds how stale a plant-wide digest may be. A writer that
-	// calls no hook is caught by the next heartbeat after the memo expires, so
-	// this plus the heartbeat interval (60 s) is the worst-case heal (~70 s).
+	// calls no hook or door is caught by the next heartbeat after the memo
+	// expires, so this plus the heartbeat interval (60 s) is the worst-case heal
+	// (~70 s).
 	feedMemoPlant = 10 * time.Second
 	// feedMemoBins bounds one Edge's bins snapshot. Short, as feedMemoPlant is:
 	// a bin moved by a writer that calls no hook is in a snapshot ten seconds
 	// later, and the Edge's next heartbeat carries it there.
 	feedMemoBins = 10 * time.Second
 	// feedMemoStation bounds the per-station feeds (nodes, scene). Two minutes is
-	// the cadence the node list was re-asked at before feeds. It is the
-	// worst-case heal for a write that changes a station's node list and drops
-	// no memo: that write reaches the Edge up to two minutes and a heartbeat
-	// later. A payload write drops every station's node-list memo
-	// (PayloadsChanged: the list carries each part's carrier rows), and an
-	// Edge's re-ask drops its own (HandleNodeListRequest), which is how
-	// NodeStructureChanged (a group deleted or reparented) reaches it: Core
-	// announces it, the Edge re-asks. A node or carrier-type edit with no
-	// notice waits out the memo.
+	// the cadence the node list was re-asked at before feeds. Every known write
+	// to what they are built from goes through a change door (FeedsChanged),
+	// which forgets the memos and pushes the stations their new copies, and a
+	// reply forgets its station's (HandleNodeListRequest). So this is the
+	// backstop for a write that reaches no door: it reaches the Edge up to two
+	// minutes and a heartbeat later.
 	feedMemoStation = 2 * time.Minute
 )
 
@@ -70,9 +68,9 @@ type feedSendRecord struct {
 	pushedAt time.Time
 }
 
-// feedState is the memo, the send records and the flags. One mutex: every
-// access is a map lookup or a small write, and heartbeats arrive one per
-// station per minute.
+// feedState is the memo, the send records, the flags and the change doors'
+// armed pushes. One mutex: every access is a map lookup or a small write, and
+// heartbeats arrive one per station per minute.
 type feedState struct {
 	mu lockcheck.Mutex[lockorder.MessagingFeeds]
 	// memo is each feed's build by slot (coreFeed.slot): feed key and station,
@@ -88,6 +86,21 @@ type feedState struct {
 	drops      uint64
 	dropped    map[[2]string]uint64
 	droppedAll map[string]uint64
+	// quoted is the digest each station last quoted for each key, and when:
+	// what a change door's push compares with when the quote is newer than
+	// the last send (lastKnown).
+	quoted map[[2]string]feedQuote
+	// pending is each station's push armed by a change door, until it starts;
+	// running counts the pushes started and not done (feed_doors.go).
+	pending   map[string]*feedPush
+	running   int
+	pushDelay time.Duration
+}
+
+// feedQuote is one heartbeat's quote of one key.
+type feedQuote struct {
+	digest string
+	at     time.Time
 }
 
 func newFeedState() *feedState {
@@ -97,6 +110,9 @@ func newFeedState() *feedState {
 		flags:      map[string]map[string]string{},
 		dropped:    map[[2]string]uint64{},
 		droppedAll: map[string]uint64{},
+		quoted:     map[[2]string]feedQuote{},
+		pending:    map[string]*feedPush{},
+		pushDelay:  feedPushDelay,
 	}
 }
 
@@ -306,6 +322,7 @@ func (f *feedState) compare(station, key, current, held string, now time.Time) b
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rk := [2]string{station, key}
+	f.quoted[rk] = feedQuote{digest: held, at: now}
 	rec := f.sent[rk]
 	converged := current == held
 	if rec != nil && (converged || rec.IsLast(held) || (rec.pushed != "" && held == rec.pushed)) {

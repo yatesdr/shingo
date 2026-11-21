@@ -331,25 +331,6 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: sent payload catalog (%d payloads, digest=%s) to %s", len(resp.Payloads), resp.Digest, env.Src.Station)
 }
 
-// PayloadsChanged is called after a known payload write (a create, an update,
-// a delete, a carrier-type set, a manifest or a part's cat id written: every
-// write PayloadService makes, from the desktop or the floor). It drops the
-// catalog memo and every station's node-list memo, which carries each part's
-// carrier rows, so the next heartbeat from any Edge compares against a build
-// made after the write. Nothing is broadcast: an Edge learns the write on its
-// next heartbeat.
-//
-// Without it a heartbeat inside the memo's life compared against the build
-// from before the write: an Edge whose digest differed from that build was
-// sent the catalog from before the write, and its sync deleted any row the
-// write had added there (a floor part its answer had landed). A heartbeat's
-// build that began before the write and finishes after this drop is not
-// stored (feedState.store). Pinned by TestPayloadsChanged_DropsTheMemos.
-func (s *CoreDataService) PayloadsChanged() {
-	s.feeds.drop(protocol.FeedCatalog)
-	s.feeds.drop(protocol.FeedNodes)
-}
-
 // buildCatalog builds the payload catalog — the FeedCatalog value — and its
 // digest. strict is the feed path.
 func (s *CoreDataService) buildCatalog(strict bool) (*protocol.CatalogPayloadsResponse, error) {

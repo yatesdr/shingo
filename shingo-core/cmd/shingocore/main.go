@@ -487,9 +487,11 @@ func main() {
 	// A known containment write (a flag, a bin hold, a diverted bin stamped on
 	// arrival) pushes the containment snapshot to every Edge at once.
 	eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)
-	// A payload write, from the desktop or the floor, drops the catalog and
-	// node-list memos so the next heartbeats compare against it. No broadcast.
-	eng.SetPayloadsChangedFunc(coreDataService.PayloadsChanged)
+	// A known write to what the node list, the scene or the catalog is built
+	// from (a payload, from the desktop or the floor) goes through a change
+	// door: the memos it made stale go at once, and each Edge Core has sent a
+	// feed to is pushed its new copies a moment later.
+	eng.SetFeedsChangedFunc(coreDataService.FeedsChanged)
 	// A part made at the floor is answered with its catalog row and carrier
 	// rows, built by the builders the catalog feed and the node list use.
 	eng.SetCatalogRowFunc(coreDataService.CatalogRow)

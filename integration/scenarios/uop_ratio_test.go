@@ -95,13 +95,13 @@ func TestUOP_OwnersExample_StoresPartsReadsUOP(t *testing.T) {
 	// The catalog feed, routed as the two composition roots route it: the
 	// Edge's heartbeat to Core's HandleEdgeHeartbeat, Core's catalog to the
 	// Edge's ApplyCatalog, and the payload service's writes to the same data
-	// service's memo drop (cmd/shingocore wires SetPayloadsChangedFunc to it).
+	// service's change door (cmd/shingocore wires SetFeedsChangedFunc to it).
 	// wireBus routes neither subject, so each side's ingestor takes those two
 	// first and hands every other envelope on as before.
 	feed := coremessaging.NewCoreDataService(coreDB,
 		coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", c.core.eng.Dispatcher()),
 		coreservice.EpochAnnounce{Topic: "shingo.dispatch", CoreStation: "core"})
-	c.core.eng.SetPayloadsChangedFunc(feed.PayloadsChanged)
+	c.core.eng.SetFeedsChangedFunc(feed.FeedsChanged)
 	toCore := router.NewSubject()
 	router.RegisterSubject(toCore, protocol.SubjectEdgeHeartbeat, feed.HandleEdgeHeartbeat)
 	routeFirst(w.coreIn, toCore)
