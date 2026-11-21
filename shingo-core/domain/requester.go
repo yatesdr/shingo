@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 // The Core actors: who asked for an order when no station did. Each is the
 // sender name one of Core's own pages puts on the envelope it builds, or the
 // name a door that writes an order directly stands in for:
@@ -19,17 +21,13 @@ const (
 	RequesterTest     = "core-test"
 )
 
-// CoreActors lists the Core actors, in the order v185's CHECKs name them.
+// CoreActors lists the Core actors, the one list IsCoreActor reads. v185
+// keeps its own copy (store's v185Actors), since a migration's text must not
+// follow a later change to this one.
 var CoreActors = []string{RequesterOperator, RequesterDirect, RequesterTest}
 
 // IsCoreActor reports whether s is one of the Core actors.
-func IsCoreActor(s string) bool {
-	switch s {
-	case RequesterOperator, RequesterDirect, RequesterTest:
-		return true
-	}
-	return false
-}
+func IsCoreActor(s string) bool { return slices.Contains(CoreActors, s) }
 
 // SplitRequester reads an envelope's sender as the two columns an order keeps:
 // a Core actor's name is the requested_by, with no station; anything else,
