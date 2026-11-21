@@ -1866,14 +1866,15 @@ type UOPAdjustment struct {
 	// NewRemaining (which is ignored when Released). Reuses this Core→Edge
 	// channel rather than a separate subject. Older Edges ignore the field.
 	Released bool `json:"released,omitempty"`
-	// PlacedSeq is set only with Released: the placement stamp (a
-	// bin_placement_seq value) of the hand move that ends the seat's landing,
-	// taken in the move's own transaction. Every landing the move ends was
-	// stamped before it, and a later return is stamped after it, so the Edge
-	// should refuse a Released when the seat's placed_seq is greater than
-	// PlacedSeq: that seat holds a landing the move did not end. Absent or 0 is
-	// an older Core, and the Edge clears as it always has. Older Edges ignore
-	// the field.
+	// PlacedSeq is set only with Released: the move's own placement stamp (a
+	// bin_placement_seq value), taken in the hand move's transaction. Every
+	// landing the move ends was stamped before it, and a later return is
+	// stamped after it, so the Edge refuses a Released when the seat's
+	// placed_seq is greater than PlacedSeq: that seat holds a landing the move
+	// did not end (processes.ClearActiveBinIfBound; PIN:
+	// TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain).
+	// Absent or 0 is an older Core, and the Edge clears as it always has. Older
+	// Edges ignore the field.
 	PlacedSeq int64 `json:"placed_seq,omitempty"`
 	// Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin
 	// Move mirroring a physical relocation the robot-delivery path never recorded
@@ -1985,9 +1986,9 @@ type PlantClaimsReport struct {
 	// sender that does stamp it is still understood.
 	ConfigGen int64 `json:"config_gen,omitempty"`
 	// Digest is ClaimsDigest of this report, set by the Edge where it builds
-	// it. Core stores it per process and quotes it on the heartbeat ack, so a
-	// lost or out-of-order report is noticed and re-sent. Absent from an older
-	// Edge.
+	// it. Core stores it per station and process and quotes it on the heartbeat
+	// ack to the station that sent it, so a lost or out-of-order report is
+	// noticed and re-sent. Absent from an older Edge.
 	Digest string `json:"digest,omitempty"`
 	// Positions are the core node names, sorted and de-duplicated, where this
 	// process binds carriers that no claim in Styles names: its loader windows
