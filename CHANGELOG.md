@@ -24,6 +24,8 @@ Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 - The Edge reads nothing from namespace, line_id or messaging.station_id in its config; a file that still has them loads, and the next save drops them. An Edge known only by messaging.station_id would start as a new station: put that value in station_uid before the upgrade
 - A sim plant file names its own Edge with one station_uid key in place of namespace and line_id, and a process's edge may be any station uid, a minted stn-… one included; seeddev names the dev stations EDGE 1 and EDGE 2 on Core
 - An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence, a stale notice or Core's re-register request it asks for its orders only
+- An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence it asks for its orders only
+- An Edge that re-registers (Core restarted, asked for it, or marked it stale) asks for its orders only when Core sends the node list and catalog by itself; against an older Core it still asks for both
 - The Edge Processes page's Setup tab no longer puts up an error every five seconds while it waits for a screen and the Edge does not answer; the lost-connection banner says it
 
 ## v0.18.0 — 2026-11-21

@@ -174,26 +174,35 @@ func (a *askCounter) RequestNodeSync()    { a.nodeAsks++ }
 func (a *askCounter) RequestCatalogSync() { a.catalogAsks++ }
 
 // TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds runs the registered
-// closure itself, through buildInboundRouter, after an ack from a Core that
-// speaks feeds. Inside an Edge's first 30 s (a boot: Core's reply lands within
-// a round trip of the burst) it asks for no node list and no catalog, so one
-// boot's asks are the burst's and StartupReconcile's
+// closure itself, through buildInboundRouter, before any ack, or after an ack
+// from a Core that answers feeds or from an older one. Inside an Edge's first
+// 30 s (a boot: Core's reply lands within a round trip of the burst, before
+// the first ack) it asks for no node list and no catalog, whatever Core is, so
+// one boot's asks are the burst's
 // (TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts). Past
-// 30 s (a re-register: Core restarted, or marked the Edge stale) it asks for
-// both, whether or not Core speaks feeds. The second case stands an engine that
-// was never started, whose Uptime reads past 30 s.
-//
-// Lane D2 is to gate these two asks on !CoreSpeaksFeeds(): the second case's
-// want should then be 0 and 0.
+// 30 s (a re-register: Core restarted, asked for it, or marked the Edge stale)
+// it asks for both only while the Edge does not know Core answers feeds: an
+// older Core, or no ack yet. A Core that answers feeds sends them when the next
+// heartbeat quotes a digest it does not hold. The past-30-s cases stand an
+// engine that was never started, whose Uptime reads past 30 s.
 func TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds(t *testing.T) {
 	t.Parallel()
+	const (
+		noAck    = ""
+		feedsAck = "a Core that answers feeds"
+		olderAck = "an older Core"
+	)
 	cases := []struct {
 		name                  string
 		start                 bool
+		ack                   string
 		wantNode, wantCatalog int
 	}{
-		{"at boot, the engine started just now", true, 0, 0},
-		{"a re-register past 30 s", false, 1, 1},
+		{"at boot, before the first ack", true, noAck, 0, 0},
+		{"at boot, after a feeds ack", true, feedsAck, 0, 0},
+		{"a re-register past 30 s, a feeds Core", false, feedsAck, 0, 0},
+		{"a re-register past 30 s, an older Core", false, olderAck, 1, 1},
+		{"a re-register past 30 s, no ack yet", false, noAck, 1, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,14 +227,21 @@ func TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds(t *testing.T) {
 				}
 				in.Dispatch(env, env.Type)
 			}
-			dispatch(protocol.SubjectEdgeHeartbeatAck, protocol.EdgeHeartbeatAck{StationID: cfg.StationUID, Feeds: map[string]string{}})
-			if !eng.CoreSpeaksFeeds() {
-				t.Fatal("the ack did not reach OnCoreAck: the Edge does not know Core speaks feeds")
+			switch tc.ack {
+			case feedsAck:
+				dispatch(protocol.SubjectEdgeHeartbeatAck, protocol.EdgeHeartbeatAck{StationID: cfg.StationUID, Feeds: map[string]string{}})
+			case olderAck:
+				dispatch(protocol.SubjectEdgeHeartbeatAck, protocol.EdgeHeartbeatAck{StationID: cfg.StationUID})
+			}
+			if local, _ := eng.LastCoreAck(); local.IsZero() != (tc.ack == noAck) {
+				t.Fatalf("ack %q: the Edge's last ack is %v; the ack did not reach OnCoreAck as the case needs", tc.ack, local)
+			}
+			if eng.CoreSpeaksFeeds() != (tc.ack == feedsAck) {
+				t.Fatalf("ack %q: the Edge reads Core as answering feeds = %v", tc.ack, eng.CoreSpeaksFeeds())
 			}
 			dispatch(protocol.SubjectEdgeRegistered, protocol.EdgeRegistered{StationID: cfg.StationUID, Message: "registered"})
 			if hb.nodeAsks != tc.wantNode || hb.catalogAsks != tc.wantCatalog || hb.registers != 0 {
-				t.Errorf("the registered reply asked %d node lists, %d catalogs and %d registers; want %d, %d and 0 "+
-					"(if lane D2 has landed, a re-register against a Core that speaks feeds asks none: update want)",
+				t.Errorf("the registered reply asked %d node lists, %d catalogs and %d registers; want %d, %d and 0",
 					hb.nodeAsks, hb.catalogAsks, hb.registers, tc.wantNode, tc.wantCatalog)
 			}
 		})

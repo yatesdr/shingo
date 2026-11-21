@@ -378,12 +378,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// Wrap msgClient.Reconnect so a UI-triggered reconnect (operator saves
 	// Messaging config) also re-fires the Heartbeater's boot burst.
 	// Heartbeater.Start() sends it (register, node list and catalog requests,
-	// bins watch, one heartbeat) once at process start; if Kafka was unreachable then
-	// (or the client got wedged during a long outage), those one-shots
-	// failed and the periodic loop only re-sends node_list+catalog every
-	// 2 min — never register — leaving Edge silently unregistered until
-	// manual restart. Witnessed at Shelbyville 2026-05-21. This makes the
-	// "Save Messaging" button a self-heal action.
+	// bins watch, one heartbeat) once at process start; if Kafka was
+	// unreachable then (or the client got wedged during a long outage), those
+	// one-shots failed. The periodic loop never re-sends them: it sends a
+	// heartbeat every minute, and re-asks the node list and catalog every two
+	// minutes only while Core does not answer feeds (messaging Heartbeater
+	// loop). A failed burst left an Edge unregistered until a manual restart
+	// at Shelbyville, 2026-05-21. This makes the "Save Messaging" button a
+	// self-heal action.
 	eng.SetKafkaReconnectFunc(func() error {
 		if err := msgClient.Reconnect(); err != nil {
 			return err
@@ -1152,7 +1154,15 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 				}
 			})
 		}
-		if eng.Uptime() > 30 {
+		// A re-register (past this Edge's first 30 s: Core restarted, asked
+		// for it, or marked this Edge stale) asks for the node list and the
+		// catalog only of a Core that does not answer feeds: one that does
+		// sends either when the next heartbeat quotes a digest it does not
+		// hold. Both conditions, not one: at boot this reply lands before the
+		// first ack, while CoreSpeaksFeeds is still false, so the uptime
+		// check is what keeps a boot to the burst's asks. PIN:
+		// TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds.
+		if eng.Uptime() > 30 && !eng.CoreSpeaksFeeds() {
 			hb.RequestNodeSync()
 			hb.RequestCatalogSync()
 		}
