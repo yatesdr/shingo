@@ -69,9 +69,6 @@ func TestStationToastShots(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	cfg.StationUID = "shots.press400"
-	cfg.Namespace = "shots"
-	cfg.LineID = "press400"
-	cfg.Messaging.StationID = cfg.StationUID
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
 	eng.SetPayloadBinTypes(nil)
 	eng.Start()
