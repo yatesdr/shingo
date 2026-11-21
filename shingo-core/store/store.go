@@ -240,10 +240,14 @@ END $$`)
 }
 
 // OpenWithoutMigrate connects to the configured Postgres database and
-// applies pool limits, but does NOT run migrations. Production callers
-// should use Open; this is a test-only seam so testdb can clone a
-// pre-migrated template database and skip per-test migration cost.
-// Lives next to Open so the two paths are obviously paired.
+// applies pool limits, but does NOT run migrations. Core's boot uses Open,
+// which calls this and then migrates. The callers that must not migrate:
+// CheckDatabase and MigrateDown (`shingocore migrate check` and `down`, which
+// read or step a database before the build that would migrate it runs), Ping
+// (the config page's connection test), cmd/soakstat (a report on a database
+// it does not own), and testdb (which clones a migrated template instead of
+// migrating per test). Lives next to Open so the two paths are obviously
+// paired.
 func OpenWithoutMigrate(cfg *config.DatabaseConfig) (*DB, error) {
 	sqlDB, err := openPgx(&cfg.Postgres)
 	if err != nil {

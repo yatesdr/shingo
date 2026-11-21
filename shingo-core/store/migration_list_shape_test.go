@@ -18,6 +18,11 @@ import (
 // baseline (which records 1..RetiredChain) and would on an upgraded one.
 // LatestMigrationVersion is the last entry, or RetiredChain while there is
 // none; it is what CoreSchemaVersion reports and an Edge reads.
+//
+// The entries also run on from RetiredChain with no gap, each with its down
+// step: the rollback install-core.sh prints runs `migrate down v` for every v
+// between the version a deploy found and the one it reached, so a missing
+// version would put a down in the recipe that this build refuses.
 func TestMigrationList_Shape(t *testing.T) {
 	ms := migrationList()
 	list := make([]migrate.Migration, len(ms))
@@ -27,6 +32,11 @@ func TestMigrationList_Shape(t *testing.T) {
 			t.Errorf("migration v%d (%s) is at or below the retired chain's v%d: the baseline records it as "+
 				"applied, so it would run on an upgraded database and never on a new one. Number it above v%d.",
 				m.version, m.name, RetiredChain, RetiredChain)
+		}
+		if want := RetiredChain + 1 + i; m.version != want {
+			t.Errorf("migration %d of the list is v%d, want v%d: the versions above the retired chain run on with no "+
+				"gap, since the rollback install-core.sh prints runs one `migrate down` per version. Number it v%d.",
+				i+1, m.version, want, want)
 		}
 		if m.down == nil {
 			t.Errorf("migration v%d (%s) has no down step: give its entry the step that puts the shape before it "+

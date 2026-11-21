@@ -33,10 +33,10 @@ const (
 //     nothing can tell what shape it is.
 //   - schema_migrations without some version of 1..RetiredChain: refused,
 //     naming the versions and RetiredChainRelease, the release that applies
-//     them. This build no longer carries the chain that did; a database below
-//     v183 passes through that release first. Holes, not MAX(version): a
-//     branch build that merged out of order can stand at a high version
-//     without a lower one.
+//     them. This build no longer carries the chain that did; a database
+//     missing any of them passes through that release first. Holes, not
+//     MAX(version): a branch build that merged out of order can stand at a
+//     high version without a lower one.
 //
 // A refusal writes nothing. Then the migrations above RetiredChain run through
 // the shared runner, protocol/migrate, which carries the two correctness
@@ -191,9 +191,11 @@ func formatVersions(vs []int) string {
 // down is the step `shingocore migrate down <version>` runs: it puts the shape
 // before the migration back, in one transaction with the delete of the
 // version's schema_migrations row (MigrateDown). Every entry has one: the
-// schema rule is a migration above the retired chain with its down step, and
-// the rollback recipe install-core.sh prints names one down per version a
-// release added (TestMigrationList_Shape).
+// schema rule is a migration above the retired chain with its down step. The
+// rollback recipe install-core.sh prints runs `migrate down v` for every v
+// from the version the deploy reached down to one above the version it found,
+// so the versions run on from RetiredChain with no gap
+// (TestMigrationList_Shape holds both).
 type migration struct {
 	version int
 	name    string

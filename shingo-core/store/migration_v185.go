@@ -20,15 +20,27 @@ import (
 // _station_uid; Core's three actors (core-operator, core-direct, core-test)
 // leave the station columns for requested_by; an RDS map name is rds_station;
 // the outbox's addressee is dst_station; the columns and tables with no reader
-// go. Every op is a row of v185Ops, so its down step can be generated from the
-// same table.
+// go.
+//
+// Most of it is data, and down walks the same data backwards: the renames,
+// relabels, adds, column and table drops and constraints are rows of v185Ops,
+// the partition children's index names follow v185PartitionTokens, and the
+// row moves are v185Moves. Each row is undone by construction (a rename named
+// back, an add dropped) or by the inverse written beside it (a move's down, a
+// drop's restore: TestV185_EveryOpHasItsInverse). Five pieces are written by
+// hand instead: the edge_registry.station_id drop and its restore (refilled
+// from station_uid), the partial uid index the total UNIQUE replaces and its
+// restore, the JSON guard around the moves, the comments (comments.sql, and
+// v185CommentsOff for down), and the registry fold, up only: down does not
+// undo it, and what it changed is among down's named losses (v185Down).
 //
 // ONE TRANSACTION, in this order (the runner's, runOne):
 //  1. SET LOCAL statement_timeout = 0: the moves can outrun the DSN's 30 s cap
 //     at plant volume; the 3 s lock_timeout stays.
 //  2. LOCK TABLE on every table it touches, ACCESS EXCLUSIVE, before anything
 //     else: a reader holding one makes it fail on the lock (55P03) before a
-//     single row moves, and the next boot tries again.
+//     single row moves, and the next boot tries again (1 and 2 are v185Begin;
+//     TestV185_AHeldReaderStopsUpAndDown).
 //  3. Renames, adds and the drops no move reads.
 //  4. The data moves (v185Moves), the registry fold among them.
 //  5. The drop a move read (edge_registry.station_id), then the CHECKs and the
@@ -641,13 +653,13 @@ func v185Verify(q schema.Querier) bool {
 }
 
 // v185Down is v185's down step (MigrateDown runs it, and deletes row 185 in
-// the same transaction). It puts the v184 shape back, generated from v185Ops
-// and comments.sql: the comments up applied removed, the constraints dropped,
-// every rename back, every move inverted, the added columns dropped, the
-// dropped columns and tables restored as v184 declared them (every default,
-// NOT NULL, key and sequence; edge_registry.station_id filled from
-// station_uid). Under SET LOCAL statement_timeout = 0 and every table's lock
-// first, as up (v185Begin).
+// the same transaction). It puts the v184 shape back, from v185Ops, v185Moves
+// and comments.sql and the hand-written pieces the header names: the comments
+// up applied removed, the constraints dropped, every rename back, every move
+// inverted, the added columns dropped, the dropped columns and tables
+// restored as v184 declared them (every default, NOT NULL, key and sequence;
+// edge_registry.station_id filled from station_uid). Under SET LOCAL
+// statement_timeout = 0 and every table's lock first, as up (v185Begin).
 //
 // What does not come back: the rows the registry fold deleted (logged by up),
 // the values of the dropped columns (they come back as their defaults; no

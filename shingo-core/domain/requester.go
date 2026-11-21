@@ -34,7 +34,10 @@ func IsCoreActor(s string) bool {
 // SplitRequester reads an envelope's sender as the two columns an order keeps:
 // a Core actor's name is the requested_by, with no station; anything else,
 // blank included, is the station's uid. Intake calls it once, on the sender
-// (dispatch's order request and complex order request).
+// (dispatch's order request and complex order request); Engine.CreateBinMove
+// calls it on a caller that names its actor as the station; and
+// service.BinService.Lift calls it on the lifting order's requester, for the
+// lifted ledger row's station and who.
 func SplitRequester(sender string) (stationUID, requestedBy string) {
 	if IsCoreActor(sender) {
 		return "", sender
