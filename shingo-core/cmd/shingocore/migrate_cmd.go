@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strconv"
 
 	"shingocore/config"
@@ -29,12 +30,23 @@ const migrateUsage = `Usage: shingocore migrate [-config PATH] check
 // runMigrate is `shingocore migrate ...`: the installer's checks around a
 // deploy (install-core.sh) and the rollback's first step. It returns the
 // process's exit code. Exit 2 is a command line it does not read, a config
-// file that is not there, or a database it cannot read.
-func runMigrate(args []string, stdout, stderr io.Writer) int {
+// file that is not there, a database it cannot read, or a panic: exit 1 is
+// only ever a refusal, which install-core.sh reads as "this build will not
+// start on the database" (main's own recover would make a panic exit 1).
+func runMigrate(args []string, stdout, stderr io.Writer) (code int) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(stderr, "migrate: panic: %v\n%s", r, debug.Stack())
+			code = 2
+		}
+	}()
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "shingocore.yaml", "path to config file")
 	if err := fs.Parse(args); err != nil {
+		if !errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintf(stderr, "migrate: %v\n", err)
+		}
 		fmt.Fprint(stderr, migrateUsage)
 		return 2
 	}

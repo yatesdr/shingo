@@ -37,6 +37,48 @@ func TestMigrate_ACommandLineItDoesNotReadIsExit2(t *testing.T) {
 	}
 }
 
+// TestMigrate_ABadFlagIsNamed: a flag migrate does not read is named on
+// stderr above the usage, so the person at the terminal sees which word it
+// was; -help prints the usage alone.
+func TestMigrate_ABadFlagIsNamed(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	if code := runMigrate([]string{"-nosuch", "check"}, &stdout, &stderr); code != 2 ||
+		!strings.HasPrefix(stderr.String(), "migrate: flag provided but not defined: -nosuch\n") {
+		t.Errorf("migrate -nosuch check: exit %d stderr %q, want exit 2 and the flag named first", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := runMigrate([]string{"-help"}, &stdout, &stderr); code != 2 || !strings.HasPrefix(stderr.String(), "Usage: shingocore migrate") {
+		t.Errorf("migrate -help: exit %d stderr %q, want exit 2 and the usage alone", code, stderr.String())
+	}
+}
+
+// panicOnFirstWrite panics on its first Write and keeps what is written after.
+type panicOnFirstWrite struct {
+	bytes.Buffer
+	writes int
+}
+
+func (w *panicOnFirstWrite) Write(p []byte) (int, error) {
+	if w.writes++; w.writes == 1 {
+		panic("the writer broke")
+	}
+	return w.Buffer.Write(p)
+}
+
+// TestMigrate_APanicIsExit2: install-core.sh reads exit 1 as a refusal (the
+// database is one this build will not start on), so a panic inside migrate
+// exits 2 with the panic named, not 1 through main's recover. The panic here
+// is the first write of the usage.
+func TestMigrate_APanicIsExit2(t *testing.T) {
+	t.Parallel()
+	var stdout bytes.Buffer
+	stderr := &panicOnFirstWrite{}
+	if code := runMigrate(nil, &stdout, stderr); code != 2 || !strings.Contains(stderr.String(), "migrate: panic: the writer broke") {
+		t.Errorf("a panic in migrate: exit %d stderr %q, want exit 2 and the panic named", code, stderr.String())
+	}
+}
+
 // TestMigrate_AConfigThatIsNotThereIsExit2: config.Load reads a missing file
 // as the defaults, a database on localhost, so `migrate down` run from the
 // wrong directory (the -config default is relative) stepped whatever answered
