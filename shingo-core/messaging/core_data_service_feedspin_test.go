@@ -15,6 +15,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 )
@@ -35,6 +36,8 @@ import (
 //
 // The recorder and helpers below (feedsPinResponder, jsonKeys, feedsPinEnv,
 // hideTable, seedFeedsPinNodes) are shared with the package's feeds tests.
+// The last section pins every feed's golden digest as the heartbeat answers
+// and sends it (TestFeeds_GoldenDigestPerFeed).
 
 // feedsPinResponder records replyData AND sendData in one ordered trace. The
 // shared captureResponder drops sendData, and the heartbeat's register request
@@ -447,4 +450,272 @@ func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 			t.Errorf("catalog not in code order at %d: %q before %q", i, r.Payloads[i-1].Code, r.Payloads[i].Code)
 		}
 	}
+}
+
+// ── Every feed's golden digest ─────────────────────────────────────────────
+
+// goldenAt is the instant the golden fixtures stamp: the scene's sync, which
+// its revision hashes, and the refusals' and verdicts' times, which their
+// digests leave out.
+var goldenAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+// feedGolden is one feed's golden: a fixed input written to a fresh database
+// (an enrolled edge.test, nothing else), the subject the heartbeat compare
+// sends the feed on, the digest Core answers for it, and fromWire, the digest
+// recomputed by the feed's own protocol function from the value sent as it
+// decodes off the wire, so the answer is shown to be the digest of what an
+// Edge receives. The text above each row is what its golden hashes.
+type feedGolden struct {
+	carrier  string
+	golden   string
+	seed     func(t *testing.T, svc *CoreDataService)
+	fromWire func(t *testing.T, sent any) string
+}
+
+// feedGoldens has one row per feed Core serves; TestFeeds_GoldenDigestPerFeed
+// fails on a feed in protocol.AllFeeds without one.
+var feedGoldens = map[string]feedGolden{
+	// {"flags":[{"payload_code":"P1","active":true,"reason":"r","activated_by":"qa",
+	//   "activated_at":"2026-10-01T12:00:00Z","deactivated_by":"","deactivated_at":null}],
+	//  "held_bins":[],"destinations":[]}
+	// The flag TestBuildContainmentSnapshot_GoldenDigest builds and the value
+	// protocol's TestContainmentDigest_Golden pins, here through the heartbeat.
+	protocol.FeedContainment: {
+		carrier: protocol.SubjectContainmentSnapshot,
+		golden:  "495ee5733d2adacc",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			testutil.MustNoErr(t, svc.db.SetPayloadContainment("P1", "r", "qa", true), "flag P1")
+			_, err := svc.db.Exec(`UPDATE payload_containment SET activated_at = $1, updated_at = $1`,
+				time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+			testutil.MustNoErr(t, err, "stamp the flag")
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			return goldenDigest(t)(protocol.ContainmentDigest(decodeWire[protocol.ContainmentSnapshot](t, sent)))
+		},
+	},
+	// [{"loader_node":"SYN-GD-LDR","payload_code":"SYN-GD-P1","refused_by":"stn-gd-a","ack_choice":"",
+	//   "ack_process_id":""},
+	//  {"loader_node":"SYN-GD-LDR","payload_code":"SYN-GD-P2","refused_by":"stn-gd-a","ack_choice":"wait",
+	//   "ack_process_id":"SYN-GD-PR1"}]
+	protocol.FeedRefusals: {
+		carrier: protocol.SubjectSupplyRefusalSnapshot,
+		golden:  "29fde962eaf138a8",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			for i, code := range []string{"SYN-GD-P1", "SYN-GD-P2"} {
+				testutil.MustNoErr(t, svc.db.ApplySupplyRefusal(protocol.SupplyRefusalState{
+					Action: protocol.SupplyRefusalOpened, LoaderNode: "SYN-GD-LDR", PayloadCode: code,
+					RefusedAt: goldenAt.Add(time.Duration(i) * time.Minute), RefusedBy: "stn-gd-a",
+				}), "open the refusal of "+code)
+			}
+			ackAt := goldenAt.Add(time.Hour)
+			testutil.MustNoErr(t, svc.db.ApplySupplyRefusal(protocol.SupplyRefusalState{
+				Action: protocol.SupplyRefusalAcked, LoaderNode: "SYN-GD-LDR", PayloadCode: "SYN-GD-P2",
+				AckAt: &ackAt, AckChoice: protocol.SupplyRefusalChoiceWait, AckProcessID: "SYN-GD-PR1",
+			}), "answer the refusal of SYN-GD-P2")
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			snap := decodeWire[protocol.SupplyRefusalSnapshot](t, sent)
+			d := goldenDigest(t)(protocol.RefusalsDigest(snap.Open))
+			if snap.Digest != d {
+				t.Errorf("refusals: the snapshot names digest %s, its rows digest to %s", snap.Digest, d)
+			}
+			return d
+		},
+	},
+	// {"nodes":[{"name":"LN-1","node_type":""}],"loaders":[],
+	//  "payload_bin_types":[{"payload_code":"SYN-GD-P1","bin_type_code":"SYN-GD-BT"}],
+	//  "floor":{"SYN-GD-BT":"SYN-GD-BT"}}
+	// (NodeListResponse.Family under NodesDigest's key "floor"; a type in no
+	// family is its own.)
+	protocol.FeedNodes: {
+		carrier: protocol.SubjectNodeListResponse,
+		golden:  "c4cb681fa5ca164d",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			seedFeedsPinNodes(t, svc.db)
+			bt := &bins.BinType{Code: "SYN-GD-BT"}
+			testutil.MustNoErr(t, svc.db.CreateBinType(bt), "create SYN-GD-BT")
+			testutil.MustNoErr(t, service.NewPayloadService(svc.db).CreateWithSets(
+				&payloads.Payload{Code: "SYN-GD-P1", UOPCapacity: 10},
+				service.PayloadSets{BinTypeIDs: &[]int64{bt.ID}}), "create SYN-GD-P1 on SYN-GD-BT")
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			nl := decodeWire[protocol.NodeListResponse](t, sent)
+			return goldenDigest(t)(protocol.NodesDigest(nl.Nodes, nl.Loaders, nl.PayloadBinTypes, nl.Family, nl.PlantWide))
+		},
+	},
+	// Not JSON: scene.Revision is the SHA-256 of one "\n"-terminated line per
+	// row, "p:<id>:<synced_at in Unix ns>" for each point then "e:..." for each
+	// edge: here p:1, p:2, e:1, e:2, each at goldenAt (1767323045000000000). It
+	// hashes no part of what a row says, so it cannot be recomputed from the
+	// wire value: fromWire is the revision the node list carries. A revision
+	// that hashes the content moves this golden on purpose, and every Edge is
+	// sent its geometry once.
+	protocol.FeedScene: {
+		carrier: protocol.SubjectNodeListResponse,
+		golden:  "565ac6093cd8d1ec04d3fc5850258d9e59d679bee4a5ef301201a02ca82ab300",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			sceneRequest(t, svc.db)
+			for _, table := range []string{"scene_points", "scene_edges"} {
+				_, err := svc.db.Exec(`UPDATE `+table+` SET synced_at = $1`, goldenAt)
+				testutil.MustNoErr(t, err, "stamp "+table)
+				var ids []int64
+				rows, err := svc.db.Query(`SELECT id FROM ` + table + ` ORDER BY id`)
+				testutil.MustNoErr(t, err, "read the ids of "+table)
+				for rows.Next() {
+					var id int64
+					testutil.MustNoErr(t, rows.Scan(&id), "scan an id")
+					ids = append(ids, id)
+				}
+				testutil.MustNoErr(t, rows.Close(), "close")
+				if !reflect.DeepEqual(ids, []int64{1, 2}) {
+					t.Fatalf("fixture: %s ids %v, want [1 2]: the golden revision hashes the ids, and a new "+
+						"database's sequence starts at 1", table, ids)
+				}
+			}
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			nl := decodeWire[protocol.NodeListResponse](t, sent)
+			if !hasGeometry(&nl) {
+				t.Error("scene: the node list sent to an Edge holding no scene carries no geometry")
+			}
+			return nl.SceneRevision
+		},
+	},
+	// [{"id":1,"name":"SYN-GD-P1","code":"SYN-GD-P1","description":"golden part","uop_capacity":10,
+	//   "catid":"SYN-GD-C1","manifest":[{"part_number":"SYN-GD-PN1","parts_per_cycle":2,"description":""}]}]
+	protocol.FeedCatalog: {
+		carrier: protocol.SubjectCatalogPayloadsResponse,
+		golden:  "2e7fbf41f821d2a1",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			p := &payloads.Payload{Code: "SYN-GD-P1", Description: "golden part", UOPCapacity: 10}
+			testutil.MustNoErr(t, service.NewPayloadService(svc.db).CreateWithSets(p, service.PayloadSets{
+				Manifest: &[]service.ManifestLine{{PartNumber: "SYN-GD-PN1", CATID: "SYN-GD-C1", PartsPerCycle: 2}},
+			}), "create SYN-GD-P1")
+			if p.ID != 1 {
+				t.Fatalf("fixture: SYN-GD-P1 has id %d, want 1: the golden digest covers the id, and a new "+
+					"database's sequence starts at 1", p.ID)
+			}
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			cat := decodeWire[protocol.CatalogPayloadsResponse](t, sent)
+			d := goldenDigest(t)(protocol.CatalogDigest(cat.Payloads))
+			if cat.Digest != d {
+				t.Errorf("catalog: the response names digest %s, its rows digest to %s", cat.Digest, d)
+			}
+			return d
+		},
+	},
+	// newBinsFixture watched under binsFixtureNames: the list's digest, the
+	// rows of binsFixture.wantRows (bin ids 1 and 2; the build's rows are
+	// those, TestBuildNodeBins_FiveStatementsWhateverTheListLength) less their
+	// counts, no groups.
+	protocol.FeedBins: {
+		carrier: protocol.SubjectBinsSnapshot,
+		golden:  "f55f440e930daf52",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			f := newBinsFixture(t, svc.db)
+			if f.full != 1 || f.base != 2 {
+				t.Fatalf("fixture: bin ids %d and %d, want 1 and 2: the golden digest covers them, and a new "+
+					"database's sequence starts at 1", f.full, f.base)
+			}
+			svc.HandleBinWatch(feedsPinEnv("edge.test"), binsWatchList(t, binsFixtureNames...))
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			snap := decodeWire[protocol.NodeBinsSnapshot](t, sent)
+			d := goldenDigest(t)(protocol.NodeBinsDigest(snap))
+			if snap.Digest != d {
+				t.Errorf("bins: the snapshot names digest %s, its rows digest to %s", snap.Digest, d)
+			}
+			return d
+		},
+	},
+	// [{"process_id":"SYN-GD-PR1","style_id":"SYN-GD-S1","status":"red","missing":["SYN-GD-P1"],
+	//   "absent":["SYN-GD-P1"],"at_risk":null,"reason":"Cannot change over: missing SYN-GD-P1."},
+	//  {"process_id":"SYN-GD-PR1","style_id":"SYN-GD-S2","status":"yellow","missing":null,"absent":null,
+	//   "at_risk":[{"payload_code":"SYN-GD-P2","node":"LN-1"}],"reason":"Can change over; SYN-GD-P2 running low."}]
+	protocol.FeedSourcing: {
+		carrier: protocol.SubjectSourcingState,
+		golden:  "6bea1c8227734e57",
+		seed: func(t *testing.T, svc *CoreDataService) {
+			report := protocol.SourcingStateReport{Snapshot: true, States: []protocol.SourcingState{
+				{ProcessID: "SYN-GD-PR1", StyleID: "SYN-GD-S1", Status: "red", Missing: []string{"SYN-GD-P1"},
+					Absent: []string{"SYN-GD-P1"}, Reason: "Cannot change over: missing SYN-GD-P1.", ComputedAt: goldenAt},
+				{ProcessID: "SYN-GD-PR1", StyleID: "SYN-GD-S2", Status: "yellow", Reason: "Can change over; SYN-GD-P2 running low.",
+					AtRisk:     []protocol.SourcingAtRisk{{PayloadCode: "SYN-GD-P2", Node: "LN-1", TimeToEmptySeconds: 600}},
+					ComputedAt: goldenAt},
+			}}
+			svc.SetSourcingReport(func(station string) (protocol.SourcingStateReport, bool) {
+				return report, station == "edge.test"
+			})
+		},
+		fromWire: func(t *testing.T, sent any) string {
+			r := decodeWire[protocol.SourcingStateReport](t, sent)
+			if !r.Snapshot {
+				t.Error("sourcing: the compare's send is not a snapshot")
+			}
+			return goldenDigest(t)(protocol.SourcingDigest(r.States))
+		},
+	},
+}
+
+// TestFeeds_GoldenDigestPerFeed: for each feed Core serves, a fixed input
+// gives a fixed digest on the ack, the heartbeat compare sends the feed on its
+// carrier to an Edge holding nothing, and the value sent, decoded as an Edge
+// decodes it, digests to the same string. A moved golden is a resend of that
+// feed to every Edge at every plant on upgrade, so only a change that means it
+// (the scene's revision from content) moves one, and says so in the
+// changelog. The heartbeat is the station's first: no memo stands before it.
+func TestFeeds_GoldenDigestPerFeed(t *testing.T) {
+	t.Parallel()
+	for _, key := range protocol.AllFeeds() {
+		if _, ok := feedGoldens[key]; !ok {
+			t.Errorf("feed %s has no row in feedGoldens: add its fixed input and golden digest", key)
+		}
+	}
+	for key, g := range feedGoldens {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			db := testdb.Open(t)
+			_, err := db.EnrollEdge("edge.test", "")
+			testutil.MustNoErr(t, err, "enroll")
+			resp := &feedsPinResponder{}
+			svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+			g.seed(t, svc)
+
+			ack, sends := heartbeatWith(svc, resp, map[string]string{key: ""})
+			if got := ack.Feeds[key]; got != g.golden {
+				t.Errorf("%s: Core answers digest %s for the fixed input, golden %s. If that is meant, every Edge "+
+					"is sent this feed once on upgrade: update the golden and say so in the changelog", key, got, g.golden)
+			}
+			if len(sends) != 1 || sends[0].subject != g.carrier || sends[0].station != "edge.test" {
+				var trace []string
+				for _, s := range sends {
+					trace = append(trace, s.subject+" -> "+s.station)
+				}
+				t.Fatalf("%s: sent %v, want one %s to edge.test", key, trace, g.carrier)
+			}
+			if got := g.fromWire(t, sends[0].payload); got != g.golden {
+				t.Errorf("%s: the value sent digests to %s off the wire, golden %s", key, got, g.golden)
+			}
+		})
+	}
+}
+
+// goldenDigest unwraps a digest function's two results.
+func goldenDigest(t *testing.T) func(string, error) string {
+	return func(d string, err error) string {
+		t.Helper()
+		testutil.MustNoErr(t, err, "digest")
+		return d
+	}
+}
+
+// decodeWire is v as an Edge receives it: encoded to JSON, decoded into T.
+func decodeWire[T any](t *testing.T, v any) T {
+	t.Helper()
+	b, err := json.Marshal(v)
+	testutil.MustNoErr(t, err, "encode the value sent")
+	var out T
+	testutil.MustNoErr(t, json.Unmarshal(b, &out), "decode the value sent")
+	return out
 }
