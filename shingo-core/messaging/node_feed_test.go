@@ -3,6 +3,8 @@
 package messaging
 
 import (
+	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"testing"
@@ -30,8 +32,14 @@ func nodeFeedSetup(t *testing.T) (*CoreDataService, *feedsPinResponder) {
 }
 
 func heartbeatWith(svc *CoreDataService, resp *feedsPinResponder, feeds map[string]string) (*protocol.EdgeHeartbeatAck, []feedsPinEvent) {
+	return heartbeatFrom(svc, resp, "edge.test", feeds)
+}
+
+// heartbeatFrom is one station's heartbeat naming feeds: its ack, and what
+// else was sent while it was handled.
+func heartbeatFrom(svc *CoreDataService, resp *feedsPinResponder, station string, feeds map[string]string) (*protocol.EdgeHeartbeatAck, []feedsPinEvent) {
 	before := len(resp.events)
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.test"), &protocol.EdgeHeartbeat{StationID: "edge.test", Feeds: feeds})
+	svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{StationID: station, Feeds: feeds})
 	var ack *protocol.EdgeHeartbeatAck
 	var sends []feedsPinEvent
 	for _, e := range resp.events[before:] {
@@ -236,6 +244,207 @@ func TestNodeFeed_AReAskedListIsNotSentBack(t *testing.T) {
 			t.Errorf("heartbeat %d: the ack quotes %s, want the re-asked list's %s", i, ack.Feeds[protocol.FeedNodes], reply.Digest)
 		}
 	}
+}
+
+// TestNodeFeed_ACatalogReplyAfterAnEdit: a part is edited, one Edge's catalog
+// sync is answered with the edited catalog (a reconnect or a register asks
+// it), and that Edge's next heartbeat quotes the answer's digest inside the
+// plant-wide memo's life, a memo the heartbeats built before the edit. What
+// the heartbeat sends turns on whether the edit dropped the memo:
+//
+//   - through the payload service, the door every runtime catalog writer goes
+//     through, its hook wired as the composition root wires it, the hook drops
+//     the memo (PayloadsChanged), the heartbeat compares against a build made
+//     after the edit, and nothing is sent;
+//   - a write that calls no hook (the store's own writer, which cmd/seeddev
+//     uses) leaves the memo's build from before the edit, and the heartbeat
+//     sends that catalog back over the answer. PREDICTED red
+//     (testdb.VerifyRed) until a catalog reply drops the catalog memo.
+//
+// Neither case touches the memo; the test reads it, to show it was warm.
+func TestNodeFeed_ACatalogReplyAfterAnEdit(t *testing.T) {
+	t.Parallel()
+	for _, throughTheService := range []bool{true, false} {
+		name := "a write that calls no hook"
+		if throughTheService {
+			name = "through the payload service"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			db := testdb.Open(t)
+			for _, st := range []string{"edge.test", "edge.other"} {
+				_, err := db.EnrollEdge(st, "")
+				testutil.MustNoErr(t, err, "enroll "+st)
+			}
+			resp := &feedsPinResponder{}
+			svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+			ps := service.NewPayloadService(db)
+			ps.SetPayloadsChangedFunc(svc.PayloadsChanged)
+			p := &payloads.Payload{Code: "SYN-CE-1", Description: "before", UOPCapacity: 10}
+			testutil.MustNoErr(t, ps.CreateWithSets(p, service.PayloadSets{}), "create the part")
+
+			reply := func() *protocol.CatalogPayloadsResponse {
+				t.Helper()
+				before := len(resp.events)
+				svc.HandleCatalogPayloadsRequest(feedsPinEnv("edge.test"))
+				if len(resp.events) != before+1 {
+					t.Fatalf("catalog sync: %d messages, want the one reply", len(resp.events)-before)
+				}
+				return resp.events[before].payload.(*protocol.CatalogPayloadsResponse)
+			}
+			// edge.test learns the catalog from a reply, as at boot; both
+			// stations' heartbeats quote it back: converged, memo built.
+			old := reply()
+			for _, st := range []string{"edge.other", "edge.test"} {
+				if _, sends := heartbeatFrom(svc, resp, st, map[string]string{protocol.FeedCatalog: old.Digest}); len(sends) != 0 {
+					t.Fatalf("%s quoting the catalog it holds was sent %d messages, want none", st, len(sends))
+				}
+			}
+			built := clock.Now()
+			if e, ok := svc.feeds.lookup("", protocol.FeedCatalog, built); !ok || e.digest != old.Digest {
+				t.Fatalf("fixture: the catalog memo is %q (warm %v), want the converged %s", e.digest, ok, old.Digest)
+			}
+
+			p.Description = "after"
+			if throughTheService {
+				testutil.MustNoErr(t, ps.Update(p), "edit through the payload service")
+			} else {
+				testutil.MustNoErr(t, db.UpdatePayload(p), "edit through the store")
+			}
+			answer := reply()
+			if answer.Digest == old.Digest {
+				t.Fatalf("the edit left the catalog digest at %s", old.Digest)
+			}
+
+			ack, sends := heartbeatFrom(svc, resp, "edge.test", map[string]string{protocol.FeedCatalog: answer.Digest})
+			if age := clock.Now().Sub(built); age >= feedMemoPlant {
+				t.Fatalf("the heartbeat came %v after the memo was built, past its %v: the case was not exercised", age, feedMemoPlant)
+			}
+			if throughTheService {
+				if len(sends) != 0 {
+					t.Errorf("the heartbeat quoting the answer's catalog %s was sent %d messages, want none", answer.Digest, len(sends))
+				}
+				if ack.Feeds[protocol.FeedCatalog] != answer.Digest {
+					t.Errorf("the ack quotes catalog %s, want the answer's %s", ack.Feeds[protocol.FeedCatalog], answer.Digest)
+				}
+				return
+			}
+			// Today's outcome, exactly: the memo's catalog from before the
+			// edit, sent to the Edge holding the answer, and quoted on the ack.
+			var violations []string
+			for _, s := range sends {
+				cat, ok := s.payload.(*protocol.CatalogPayloadsResponse)
+				if !ok || s.station != "edge.test" {
+					t.Errorf("sent %s to %q, want a catalog to edge.test or nothing", s.subject, s.station)
+					continue
+				}
+				if !reflect.DeepEqual(cat, old) {
+					t.Errorf("sent the catalog %s, want today's: the build from before the edit, %s", cat.Digest, old.Digest)
+				}
+				violations = append(violations, fmt.Sprintf("the heartbeat quoting the answer's catalog %s was sent "+
+					"the catalog from before the edit, %s", answer.Digest, cat.Digest))
+			}
+			if got := ack.Feeds[protocol.FeedCatalog]; got != answer.Digest {
+				if got != old.Digest {
+					t.Errorf("the ack quotes catalog %s, want today's %s (the memo's)", got, old.Digest)
+				}
+				violations = append(violations, fmt.Sprintf("the ack quotes the memo's catalog %s, not the answer's %s", got, answer.Digest))
+			}
+			testdb.VerifyRed(t, "a catalog reply after a write that calls no hook is sent back old", violations)
+		})
+	}
+}
+
+// TestNodeFeed_ASceneChangeThenAReAskIsSentTheOldScene: the scene changes
+// (a sync moves a point; nothing drops a scene memo), the Edge re-asks its
+// node list (boot, a reconnect, NodeStructureChanged) quoting the scene it
+// holds, and the reply carries the new scene with its geometry. The re-ask
+// drops the station's node-list memo and not its scene memo, so the next
+// heartbeat, quoting the reply's digests inside that memo's life, is answered
+// with the scene the memo built before the change: Core sends the node list
+// with the old revision and the old geometry, and the Edge applies it until
+// the memo ages out. PREDICTED red (testdb.VerifyRed) until a node-list reply
+// drops the station's scene memo as well. The node half is
+// TestNodeFeed_AReAskedListIsNotSentBack. Nothing here touches the memo.
+func TestNodeFeed_ASceneChangeThenAReAskIsSentTheOldScene(t *testing.T) {
+	t.Parallel()
+	svc, resp := nodeFeedSetup(t)
+	ack, _ := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: "", protocol.FeedScene: ""})
+	built := clock.Now()
+	nodesDigest, oldScene := ack.Feeds[protocol.FeedNodes], ack.Feeds[protocol.FeedScene]
+	if nodesDigest == "" || oldScene == "" || oldScene == protocol.SceneRevisionNone {
+		t.Fatalf("fixture: first ack quotes nodes %q, scene %q; want both, a real scene", nodesDigest, oldScene)
+	}
+	held := map[string]string{protocol.FeedNodes: nodesDigest, protocol.FeedScene: oldScene}
+	if _, sends := heartbeatWith(svc, resp, held); len(sends) != 0 {
+		t.Fatalf("the converged heartbeat was sent %d messages, want none", len(sends))
+	}
+
+	// The sync moves LM9 a metre along x and writes the area again.
+	const oldX, newX = -0.604, 0.396
+	points, err := svc.db.ListScenePoints()
+	testutil.MustNoErr(t, err, "read the scene points")
+	edges, err := svc.db.ListSceneEdges()
+	testutil.MustNoErr(t, err, "read the scene edges")
+	moved := false
+	for _, p := range points {
+		if p.InstanceName == "LM9" && p.PosX == oldX {
+			p.PosX, moved = newX, true
+		}
+	}
+	if !moved {
+		t.Fatalf("fixture: no LM9 at x=%v", oldX)
+	}
+	testutil.MustNoErr(t, svc.db.ReplaceAreaScene("AREA-G", points, edges), "sync the moved point")
+
+	before := len(resp.events)
+	svc.HandleNodeListRequest(feedsPinEnv("edge.test"), &protocol.NodeListRequest{SceneRevision: oldScene})
+	reply := resp.events[before].payload.(*protocol.NodeListResponse)
+	if reply.SceneRevision == oldScene || !hasGeometry(reply) || lm9X(reply) != newX {
+		t.Fatalf("fixture: the re-ask's reply carries scene %s, geometry %v, LM9 at x=%v; want a new scene with LM9 at %v",
+			reply.SceneRevision, hasGeometry(reply), lm9X(reply), newX)
+	}
+
+	ack, sends := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: reply.Digest, protocol.FeedScene: reply.SceneRevision})
+	if age := clock.Now().Sub(built); age >= feedMemoStation {
+		t.Fatalf("the heartbeat came %v after the station's memo was built, past its %v: the case was not exercised", age, feedMemoStation)
+	}
+	// Today's outcome, exactly: one node list carrying the memo's scene, from
+	// before the change, with its geometry; the ack quotes that scene.
+	var violations []string
+	for _, s := range sends {
+		nl, ok := s.payload.(*protocol.NodeListResponse)
+		if !ok {
+			t.Errorf("sent %s, want a node list or nothing", s.subject)
+			continue
+		}
+		if nl.SceneRevision != oldScene || !hasGeometry(nl) || lm9X(nl) != oldX || nl.Digest != reply.Digest {
+			t.Errorf("sent a node list at scene %s (geometry %v, LM9 at x=%v, nodes %s); want today's: scene %s with "+
+				"LM9 at %v over nodes %s", nl.SceneRevision, hasGeometry(nl), lm9X(nl), nl.Digest, oldScene, oldX, reply.Digest)
+		}
+		violations = append(violations, fmt.Sprintf("the heartbeat quoting the reply's scene %s was sent the scene "+
+			"from before the change, %s, with LM9 at x=%v", reply.SceneRevision, nl.SceneRevision, lm9X(nl)))
+	}
+	if got := ack.Feeds[protocol.FeedScene]; got != reply.SceneRevision {
+		if got != oldScene {
+			t.Errorf("the ack quotes scene %s, want today's %s (the memo's)", got, oldScene)
+		}
+		violations = append(violations, fmt.Sprintf("the ack quotes the memo's scene %s, not the reply's %s", got, reply.SceneRevision))
+	}
+	if got := ack.Feeds[protocol.FeedNodes]; got != reply.Digest {
+		t.Errorf("the ack quotes nodes %s, want the reply's %s (the nodes did not change)", got, reply.Digest)
+	}
+	testdb.VerifyRed(t, "a scene change then a node-list re-ask is sent the old scene", violations)
+}
+
+// lm9X is LM9's x in a node list's geometry; NaN when it carries none.
+func lm9X(nl *protocol.NodeListResponse) float64 {
+	for _, p := range nl.ScenePoints {
+		if p.InstanceName == "LM9" && p.PosX != nil {
+			return *p.PosX
+		}
+	}
+	return math.NaN()
 }
 
 // The feed path is strict: a failed read leaves the key out of the ack and
