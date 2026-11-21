@@ -197,8 +197,9 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 				case *protocol.EdgeHeartbeatAck:
 					gotAck = p
 				case *protocol.EdgeRegisterRequest:
-					if p.StationID != st || p.Reason != "station not enrolled" {
-						t.Errorf("register request = %+v, want station %s, reason \"station not enrolled\"", p, st)
+					// Addressed to st by the trace (send ... -> st); the body names no station.
+					if p.Reason != "station not enrolled" {
+						t.Errorf("register request = %+v, want reason \"station not enrolled\"", p)
 					}
 				}
 			}

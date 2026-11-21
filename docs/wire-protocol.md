@@ -1002,8 +1002,7 @@ Sent by core to notify an edge that it has been marked stale: no heartbeat for l
 
 ```json
 {
-  "station_id": "stn-4f8a1c02b7e39d15",
-  "message":    "heartbeat timeout — marked stale by core"
+  "message": "heartbeat timeout — marked stale by core"
 }
 ```
 
@@ -1011,7 +1010,6 @@ Sent by core to notify an edge that it has been marked stale: no heartbeat for l
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | the stale station's UID |
 | `message` | string |  | a human-readable detail |
 
 <!-- /generated -->
@@ -1019,13 +1017,13 @@ Sent by core to notify an edge that it has been marked stale: no heartbeat for l
 #### EdgeRegisterRequest
 
 Sent by core to request that an edge re-register: in answer to a heartbeat from a uid Core holds no row for
-(reason `station not enrolled`), or to one edge or every edge (`station_id` `*`) from the dashboard's re-sync
-action (`(*Engine).RequestEdgeReregister`), so a changed cell catalog is picked up without a reconnect.
+(reason `station not enrolled`), or to one edge or every edge (the envelope's `dst.station` `*`) from the
+dashboard's re-sync action (`(*Engine).RequestEdgeReregister`), so a changed cell catalog is picked up without a
+reconnect.
 
 ```json
 {
-  "station_id": "stn-4f8a1c02b7e39d15",
-  "reason":     "station not enrolled"
+  "reason": "station not enrolled"
 }
 ```
 
@@ -1033,7 +1031,6 @@ action (`(*Engine).RequestEdgeReregister`), so a changed cell catalog is picked 
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | the station that should re-register |
 | `reason` | string |  | why it should |
 
 <!-- /generated -->

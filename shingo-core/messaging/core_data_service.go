@@ -657,7 +657,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	if err == nil && !found {
 		log.Printf("core_handler: heartbeat from unenrolled station %s, requesting registration", station)
 		s.resp.sendData(protocol.SubjectEdgeRegisterRequest, station,
-			&protocol.EdgeRegisterRequest{StationID: station, Reason: "station not enrolled"})
+			&protocol.EdgeRegisterRequest{Reason: "station not enrolled"})
 	}
 }
 

@@ -255,7 +255,7 @@ func (h *CoreHandler) SweepStaleEdges() {
 
 func (h *CoreHandler) sendStaleNotification(stationID string) {
 	h.sendData(protocol.SubjectEdgeStale, stationID,
-		&protocol.EdgeStale{StationID: stationID, Message: "heartbeat timeout — marked stale by core"})
+		&protocol.EdgeStale{Message: "heartbeat timeout — marked stale by core"})
 }
 
 // ReplyAnswer sends the answer to an ask (protocol.SubjectEdgeAnswer) as a

@@ -1478,15 +1478,19 @@ type LoaderPayloadInfo struct {
 // --- Production data schemas ---
 
 // EdgeStale is sent by core to notify an edge that it has been marked stale.
+// It goes to the stale station alone (the envelope's Address.Station), so the
+// body does not name it; a Core before this build also sent a "station_id",
+// which no Edge read.
 type EdgeStale struct {
-	StationID string `json:"station_id"` // the stale station's UID
-	Message   string `json:"message"`    // a human-readable detail
+	Message string `json:"message"` // a human-readable detail
 }
 
-// EdgeRegisterRequest is sent by core to ask an edge to re-register.
+// EdgeRegisterRequest is sent by core to ask an edge to re-register. It is
+// addressed by the envelope's Address.Station (one station, or every Edge for
+// the dashboard's re-sync), so the body does not name it; a Core before this
+// build also sent a "station_id", which no Edge read.
 type EdgeRegisterRequest struct {
-	StationID string `json:"station_id"` // the station that should re-register
-	Reason    string `json:"reason"`     // why it should
+	Reason string `json:"reason"` // why it should
 }
 
 // --- Payload Catalog ---

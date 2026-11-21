@@ -39,7 +39,7 @@ func (e *Engine) RequestEdgeReregister(station string) error {
 		station = protocol.StationBroadcast
 	}
 	return e.SendDataToEdge(protocol.SubjectEdgeRegisterRequest, station,
-		&protocol.EdgeRegisterRequest{StationID: station, Reason: "manual re-sync (dashboard)"})
+		&protocol.EdgeRegisterRequest{Reason: "manual re-sync (dashboard)"})
 }
 
 // RunFulfillmentScan runs one pass of the fulfillment scanner and returns the
