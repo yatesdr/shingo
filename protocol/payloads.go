@@ -437,11 +437,12 @@ const CancelActorEdge = "edge"
 const CancelReasonAcceptHalfSwap = "accept_half_swap"
 
 // CancelReasonAbandonedPrefix opens the reason of a cancel made because an
-// order waited too long, not because anyone asked: Core's stuck-order sweep
-// (shingo-core/engine/reconciliation_service.go) writes "abandoned: stuck in
-// ..." and "abandoned: operator-gated staging ...". The Edge reads it on a
-// cancel Core sends and switches the position's auto-reorder off rather than
-// pausing it (shingo-edge/orders.holdOnCoreCancel).
+// order waited too long, not because anyone asked. The Edge's idle rule writes
+// it (CancelReasonLineIdle); a Core before v0.9.0 wrote "abandoned: stuck in
+// ..." from a stuck-order sweep that release removed, and no Core writes it now.
+// The Edge reads it on a cancel Core sends and switches the position's
+// auto-reorder off rather than pausing it (shingo-edge/orders.holdOnCoreCancel);
+// from a current Core that cancel is the echo of the Edge's own idle cancel.
 const CancelReasonAbandonedPrefix = "abandoned:"
 
 // CancelReasonLineIdle is the reason of the Edge's own cancel of the robots
