@@ -331,7 +331,8 @@ func (e *Engine) closeCellEpisode(processID int64, payload string, role protocol
 // row is gone and nothing will ever say so — while this order can at worst
 // re-send one, and a re-send is a no-op under Core's revision guard. Once the
 // message is on the durable outbox, delivery is the outbox's job: it retries
-// and dead-letters on its own, which is what lets this table keep meaning
+// until the broker takes it (demand.origin never dead-letters: its row in
+// protocol's must-arrive table), which is what lets this table keep meaning
 // "episodes that are open" rather than "episodes we are still responsible for".
 //
 // Closing something already closed is a NO-OP, not an error: the falling edge

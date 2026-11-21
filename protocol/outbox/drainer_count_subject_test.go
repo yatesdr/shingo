@@ -179,6 +179,9 @@ var neverDeadLetterWant = map[string]string{
 	// Added by the must-arrive table: a lost refresh leaves the station counting
 	// under an ended generation; a late one only moves a stamp forward.
 	"data.inventory.bin_epoch_refresh": "Core (uop applier, the epoch repair)",
+	// Added by the must-arrive table: a lost episode state is missing at Core until
+	// the episode next changes; a late one loses Core's revision compare.
+	"demand.origin": "Edge (demand episode)",
 }
 
 // msgTypeUniverse is every spelling a row's msg_type can take for a protocol

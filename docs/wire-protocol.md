@@ -157,6 +157,7 @@ what makes a late copy safe at its receiver. Guards: `TestNoExpiry_ExactMembersh
 | `transit.bin_picked_up` | Core | yes | yes | `data.transit.bin_picked_up` | strands what only the lift triggers: the slot's flush and clear, a changeover supply deferred to it, the re-pull | each branch is idempotent or gated on the bin still bound at the slot (HandleBinPickedUp) |
 | `transit.bin_landed` | Core | yes | yes | `data.transit.bin_landed` | a seat left empty while a carrier stands on it, and every tick there held | the bind refuses a landing not newer than the seat's placed_seq |
 | `edge.answer` | Core | yes | yes | `data.reply.edge.answer` | the asking Edge's table and seat stay wrong until something else heals them | an answer is a fact already true at Core |
+| `demand.origin` | Edge | yes | yes | `demand.origin` | an episode's open or close is missing at Core until the episode next changes; a zero-order episode may never show | Core upserts on origin_id under a strictly rising revision (UpsertDemandOrigin), so a late copy loses the comparison |
 | `order.ingest` | Edge | yes | yes | `order.ingest` | a full produce bin left unconfirmed and invisible to sourcing | Core fences a late ingest by its bin_epoch |
 | `order.release` | Edge | yes | yes | `order.release` | a robot Core holds staged that nobody can release | the release echoes the wait it was pressed for (OrderRelease.StationWait), so a copy for a wait already passed is a no-op |
 | `order.cancel` | Edge | yes | yes | `order.cancel` | a robot keeps working an order its operator ended | it cancels what is still live, and is a no-op at Core on an order that has ended (dispatch.HandleOrderCancel) |
@@ -487,7 +488,7 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `catalog.payloads_request` | 5 min |
 | `catalog.payloads_response` | 5 min |
 | `containment.snapshot` | 5 min |
-| `demand.origin` | 5 min |
+| `demand.origin` | **none** |
 | `edge.answer` | **none** |
 | `edge.ask` | 25 s |
 | `edge.cells` | 5 min |
@@ -523,21 +524,11 @@ A subject not listed gets the `data` type's TTL (5 min).
 
 <!-- /generated -->
 
-**Nine subjects carry NO expiry at all** (`protocol.NoExpiry`; `protocol/docs_drift_test.go` keeps this count in
+**Ten subjects carry NO expiry at all** (`protocol.NoExpiry`; `protocol/docs_drift_test.go` keeps this count in
 step with `protocol/expiry.go`). Every other data subject is a snapshot whose successor carries the same truth
-seconds later, so discarding a late copy costs nothing. For these nine a dropped copy costs more than a late one,
-and each receiving handler is safe on a late or repeated copy:
-
-| Subject | A dropped copy | Why a late or repeated copy is safe |
-|---|---|---|
-| `inventory.bin_uop_delta` | a permanently wrong count: it is an increment | Core dedups each scope on its high-water `SequenceID` (`inventory_delta_dedup`); a delta from a superseded epoch goes to the discrepancy audit, not the count |
-| `inventory.lineside_bucket_level` | Core's mirror of the pile row stays wrong until the pile next changes (for a stranded row, never) | Core applies a level only above the row's high-water `SequenceID` |
-| `production.ticks` | a fake stop in MTBF and Lost | Core keys each tick on (cell, snapshot id, recorded_at) |
-| `inventory.hold_dropped` | parts left the count and no row says so | Core writes the row once per envelope id |
-| `inventory.uop_adjustment`, `inventory.bin_epoch_refresh` | after an outage longer than 5 minutes the station counts under a generation that has ended, and Core discards every count it reports | an Edge bind moves a carrier's epoch forward only; a late adjustment does write its count over ticks counted after Core sent it |
-| `transit.bin_picked_up` | the slot's clear, a changeover supply deferred to the lift and a consolidation's Order B never run | each branch of the Edge's handler is idempotent or guarded (the clear needs the bin still bound at the slot); the audit is on `subjectTTLs` in `protocol/expiry.go` |
-| `transit.bin_landed` | a carrier Core placed is never bound at its seat: it is the only door that binds one | the seat keeps the placement stamp (`placed_seq`) of the landing it last bound and refuses one not newer |
-| `edge.answer` | the asking edge's rows and seat stay wrong until something else heals them | the answer is a fact already true at Core; applying it again redraws rows at worst one snapshot old |
+seconds later, so discarding a late copy costs nothing. For these ten a dropped copy costs more than a late one,
+and each is a row of the [must-arrive table](#must-arrive), which says what a dropped copy costs and why a late or
+repeated copy is safe at its receiver.
 
 A no-expiry message carries the zero time (`"0001-01-01T00:00:00Z"`) in `exp`, which a receiver reads as never
 expiring — not `now`, which would read as already expired on the next tick. Both stamping sites go through

@@ -96,7 +96,7 @@ func TestNoExpiry_SurvivesAnyAge(t *testing.T) {
 // TestNewDataEnvelope_SnapshotSubjectsStillExpire pins the other half: a
 // snapshot subject that stopped expiring would publish an hour of superseded
 // history after every outage. (It said only the two sequenced deltas are
-// exempt; nine data subjects are, listed in noExpiryAtV0180.)
+// exempt; nine data subjects are, listed in noExpiryWant.)
 func TestNewDataEnvelope_SnapshotSubjectsStillExpire(t *testing.T) {
 	t.Parallel()
 	before := time.Now().UTC()
@@ -195,14 +195,15 @@ func TestNewDataEnvelope_BinLandedCarriesNoExpiry(t *testing.T) {
 	}
 }
 
-// noExpiryAtV0180 is the never-expire set as the base (v0.18.0, d2686a1d)
-// holds it: the data subjects (subjectTTLs) and the envelope types
-// (defaultTTLs) whose envelopes carry no `exp`. These keys are wire names,
-// the same on both sides; the outbox's spellings are the drainer's pin's
-// (outbox.TestNeverDeadLetter_ExactMembership). Literal strings, so a
-// respelled subject fails here too.
-var noExpiryAtV0180 = struct{ subjects, types []string }{
+// noExpiryWant is the never-expire set: the base's (v0.18.0, d2686a1d), then
+// each message the must-arrive table has added since, marked where it is: the
+// data subjects and the envelope types whose envelopes carry no `exp`. These
+// keys are wire names, the same on both sides; the outbox's spellings are the
+// drainer's pin's (outbox.TestNeverDeadLetter_ExactMembership). Literal
+// strings, so a respelled subject fails here too.
+var noExpiryWant = struct{ subjects, types []string }{
 	subjects: []string{
+		"demand.origin", // added by the must-arrive table: late-safe by its revision
 		"edge.answer",
 		"inventory.bin_epoch_refresh",
 		"inventory.bin_uop_delta",
@@ -223,11 +224,11 @@ var noExpiryAtV0180 = struct{ subjects, types []string }{
 // TestNoExpiry_ExactMembership pins which messages carry no `exp`, by building
 // each one: every subject in AllSubjects through NewDataEnvelope, every type in
 // AllTypes and EphemeralTypes through NewEnvelope. The ones stamped with no
-// expiry must be exactly noExpiryAtV0180, no more and no fewer.
+// expiry must be exactly noExpiryWant, no more and no fewer.
 //
 // Pin 12 of the info-flow build's Step 0. The must-arrive table (lane B2)
 // derives this set from one table and keeps this membership in its first
-// commit; each later commit that changes membership changes noExpiryAtV0180
+// commit; each later commit that changes membership changes noExpiryWant
 // in the same commit and says why.
 func TestNoExpiry_ExactMembership(t *testing.T) {
 	t.Parallel()
@@ -257,13 +258,13 @@ func TestNoExpiry_ExactMembership(t *testing.T) {
 	}
 	sort.Strings(subjects)
 	sort.Strings(types)
-	if got, want := strings.Join(subjects, " "), strings.Join(noExpiryAtV0180.subjects, " "); got != want {
+	if got, want := strings.Join(subjects, " "), strings.Join(noExpiryWant.subjects, " "); got != want {
 		t.Errorf("never-expire data subjects = [%s], want [%s]. If the change is meant, change "+
-			"noExpiryAtV0180 in the same commit and say why in the body", got, want)
+			"noExpiryWant in the same commit and say why in the body", got, want)
 	}
-	if got, want := strings.Join(types, " "), strings.Join(noExpiryAtV0180.types, " "); got != want {
+	if got, want := strings.Join(types, " "), strings.Join(noExpiryWant.types, " "); got != want {
 		t.Errorf("never-expire envelope types = [%s], want [%s]. If the change is meant, change "+
-			"noExpiryAtV0180 in the same commit and say why in the body", got, want)
+			"noExpiryWant in the same commit and say why in the body", got, want)
 	}
 }
 

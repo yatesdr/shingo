@@ -168,6 +168,15 @@ var mustArrive = []MustArrive{
 		Lost: "the asking Edge's table and seat stay wrong until something else heals them",
 		Late: "an answer is a fact already true at Core",
 	},
+	// The demand episodes the Edge owns, as whole state (SubjectDemandOrigin).
+	// Sent once per change on the outbox; the Edge re-sends one only when the
+	// outbox refused it, not one sent and lost, so a dead-lettered or expired
+	// copy was missing at Core until the episode next changed.
+	{
+		Name: SubjectDemandOrigin, Sender: SentByEdge, NeverExpires: true, NeverDeadLetters: true,
+		Lost: "an episode's open or close is missing at Core until the episode next changes; a zero-order episode may never show",
+		Late: "Core upserts on origin_id under a strictly rising revision (UpsertDemandOrigin), so a late copy loses the comparison",
+	},
 	// An ingest is a produced bin's count.
 	{
 		Name: TypeOrderIngest, Type: true, Sender: SentByEdge, NeverExpires: true, NeverDeadLetters: true,
