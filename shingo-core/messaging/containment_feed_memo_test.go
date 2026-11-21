@@ -45,7 +45,7 @@ func TestFeedState_ABuildStartedBeforeADropIsNotKept(t *testing.T) {
 	}{
 		{"one station's node list", "edge.a", protocol.FeedNodes, func(f *feedState) { f.dropStation("edge.a", protocol.FeedNodes) }},
 		{"the plant's catalog", "", protocol.FeedCatalog, func(f *feedState) { f.drop(protocol.FeedCatalog) }},
-		{"every station's node list", "edge.b", protocol.FeedNodes, func(f *feedState) { f.dropEveryStation(protocol.FeedNodes) }},
+		{"every station's node list", "edge.b", protocol.FeedNodes, func(f *feedState) { f.drop(protocol.FeedNodes) }},
 	}
 	for _, c := range cases {
 		f := newFeedState()

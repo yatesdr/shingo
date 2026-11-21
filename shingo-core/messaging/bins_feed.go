@@ -33,8 +33,9 @@ import (
 // (bins_feed_groups.go). Nothing is written: after a Core restart the ack
 // quotes "" and the Edge publishes again.
 //
-// An Edge that never published a list is never sent a snapshot: buildFeed
-// answers the key unknown for it, so nothing is logged, answered or sent.
+// An Edge that never published a list is never sent a snapshot: its row's build
+// (buildBinsFeed) answers the key unknown for it, so nothing is logged,
+// answered or sent.
 //
 // AFTER A KNOWN CHANGE, ONE TIMER PER DIRTY EDGE. A bin event at a watched
 // node or group window, a station door (LOAD, count, CLEAR) on a watched bin,

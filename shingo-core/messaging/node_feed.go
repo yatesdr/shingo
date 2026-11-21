@@ -5,7 +5,6 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -291,15 +290,17 @@ func (s *CoreDataService) buildScene() (string, sceneRows, error) {
 //
 // A node list that cannot be read is not sent at all, even when only the scene
 // differs: an empty list would wipe the Edge's.
-func (s *CoreDataService) sendNodeFeed(station string, held map[string]string) {
-	now := clock.Now()
-	ne, ok := s.feedCurrent(station, protocol.FeedNodes, now)
+//
+// The send of both the FeedNodes and the FeedScene rows (coreFeeds), so it
+// reads both builds through current, whichever of the two is due.
+func sendNodeFeed(s *CoreDataService, station string, _ coreFeed, _ feedMemoEntry, current feedReader, held map[string]string) {
+	ne, ok := current(protocol.FeedNodes)
 	if !ok {
 		return
 	}
 	resp := *ne.value.(*protocol.NodeListResponse)
 	heldRevision := held[protocol.FeedScene]
-	if se, ok := s.feedCurrent(station, protocol.FeedScene, now); ok {
+	if se, ok := current(protocol.FeedScene); ok {
 		rows := se.value.(sceneRows)
 		withGeometry := se.digest != heldRevision
 		resp.ScenePoints = projectScenePoints(rows.points, withGeometry)
@@ -345,7 +346,7 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 // stored (feedState.store). Pinned by TestPayloadsChanged_DropsTheMemos.
 func (s *CoreDataService) PayloadsChanged() {
 	s.feeds.drop(protocol.FeedCatalog)
-	s.feeds.dropEveryStation(protocol.FeedNodes)
+	s.feeds.drop(protocol.FeedNodes)
 }
 
 // buildCatalog builds the payload catalog — the FeedCatalog value — and its

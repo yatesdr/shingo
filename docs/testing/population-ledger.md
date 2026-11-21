@@ -2176,3 +2176,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### STRENGTHEN — `TestFeedScopes_CoverAllFeeds`
+- test: `TestFeedScopes_CoverAllFeeds` · pkg `shingocore/messaging` · run `-run '^TestFeedScopes_CoverAllFeeds$'` · `shingo-core/messaging/feeds_test.go:320` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: renamed `TestCoreFeeds_EveryFeedHasARow` (`shingo-core/messaging/feeds_test.go`) when Core's three lists of a feed's facts (`feedScopes`, the build switch, the send switch) became one row per feed (`coreFeeds`): every feed key has a row and none names a key protocol does not list (kept, now as one row per key in `protocol.AllFeeds`' order); every ask subject is in `CoreInboundSubjects` (kept). The lifetime-or-noMemo check is gone with `noMemo` (a zero ttl is never memoised; the lifetimes are pinned by `TestFeedMemo_ScopeAndTTLCharacterised`). Added: every row has a build, a carrier and a send.
+- mutation: the sourcing row without its send · rewritten red: `go test -count=1 -tags lockcheck -run 'TestCoreFeeds_' ./messaging/` → `feeds_test.go:337: sourcing: build set true, send set false, carrier "sourcing.state"; want all three`, `--- FAIL: TestCoreFeeds_EveryFeedHasARow`
+- coverage Δ: not measured for this row (the same table is read under the new name)
+- citations rewritten: none
+- verified at: the commit that adds this row

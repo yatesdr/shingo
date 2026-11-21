@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
@@ -20,8 +19,8 @@ import (
 // The compare runs no goroutine of its own: it happens inside
 // HandleEdgeHeartbeat. For each key the Edge named, Core takes its current
 // digest (from a short memo), answers it on the ack, and sends the feed to that
-// station when the two differ. A plain switch on the key builds and sends each
-// feed.
+// station when the two differ. One row per feed (coreFeeds) says how it is
+// memoised, built and sent.
 //
 // One feed keeps state per Edge beyond the memo: bins, whose scope is a watch
 // list each Edge publishes. bins_feed.go holds those lists in memory and, after
@@ -75,103 +74,146 @@ type feedSendRecord struct {
 // access is a map lookup or a small write, and heartbeats arrive one per
 // station per minute.
 type feedState struct {
-	mu    lockcheck.Mutex[lockorder.MessagingFeeds]
-	memo  map[string]feedMemoEntry
+	mu lockcheck.Mutex[lockorder.MessagingFeeds]
+	// memo is each feed's build by slot (coreFeed.slot): feed key and station,
+	// "" for a plant-wide feed.
+	memo  map[[2]string]feedMemoEntry
 	sent  map[[2]string]*feedSendRecord
 	flags map[string]map[string]string
-	// drops counts the memo drops; dropped is the count at the last drop of a
-	// memo key, droppedAll at the last drop of every station's memo of a feed.
-	// A build carries the count it started at (lookup), and store keeps it
-	// only when no drop of its key has come since: a build that read before a
+	// drops counts the memo drops; dropped is the count at the last drop of
+	// one slot, droppedAll at the last drop of every slot of a feed. A build
+	// carries the count it started at (dropCount), and store keeps it only
+	// when no drop of its slot has come since: a build that read before a
 	// known write must not be stored after the drop that write made.
 	drops      uint64
-	dropped    map[string]uint64
+	dropped    map[[2]string]uint64
 	droppedAll map[string]uint64
 }
 
 func newFeedState() *feedState {
 	return &feedState{
-		memo:       map[string]feedMemoEntry{},
+		memo:       map[[2]string]feedMemoEntry{},
 		sent:       map[[2]string]*feedSendRecord{},
 		flags:      map[string]map[string]string{},
-		dropped:    map[string]uint64{},
+		dropped:    map[[2]string]uint64{},
 		droppedAll: map[string]uint64{},
 	}
 }
 
-// feedScope is how one feed's build is memoised: for each station apart or
-// once for the plant, and for how long, or (noMemo) not at all.
-type feedScope struct {
+// coreFeed is everything Core says about one feed it serves, in one place: how
+// its build is memoised, how it is built, the subject it is sent on, and the
+// send. The facts were a scope table and two switches on the key, one to build
+// and one to send; a feed missing from the build switch was silent and one
+// missing from the send switch was a log line. TestCoreFeeds_EveryFeedHasARow
+// fails on a key of protocol.AllFeeds with no row and on a row with no build,
+// carrier or send.
+type coreFeed struct {
+	key string
+	// perStation: built for each station apart, else once for the plant. A
+	// per-station feed memoised for the plant would answer station B with
+	// station A's build.
 	perStation bool
-	ttl        time.Duration
-	// noMemo: every heartbeat builds the feed afresh. For a build that reads
-	// nothing, where a memo could only answer with a digest older than a push.
-	noMemo bool
+	// ttl is how long a build is memoised; zero is never, and every heartbeat
+	// builds the feed afresh.
+	ttl time.Duration
+	// carrier is the subject the feed is sent on. Feeds that share a carrier
+	// share one send per heartbeat: one node list carries the nodes and the
+	// scene.
+	carrier string
+	// build builds the feed's value for one station and digests it. known is
+	// false when this Core does not serve the key to that station. Any failed
+	// read fails the build: a digest of a partial read would confirm a copy
+	// nobody read.
+	build func(s *CoreDataService, station string) (digest string, value any, known bool, err error)
+	// send sends a due feed's build e to one station, the value exactly as
+	// digested. current reads another feed's build as the same answer reads
+	// it; held is what the Edge holds, for a send that depends on it.
+	send func(s *CoreDataService, station string, f coreFeed, e feedMemoEntry, current feedReader, held map[string]string)
 }
 
-// feedScopes has one row per feed Core serves and NO DEFAULT: a key without a
+// feedReader reads one feed's current build by key, for one station at one
+// instant (feedCurrent).
+type feedReader func(key string) (feedMemoEntry, bool)
+
+// coreFeeds has one row per feed Core serves and NO DEFAULT: a key without a
 // row is neither memoised nor served (feedCurrent leaves it out of the ack, as
-// a key this Core does not know). The default it replaces memoised any key
-// plant-wide, so a per-station feed left out would have answered station B
-// with station A's build. TestFeedScopes_CoverAllFeeds pins a row per key.
-var feedScopes = map[string]feedScope{
-	protocol.FeedContainment: {ttl: feedMemoPlant},
-	protocol.FeedRefusals:    {ttl: feedMemoPlant},
-	protocol.FeedNodes:       {perStation: true, ttl: feedMemoStation},
-	protocol.FeedScene:       {perStation: true, ttl: feedMemoStation},
-	protocol.FeedCatalog:     {ttl: feedMemoPlant},
-	protocol.FeedBins:        {perStation: true, ttl: feedMemoBins},
-	// Built from the monitor's in-memory verdicts with no read, so a memo
-	// would save nothing and could answer a delta the monitor just pushed with
-	// the digest from before it.
-	protocol.FeedSourcing: {perStation: true, noMemo: true},
+// a key this Core does not know). A default once memoised any key plant-wide,
+// so a per-station feed left out would have answered station B with station
+// A's build. The order is protocol.AllFeeds'.
+var coreFeeds = [...]coreFeed{
+	{key: protocol.FeedContainment, ttl: feedMemoPlant, carrier: protocol.SubjectContainmentSnapshot,
+		build: buildContainmentFeed, send: sendFeedValue},
+	{key: protocol.FeedRefusals, ttl: feedMemoPlant, carrier: protocol.SubjectSupplyRefusalSnapshot,
+		build: buildRefusalsFeed, send: sendFeedValue},
+	{key: protocol.FeedNodes, perStation: true, ttl: feedMemoStation, carrier: protocol.SubjectNodeListResponse,
+		build: buildNodesFeed, send: sendNodeFeed},
+	{key: protocol.FeedScene, perStation: true, ttl: feedMemoStation, carrier: protocol.SubjectNodeListResponse,
+		build: buildSceneFeed, send: sendNodeFeed},
+	{key: protocol.FeedCatalog, ttl: feedMemoPlant, carrier: protocol.SubjectCatalogPayloadsResponse,
+		build: buildCatalogFeed, send: sendFeedValue},
+	// Known per Edge: only for one whose watch list Core holds.
+	{key: protocol.FeedBins, perStation: true, ttl: feedMemoBins, carrier: protocol.SubjectBinsSnapshot,
+		build: buildBinsFeed, send: sendFeedValue},
+	// Never memoised: built from the monitor's in-memory verdicts with no read,
+	// so a memo would save nothing and could answer a delta the monitor just
+	// pushed with the digest from before it.
+	{key: protocol.FeedSourcing, perStation: true, carrier: protocol.SubjectSourcingState,
+		build: buildSourcingFeed, send: sendFeedValue},
 }
 
-// memoKey scopes the per-station feeds to their station.
-func memoKey(station, key string) string {
-	if feedScopes[key].perStation {
-		return key + "@" + station
+// coreFeedOf is the row for a feed key; ok false for a key this Core does not
+// serve.
+func coreFeedOf(key string) (coreFeed, bool) {
+	for _, f := range coreFeeds {
+		if f.key == key {
+			return f, true
+		}
 	}
-	return key
+	return coreFeed{}, false
 }
 
-// memoTTL is how long a feed's build is memoised: zero, never, for a key
-// with no row.
-func memoTTL(key string) time.Duration { return feedScopes[key].ttl }
+// slot is where the feed's build for one station is memoised: the station's
+// own for a per-station feed, the plant's ("") for a plant-wide one.
+func (f coreFeed) slot(station string) [2]string {
+	if f.perStation {
+		return [2]string{f.key, station}
+	}
+	return [2]string{f.key, ""}
+}
 
-// drop forgets a plant-wide feed's memo, so the next read rebuilds it. Called
-// after a known write to that feed's data.
+// slotOf is the memo slot of key for station, and the key's row (the zero row,
+// never memoised, for a key with none).
+func slotOf(station, key string) ([2]string, coreFeed) {
+	f, ok := coreFeedOf(key)
+	if !ok {
+		return [2]string{key, ""}, coreFeed{key: key}
+	}
+	return f.slot(station), f
+}
+
+// drop forgets every build of a feed, the plant's or every station's (a
+// station's build still running included), so the next read rebuilds it.
+// Called after a known write to that feed's data.
 func (f *feedState) drop(key string) {
 	f.mu.Lock()
 	f.drops++
-	delete(f.memo, key)
-	f.dropped[key] = f.drops
-	f.mu.Unlock()
-}
-
-// dropStation forgets one station's memo of a per-station feed.
-func (f *feedState) dropStation(station, key string) {
-	k := memoKey(station, key)
-	f.mu.Lock()
-	f.drops++
-	delete(f.memo, k)
-	f.dropped[k] = f.drops
-	f.mu.Unlock()
-}
-
-// dropEveryStation forgets every station's memo of a per-station feed, for a
-// write that changes every station's build of it, a station whose build is
-// still running included.
-func (f *feedState) dropEveryStation(key string) {
-	prefix := memoKey("", key)
-	f.mu.Lock()
-	f.drops++
-	for k := range f.memo {
-		if strings.HasPrefix(k, prefix) {
-			delete(f.memo, k)
+	for slot := range f.memo {
+		if slot[0] == key {
+			delete(f.memo, slot)
 		}
 	}
 	f.droppedAll[key] = f.drops
+	f.mu.Unlock()
+}
+
+// dropStation forgets one station's build of a feed: of a plant-wide feed,
+// the plant's, which is what that station is answered.
+func (f *feedState) dropStation(station, key string) {
+	slot, _ := slotOf(station, key)
+	f.mu.Lock()
+	f.drops++
+	delete(f.memo, slot)
+	f.dropped[slot] = f.drops
 	f.mu.Unlock()
 }
 
@@ -206,11 +248,14 @@ func (f *feedState) lastSent(station, key string) string {
 	return digest
 }
 
+// lookup is the memo's build of one feed for one station, ok false on a miss,
+// on a build older than the row's ttl, and always for a feed never memoised.
 func (f *feedState) lookup(station, key string, now time.Time) (feedMemoEntry, bool) {
+	slot, row := slotOf(station, key)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	e, ok := f.memo[memoKey(station, key)]
-	if !ok || now.Sub(e.at) >= memoTTL(key) {
+	e, ok := f.memo[slot]
+	if !ok || now.Sub(e.at) >= row.ttl {
 		return feedMemoEntry{}, false
 	}
 	return e, true
@@ -224,24 +269,25 @@ func (f *feedState) dropCount() uint64 {
 	return f.drops
 }
 
-// store keeps a build that started at drop count drops, unless its key was
-// dropped since or the memo already holds a build started later. A build that
-// read before a known write and finished after the write's drop holds the old
-// digest: kept, the next heartbeats would send the old value to Edges that
-// have the new one (one that a reply answered, or a push sent), until the memo
-// aged out. Pinned by TestFeedState_ABuildStartedBeforeADropIsNotKept.
+// store keeps a build that started at drop count drops, unless its slot was
+// dropped since, the memo already holds a build started later, or the feed is
+// never memoised. A build that read before a known write and finished after
+// the write's drop holds the old digest: kept, the next heartbeats would send
+// the old value to Edges that have the new one (one that a reply answered, or
+// a push sent), until the memo aged out. Pinned by
+// TestFeedState_ABuildStartedBeforeADropIsNotKept.
 func (f *feedState) store(station, key string, e feedMemoEntry, drops uint64) {
-	if feedScopes[key].noMemo {
+	slot, row := slotOf(station, key)
+	if row.ttl <= 0 {
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	k := memoKey(station, key)
-	if drops < f.dropped[k] || drops < f.droppedAll[key] {
+	if drops < f.dropped[slot] || drops < f.droppedAll[key] {
 		return
 	}
-	if cur, ok := f.memo[k]; !ok || !cur.at.After(e.at) {
-		f.memo[k] = e
+	if cur, ok := f.memo[slot]; !ok || !cur.at.After(e.at) {
+		f.memo[slot] = e
 	}
 }
 
@@ -332,10 +378,11 @@ func (s *CoreDataService) EdgeFeedFlags(station string) []string {
 // could not read is left out of the answer and nothing is sent for it.
 func (s *CoreDataService) answerFeeds(station string, held map[string]string) map[string]string {
 	now := clock.Now()
+	current := s.feedReaderAt(station, now)
 	answer := make(map[string]string, len(held))
 	due := map[string]feedMemoEntry{}
 	for key, h := range held {
-		e, ok := s.feedCurrent(station, key, now)
+		e, ok := current(key)
 		if !ok {
 			continue
 		}
@@ -345,24 +392,30 @@ func (s *CoreDataService) answerFeeds(station string, held map[string]string) ma
 		}
 	}
 	if len(due) > 0 {
-		s.sendFeeds(station, due, held)
+		s.sendFeeds(station, due, current, held)
 	}
 	return answer
 }
 
+// feedReaderAt reads feeds' current builds for one station at one instant.
+func (s *CoreDataService) feedReaderAt(station string, now time.Time) feedReader {
+	return func(key string) (feedMemoEntry, bool) { return s.feedCurrent(station, key, now) }
+}
+
 // feedCurrent returns the memoised build of one feed, building it on a miss.
-// ok is false when the key has no scope row, is unknown to this Core, or its
-// read failed; a failed read is never memoised, so the next heartbeat tries
-// again.
+// ok is false when the key has no row, the row does not serve it to this
+// station, or its read failed; a failed read is never memoised, so the next
+// heartbeat tries again.
 func (s *CoreDataService) feedCurrent(station, key string, now time.Time) (feedMemoEntry, bool) {
-	if _, scoped := feedScopes[key]; !scoped {
+	f, ok := coreFeedOf(key)
+	if !ok {
 		return feedMemoEntry{}, false
 	}
 	if e, ok := s.feeds.lookup(station, key, now); ok {
 		return e, true
 	}
 	drops := s.feeds.dropCount()
-	digest, value, known, err := s.buildFeed(station, key)
+	digest, value, known, err := f.build(s, station)
 	if !known {
 		return feedMemoEntry{}, false
 	}
@@ -375,101 +428,99 @@ func (s *CoreDataService) feedCurrent(station, key string, now time.Time) (feedM
 	return e, true
 }
 
-// buildFeed builds one feed's value and digests it. known is false for a key
-// this Core does not serve. On the feed path any read error fails the build:
-// a digest of a partial read would confirm a copy nobody read.
-func (s *CoreDataService) buildFeed(station, key string) (digest string, value any, known bool, err error) {
-	switch key {
-	case protocol.FeedContainment:
-		snap, err := s.buildContainmentSnapshot()
-		if err != nil {
-			return "", nil, true, err
-		}
-		return snap.Digest, snap, true, nil
-	case protocol.FeedRefusals:
-		digest, value, err = s.buildRefusalsFeed()
-		return digest, value, true, err
-	case protocol.FeedNodes:
-		v, err := s.buildNodeList(station, true)
-		if err != nil {
-			return "", nil, true, err
-		}
-		return v.Digest, v, true, nil
-	case protocol.FeedScene:
-		d, rows, err := s.buildScene()
-		return d, rows, true, err
-	case protocol.FeedCatalog:
-		v, err := s.buildCatalog(true)
-		if err != nil {
-			return "", nil, true, err
-		}
-		return v.Digest, v, true, nil
-	case protocol.FeedBins:
-		v, known, err := s.buildNodeBins(station)
-		if !known || err != nil {
-			return "", nil, known, err
-		}
-		return v.Digest, v, true, nil
-	case protocol.FeedSourcing:
-		if s.sourcingReport == nil {
-			return "", nil, false, nil
-		}
-		r, ok := s.sourcingReport(station)
-		if !ok {
-			return "", nil, false, nil
-		}
-		d, err := protocol.SourcingDigest(r.States)
-		return d, r, true, err
+// The rows' builds. Each is the strict build of its feed, so a digest is never
+// of a partial read; a reply's lenient build (HandleNodeListRequest,
+// HandleCatalogPayloadsRequest) is never memoised.
+
+func buildContainmentFeed(s *CoreDataService, _ string) (string, any, bool, error) {
+	snap, err := s.buildContainmentSnapshot()
+	if err != nil {
+		return "", nil, true, err
 	}
-	return "", nil, false, nil
+	return snap.Digest, snap, true, nil
 }
 
-// buildRefusalsFeed is the FeedRefusals build: every refusal Core holds open,
-// digested with the same function the Edge digests its own table with. One
-// statement per build.
-func (s *CoreDataService) buildRefusalsFeed() (string, any, error) {
+// buildRefusalsFeed is every refusal Core holds open, digested with the same
+// function the Edge digests its own table with. One statement per build.
+func buildRefusalsFeed(s *CoreDataService, _ string) (string, any, bool, error) {
 	open, err := s.db.ListOpenSupplyRefusals()
 	if err != nil {
-		return "", nil, err
+		return "", nil, true, err
 	}
 	digest, err := protocol.RefusalsDigest(open)
 	if err != nil {
-		return "", nil, err
+		return "", nil, true, err
 	}
-	return digest, protocol.SupplyRefusalSnapshot{Digest: digest, Open: open}, nil
+	return digest, protocol.SupplyRefusalSnapshot{Digest: digest, Open: open}, true, nil
 }
 
-// sendFeeds sends each due feed to one station, the value exactly as digested.
-// held is the heartbeat's map, for feeds whose send depends on what the Edge
-// already has.
-func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry, held map[string]string) {
+func buildNodesFeed(s *CoreDataService, station string) (string, any, bool, error) {
+	v, err := s.buildNodeList(station, true)
+	if err != nil {
+		return "", nil, true, err
+	}
+	return v.Digest, v, true, nil
+}
+
+func buildSceneFeed(s *CoreDataService, _ string) (string, any, bool, error) {
+	d, rows, err := s.buildScene()
+	return d, rows, true, err
+}
+
+func buildCatalogFeed(s *CoreDataService, _ string) (string, any, bool, error) {
+	v, err := s.buildCatalog(true)
+	if err != nil {
+		return "", nil, true, err
+	}
+	return v.Digest, v, true, nil
+}
+
+// buildBinsFeed is unknown for an Edge whose watch list Core does not hold.
+func buildBinsFeed(s *CoreDataService, station string) (string, any, bool, error) {
+	v, known, err := s.buildNodeBins(station)
+	if !known || err != nil {
+		return "", nil, known, err
+	}
+	return v.Digest, v, true, nil
+}
+
+// buildSourcingFeed is unknown until the monitor is wired and has made its
+// first pass for the station.
+func buildSourcingFeed(s *CoreDataService, station string) (string, any, bool, error) {
+	if s.sourcingReport == nil {
+		return "", nil, false, nil
+	}
+	r, ok := s.sourcingReport(station)
+	if !ok {
+		return "", nil, false, nil
+	}
+	d, err := protocol.SourcingDigest(r.States)
+	return d, r, true, err
+}
+
+// sendFeedValue is the send of a feed whose build is the message: its value,
+// on its carrier.
+func sendFeedValue(s *CoreDataService, station string, f coreFeed, e feedMemoEntry, _ feedReader, _ map[string]string) {
+	s.resp.sendData(f.carrier, station, e.value)
+}
+
+// sendFeeds sends each due feed to one station through its row's send, in key
+// order, once per carrier: a feed whose carrier went already this time rode
+// that send (the node list carries the nodes and the scene). held is what the
+// Edge holds, for a send that depends on it.
+func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry, current feedReader, held map[string]string) {
 	keys := make([]string, 0, len(due))
 	for key := range due {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	nodeListSent := false
+	sent := map[string]bool{}
 	for _, key := range keys {
-		switch key {
-		case protocol.FeedContainment:
-			s.resp.sendData(protocol.SubjectContainmentSnapshot, station, due[key].value)
-		case protocol.FeedRefusals:
-			s.resp.sendData(protocol.SubjectSupplyRefusalSnapshot, station, due[key].value)
-		case protocol.FeedNodes, protocol.FeedScene:
-			// One node-list message carries both; geometry rides it when the
-			// scene differs.
-			if !nodeListSent {
-				s.sendNodeFeed(station, held)
-				nodeListSent = true
-			}
-		case protocol.FeedCatalog:
-			s.resp.sendData(protocol.SubjectCatalogPayloadsResponse, station, due[key].value)
-		case protocol.FeedBins:
-			s.resp.sendData(protocol.SubjectBinsSnapshot, station, due[key].value)
-		case protocol.FeedSourcing:
-			s.resp.sendData(protocol.SubjectSourcingState, station, due[key].value)
-		default:
-			log.Printf("core_feeds: no sender for %s", key)
+		f, ok := coreFeedOf(key)
+		if !ok || sent[f.carrier] {
+			continue
 		}
+		sent[f.carrier] = true
+		f.send(s, station, f, due[key], current, held)
 	}
 }
