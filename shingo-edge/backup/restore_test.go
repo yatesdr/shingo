@@ -85,7 +85,9 @@ func TestRestoreArchiveNow_TheRestoredUIDIsTheOneTheEdgeBootsWith(t *testing.T) 
 	if err == nil || !strings.Contains(err.Error(), "does not match expected station") {
 		t.Fatalf("restore expecting the fresh box's own uid = %v, want refused: the archive is %s's", err, oldUID)
 	}
-	if after, _ := os.ReadFile(freshPath); !bytes.Equal(after, before) {
+	after, err := os.ReadFile(freshPath)
+	testutil.MustNoErr(t, err, "read the fresh config after the refused restore")
+	if !bytes.Equal(after, before) {
 		t.Fatal("the refused restore changed the fresh box's config")
 	}
 	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
@@ -95,7 +97,9 @@ func TestRestoreArchiveNow_TheRestoredUIDIsTheOneTheEdgeBootsWith(t *testing.T) 
 	testutil.MustNoErr(t, RestoreArchiveNow(freshPath, bytes.NewReader(archive), oldUID), "restore the old box's archive")
 	oldFile, err := os.ReadFile(oldPath)
 	testutil.MustNoErr(t, err, "read the old box's config")
-	if restored, _ := os.ReadFile(freshPath); !bytes.Equal(restored, oldFile) {
+	restored, err := os.ReadFile(freshPath)
+	testutil.MustNoErr(t, err, "read the fresh config after the restore")
+	if !bytes.Equal(restored, oldFile) {
 		t.Errorf("the fresh box's config after the restore is\n%s\nwant the old box's\n%s", restored, oldFile)
 	}
 	booted, err := config.Load(freshPath)
