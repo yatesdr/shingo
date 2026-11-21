@@ -29,6 +29,8 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence, a stale notice or Core's re-register request it asks for its orders only
 - An Edge asks Core for its node list and catalog once when it starts, not twice; after a silence it asks for its orders only
 - An Edge no longer rewrites its payload catalog and redraws its boards when Core sends the catalog it already holds
+- An Edge checks its plant claims and bins watch list against Core's copy from what it already holds, so a heartbeat that changes nothing reads nothing on the Edge; a claim written somewhere other than the Edge's own editors reaches Core within five minutes (it was the next heartbeat)
+- A counter or tag edit on an Edge reaches Core's production dashboards without a restart, and a cell whose last counter is taken off goes from them; the Edge sends its cells when a counter is saved and whenever Core's copy differs (both Core and Edge on this release)
 - An Edge that re-registers (Core restarted, asked for it, or marked it stale) asks for its orders only when Core sends the node list and catalog by itself; against an older Core it still asks for both
 - The Edge Processes page's Setup tab no longer puts up an error every five seconds while it waits for a screen and the Edge does not answer; the lost-connection banner says it
 - Core Diagnostics: the CMS table drops its Notes column, which Core no longer fills

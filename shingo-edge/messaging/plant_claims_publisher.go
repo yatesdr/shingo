@@ -19,26 +19,27 @@ import (
 // on Edge being up.
 //
 // Edge stays the source of truth for the plant spec; this publisher plumbs it
-// onto Core. Three publish triggers:
+// onto Core. Four publish triggers:
 //   - PublishChanged: called by the spec-edit handlers on every style/claim
 //     change (one message, for the process the edit touched).
 //   - PublishAll on registration — Start calls it at boot, and the
 //     SubjectEdgeRegistered handler calls it again on every re-register, which
 //     covers Core restarting (Core sends EdgeRegisterRequest to an edge it does
 //     not know, the edge re-registers, and the ack lands on that handler).
+//   - SendClaims, from the engine's owned map (engine owned.go): Core quotes
+//     its digests back on each heartbeat ack, and the engine re-publishes
+//     exactly the processes whose digest differs from the one it holds, so a
+//     lost publish heals within a heartbeat or two.
 //   - a periodic full snapshot (snapshotInterval) as the last-resort safety net
 //     for a change whose publish was lost outright — only while Core does not
-//     speak feeds. A Core that does quotes every process's digest back on each
-//     heartbeat ack, and ReconcileClaims re-publishes exactly the processes
-//     whose digest differs, so a lost publish heals within a heartbeat or two
-//     instead of an hour.
+//     speak feeds.
 //
 // Together the periodic + boot snapshots replace Kafka compaction for late
 // joiners: Core persists the mirror on every message, each replacing the rows
 // of the one process it names, and a snapshot names only the processes this
 // Edge has, so it never removes one this Edge no longer has. That process
-// (deleted or renamed) is emptied only by ReconcileClaims' empty report
-// (emptyUnreported), sent to a Core that quotes its digests back.
+// (deleted or renamed) is emptied only by SendClaims' empty report, sent when
+// Core quotes a process this Edge does not hold.
 // Loaders/unloaders (manual_swap claims) are EXCLUDED here —
 // they enter the computation as pool supply/demand via the loader aggregate,
 // never as style claims. Their seats travel as the report's Positions, which
@@ -66,6 +67,15 @@ type PlantClaimsPublisher struct {
 	// snapshot is redundant and skipped. Set at the composition root before
 	// Start; nil (tests, an unwired publisher) keeps the snapshot running.
 	CoreSpeaksFeeds func() bool
+
+	// Reported and ReportedAll are told what this publisher just read and
+	// sent, so the engine's cached claims family follows the spec without a
+	// read of its own (engine ClaimsReported, ClaimsReportedAll): Reported
+	// for one process (PublishChanged; styled false is a process with no
+	// styles, which is no member), ReportedAll for every process (PublishAll),
+	// with the ones whose read failed. nil (tests) tells nobody.
+	Reported    func(process, digest string, styled bool)
+	ReportedAll func(members map[string]string, unread map[string]bool)
 
 	DebugLog DebugLogFunc
 }
@@ -115,8 +125,8 @@ func (p *PlantClaimsPublisher) loop() {
 }
 
 // snapshotTick is one tick of the safety-net snapshot: a full PublishAll for
-// an older Core, nothing for one that quotes digests back (ReconcileClaims
-// heals that Core's mirror on the heartbeat, process by process).
+// an older Core, nothing for one that quotes digests back (the engine's owned
+// map heals that Core's mirror on the heartbeat ack, process by process).
 func (p *PlantClaimsPublisher) snapshotTick() {
 	if p.CoreSpeaksFeeds != nil && p.CoreSpeaksFeeds() {
 		return
@@ -156,6 +166,9 @@ func (p *PlantClaimsPublisher) PublishChanged(processID int64) error {
 	if err != nil {
 		return fmt.Errorf("plant_claims: build %s: %w", proc.Name, err)
 	}
+	if p.Reported != nil {
+		p.Reported(report.ProcessID, report.Digest, len(report.Styles) > 0)
+	}
 	return p.publishOne(report)
 }
 
@@ -188,15 +201,27 @@ func (p *PlantClaimsPublisher) PublishAll() error {
 	// delete the payloads the previous ones just wrote, and Core would end up
 	// mirroring a single process.
 	payloads := make([][]byte, 0, len(procs))
+	members, unread := map[string]string{}, map[string]bool{}
 	for _, proc := range procs {
-		data, err := p.buildProcess(proc)
+		report, err := p.reportFor(proc)
+		var data []byte
+		if err == nil {
+			data, err = p.encode(report)
+		}
 		if err != nil {
 			// One unreadable process must not block the rest — the same
 			// contract this loop had when it published per process.
 			log.Printf("plant_claims: build %s: %v", proc.Name, err)
+			unread[proc.Name] = true
 			continue
 		}
+		if len(report.Styles) > 0 {
+			members[proc.Name] = report.Digest
+		}
 		payloads = append(payloads, data)
+	}
+	if p.ReportedAll != nil {
+		p.ReportedAll(members, unread)
 	}
 	if len(payloads) == 0 {
 		return nil
@@ -220,9 +245,9 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 }
 
 // reportFor reads one process's report (the two queries buildProcess
-// describes) and stamps its Digest, so every path that publishes it — and
-// ReconcileClaims, which compares it with what Core quotes back — carries the
-// digest of exactly the value sent.
+// describes) and stamps its Digest, so every path that publishes it — and the
+// claims family (ClaimsMembers), which the engine compares with what Core
+// quotes back — carries the digest of exactly the value sent.
 //
 // Positions (the seats no claim names: loader windows and homes, FG drains)
 // come back with the styles read, so a report is still two reads; a legacy

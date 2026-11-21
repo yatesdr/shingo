@@ -13,9 +13,10 @@
 //     reporting point's rows (syncPointRows), the point seeded at the new
 //     slot's count when the PLC moved when the slot watch has the slot
 //     leading (beginCatchUp, repoint_catch_up.go);
-//   - after the unlock, moves the point's WarLink publishing and, when the
-//     identity tag changed, the identity's, and re-primes the monitor's state
-//     for the process.
+//   - after the unlock, moves the point's WarLink publishing, reads the cell
+//     catalog again (CellsChanged: a Core that answers the owned map is sent
+//     it when it moved) and, when the identity tag changed, moves the
+//     identity's publishing and re-primes the monitor's state for the process.
 
 package engine
 
@@ -99,6 +100,9 @@ func (e *Engine) EditProcessCounter(processID int64, edit domain.ProcessCounterE
 	if syncErr != nil {
 		return fmt.Errorf("re-point the reporting point: %w", syncErr)
 	}
+	// The cell catalog reads the counter and its reporting point: read it
+	// again and send it to a Core that answers the owned map (owned.go).
+	e.CellsChanged()
 
 	cur, err := e.db.GetProcess(processID)
 	if err != nil {

@@ -2131,3 +2131,48 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### STALE — `TestOnCoreAck_AQuietAckReadsOnePlusTwoPerProcess`
+- test: `TestOnCoreAck_AQuietAckReadsOnePlusTwoPerProcess` · pkg `shingoedge/engine` · run `-run '^TestOnCoreAck_AQuietAckReadsOnePlusTwoPerProcess$'` · `shingo-edge/engine/feeds_claims_test.go:99` @ `ebdabedf` · tags `none`
+- code: STALE (pin 9: the behaviour it pinned was changed by ruling D1, the owned map's cached digests)
+- assertion map: a quiet ack reads exactly 1 + 2P statements, 0 writes, sends no report (P = 1, 3, 6) → a quiet heartbeat's quote and a quiet ack run 0 statements, build no family and send nothing, from a Core that speaks the owned map and from an older one, at the same P and fixture: `TestOnCoreAck_AQuietAckRunsNoStatementAndNoHash` (`shingo-edge/engine/owned_test.go`); 0 hashes by that and `TestOwned_EveryOwnedDigestIsInABuildOrASend`
+- mutation: the new pin fails with the claims family rebuilt on every ack (4 statements and a build per family at P=1)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `PREDICTIONS.md` row 9 names it (a working doc, outside the repo)
+- verified at: the commit that adds this row
+
+### STALE — `TestClaimSendDue_GuardAndFlag`
+- test: `TestClaimSendDue_GuardAndFlag` · pkg `shingoedge/engine` · run `-run '^TestClaimSendDue_GuardAndFlag$'` · `shingo-edge/engine/feeds_claims_test.go:53` @ `ebdabedf` · tags `none`
+- code: STALE (`ClaimSendDue` and `ClaimsSettled` are gone; the claims keys go through `sendDue` and the family's `settleOwned`)
+- assertion map: the same steps, digests and flag texts, through `sendDue(claimsGuardKey(p), …)` and `settleOwned` with P2 pending → `TestOwned_ClaimsGuardAndFlag` (`shingo-edge/engine/owned_test.go`)
+- mutation: unchanged assertions; a guard that does not hold a repeat fails step 1 as before
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### FOLD — `TestReconcileClaims_RepublishesWhatDiffers`
+- test: `TestReconcileClaims_RepublishesWhatDiffers` · pkg `shingoedge/messaging` · run `-run '^TestReconcileClaims_RepublishesWhatDiffers$'` · `shingo-edge/messaging/plant_claims_reconcile_test.go:91` @ `ebdabedf` · tags `none`
+- code: FOLD (`ReconcileClaims` is gone: the compare is the engine's owned map, the read and send the publisher's `ClaimsMembers` and `SendClaims`)
+- assertion map: same fixture (SAME, STALE, MISSING, BARE; Core holding SAME, STALE, BARE, GONE) and the same published set `BARE:0 GONE:0 MISSING:1 STALE:1`, from the owned map and from an older Core's Claims → `TestAnswerOwned_ClaimsRepublishesWhatDiffers` (`shingo-edge/engine/owned_test.go`); the empty report for a bare or gone name → `TestSendClaims_TheReportOrTheEmptyOne` (`shingo-edge/messaging/plant_claims_reconcile_test.go`)
+- mutation: not run against the fold
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### FOLD — `TestReconcileClaims_GuardHoldsARepeat`
+- test: `TestReconcileClaims_GuardHoldsARepeat` · pkg `shingoedge/messaging` · run `-run '^TestReconcileClaims_GuardHoldsARepeat$'` · `shingo-edge/messaging/plant_claims_reconcile_test.go:120` @ `ebdabedf` · tags `none`
+- code: FOLD (`ReconcileClaims` is gone; the guard is the engine's real one, not a fake)
+- assertion map: the same differing answer twice publishes each process once → the second half of `TestAnswerOwned_ClaimsRepublishesWhatDiffers` (`shingo-edge/engine/owned_test.go`)
+- mutation: not run against the fold
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### FOLD — `TestReconcileClaims_FailedReadPublishesNothing`
+- test: `TestReconcileClaims_FailedReadPublishesNothing` · pkg `shingoedge/messaging` · run `-run '^TestReconcileClaims_FailedReadPublishesNothing$'` · `shingo-edge/messaging/plant_claims_reconcile_test.go:137` @ `ebdabedf` · tags `none`
+- code: FOLD (`ReconcileClaims` is gone)
+- assertion map: a process list that cannot be read publishes nothing, not even the empty reports, and settles nothing → `TestAnswerOwned_AFailedReadPublishesNothing` (`shingo-edge/engine/owned_test.go`, the family never read and read before) and `TestClaimsMembers_AFailedListReadKnowsNothing` (`shingo-edge/messaging/plant_claims_reconcile_test.go`)
+- mutation: not run against the fold
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row

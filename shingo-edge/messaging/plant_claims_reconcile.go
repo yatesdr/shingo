@@ -1,96 +1,78 @@
 package messaging
 
 import (
+	"fmt"
 	"log"
-	"sort"
 
 	"shingo/protocol"
 	"shingoedge/store/processes"
 )
 
-// ClaimsGuard is the Edge's resend guard for its plant claims, which lives with
-// the rest of the feed bookkeeping in the engine (engine/feeds.go). Seen here
-// through an interface so the publisher needs no engine import.
-type ClaimsGuard interface {
-	// ClaimSendDue reports whether one process's report, at this digest,
-	// should be sent now, and records the send: the same digest inside two
-	// minutes is in flight and held back, and a third send in a row flags it —
-	// unless Core's quote (quoted, "" for none) is the digest sent last, which
-	// ends the streak.
-	ClaimSendDue(process, digest, quoted string) bool
-	// ClaimsSettled marks every process NOT in pending as converged — Core
-	// quoted it back, or it needs nothing — ending its streak and any flag.
-	ClaimsSettled(pending map[string]bool)
-}
+// plant_claims_reconcile.go — the publisher as the engine's owned map drives
+// it (engine owned.go, ClaimsSource). The engine caches one digest per
+// process, compares it with what Core quotes on the heartbeat ack, and keeps
+// the resend guard; this side does the reading and the sending.
 
-// ReconcileClaims answers the Claims map on a heartbeat ack from a Core that
-// keeps one digest per process for this station. A process with at least one
-// style whose digest Core does not hold is re-published; a name Core holds that
-// this Edge no longer has, or has with no styles, gets an empty report so Core
-// drops its mirror. Everything else is converged.
+// ClaimsMembers reads this Edge's spec as the claims family: every process
+// with at least one style, name to the digest of its report. A process whose
+// own read fails is in unread (the engine neither re-publishes nor empties
+// it: an unread spec is not evidence that a process is gone). err is the
+// process list itself failing, and then nothing is known.
 //
 // Reads: the process list and two per process (reportFor), the same reads a
-// full snapshot makes. A failed list read publishes nothing — an unread spec
-// is not evidence that a process is gone. A process whose own read fails is
-// left alone, neither re-published nor emptied.
-func (p *PlantClaimsPublisher) ReconcileClaims(coreHeld map[string]string, guard ClaimsGuard) {
+// full snapshot makes, on the engine's boot build and its floor only.
+func (p *PlantClaimsPublisher) ClaimsMembers() (members map[string]string, unread map[string]bool, err error) {
 	procs, err := processes.List(p.db.DB)
 	if err != nil {
-		log.Printf("plant_claims: reconcile with Core: list processes: %v — nothing published", err)
-		return
+		return nil, nil, fmt.Errorf("list processes: %w", err)
 	}
-	pending := map[string]bool{}
-	reported := map[string]bool{} // has styles here, or could not be read
+	members, unread = map[string]string{}, map[string]bool{}
 	for _, proc := range procs {
 		report, err := p.reportFor(proc)
 		if err != nil {
-			log.Printf("plant_claims: reconcile with Core: build %s: %v — left as it is", proc.Name, err)
-			reported[proc.Name], pending[proc.Name] = true, true
+			log.Printf("plant_claims: read %s: %v — left as it is", proc.Name, err)
+			unread[proc.Name] = true
 			continue
 		}
-		if len(report.Styles) == 0 {
-			continue
+		if len(report.Styles) > 0 {
+			members[proc.Name] = report.Digest
 		}
-		reported[proc.Name] = true
-		if held, ok := coreHeld[proc.Name]; ok && held == report.Digest {
-			continue
-		}
-		pending[proc.Name] = true
-		p.sendIfDue(report, guard, coreHeld[proc.Name])
 	}
-	p.emptyUnreported(coreHeld, reported, pending, guard)
-	guard.ClaimsSettled(pending)
+	return members, unread, nil
 }
 
-// emptyUnreported sends an empty report for every name Core holds that this
-// Edge does not report with styles. It is built directly, not through
-// reportFor: a deleted or renamed process has no row to read.
-func (p *PlantClaimsPublisher) emptyUnreported(coreHeld map[string]string, reported, pending map[string]bool, guard ClaimsGuard) {
-	names := make([]string, 0, len(coreHeld))
-	for name := range coreHeld {
-		if !reported[name] {
-			names = append(names, name)
-		}
+// SendClaims reads one process's report and publishes it when due(digest)
+// says so. A name this Edge has no process for, or one with no styles, is
+// sent as an empty report, built directly (a deleted or renamed process has no
+// row to read), so Core drops its mirror. digest and styled describe the
+// report read, sent or not.
+//
+// Reads: the process list and, for a process found, its two (reportFor).
+func (p *PlantClaimsPublisher) SendClaims(name string, due func(digest string) bool) (digest string, styled bool, err error) {
+	procs, err := processes.List(p.db.DB)
+	if err != nil {
+		return "", false, fmt.Errorf("list processes: %w", err)
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		report, err := withDigest(protocol.PlantClaimsReport{ProcessID: name})
-		if err != nil {
-			log.Printf("plant_claims: reconcile with Core: empty report for %s: %v", name, err)
+	var report protocol.PlantClaimsReport
+	for _, proc := range procs {
+		if proc.Name != name {
 			continue
 		}
-		pending[name] = true
-		p.sendIfDue(report, guard, coreHeld[name])
+		if report, err = p.reportFor(proc); err != nil {
+			return "", false, fmt.Errorf("build %s: %w", name, err)
+		}
+		break
 	}
-}
-
-// sendIfDue publishes one report unless the guard holds it back. quoted is
-// the digest Core holds for the process.
-func (p *PlantClaimsPublisher) sendIfDue(report protocol.PlantClaimsReport, guard ClaimsGuard, quoted string) {
-	if !guard.ClaimSendDue(report.ProcessID, report.Digest, quoted) {
-		return
+	if len(report.Styles) == 0 {
+		if report, err = withDigest(protocol.PlantClaimsReport{ProcessID: name}); err != nil {
+			return "", false, fmt.Errorf("empty report for %s: %w", name, err)
+		}
 	}
-	if err := p.publishOne(report); err != nil {
-		log.Printf("plant_claims: reconcile with Core: %v", err)
+	styled = len(report.Styles) > 0
+	if due(report.Digest) {
+		if err := p.publishOne(report); err != nil {
+			return report.Digest, styled, err
+		}
 	}
+	return report.Digest, styled, nil
 }

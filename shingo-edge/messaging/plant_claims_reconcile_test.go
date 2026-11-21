@@ -11,28 +11,6 @@ import (
 	"shingoedge/store/processes"
 )
 
-// fakeClaimsGuard holds back a repeat of the same digest for the same process,
-// as the engine's guard does inside its two minutes, and records what it saw.
-type fakeClaimsGuard struct {
-	last    map[string]string
-	settled map[string]bool
-	calls   int
-}
-
-func (g *fakeClaimsGuard) ClaimSendDue(process, digest, _ string) bool {
-	g.calls++
-	if g.last == nil {
-		g.last = map[string]string{}
-	}
-	if g.last[process] == digest {
-		return false
-	}
-	g.last[process] = digest
-	return true
-}
-
-func (g *fakeClaimsGuard) ClaimsSettled(pending map[string]bool) { g.settled = pending }
-
 // sentReports decodes every unsent plant.claims row to "process:<n styles>".
 func sentReports(t *testing.T, db *store.DB) []string {
 	t.Helper()
@@ -83,58 +61,79 @@ func TestPlantClaimsPublisher_DigestIsTheReportsOwn(t *testing.T) {
 	}
 }
 
-// On an ack quoting this Edge's processes: a styled process Core holds at the
-// same digest is left alone; one at a different digest, or missing, is
-// re-published; a name Core holds that this Edge has with no styles, or does
-// not have at all, gets an empty report. Every one of those is pending; the
-// converged one is not.
-func TestReconcileClaims_RepublishesWhatDiffers(t *testing.T) {
+// ClaimsMembers is the claims family as the engine caches it: every process
+// with styles at its report's digest, the digest the report on the wire
+// carries; a process with no styles is no member. The reads are a full
+// snapshot's, and nothing is published.
+func TestClaimsMembers_EveryStyledProcessAtItsReportsDigest(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
 	p := NewPlantClaimsPublisher(db, "edge.test", 0)
 	pidSame, _ := seedClaimsProcess(t, db, "SAME", 2, 1)
-	seedClaimsProcess(t, db, "STALE", 1, 1)
-	seedClaimsProcess(t, db, "MISSING", 1, 1)
+	pidStale, _ := seedClaimsProcess(t, db, "STALE", 1, 1)
 	if _, err := db.CreateProcess("BARE", "", "", "", false); err != nil {
 		t.Fatalf("create bare process: %v", err)
 	}
-	held := map[string]string{
-		"SAME":  digestOf(t, p, db, pidSame),
-		"STALE": "0000000000000000",
-		"BARE":  "1111111111111111",
-		"GONE":  "2222222222222222",
+	members, unread, err := p.ClaimsMembers()
+	if err != nil {
+		t.Fatalf("claims members: %v", err)
 	}
-	guard := &fakeClaimsGuard{}
-	p.ReconcileClaims(held, guard)
-
-	if got, want := sentReports(t, db), []string{"BARE:0", "GONE:0", "MISSING:1", "STALE:1"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("published = %v, want %v", got, want)
+	want := map[string]string{"SAME": digestOf(t, p, db, pidSame), "STALE": digestOf(t, p, db, pidStale)}
+	if !reflect.DeepEqual(members, want) || len(unread) != 0 {
+		t.Errorf("members = %v, unread = %v; want %v and none", members, unread, want)
 	}
-	if want := map[string]bool{"BARE": true, "GONE": true, "MISSING": true, "STALE": true}; !reflect.DeepEqual(guard.settled, want) {
-		t.Errorf("pending = %v, want %v", guard.settled, want)
+	if got := sentReports(t, db); len(got) != 0 {
+		t.Errorf("reading the members published %v", got)
 	}
 }
 
-// The guard holds a repeat: the same differing digest on the next ack is in
-// flight, not re-sent.
-func TestReconcileClaims_GuardHoldsARepeat(t *testing.T) {
+// SendClaims publishes one process's report when due says so, and the empty
+// report for a name with no styles here or no process at all, so Core drops
+// its mirror; it says the digest of what it read either way.
+func TestSendClaims_TheReportOrTheEmptyOne(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
 	p := NewPlantClaimsPublisher(db, "edge.test", 0)
-	seedClaimsProcess(t, db, "STALE", 1, 1)
-	guard := &fakeClaimsGuard{}
-	held := map[string]string{"STALE": "0000000000000000", "GONE": "2222222222222222"}
-	p.ReconcileClaims(held, guard)
-	p.ReconcileClaims(held, guard)
-	if got := sentReports(t, db); !reflect.DeepEqual(got, []string{"GONE:0", "STALE:1"}) {
-		t.Errorf("published = %v, want each once", got)
+	pid, _ := seedClaimsProcess(t, db, "STALE", 1, 1)
+	if _, err := db.CreateProcess("BARE", "", "", "", false); err != nil {
+		t.Fatalf("create bare process: %v", err)
+	}
+	empty, err := withDigest(protocol.PlantClaimsReport{ProcessID: "GONE"})
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	always := func(string) bool { return true }
+	for _, tc := range []struct {
+		name, digest string
+		styled       bool
+	}{
+		{"STALE", digestOf(t, p, db, pid), true},
+		{"BARE", "", false},
+		{"GONE", empty.Digest, false},
+	} {
+		digest, styled, err := p.SendClaims(tc.name, always)
+		if err != nil {
+			t.Fatalf("send %s: %v", tc.name, err)
+		}
+		if styled != tc.styled || (tc.digest != "" && digest != tc.digest) {
+			t.Errorf("send %s = %s, styled %v; want %s, styled %v", tc.name, digest, styled, tc.digest, tc.styled)
+		}
+	}
+	if got, want := sentReports(t, db), []string{"BARE:0", "GONE:0", "STALE:1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("published = %v, want %v", got, want)
+	}
+	if _, _, err := p.SendClaims("STALE", func(string) bool { return false }); err != nil {
+		t.Fatalf("send not due: %v", err)
+	}
+	if got := sentReports(t, db); len(got) != 3 {
+		t.Errorf("a send that was not due published: %v", got)
 	}
 }
 
-// A failed read of this Edge's own processes publishes nothing — not even the
-// empty reports, since an unread spec is not evidence a process is gone — and
-// settles nothing.
-func TestReconcileClaims_FailedReadPublishesNothing(t *testing.T) {
+// A failed read of this Edge's own process list knows nothing: ClaimsMembers
+// returns the error, and SendClaims publishes nothing — not even the empty
+// report, since an unread spec is not evidence a process is gone.
+func TestClaimsMembers_AFailedListReadKnowsNothing(t *testing.T) {
 	t.Parallel()
 	db, _ := countingPublisherDB(t)
 	p := NewPlantClaimsPublisher(db, "edge.test", 0)
@@ -142,13 +141,15 @@ func TestReconcileClaims_FailedReadPublishesNothing(t *testing.T) {
 	if _, err := db.DB.Exec(`ALTER TABLE processes RENAME TO processes_hidden`); err != nil {
 		t.Fatalf("hide processes: %v", err)
 	}
-	guard := &fakeClaimsGuard{}
-	p.ReconcileClaims(map[string]string{"STALE": "0", "GONE": "1"}, guard)
+	if members, _, err := p.ClaimsMembers(); err == nil {
+		t.Errorf("members = %v with no process list, want the error", members)
+	}
+	asked := false
+	if _, _, err := p.SendClaims("GONE", func(string) bool { asked = true; return true }); err == nil || asked {
+		t.Errorf("send with no process list: err %v, asked %v; want the error and no ask", err, asked)
+	}
 	if got := sentReports(t, db); len(got) != 0 {
 		t.Errorf("published = %v, want nothing", got)
-	}
-	if guard.calls != 0 || guard.settled != nil {
-		t.Errorf("guard calls = %d, settled = %v; want untouched", guard.calls, guard.settled)
 	}
 }
 

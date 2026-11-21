@@ -58,18 +58,21 @@ type feedBook struct {
 	// coreSpeaksFeeds is true once an ack carried a Feeds map. Until then,
 	// and whenever an older Core answers, the Edge keeps its own timers.
 	coreSpeaksFeeds bool
-	// binWatchCarried is true while the last ack carried BinWatch (a Core
-	// serving the node-bins feed), and binWatchQuoted is the digest it quoted
-	// (node_bins.go).
-	binWatchCarried bool
-	binWatchQuoted  string
+	// owned is the cache of every Edge-owned family (owned.go): what this Edge
+	// holds, what the last heartbeat quoted and what Core held at the last ack.
+	// ownedSeq orders its builds; ownedFloorAt is when every family was last
+	// built together (ownedFloor).
+	owned        map[string]*ownedHeld
+	ownedSeq     uint64
+	ownedFloorAt time.Time
 	// lastAck is the local (monotonic) time of the last ack; lastServerTS is
 	// Core's stamp on it.
 	lastAck      time.Time
 	lastServerTS time.Time
 	// sent and flags are the Edge's side of the resend guard, for the data
-	// this Edge owns and sends to Core (its plant claims, its bins watch
-	// list): the same rule Core applies to its feeds (protocol/resend).
+	// this Edge owns and sends to Core (owned.go: its plant claims, its bins
+	// watch list, its cell catalog): the same rule Core applies to its feeds
+	// (protocol/resend).
 	sent  map[string]*resend.Record
 	flags map[string]string
 	// reconcile is what an ack after a gap runs; nil means StartupReconcile.
@@ -475,10 +478,11 @@ func (e *Engine) CoreSpeaksFeeds() bool {
 }
 
 // OnCoreAck takes Core's answer to a heartbeat: whether Core speaks feeds,
-// for each feed whose digest equals the one held, the confirmation, the
-// plant-claims digests Core holds for this station (feeds_claims.go), the bins
-// watch digest, the ask kinds, the ephemeral topic Core names and the
-// station's name; then it tells the ack observer (SetCoreAckObserver).
+// for each feed whose digest equals the one held, the confirmation, Core's
+// answer for each family this Edge owns (answerOwned: its plant claims, its
+// bins watch list, its cell catalog), the ask kinds, the ephemeral topic Core
+// names and the station's name; then it tells the ack observer
+// (SetCoreAckObserver).
 func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	if ack == nil {
 		return
@@ -512,8 +516,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 			e.logFn("feeds: save %s confirmation: %v", row.Feed, err)
 		}
 	}
-	e.answerClaims(ack.Claims)
-	e.answerBinWatch(ack.BinWatch)
+	e.answerOwned(ack)
 	e.setAskKinds(ack.Asks)
 	// Core's verified ephemeral topic, or none (an older Core, or one that
 	// could not verify it), which closes the live robot feed (robot_watch.go).

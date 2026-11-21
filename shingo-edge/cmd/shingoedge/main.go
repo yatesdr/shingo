@@ -270,11 +270,22 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 // main().
 //
 // Package-level rather than a parameter because setupKafkaSubscribers already
-// takes seven, and atomic rather than a plain pointer because ORDERING MAKES
-// THE RACE REAL: subscribers are wired (twice — once inline, once from the
-// kafka-connect-retry goroutine) well before main constructs the publisher, so
-// a Registered ack can genuinely arrive while this is still nil.
+// takes seven. main stores it before the engine starts, ahead of the
+// subscribers (wired twice — once inline, once from the kafka-connect-retry
+// goroutine); atomic so that goroutine's read needs no other ordering, and a
+// test that builds the router alone reads nil.
 var plantClaimsPub atomic.Pointer[messaging.PlantClaimsPublisher]
+
+// cellCatalog is this Edge's cell catalog: the points that read a live
+// process's counter, disabled ones included, grouped by PLC. The register's
+// catalog and the engine's cells family (edge.cells) read it the same way.
+func cellCatalog(db *store.DB) ([]protocol.CellCatalogEntry, error) {
+	pts, err := db.ListCountedReportingPoints()
+	if err != nil {
+		return nil, err
+	}
+	return messaging.BuildCellCatalog(pts), nil
+}
 
 func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
@@ -296,14 +307,16 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// Q-034: attach the PLC-grouped cell catalog to every register so Core can
 	// auto-derive cells (no manual cell setup). The points that read a live
 	// process's counter, disabled ones included. Read errors degrade to no
-	// catalog — registration must still succeed.
+	// catalog — registration must still succeed. A Core that answers the owned
+	// map is sent the catalog on edge.cells as well (engine owned.go); the
+	// register still carries it for an older Core.
 	hb.CatalogFn = func() []protocol.CellCatalogEntry {
-		pts, err := db.ListCountedReportingPoints()
+		cells, err := cellCatalog(db)
 		if err != nil {
 			log.Printf("heartbeat: cell catalog load failed: %v", err)
 			return nil
 		}
-		return messaging.BuildCellCatalog(pts)
+		return cells
 	}
 	// Plant display zone on every register/heartbeat, so Core's /edges table
 	// shows what this edge is set to. Read from the LIVE config at send time,
@@ -342,6 +355,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// The digest of every Core feed this Edge holds, on every heartbeat; Core
 	// answers on the ack and sends whichever differ.
 	hb.FeedsFn = eng.FeedDigests
+	// The digest of every family this Edge owns (its plant claims, its bins
+	// watch list, its cell catalog), from the engine's cache; Core answers on
+	// the ack and the engine sends whichever differ.
+	hb.OwnedFn = eng.OwnedDigests
 	hb.CoreSpeaksFeedsFn = eng.CoreSpeaksFeeds
 	// The bins watch list rides the boot burst, so a restarted Edge has its
 	// bins one round trip after it starts.
@@ -527,15 +544,27 @@ func main() {
 		// client). sim_enabled.go / sim_disabled.go (T3.1).
 		Warlink: simWarlinkClient(cfg),
 	})
-	// Plant claims on the heartbeat ack: Core quotes each process's digest
-	// back and the publisher re-sends what differs. Set here, before Kafka is
-	// wired, so no ack can race the assignment; the publisher itself is built
-	// later and read through plantClaimsPub, nil until then.
-	eng.SetClaimsAckFunc(func(claims map[string]string) {
-		if pub := plantClaimsPub.Load(); pub != nil {
-			pub.ReconcileClaims(claims, eng)
-		}
-	})
+	// ── Plant-claims publisher (sourceability feed, Edge → Core) ───────
+	// Publishes the plant-spec claim set so Core can mirror what every
+	// process can source. Built before the engine starts: the engine's owned
+	// map reads and sends the claims through it (ClaimsSource), and Start
+	// reads every family it owns once before the first heartbeat quotes it.
+	// Every report the publisher reads for an edit or a full publish is
+	// handed to the engine, so its cached claims follow the spec. Start (below)
+	// publishes one full snapshot, then one every plant_claims.snapshot_interval
+	// (default 60m; late-joiner rebuild) while Core does not quote digests back.
+	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID, cfg.PlantClaims.SnapshotInterval)
+	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
+	plantClaims.CoreSpeaksFeeds = eng.CoreSpeaksFeeds
+	plantClaims.Reported = eng.ClaimsReported
+	plantClaims.ReportedAll = eng.ClaimsReportedAll
+	// Publish it for the SubjectEdgeRegistered handler, registered in
+	// setupKafkaSubscribers, which cannot take it as a parameter.
+	plantClaimsPub.Store(plantClaims)
+	eng.SetClaimsSource(plantClaims)
+	// The cell catalog the engine sends on edge.cells to a Core that answers
+	// the owned map: on a counter save, and when the ack's digest differs.
+	eng.SetCellCatalogFunc(func() ([]protocol.CellCatalogEntry, error) { return cellCatalog(db) })
 	eng.Start()
 	defer eng.Stop()
 
@@ -808,19 +837,9 @@ func main() {
 	// ── HTTP server & shutdown ──────────────────────────────────────────
 	h, router, stopWeb := www.NewRouter(eng, dbg, backupSvc, www.WithBuild(Version, Commit))
 
-	// ── Plant-claims publisher (sourceability feed, Edge → Core) ───────
-	// Publishes the plant-spec claim set so Core can mirror what every
-	// process can source. Start publishes one full snapshot immediately
-	// (boot), then a periodic snapshot every plant_claims.snapshot_interval
-	// (default 60m; late-joiner rebuild) while Core does not quote digests
-	// back. The spec-change hook re-publishes on every style/claim
-	// edit via the coalesced spec-change signal.
-	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID, cfg.PlantClaims.SnapshotInterval)
-	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
-	plantClaims.CoreSpeaksFeeds = eng.CoreSpeaksFeeds
-	// Publish it for the SubjectEdgeRegistered handler registered far above,
-	// which cannot capture a variable that does not exist yet.
-	plantClaimsPub.Store(plantClaims)
+	// ── Plant-claims publisher's hooks (built above, before the engine) ──
+	// The spec-change hook re-publishes on every style/claim edit via the
+	// coalesced spec-change signal.
 	h.SetPlantSpecChangeHook(
 		func(processID int64) {
 			if err := plantClaims.PublishChanged(processID); err != nil {

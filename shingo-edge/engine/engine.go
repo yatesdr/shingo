@@ -252,10 +252,12 @@ type Engine struct {
 	// waiting for the snapshot. Wired at the composition root; nil in
 	// tests that don't assert the publish (call sites nil-guard).
 	plantClaimsFn func(processID int64)
-	// claimsAckFn reconciles this Edge's plant claims against the digests a
-	// heartbeat ack quotes back (feeds_claims.go). nil in tests that do not
-	// wire the publisher.
-	claimsAckFn func(claims map[string]string)
+	// claimsSource reads and sends this Edge's plant claims for the claims
+	// family of the owned map (owned.go, SetClaimsSource), and cellCatalogFn
+	// reads its cell catalog for the cells family (SetCellCatalogFunc). Both
+	// under the feed book's lock; nil leaves the family off the heartbeat.
+	claimsSource  ClaimsSource
+	cellCatalogFn func() ([]protocol.CellCatalogEntry, error)
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
@@ -563,6 +565,11 @@ func (e *Engine) Start() {
 	// The live robot feed's sender: idle (no timer) until Core names the
 	// ephemeral topic and an operator station shows an order.
 	e.startRobotWatchLoop(protocol.RobotWatchInterval)
+
+	// Every family this Edge owns, read once before the first heartbeat
+	// quotes it (owned.go): the claims (the publisher is wired before Start),
+	// the watch list (the loaders above are held) and the cell catalog.
+	e.buildAllOwned()
 
 	e.startedAt = time.Now()
 	e.logFn("Engine started: station=%s", e.cfg.StationID())

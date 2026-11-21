@@ -767,11 +767,11 @@ func everyAs(occupied bool) func(string) (protocol.NodeBinInfo, bool) {
 	}
 }
 
-// speaksBins is whether the last heartbeat ack carried BinWatch (the feed
-// book's binWatchCarried): false before the first ack and after an ack from a
-// Core without the feed.
+// speaksBins is whether the last heartbeat ack answered the watch family (in
+// BinWatch, or in the owned map: the family's served): false before the first
+// ack and after an ack from a Core without the feed.
 func speaksBins(e *Engine) bool {
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
-	return e.feeds.binWatchCarried
+	return e.feeds.ownedLocked(protocol.OwnedBinWatch).served
 }

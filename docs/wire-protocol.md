@@ -1242,8 +1242,9 @@ full snapshot. Edge publishes (`PlantClaimsPublisher`):
 - the edited process, on every plant-spec change (style or claim edit);
 - every process, at boot and on every `edge.registered` (which is how a restarted Core is refilled: it asks an
   edge it does not know to re-register);
-- every process whose digest differs from the one Core quotes on the heartbeat ack (`claims`;
-  `(*PlantClaimsPublisher).ReconcileClaims`), which heals a lost or out-of-order report within a heartbeat or two;
+- every process whose digest differs from the one Core holds, as the heartbeat ack answers the `claims` family
+  (`owned`, or `claims` from an older Core; the Edge compares from its cached digests and sends through
+  `(*PlantClaimsPublisher).SendClaims`), which heals a lost or out-of-order report within a heartbeat or two;
 - every process on `plant_claims.snapshot_interval` (60 min by default), only while Core does not quote digests.
 
 No Kafka compaction is used. `config_gen` is not set by any Edge (see the field).

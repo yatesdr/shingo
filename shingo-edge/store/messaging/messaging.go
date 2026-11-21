@@ -76,6 +76,9 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 //     edit (PublishChanged) is complete for ONE process, not the plant, and
 //     superseding through it would delete a pending snapshot's other
 //     processes — so it uses plain Enqueue.
+//   - edge.cells carries the Edge's whole cell catalog, and Core applies it as
+//     authoritative (a cell it leaves out goes stale), so the newest catalog
+//     is everything an older unsent one said.
 //
 // Everything else must NOT be here, and the reasons differ:
 // bin_uop_delta is a sequenced INCREMENT — dropping one is a permanently wrong
@@ -86,6 +89,7 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 var coalescableSubjects = map[string]bool{
 	protocol.SubjectLinesideLevelReport: true,
 	protocol.SubjectPlantClaims:         true,
+	protocol.SubjectEdgeCells:           true,
 }
 
 // EnqueueSnapshot replaces every unsent row of msgType with the given payloads,

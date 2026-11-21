@@ -221,37 +221,21 @@ func (e *Engine) LocalNodeBins() NodeBinsState {
 	return st
 }
 
-// answerBinWatch takes an ack's BinWatch: nil is a Core without the feed, and
-// nothing is published to it. Otherwise the list is published when the
-// quoted digest differs from this Edge's, and on the first ack carrying the
-// field while nothing is held, whatever was quoted.
-func (e *Engine) answerBinWatch(quoted *string) {
-	e.feeds.mu.Lock()
-	first := !e.feeds.binWatchCarried
-	e.feeds.binWatchCarried = quoted != nil
-	if quoted != nil {
-		e.feeds.binWatchQuoted = *quoted
-	}
-	e.feeds.mu.Unlock()
-	if quoted == nil {
-		return
-	}
-	e.publishBinWatch(*quoted, first && e.nodeBins.Load() == nil)
-}
+// The watch list is the owned map's bins.watch family (owned.go): one member,
+// the list, at BinWatchDigest of it, and no member while this Edge watches
+// none (protocol.OwnedSingleton). Core answers it on the ack: in the owned
+// map, or in BinWatch from an older Core.
 
 // binWatchChanged runs when the stations' bin lists were rebuilt to a
-// different set of names: while Core serves the feed, the list goes at once.
+// different set of names: the family is rebuilt and, while Core serves it,
+// the list goes at once.
 func (e *Engine) binWatchChanged() {
-	e.feeds.mu.Lock()
-	speaks, quoted := e.feeds.binWatchCarried, e.feeds.binWatchQuoted
-	e.feeds.mu.Unlock()
-	if speaks {
-		e.publishBinWatch(quoted, false)
-	}
+	e.ownedChanged(protocol.OwnedBinWatch)
 }
 
 // binWatchList is this Edge's watch list and its digest; ok false when the
-// digest cannot be computed (logged).
+// digest cannot be computed (logged). Read by the bins family's build and by
+// the decision rule (actableCopy), never by a heartbeat or an ack.
 func (e *Engine) binWatchList() (nodes []string, digest string, ok bool) {
 	if e.binWatchSource != nil {
 		nodes = e.binWatchSource()
@@ -267,6 +251,34 @@ func (e *Engine) binWatchList() (nodes []string, digest string, ok bool) {
 	return nodes, digest, true
 }
 
+// buildBinWatchFamily is the bins family's build: the list, kept to send.
+func buildBinWatchFamily(e *Engine) (ownedBuild, bool) {
+	nodes, digest, ok := e.binWatchList()
+	if !ok {
+		return ownedBuild{}, false
+	}
+	return ownedBuild{members: protocol.OwnedSingleton(digest, len(nodes) == 0), raw: digest, value: nodes}, true
+}
+
+// heldWatchList is the list a build kept, never nil.
+func heldWatchList(h ownedHeld) []string {
+	if nodes, _ := h.value.([]string); nodes != nil {
+		return nodes
+	}
+	return []string{}
+}
+
+// legacyBinWatch is an older Core's BinWatch: the digest of the list it holds
+// ("" for none), always against this Edge's list digest, empty list or not,
+// as that Core has always compared it. nil is a Core without the feed.
+func legacyBinWatch(h ownedHeld, ack *protocol.EdgeHeartbeatAck) (core, mine map[string]string, served bool) {
+	mine = map[string]string{protocol.SingletonMember: h.raw}
+	if ack == nil || ack.BinWatch == nil {
+		return nil, mine, false
+	}
+	return map[string]string{protocol.SingletonMember: *ack.BinWatch}, mine, true
+}
+
 // PublishBinWatchAtBoot sends the watch list in the heartbeater's boot burst,
 // beside the register and the node-list and catalog requests, so a restarted
 // Edge has its bins one round trip after it starts instead of one heartbeat
@@ -278,47 +290,43 @@ func (e *Engine) binWatchList() (nodes []string, digest string, ok bool) {
 // nothing, and the first ack asks as it always has. Pinned by
 // TestBinWatch_PublishedAtBoot.
 func (e *Engine) PublishBinWatchAtBoot(publish func(*protocol.BinWatchList) error) {
-	nodes, digest, ok := e.binWatchList()
-	if !ok || publish == nil {
+	row, _ := ownedRowOf(protocol.OwnedBinWatch)
+	h := e.buildOwned(row)
+	if !h.ok || publish == nil {
 		return
 	}
-	if err := publish(&protocol.BinWatchList{Digest: digest, Nodes: nodes}); err != nil {
+	nodes := heldWatchList(h)
+	if err := publish(&protocol.BinWatchList{Digest: h.raw, Nodes: nodes}); err != nil {
 		e.logFn("feeds: publish bins watch at boot (%d nodes): %v — the first ack asks again", len(nodes), err)
 		return
 	}
-	e.sendDue(binWatchKey, digest, "")
+	e.sendDue(binWatchKey, h.raw, "")
 }
 
-// publishBinWatch sends this Edge's watch list when Core's quoted digest is
-// not its own (or force), through the resend guard.
-func (e *Engine) publishBinWatch(quoted string, force bool) {
-	nodes, digest, ok := e.binWatchList()
-	if !ok {
-		return
-	}
-	if quoted == digest && !force {
-		e.converged(binWatchKey)
-		return
-	}
-	if !e.sendDue(binWatchKey, digest, quoted) {
-		return
-	}
+// sendBinWatchMember sends the list the family holds (the empty list when this
+// Edge watches none) to a Core quoting quoted, through the resend guard.
+func sendBinWatchMember(e *Engine, h ownedHeld, _, quoted string) bool {
 	if e.sendFn == nil {
-		return
+		return true
 	}
+	if !e.sendDue(binWatchKey, h.raw, quoted) {
+		return true
+	}
+	nodes := heldWatchList(h)
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectBinsWatch,
 		protocol.Address{Role: protocol.RoleEdge, Station: e.cfg.StationID()},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.BinWatchList{Digest: digest, Nodes: nodes},
+		&protocol.BinWatchList{Digest: h.raw, Nodes: nodes},
 	)
 	if err != nil {
 		e.logFn("feeds: build bins watch: %v", err)
-		return
+		return true
 	}
 	if err := e.sendFn(env); err != nil {
 		e.logFn("feeds: publish bins watch (%d nodes): %v — the next ack asks again", len(nodes), err)
 	}
+	return true
 }
 
 // BinsActable is Actable for this Edge's bins copy: whether a decision may be

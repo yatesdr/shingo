@@ -62,6 +62,12 @@ type Heartbeater struct {
 	// differs. Read at send time. Nil leaves the field nil, which Core reads as
 	// an Edge that predates feeds.
 	FeedsFn func() map[string]string
+	// OwnedFn, when set, supplies the digest of every family of data this Edge
+	// owns and Core holds a copy of (engine OwnedDigests), stamped onto every
+	// heartbeat so Core can answer them on the ack. Read at send time, from the
+	// engine's cache. Nil leaves the field nil, which Core reads as an Edge
+	// that predates the owned map.
+	OwnedFn func() map[string]string
 	// CoreSpeaksFeedsFn, when set, reports whether the last ack came from a
 	// Core that answers feed digests. While it does, the node list and catalog
 	// arrive as feeds and the two-minute re-ask is not sent. Nil keeps the
@@ -239,6 +245,9 @@ func (h *Heartbeater) heartbeatBody() *protocol.EdgeHeartbeat {
 	}
 	if h.FeedsFn != nil {
 		b.Feeds = h.FeedsFn()
+	}
+	if h.OwnedFn != nil {
+		b.Owned = h.OwnedFn()
 	}
 	return b
 }

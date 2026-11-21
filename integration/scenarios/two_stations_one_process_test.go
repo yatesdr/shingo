@@ -1,9 +1,10 @@
 // Two stations publishing one process, both sides real: Core's plant_claims_reports
 // rows and the claims its heartbeat ack quotes (shingocore messaging
 // HandlePlantClaims, HandleEdgeHeartbeat; store/plantclaims reports.go), and
-// each Edge's own plant spec, publisher and resend guard (shingoedge messaging
-// PlantClaimsPublisher.ReconcileClaims behind Engine.OnCoreAck, wired as
-// cmd/shingoedge main.go wires it). The Edges' clock is a testing/synctest
+// each Edge's own plant spec, publisher and resend guard (the engine's owned
+// map: its quote on the heartbeat, its answer in Engine.OnCoreAck, its sends
+// through shingoedge messaging PlantClaimsPublisher.SendClaims, wired as
+// cmd/shingoedge main.go wires them). The Edges' clock is a testing/synctest
 // bubble's, so ten minutes of heartbeats run in no real time.
 //
 //go:build docker
@@ -99,8 +100,11 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		mustNil(t, err, "claim on "+uid)
 		cfg := &config.Config{StationUID: uid}
 		eng := edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: func(string, ...any) {}})
+		// The claims family reads and sends through the publisher, and the
+		// publisher's own reads report back, as cmd/shingoedge main.go wires them.
 		pub := edgemessaging.NewPlantClaimsPublisher(db, uid, 0)
-		eng.SetClaimsAckFunc(func(claims map[string]string) { pub.ReconcileClaims(claims, eng) })
+		pub.Reported, pub.ReportedAll = eng.ClaimsReported, eng.ClaimsReportedAll
+		eng.SetClaimsSource(pub)
 		// The engine's direct sends (its bins watch list) ride the outbox to the
 		// bus, as main.go's data sender publishes them.
 		eng.SetSendFunc(func(env *protocol.Envelope) error {
@@ -161,14 +165,14 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		}
 		// beat is one heartbeat from x and everything it sets moving: Core's
 		// ack, the Edge's reconcile, the report it sends, until both sides are
-		// quiet. Feeds is the engine's own (FeedDigests, as cmd/shingoedge wires
-		// the heartbeater); the feeds Core sends back are not applied here, which
-		// leaves the claims, the bins watch list and the ack's quote of each as
-		// they are.
+		// quiet. Feeds and Owned are the engine's own (FeedDigests, OwnedDigests,
+		// as cmd/shingoedge wires the heartbeater); the feeds Core sends back are
+		// not applied here, which leaves the claims, the bins watch list and the
+		// ack's quote of each as they are.
 		beat := func(x *twinEdge) {
 			env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
 				protocol.Address{Role: protocol.RoleEdge, Station: x.uid}, protocol.Address{Role: protocol.RoleCore},
-				&protocol.EdgeHeartbeat{StationID: x.uid, Feeds: x.eng.FeedDigests()})
+				&protocol.EdgeHeartbeat{StationID: x.uid, Feeds: x.eng.FeedDigests(), Owned: x.eng.OwnedDigests()})
 			mustNil(t, err, "build heartbeat")
 			data, err := env.Encode()
 			mustNil(t, err, "encode heartbeat")
