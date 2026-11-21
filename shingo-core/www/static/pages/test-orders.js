@@ -354,9 +354,9 @@ async function submitKafkaComplexOrder() {
   };
   if (!body.location) { toast('Lineside location is required', 'warning'); return; }
   var r = await ask('POST', '/api/test-orders/submit/complex', body);
-  if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
+  if (!r.ok) { refused(r, function(m) { toast('Error: ' + m, 'error'); }); return; }
   var uuids = ((r.body || {}).orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
-  showToast('Kafka complex order published: ' + uuids, 'info');
+  toast('Kafka complex order published: ' + uuids, 'success');
   refreshKafkaOrders();
 }
 
@@ -409,16 +409,16 @@ async function submitComplexOrder() {
   };
   if (!body.location) { toast('Lineside location is required', 'warning'); return; }
   var r = await ask('POST', '/api/test-orders/direct/complex', body);
-  if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
+  if (!r.ok) { refused(r, function(m) { toast('Error: ' + m, 'error'); }); return; }
   var uuids = ((r.body || {}).orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
-  showToast('Complex order created: ' + uuids, 'info');
+  toast('Complex order created: ' + uuids, 'success');
   refreshDirectOrders();
 }
 
 async function releaseComplexOrder(orderUUID) {
   var r = await ask('POST', '/api/test-orders/direct/release', { order_uuid: orderUUID });
-  if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
-  showToast('Released: ' + orderUUID, 'info');
+  if (!r.ok) { refused(r, function(m) { toast('Error: ' + m, 'error'); }); return; }
+  toast('Released: ' + orderUUID, 'success');
   refreshDirectOrders();
 }
 
@@ -496,28 +496,18 @@ async function viewHistory(orderId) {
   } catch(e) { document.getElementById('hist-body').innerHTML = '<p style="color:red;">Error: ' + escapeHtml(String(e)) + '</p>'; }
 }
 
-// --- Toast notifications ---
-function showToast(msg, type) {
-  var toast = document.createElement('div');
-  toast.className = 'to-toast to-toast-' + (type || 'info');
-  toast.textContent = msg;
-  document.body.appendChild(toast);
-  setTimeout(function() { toast.classList.add('to-toast-visible'); }, 10);
-  setTimeout(function() {
-    toast.classList.remove('to-toast-visible');
-    setTimeout(function() { toast.remove(); }, 300);
-  }, 6000);
-}
-
 // --- SSE ---
 // Subscribed on the shared onSSE bus (shared/bus.js); the handler receives
 // the parsed payload (the bus does JSON.parse + reconnect). Replaces the
 // retired app.js IIFE window.onOrderUpdate dispatch (Q-002).
+//
+// A failed order arrives on its own, so its toast is sticky (style guide §11:
+// the engineer may be looking elsewhere); the page's own copy gave it 6 s.
 onSSE('order-update', function(data) {
   refreshKafkaOrders();
   refreshDirectOrders();
   if (data && data.type === 'failed') {
-    showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
+    toast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error', { sticky: true });
   }
 });
 

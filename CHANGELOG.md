@@ -40,6 +40,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - A toast that says a field is missing or wrong is amber (some were red, some grey), and one that says an order or a save went through is green (some were grey), on Core, the Edge and the station
 - Every toast on Core and the Edge's admin pages has a × that closes it; tapping a toast's button (Sign in) no longer closes the toast
 - A success, info or warning toast stays 10 s (it went at 3.2 s); an error stays 5 minutes or until its × is tapped (it went at 5 s), on Core and the Edge's admin pages
+- Core Test Orders: an order that fails while the page is open says so in a toast that stays until its × is tapped (it went after 6 s); the page's other toasts look and last like every other page's
 
 ## v0.18.0 — 2026-11-21
 

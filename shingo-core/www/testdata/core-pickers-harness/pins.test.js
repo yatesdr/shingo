@@ -1135,13 +1135,11 @@ function testOrdersPage() {
     ['kc-full-source', 'kc-outgoing', 'cx-full-source', 'cx-outgoing'].forEach((id) => { doc.getElementById(id).dataset = { placeholder: 'Core Decides' }; });
     doc.getElementById('k-payload').dataset = { placeholder: '-- select payload --' };
     ['kc-payload', 'cx-payload'].forEach((id) => { doc.getElementById(id).dataset = { placeholder: '-- optional --' }; });
-    const p = D.loadPage('static/pages/test-orders.js', baseGlobals(doc, net, rec), lender(rec, doc));
-    return { p, doc, net, rec };
-}
-
-// shownToasts is what test-orders.js's own showToast appended to the body.
-function shownToasts(L, t) {
-    t.doc.body.children.splice(0).forEach((c) => L.push('  showToast ' + c.className + ': ' + D.normal(c.textContent)));
+    // The page's stream handlers, by event, as the bus would hold them.
+    const sse = {};
+    const p = D.loadPage('static/pages/test-orders.js', baseGlobals(doc, net, rec),
+        lender(rec, doc, { onSSE(type, fn) { sse[type] = fn; } }));
+    return { p, doc, net, rec, sse };
 }
 
 async function testOrdersPins() {
@@ -1209,7 +1207,6 @@ async function testOrdersPins() {
         await D.settle();
         L.push('-- ' + c[0]);
         flush(L, t.net, t.rec);
-        shownToasts(L, t);
     }
 
     L.push('', '== refusals: Kafka order');
@@ -1229,7 +1226,6 @@ async function testOrdersPins() {
         await D.settle();
         L.push('-- ' + refusalTitle(key));
         flush(L, t.net, t.rec);
-        shownToasts(L, t);
     }
     L.push('', '== refusals: Direct order');
     for (const key of ['json.409', 'reject']) {
@@ -1240,6 +1236,12 @@ async function testOrdersPins() {
         L.push('-- ' + refusalTitle(key));
         flush(L, t.net, t.rec);
     }
+    // An order Core reports failed, on the stream: nobody on the page asked,
+    // so the toast stays until its × (style guide §11).
+    L.push('', '== the stream says an order failed');
+    t.sse['order-update']({ type: 'failed', order_id: 7, detail: 'no bin of PART-A in storage' });
+    await D.settle();
+    flush(L, t.net, t.rec);
     goldens['test-orders-page.txt'] = L.join('\n') + '\n';
 }
 
