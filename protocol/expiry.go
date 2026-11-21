@@ -102,9 +102,11 @@ var subjectTTLs = map[string]time.Duration{
 	// every Edge write they reach goes through the store's epochAssignOnBind,
 	// which moves a bound carrier's stamp forward only, and a bind into an
 	// empty slot is refused for the carrier that last left it at an older
-	// stamp (BindEmptySlotUnlessDeparted). What a late UOPAdjustment still
-	// does is write its count as sent, over any ticks the Edge counted after
-	// Core sent it.
+	// stamp (BindEmptySlotUnlessDeparted). A late UOPAdjustment's count is
+	// safe when it carries a fence, which every count this Core states does,
+	// per addressed station: the station rebases it on its own stream
+	// (shingo-edge's Engine.fencedCount). Only an unfenced copy, an older
+	// Core's, writes its count as sent over the ticks counted since.
 	SubjectUOPAdjustment:   NoExpiry,
 	SubjectBinEpochRefresh: NoExpiry,
 

@@ -219,7 +219,8 @@ const (
 	// count, because nobody declared one — Core noticed that a count arrived
 	// stamped with a generation that had ended, which tells it the Edge is
 	// behind but tells it nothing about how many parts are in the carrier. The
-	// stamp goes down, the count comes back up in the reports that now land.
+	// stamp goes down and the station's next counts land under it; the counts
+	// Core discarded under the ended generation stay discarded.
 	//
 	// A NEW SUBJECT on the existing dispatch topic, not a new topic — the
 	// SubjectSourcingState precedent.

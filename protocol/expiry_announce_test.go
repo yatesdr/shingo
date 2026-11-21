@@ -34,9 +34,11 @@ func announcementAged(t *testing.T, subject string, age time.Duration) []byte {
 
 // TestLateAnnouncementReachesTheEdge is S5a. UOPAdjustment and BinEpochRefresh
 // carry no exp, so one delivered after an outage of any length reaches the
-// Edge's handler. Safe to arrive late because every epoch write they reach
-// refuses to move a bound carrier's stamp backward
-// (shingo-edge/engine/epoch_monotonic_test.go).
+// Edge's handler. The stamp a late copy carries is safe: every epoch write it
+// reaches refuses to move a bound carrier's stamp backward
+// (shingo-edge/engine/epoch_monotonic_test.go). Its count is safe only when
+// fenced, which every count this Core states is: the station rebases it on its
+// own stream. An older Core's unfenced copy writes its count as sent.
 //
 // Inverted pin: at base (TestPin_P0i_LateAnnouncementIsDroppedAtTheEdge) they
 // took TypeData's 5 minutes and the ingestor dropped one delivered 6 minutes

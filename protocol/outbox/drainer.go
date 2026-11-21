@@ -12,7 +12,7 @@ import (
 )
 
 // MaxRetries is the number of delivery attempts before a message is
-// dead-lettered. The two count subjects are exempt; see neverDeadLetter.
+// dead-lettered. The messages in neverDeadLetter are exempt.
 const MaxRetries = 10
 
 const (
@@ -193,8 +193,8 @@ func (d *Drainer) run() {
 	// pass lasts far longer than the interval once rows fail, and how long a
 	// row takes to die depends on how many rows share its passes: modelled
 	// against kafka-go's retry schedule, 74-100 s on a quiet line and 45-75
-	// minutes on a busy one. The two count subjects have no budget at all;
-	// see neverDeadLetter.
+	// minutes on a busy one. The messages in neverDeadLetter have no budget at
+	// all.
 	//
 	// Only a ticker drain clears it: a wake-driven success would let a
 	// partially reachable broker re-arm the multiplier between failures.
@@ -277,7 +277,8 @@ func (d *Drainer) drain() (failed bool) {
 // neverDeadLetter holds the subjects whose failed publishes do not spend a
 // retry, so they are offered on every pass until the broker takes them.
 //
-// They are the three count messages. A dead-lettered bin delta is parts
+// They are the messages whose loss costs more than a late copy, each safe late
+// by its receiver's guard. A dead-lettered bin delta is parts
 // that happened and that Core never hears of; a dead-lettered pile level leaves
 // Core's mirror of the pile wrong until the pile next changes; a dead-lettered
 // ingest leaves a full produce bin with no confirmed manifest (its bin_epoch

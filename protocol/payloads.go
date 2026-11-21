@@ -1833,10 +1833,13 @@ type LinesideBucketLevel struct {
 // EventUOPAdjusted so the operator screen refreshes via the existing
 // counter-update SSE channel.
 //
-// A count carries a fence (AsOfNet, AsOfSeq, AsOfStation): where in the
-// counting station's own stream of count messages Core was when it wrote the
-// number. That station rebases instead of overwriting, so the windows Core
-// had not applied yet are not lost on either side; see AsOfNet.
+// Every count Core states (a count, a late draw's correction, a reset's
+// declaration) carries a fence (AsOfNet, AsOfSeq, AsOfStation) in each
+// addressed station's copy: where in that station's own stream of count
+// messages Core was when it wrote the number. The station rebases instead of
+// overwriting, so the windows Core had not applied yet are not lost on either
+// side; see AsOfNet. A placement (Released, Bound) states no count and
+// carries no fence.
 //
 // CoreNodeName allows Edge to look up the target process node without
 // scanning — it is the canonical cross-system identifier carried on
@@ -1889,14 +1892,17 @@ type UOPAdjustment struct {
 	//   remaining = NewRemaining + (flushed_net - AsOfNet) + unflushed
 	//
 	// and ignores an adjustment whose AsOfSeq is below the one it last took
-	// for the same (bin, epoch). Set only by a count, and only when exactly
-	// one station has an anchored cursor for the carrier in this generation;
-	// nil otherwise, and then the station writes NewRemaining as is, which is
-	// also what an Edge that predates the fields does.
+	// for the same (bin, epoch). Set on every count Core states, per addressed
+	// station: that station's cursor for the carrier in this generation, or
+	// net 0 at seq 0 when it has none (always so for a reset, whose generation
+	// is new). nil only when the station's cursor has no running net (an Edge
+	// built before it), on a placement, and from an older Core; the station
+	// then writes NewRemaining as is, which is also what an Edge that predates
+	// the fields does.
 	AsOfNet *int64 `json:"as_of_net,omitempty"`
 	AsOfSeq *int64 `json:"as_of_seq,omitempty"`
-	// AsOfStation is the station whose stream AsOfNet measures. Any other
-	// station modelling the node takes NewRemaining as is.
+	// AsOfStation is the station whose stream AsOfNet measures: the copy's own
+	// addressee. Any other station modelling the node takes NewRemaining as is.
 	AsOfStation string `json:"as_of_station,omitempty"`
 	// PayloadCode and PayloadKnown name what the carrier holds after a reset a
 	// person declared (an admin Load Payload or Clear, a non-lifecycle Actor):
@@ -1916,8 +1922,10 @@ type UOPAdjustment struct {
 // because nobody declared one — Core sends this when it discards a count for
 // carrying a generation that has ended, which proves the Edge is behind and
 // says nothing at all about how many parts are in the carrier. The Edge's own
-// number stays the Edge's. It writes the stamp, reports its next count under
-// it, and that count is what corrects Core's ledger.
+// number stays the Edge's. It writes the stamp and reports its next counts
+// under it, and Core applies those. It corrects nothing already lost: a count
+// message is a net within its generation, so the counts Core discarded under
+// the ended one stay discarded (TestQuietPlant_TheDropAnswers).
 //
 // The Edge ignores a refresh naming a carrier it is not holding: Core sends to
 // the station it believes has the carrier, and if that slot holds something
