@@ -24,7 +24,15 @@
 // page whose background reads fail every ten seconds says so once, not once
 // per read. A STICKY ONE STAYS: the same words while a sticky toast says them
 // add nothing, so a page's own "Signed out" never replaces the door's, and its
-// Sign-in link stays on screen.
+// Sign-in link stays on screen. {fold:false} stacks the same words again, as
+// a toast of their own (the station: a tap held while its ask is out says it
+// was sent, beside the first).
+//
+// A CAP, {max: n}: with n toasts up, the oldest that is not sticky goes to make
+// room for the new one. A sticky toast never goes to make room, and a new one
+// is never refused: with n sticky ones up it is shown beside them. The station
+// passes 3 (a bug fixed there: about 9 s of failed polls cleared an
+// order-failed alert).
 //
 // THE BANNER is a line across the top of the page, one per key, that stays
 // until it is cleared or dismissed. banner() carries no words of its own.
@@ -47,7 +55,7 @@ const LIFETIME_MS = { success: 10000, info: 10000, warning: 10000, error: 5 * 60
 
 let region = null;
 const banners = new Map();
-const live = new WeakMap();   // toast element -> { text, level, timer }
+const live = new WeakMap();   // toast element -> { text, level, timer, sticky }
 
 function parts() {
     if (!region || !region.isConnected) {
@@ -105,13 +113,15 @@ function toastAction(a, t) {
 // toast shows one message and returns its element.
 //   level  'info' (default), 'success', 'warning', 'error'
 //   opts   sticky (stays until its × or a click on it), action ({label,
-//          href} or {label, onClick}; an onClick may return a promise)
+//          href} or {label, onClick}; an onClick may return a promise),
+//          max (how many may be up; the oldest plain one goes), fold
+//          (false: the same words again are a toast of their own)
 export function toast(message, level, opts) {
     const o = opts || {};
     const lvl = LEVELS.indexOf(level) >= 0 ? level : 'info';
     const text = words(message);
     const { stack } = parts();
-    for (const old of Array.prototype.slice.call(stack.children)) {
+    for (const old of o.fold === false ? [] : Array.prototype.slice.call(stack.children)) {
         const was = live.get(old);
         if (!was || was.text !== text || was.level !== lvl) continue;
         // A sticky one already up says it, and stays with its action (the
@@ -119,6 +129,7 @@ export function toast(message, level, opts) {
         if (was.sticky) return old;
         drop(old);
     }
+    if (o.max > 0) makeRoom(stack, o.max);
     const t = el('div', {
         className: 'notice-toast notice-toast--' + lvl + (o.sticky ? ' is-sticky' : ''),
         role: lvl === 'error' ? 'alert' : null,
@@ -136,6 +147,16 @@ export function toast(message, level, opts) {
     else note.timer = setTimeout(() => drop(t), LIFETIME_MS[lvl]);
     stack.appendChild(t);
     return t;
+}
+
+// makeRoom drops the oldest toasts that are not sticky until fewer than max
+// are up, and stops when only sticky ones are left.
+function makeRoom(stack, max) {
+    while (stack.children.length >= max) {
+        const plain = Array.prototype.find.call(stack.children, (t) => !(live.get(t) || {}).sticky);
+        if (!plain) return;
+        drop(plain);
+    }
 }
 
 function drop(t) {

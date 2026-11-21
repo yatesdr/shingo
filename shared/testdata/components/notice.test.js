@@ -94,6 +94,45 @@ test('different words beside a sticky one are their own toast', async () => {
     eq(f.stack().children.map(said), ['Signed out', 'Save failed: Signed out', 'Signed out']);
 });
 
+test('{fold:false}: the same words at the same level again are a toast of their own, with a lifetime of their own', async () => {
+    const f = notice();
+    const a = f.N.toast('sent', 'info', { fold: false });
+    await f.r.advance(4000);
+    f.N.toast('sent', 'info', { fold: false });
+    eq([f.stack().children.map(said), f.r.clock.timers.length], [['sent', 'sent'], 2]);
+    eq(await gone(f.r, a, 10000), 6000, 'the first keeps its own lifetime');
+});
+
+// The station's cap (operator-util.js STATION_TOASTS); a bug fixed there: about
+// 9 s of failed polls cleared an order-failed alert.
+test('{max: 3}: the oldest plain toast goes to make room, a sticky one never; with three sticky up a new one still shows', async () => {
+    const f = notice();
+    const cap = { max: 3 };
+    const sticky = Object.assign({ sticky: true }, cap);
+    f.N.toast('alert one', 'error', sticky);
+    ['one', 'two', 'three'].forEach((w) => f.N.toast(w, 'error', cap));
+    const fourth = f.stack().children.map(said);
+    f.N.toast('alert two', 'error', sticky);
+    f.N.toast('alert three', 'error', sticky);
+    const stickies = f.stack().children.map(said);
+    f.N.toast('four', 'error', cap);
+    const over = f.stack().children.map(said);
+    f.N.toast('five', 'warning', cap);
+    eq([fourth, stickies, over, f.stack().children.map(said), f.r.clock.timers.length], [
+        ['alert one', 'two', 'three'],
+        ['alert one', 'alert two', 'alert three'],
+        ['alert one', 'alert two', 'alert three', 'four'],
+        ['alert one', 'alert two', 'alert three', 'five'],
+        1,
+    ]);
+});
+
+test('no max, no cap: a page that passes none keeps every toast it shows', async () => {
+    const f = notice();
+    for (let i = 0; i < 5; i++) f.N.toast('n' + i, 'error', { sticky: i === 0 });
+    eq(f.stack().children.length, 5);
+});
+
 test('toasts stack in the order shown, under one region that is one child of body', async () => {
     const f = notice();
     f.N.toast('one');
