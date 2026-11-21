@@ -2903,6 +2903,12 @@ The `v` field in the envelope is an integer protocol version. The current versio
 - New data channel subjects may be added without incrementing `v`. Handlers should log and ignore unknown subjects.
 - Changes to existing field semantics, field removals, or envelope structure changes require incrementing `v`.
 
+**The peer floor.** `FloorCore` and `FloorEdge` (`protocol/peer_floor.go`) name the oldest Core and Edge releases
+this build supports. The floor is reported, never enforced: nothing is refused, and a path kept only for a peer
+older than it may be deleted. `CompareToFloor` compares a release by MAJOR, MINOR and PATCH as numbers; a build
+past a tag (`v0.17.2-3-gabc1234`) stands at that tag, `-dirty` changes nothing, and a version that names no release
+(`dev`, a bare sha) is unknown, neither below nor above. Guard: `TestCompareToFloor_EveryShapeAStampCanTake`.
+
 ---
 
 ## Appendix: Complete JSON Schemas
