@@ -768,20 +768,30 @@ done
 # Install binary
 # ----------------------------------------------------------------------
 
-# One-slot rollback: save the live binary as shingoedge.previous before
-# overwriting. Operator rollback recipe:
+# THE ROLLBACK SLOT: /opt/shingo/shingoedge.previous, the build this install
+# replaced. Operator rollback recipe:
 #   sudo systemctl stop shingo-edge
 #   sudo mv /opt/shingo/shingoedge.previous /opt/shingo/shingoedge
 #   sudo systemctl start shingo-edge
-# .previous always reflects the binary that was running just before this
-# install — overwritten on every successful run, so a second install
-# replaces the snapshot. For multi-version recovery use the
-# timestamped /tmp/shingo-pre-install-*.tar.gz (config + DB only) plus
-# git checkout + reinstall.
+# When the live binary is this build (sha256 equal), a rerun, the slot is left as
+# it is: copying the live binary into it on every run made a second run of the
+# same build lose the release it replaced (the slot became the new build, and
+# the mv above put the new build back). Otherwise the live binary goes into the
+# slot, copied to a temp name and renamed, so a failed copy leaves the old slot.
+# A fresh install (no live binary) writes none. The Edge has no down step, so,
+# unlike Core's, the slot needs no record. For a release older than the slot's:
+# the backup in /tmp/shingo-pre-install-*.tar.gz (config + DB) plus a checkout
+# of that release's tag and a reinstall.
 if [ -f /opt/shingo/shingoedge ]; then
-    if cp -p /opt/shingo/shingoedge /opt/shingo/shingoedge.previous; then
+    NEW_SHA=$(sha256sum /tmp/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
+    LIVE_SHA=$(sha256sum /opt/shingo/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
+    if [ -n "$LIVE_SHA" ] && [ "$LIVE_SHA" = "$NEW_SHA" ]; then
+        echo "==> The live binary is this build (sha256 ${LIVE_SHA:0:16}): /opt/shingo/shingoedge.previous is kept as it is"
+    elif cp -p /opt/shingo/shingoedge /opt/shingo/shingoedge.previous.tmp \
+        && mv -f /opt/shingo/shingoedge.previous.tmp /opt/shingo/shingoedge.previous; then
         echo "==> Saved previous binary to /opt/shingo/shingoedge.previous"
     else
+        rm -f /opt/shingo/shingoedge.previous.tmp
         echo "    WARNING: failed to snapshot previous binary; install will continue"
     fi
 fi
