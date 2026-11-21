@@ -1308,16 +1308,23 @@ nav {
     align-self: flex-end; display: flex; flex-direction: column; gap: var(--sp-2);
     width: 24rem; max-width: calc(100vw - 2 * var(--sp-4)); margin: var(--sp-4);
 }
+/* A toast is its words, its one action and its ×, on one line: the words take
+ * the room, the × sits at the right edge. */
 .notice-toast {
-    padding: var(--sp-2) var(--sp-4); pointer-events: auto;
+    display: flex; align-items: baseline;
+    padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4); pointer-events: auto;
     border: 1px solid var(--border); border-left: 4px solid var(--info); border-radius: var(--radius);
     background: var(--surface); color: var(--text); box-shadow: var(--shadow-md); font-size: var(--font-sm);
 }
+.notice-toast .notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notice-toast .notice-dismiss { margin-left: var(--sp-2); color: var(--text-muted); }
+.notice-toast .notice-dismiss:hover { color: var(--text); }
 .notice-toast--success { border-left-color: var(--success); }
 .notice-toast--warning { border-left-color: var(--warning); }
 .notice-toast--error { border-left-color: var(--danger); }
 .notice-toast.is-sticky { cursor: pointer; }
 .notice-action { margin-left: var(--sp-2); padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-weight: var(--fw-bold); cursor: pointer; }
+.notice-action:disabled { color: var(--text-muted); cursor: default; }
 .notice-dismiss { padding: 0 var(--sp-1); border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 
 /* ── THE PICKER (style guide §34, shared/picker.js) ──────────────────────

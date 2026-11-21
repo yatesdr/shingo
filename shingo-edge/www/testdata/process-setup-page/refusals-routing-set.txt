@@ -31,6 +31,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."
@@ -65,6 +66,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."
@@ -99,6 +101,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."
@@ -133,6 +136,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved."
@@ -170,6 +174,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     new text: #picker-3-30 span.picker-tag: Staging
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed

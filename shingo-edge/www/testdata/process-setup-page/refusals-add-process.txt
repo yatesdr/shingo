@@ -29,6 +29,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add process", no status, OK "Create" enabled
     state: no message set
@@ -60,6 +61,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The process was created. Its operator screen was not written.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add process", status "The process was created. Its operator screen was not written." (bad), OK "Create" enabled
     state: no message set
@@ -91,6 +93,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added. Its positions was not written.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add process", status "The process was created; its screen added. Its positions was not written." (bad), OK "Create" enabled
     state: no message set
@@ -122,6 +125,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed. Its routing set was not written.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed. Its routing set was not written." (bad), OK "Create" enabled
     state: no message set
@@ -153,6 +157,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The process was created; its screen added; its positions claimed; its routing set written. Its part set was not written.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add process", status "The process was created; its screen added; its positions claimed; its routing set written. Its part set was not written." (bad), OK "Create" enabled
     state: no message set

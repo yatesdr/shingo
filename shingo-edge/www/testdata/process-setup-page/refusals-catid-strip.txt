@@ -59,6 +59,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Pin CATID CAT-Q to Style B?", no status, OK "Pin" enabled
     state: no message set
@@ -92,6 +93,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Pin CATID CAT-Q to Style A?", no status, OK "Pin" enabled
     state: no message set
@@ -125,6 +127,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Count MES.Slot2?", no status, OK "Count" enabled
     state: no message set
@@ -164,6 +167,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     new text: .layer-scrim h2: Charge this hold?
     new text: .layer-scrim p: its preview could not be read: Signed out. Nothing was charged.
     new text: .layer-scrim button.btn: Cancel
@@ -200,6 +204,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Charge 12 on CATID CAT-Q?", no status, OK "Charge" enabled
     state: no message set
@@ -233,6 +238,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Write off this hold?", no status, OK "Write off" enabled
     state: no message set

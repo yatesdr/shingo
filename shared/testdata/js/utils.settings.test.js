@@ -552,7 +552,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
             draft.port = '9090';
             page.update();
             const out = await page.save();
-            const toasts = ctx.document.body.querySelectorAll('.notice-toast').map((t) => t.textContent);
+            // A toast's words and its action's label, without its ×.
+            const toasts = ctx.document.body.querySelectorAll('.notice-toast').map((t) => t.querySelector('.notice-text').textContent
+                + ((t.querySelector('.notice-action') || {}).textContent || ''));
             const errFor = root.querySelector('[data-err-for="port"]');
             return { out, page, sent, toasts, fieldErr: errFor ? errFor.textContent : null };
         };

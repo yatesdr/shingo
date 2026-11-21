@@ -29,6 +29,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Edit Screen A", no status, OK "Save" enabled
     state: no message set
@@ -62,6 +63,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add operator screen", no status, OK "Add" enabled
     state: no message set
@@ -93,6 +95,7 @@
     new text: .layer-scrim span.layer-status.is-bad: The screen was added. Its positions were refused:
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Add operator screen", status "The screen was added. Its positions were refused: " (bad), OK "Add" enabled
     state: no message set
@@ -128,6 +131,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved. Screen A’s positions could not be read, so nothing was changed. Try again."
@@ -159,6 +163,7 @@
     new text: .pd-sheet span.prov.dirty: Unsaved changes
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: closed
     state: bar.refusal="Not saved. Screen A’s positions could not be read, so nothing was changed. Try again."

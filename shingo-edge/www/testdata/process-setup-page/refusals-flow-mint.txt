@@ -58,6 +58,7 @@
     new text: .layer-scrim span.layer-status.is-bad: Minted PART-1 PART-3, but its CATID did not save.
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "New style", status "Minted PART-1 PART-3, but its CATID did not save." (bad), OK "Create" enabled
     state: no message set

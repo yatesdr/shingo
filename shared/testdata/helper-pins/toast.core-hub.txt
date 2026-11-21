@@ -6,30 +6,44 @@ toast("Saved", "success"): returns, and the DOM it writes: returns the toast ele
       div class="notice-toast notice-toast--success"
         span class="notice-text"
           "Saved"
+        button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+          "×"
 level (none): the toast node:
     div class="notice-toast notice-toast--info"
       span class="notice-text"
         "Msg"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
 level "info": the toast node:
     div class="notice-toast notice-toast--info"
       span class="notice-text"
         "Msg"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
 level "success": the toast node:
     div class="notice-toast notice-toast--success"
       span class="notice-text"
         "Msg"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
 level "warning": the toast node:
     div class="notice-toast notice-toast--warning"
       span class="notice-text"
         "Msg"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
 level "error": the toast node:
     div class="notice-toast notice-toast--error" role="alert"
       span class="notice-text"
         "Msg"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
 level "bogus": the toast node:
     div class="notice-toast notice-toast--info"
       span class="notice-text"
         "Msg"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
 lifetime, level (none): removed at 3200 ms
 lifetime, level "success": removed at 3200 ms
 lifetime, level "warning": removed at 3200 ms
@@ -40,13 +54,17 @@ lifetime, "error", {sticky:false}: removed at 5000 ms
     div class="notice-toast notice-toast--error is-sticky" role="alert" title="Click to dismiss" listens=click
       span class="notice-text"
         "Msg"
-three toasts: the container's children, in order: "one" notice-toast notice-toast--info | "two" notice-toast notice-toast--error | "three" notice-toast notice-toast--success (1 child(ren) of body)
-twelve toasts at once: how many are in the DOM: 12 toasts, first "n0"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
+three toasts: the container's children, in order: "one×" notice-toast notice-toast--info | "two×" notice-toast notice-toast--error | "three×" notice-toast notice-toast--success (1 child(ren) of body)
+twelve toasts at once: how many are in the DOM: 12 toasts, first "n0×"
 message with markup <img src=x onerror=alert(1)> & "q": the toast's children:
     div class="notice-toast notice-toast--error" role="alert"
       span class="notice-text"
         "<img src=x onerror=alert(1)> & \"q\""
-toast(null): ""
-toast(42): "42"
-toast(an Error("boom")): "boom"
-toast({error:"x"}): "x"
+      button class="notice-dismiss" type="button" aria-label="Dismiss" listens=click
+        "×"
+toast(null): "×"
+toast(42): "42×"
+toast(an Error("boom")): "boom×"
+toast({error:"x"}): "x×"

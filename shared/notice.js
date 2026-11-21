@@ -9,6 +9,15 @@
 // with {sticky:false} 3.2 s, because its test read "not explicitly false"
 // where it meant "not sticky"; here sticky is the only switch.
 //
+// EVERY TOAST HAS A ×, which takes it down at once. A sticky toast goes only
+// by its × or by a click on its body.
+//
+// THE ACTION is a toast's one control, and a click on it never takes the
+// toast down: it stops at the control. An onClick that returns a promise is
+// run once: the control is disabled while it runs, and the toast goes when it
+// settles, done or failed (the station's exit toast takes the exit, re-sends
+// what was refused, then goes). Any other onClick leaves the toast as it is.
+//
 // ONE OF EACH. A toast whose words and level are already up is not stacked a
 // second time: the old one goes and the new one starts its lifetime again. A
 // page whose background reads fail every ten seconds says so once, not once
@@ -66,18 +75,37 @@ function words(m) {
     return String(m);
 }
 
-// action is a toast's or banner's one control: {label, href} is a link (the
-// sign-in link the HTTP door offers), {label, onClick} a button.
+// action is a banner's one control: {label, href} is a link, {label, onClick}
+// a button. A toast's is toastAction's, below.
 function action(a) {
     if (!a || !a.label) return null;
     if (a.href) return el('a', { className: 'notice-action', href: a.href }, a.label);
     return el('button', { className: 'notice-action', type: 'button', onclick: a.onClick || null }, a.label);
 }
 
+// toastAction is toast t's one control, action's shape: its click stops at it,
+// and an onClick's promise keeps it disabled until it settles, then drops t.
+function toastAction(a, t) {
+    if (!a || !a.label) return null;
+    const stop = (e) => e.stopPropagation();
+    if (a.href) return el('a', { className: 'notice-action', href: a.href, onclick: stop }, a.label);
+    const b = el('button', {
+        className: 'notice-action', type: 'button',
+        onclick: (e) => {
+            stop(e);
+            const run = a.onClick ? a.onClick(e) : null;
+            if (!run || typeof run.then !== 'function') return;
+            b.disabled = true;
+            run.then(() => drop(t), (err) => { drop(t); console.error('toast action', err); });
+        },
+    }, a.label);
+    return b;
+}
+
 // toast shows one message and returns its element.
 //   level  'info' (default), 'success', 'warning', 'error'
-//   opts   sticky (stays until clicked), action ({label, href} or
-//          {label, onClick})
+//   opts   sticky (stays until its × or a click on it), action ({label,
+//          href} or {label, onClick}; an onClick may return a promise)
 export function toast(message, level, opts) {
     const o = opts || {};
     const lvl = LEVELS.indexOf(level) >= 0 ? level : 'info';
@@ -95,7 +123,13 @@ export function toast(message, level, opts) {
         className: 'notice-toast notice-toast--' + lvl + (o.sticky ? ' is-sticky' : ''),
         role: lvl === 'error' ? 'alert' : null,
         title: o.sticky ? 'Click to dismiss' : null,
-    }, [el('span', { className: 'notice-text' }, text), action(o.action)]);
+    }, el('span', { className: 'notice-text' }, text));
+    const act = toastAction(o.action, t);
+    if (act) t.appendChild(act);
+    t.appendChild(el('button', {
+        className: 'notice-dismiss', type: 'button', 'aria-label': 'Dismiss',
+        onclick: (e) => { e.stopPropagation(); drop(t); },
+    }, '×'));
     const note = { text, level: lvl, timer: null, sticky: !!o.sticky };
     live.set(t, note);
     if (o.sticky) t.addEventListener('click', () => drop(t));

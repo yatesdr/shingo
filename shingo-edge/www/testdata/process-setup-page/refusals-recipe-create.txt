@@ -29,6 +29,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Save Style A as a recipe", no status, OK "Save recipe" enabled
     state: no message set
@@ -62,6 +63,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Name this recipe", no status, OK "Save recipe" enabled
     state: no message set
@@ -98,6 +100,7 @@
     then: nothing
     new text: .notice-root span.notice-text: Signed out
     new text: .notice-root a.notice-action: Sign in
+    new text: .notice-root button.notice-dismiss: ×
     notice: error "Signed out" (sticky) · Sign in → /login?next=%2Fprocesses%3Fprocess%3D1
     sheet: open "Save recipe Recipe One", no status, OK "Save recipe" enabled
     state: no message set

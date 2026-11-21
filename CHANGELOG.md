@@ -38,6 +38,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - Core Health no longer lists the schema leftovers the v0.18.0 start reported at the plants; each one removed is written to the audit log (as a schema entry), which is what a rollback puts back
 
 - A toast that says a field is missing or wrong is amber (some were red, some grey), and one that says an order or a save went through is green (some were grey), on Core, the Edge and the station
+- Every toast on Core and the Edge's admin pages has a × that closes it; tapping a toast's button (Sign in) no longer closes the toast
 
 ## v0.18.0 — 2026-11-21
 

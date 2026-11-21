@@ -95,7 +95,9 @@ function page(answer) {
     return {
         r, d, sent, click,
         text: (id) => d.getElementById(id).textContent,
-        notices: () => d.querySelectorAll('.notice-toast').map((t) => t.textContent + (t.classList.contains('is-sticky') ? ' (sticky)' : '')),
+        // A toast's words and its action's label, without its ×.
+        notices: () => d.querySelectorAll('.notice-toast').map((t) => t.querySelector('.notice-text').textContent
+            + ((t.querySelector('.notice-action') || {}).textContent || '') + (t.classList.contains('is-sticky') ? ' (sticky)' : '')),
     };
 }
 

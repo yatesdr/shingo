@@ -11,6 +11,12 @@ function notice() {
     return { r: p.r, N: p.mods[0], stack: () => p.r.doc.querySelector('.notice-stack'), banners: () => p.r.doc.querySelector('.notice-banners') };
 }
 
+// said is a toast's words: its text, without its controls (the ×, the action).
+function said(t) { return t.querySelector('.notice-text').textContent; }
+
+// settle lets the promises a click started run out.
+function settle() { return new Promise((r) => setImmediate(r)); }
+
 // gone says when (ms after it was shown) t left the page, stepping 100 ms.
 async function gone(r, t, maxMs) {
     for (let ms = 100; ms <= maxMs; ms += 100) {
@@ -85,7 +91,7 @@ test('different words beside a sticky one are their own toast', async () => {
     f.N.toast('Signed out', 'error', { sticky: true });
     f.N.toast('Save failed: Signed out', 'error');
     f.N.toast('Signed out', 'warning');
-    eq(f.stack().children.map((t) => t.textContent), ['Signed out', 'Save failed: Signed out', 'Signed out']);
+    eq(f.stack().children.map(said), ['Signed out', 'Save failed: Signed out', 'Signed out']);
 });
 
 test('toasts stack in the order shown, under one region that is one child of body', async () => {
@@ -93,14 +99,14 @@ test('toasts stack in the order shown, under one region that is one child of bod
     f.N.toast('one');
     f.N.toast('two', 'error');
     f.N.toast('three', 'success');
-    eq([f.stack().children.map((t) => t.textContent), f.r.doc.body.children.length], [['one', 'two', 'three'], 1]);
+    eq([f.stack().children.map(said), f.r.doc.body.children.length], [['one', 'two', 'three'], 1]);
 });
 
 test('a message is text, never markup; an Error is its message; a refusal body is its error', async () => {
     const f = notice();
     const t = f.N.toast('<img src=x onerror=alert(1)>', 'error');
-    eq([t.querySelector('.notice-text').childNodes.length, t.textContent], [1, '<img src=x onerror=alert(1)>']);
-    eq([f.N.toast(new f.r.TypeError('boom')).textContent, f.N.toast({ error: 'held' }).textContent, f.N.toast(null).textContent], ['boom', 'held', '']);
+    eq([t.querySelector('.notice-text').childNodes.length, said(t)], [1, '<img src=x onerror=alert(1)>']);
+    eq([said(f.N.toast(new f.r.TypeError('boom'))), said(f.N.toast({ error: 'held' })), said(f.N.toast(null))], ['boom', 'held', '']);
 });
 
 test('an error toast is an alert; the others are read through the polite region', async () => {
@@ -117,6 +123,50 @@ test('a toast carries one action: a link or a button', async () => {
     const b = f.N.toast('Held', 'warning', { action: { label: 'Release', onClick: () => { pressed++; } } });
     b.querySelector('.notice-action').click();
     eq([a.querySelector('a').getAttribute('href'), a.querySelector('a').textContent, pressed], ['/login?next=%2Fprocesses', 'Sign in', 1]);
+});
+
+test('every toast has a ×, last: it takes a plain or a sticky toast down at once, its timer with it', async () => {
+    const f = notice();
+    const p = f.N.toast('Saved', 'success');
+    const s = f.N.toast('Lost', 'error', { sticky: true, action: { label: 'Retry', onClick: () => {} } });
+    const xs = [p, s].map((t) => t.lastChild);
+    eq(xs.map((x) => [x.className, x.textContent, x.getAttribute('aria-label')]),
+        [['notice-dismiss', '×', 'Dismiss'], ['notice-dismiss', '×', 'Dismiss']]);
+    xs.forEach((x) => x.click());
+    eq([p.isConnected, s.isConnected, f.r.clock.timers.length], [false, false, 0]);
+});
+
+// The station's exit toast is a sticky error whose button the operator taps:
+// the tap used to reach the toast's own click and take it down before the
+// exit was answered.
+test('a click on a toast\'s action does not take it down, sticky or not, button or link', async () => {
+    const f = notice();
+    let pressed = 0;
+    const s = f.N.toast('Held', 'error', { sticky: true, action: { label: 'Release', onClick: () => { pressed++; } } });
+    const l = f.N.toast('Signed out', 'error', { sticky: true, action: { label: 'Sign in', href: '/login' } });
+    const p = f.N.toast('Held', 'warning', { action: { label: 'Release', onClick: () => { pressed++; } } });
+    [s, l, p].forEach((t) => t.querySelector('.notice-action').click());
+    eq([pressed, s.isConnected, l.isConnected, p.isConnected, s.querySelector('.notice-action').disabled], [2, true, true, true, false]);
+});
+
+test('an action whose onClick returns a promise: run once, its button dead until it settles, then the toast goes', async () => {
+    const f = notice();
+    const runs = [];
+    const take = () => new Promise((resolve, reject) => { runs.push({ resolve, reject }); });
+    const a = f.N.toast('Armed', 'error', { sticky: true, action: { label: 'Cancel changeover', onClick: take } });
+    const b = a.querySelector('.notice-action');
+    b.click();
+    await settle();
+    const during = [runs.length, b.disabled, a.isConnected];
+    runs[0].resolve();
+    await settle();
+    eq(during.concat([a.isConnected]), [1, true, true, false], 'done');
+
+    const c = f.N.toast('Armed again', 'error', { sticky: true, action: { label: 'Cancel changeover', onClick: take } });
+    c.querySelector('.notice-action').click();
+    runs[1].reject(new f.r.TypeError('refused'));
+    await settle();
+    eq(c.isConnected, false, 'failed: the toast goes too');
 });
 
 // ── the banner: what S5 puts on it ──────────────────────────────────────────

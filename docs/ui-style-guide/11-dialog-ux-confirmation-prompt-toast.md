@@ -43,12 +43,15 @@ the banners across it, the toasts stacked on the right below them, so a toast
 never covers a banner's button. Pages move onto it in wave C.
 
 - **`toast(message, level, opts)`** keeps the lifetimes above: an error 5 s,
-  every other level 3.2 s, `{ sticky: true }` until it is clicked.
-  `{ sticky: false }` is the level's own lifetime. The same words at the same
-  level already up are one toast, its lifetime started again, so a read that
-  fails every ten seconds says so once. A message is text, never markup; an
-  Error shows its message. `opts.action` is one control: `{ label, href }` (the
-  HTTP door's **Sign in**) or `{ label, onClick }`.
+  every other level 3.2 s, `{ sticky: true }` until its × or a click on it.
+  Every toast has a ×. `{ sticky: false }` is the level's own lifetime. The
+  same words at the same level already up are one toast, its lifetime started
+  again, so a read that fails every ten seconds says so once. A message is
+  text, never markup; an Error shows its message. `opts.action` is one
+  control: `{ label, href }` (the HTTP door's **Sign in**) or
+  `{ label, onClick }`. A click on it never takes the toast down; an `onClick`
+  that returns a promise disables the control until it settles, and then the
+  toast goes.
 - **`banner(key, opts)`** is a line that stays until it is cleared or its ×
   is pressed: one per key, redrawn in place when shown again. It carries no
   words of its own.

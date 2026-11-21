@@ -111,7 +111,7 @@ test('cannot happen: a dead Edge leaves a write as an unhandled rejection with n
     const f = door({ reject: 'Failed to fetch' });
     const out = await f.H.http.post('/api/processes', { name: 'P' });
     eq([out.ok, out.status, out.body, out.error], [false, 0, null, 'No answer from the server']);
-    eq(f.toasts().map((t) => t.textContent), ['No answer from the server']);
+    eq(f.toasts().map((t) => t.querySelector('.notice-text').textContent), ['No answer from the server']);
 });
 
 test('a failure is shown once, by the door; {notice:false} leaves it to the caller', async () => {
