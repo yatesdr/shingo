@@ -1,0 +1,109 @@
+edges edge1.line1
+plant station edge1.line1
+
+edge edge1.line1
+  view station edge1.line1
+  process PRESS-1 on edge1.line1
+  process PRESS-2 on edge1.line1
+  process PRESS-3 on edge1.line1
+  process PRESS-4 on edge1.line1
+  process WELD-1 on edge1.line1
+  process WELD-2 on edge1.line1
+  process WELD-3 on edge1.line1
+  process WELD-4 on edge1.line1
+  process WELD-5 on edge1.line1
+  process LOADER-COMP on edge1.line1
+  process LOADER-CLIP on edge1.line1
+  process LOADER-STUD on edge1.line1
+  process UNLOADER-A on edge1.line1
+  process UNLOADER-B on edge1.line1
+  process UNLOADER-C on edge1.line1
+  process UNLOADER-D on edge1.line1
+  style PRESS-1-RUN of PRESS-1
+  style PRESS-2-RUN of PRESS-2
+  style PRESS-3-RUN of PRESS-3
+  style PRESS-4-RUN of PRESS-4
+  style WELD-1-RUN of WELD-1
+  style WELD-2-RUN of WELD-2
+  style WELD-3-RUN of WELD-3
+  style WELD-4-RUN of WELD-4
+  style WELD-5-RUN of WELD-5
+  style LOADER-COMP-RUN of LOADER-COMP
+  style LOADER-CLIP-RUN of LOADER-CLIP
+  style LOADER-STUD-RUN of LOADER-STUD
+  style UNLOADER-A-RUN of UNLOADER-A
+  style UNLOADER-B-RUN of UNLOADER-B
+  style UNLOADER-C-RUN of UNLOADER-C
+  style UNLOADER-D-RUN of UNLOADER-D
+  claim PLN_001 PRESS-1-RUN operator=
+  claim PLN_003 PRESS-2-RUN operator=
+  claim PLN_004 PRESS-2-RUN operator=
+  claim ALN_001 WELD-1-RUN operator=
+  claim ALN_002 WELD-1-RUN operator=
+  claim ALN_003 WELD-2-RUN operator=
+  claim ALN_004 WELD-2-RUN operator=
+  claim ALN_005 WELD-2-RUN operator=
+  claim ALN_006 WELD-3-RUN operator=
+  claim ALN_007 WELD-3-RUN operator=
+  claim ALN_008 WELD-3-RUN operator=
+  claim PLK_W1 LOADER-COMP-RUN operator=PLK_W1-OPS
+  claim PLK_W2 LOADER-COMP-RUN operator=PLK_W2-OPS
+  claim PLK_W3 LOADER-COMP-RUN operator=PLK_W3-OPS
+  claim PLK_X1 LOADER-CLIP-RUN operator=PLK_X1-OPS
+  claim PLK_D1 LOADER-STUD-RUN operator=PLK_D1-OPS
+  claim PLK_D2 LOADER-STUD-RUN operator=PLK_D2-OPS
+  claim FGN_001 UNLOADER-A-RUN operator=
+  claim FGN_002 UNLOADER-B-RUN operator=
+  claim PLN_005 PRESS-3-RUN operator=
+  claim ALN_009 WELD-4-RUN operator=
+  claim ALN_010 WELD-4-RUN operator=
+  claim ALN_011 WELD-4-RUN operator=
+  claim FGN_003 UNLOADER-C-RUN operator=
+  claim PLN_007 PRESS-4-RUN operator=
+  claim ALN_012 WELD-5-RUN operator=
+  claim ALN_013 WELD-5-RUN operator=
+  claim ALN_014 WELD-5-RUN operator=
+  claim FGN_004 UNLOADER-D-RUN operator=
+  point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-RUN
+  point PRESS-2 PRESS-2_COUNTER PLN_003 style=PRESS-2-RUN
+  point WELD-1 WELD-1_COUNTER ALN_001 style=WELD-1-RUN
+  point WELD-2 WELD-2_COUNTER ALN_003 style=WELD-2-RUN
+  point WELD-3 WELD-3_COUNTER ALN_006 style=WELD-3-RUN
+  point PRESS-3 PRESS-3_COUNTER PLN_005 style=PRESS-3-RUN
+  point PRESS-4 PRESS-4_COUNTER PLN_007 style=PRESS-4-RUN
+  point WELD-4 WELD-4_COUNTER ALN_009 style=WELD-4-RUN
+  point WELD-5 WELD-5_COUNTER ALN_012 style=WELD-5-RUN
+  counter WELD-2 WELD-2_STATION_01 ALN_004
+  cell PRESS-1 PRESS-1-OPS
+  cell PRESS-2 PRESS-2-OPS
+  cell WELD-1 WELD-1-OPS
+  cell WELD-2 WELD-2-OPS
+  cell WELD-3 WELD-3-OPS
+  cell PRESS-3 PRESS-3-OPS
+  cell PRESS-4 PRESS-4-OPS
+  cell WELD-4 WELD-4-OPS
+  cell WELD-5 WELD-5-OPS
+  cell UNLOADER-A UNLOADER-A-OPS
+  cell UNLOADER-B UNLOADER-B-OPS
+  cell UNLOADER-C UNLOADER-C-OPS
+  cell UNLOADER-D UNLOADER-D-OPS
+  operator PRESS-1-OPS
+  operator PRESS-2-OPS
+  operator PRESS-3-OPS
+  operator PRESS-4-OPS
+  operator WELD-1-OPS
+  operator WELD-2-OPS
+  operator WELD-3-OPS
+  operator WELD-4-OPS
+  operator WELD-5-OPS
+  operator PLK_W1-OPS
+  operator PLK_W2-OPS
+  operator PLK_W3-OPS
+  operator PLK_X1-OPS
+  operator PLK_D1-OPS
+  operator PLK_D2-OPS
+  operator UNLOADER-A-OPS
+  operator UNLOADER-B-OPS
+  operator UNLOADER-C-OPS
+  operator UNLOADER-D-OPS
+  core bin_types=2 payloads=11 zones=12 stations=49 bins=92 demands=6 kanbans=1 loader_settings=0

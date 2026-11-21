@@ -1,6 +1,10 @@
 package plantspec
 
 import (
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -95,4 +99,110 @@ func TestValidate_AnExpectedCATIDIsIntegers(t *testing.T) {
 	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), `expected_catid "RUN"`) {
 		t.Errorf("Validate = %v, want a pin that is no integer refused", err)
 	}
+}
+
+var updateEdgesGolden = flag.Bool("update-edges-golden", false,
+	"rewrite testdata/edges-*.golden from the committed plant files as they split now")
+
+// TestEdges_TheCommittedSpecsSplitAsTheyDo pins how the two committed plant
+// files split into Edges: the station list (Edges), each Edge's view
+// (ForEdge): the station it names, every process, style, claim, reporting
+// point, station counter, cell config and operator station it keeps, and the
+// size of Core's half it carries whole. The goldens are today's split.
+//
+// The station uid's spelling in the file may change (one key in place of
+// namespace and line_id); the split must not: a diff here is an Edge seeded
+// with something other than what it was.
+func TestEdges_TheCommittedSpecsSplitAsTheyDo(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ golden, spec string }{
+		{"edges-master.golden", masterPath},
+		{"edges-seed-fixture.golden", "../cmd/seeddev/testdata/seed-fixture.yaml"},
+	} {
+		t.Run(c.golden, func(t *testing.T) {
+			t.Parallel()
+			got := renderEdgeSplit(t, c.spec)
+			if again := renderEdgeSplit(t, c.spec); again != got {
+				t.Fatalf("two loads of %s split differently: the rendering is not deterministic", c.spec)
+			}
+			path := filepath.Join("testdata", c.golden)
+			if *updateEdgesGolden {
+				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+					t.Fatalf("write %s: %v", path, err)
+				}
+				return
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			want := string(raw)
+			if got == want {
+				return
+			}
+			gl, wl := strings.Split(got, "\n"), strings.Split(want, "\n")
+			for i := 0; i < max(len(gl), len(wl)); i++ {
+				g, w := "<end>", "<end>"
+				if i < len(gl) {
+					g = gl[i]
+				}
+				if i < len(wl) {
+					w = wl[i]
+				}
+				if g != w {
+					t.Fatalf("%s splits differently from %s at line %d:\n  got  %s\n  want %s\n"+
+						"A change to how a station is named must not move a process, claim or point between Edges. "+
+						"If the plant file itself changed on purpose, rerun with -update-edges-golden and review the diff.",
+						c.spec, path, i+1, g, w)
+				}
+			}
+		})
+	}
+}
+
+// renderEdgeSplit loads spec and writes its split one item per line, in the
+// plant's own order, so a diff names the item that moved.
+func renderEdgeSplit(t *testing.T, spec string) string {
+	t.Helper()
+	p, err := Load(spec)
+	if err != nil {
+		t.Fatalf("load %s: %v", spec, err)
+	}
+	var b strings.Builder
+	edges := p.Edges()
+	if len(edges) == 0 {
+		t.Fatalf("%s names no Edge", spec)
+	}
+	fmt.Fprintf(&b, "edges %s\n", strings.Join(edges, " "))
+	fmt.Fprintf(&b, "plant station %s\n", p.Station())
+	for _, station := range edges {
+		v := p.ForEdge(station)
+		fmt.Fprintf(&b, "\nedge %s\n", station)
+		fmt.Fprintf(&b, "  view station %s\n", v.Station())
+		for _, pr := range v.Processes {
+			fmt.Fprintf(&b, "  process %s on %s\n", pr.Name, p.EdgeOf(pr.Name))
+		}
+		for _, s := range v.Styles {
+			fmt.Fprintf(&b, "  style %s of %s\n", s.Name, s.Process)
+		}
+		for _, c := range v.Claims {
+			fmt.Fprintf(&b, "  claim %s %s operator=%s\n", c.CoreNode, c.Style, c.OperatorStation)
+		}
+		for _, rp := range v.ReportingPoints {
+			fmt.Fprintf(&b, "  point %s %s %s style=%s\n", rp.PLCName, rp.TagName, rp.Node, rp.Style)
+		}
+		for _, sc := range v.StationCounters {
+			fmt.Fprintf(&b, "  counter %s %s %s\n", sc.Process, sc.TagName, strings.Join(sc.Nodes, ","))
+		}
+		for _, cc := range v.CellConfigs {
+			fmt.Fprintf(&b, "  cell %s %s\n", cc.Process, cc.Station)
+		}
+		for _, s := range v.OperatorStations {
+			fmt.Fprintf(&b, "  operator %s\n", s)
+		}
+		fmt.Fprintf(&b, "  core bin_types=%d payloads=%d zones=%d stations=%d bins=%d demands=%d kanbans=%d loader_settings=%d\n",
+			len(v.BinTypes), len(v.Payloads), len(v.Zones), len(v.Stations), len(v.Bins), len(v.Demands),
+			len(v.Kanbans), len(v.LoaderSettings))
+	}
+	return b.String()
 }

@@ -1,0 +1,307 @@
+edges edge1.line1 edge2.line1
+plant station edge1.line1
+
+edge edge1.line1
+  view station edge1.line1
+  process PRESS-1 on edge1.line1
+  process PRESS-2 on edge1.line1
+  process WELD-1 on edge1.line1
+  process WELD-2 on edge1.line1
+  process WELD-3 on edge1.line1
+  process WELD-4 on edge1.line1
+  process WELD-5 on edge1.line1
+  process LOADER-SHIM on edge1.line1
+  process LOADER-COMP on edge1.line1
+  process LOADER-CLIP on edge1.line1
+  process LOADER-STUD on edge1.line1
+  process UNLOADER-A on edge1.line1
+  process WELD-6 on edge1.line1
+  process LOADER-COMMON-1 on edge1.line1
+  process LOADER-COMMON-2 on edge1.line1
+  process LOADER-COMMON-3 on edge1.line1
+  process LOADER-MIRROR-L on edge1.line1
+  process LOADER-MIRROR-R on edge1.line1
+  process KP-PRESS on edge1.line1
+  process KW-WELD on edge1.line1
+  process KP-UNLOAD on edge1.line1
+  process KW-UNLOAD on edge1.line1
+  process P5-PRESS-1 on edge1.line1
+  process P5-PRESS-2 on edge1.line1
+  process P5-PRESS-3 on edge1.line1
+  process P5-PRESS-4 on edge1.line1
+  process P5-PRESS-5 on edge1.line1
+  process P5-UNLOAD-CELL on edge1.line1
+  style PRESS-1-RUN of PRESS-1
+  style PRESS-1-ALT of PRESS-1
+  style PRESS-1-MOVED of PRESS-1
+  style PRESS-1-RETOOL of PRESS-1
+  style PRESS-1-R3 of PRESS-1
+  style PRESS-2-RUN of PRESS-2
+  style PRESS-2-ALT of PRESS-2
+  style PRESS-2-ALT2 of PRESS-2
+  style WELD-1-RUN of WELD-1
+  style WELD-1-ALT of WELD-1
+  style WELD-2-RUN of WELD-2
+  style WELD-3-RUN of WELD-3
+  style WELD-4-RUN of WELD-4
+  style WELD-5-RUN of WELD-5
+  style LOADER-SHIM-RUN of LOADER-SHIM
+  style LOADER-COMP-RUN of LOADER-COMP
+  style LOADER-CLIP-RUN of LOADER-CLIP
+  style LOADER-STUD-RUN of LOADER-STUD
+  style UNLOADER-A-RUN of UNLOADER-A
+  style WELD-6-RUN of WELD-6
+  style WELD-6-ALT of WELD-6
+  style LOADER-COMMON-1-RUN of LOADER-COMMON-1
+  style LOADER-COMMON-2-RUN of LOADER-COMMON-2
+  style LOADER-COMMON-3-RUN of LOADER-COMMON-3
+  style LOADER-MIRROR-L-RUN of LOADER-MIRROR-L
+  style LOADER-MIRROR-R-RUN of LOADER-MIRROR-R
+  style KP-SMALL of KP-PRESS
+  style KP-BIG of KP-PRESS
+  style KP-TOTES of KP-PRESS
+  style KP-32 of KP-PRESS
+  style KP-UNTYPED of KP-PRESS
+  style KW-RUN of KW-WELD
+  style KP-UNLOAD-RUN of KP-UNLOAD
+  style KW-UNLOAD-RUN of KW-UNLOAD
+  style P5-1-SMALL of P5-PRESS-1
+  style P5-1-BIG of P5-PRESS-1
+  style P5-1-TOTES of P5-PRESS-1
+  style P5-1-32 of P5-PRESS-1
+  style P5-2-SMALL of P5-PRESS-2
+  style P5-2-BIG of P5-PRESS-2
+  style P5-2-TOTES of P5-PRESS-2
+  style P5-2-32 of P5-PRESS-2
+  style P5-3-SMALL of P5-PRESS-3
+  style P5-3-BIG of P5-PRESS-3
+  style P5-3-TOTES of P5-PRESS-3
+  style P5-3-32 of P5-PRESS-3
+  style P5-4-SMALL of P5-PRESS-4
+  style P5-4-BIG of P5-PRESS-4
+  style P5-4-TOTES of P5-PRESS-4
+  style P5-4-32 of P5-PRESS-4
+  style P5-5-SMALL of P5-PRESS-5
+  style P5-5-BIG of P5-PRESS-5
+  style P5-5-TOTES of P5-PRESS-5
+  style P5-5-32 of P5-PRESS-5
+  style P5-UNLOAD-RUN of P5-UNLOAD-CELL
+  claim PLN_001 PRESS-1-RUN operator=
+  claim PLN_001 PRESS-1-ALT operator=
+  claim PLN_001 PRESS-1-R3 operator=
+  claim PLN_001 PRESS-1-RETOOL operator=
+  claim PLN_005 PRESS-1-MOVED operator=
+  claim PLN_003 PRESS-2-RUN operator=
+  claim PLN_004 PRESS-2-RUN operator=
+  claim PLN_003 PRESS-2-ALT operator=
+  claim PLN_004 PRESS-2-ALT operator=
+  claim PLN_003 PRESS-2-ALT2 operator=
+  claim PLN_004 PRESS-2-ALT2 operator=
+  claim ALN_001 WELD-1-RUN operator=
+  claim ALN_002 WELD-1-RUN operator=
+  claim ALN_001 WELD-1-ALT operator=
+  claim ALN_002 WELD-1-ALT operator=
+  claim ALN_003 WELD-2-RUN operator=
+  claim ALN_004 WELD-2-RUN operator=
+  claim ALN_005 WELD-2-RUN operator=
+  claim ALN_006 WELD-3-RUN operator=
+  claim ALN_007 WELD-4-RUN operator=
+  claim ALN_008 WELD-5-RUN operator=
+  claim PLK_H1 LOADER-SHIM-RUN operator=PLK_H1-OPS
+  claim PLK_H2 LOADER-SHIM-RUN operator=PLK_H2-OPS
+  claim PLK_B1 LOADER-SHIM-RUN operator=PLK_B1-OPS
+  claim PLK_B2 LOADER-SHIM-RUN operator=PLK_B2-OPS
+  claim PLK_W1 LOADER-COMP-RUN operator=PLK_W1-OPS
+  claim PLK_W2 LOADER-COMP-RUN operator=PLK_W2-OPS
+  claim PLK_X1 LOADER-CLIP-RUN operator=PLK_X1-OPS
+  claim PLK_X2 LOADER-STUD-RUN operator=PLK_X2-OPS
+  claim FGN_001 UNLOADER-A-RUN operator=
+  claim ALN_061 WELD-6-RUN operator=
+  claim ALN_062 WELD-6-RUN operator=
+  claim ALN_063 WELD-6-RUN operator=
+  claim ALN_064 WELD-6-RUN operator=
+  claim ALN_065 WELD-6-RUN operator=
+  claim ALN_061 WELD-6-ALT operator=
+  claim ALN_062 WELD-6-ALT operator=
+  claim ALN_063 WELD-6-ALT operator=
+  claim ALN_064 WELD-6-ALT operator=
+  claim ALN_065 WELD-6-ALT operator=
+  claim PLK_61 LOADER-COMMON-1-RUN operator=PLK_61-OPS
+  claim PLK_62 LOADER-COMMON-2-RUN operator=PLK_62-OPS
+  claim PLK_63 LOADER-COMMON-3-RUN operator=PLK_63-OPS
+  claim PLK_64 LOADER-MIRROR-L-RUN operator=PLK_64-OPS
+  claim PLK_65 LOADER-MIRROR-R-RUN operator=PLK_65-OPS
+  claim PLN_021 KP-SMALL operator=KP-PRESS-OPS
+  claim PLN_023 KP-SMALL operator=KP-PRESS-OPS
+  claim PLN_021 KP-BIG operator=KP-PRESS-OPS
+  claim PLN_023 KP-BIG operator=KP-PRESS-OPS
+  claim PLN_021 KP-TOTES operator=KP-PRESS-OPS
+  claim PLN_023 KP-TOTES operator=KP-PRESS-OPS
+  claim PLN_021 KP-32 operator=KP-PRESS-OPS
+  claim PLN_023 KP-32 operator=KP-PRESS-OPS
+  claim PLN_021 KP-UNTYPED operator=KP-PRESS-OPS
+  claim PLN_023 KP-UNTYPED operator=KP-PRESS-OPS
+  claim ALN_021 KW-RUN operator=KW-WELD-OPS
+  claim ULN_021 KP-UNLOAD-RUN operator=KP-UNLOAD-OPS
+  claim ULN_022 KP-UNLOAD-RUN operator=KP-UNLOAD-OPS
+  claim ULN_023 KP-UNLOAD-RUN operator=KP-UNLOAD-OPS
+  claim ULN_024 KP-UNLOAD-RUN operator=KP-UNLOAD-OPS
+  claim ULN_031 KW-UNLOAD-RUN operator=KW-UNLOAD-OPS
+  claim ULN_032 KW-UNLOAD-RUN operator=KW-UNLOAD-OPS
+  claim PLN_511 P5-1-SMALL operator=P5-PRESS-1-OPS
+  claim PLN_513 P5-1-SMALL operator=P5-PRESS-1-OPS
+  claim PLN_511 P5-1-BIG operator=P5-PRESS-1-OPS
+  claim PLN_513 P5-1-BIG operator=P5-PRESS-1-OPS
+  claim PLN_511 P5-1-TOTES operator=P5-PRESS-1-OPS
+  claim PLN_513 P5-1-TOTES operator=P5-PRESS-1-OPS
+  claim PLN_511 P5-1-32 operator=P5-PRESS-1-OPS
+  claim PLN_513 P5-1-32 operator=P5-PRESS-1-OPS
+  claim PLN_521 P5-2-SMALL operator=P5-PRESS-2-OPS
+  claim PLN_523 P5-2-SMALL operator=P5-PRESS-2-OPS
+  claim PLN_521 P5-2-BIG operator=P5-PRESS-2-OPS
+  claim PLN_523 P5-2-BIG operator=P5-PRESS-2-OPS
+  claim PLN_521 P5-2-TOTES operator=P5-PRESS-2-OPS
+  claim PLN_523 P5-2-TOTES operator=P5-PRESS-2-OPS
+  claim PLN_521 P5-2-32 operator=P5-PRESS-2-OPS
+  claim PLN_523 P5-2-32 operator=P5-PRESS-2-OPS
+  claim PLN_531 P5-3-SMALL operator=P5-PRESS-3-OPS
+  claim PLN_533 P5-3-SMALL operator=P5-PRESS-3-OPS
+  claim PLN_531 P5-3-BIG operator=P5-PRESS-3-OPS
+  claim PLN_533 P5-3-BIG operator=P5-PRESS-3-OPS
+  claim PLN_531 P5-3-TOTES operator=P5-PRESS-3-OPS
+  claim PLN_533 P5-3-TOTES operator=P5-PRESS-3-OPS
+  claim PLN_531 P5-3-32 operator=P5-PRESS-3-OPS
+  claim PLN_533 P5-3-32 operator=P5-PRESS-3-OPS
+  claim PLN_541 P5-4-SMALL operator=P5-PRESS-4-OPS
+  claim PLN_543 P5-4-SMALL operator=P5-PRESS-4-OPS
+  claim PLN_541 P5-4-BIG operator=P5-PRESS-4-OPS
+  claim PLN_543 P5-4-BIG operator=P5-PRESS-4-OPS
+  claim PLN_541 P5-4-TOTES operator=P5-PRESS-4-OPS
+  claim PLN_543 P5-4-TOTES operator=P5-PRESS-4-OPS
+  claim PLN_541 P5-4-32 operator=P5-PRESS-4-OPS
+  claim PLN_543 P5-4-32 operator=P5-PRESS-4-OPS
+  claim PLN_551 P5-5-SMALL operator=P5-PRESS-5-OPS
+  claim PLN_553 P5-5-SMALL operator=P5-PRESS-5-OPS
+  claim PLN_551 P5-5-BIG operator=P5-PRESS-5-OPS
+  claim PLN_553 P5-5-BIG operator=P5-PRESS-5-OPS
+  claim PLN_551 P5-5-TOTES operator=P5-PRESS-5-OPS
+  claim PLN_553 P5-5-TOTES operator=P5-PRESS-5-OPS
+  claim PLN_551 P5-5-32 operator=P5-PRESS-5-OPS
+  claim PLN_553 P5-5-32 operator=P5-PRESS-5-OPS
+  claim ULN_501 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_502 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_503 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_504 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_505 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_506 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_507 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_508 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_509 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ULN_510 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-RUN
+  point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-ALT
+  point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-R3
+  point PRESS-2 PRESS-2_COUNTER PLN_003 style=PRESS-2-RUN
+  point WELD-1 WELD-1_COUNTER ALN_001 style=WELD-1-RUN
+  point WELD-1 WELD-1_COUNTER ALN_001 style=WELD-1-ALT
+  point WELD-2 WELD-2_COUNTER ALN_003 style=WELD-2-RUN
+  point WELD-3 WELD-3_COUNTER ALN_006 style=WELD-3-RUN
+  point WELD-4 WELD-4_COUNTER ALN_007 style=WELD-4-RUN
+  point WELD-5 WELD-5_COUNTER ALN_008 style=WELD-5-RUN
+  point WELD-6 MES_WELD_6.Prod_Counter_01 ALN_061 style=WELD-6-RUN
+  point KP-PRESS KP-PRESS_COUNTER PLN_021 style=KP-SMALL
+  point KW-WELD KW-WELD_COUNTER ALN_021 style=KW-RUN
+  point P5-PRESS-1 P5-PRESS-1_COUNTER PLN_511 style=P5-1-SMALL
+  point P5-PRESS-2 P5-PRESS-2_COUNTER PLN_521 style=P5-2-SMALL
+  point P5-PRESS-3 P5-PRESS-3_COUNTER PLN_531 style=P5-3-SMALL
+  point P5-PRESS-4 P5-PRESS-4_COUNTER PLN_541 style=P5-4-SMALL
+  point P5-PRESS-5 P5-PRESS-5_COUNTER PLN_551 style=P5-5-SMALL
+  counter WELD-6 STA_W6_LOAD.Load_Count ALN_061,ALN_062,ALN_063,ALN_064,ALN_065
+  cell PRESS-1 PRESS-1-OPS
+  cell PRESS-2 PRESS-2-OPS
+  cell WELD-1 WELD-1-OPS
+  cell WELD-2 WELD-2-OPS
+  cell WELD-3 WELD-3-OPS
+  cell WELD-4 WELD-4-OPS
+  cell WELD-5 WELD-5-OPS
+  cell UNLOADER-A UNLOADER-A-OPS
+  cell WELD-6 WELD-6-OPS
+  cell KP-PRESS KP-PRESS-OPS
+  cell KW-WELD KW-WELD-OPS
+  cell KP-UNLOAD KP-UNLOAD-OPS
+  cell KW-UNLOAD KW-UNLOAD-OPS
+  cell P5-PRESS-1 P5-PRESS-1-OPS
+  cell P5-PRESS-2 P5-PRESS-2-OPS
+  cell P5-PRESS-3 P5-PRESS-3-OPS
+  cell P5-PRESS-4 P5-PRESS-4-OPS
+  cell P5-PRESS-5 P5-PRESS-5-OPS
+  cell P5-UNLOAD-CELL P5-UNLOAD-OPS
+  operator PRESS-1-OPS
+  operator PRESS-2-OPS
+  operator WELD-1-OPS
+  operator WELD-2-OPS
+  operator WELD-3-OPS
+  operator WELD-4-OPS
+  operator PLK_W1-OPS
+  operator PLK_W2-OPS
+  operator PLK_X1-OPS
+  operator PLK_X2-OPS
+  operator UNLOADER-A-OPS
+  operator WELD-5-OPS
+  operator PLK_H1-OPS
+  operator PLK_H2-OPS
+  operator PLK_B1-OPS
+  operator PLK_B2-OPS
+  operator WELD-6-OPS
+  operator PLK_61-OPS
+  operator PLK_62-OPS
+  operator PLK_63-OPS
+  operator PLK_64-OPS
+  operator PLK_65-OPS
+  operator KP-PRESS-OPS
+  operator KW-WELD-OPS
+  operator KP-UNLOAD-OPS
+  operator KW-UNLOAD-OPS
+  operator P5-PRESS-1-OPS
+  operator P5-PRESS-2-OPS
+  operator P5-PRESS-3-OPS
+  operator P5-PRESS-4-OPS
+  operator P5-PRESS-5-OPS
+  operator P5-UNLOAD-OPS
+  core bin_types=8 payloads=29 zones=13 stations=95 bins=211 demands=13 kanbans=4 loader_settings=2
+
+edge edge2.line1
+  view station edge2.line1
+  process LINE-2 on edge2.line1
+  process SMN-10-W on edge2.line1
+  process SMN-10-X on edge2.line1
+  process DRAIN-10 on edge2.line1
+  style L2-A of LINE-2
+  style L2-B of LINE-2
+  style L2-C of LINE-2
+  style SMN-10-W-RUN of SMN-10-W
+  style SMN-10-X-RUN of SMN-10-X
+  style DRAIN-10-RUN of DRAIN-10
+  claim PRS_010 L2-A operator=LINE-2-OPS
+  claim PRS_010 L2-B operator=LINE-2-OPS
+  claim PRS_010B L2-A operator=LINE-2-OPS
+  claim PRS_010B L2-B operator=LINE-2-OPS
+  claim PRS_011 L2-A operator=LINE-2-OPS
+  claim PRS_011 L2-B operator=LINE-2-OPS
+  claim PRS_011 L2-C operator=LINE-2-OPS
+  claim WLD_010 L2-A operator=LINE-2-OPS
+  claim WLD_010 L2-B operator=LINE-2-OPS
+  claim WLD_010 L2-C operator=LINE-2-OPS
+  claim SMN_L2_01 SMN-10-W-RUN operator=SMN-10-OPS
+  claim SMN_L2_02 SMN-10-X-RUN operator=SMN-10X-OPS
+  claim FGN_L2_01 DRAIN-10-RUN operator=DRAIN-10-OPS
+  point PRESS-10 PRESS-10_COUNTER PRS_010 style=L2-A
+  cell LINE-2 LINE-2-OPS
+  cell SMN-10-W SMN-10-OPS
+  cell SMN-10-X SMN-10X-OPS
+  cell DRAIN-10 DRAIN-10-OPS
+  operator LINE-2-OPS
+  operator SMN-10-OPS
+  operator SMN-10X-OPS
+  operator DRAIN-10-OPS
+  core bin_types=8 payloads=29 zones=13 stations=95 bins=211 demands=13 kanbans=4 loader_settings=2
