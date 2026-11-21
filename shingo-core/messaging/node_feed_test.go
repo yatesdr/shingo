@@ -447,6 +447,63 @@ func lm9X(nl *protocol.NodeListResponse) float64 {
 	return math.NaN()
 }
 
+// TestNodeFeed_TheSameSceneReSyncedIsSentAgain: a sync that writes the scene
+// again unchanged (scenesync replaces each area: ReplaceAreaScene deletes its
+// rows and inserts them afresh, with new ids and synced_at = now) moves the
+// scene's revision, because scene.Revision hashes each row's (id, synced_at),
+// not what the row says. So the next heartbeat that builds the scene feed for
+// an Edge holding that scene sends it the whole geometry again: here the
+// Edge's first heartbeat (it learned the scene from a reply, which builds no
+// memo); for any Edge, the first after its station's memo ages out. PREDICTED
+// red (testdb.VerifyRed) until the revision is a hash of the scene's content,
+// when the heartbeat sends nothing. The pure rule is pinned beside the
+// function (TestRevision_IsAFunctionOfTheRowsOnly: a re-synced point is a new
+// scene).
+func TestNodeFeed_TheSameSceneReSyncedIsSentAgain(t *testing.T) {
+	t.Parallel()
+	svc, resp := nodeFeedSetup(t)
+	svc.HandleNodeListRequest(feedsPinEnv("edge.test"), &protocol.NodeListRequest{})
+	held := resp.events[len(resp.events)-1].payload.(*protocol.NodeListResponse)
+	if !hasGeometry(held) || held.SceneRevision == "" || held.SceneRevision == protocol.SceneRevisionNone {
+		t.Fatalf("fixture: the boot reply carries scene %q, geometry %v; want a real scene with geometry",
+			held.SceneRevision, hasGeometry(held))
+	}
+
+	points, err := svc.db.ListScenePoints()
+	testutil.MustNoErr(t, err, "read the scene points")
+	edges, err := svc.db.ListSceneEdges()
+	testutil.MustNoErr(t, err, "read the scene edges")
+	testutil.MustNoErr(t, svc.db.ReplaceAreaScene("AREA-G", points, edges), "sync the same scene again")
+
+	ack, sends := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: held.Digest, protocol.FeedScene: held.SceneRevision})
+	// Today's outcome, exactly: a new revision for the same rows, and one node
+	// list carrying it with the geometry the Edge already holds.
+	var violations []string
+	resynced := ack.Feeds[protocol.FeedScene]
+	if resynced != held.SceneRevision {
+		violations = append(violations, fmt.Sprintf("the same scene re-synced has a new revision, %s (was %s)",
+			resynced, held.SceneRevision))
+	}
+	for _, s := range sends {
+		nl, ok := s.payload.(*protocol.NodeListResponse)
+		if !ok {
+			t.Errorf("sent %s, want a node list or nothing", s.subject)
+			continue
+		}
+		if nl.SceneRevision != resynced || !reflect.DeepEqual(nl.ScenePoints, held.ScenePoints) ||
+			!reflect.DeepEqual(nl.SceneEdges, held.SceneEdges) {
+			t.Errorf("sent scene %s (geometry %v); want today's: the ack's revision %s with exactly the geometry "+
+				"the Edge holds", nl.SceneRevision, hasGeometry(nl), resynced)
+		}
+		violations = append(violations, fmt.Sprintf("its geometry (%d points, %d edges) was sent again to an Edge holding it",
+			len(nl.ScenePoints), len(nl.SceneEdges)))
+	}
+	if got := ack.Feeds[protocol.FeedNodes]; got != held.Digest {
+		t.Errorf("the ack quotes nodes %s, want the reply's %s (the nodes did not change)", got, held.Digest)
+	}
+	testdb.VerifyRed(t, "the same scene re-synced is sent again", violations)
+}
+
 // The feed path is strict: a failed read leaves the key out of the ack and
 // sends nothing, where the reply path still answers with what it could read.
 func TestNodeFeed_FailedReadLeavesTheKeyOut(t *testing.T) {
