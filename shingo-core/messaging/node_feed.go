@@ -268,8 +268,9 @@ type sceneRows struct {
 	edges  []*scene.Edge
 }
 
-// buildScene reads the scene for the feed path. Its digest is the existing
-// revision, a hash of the rows; a failed read of either half fails the build.
+// buildScene reads the scene for the feed path. Its digest is the scene's
+// revision, a hash of what the rows say (scene.Revision); a failed read of
+// either half fails the build.
 func (s *CoreDataService) buildScene() (string, sceneRows, error) {
 	points, err := s.db.ListScenePoints()
 	if err != nil {

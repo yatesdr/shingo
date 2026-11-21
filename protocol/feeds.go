@@ -18,10 +18,14 @@ import (
 // out of the owner's map means "could not read it": nothing is sent and nothing
 // is confirmed, because silence is not evidence that a copy is current.
 //
-// ONE DEFINITION. Every digest is computed here, over the wire value, so the two
-// sides cannot disagree about what was hashed. A holder quotes the digest that
-// arrived with the data and never recomputes it — except refusals, a table both
-// sides write, where the Edge digests its own open set with RefusalsDigest.
+// ONE DEFINITION. Every digest but the scene's is computed here, over the wire
+// value, so the two sides cannot disagree about what was hashed. The scene's
+// is its revision, Core's hash of the scene rows it holds (shingo-core
+// store/scene Revision), which the Edge only quotes. A holder quotes the digest
+// that arrived with the data and never recomputes it, except where it keeps
+// the data itself: refusals, a table both sides write (RefusalsDigest), and
+// the sourcing cache, which Core's deltas change between snapshots
+// (SourcingDigest).
 
 // Feed keys, as they appear in EdgeHeartbeat.Feeds and EdgeHeartbeatAck.Feeds.
 const (

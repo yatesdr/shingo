@@ -5,29 +5,30 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"shingo/protocol"
 )
 
-// Revision identifies one state of the scene tables, for the node-list sync's
-// "send geometry only when it changed" short-circuit.
+// Revision identifies one state of the scene, for the node-list sync's "send
+// geometry only when it changed" short-circuit and the scene feed's digest.
 //
-// A SHA-256 over (id, synced_at) of every point and every edge, in id order.
-// synced_at is the change signal because every write path bumps it — Upsert
-// sets it to NOW() and ReplaceArea deletes and re-inserts, which mints new ids
-// as well — so a row that moved, appeared or vanished changes the digest, and
-// a row that did not does not. Nothing that changes the geometry leaves both
-// id and synced_at alone.
+// A SHA-256 OVER WHAT THE ROWS SAY: every column a sync writes, of every point
+// and every edge, and neither a row's id nor its synced_at. Scene sync
+// replaces an area by deleting its rows and inserting them again
+// (ReplaceArea), which mints new ids and stamps synced_at = NOW() on every row
+// whether anything moved or not; a revision over (id, synced_at) moved on
+// every sync, and every Edge holding the scene was sent its whole geometry
+// again. Over the content, the same scene written again is the same revision,
+// and a row that moved, appeared or vanished is a new one. Pinned by
+// TestRevision_IsAFunctionOfTheContentOnly and
+// TestNodeFeed_TheSameSceneReSyncedIsNotSentAgain.
 //
-// WHY NOT max(synced_at) + count. It is nearly the same signal and it is
-// cheaper to ask the database for, but it is not equivalent: a transaction
-// that deletes one row and inserts another keeps the count, and if a
-// concurrent commit landed after that transaction began, the new row's NOW()
-// is EARLIER than the max already on the table and the max does not move.
-// Unlikely, and exactly the kind of unlikely that stops a plant's map from
-// updating with nothing to say why. The rows are already in memory for the
-// name set, so hashing them costs no extra query; the marginal price of the
-// stronger signal is zero.
+// EVERY COLUMN, NOT ONLY THE ONES THE NODE LIST CARRIES (names, classes,
+// coordinates, handles). A column the projection starts carrying later is
+// covered already; the price is one geometry send when a property the Edge
+// does not hold changes. The rows are in memory for the name set anyway, so
+// hashing them costs no query.
 //
 // NO SCENE IS ITS OWN REVISION. The Edge caches geometry only when a response
 // carries both points and edges (domain.NewSceneGeometry), so a hash over a
@@ -39,34 +40,45 @@ import (
 // that value, and the feed converges. Not "", which stays what a partial read
 // mints (messaging/scene_slices.go) and changes nothing on the Edge.
 //
-// A FUNCTION OF THE ROWS ONLY. Two Cores answering the same scene — or one
-// Core restarted — produce the same revision, so an Edge's cached revision is
-// comparable across Core lifetimes. It must never depend on read order, the
-// clock, or the process.
+// A FUNCTION OF THE CONTENT ONLY. Two Cores answering the same scene, one Core
+// restarted, or one scene synced twice give the same revision, so an Edge's
+// cached revision is comparable across Core lifetimes and syncs. It does not
+// depend on read order, row ids, the clock or the process: each row is one
+// line, its strings quoted and its numbers exact, the lines are sorted, and the
+// hash is over the sorted lines.
 func Revision(points []*Point, edges []*Edge) string {
 	if len(points) == 0 || len(edges) == 0 {
 		return protocol.SceneRevisionNone
 	}
-	type row struct {
-		id int64
-		ns int64
-	}
-	ps := make([]row, 0, len(points))
+	lines := make([]string, 0, len(points)+len(edges))
 	for _, p := range points {
-		ps = append(ps, row{p.ID, p.SyncedAt.UnixNano()})
+		lines = append(lines, fmt.Sprintf("p %q %q %q %q %q %q %s %s %s %s %q",
+			p.AreaName, p.InstanceName, p.ClassName, p.PointName, p.GroupName, p.Label,
+			revisionFloat(p.PosX), revisionFloat(p.PosY), revisionFloat(p.PosZ), revisionFloat(p.Dir),
+			p.PropertiesJSON))
 	}
-	es := make([]row, 0, len(edges))
 	for _, e := range edges {
-		es = append(es, row{e.ID, e.SyncedAt.UnixNano()})
+		lines = append(lines, fmt.Sprintf("e %q %q %q %q %q %s %s %s %s %s %s %s %s",
+			e.AreaName, e.InstanceName, e.ClassName, e.FromName, e.ToName,
+			revisionFloat(e.FromX), revisionFloat(e.FromY), revisionFloat(e.ToX), revisionFloat(e.ToY),
+			revisionHandle(e.Ctrl1X), revisionHandle(e.Ctrl1Y), revisionHandle(e.Ctrl2X), revisionHandle(e.Ctrl2Y)))
 	}
-	sort.Slice(ps, func(i, j int) bool { return ps[i].id < ps[j].id })
-	sort.Slice(es, func(i, j int) bool { return es[i].id < es[j].id })
+	sort.Strings(lines)
 	h := sha256.New()
-	for _, r := range ps {
-		fmt.Fprintf(h, "p:%d:%d\n", r.id, r.ns)
-	}
-	for _, r := range es {
-		fmt.Fprintf(h, "e:%d:%d\n", r.id, r.ns)
+	for _, l := range lines {
+		fmt.Fprintln(h, l)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// revisionFloat is a number exactly: the shortest text that reads back as the
+// same float64.
+func revisionFloat(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
+
+// revisionHandle is a control handle: "-" for none, which no number prints as.
+func revisionHandle(v *float64) string {
+	if v == nil {
+		return "-"
+	}
+	return revisionFloat(*v)
 }

@@ -456,9 +456,8 @@ func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 
 // ── Every feed's golden digest ─────────────────────────────────────────────
 
-// goldenAt is the instant the golden fixtures stamp: the scene's sync, which
-// its revision hashes, and the refusals' and verdicts' times, which their
-// digests leave out.
+// goldenAt is the instant the golden fixtures stamp: the refusals' and
+// verdicts' times, which their digests leave out.
 var goldenAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 // feedGolden is one feed's golden: a fixed input written to a fresh database
@@ -546,34 +545,22 @@ var feedGoldens = map[string]feedGolden{
 		},
 	},
 	// Not JSON: scene.Revision is the SHA-256 of one "\n"-terminated line per
-	// row, "p:<id>:<synced_at in Unix ns>" for each point then "e:..." for each
-	// edge: here p:1, p:2, e:1, e:2, each at goldenAt (1767323045000000000). It
-	// hashes no part of what a row says, so it cannot be recomputed from the
-	// wire value: fromWire is the revision the node list carries. A revision
-	// that hashes the content moves this golden on purpose, and every Edge is
-	// sent its geometry once.
+	// row, sorted, each a row's columns with its strings quoted (%q) and its
+	// numbers exact, a handle that is not there written "-":
+	//   e "AREA-G" "CP51-LM54" "StraightPath" "CP51" "LM54" -9.338 6.23 -8.855 6.221 - - - -
+	//   e "AREA-G" "LM9-PP224" "BezierPath" "LM9" "PP224" -0.604 22.449 0.986 22.169 -0.287 22.094 0.303 22.142
+	//   p "AREA-G" "LM9" "LocationMark" "" "" "" -0.604 22.449 0 1.5708 "{}"
+	//   p "AREA-G" "PLN_ORIGIN" "GeneralLocation" "AP1" "" "" 0 0 0 0 "{}"
+	// Row ids and synced_at are not in it. It covers columns the wire does not
+	// carry (a point's properties), so fromWire is the revision the node list
+	// carries. The golden moved once, from the hash of each row's (id,
+	// synced_at), when the revision became the content's: every Edge is sent
+	// its geometry once on that upgrade.
 	protocol.FeedScene: {
 		carrier: protocol.SubjectNodeListResponse,
-		golden:  "565ac6093cd8d1ec04d3fc5850258d9e59d679bee4a5ef301201a02ca82ab300",
+		golden:  "edcc4e48f82820b49fed786cf76a449d4d3f9cf97aa27c578ff8ac8e5cc1b330",
 		seed: func(t *testing.T, svc *CoreDataService) {
 			sceneRequest(t, svc.db)
-			for _, table := range []string{"scene_points", "scene_edges"} {
-				_, err := svc.db.Exec(`UPDATE `+table+` SET synced_at = $1`, goldenAt)
-				testutil.MustNoErr(t, err, "stamp "+table)
-				var ids []int64
-				rows, err := svc.db.Query(`SELECT id FROM ` + table + ` ORDER BY id`)
-				testutil.MustNoErr(t, err, "read the ids of "+table)
-				for rows.Next() {
-					var id int64
-					testutil.MustNoErr(t, rows.Scan(&id), "scan an id")
-					ids = append(ids, id)
-				}
-				testutil.MustNoErr(t, rows.Close(), "close")
-				if !reflect.DeepEqual(ids, []int64{1, 2}) {
-					t.Fatalf("fixture: %s ids %v, want [1 2]: the golden revision hashes the ids, and a new "+
-						"database's sequence starts at 1", table, ids)
-				}
-			}
 		},
 		fromWire: func(t *testing.T, sent any) string {
 			nl := decodeWire[protocol.NodeListResponse](t, sent)

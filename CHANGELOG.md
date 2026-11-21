@@ -41,6 +41,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - Core Test Orders: an order that fails while the page is open says so in a toast that stays until its × is tapped (it went after 6 s); the page's other toasts look and last like every other page's
 - Station: an error toast stays 5 minutes or until its × is tapped (it went at 3.2 s); a done or a notice stays 10 s; every toast has a ×; still three at most, bottom right above the footer, and an order that failed or was cancelled still stays until its × is tapped
 - An Edge that asks Core for its node list or the parts catalog is no longer sent an older copy back on its next heartbeats: after a group was moved or deleted, the map synced or a part edited, the old list, map or catalog could come back for up to two minutes
+- Core no longer sends every Edge the whole robot map again each time it re-reads an unchanged map from the fleet (each fleet reconnect and the daily map check). Each Edge is sent the map once more after this upgrade
 
 ## v0.18.0 — 2026-11-21
 

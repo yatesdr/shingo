@@ -3,7 +3,6 @@
 package messaging
 
 import (
-	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -417,19 +416,16 @@ func lm9X(nl *protocol.NodeListResponse) float64 {
 	return math.NaN()
 }
 
-// TestNodeFeed_TheSameSceneReSyncedIsSentAgain: a sync that writes the scene
-// again unchanged (scenesync replaces each area: ReplaceAreaScene deletes its
-// rows and inserts them afresh, with new ids and synced_at = now) moves the
-// scene's revision, because scene.Revision hashes each row's (id, synced_at),
-// not what the row says. So the next heartbeat that builds the scene feed for
-// an Edge holding that scene sends it the whole geometry again: here the
-// Edge's first heartbeat (it learned the scene from a reply, which builds no
-// memo); for any Edge, the first after its station's memo ages out. PREDICTED
-// red (testdb.VerifyRed) until the revision is a hash of the scene's content,
-// when the heartbeat sends nothing. The pure rule is pinned beside the
-// function (TestRevision_IsAFunctionOfTheRowsOnly: a re-synced point is a new
-// scene).
-func TestNodeFeed_TheSameSceneReSyncedIsSentAgain(t *testing.T) {
+// TestNodeFeed_TheSameSceneReSyncedIsNotSentAgain: a sync that writes the
+// scene again unchanged (scenesync replaces each area: ReplaceAreaScene deletes
+// its rows and inserts them afresh, with new ids and synced_at = now) keeps
+// the scene's revision, which hashes what the rows say (scene.Revision), and
+// the next heartbeat that builds the scene feed for an Edge holding that scene
+// sends nothing. Before, the revision hashed each row's (id, synced_at), so
+// every sync was a new scene and every Edge was sent its whole geometry again.
+// The pure rule is pinned beside the function
+// (TestRevision_IsAFunctionOfTheContentOnly).
+func TestNodeFeed_TheSameSceneReSyncedIsNotSentAgain(t *testing.T) {
 	t.Parallel()
 	svc, resp := nodeFeedSetup(t)
 	svc.HandleNodeListRequest(feedsPinEnv("edge.test"), &protocol.NodeListRequest{})
@@ -446,32 +442,20 @@ func TestNodeFeed_TheSameSceneReSyncedIsSentAgain(t *testing.T) {
 	testutil.MustNoErr(t, svc.db.ReplaceAreaScene("AREA-G", points, edges), "sync the same scene again")
 
 	ack, sends := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: held.Digest, protocol.FeedScene: held.SceneRevision})
-	// Today's outcome, exactly: a new revision for the same rows, and one node
-	// list carrying it with the geometry the Edge already holds.
-	var violations []string
-	resynced := ack.Feeds[protocol.FeedScene]
-	if resynced != held.SceneRevision {
-		violations = append(violations, fmt.Sprintf("the same scene re-synced has a new revision, %s (was %s)",
-			resynced, held.SceneRevision))
+	if got := ack.Feeds[protocol.FeedScene]; got != held.SceneRevision {
+		t.Errorf("the same scene re-synced has a new revision, %s (was %s)", got, held.SceneRevision)
 	}
 	for _, s := range sends {
-		nl, ok := s.payload.(*protocol.NodeListResponse)
-		if !ok {
-			t.Errorf("sent %s, want a node list or nothing", s.subject)
+		if nl, ok := s.payload.(*protocol.NodeListResponse); ok {
+			t.Errorf("the scene's geometry (%d points, %d edges) was sent again to an Edge holding it",
+				len(nl.ScenePoints), len(nl.SceneEdges))
 			continue
 		}
-		if nl.SceneRevision != resynced || !reflect.DeepEqual(nl.ScenePoints, held.ScenePoints) ||
-			!reflect.DeepEqual(nl.SceneEdges, held.SceneEdges) {
-			t.Errorf("sent scene %s (geometry %v); want today's: the ack's revision %s with exactly the geometry "+
-				"the Edge holds", nl.SceneRevision, hasGeometry(nl), resynced)
-		}
-		violations = append(violations, fmt.Sprintf("its geometry (%d points, %d edges) was sent again to an Edge holding it",
-			len(nl.ScenePoints), len(nl.SceneEdges)))
+		t.Errorf("sent %s, want nothing", s.subject)
 	}
 	if got := ack.Feeds[protocol.FeedNodes]; got != held.Digest {
 		t.Errorf("the ack quotes nodes %s, want the reply's %s (the nodes did not change)", got, held.Digest)
 	}
-	testdb.VerifyRed(t, "the same scene re-synced is sent again", violations)
 }
 
 // The feed path is strict: a failed read leaves the key out of the ack and

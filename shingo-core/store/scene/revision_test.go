@@ -7,15 +7,18 @@ import (
 	"shingo/protocol"
 )
 
-// Revision is a pure function of the rows, and these pin the three properties
-// the node-list short-circuit rests on: read order does not matter, a moved
-// row changes it, and a point and an edge with the same id are not confused.
-func TestRevision_IsAFunctionOfTheRowsOnly(t *testing.T) {
+// Revision is a pure function of what the rows say, and these pin the
+// properties the node-list short-circuit and the scene feed rest on: read
+// order does not matter, the same scene written again (new ids, new
+// synced_at) is the same revision, a moved, added or removed row is a new one,
+// and no two different scenes are confused by how their rows are cut into
+// fields or tables.
+func TestRevision_IsAFunctionOfTheContentOnly(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 9, 3, 1, 44, 23, 0, time.UTC)
-	p1 := &Point{ID: 1, InstanceName: "PLN_001", SyncedAt: t0}
-	p2 := &Point{ID: 2, InstanceName: "LM9", SyncedAt: t0}
-	e1 := &Edge{ID: 1, FromName: "LM9", ToName: "PP224", SyncedAt: t0}
+	p1 := &Point{ID: 1, AreaName: "A", InstanceName: "PLN_001", ClassName: "GeneralLocation", PosX: 1.5, PosY: -2, SyncedAt: t0}
+	p2 := &Point{ID: 2, AreaName: "A", InstanceName: "LM9", ClassName: "LocationMark", PosX: -0.604, PosY: 22.449, Dir: 1.5708, SyncedAt: t0}
+	e1 := &Edge{ID: 1, AreaName: "A", InstanceName: "LM9-PP224", FromName: "LM9", ToName: "PP224", FromX: -0.604, ToX: 0.986, SyncedAt: t0}
 
 	a := Revision([]*Point{p1, p2}, []*Edge{e1})
 	b := Revision([]*Point{p2, p1}, []*Edge{e1})
@@ -25,30 +28,48 @@ func TestRevision_IsAFunctionOfTheRowsOnly(t *testing.T) {
 	if len(a) != 64 {
 		t.Errorf("revision %q is not a hex SHA-256", a)
 	}
-
-	// The same rows re-read later, untouched: same revision. The clock is not
-	// an input.
 	if c := Revision([]*Point{p1, p2}, []*Edge{e1}); c != a {
 		t.Errorf("an unchanged scene produced a new revision")
 	}
 
-	// A point re-synced (synced_at bumped, nothing else) is a new scene.
-	moved := &Point{ID: 2, InstanceName: "LM9", SyncedAt: t0.Add(time.Second)}
-	if d := Revision([]*Point{p1, moved}, []*Edge{e1}); d == a {
-		t.Error("a re-synced point left the revision unchanged")
+	// The same scene synced again: ReplaceArea deletes the area and inserts it,
+	// so every row has a new id and a new synced_at, and nothing else moved.
+	resynced := func(p Point) *Point { p.ID += 100; p.SyncedAt = t0.Add(time.Hour); return &p }
+	e1again := *e1
+	e1again.ID, e1again.SyncedAt = 7, t0.Add(time.Hour)
+	if d := Revision([]*Point{resynced(*p1), resynced(*p2)}, []*Edge{&e1again}); d != a {
+		t.Errorf("the same scene synced again has a new revision %s (was %s)", d, a)
 	}
 
-	// A row removed is a new scene, even with the count restored by an
-	// insert that happens to carry an OLDER synced_at than the table's max.
-	replaced := &Point{ID: 3, InstanceName: "LM10", SyncedAt: t0.Add(-time.Hour)}
-	if e := Revision([]*Point{p1, replaced}, []*Edge{e1}); e == a {
-		t.Error("delete+insert with the count preserved left the revision unchanged — this is the case max(synced_at)+count misses")
+	// A point moved a millimetre is a new scene.
+	moved := *p2
+	moved.PosX += 0.001
+	if d := Revision([]*Point{p1, &moved}, []*Edge{e1}); d == a {
+		t.Error("a moved point left the revision unchanged")
+	}
+	// A row replaced by another, the count kept, is a new scene.
+	replaced := &Point{ID: 3, AreaName: "A", InstanceName: "LM10", ClassName: "LocationMark", SyncedAt: t0.Add(-time.Hour)}
+	if d := Revision([]*Point{p1, replaced}, []*Edge{e1}); d == a {
+		t.Error("a row replaced, the count kept, left the revision unchanged")
+	}
+	// A handle at the origin is not a straight segment's missing handle.
+	zero := 0.0
+	bowed := *e1
+	bowed.Ctrl1X, bowed.Ctrl1Y, bowed.Ctrl2X, bowed.Ctrl2Y = &zero, &zero, &zero, &zero
+	if d := Revision([]*Point{p1, p2}, []*Edge{&bowed}); d == a {
+		t.Error("handles at (0,0) hash like no handles")
 	}
 
-	// Point 1 and edge 1 share an id; moving an edge into the point table (or
-	// vice versa) must not collide.
-	if f := Revision([]*Point{p1, p2, {ID: 9, SyncedAt: t0}}, []*Edge{e1}); f == Revision([]*Point{p1, p2}, []*Edge{e1, {ID: 9, SyncedAt: t0}}) {
-		t.Error("a point and an edge with the same id and stamp hash alike")
+	// A point and an edge saying the same names do not collide, nor do two
+	// rows that split the same text across different fields.
+	if f := Revision([]*Point{p1, p2, {AreaName: "A", InstanceName: "X"}}, []*Edge{e1}); f == Revision([]*Point{p1, p2}, []*Edge{e1, {AreaName: "A", InstanceName: "X"}}) {
+		t.Error("a point and an edge with the same names hash alike")
+	}
+	split := func(class, label string) string {
+		return Revision([]*Point{p1, {AreaName: "A", InstanceName: "LM9", ClassName: class, Label: label}}, []*Edge{e1})
+	}
+	if split("A B", "C") == split("A", "B C") {
+		t.Error("two points that cut the same text into different fields hash alike")
 	}
 }
 

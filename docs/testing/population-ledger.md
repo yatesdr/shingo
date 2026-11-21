@@ -2185,3 +2185,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row (the same table is read under the new name)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### STALE — `TestRevision_IsAFunctionOfTheRowsOnly`
+- test: `TestRevision_IsAFunctionOfTheRowsOnly` · pkg `shingocore/store/scene` · run `-run '^TestRevision_IsAFunctionOfTheRowsOnly$'` · `shingo-core/store/scene/revision_test.go:13` @ `d2686a1d` · tags `none`
+- code: STALE
+- assertion map: renamed `TestRevision_IsAFunctionOfTheContentOnly` (`shingo-core/store/scene/revision_test.go`) when the scene revision became a hash of what the rows say instead of each row's (id, synced_at): read order does not matter, a hex SHA-256, an unchanged scene keeps its revision, a row replaced with the count kept is a new scene, a point and an edge do not collide (kept, over content); a re-synced point (synced_at bumped, nothing else) is now the same scene, not a new one (flipped: the build's C4 ruling, one geometry send per Edge at upgrade). Added: a point moved a millimetre, handles at (0,0) against none, and the same text cut into different fields are each a new scene.
+- mutation: the revision over (id, synced_at), as at `d2686a1d` · rewritten red: `go test -count=1 -run 'TestRevision_' ./store/scene/` → `revision_test.go:41: the same scene synced again has a new revision …`, `revision_test.go:48: a moved point left the revision unchanged`, `revision_test.go:60: handles at (0,0) hash like no handles`, `revision_test.go:72: two points that cut the same text into different fields hash alike`, `--- FAIL: TestRevision_IsAFunctionOfTheContentOnly`
+- coverage Δ: not measured for this row (the same function runs under the new name)
+- citations rewritten: `TestNodeFeed_TheSameSceneReSyncedIsNotSentAgain`'s header
+- verified at: the commit that adds this row
