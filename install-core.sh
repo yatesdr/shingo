@@ -973,8 +973,12 @@ if [ -f /etc/shingo/shingocore.yaml ]; then
 fi
 WEB_URL="http://${WEB_HOST}:${WEB_PORT}/login"
 HEALTH_WAIT_S=900
-echo "==> Waiting up to ${HEALTH_WAIT_S}s for Core to answer ${WEB_URL}"
-echo "    (a release that migrates the database starts serving only when the migration is done)"
+if [ "$MODE" = "FRESH" ]; then
+    echo "==> Waiting for shingo-core to be active (a fresh box has no database configured, so Core cannot answer yet)"
+else
+    echo "==> Waiting up to ${HEALTH_WAIT_S}s for Core to answer ${WEB_URL}"
+    echo "    (a release that migrates the database starts serving only when the migration is done)"
+fi
 HEALTHY=no
 HEALTH_CODE=""
 wait_start=$SECONDS
@@ -1018,13 +1022,37 @@ fi
 # every other signal while executing the previous build. Verify what is ACTUALLY
 # executing via /proc/<pid>/exe: after the binary is replaced, a stale process's
 # exe link resolves to the unlinked inode and Linux marks it "(deleted)".
+#
+# ON systemd 255 AND LATER, MainPID IS systemd-executor FOR A MOMENT. systemd
+# starts a service through systemd-executor, which then execs the binary, and a
+# Type=simple unit reads active before that exec. A fresh install waits only for
+# active, so it read the executor here and stopped with "running an unexpected
+# binary" (measured 2026-11-21 on systemd 259, Ubuntu 26.04 under WSL: v0.17.3's
+# installer and this one's, each on a fresh box). A fresh Core, with no database
+# yet, also restarts every 5 s and has no MainPID in between. So the check looks
+# again, for up to 15 s, while MainPID is missing or is the executor; a deleted
+# or foreign binary still fails at once below. Do not drop the look-again for a
+# single read: that is the version that failed. Expiry: when no box this installs
+# on runs a systemd that starts services through an executor.
 echo "==> Verifying the running process is the binary we installed..."
-RUN_PID=$(systemctl show shingo-core -p MainPID --value 2>/dev/null || echo "")
+verify_until=$((SECONDS + 15))
+while :; do
+    RUN_PID=$(systemctl show shingo-core -p MainPID --value 2>/dev/null || echo "")
+    RUN_EXE=""
+    if [ -n "$RUN_PID" ] && [ "$RUN_PID" != "0" ]; then
+        RUN_EXE=$(readlink "/proc/$RUN_PID/exe" 2>/dev/null || echo "")
+    fi
+    case "$RUN_EXE" in
+        ""|*/systemd-executor) ;;
+        *) break ;;
+    esac
+    [ "$SECONDS" -ge "$verify_until" ] && break
+    sleep 0.5
+done
 if [ -z "$RUN_PID" ] || [ "$RUN_PID" = "0" ]; then
     echo "ERROR: could not determine shingo-core MainPID; cannot verify the build."
     exit 1
 fi
-RUN_EXE=$(readlink "/proc/$RUN_PID/exe" 2>/dev/null || echo "")
 case "$RUN_EXE" in
     *"(deleted)"*)
         echo "ERROR: shingo-core (pid=$RUN_PID) is running a DELETED binary:"
