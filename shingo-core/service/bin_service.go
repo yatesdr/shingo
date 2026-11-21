@@ -332,12 +332,56 @@ type MoveResult struct {
 // to `_TRANSIT` by hand to free its slot, and the inference then blamed the
 // robot of its last order for losing it. The engine's own carrier parking
 // calls Move directly and is unaffected.
+//
+// THE NODE THE BIN LEFT IS TOLD IN THE MOVE'S TRANSACTION (releasedFrom), so
+// the Released commits with the move or not at all, and it carries the move's
+// placement stamp, which a seat the carrier has landed on again since holds a
+// newer one of (the Edge refuses it there). The engine's carrier parking sends
+// no Released, as before.
 func (s *BinService) MoveByHand(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	if dest, err := s.db.GetNode(toNodeID); err == nil && wasUnlocated(dest.Name) {
 		return nil, fmt.Errorf("%s is not a location — a bin goes there only when a robot picks it up; "+
 			"to take a bin out of a slot, move it to where it physically went", dest.Name)
 	}
-	return s.Move(b, toNodeID)
+	return s.move(b, toNodeID, s.releasedFrom(b))
+}
+
+// releasedFrom is the hand move's Released for the node b stood at when it was
+// read (b is not moved in memory): an outbox row on the move's transaction,
+// broadcast as it always was (the Edge whose seat still points at the carrier
+// clears it; every other Edge drops it), carrying the move's placement stamp
+// (protocol.UOPAdjustment.PlacedSeq). Every landing the move ends was stamped
+// before it; a landing after it, the carrier brought back, is stamped after
+// it, and the Edge refuses a Released for a seat bound at a newer stamp.
+//
+// It used to be sent from the bins page's handler after the move committed:
+// a Core that stopped between the two moved the carrier and never told the
+// seat, and a late copy cleared the same carrier landed there again.
+//
+// Cost: one outbox row, as the after-commit send wrote; the stamp comes back
+// from the move's own UPDATE (helpers.ArrivalReturningSQL), +0 statements.
+func (s *BinService) releasedFrom(b *bins.Bin) store.OnPlaced {
+	if b.NodeName == "" {
+		return nil
+	}
+	return func(tx *sql.Tx, p store.Placed) error {
+		if s.manifest == nil || !s.manifest.announce.Wired() {
+			log.Printf("bin_move: bin %d moved off %s with no announce topic wired — "+
+				"the station modelling that node keeps counting it", b.ID, b.NodeName)
+			return nil
+		}
+		if err := s.manifest.announce.SendTo(tx, protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
+			BinID:        b.ID,
+			CoreNodeName: b.NodeName,
+			Released:     true,
+			PlacedSeq:    p.PlacedSeq,
+			Actor:        protocol.AuditActorUI,
+			AdjustedAt:   time.Now().UTC(),
+		}); err != nil {
+			return fmt.Errorf("release bin %d from %s: %w", b.ID, b.NodeName, err)
+		}
+		return nil
+	}
 }
 
 // CarrierTypeWarning is the hand move's carrier check (owner, 2026-11-12,
@@ -378,6 +422,12 @@ func (s *BinService) CarrierTypeWarning(b *bins.Bin) (string, error) {
 //   - destination node exists
 //   - destination is either synthetic or empty (refuseOccupied)
 func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
+	return s.move(b, toNodeID, nil)
+}
+
+// move is Move with left, when not nil, run on the move's transaction after
+// the landing: what the node the bin left is told (MoveByHand's releasedFrom).
+func (s *BinService) move(b *bins.Bin, toNodeID int64, left store.OnPlaced) (*MoveResult, error) {
 	if toNodeID == 0 {
 		return nil, fmt.Errorf("node_id is required")
 	}
@@ -417,7 +467,13 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	// still gets, addressed (H.7). The engine's own carrier parking also comes
 	// through here, onto a robot's synthetic deck node, where nothing is sent.
 	onPlaced := func(tx *sql.Tx, p store.Placed) error {
-		return s.announceLanding(tx, p, 0, true, protocol.AuditActorUI)
+		if err := s.announceLanding(tx, p, 0, true, protocol.AuditActorUI); err != nil {
+			return err
+		}
+		if left == nil {
+			return nil
+		}
+		return left(tx, p)
 	}
 	if err := s.db.MoveBinByHandAnnounced(b.ID, toNodeID, clearStaging, offTransit, onPlaced); err != nil {
 		return nil, err

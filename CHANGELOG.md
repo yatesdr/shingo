@@ -19,6 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 
 - A count, load or clear from Core (the Bins page, the line's count, a press finishing a cart) that reaches a station late, or after the station took the cart's new life from an epoch refresh, keeps the parts the station counted since; it used to write over them, or be ignored and leave the station's number off Core's
+- A cart moved by hand on the Bins page is taken off the station it left in the same step as the move; a move whose notice cannot be written is refused, not made with the station never told
 - A late notice that a cart was moved by hand on the Bins page no longer takes the cart off a station it has been moved back to, which stopped the line counting it
 - Two Edges that report the same process no longer re-send its claims every two minutes; the Edges page still flags the process on both until one of them stops reporting it, and the flag now stays through a Core restart
 - The Edge's Configuration page shows the Station UID as text and can no longer change it; a save from a page that still sends a different one is refused. A replacement box takes the old station's uid with shingoedge --restore

@@ -614,6 +614,15 @@ func TestExecuteBinAction_Move(t *testing.T) {
 		t.Errorf("node_id after move: got %v, want %d", got.NodeID, sd.LineNode.ID)
 	}
 	requireAudit(t, db, bin.ID, "moved", sd.StorageNode.Name, sd.LineNode.Name, "ui")
+
+	// The node the bin left is told once, by the Released the move wrote in
+	// its own transaction with its placement stamp (service
+	// TestMoveByHand_TellsTheNodeItLeftWithTheMovesStamp). This door used to
+	// send its own, unstamped, after the commit.
+	adjs := adjustmentsForBin(t, db, bin.ID)
+	if len(adjs) != 1 || !adjs[0].Released || adjs[0].CoreNodeName != sd.StorageNode.Name || adjs[0].PlacedSeq == 0 {
+		t.Errorf("the move enqueued %+v, want exactly one Released of %s, stamped", adjs, sd.StorageNode.Name)
+	}
 }
 
 func TestExecuteBinAction_Move_MissingNodeID(t *testing.T) {

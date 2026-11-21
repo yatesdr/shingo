@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"time"
 
 	"shingo/protocol"
 	"shingocore/domain"
@@ -258,31 +257,16 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 		// carries an empty Resource, which is the accurate answer.
 	}})
 
-	// Tell Edge to release the bin from its OLD node's runtime so that node
-	// stops attributing PLC consumption to a bin that has moved away (the
-	// "moved bin keeps counting down" bug). Reuses the UOP-adjustment Core→Edge
-	// channel with Released=true; the Edge handler's active-bin guard ensures
-	// only the node still pointing at this bin clears it. Broadcast like
-	// binRecordCount — Core shouldn't pre-resolve a node-scoped change to one
-	// station. (b.NodeName is still the OLD node here; Move() doesn't mutate b.)
-	if b.NodeName != "" {
-		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
-			BinID:        b.ID,
-			CoreNodeName: b.NodeName,
-			Released:     true,
-			Actor:        protocol.AuditActorUI,
-			AdjustedAt:   time.Now().UTC(),
-		}); err != nil {
-			log.Printf("bin_move: release-from-edge broadcast bin %d (old node %s): %v", b.ID, b.NodeName, err)
-		}
-	}
-
-	// The NEW node hears of the move from the landing MoveByHand wrote in the
-	// move's own transaction (Lane H, H.2; service.announceLanding), addressed
-	// to the station claiming the node (H.3). This used to be a broadcast
-	// Bound here, after the commit. An Edge too old for the landing gets that
-	// Bound, addressed to it (H.7). The release above stays as it was (SYNTH
-	// §9).
+	// Both nodes hear of the move from rows MoveByHand wrote in the move's own
+	// transaction. The OLD node gets the Released (BinService.releasedFrom):
+	// the Edge whose seat still points at the bin clears it, so its PLC ticks
+	// stop counting down a bin that has moved away (the "moved bin keeps
+	// counting down" bug), unless that seat has bound the carrier again since,
+	// at a newer placement stamp. The NEW node gets the landing
+	// (service.announceLanding), addressed to the station claiming the node
+	// (Lane H, H.2, H.3); an Edge too old for the landing gets a Bound,
+	// addressed to it (H.7). Both used to be sent from here after the commit,
+	// the Released broadcast and the landing as a broadcast Bound.
 	return nil
 }
 

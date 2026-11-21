@@ -302,6 +302,94 @@ func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesThePlantsOnlyEdge(t *testin
 	}
 }
 
+// TestMoveByHand_TellsTheNodeItLeftWithTheMovesStamp: a hand move from seat A
+// to seat B writes, in its own transaction, the landing at B and the Released
+// for A, broadcast, carrying the landing's placement stamp. Moved back, the
+// landing at A is stamped after that Released, which is what lets the Edge
+// refuse it there if it arrives late (the Edge's
+// TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain).
+func TestMoveByHand_TellsTheNodeItLeftWithTheMovesStamp(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	const edge = "edge-rl.line"
+	registerEdgeSchema(t, db, edge, protocol.EdgeSchemaBinLanded)
+	seatA, seatB := ownedSeat(t, db, "SEAT-RL-A", edge), ownedSeat(t, db, "SEAT-RL-B", edge)
+	bin := createTestBin(t, db, seatA.ID, "BIN-RL", "PART-A", 60)
+
+	move := func(to *nodes.Node) (landingSeq int64, released protocol.UOPAdjustment, dst string) {
+		t.Helper()
+		fresh, err := db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "read the bin")
+		before := len(outboxAdjustments(t, db, bin.ID))
+		_, err = binSvc.MoveByHand(fresh, to.ID)
+		testutil.MustNoErr(t, err, "the hand move to "+to.Name)
+		landings := landingsFor(t, db, bin.ID)
+		if len(landings) == 0 || landings[len(landings)-1].L.CoreNodeName != to.Name {
+			t.Fatalf("no landing at %s after the move", to.Name)
+		}
+		adjs, dsts := outboxAdjustments(t, db, bin.ID), adjustmentDsts(t, db, bin.ID)
+		if len(adjs) != before+1 {
+			t.Fatalf("the move wrote %d adjustments, want 1: the Released, in the move's transaction", len(adjs)-before)
+		}
+		return landings[len(landings)-1].L.PlacedSeq, adjs[len(adjs)-1], dsts[len(dsts)-1]
+	}
+
+	toB, relA, dstA := move(seatB)
+	if !relA.Released || relA.CoreNodeName != seatA.Name || relA.BinID != bin.ID || dstA != protocol.StationBroadcast {
+		t.Errorf("the move's adjustment is %+v to %q, want the Released of bin %d from %s, broadcast",
+			relA, dstA, bin.ID, seatA.Name)
+	}
+	if toB == 0 || relA.PlacedSeq != toB {
+		t.Errorf("the Released carries stamp %d, want the move's own, %d (the landing at %s)", relA.PlacedSeq, toB, seatB.Name)
+	}
+
+	toA, relB, _ := move(seatA)
+	if relB.CoreNodeName != seatB.Name || relB.PlacedSeq != toA {
+		t.Errorf("moved back, the Released is %+v, want from %s at the landing's stamp %d", relB, seatB.Name, toA)
+	}
+	if toA <= relA.PlacedSeq {
+		t.Errorf("the landing back at %s is stamped %d, not after the Released that left it (%d): "+
+			"a late copy of that Released could not be told from the move that ends this stay",
+			seatA.Name, toA, relA.PlacedSeq)
+	}
+}
+
+// TestMoveByHand_AReleasedThatCannotBeWrittenRefusesTheMove: the Released is
+// written in the move's transaction, so an outbox that refuses it refuses the
+// move: the bin stays where it was and no landing is written. It used to be
+// sent after the commit, and a send that failed was logged with the bin moved
+// and the seat it left never told.
+func TestMoveByHand_AReleasedThatCannotBeWrittenRefusesTheMove(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	const edge = "edge-rf.line"
+	registerEdgeSchema(t, db, edge, protocol.EdgeSchemaBinLanded)
+	seatA, seatB := ownedSeat(t, db, "SEAT-RF-A", edge), ownedSeat(t, db, "SEAT-RF-B", edge)
+	bin := createTestBin(t, db, seatA.ID, "BIN-RF", "PART-A", 60)
+	_, err := db.Exec(`CREATE FUNCTION refuse_adjustments() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'outbox fault: %', NEW.msg_type; END $$`)
+	testutil.MustNoErr(t, err, "the fault's function")
+	_, err = db.Exec(`CREATE TRIGGER refuse_adjustments BEFORE INSERT ON outbox FOR EACH ROW
+		WHEN (NEW.msg_type = 'data.` + protocol.SubjectUOPAdjustment + `') EXECUTE FUNCTION refuse_adjustments()`)
+	testutil.MustNoErr(t, err, "the fault's trigger")
+
+	if _, err := binSvc.MoveByHand(bin, seatB.ID); err == nil {
+		t.Fatal("the move succeeded with its Released refused, want it refused with it")
+	}
+	got, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read the bin")
+	if got.NodeID == nil || *got.NodeID != seatA.ID {
+		t.Errorf("the bin is at %v, want still at %s (%d): the move and its Released commit together", got.NodeID, seatA.Name, seatA.ID)
+	}
+	if n := len(landingsFor(t, db, bin.ID)); n != 0 {
+		t.Errorf("%d landing(s) written by a refused move, want none", n)
+	}
+}
+
 // TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesEveryEdge — two Edges: a
 // landing to each.
 func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesEveryEdge(t *testing.T) {
