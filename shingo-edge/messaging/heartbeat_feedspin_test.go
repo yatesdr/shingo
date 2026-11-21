@@ -16,7 +16,8 @@ import (
 
 // TestFeedsPin_HeartbeatBodyBytes pins the heartbeat payload byte for byte
 // (key order follows the struct). feeds is null while FeedsFn is unwired (the
-// wired map is TestHeartbeater_FeedsAndTheReAsk's), and there is no uptime_s
+// wired map is TestHeartbeater_FeedsAndTheReAsk's), owned is null while
+// nothing fills EdgeHeartbeat.Owned, and there is no uptime_s
 // or active_orders: "fix(core,edge): ack on a registry failure, no plant-wide
 // list on a read error, reconcile after an ack gap, uptime and order count off
 // the heartbeat" removed both (no Core reader; the count was a store read
@@ -31,7 +32,7 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 		{
 			name: "unwired",
 			wire: func(h *Heartbeater) {},
-			want: `{"station_id":"edge.test","feeds":null}`,
+			want: `{"station_id":"edge.test","feeds":null,"owned":null}`,
 		},
 		{
 			// The name predates the order count's removal: only the zone and
@@ -41,7 +42,7 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 				h.TimezoneFn = func() string { return "America/Chicago" }
 				h.TickLagFn = func() (int64, int64, bool) { return 2, 1500, true }
 			},
-			want: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null}`,
+			want: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null,"owned":null}`,
 		},
 	}
 	for _, tc := range cases {

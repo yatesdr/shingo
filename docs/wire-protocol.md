@@ -653,7 +653,7 @@ takes the data channel's TTL.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `digest` | string |  | Digest is CellCatalogDigest(Cells), set by the Edge where it builds the catalog. Core should keep it with the station's cells and quote it back on the heartbeat ack, never recomputing it. |
+| `digest` | string |  | Digest is CellCatalogDigest(Cells), set by the Edge where it builds the catalog. Core should keep it with the station's cells and answer OwnedCells with it on the heartbeat ack (OwnedSingleton), never recomputing it. |
 | `cells` | [`CellCatalogEntry`](#cellcatalogentry)[] |  | Cells is every cell the Edge reports. NOT omitempty: an empty catalog is a value, and Core empties the station's cells on it. |
 
 <!-- /generated -->
@@ -678,6 +678,7 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 | `tick_pending` | integer | omitempty | TickPending and TickOldestUnsentAgeMS are the production-tick shipper's lag at send time: shippable counter_snapshots rows past its cursor, and the age of the oldest of them in ms (0 when none). Core keeps the latest per station and flags one whose feed has stalled. Absent from an Edge without the shipper, or when the read failed — never a zero nobody measured. |
 | `tick_oldest_unsent_age_ms` | integer | omitempty | See `tick_pending`. |
 | `feeds` | object (string → string) |  | Feeds names, per Core feed this Edge holds (FeedContainment, ...), the digest it holds — "" when it holds nothing yet. Core answers each key on the ack and sends the feed where they differ (see feeds.go). NOT omitempty: nil is how Core recognises an Edge that predates feeds and does nothing new for it, so a new Edge always sends at least {}. |
+| `owned` | object (string → string) |  | Owned is the other direction of THE RULE (feeds.go): per family of data this Edge owns and Core holds a copy of (AllOwned), the family's digest as this Edge holds it, OwnedDigest of its members. Core answers each family on the ack (EdgeHeartbeatAck.Owned) and the Edge sends the members that differ. Absence, three ways. nil (the key's value null; NOT omitempty, so a new Edge always sends at least {}) is an Edge that does not speak the owned map: the old fields serve it, and Core answers EdgeHeartbeatAck.Claims and .BinWatch and no Owned. A family left off is one this Edge could not read: Core answers nothing for it and nothing is sent for it. A family that holds none is present at OwnedDigest of no members, a real digest, never "". |
 
 <!-- /generated -->
 
@@ -724,10 +725,31 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 | `timezone` | string | omitempty | Timezone is the plant's IANA zone as EXPLICITLY CONFIGURED on Core, and empty when Core has not been told either. It is deliberately not Core's RESOLVED zone: resolving folds in Core's own default, so an unconfigured site would broadcast that default to every edge with the confidence of an answer, the blank-zone warnings would clear, and a value nobody chose would quietly become the plant's clock. Empty propagates nothing and leaves every box visibly unset, which is the honest state. An edge adopts it only to FILL A BLANK — see the edge handler. Config arriving over a network must never overwrite a zone somebody typed locally. Additive, like EdgeRegister.Timezone: an old edge ignores the unknown field, and an old Core sends nothing, which a new edge reads as "Core has no opinion" rather than as an instruction. |
 | `display_name` | string | omitempty | DisplayName is the station's name for people, as Core's registry holds it (edge_registry.display_name, set on Core's Stations page). Core owns it; the Edge shows it and has no control that edits it. A POINTER, AND ABSENT IS AN ANSWER, unlike Timezone: Core owns the name, so an empty one is a value the Edge follows. nil (no key) is no answer: an older Core, or one whose registry write for this heartbeat failed or found no row; the Edge keeps the name it holds. "" is Core holding no name for the station (an unclaimed one, or a name cleared on Core); the Edge shows the uid. Anything else is the name. Additive: an older Edge ignores the key. |
 | `feeds` | object (string → string) |  | Feeds is Core's current digest for each key the heartbeat named that Core could read. A key Core failed to read is absent — not "", which would be a digest of nothing — so the Edge confirms nothing it was not told. NOT omitempty: a new Core always sends at least {}, and nil is how the Edge recognises an older Core and keeps its own timers running. |
-| `claims` | object (string → string) |  | Claims is, for every process Core holds a plant-claims report for from this station, the digest that arrived with that process's last report. The Edge re-publishes a process whose digest differs or is missing, and publishes an empty report for a name it no longer has. nil means Core could not read them (or is older); {} means it holds none. |
-| `bin_watch` | string | omitempty | BinWatch is the digest of the bins watch list Core holds for this Edge, as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge publishes its list when this differs from its own. A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core without the bins feed, and the Edge then reads bins as it did before and publishes nothing. An Edge that sends no Feeds is not answered either. |
+| `owned` | object (string → [`OwnedAnswer`](#ownedanswer)) |  | Owned answers the heartbeat's Owned: per family it named that Core could read, Core's digest of what it holds from this Edge and, only when that digest differs from the heartbeat's, the members themselves (OwnedAnswer). The Edge sends each member it holds that differs or that Core lacks, sends empty each member Core holds that it lacks, and confirms the rest. Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is a Core that does not speak the owned map, or a heartbeat that sent none: the old fields serve, so the Edge reads Claims and BinWatch as before and sends no SubjectEdgeCells. A family left off is one Core could not read (or does not serve): the Edge sends nothing for it and confirms nothing. A family whose answer holds no members is Core holding none. |
+| `claims` | object (string → string) |  | Claims is, for every process Core holds a plant-claims report for from this station, the digest that arrived with that process's last report. The Edge re-publishes a process whose digest differs or is missing, and publishes an empty report for a name it no longer has. nil means Core could not read them (or is older); {} means it holds none. The old field for OwnedClaims: Core should fill it only for a heartbeat with no Owned, and the Edge should read it only from an ack with no Owned. |
+| `bin_watch` | string | omitempty | BinWatch is the digest of the bins watch list Core holds for this Edge, as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge publishes its list when this differs from its own. A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core without the bins feed, and the Edge then reads bins as it did before and publishes nothing. An Edge that sends no Feeds is not answered either. The old field for OwnedBinWatch, under the same rule as Claims. |
 | `asks` | string[] | omitempty | Asks is every ask kind this Core answers (protocol.AskKinds, as registered), sorted. The Edge sends an ask of a kind only while the last ack named it, and refuses the act otherwise: nil (absent) is a Core without the ask pair. Not sent to an Edge that sends no Feeds. |
 | `ephemeral_topic` | string | omitempty | EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created and whose retention it read back and verified; absent when it has none. AN EDGE TOUCHES THE TOPIC ONLY WHILE THE LAST ACK OR REGISTRATION NAMED IT: absent from a later one (an older Core, or one that could not verify it) stops the Edge's reader and writer. Additive: an older Edge ignores the key and never reads the topic. |
+
+<!-- /generated -->
+
+##### OwnedAnswer
+
+The Edge-owned direction of the feed digests: the data the edge owns and Core holds a copy of, one map each way.
+The heartbeat's `owned` quotes, per family, the edge's digest (`OwnedDigest` over the family's members); the ack's
+`owned` answers, per family Core could read, Core's digest and, only when it differs, the members Core holds; the
+edge sends the members that differ. The families are `AllOwned` in `protocol/feeds.go`: `claims` (a member per
+process, carried by `plant.claims`), `bins.watch` and `cells` (one member each, carried by `bins.watch` and
+`edge.cells`; an empty list or catalog is no member). Absence: `owned` null is a peer that does not speak the map,
+for which the old `claims` and `bin_watch` serve; a family left off is one the sender could not read, and nothing is
+sent for it; a family with no members is one that holds none.
+
+<!-- generated: protocol struct OwnedAnswer -->
+
+| Field | Type | Omitted when zero | Description |
+|---|---|---|---|
+| `digest` | string |  | Digest is OwnedDigest of the members Core holds for the family from this Edge, each at the digest that arrived with it. Equal to the heartbeat's quote: the family has converged, and Members is left off. |
+| `members` | object (string → string) | omitempty | Members is what Core holds, member name to digest, sent only when Digest differs from the quote. Absent and {} both mean Core holds none: the digest compare decides whether members were sent, never their presence, which is why omitempty is safe here. A member at "" is one Core holds with no digest (for claims, a mirrored process with no report row): never equal to the Edge's, so the Edge sends it, or sends it empty. |
 
 <!-- /generated -->
 

@@ -63,6 +63,69 @@ func AllFeeds() []string {
 	return []string{FeedContainment, FeedRefusals, FeedNodes, FeedScene, FeedCatalog, FeedBins, FeedSourcing}
 }
 
+// Edge-owned family keys, as they appear in EdgeHeartbeat.Owned and
+// EdgeHeartbeatAck.Owned: THE RULE run the other way. The Edge owns the data
+// and Core holds a copy. The Edge quotes each family's digest on the
+// heartbeat; Core answers its own and, for a family that differs, the members
+// it holds; the Edge sends the members that differ. A family is a map of
+// member name to the member's own digest, and its digest is OwnedDigest of
+// that map. A family of one has the one member SingletonMember (OwnedSingleton).
+const (
+	// OwnedClaims is the plant claims, one member per process: the member is
+	// the process (PlantClaimsReport.ProcessID), its digest ClaimsDigest of
+	// that process's report. Carrier: SubjectPlantClaims, one report per
+	// member; a report with no styles is the empty one, which removes the
+	// member at Core.
+	OwnedClaims = "claims"
+	// OwnedBinWatch is the bins watch list, a family of one: its digest is
+	// BinWatchDigest of the list, and an empty list is no member. Carrier:
+	// SubjectBinsWatch.
+	OwnedBinWatch = "bins.watch"
+	// OwnedCells is the cell catalog, a family of one: its digest is
+	// CellCatalogDigest of the catalog, and a catalog with no cells is no
+	// member. Carrier: SubjectEdgeCells.
+	OwnedCells = "cells"
+)
+
+// AllOwned is every Edge-owned family key. Each side's coverage test should
+// assert that every key here has that side's row (the Edge's owned row, Core's
+// answer), so a new family missing from either fails a test instead of taking
+// a silent default. TestAllOwned_NamesEveryOwnedConst keeps this list and the
+// constants above one set.
+func AllOwned() []string {
+	return []string{OwnedClaims, OwnedBinWatch, OwnedCells}
+}
+
+// SingletonMember is the name of the one member of a family of one
+// (OwnedBinWatch, OwnedCells).
+const SingletonMember = ""
+
+// OwnedSingleton is the members of a family of one whose value has the digest
+// d: {SingletonMember: d}, or no members when the value is empty (a watch list
+// of no nodes, a catalog of no cells), whatever d is. AN EMPTY VALUE IS NO
+// MEMBER ON BOTH SIDES, so an Edge and a Core that both hold none agree with
+// nothing sent, and an Edge whose value has emptied lacks the member Core
+// still holds and sends it empty. Both sides should build a family of one
+// through this, Core from the value it last applied (an empty list or
+// catalog it was sent is empty here too, or the two would never agree).
+func OwnedSingleton(d string, empty bool) map[string]string {
+	if empty {
+		return map[string]string{}
+	}
+	return map[string]string{SingletonMember: d}
+}
+
+// OwnedDigest is an Edge-owned family's digest over its members (member name
+// to the member's digest): the one function both sides should call, the Edge
+// over what it holds and Core over the digests that arrived. A family with no
+// members (nil or empty) has a real digest, never "".
+func OwnedDigest(members map[string]string) (string, error) {
+	if members == nil {
+		members = map[string]string{}
+	}
+	return Digest(members)
+}
+
 // SceneRevisionNone is the scene revision of a plant with no scene an Edge can
 // cache — no points, no edges, or one without the other (the Edge keeps
 // geometry only when a response carries both). An Edge that receives it clears

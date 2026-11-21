@@ -121,7 +121,8 @@ func hideTable(t *testing.T, db *store.DB, table string) {
 // Its ack carries feeds as {} and claims as null (claimsFor is nil for an Edge
 // that does not speak feeds); bin_watch and asks are left off; timezone is
 // there only when a plant zone is configured; display_name only when the
-// registry write found the station's row (EdgeHeartbeatAck.DisplayName).
+// registry write found the station's row (EdgeHeartbeatAck.DisplayName); owned
+// is null, as to every Edge that sends no owned map.
 func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 	t.Parallel()
 
@@ -141,17 +142,17 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		{
 			name: "enrolled station, plant zone configured", enroll: true, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "display_name", "feeds", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
+			wantAckKeys: []string{"claims", "display_name", "feeds", "owned", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
 		},
 		{
 			name: "enrolled station, plant zone unset", enroll: true, plantTZ: "",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "display_name", "feeds", "server_ts", "station_id"},
+			wantAckKeys: []string{"claims", "display_name", "feeds", "owned", "server_ts", "station_id"},
 		},
 		{
 			name: "unenrolled station gets the ack and a register request", enroll: false, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack, regReq},
-			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
+			wantAckKeys: []string{"claims", "feeds", "owned", "server_ts", "station_id", "timezone"},
 		},
 		{
 			// Core acks anyway, with only the feed keys it could read (none
@@ -160,7 +161,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 			// was sent at all.
 			name: "registry write fails: ack, no register request", enroll: true, breakRegistry: true, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
+			wantAckKeys: []string{"claims", "feeds", "owned", "server_ts", "station_id", "timezone"},
 		},
 	}
 

@@ -128,7 +128,7 @@ func TestNodeBinsSnapshot_Golden(t *testing.T) {
 func TestEdgeHeartbeatAck_BinWatchGolden(t *testing.T) {
 	t.Parallel()
 	none, held := "", "0123456789abcdef"
-	const head = `{"station_id":"edge.a","server_ts":"0001-01-01T00:00:00Z","feeds":{},"claims":{}`
+	const head = `{"station_id":"edge.a","server_ts":"0001-01-01T00:00:00Z","feeds":{},"owned":null,"claims":{}`
 	for _, tc := range []struct {
 		name     string
 		binWatch *string

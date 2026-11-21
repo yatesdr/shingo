@@ -40,8 +40,8 @@ type CellCatalogEntry struct {
 // names no station; the sender is the envelope's Address.Station.
 type CellCatalog struct {
 	// Digest is CellCatalogDigest(Cells), set by the Edge where it builds the
-	// catalog. Core should keep it with the station's cells and quote it back on
-	// the heartbeat ack, never recomputing it.
+	// catalog. Core should keep it with the station's cells and answer OwnedCells
+	// with it on the heartbeat ack (OwnedSingleton), never recomputing it.
 	Digest string `json:"digest"`
 	// Cells is every cell the Edge reports. NOT omitempty: an empty catalog is a
 	// value, and Core empties the station's cells on it.
@@ -137,6 +137,20 @@ type EdgeHeartbeat struct {
 	// NOT omitempty: nil is how Core recognises an Edge that predates feeds and
 	// does nothing new for it, so a new Edge always sends at least {}.
 	Feeds map[string]string `json:"feeds"`
+	// Owned is the other direction of THE RULE (feeds.go): per family of data
+	// this Edge owns and Core holds a copy of (AllOwned), the family's digest
+	// as this Edge holds it, OwnedDigest of its members. Core answers each
+	// family on the ack (EdgeHeartbeatAck.Owned) and the Edge sends the members
+	// that differ.
+	//
+	// Absence, three ways. nil (the key's value null; NOT omitempty, so a new
+	// Edge always sends at least {}) is an Edge that does not speak the owned
+	// map: the old fields serve it, and Core answers EdgeHeartbeatAck.Claims
+	// and .BinWatch and no Owned. A family left off is one this Edge could not
+	// read: Core answers nothing for it and nothing is sent for it. A family
+	// that holds none is present at OwnedDigest of no members, a real digest,
+	// never "".
+	Owned map[string]string `json:"owned"`
 }
 
 // EdgeRegistered acknowledges edge registration.
@@ -194,11 +208,28 @@ type EdgeHeartbeatAck struct {
 	// NOT omitempty: a new Core always sends at least {}, and nil is how the
 	// Edge recognises an older Core and keeps its own timers running.
 	Feeds map[string]string `json:"feeds"`
+	// Owned answers the heartbeat's Owned: per family it named that Core could
+	// read, Core's digest of what it holds from this Edge and, only when that
+	// digest differs from the heartbeat's, the members themselves
+	// (OwnedAnswer). The Edge sends each member it holds that differs or that
+	// Core lacks, sends empty each member Core holds that it lacks, and
+	// confirms the rest.
+	//
+	// Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is a
+	// Core that does not speak the owned map, or a heartbeat that sent none:
+	// the old fields serve, so the Edge reads Claims and BinWatch as before and
+	// sends no SubjectEdgeCells. A family left off is one Core could not read
+	// (or does not serve): the Edge sends nothing for it and confirms nothing.
+	// A family whose answer holds no members is Core holding none.
+	Owned map[string]OwnedAnswer `json:"owned"`
 	// Claims is, for every process Core holds a plant-claims report for from
 	// this station, the digest that arrived with that process's last report.
 	// The Edge re-publishes a process whose digest differs or is missing, and
 	// publishes an empty report for a name it no longer has. nil means Core
 	// could not read them (or is older); {} means it holds none.
+	//
+	// The old field for OwnedClaims: Core should fill it only for a heartbeat
+	// with no Owned, and the Edge should read it only from an ack with no Owned.
 	Claims map[string]string `json:"claims"`
 	// BinWatch is the digest of the bins watch list Core holds for this Edge,
 	// as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge
@@ -207,6 +238,8 @@ type EdgeHeartbeatAck struct {
 	// A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core
 	// without the bins feed, and the Edge then reads bins as it did before and
 	// publishes nothing. An Edge that sends no Feeds is not answered either.
+	//
+	// The old field for OwnedBinWatch, under the same rule as Claims.
 	BinWatch *string `json:"bin_watch,omitempty"`
 	// Asks is every ask kind this Core answers (protocol.AskKinds, as
 	// registered), sorted. The Edge sends an ask of a kind only while the last
@@ -220,6 +253,22 @@ type EdgeHeartbeatAck struct {
 	// it) stops the Edge's reader and writer. Additive: an older Edge ignores
 	// the key and never reads the topic.
 	EphemeralTopic string `json:"ephemeral_topic,omitempty"`
+}
+
+// OwnedAnswer is Core's answer for one Edge-owned family on the heartbeat ack
+// (EdgeHeartbeatAck.Owned).
+type OwnedAnswer struct {
+	// Digest is OwnedDigest of the members Core holds for the family from this
+	// Edge, each at the digest that arrived with it. Equal to the heartbeat's
+	// quote: the family has converged, and Members is left off.
+	Digest string `json:"digest"`
+	// Members is what Core holds, member name to digest, sent only when Digest
+	// differs from the quote. Absent and {} both mean Core holds none: the
+	// digest compare decides whether members were sent, never their presence,
+	// which is why omitempty is safe here. A member at "" is one Core holds
+	// with no digest (for claims, a mirrored process with no report row):
+	// never equal to the Edge's, so the Edge sends it, or sends it empty.
+	Members map[string]string `json:"members,omitempty"`
 }
 
 // --- Order payloads: Edge -> Core ---
