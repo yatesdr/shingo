@@ -5,9 +5,11 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
+	"shingo/protocol/migrate"
 	"shingocore/config"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -463,4 +465,56 @@ func TestV185_AHeldReaderStopsUpAndDown(t *testing.T) {
 		t.Fatalf("v185 up with the reader gone: %v", err)
 	}
 	db.Close()
+}
+
+// TestMigrate_AFailedReRunKeepsTheVersionRecorded pins the shared runner's
+// self-heal on Postgres: a version recorded as applied whose post-condition
+// then fails is re-run, and a re-run that fails leaves the version recorded,
+// since the stale row is deleted inside the re-run's transaction
+// (migrate.Run). It used to be deleted in a statement of its own first, so a
+// failed re-run left the version unrecorded: migrate check then reported the
+// database as needing it and migrate down refused. The Edge's twin is
+// TestRunVersioned_AFailedReRunKeepsTheVersionRecorded (SQLite).
+func TestMigrate_AFailedReRunKeepsTheVersionRecorded(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	// Far above any real migration: this database is the test's own, and the
+	// runner applies only the list it is given.
+	const version = 990001
+	healthy := true
+	list := []migrate.Migration{{
+		Version: version,
+		Name:    "test_rerun",
+		Fn: func(tx *sql.Tx) error {
+			if !healthy {
+				return errors.New("the re-run fails")
+			}
+			_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS rerun_marker (id INTEGER PRIMARY KEY)`)
+			return err
+		},
+		Verify: func(migrate.Querier) bool { return healthy },
+	}}
+	recorded := func() bool {
+		t.Helper()
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&n); err != nil {
+			t.Fatalf("read schema_migrations: %v", err)
+		}
+		return n == 1
+	}
+
+	if err := migrate.Run(db.DB, migrate.Postgres, 0, list); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if !recorded() {
+		t.Fatalf("v%d is not recorded after it applied", version)
+	}
+	healthy = false
+	if err := migrate.Run(db.DB, migrate.Postgres, 0, list); err == nil {
+		t.Fatal("the re-run failed but Run returned no error")
+	}
+	if !recorded() {
+		t.Errorf("v%d is no longer recorded after its re-run failed: the stale row was deleted outside the "+
+			"re-run's transaction, so migrate check and migrate down lose a version that was applied", version)
+	}
 }

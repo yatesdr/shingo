@@ -47,6 +47,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - Core no longer sends every Edge the whole robot map again each time it re-reads an unchanged map from the fleet (each fleet reconnect and the daily map check). Each Edge is sent the map once more after this upgrade
 - A count, load or clear from Core, or a cart's new-life notice, that cannot reach a station while the link is down now waits until it can, however long the outage; after ten tries it used to be dropped, and the station's number and Core's stayed apart
 - A cell's demand episode that opens or closes while Core cannot be reached now reaches Core when the link is back, however long it was down; it used to be dropped after five minutes or ten tries, and Core did not see it until the episode next changed
+- A Core or Edge start that re-runs a recorded migration to repair it, and fails, now leaves that migration recorded; shingocore migrate check and migrate down used to see it as never applied
 
 ## v0.18.0 — 2026-11-21
 

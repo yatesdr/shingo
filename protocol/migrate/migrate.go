@@ -90,13 +90,15 @@ var (
 //
 // Verify is the optional post-condition check — given a Querier, true iff
 // the schema state the migration is supposed to produce is actually
-// present. Run on startup BEFORE the schema_migrations gate: if a row says
-// "applied" but Verify returns false, the runner deletes the row and
-// re-applies. That catches prior deploys that recorded the version row
-// without committing the DDL, and operator-induced drift (a DROPped column,
-// a restored-from-backup schema_migrations ahead of actual schema). Nil
-// Verify means "trust schema_migrations". Verify must be cheap — it runs
-// on every startup for every applied migration.
+// present. Run on startup for every migration recorded as applied: if
+// Verify returns false, the runner re-applies the migration, deleting its
+// row inside the re-run's own transaction (runOne), so a re-run that fails
+// leaves the version recorded as it was rather than unrecorded with its
+// post-condition still missing. That catches prior deploys that recorded the
+// version row without committing the DDL, and operator-induced drift (a
+// DROPped column, a restored-from-backup schema_migrations ahead of actual
+// schema). Nil Verify means "trust schema_migrations". Verify must be cheap —
+// it runs on every startup for every applied migration.
 type Migration struct {
 	Version int
 	Name    string
@@ -166,20 +168,18 @@ func Run(db *sql.DB, dialect Dialect, baseline int, migrations []Migration) erro
 		db.QueryRow(existsSQL[dialect], m.Version).Scan(&applied)
 
 		// Self-heal check: if recorded as applied but the post-condition
-		// is missing, treat as not-applied so the transactional re-run
-		// below restores it.
-		if applied && m.Verify != nil && !m.Verify(db) {
+		// is missing, re-run it. The stale row is deleted inside the re-run's
+		// transaction, not before it: a re-run that fails rolls the delete
+		// back with it, so the version stays recorded (migrate check and
+		// migrate down still see it) and the next boot heals again.
+		rerun := applied && m.Verify != nil && !m.Verify(db)
+		if rerun {
 			log.Printf("migrations: v%d (%s) recorded as applied but post-condition fails — re-running",
 				m.Version, m.Name)
-			if _, err := db.Exec(deleteSQL[dialect], m.Version); err != nil {
-				return fmt.Errorf("clear stale schema_migrations row v%d: %w", m.Version, err)
-			}
-			applied = false
-		}
-		if applied {
+		} else if applied {
 			continue
 		}
-		if err := runOne(db, dialect, m); err != nil {
+		if err := runOne(db, dialect, m, rerun); err != nil {
 			return err
 		}
 	}
@@ -209,13 +209,20 @@ func seedBaseline(db *sql.DB, dialect Dialect, baseline int) error {
 // runOne wraps a single migration's DDL/DML and its schema_migrations row
 // insert in one transaction. On any error the transaction rolls back and
 // the migration is re-attempted on the next startup — which is why Fn must
-// be idempotent.
-func runOne(db *sql.DB, dialect Dialect, m Migration) error {
+// be idempotent. rerun is the self-heal re-run of a recorded version: its
+// row is deleted first, in the same transaction, so a failure leaves it.
+func runOne(db *sql.DB, dialect Dialect, m Migration, rerun bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("migration v%d (%s): begin tx: %w", m.Version, m.Name, err)
 	}
 	defer tx.Rollback() // no-op after Commit
+
+	if rerun {
+		if _, err := tx.Exec(deleteSQL[dialect], m.Version); err != nil {
+			return fmt.Errorf("migration v%d (%s): clear the stale version row: %w", m.Version, m.Name, err)
+		}
+	}
 
 	if err := m.Fn(tx); err != nil {
 		return fmt.Errorf("migration v%d (%s): %w", m.Version, m.Name, err)
