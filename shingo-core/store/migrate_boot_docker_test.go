@@ -376,3 +376,54 @@ func TestV185_PartitionIndexRenameTakesAnyChild(t *testing.T) {
 	db.Close()
 	check("after up", "station_uid", "cell_id")
 }
+
+// TestV185_AHeldReaderStopsUpAndDown: up and down each take ACCESS EXCLUSIVE
+// on every table v185 touches before anything else (v185Begin), so a client
+// holding a read on one stops them on the 3 s lock_timeout (55P03) with
+// nothing changed, and the next try goes through. audit_log is the table this
+// can see: its only change is a row move, whose UPDATE a reader's ACCESS SHARE
+// does not block, so only the lock step stops v185 there.
+func TestV185_AHeldReaderStopsUpAndDown(t *testing.T) {
+	t.Parallel()
+	raw, cfg := testdb.OpenWithConfig(t)
+	held := func() func() {
+		t.Helper()
+		tx, err := raw.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(`LOCK TABLE audit_log IN ACCESS SHARE MODE`); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		return func() { tx.Rollback() }
+	}
+
+	release := held()
+	err := store.MigrateDown(cfg, 185)
+	release()
+	if err == nil || !strings.Contains(err.Error(), "55P03") {
+		t.Fatalf("down 185 beside a reader of audit_log: err %v, want the lock timeout (55P03)", err)
+	}
+	if !schema.ColumnExists(raw, "orders", "station_uid") {
+		t.Fatal("the down stopped by the lock changed the schema: orders.station_uid is gone")
+	}
+	if err := store.MigrateDown(cfg, 185); err != nil {
+		t.Fatalf("down 185 with the reader gone: %v", err)
+	}
+
+	release = held()
+	_, err = store.Open(cfg)
+	release()
+	if err == nil || !strings.Contains(err.Error(), "55P03") {
+		t.Fatalf("v185 up beside a reader of audit_log: err %v, want the lock timeout (55P03)", err)
+	}
+	if !schema.ColumnExists(raw, "orders", "station_id") {
+		t.Fatal("the up stopped by the lock changed the schema: orders.station_id is gone")
+	}
+	db, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("v185 up with the reader gone: %v", err)
+	}
+	db.Close()
+}

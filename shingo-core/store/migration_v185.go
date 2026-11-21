@@ -302,8 +302,10 @@ func v185ActorList(first string) string {
 	return first + ", " + v185Quoted(v185Actors)
 }
 
-// v185Tables are the tables v185 touches, in a fixed order: the ones it
-// locks before its first move. present filters out the tables down restores.
+// v185Tables are the tables v185 touches, in a fixed order, the tables it
+// drops last. Up and down lock the ones there before anything else
+// (v185Begin): a table up drops is there only for its first run, and one down
+// restores is not there yet when down locks.
 func v185Tables() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -329,6 +331,9 @@ func v185Tables() []string {
 		add(c.table)
 	}
 	add("audit_log") // its only change is a move
+	for _, d := range v185Ops.dropTables {
+		add(d.table)
+	}
 	return out
 }
 
@@ -339,12 +344,10 @@ func v185Exec(tx *sql.Tx, step, q string) error {
 	return nil
 }
 
-func v185Lock(tx *sql.Tx, tables []string) error {
-	return v185Exec(tx, "lock", "LOCK TABLE "+strings.Join(tables, ", ")+" IN ACCESS EXCLUSIVE MODE")
-}
-
-// v185Up is migration 185's apply function.
-func v185Up(tx *sql.Tx) error {
+// v185Begin is up's and down's first two steps (the header's 1 and 2):
+// statement_timeout off for the transaction, then ACCESS EXCLUSIVE on every
+// table of v185Tables that is there.
+func v185Begin(tx *sql.Tx) error {
 	if err := v185Exec(tx, "statement_timeout", `SET LOCAL statement_timeout = 0`); err != nil {
 		return err
 	}
@@ -354,12 +357,12 @@ func v185Up(tx *sql.Tx) error {
 			present = append(present, t)
 		}
 	}
-	for _, d := range v185Ops.dropTables {
-		if schema.TableExists(tx, d.table) {
-			present = append(present, d.table)
-		}
-	}
-	if err := v185Lock(tx, present); err != nil {
+	return v185Exec(tx, "lock", "LOCK TABLE "+strings.Join(present, ", ")+" IN ACCESS EXCLUSIVE MODE")
+}
+
+// v185Up is migration 185's apply function.
+func v185Up(tx *sql.Tx) error {
+	if err := v185Begin(tx); err != nil {
 		return err
 	}
 	// 3. Renames, adds, and the drops no move reads.
@@ -644,7 +647,7 @@ func v185Verify(q schema.Querier) bool {
 // dropped columns and tables restored as v184 declared them (every default,
 // NOT NULL, key and sequence; edge_registry.station_id filled from
 // station_uid). Under SET LOCAL statement_timeout = 0 and every table's lock
-// first, as up.
+// first, as up (v185Begin).
 //
 // What does not come back: the rows the registry fold deleted (logged by up),
 // the values of the dropped columns (they come back as their defaults; no
@@ -653,16 +656,7 @@ func v185Verify(q schema.Querier) bool {
 // not its row's uid (it comes back as the uid), and a partition index name
 // set by hand.
 func v185Down(tx *sql.Tx) error {
-	if err := v185Exec(tx, "statement_timeout", `SET LOCAL statement_timeout = 0`); err != nil {
-		return err
-	}
-	var present []string
-	for _, t := range v185Tables() {
-		if schema.TableExists(tx, t) {
-			present = append(present, t)
-		}
-	}
-	if err := v185Lock(tx, present); err != nil {
+	if err := v185Begin(tx); err != nil {
 		return err
 	}
 	// The comments up applied go first, while every object has the name they
