@@ -7,6 +7,12 @@ import (
 	"go/types"
 	"reflect"
 	"testing"
+
+	"shingo/protocol"
+	"shingoedge/config"
+	"shingoedge/engine"
+	"shingoedge/internal/testdb"
+	"shingoedge/messaging"
 )
 
 // main_feedspin_test.go — source-shape pins of the inbound subject closures
@@ -18,6 +24,8 @@ import (
 // so the call lists are pinned here as written. What main.go hands
 // messaging.NewHeartbeater is the compiler's to check (its arity and types);
 // what the heartbeat carries is pinned in messaging/heartbeat_feedspin_test.go.
+// One closure is also run, not parsed: what the registered reply asks of the
+// heartbeater (TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds).
 
 // subjectClosures parses main.go and returns, for each subject registered with
 // router.RegisterSubject, the closure's body.
@@ -155,5 +163,72 @@ func TestFeedsPin_PublishOnRegister(t *testing.T) {
 		if !calls[callee] { // after: same
 			t.Errorf("registered closure no longer calls %s — publish-on-register is kept by F5", callee)
 		}
+	}
+}
+
+// askCounter is the inbound handlers' heartbeater, counting what they ask of it.
+type askCounter struct{ registers, nodeAsks, catalogAsks int }
+
+func (a *askCounter) SendRegister()       { a.registers++ }
+func (a *askCounter) RequestNodeSync()    { a.nodeAsks++ }
+func (a *askCounter) RequestCatalogSync() { a.catalogAsks++ }
+
+// TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds runs the registered
+// closure itself, through buildInboundRouter, after an ack from a Core that
+// speaks feeds. Inside an Edge's first 30 s (a boot: Core's reply lands within
+// a round trip of the burst) it asks for no node list and no catalog, so one
+// boot's asks are the burst's and StartupReconcile's
+// (TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts). Past
+// 30 s (a re-register: Core restarted, or marked the Edge stale) it asks for
+// both, whether or not Core speaks feeds. The second case stands an engine that
+// was never started, whose Uptime reads past 30 s.
+//
+// Lane D2 is to gate these two asks on !CoreSpeaksFeeds(): the second case's
+// want should then be 0 and 0.
+func TestBootAsks_TheRegisteredReplyAsksOnlyPastThirtySeconds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                  string
+		start                 bool
+		wantNode, wantCatalog int
+	}{
+		{"at boot, the engine started just now", true, 0, 0},
+		{"a re-register past 30 s", false, 1, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Defaults()
+			cfg.StationUID = "edge.asks"
+			cfg.Messaging.StationID = cfg.StationUID
+			eng := engine.New(engine.Config{AppConfig: cfg, DB: testdb.Open(t), LogFunc: func(string, ...any) {}})
+			if tc.start {
+				eng.Start()
+				t.Cleanup(eng.Stop)
+			}
+			if up := eng.Uptime(); tc.start != (up <= 30) {
+				t.Fatalf("engine uptime %d s: the case needs it %s 30 s", up, map[bool]string{true: "at or under", false: "over"}[tc.start])
+			}
+			hb := &askCounter{}
+			in := buildInboundRouter(eng, messaging.NewEdgeHandler(eng.OrderManager()), hb, func(string, ...any) {})
+			dispatch := func(subject string, body any) {
+				env, err := protocol.NewDataEnvelope(subject, protocol.Address{Role: protocol.RoleCore},
+					protocol.Address{Role: protocol.RoleEdge, Station: cfg.StationUID}, body)
+				if err != nil {
+					t.Fatalf("envelope %s: %v", subject, err)
+				}
+				in.Dispatch(env, env.Type)
+			}
+			dispatch(protocol.SubjectEdgeHeartbeatAck, protocol.EdgeHeartbeatAck{StationID: cfg.StationUID, Feeds: map[string]string{}})
+			if !eng.CoreSpeaksFeeds() {
+				t.Fatal("the ack did not reach OnCoreAck: the Edge does not know Core speaks feeds")
+			}
+			dispatch(protocol.SubjectEdgeRegistered, protocol.EdgeRegistered{StationID: cfg.StationUID, Message: "registered"})
+			if hb.nodeAsks != tc.wantNode || hb.catalogAsks != tc.wantCatalog || hb.registers != 0 {
+				t.Errorf("the registered reply asked %d node lists, %d catalogs and %d registers; want %d, %d and 0 "+
+					"(if lane D2 has landed, a re-register against a Core that speaks feeds asks none: update want)",
+					hb.nodeAsks, hb.catalogAsks, hb.registers, tc.wantNode, tc.wantCatalog)
+			}
+		})
 	}
 }
