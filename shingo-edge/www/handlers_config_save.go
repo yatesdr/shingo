@@ -27,11 +27,16 @@
 //
 // Live vs restart-only (U3): brokers (ReconnectKafka), the PLC link
 // (ApplyWarLinkConfig), backups (the service reads the live config) and
-// auto-confirm (read at use) apply live. Station UID, Plant timezone and the
-// Core address apply after a restart. The Station UID is still swapped into
-// the live config: some readers take it live (cfg.StationID()), the rest hold
-// the boot value, so it runs split until the restart, and leaving it out of
-// the swap would make the next save write the old one back.
+// auto-confirm (read at use) apply live. Plant timezone applies after a
+// restart; it is the restart notice's one field.
+//
+// THE STATION UID IS NOT SET HERE. The page shows it as text and posts none.
+// A post that carries one different from the uid this Edge runs as (a page
+// loaded before the field went, a hand-made request) is refused 400 with
+// nothing written; an equal or absent one is accepted and changes nothing.
+// The uid is set on the box: main.ensureIdentity mints it at first start,
+// and an engineer replacing hardware restores the old box's backup
+// (shingoedge --restore) or edits the yaml.
 
 package www
 
@@ -56,8 +61,7 @@ var configSections = []string{"station", "plc", "messaging", "backups"}
 // Taken once in NewRouter. Nil (handler tests build &Handlers{} directly)
 // means no notice: no snapshot, no notice.
 type configBoot struct {
-	stationID string
-	timezone  string
+	timezone string
 }
 
 func newConfigBoot(cfg *config.Config) *configBoot {
@@ -65,7 +69,7 @@ func newConfigBoot(cfg *config.Config) *configBoot {
 		return nil
 	}
 	c := cfg.Clone()
-	return &configBoot{stationID: c.StationID(), timezone: c.Timezone}
+	return &configBoot{timezone: c.Timezone}
 }
 
 // restartPending lists the restart-only fields whose live value (which equals
@@ -82,9 +86,6 @@ func (h *Handlers) restartPending() []string {
 		return out
 	}
 	c := cfg.Clone()
-	if c.StationID() != h.boot.stationID {
-		out = append(out, "Station UID")
-	}
 	if c.Timezone != h.boot.timezone {
 		out = append(out, "Plant timezone")
 	}
@@ -93,18 +94,15 @@ func (h *Handlers) restartPending() []string {
 
 // ── Wire sections ───────────────────────────────────────────────────────
 
-// stationSection: the Station UID, the plant timezone and auto-confirm.
+// stationSection: the plant timezone and auto-confirm.
 //
-// station_id is the legacy Messaging.StationID, accepted for the migration
-// window only (the page has no field for it): a post with either one is
-// saved, a post with both blank is refused (E1). An absent timezone keeps the
-// saved zone; a blank one is stored blank, which means "take the zone Core
-// offers" (adoptPlantTimezone fills it at the next heartbeat ack). An absent
-// auto_confirm is off, as it was on its own door; the page always sends the
-// section whole.
+// station_uid is read only to refuse a different one (see the header): the
+// page sends none. An absent timezone keeps the saved zone; a blank one is
+// stored blank, which means "take the zone Core offers" (adoptPlantTimezone
+// fills it at the next heartbeat ack). An absent auto_confirm is off, as it
+// was on its own door; the page always sends the section whole.
 type stationSection struct {
-	StationUID  string  `json:"station_uid"`
-	StationID   string  `json:"station_id"`
+	StationUID  *string `json:"station_uid"`
 	Timezone    *string `json:"timezone"`
 	AutoConfirm bool    `json:"auto_confirm"`
 }
@@ -376,18 +374,12 @@ func (h *Handlers) applyConfigLive(cfg *config.Config, posted map[string]bool) (
 	return applied, failed, simulated
 }
 
-// applyStation applies the Station section to the draft (E1, the timezone).
+// applyStation applies the Station section to the draft: the timezone and
+// auto-confirm. It never writes the uid; a posted uid other than the one the
+// draft (a copy of the live config) carries is refused.
 func applyStation(draft *config.Config, s stationSection, errs *configErrors) {
-	uid := strings.TrimSpace(s.StationUID)
-	legacy := strings.TrimSpace(s.StationID)
-	if uid == "" && legacy == "" {
-		errs.add("station_uid", "Station UID is required.")
-	}
-	if uid != "" {
-		draft.StationUID = s.StationUID
-	}
-	if legacy != "" {
-		draft.Messaging.StationID = s.StationID
+	if s.StationUID != nil && *s.StationUID != draft.StationUID {
+		errs.add("station_uid", "Station UID is not set on this page.")
 	}
 	if s.Timezone != nil {
 		tz := *s.Timezone

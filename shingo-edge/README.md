@@ -42,10 +42,10 @@ messaging:
 station as unclaimed on its Stations page until someone names it. If the write fails, the Edge runs and warns
 that it will mint a different uid on the next restart.
 
-**Replacement hardware for an existing station takes that station's uid** — read off Core and put in
-`station_uid` (or the Station UID field on `/config`) before the box first starts, or brought back by a restore
-([Backup and Restore](docs/backup-restore.md)) — so the station's history stays attached. A minted uid is
-always a new station.
+**Replacement hardware for an existing station takes that station's uid** — brought back by a restore
+(`shingoedge --restore`, [Backup and Restore](docs/backup-restore.md)), or read off Core and put in
+`station_uid` by hand before the box first starts — so the station's history stays attached. A minted uid is
+always a new station. The `/config` page shows the uid as text and cannot change it.
 
 `namespace` and `line_id` are labels only; nothing derives an identity from them. `messaging.station_id` is an
 identity override for a bench Edge that has no `station_uid`.

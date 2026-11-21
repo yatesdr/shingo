@@ -1,6 +1,6 @@
 // config-backups.js — the Configuration page's backup list, restore action
 // and the Backups section's live words, built from explicit inputs so a node
-// test can drive them (config_backups_js_test.go). No imports: the page passes
+// test can drive them (TestConfigBackupsJS). No imports: the page passes
 // in el / formatClock / the request and prompt functions it already has.
 //
 // E5. The restore button used to be built as
@@ -87,24 +87,4 @@ export function backupWords(status, clock) {
     if (failedLast) parts.push('last run failed');
     if (status.stale || failedLast) cls = 'warn';
     return { text: parts.join(' · '), cls: cls };
-}
-
-// ─── The Station section's wire body (lead ruling on E1, 2026-10-07) ─────
-//
-// A legacy-only Edge (Messaging.StationID set, no Station UID) must still be
-// able to save its timezone and auto-confirm. The page has no field for the
-// legacy id: it is rendered into the page's data and carried UNCHANGED in the
-// station body, so the door sees "either one set" (E1) and saves. It is sent
-// only while the config has no UID; once a UID is typed it is the UID alone.
-
-// stationErrors: the client half of E1 — a UID, or a legacy id to carry.
-export function stationErrors(d, legacyID) {
-    return (d.station_uid || legacyID) ? null : { station_uid: 'Station UID is required.' };
-}
-
-// stationBody: what the page sends for the Station section.
-export function stationBody(d, legacyID) {
-    const body = { station_uid: d.station_uid, timezone: d.timezone, auto_confirm: d.auto_confirm };
-    if (legacyID) body.station_id = legacyID;
-    return body;
 }

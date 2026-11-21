@@ -733,26 +733,14 @@ func TestApiConfig_UpdateMessaging(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 }
 
-func TestApiConfig_UpdateStationID(t *testing.T) {
-	t.Parallel()
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	// E1 check: the legacy station_id alone is still accepted.
-	body := map[string]any{"station": map[string]string{"station_id": "plant-a.line-1"}}
-	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-}
-
 func TestApiConfig_UpdateAutoConfirm(t *testing.T) {
 	t.Parallel()
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	// Auto-confirm is in the Station section, which carries the Station UID
-	// (a station post with neither id is refused, E1).
-	body := map[string]any{"station": map[string]any{"station_uid": "test.station", "auto_confirm": true}}
+	// Auto-confirm is in the Station section, which the page sends with no
+	// Station UID (the uid is not set on this page).
+	body := map[string]any{"station": map[string]any{"auto_confirm": true}}
 	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")

@@ -147,20 +147,19 @@ func TestConfigPage_RestartNoticeRendered(t *testing.T) {
 	}
 }
 
-// TestConfigPage_LegacyStationIDCarried: a legacy-only Edge's station_id is in
-// the page's data (not a field), for the station body to carry; an Edge with
-// a UID has none.
-func TestConfigPage_LegacyStationIDCarried(t *testing.T) {
+// TestConfigPage_StationUIDIsText: the Station UID is shown as text, not as a
+// field the page could post: no input carries it, and the "replacing a box?"
+// hint is gone (the uid is set on the box, not on this page).
+func TestConfigPage_StationUIDIsText(t *testing.T) {
 	t.Parallel()
-	html := renderConfigPage(t, func(c *config.Config) { c.StationUID = ""; c.Messaging.StationID = "plant-a.line-1" }, false)
-	if !strings.Contains(html, `data-legacy-station-id="plant-a.line-1"`) {
-		t.Error("legacy-only: the legacy station_id is not in the page data")
+	body := configPageBody(t, renderConfigPage(t, func(c *config.Config) { c.StationUID = "stn-0123456789abcdef" }, false))
+	if !strings.Contains(body, `<span id="cf-uid">stn-0123456789abcdef</span>`) {
+		t.Error("the uid is not shown as text in the Station section")
 	}
-	if strings.Contains(html, `value="plant-a.line-1"`) {
-		t.Error("legacy-only: the legacy id is rendered as an editable field")
+	if strings.Contains(body, `data-field="station_uid"`) || strings.Contains(body, `value="stn-0123456789abcdef"`) {
+		t.Error("the uid is rendered as a field the page could post")
 	}
-	html = renderConfigPage(t, func(c *config.Config) { c.StationUID = "stn-1"; c.Messaging.StationID = "plant-a.line-1" }, false)
-	if strings.Contains(html, "data-legacy-station-id") {
-		t.Error("UID Edge: legacy id carried though a UID is set")
+	if strings.Contains(body, "replacing a box") {
+		t.Error("the replacing-a-box hint is still on the page")
 	}
 }

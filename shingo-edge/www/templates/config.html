@@ -6,7 +6,6 @@
 
 <div id="config" class="set-page set-ui"
      data-station-id="{{.StationID}}"
-     {{- if not .Config.StationUID}}{{with .Config.Messaging.StationID}} data-legacy-station-id="{{.}}"{{end}}{{end}}
      data-restart="{{.RestartJSON}}"
      data-backup-status="{{.BackupStatusJSON}}">
 
@@ -16,8 +15,8 @@
         {{if not .Config.Timezone}}<span class="set-cnt warn"><i></i>no timezone set · showing {{.DisplayZone}}</span>{{end}}
     </div>
     <div class="set-fld">
-        <label for="cf-uid">Station UID<small>minted by this Edge at first start · replacing a box? enter the old station's UID · applies after a restart</small></label>
-        <div class="v"><input id="cf-uid" class="set-inp mid" type="text" data-field="station_uid" value="{{.Config.StationUID}}" placeholder="stn-…" spellcheck="false" autocomplete="off"></div>
+        <label>Station UID<small>minted by this Edge at first start</small></label>
+        <div class="v"><span id="cf-uid">{{.StationID}}</span></div>
     </div>
     <div class="set-fld">
         <label for="cf-tz">Plant timezone<small>blank takes the plant's zone from Core · applies after a restart</small></label>

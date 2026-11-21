@@ -287,9 +287,9 @@ func refused(field, msg string) map[string]any {
 
 var oneBackup = []string{"config"}
 
-// stationBody: the Station section carries the UID (a station post with
-// neither id is refused, E1), so a pin of one of its other fields posts the
-// seeded UID with it.
+// stationBody: a Station section that re-posts the seeded UID beside the
+// fields under test, as a page loaded before the uid became text did. An
+// equal uid is accepted and changes nothing (TestPinEdgeConfig_StationID).
 func stationBody(extra map[string]any) map[string]any {
 	s := map[string]any{"station_uid": "pin.uid"}
 	for k, v := range extra {
@@ -357,62 +357,50 @@ func TestPinEdgeConfig_Messaging(t *testing.T) {
 	})
 }
 
-// ── Station UID (E1) ─────────────────────────────────────────────────────
+// ── Station UID: not set on this page ────────────────────────────────────
 
+// TestPinEdgeConfig_StationID: the page cannot change the uid. A post that
+// carries a uid other than the one this Edge runs as, blank included, is a
+// 400 with nothing written, no backup and the live uid untouched; the same
+// uid, or none, saves the section's other fields and leaves the uid alone,
+// with no restart notice for it.
 func TestPinEdgeConfig_StationID(t *testing.T) {
 	t.Parallel()
-	seedUID := func(c *config.Config) { c.StationUID = "seed.uid"; c.Messaging.StationID = "seed.legacy" }
+	seedUID := func(c *config.Config) { c.StationUID = "seed.uid" }
+	untouched := func(t *testing.T, c *config.Config) {
+		if c.StationUID != "seed.uid" {
+			t.Errorf("live uid=%q, want seed.uid", c.StationUID)
+		}
+	}
+	notSet := refused("station_uid", "Station UID is not set on this page.")
 	runPinCases(t, []pinCase{
 		{
-			// The RESTART toast's note goes; the restart notice names the field.
-			// The live config still swaps (some readers take it live).
-			name:   "uid",
+			name:   "a_different_uid_is_refused",
 			seed:   seedUID,
-			body:   map[string]any{"station": map[string]string{"station_uid": "plant.line-9"}},
-			status: 200, resp: okSaved([]any{"Station"}, []any{"Station UID"}), noResp: []string{"note"},
-			wrote:   true,
-			saved:   map[string]any{"station_uid": "plant.line-9", "messaging.station_id": "seed.legacy"},
-			backups: oneBackup,
-			live: func(t *testing.T, c *config.Config) {
-				if c.StationUID != "plant.line-9" || c.Messaging.StationID != "seed.legacy" {
-					t.Errorf("live uid=%q legacy=%q", c.StationUID, c.Messaging.StationID)
-				}
-			},
+			body:   map[string]any{"station": map[string]any{"station_uid": "other.uid", "auto_confirm": true}},
+			status: 400, resp: notSet, wrote: false, live: untouched,
 		},
 		{
-			// E1 check: TestApiConfig_UpdateStationID's case, legacy station_id
-			// only, is still saved.
-			name:   "legacy_station_id_only",
+			name:   "a_blank_uid_is_refused",
 			seed:   seedUID,
-			body:   map[string]any{"station": map[string]string{"station_id": "plant-a.line-1"}},
-			status: 200, resp: okSaved([]any{"Station"}, nil), noResp: []string{"note"},
-			wrote:   true,
-			saved:   map[string]any{"station_uid": "seed.uid", "messaging.station_id": "plant-a.line-1"},
-			backups: oneBackup,
-			live: func(t *testing.T, c *config.Config) {
-				if c.StationUID != "seed.uid" || c.Messaging.StationID != "plant-a.line-1" {
-					t.Errorf("live uid=%q legacy=%q", c.StationUID, c.Messaging.StationID)
-				}
-			},
+			body:   map[string]any{"station": map[string]any{"station_uid": ""}},
+			status: 400, resp: notSet, wrote: false, live: untouched,
 		},
 		{
-			// E1: a blank uid with no legacy id is a 400: no write, no backup.
-			name:   "blank_uid",
+			name:   "the_running_uid_is_accepted",
 			seed:   seedUID,
-			body:   map[string]any{"station": map[string]string{"station_uid": ""}},
-			status: 400, resp: refused("station_uid", "Station UID is required."), wrote: false,
-			live: func(t *testing.T, c *config.Config) {
-				if c.StationUID != "seed.uid" {
-					t.Errorf("live uid=%q, want untouched", c.StationUID)
-				}
-			},
+			body:   map[string]any{"station": map[string]any{"station_uid": "seed.uid", "auto_confirm": true}},
+			status: 200, resp: okSaved([]any{"Station"}, nil), wrote: true,
+			saved:   map[string]any{"station_uid": "seed.uid", "web.auto_confirm": true},
+			backups: oneBackup, live: untouched,
 		},
 		{
-			// E1: both blank — the same 400.
-			name:   "both_blank",
+			name:   "no_uid_is_accepted",
 			seed:   seedUID,
-			body:   map[string]any{"station": map[string]string{"station_uid": "", "station_id": ""}},
-			status: 400, resp: refused("station_uid", "Station UID is required."), wrote: false,
+			body:   map[string]any{"station": map[string]any{"auto_confirm": true}},
+			status: 200, resp: okSaved([]any{"Station"}, nil), wrote: true,
+			saved:   map[string]any{"station_uid": "seed.uid", "web.auto_confirm": true},
+			backups: oneBackup, live: untouched,
 		},
 	})
 }
@@ -935,7 +923,8 @@ func TestPinEdgeConfig_ChangePassword(t *testing.T) {
 // TestPinEdgeConfig_OneSaveManySections: a page save touching every section
 // is ONE file write and ONE backup request (the old doors made one each), and
 // each live apply fires once. The restart notice names every restart-only
-// field that moved.
+// field that moved. The station section re-posts the running uid, which is
+// accepted (the uid is not set on this page: TestPinEdgeConfig_StationID).
 func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 	t.Parallel()
 	rig := newPinRig(t, true)
@@ -944,7 +933,7 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 	rig.cfg.Unlock()
 	rig.boot()
 	resp := doRequest(t, rig.r, "PUT", "/api/config", map[string]any{
-		"station":   map[string]any{"station_uid": "pin.uid2", "timezone": "America/Chicago", "auto_confirm": true},
+		"station":   map[string]any{"station_uid": "pin.uid", "timezone": "America/Chicago", "auto_confirm": true},
 		"plc":       map[string]any{"host": "wl.test", "port": 9000, "enabled": true, "mode": "sse"},
 		"messaging": map[string]any{"brokers": []string{"b1:9092"}},
 		"backups":   map[string]any{"enabled": false, "schedule_interval": "2h"},
@@ -952,7 +941,7 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 	assertStatus(t, resp, 200)
 	var got map[string]any
 	decodeJSON(t, resp, &got)
-	if !reflect.DeepEqual(got["restart"], []any{"Station UID", "Plant timezone"}) {
+	if !reflect.DeepEqual(got["restart"], []any{"Plant timezone"}) {
 		t.Errorf("restart = %#v", got["restart"])
 	}
 	if !reflect.DeepEqual(got["applied"], []any{"Station", "PLC link", "Messaging", "Backups"}) {
@@ -968,7 +957,7 @@ func TestPinEdgeConfig_OneSaveManySections(t *testing.T) {
 	if !wrote {
 		t.Fatal("not written")
 	}
-	for path, want := range map[string]any{"station_uid": "pin.uid2", "timezone": "America/Chicago",
+	for path, want := range map[string]any{"station_uid": "pin.uid", "timezone": "America/Chicago",
 		"warlink.host": "wl.test", "backup.schedule_interval": "2h0m0s"} {
 		if v, _ := yamlAt(m, path); v != want {
 			t.Errorf("saved %s = %#v, want %#v", path, v, want)
@@ -985,7 +974,7 @@ func TestPinEdgeConfig_ErrorAnywhereWritesNothing(t *testing.T) {
 	rig.cfg.Timezone = "America/Chicago"
 	rig.cfg.Unlock()
 	resp := doRequest(t, rig.r, "PUT", "/api/config", map[string]any{
-		"station": map[string]any{"station_uid": "pin.uid2", "timezone": "America/New_York"},
+		"station": map[string]any{"timezone": "America/New_York"},
 		"plc":     map[string]any{"mode": "invalid"},
 	}, rig.cookie)
 	assertStatus(t, resp, 400)
@@ -1090,30 +1079,6 @@ func TestPinEdgeConfig_RestartNoticeAdoptedZone(t *testing.T) {
 	if got := rig.h.restartPending(); !reflect.DeepEqual(got, []string{"Plant timezone"}) {
 		t.Errorf("after adoption: notice = %q, want [Plant timezone]", got)
 	}
-}
-
-// TestPinEdgeConfig_LegacyOnlyStationSaves: an Edge whose only identity is the
-// legacy Messaging.StationID saves its Station section (timezone,
-// auto-confirm) with that id carried unchanged in the body, as the page sends
-// it (lead ruling on E1, 2026-10-07): 200, the legacy id untouched, no UID
-// invented.
-func TestPinEdgeConfig_LegacyOnlyStationSaves(t *testing.T) {
-	t.Parallel()
-	runPinCases(t, []pinCase{{
-		name: "timezone_with_legacy_id",
-		seed: func(c *config.Config) { c.StationUID = ""; c.Messaging.StationID = "plant-a.line-1" },
-		body: map[string]any{"station": map[string]any{"station_uid": "", "station_id": "plant-a.line-1",
-			"timezone": "America/Chicago", "auto_confirm": true}},
-		status: 200, resp: okSaved([]any{"Station"}, []any{"Plant timezone"}), wrote: true,
-		saved: map[string]any{"timezone": "America/Chicago", "messaging.station_id": "plant-a.line-1",
-			"station_uid": "", "web.auto_confirm": true},
-		backups: oneBackup,
-		live: func(t *testing.T, c *config.Config) {
-			if c.StationUID != "" || c.Messaging.StationID != "plant-a.line-1" {
-				t.Errorf("live uid=%q legacy=%q, want blank/plant-a.line-1", c.StationUID, c.Messaging.StationID)
-			}
-		},
-	}})
 }
 
 // TestRace_ConfigSaveLeavesUnchangedFieldsAlone: a door save of one section

@@ -2070,3 +2070,30 @@ No assertion read any of the twelve.
 - coverage Δ: not measured for this row (the same paths run under the new name)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DEAD — `TestApiConfig_UpdateStationID`
+- test: `TestApiConfig_UpdateStationID` · pkg `shingoedge/www` · run `-run '^TestApiConfig_UpdateStationID$'` · `shingo-edge/www/handlers_api_config_test.go:736` @ `d2686a1d` · tags `none`
+- code: DEAD (E1's legacy `station_id` carry goes with the Station UID field: the Configuration page no longer sets the uid, so the door writes neither id)
+- assertion map: a Station section carrying only the legacy `station_id` is saved → nothing (the key is not read); a section carrying a `station_uid` other than the running one is refused, the running one or none accepted → `TestPinEdgeConfig_StationID` (`shingo-edge/www/handlers_config_pins_test.go:367`)
+- mutation: in the survivor, `applyStation`'s refusal never fires (`*s.StationUID == "never-posted"`): `--- FAIL: TestPinEdgeConfig_StationID/a_different_uid_is_refused`, `--- FAIL: TestPinEdgeConfig_StationID/a_blank_uid_is_refused`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `handlers_config_pins_test.go`'s Station UID block, which named it, is rewritten
+- verified at: the commit that adds this row
+
+### DEAD — `TestConfigPage_LegacyStationIDCarried`
+- test: `TestConfigPage_LegacyStationIDCarried` · pkg `shingoedge/www` · run `-run '^TestConfigPage_LegacyStationIDCarried$'` · `shingo-edge/www/config_page_render_test.go:153` @ `d2686a1d` · tags `none`
+- code: DEAD (the page's `data-legacy-station-id` carry goes with the Station UID field)
+- assertion map: a legacy-only Edge's id in the page data, an Edge with a uid carrying none → nothing; the uid is rendered as text and as no field the page could post → `TestConfigPage_StationUIDIsText` (`shingo-edge/www/config_page_render_test.go:153`)
+- mutation: not run (the carry it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestPinEdgeConfig_LegacyOnlyStationSaves`
+- test: `TestPinEdgeConfig_LegacyOnlyStationSaves` · pkg `shingoedge/www` · run `-run '^TestPinEdgeConfig_LegacyOnlyStationSaves$'` · `shingo-edge/www/handlers_config_pins_test.go:1100` @ `d2686a1d` · tags `none`
+- code: DEAD (E1's legacy carry, as `TestApiConfig_UpdateStationID`'s row)
+- assertion map: a legacy-only Edge's timezone save with its `station_id` carried → nothing; a Station section with no `station_uid` saves its timezone and auto-confirm and leaves the uid → `TestPinEdgeConfig_StationID` `no_uid_is_accepted` (`shingo-edge/www/handlers_config_pins_test.go:367`)
+- mutation: not run (the carry it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row

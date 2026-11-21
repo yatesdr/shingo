@@ -48,10 +48,10 @@ type Handlers struct {
 	eventHub      *EventHub
 	debugLog      *debuglog.Logger
 
-	// boot is the restart-only config fields as read at process start (Station
-	// UID, Plant timezone, Core address), for the Configuration page's restart
-	// notice. Taken once in NewRouter. Nil in handler tests that build
-	// &Handlers{} directly: no snapshot, no notice.
+	// boot is the restart-only config fields as read at process start (Plant
+	// timezone), for the Configuration page's restart notice. Taken once in
+	// NewRouter. Nil in handler tests that build &Handlers{} directly: no
+	// snapshot, no notice.
 	boot *configBoot
 
 	// stationViews coalesces concurrent builds of the same operator-station

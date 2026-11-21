@@ -25,7 +25,7 @@ import { toast } from '/static/shared/notice.js';
 import { formatClock, formatTime } from '/static/shared/clock.js';
 import { settingsPage, durationFromText, collectList } from '/static/shared/settings.js';
 import { send } from '/static/shared/http.js';
-import { backupRow, backupWords, makeStageRestore, stationBody, stationErrors } from '/static/js/pages/config-backups.js';
+import { backupRow, backupWords, makeStageRestore } from '/static/js/pages/config-backups.js';
 
 const root = document.getElementById('config');
 const $ = (sel) => root.querySelector(sel);
@@ -46,8 +46,6 @@ function readJSON(attr, fallback) {
 }
 
 const stationID = root.dataset.stationId || '';
-// Set only on a legacy-only Edge (no UID): carried unchanged in the station body.
-const legacyStationID = root.dataset.legacyStationId || '';
 let backupStatus = readJSON('data-backup-status', { available: false });
 let storageOpen = false;
 let secretRemoved = false;
@@ -116,19 +114,16 @@ const intOrText = (s) => (/^\d+$/.test(s) ? parseInt(s, 10) : s);
 const failedWhy = (r) => (r.shown ? '.' : ': ' + r.error);
 
 const sections = {
+    // The Station UID is shown as text and never sent: it is not set here.
     station: {
         read: () => ({
-            station_uid: val('station_uid'),
             timezone: val('timezone'),
             auto_confirm: sw('auto_confirm'),
         }),
         write: (v) => {
-            setVal('station_uid', v.station_uid);
             setVal('timezone', v.timezone);
             setSw('auto_confirm', v.auto_confirm);
         },
-        validate: (d) => stationErrors(d, legacyStationID),
-        body: (d) => stationBody(d, legacyStationID),
     },
     plc: {
         read: () => ({

@@ -177,7 +177,8 @@ These pages require login.
 
 The station's settings, in sections:
 
-- **Station**: Station UID, plant timezone (blank takes the plant's zone from Core), and whether deliveries
+- **Station**: the Station UID, shown as text (it is set on the box, not on this page: see the
+  [README](../README.md)), plant timezone (blank takes the plant's zone from Core), and whether deliveries
   confirm themselves.
 - **Core connection**: the link's state, and **Refresh nodes** / **Refresh catalog** to pull Core's node list
   and payload catalog now (both refresh on their own about every two minutes).
@@ -190,7 +191,7 @@ The station's settings, in sections:
 
 The page has one save bar (**Save** / **Discard**). Settings kept in `shingoedge.yaml` save in one
 `PUT /api/config`; shifts live in the database and save with the same click. A setting marked "applies after a
-restart" (Station UID, timezone) takes effect at the next start. The keys themselves are in the
+restart" (the timezone) takes effect at the next start. The keys themselves are in the
 [README](../README.md).
 
 ### Processes

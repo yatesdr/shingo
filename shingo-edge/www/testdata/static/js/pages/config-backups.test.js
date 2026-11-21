@@ -87,7 +87,7 @@ const ctx = vm.createContext({
     location: { reload: () => {} },
 });
 vm.runInContext(load(path.join(SRC_DIR, '..', '..', '..', '..', '..', 'shared', 'dom.js'), ['el', 'delegateActions']), ctx);
-vm.runInContext(load(path.join(SRC_DIR, 'config-backups.js'), ['backupRow', 'makeStageRestore', 'backupWords', 'formatBytes', 'stationBody', 'stationErrors']), ctx);
+vm.runInContext(load(path.join(SRC_DIR, 'config-backups.js'), ['backupRow', 'makeStageRestore', 'backupWords', 'formatBytes']), ctx);
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -188,20 +188,6 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         'warn', 'words: stale warns');
     eq(ctx.backupWords({ available: false }, clock).text, 'unavailable', 'words: no service');
     eq(ctx.formatBytes(1536), '1.5 KB', 'formatBytes');
-
-    // The Station body on a legacy-only Edge carries the legacy id unchanged,
-    // so a timezone save is not refused for want of a UID (lead ruling on E1).
-    {
-        const d = { station_uid: '', timezone: 'America/Chicago', auto_confirm: true };
-        eq(ctx.stationErrors(d, 'plant-a.line-1'), null, 'legacy-only: no client error');
-        const b = ctx.stationBody(d, 'plant-a.line-1');
-        eq(b.station_id, 'plant-a.line-1', 'legacy-only: body carries station_id unchanged');
-        eq(b.station_uid, '', 'legacy-only: no UID invented');
-        eq(b.timezone, 'America/Chicago', 'legacy-only: timezone sent');
-        eq(Object.prototype.hasOwnProperty.call(ctx.stationBody({ station_uid: 'stn-1', timezone: '', auto_confirm: false }, ''), 'station_id'),
-            false, 'UID Edge: no station_id in the body');
-        eq(ctx.stationErrors({ station_uid: '' }, '') !== null, true, 'neither id: client error (E1)');
-    }
 
     console.log(passed + ' passed, ' + failed + ' failed');
     process.exit(failed ? 1 : 0);
