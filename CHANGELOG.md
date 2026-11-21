@@ -42,6 +42,7 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - Station: an error toast stays 5 minutes or until its × is tapped (it went at 3.2 s); a done or a notice stays 10 s; every toast has a ×; still three at most, bottom right above the footer, and an order that failed or was cancelled still stays until its × is tapped
 - An Edge that asks Core for its node list or the parts catalog is no longer sent an older copy back on its next heartbeats: after a group was moved or deleted, the map synced or a part edited, the old list, map or catalog could come back for up to two minutes
 - A part edited on Core (its carrier types, its manifest, a cat id), from the desktop or the floor, reaches each Edge within a second; it waited for that Edge's next heartbeat
+- A node, group, lane, a node's stations, a loader, a kanban level, a carrier type or family, or an Edge's name edited on Core reaches each Edge's node list within a second; it waited up to two minutes, and a group moved or deleted could flicker back
 - Core no longer sends every Edge the whole robot map again each time it re-reads an unchanged map from the fleet (each fleet reconnect and the daily map check). Each Edge is sent the map once more after this upgrade
 
 ## v0.18.0 — 2026-11-21

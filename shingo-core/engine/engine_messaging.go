@@ -69,11 +69,16 @@ func (e *Engine) SetContainmentChangedFunc(fn func()) {
 // SetFeedsChangedFunc wires the change doors (service.FeedDoors) of every
 // writer of what the node list, the scene and the catalog are built from to
 // the messaging layer's one body, which forgets the builds a write made stale
-// and pushes each Edge its new copies: the payload service's creates,
-// updates, deletes, carrier-type sets, manifests and part cat ids, desktop and
-// floor alike. Set once at the composition root.
+// and pushes each Edge its new copies: the payload service (payloads, their
+// carrier types, manifests and part cat ids, desktop and floor alike), the
+// node service (nodes, groups, lanes, a node's stations, kanban levels, an
+// Edge's name), the loader service and the bin service's bin types and
+// families. Set once at the composition root.
 func (e *Engine) SetFeedsChangedFunc(fn func(stations []string)) {
 	e.payloadService.SetFeedsChangedFunc(fn)
+	e.nodeService.SetFeedsChangedFunc(fn)
+	e.loaderService.SetFeedsChangedFunc(fn)
+	e.binService.SetFeedsChangedFunc(fn)
 }
 
 // SetCatalogRowFunc wires the read of one part's catalog row and carrier rows,

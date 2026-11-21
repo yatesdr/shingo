@@ -39,10 +39,47 @@ type NodeService struct {
 	// binsRows reads the bins rows a write door's refusal carries
 	// (bins_rows.go).
 	binsRows binsRowsHook
+
+	// FeedDoors: a write to a node, a group, a lane, a kanban level or an
+	// Edge's name goes through the plant-wide door after it (nodesWritten); a
+	// node's stations through the per-station door, for the stations it had
+	// and has (stationsWritten).
+	FeedDoors
 }
 
 func NewNodeService(db *store.DB) *NodeService {
 	return &NodeService{db: db}
+}
+
+// nodesWritten goes through the plant-wide door after a write that succeeded
+// and returns err untouched: what any station's node list carries may have
+// changed (its own nodes, the plant-wide list a station with none of its own
+// is sent, a group's members, a loader's Edge name).
+func (s *NodeService) nodesWritten(err error) error {
+	if err == nil {
+		s.FeedsChangedPlantWide()
+	}
+	return err
+}
+
+// stationsWritten goes through the per-station door after a node's stations
+// were written: the stations it had (before, read before the write) and the
+// ones it has are the node lists that changed. A failed read of before goes
+// through the plant-wide door instead.
+func (s *NodeService) stationsWritten(before []string, beforeErr error, after []string) {
+	if beforeErr != nil {
+		s.FeedsChangedPlantWide()
+		return
+	}
+	seen := map[string]bool{}
+	var changed []string
+	for _, st := range append(append([]string{}, before...), after...) {
+		if st != "" && !seen[st] {
+			seen[st] = true
+			changed = append(changed, st)
+		}
+	}
+	s.FeedsChangedAt(changed...)
 }
 
 // NodeAssignments bundles the station + bin-type selections that are
@@ -65,21 +102,23 @@ type NodeAssignments struct {
 // the given name and returns its ID. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration.
 func (s *NodeService) CreateNodeGroup(name string) (int64, error) {
-	return s.db.CreateNodeGroup(name)
+	id, err := s.db.CreateNodeGroup(name)
+	return id, s.nodesWritten(err)
 }
 
 // AddLane appends a new lane (synthetic LANE node) under the given
 // node group and returns the new lane's ID. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration.
 func (s *NodeService) AddLane(groupID int64, name string) (int64, error) {
-	return s.db.AddLane(groupID, name)
+	id, err := s.db.AddLane(groupID, name)
+	return id, s.nodesWritten(err)
 }
 
 // DeleteNodeGroup removes a node group along with its lane and slot
 // children. Absorbed from engine_db_methods.go as part of the
 // www-handler service migration.
 func (s *NodeService) DeleteNodeGroup(groupID int64) error {
-	return s.db.DeleteNodeGroup(groupID)
+	return s.nodesWritten(s.db.DeleteNodeGroup(groupID))
 }
 
 // GetGroupLayout returns the layout (lanes + slots + counts) for the
@@ -112,23 +151,29 @@ func (s *NodeService) SetNodePayloads(nodeID int64, payloadIDs []int64) error {
 
 // SetNodeStations replaces the station assignment list for the given
 // node. Pass nil or empty to clear. Absorbed from engine_db_methods.go
-// as part of the www-handler service migration.
+// as part of the www-handler service migration. The stations it had and has
+// go through the per-station door after it.
 func (s *NodeService) SetNodeStations(nodeID int64, stationIDs []string) error {
-	return s.db.SetNodeStations(nodeID, stationIDs)
+	before, beforeErr := s.db.ListStationsForNode(nodeID)
+	if err := s.db.SetNodeStations(nodeID, stationIDs); err != nil {
+		return err
+	}
+	s.stationsWritten(before, beforeErr, stationIDs)
+	return nil
 }
 
 // CreateNode inserts a new node row and populates its ID. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
 func (s *NodeService) CreateNode(n *nodes.Node) error {
-	return s.db.CreateNode(n)
+	return s.nodesWritten(s.db.CreateNode(n))
 }
 
 // UpdateNode persists changes to a node row. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
 func (s *NodeService) UpdateNode(n *nodes.Node) error {
-	return s.db.UpdateNode(n)
+	return s.nodesWritten(s.db.UpdateNode(n))
 }
 
 // SetDisplayName writes the node's person-readable name and audits it.
@@ -160,7 +205,7 @@ func (s *NodeService) SetDisplayName(nodeID int64, displayName, by string) error
 // DeleteNode removes a node row. Absorbed from engine_db_methods.go
 // as part of the www-handler service migration (PR 3a.1b).
 func (s *NodeService) DeleteNode(id int64) error {
-	return s.db.DeleteNode(id)
+	return s.nodesWritten(s.db.DeleteNode(id))
 }
 
 // GetNode loads a node by ID. Absorbed from engine_db_methods.go as
@@ -436,7 +481,7 @@ func (s *NodeService) SetNodeBinTypes(nodeID int64, binTypeIDs []int64) error {
 // Absorbed from engine_db_methods.go as part of the www-handler
 // service migration (PR 3a.1b).
 func (s *NodeService) ReparentNode(nodeID int64, parentID *int64, position int) error {
-	return s.db.ReparentNode(nodeID, parentID, position)
+	return s.nodesWritten(s.db.ReparentNode(nodeID, parentID, position))
 }
 
 // isSlotOfGroup says the node is a position directly under a node group. A read that fails says
@@ -465,13 +510,19 @@ func (s *NodeService) ApplyAssignments(nodeID int64, a NodeAssignments) error {
 		if err := s.db.SetNodeProperty(nodeID, "station_mode", a.StationMode); err != nil {
 			errs = append(errs, fmt.Errorf("set station_mode: %w", err))
 		}
+		// The stations it had and has go through the per-station door.
+		before, beforeErr := s.db.ListStationsForNode(nodeID)
 		if a.StationMode == "specific" {
 			if err := s.db.SetNodeStations(nodeID, a.Stations); err != nil {
 				errs = append(errs, fmt.Errorf("set stations: %w", err))
+			} else {
+				s.stationsWritten(before, beforeErr, a.Stations)
 			}
 		} else {
 			if err := s.db.SetNodeStations(nodeID, nil); err != nil {
 				errs = append(errs, fmt.Errorf("clear stations: %w", err))
+			} else {
+				s.stationsWritten(before, beforeErr, nil)
 			}
 		}
 	}
@@ -528,6 +579,7 @@ func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
 		return nil, err
 	}
 	s.invalidateStationNames()
+	s.FeedsChangedPlantWide() // a loader naming this uid carries its name
 	return e, nil
 }
 
@@ -543,6 +595,7 @@ func (s *NodeService) RenameEdge(uid, displayName string) (bool, error) {
 	// ran, drop the cache" and a spurious reload of a one-row map costs nothing.
 	if err == nil {
 		s.invalidateStationNames()
+		s.FeedsChangedPlantWide() // a loader naming this Edge carries its name
 	}
 	return ok, err
 }
@@ -554,6 +607,7 @@ func (s *NodeService) ClaimEdge(uid, displayName string) (bool, error) {
 	ok, err := s.db.ClaimEdge(uid, displayName)
 	if err == nil {
 		s.invalidateStationNames()
+		s.FeedsChangedPlantWide() // a loader naming this Edge carries its name
 	}
 	return ok, err
 }

@@ -39,6 +39,10 @@ type BinService struct {
 	// order-driven arrival funnel and therefore the seam; it observes and never
 	// gates.
 	burials burialShadow
+	// FeedDoors: a bin type or family write goes through the plant-wide door
+	// after it: every station's node list carries each type's family and each
+	// payload's carrier types.
+	FeedDoors
 }
 
 func NewBinService(db *store.DB, manifest *BinManifestService) *BinService {
@@ -913,7 +917,7 @@ func (s *BinService) HasNotes(binIDs []int64) (map[int64]bool, error) {
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
 func (s *BinService) CreateBinType(bt *bins.BinType) error {
-	return s.db.CreateBinType(bt)
+	return s.typesWritten(s.db.CreateBinType(bt))
 }
 
 // GetBinType loads a bin type by ID. Absorbed from engine_db_methods.go
@@ -933,7 +937,7 @@ var ErrBareTypeInPayloadRule = errors.New("a bare bin type cannot be in a payloa
 // (PR 3a.2). Bare is not writable here: it is derived from bare_of, which only
 // the stage-1 CLEAR writes (bins.EnsureBareMarkerTx).
 func (s *BinService) UpdateBinType(bt *bins.BinType) error {
-	return s.db.UpdateBinType(bt)
+	return s.typesWritten(s.db.UpdateBinType(bt))
 }
 
 // SetBinTypeFamilyByCode moves a type and its bare marker to the family of this code, making the
@@ -948,7 +952,16 @@ func (s *BinService) SetBinTypeFamilyByCode(typeID int64, code string) error {
 	if err != nil {
 		return err
 	}
-	return s.db.SetBinTypeFamily(typeID, family)
+	return s.typesWritten(s.db.SetBinTypeFamily(typeID, family))
+}
+
+// typesWritten goes through the plant-wide door after a bin type or family
+// write that succeeded, and returns err untouched.
+func (s *BinService) typesWritten(err error) error {
+	if err == nil {
+		s.FeedsChangedPlantWide()
+	}
+	return err
 }
 
 // ListCarrierFamilies is every family and its members, for the Bin Types page's picker.
@@ -960,7 +973,7 @@ func (s *BinService) ListCarrierFamilies() ([]bins.CarrierFamily, error) {
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
 func (s *BinService) DeleteBinType(id int64) error {
-	return s.db.DeleteBinType(id)
+	return s.typesWritten(s.db.DeleteBinType(id))
 }
 
 // ListBinTypes returns every bin type in the store. Absorbed from

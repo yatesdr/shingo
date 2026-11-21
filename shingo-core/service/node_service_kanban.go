@@ -167,6 +167,10 @@ func (s *NodeService) SaveKanban(save KanbanSave) (KanbanCheck, error) {
 	if err := s.db.SaveKanban(change, actor); err != nil {
 		return chk, err
 	}
+	// The node lists mark the groups that keep a level (Kanban): the save goes
+	// through the plant-wide door once its writes are done, and the push
+	// sends only a list that moved.
+	defer s.FeedsChangedPlantWide()
 	if change.EnsureRow {
 		said, err := s.familyWarnings(save.GroupNodeID, actor)
 		if err != nil {

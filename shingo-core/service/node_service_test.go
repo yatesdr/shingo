@@ -5,6 +5,7 @@ package service
 import (
 	"database/sql"
 	"sort"
+	"strings"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -1041,5 +1042,60 @@ func TestNodeService_SetDisplayName(t *testing.T) {
 	// A sentence is not a label: refused, nothing written.
 	if err := svc.SetDisplayName(n.ID, string(make([]byte, 121)), "admin"); err == nil {
 		t.Fatal("a 121-character display name was accepted")
+	}
+}
+
+// TestNodeService_EveryWriteGoesThroughADoor: each node write the service makes
+// goes through a change door once, after it succeeded: a node, a group,
+// a reparent and an Edge's name through the plant-wide door, a node's stations
+// through the per-station door for the stations it had and has, a set that
+// names none on a node that had none through neither. A refused write calls
+// nothing.
+func TestNodeService_EveryWriteGoesThroughADoor(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+	var calls [][]string
+	svc.SetFeedsChangedFunc(func(stations []string) {
+		cp := append([]string{}, stations...)
+		sort.Strings(cp)
+		calls = append(calls, cp)
+	})
+	plant := []string{}
+	n := &nodes.Node{Name: "SYN-DOOR-N1", Enabled: true}
+	var groupID int64
+	for _, w := range []struct {
+		name string
+		do   func() error
+		want []string // nil: no door; empty: the plant-wide door
+	}{
+		{"create a node", func() error { return svc.CreateNode(n) }, plant},
+		{"update it", func() error { n.Enabled = false; return svc.UpdateNode(n) }, plant},
+		{"give it stations", func() error { return svc.SetNodeStations(n.ID, []string{"stn-door-b", "stn-door-a"}) }, []string{"stn-door-a", "stn-door-b"}},
+		{"move it to another", func() error { return svc.SetNodeStations(n.ID, []string{"stn-door-c"}) }, []string{"stn-door-a", "stn-door-b", "stn-door-c"}},
+		{"its assignments, none", func() error { return svc.ApplyAssignments(n.ID, NodeAssignments{StationMode: "all"}) }, []string{"stn-door-c"}},
+		{"none again", func() error { return svc.SetNodeStations(n.ID, nil) }, nil},
+		{"a group", func() error { var err error; groupID, err = svc.CreateNodeGroup("SYN-DOOR-G"); return err }, plant},
+		{"reparent the node into the group", func() error { return svc.ReparentNode(n.ID, &groupID, 0) }, plant},
+		{"delete the group", func() error { return svc.DeleteNodeGroup(groupID) }, plant},
+		{"enroll an Edge", func() error { _, err := svc.EnrollEdge("SYN DOOR EDGE"); return err }, plant},
+		{"delete the node", func() error { return svc.DeleteNode(n.ID) }, plant},
+	} {
+		before := len(calls)
+		testutil.MustNoErr(t, w.do(), w.name)
+		got := calls[before:]
+		switch {
+		case w.want == nil && len(got) != 0:
+			t.Errorf("%s went through a door %v, want none", w.name, got)
+		case w.want != nil && (len(got) != 1 || strings.Join(got[0], ",") != strings.Join(w.want, ",")):
+			t.Errorf("%s went through the doors %v, want once with %v (none: the plant-wide door)", w.name, got, w.want)
+		}
+	}
+	before := len(calls)
+	if _, err := svc.AddLane(-1, "SYN-DOOR-L2"); err == nil {
+		t.Error("a lane was added under a group that is not there")
+	}
+	if got := calls[before:]; len(got) != 0 {
+		t.Errorf("a refused write went through the doors %v, want none", got)
 	}
 }

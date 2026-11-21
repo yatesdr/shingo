@@ -77,6 +77,9 @@ var ErrAutoPushProduce = errors.New("only an unloader can re-pull its next full:
 type LoaderService struct {
 	db       *store.DB
 	notifier ThresholdNotifier
+	// FeedDoors: every loader write goes through the plant-wide door after it
+	// (rederive, SyncPairs): every station's node list carries the loaders.
+	FeedDoors
 }
 
 // NewLoaderService constructs the service. notifier may be nil (re-derive still
@@ -689,7 +692,12 @@ func (s *LoaderService) RemovePayload(loaderID int64, payloadCode string) error 
 // DeriveDemandRegistry prints one line per station, a failure included, so a
 // station that errors is skipped here without a second line. A refused
 // derivation returns no changes, so the monitor is told nothing about it.
+//
+// Every loader write ends here, so this is also where it goes through the
+// plant-wide change door: the node list carries every loader, its windows and
+// the groups a two-stage pair makes.
 func (s *LoaderService) rederive() {
+	defer s.FeedsChangedPlantWide()
 	stationSet := map[string]struct{}{}
 	if stations, err := s.db.DemandRegistryStations(); err != nil {
 		log.Printf("loader_service: rederive: list registry stations: %v", err)

@@ -394,13 +394,15 @@ func (s *LoaderService) groupWindows(name string, g *nodes.Node, one *loaders.Lo
 
 // SyncPairs re-derives every pair, so a pair set up before stage 1 had a group
 // gets one at startup instead of at its next edit. A pair that cannot be synced
-// is logged and left as it was; the rest still sync.
+// is logged and left as it was; the rest still sync. It goes through the
+// plant-wide change door after, as every loader write does.
 func (s *LoaderService) SyncPairs() {
 	all, err := s.db.ListLoaders()
 	if err != nil {
 		log.Printf("loader_service: sync two-stage pairs: %v", err)
 		return
 	}
+	defer s.FeedsChangedPlantWide()
 	for _, l := range all {
 		if l.SecondStageLoaderID == nil || l.ArchivedAt != nil {
 			continue
