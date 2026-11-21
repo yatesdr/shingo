@@ -172,17 +172,21 @@ let failNext = 0;
 // pendingNext: the next answers are 202 pending (an ask Core has not answered
 // within the tap's wait).
 let pendingNext = 0;
+// refusals: the bodies the next refused answers carry, in order (else
+// {"error":"refused"}).
+let refusals = [];
 let waiting = [];
 function pendingAnswer() {
     const body = { status: 'pending', pending: true, notice: 'sent — waiting for Core' };
     const res = { ok: true, status: 202, json: async () => body, text: async () => JSON.stringify(body), clone() { return res; } };
     return res;
 }
-function answer(ok) {
+function answer(ok, refusal) {
+    const no = refusal || { error: 'refused' };
     const res = {
         ok: ok, status: ok ? 200 : 409,
-        json: async () => (ok ? {} : { error: 'refused' }),
-        text: async () => (ok ? '{}' : '{"error":"refused"}'),
+        json: async () => (ok ? {} : no),
+        text: async () => (ok ? '{}' : JSON.stringify(no)),
         clone() { return res; },
     };
     return res;
@@ -194,9 +198,10 @@ function fetchStub(url, opts) {
     if (method === 'GET') return Promise.resolve(answer(true));
     if (pendingNext > 0) { pendingNext--; return Promise.resolve(pendingAnswer()); }
     const ok = failNext > 0 ? (failNext--, false) : true;
-    if (!held) return Promise.resolve(answer(ok));
+    const refusal = ok ? undefined : refusals.shift();
+    if (!held) return Promise.resolve(answer(ok, refusal));
     return new Promise(function (resolve, reject) {
-        waiting.push(function () { resolve(answer(ok)); });
+        waiting.push(function () { resolve(answer(ok, refusal)); });
         if (opts.signal) {
             opts.signal.addEventListener('abort', function () {
                 const e = new Error('aborted'); e.name = 'AbortError'; reject(e);
@@ -207,6 +212,12 @@ function fetchStub(url, opts) {
 // release answers every held request.
 async function release() {
     held = false;
+    const w = waiting; waiting = [];
+    w.forEach(fn => fn());
+    await flush();
+}
+// answerHeld answers the requests held so far and keeps holding the next.
+async function answerHeld() {
     const w = waiting; waiting = [];
     w.forEach(fn => fn());
     await flush();
@@ -337,6 +348,7 @@ function resetDOM() {
     viewLoads = 0;
     held = false;
     failNext = 0;
+    refusals = [];
     waiting = [];
     ctx.closeModal();
     content.innerHTML = '';
@@ -680,6 +692,89 @@ async function tap(node) { await node.click(); await flush(); }
     eq(posts().length - before, 1, 'the held tap sent nothing');
     eq(toasts.children.map(t => t.textContent), ['sent — waiting for Core', 'sent — waiting for Core'], 'both say it was sent');
     eq(await ctx.postAction('/api/process-nodes/2/record-count', { actual_uop: 3 }, loadView), true, 'another node is not held');
+}
+
+// ── A refusal with a way out: the exit toast ─────────────────────────────────
+{
+    // A refusal that carries an exit (writeErrorWithExit: an armed changeover
+    // refusing a material request) shows its words with the exit's button and
+    // a ×, and stays until one of them is tapped. One tap on the button
+    // disables it and sends the exit; the toast stays up, the button dead,
+    // until the exit and the request it then re-sends are both answered, and
+    // then goes. A refused exit re-sends nothing and the toast still goes, with
+    // the exit's refusal said. The × goes and sends nothing.
+    //
+    // How this block reads the glass, in one place: the toasts up, oldest
+    // first; a toast's words; whether it stays until closed; its button; its ×.
+    // These lines re-point when the station's toasts are drawn by something
+    // else. A browser fires no click on a disabled button, so press() does not.
+    const box = document.getElementById('os-toast');
+    const up = () => box.children.filter(t => !t.removed);
+    const words = (t) => (t.children.length ? t.children[0].textContent : t.textContent);
+    const sticky = (t) => t.classList.contains('sticky');
+    const buttonOf = (t) => t.querySelector('.os-toast-action');
+    const closeOf = (t) => t.querySelector('.os-toast-close');
+    const press = (b) => { if (b && !b.disabled) b.click(); return flush(); };
+    const REQ = '/api/process-nodes/1/request';
+    const EXIT = '/api/processes/1/changeover/cancel';
+    const refusedWithExit = () => ({ error: 'A changeover to STYLE-2 is armed on this process',
+        exit: { kind: 'cancel_changeover', url: EXIT, label: 'Cancel changeover to STYLE-2' } });
+    const sentSince = (n) => posts().slice(n).map(p => p.url + ' ' + JSON.stringify(p.body));
+    const onlyUp = (t) => up().length === 1 && up()[0] === t;
+
+    // The exit taken: disable, await the exit and the re-sent request, drop.
+    resetDOM();
+    box.children = [];
+    failNext = 1;
+    refusals = [refusedWithExit()];
+    eq(await ctx.postAction(REQ, { quantity: 1 }, loadView), false, 'a refusal with an exit: false');
+    eq(up().map(t => [words(t), sticky(t), buttonOf(t) && buttonOf(t).textContent, !!closeOf(t)]),
+        [['A changeover to STYLE-2 is armed on this process', true, 'Cancel changeover to STYLE-2', true]],
+        'one toast: the refusal\'s words, sticky, with the exit\'s button and a ×');
+    const exitToast = up()[0];
+    const exitButton = buttonOf(exitToast);
+    let n = posts().length;
+    held = true;
+    await press(exitButton);
+    eq([exitButton.disabled, sentSince(n)], [true, [EXIT + ' {}']],
+        'one tap: the button disables and the exit is sent, once');
+    eq(onlyUp(exitToast), true, 'while the exit is out the toast stays up');
+    await press(exitButton);
+    eq(sentSince(n), [EXIT + ' {}'], 'a second tap on the dead button sends nothing');
+    await answerHeld();
+    eq(sentSince(n), [EXIT + ' {}', REQ + ' {"quantity":1}'], 'the exit answered: the request is re-sent as it was');
+    eq([onlyUp(exitToast), exitButton.disabled], [true, true], 'while the re-sent request is out the toast stays up, its button dead');
+    await release();
+    eq(up().length, 0, 'both answered: the toast goes');
+
+    // The exit refused: nothing re-sent, the toast goes, the refusal is said.
+    resetDOM();
+    box.children = [];
+    failNext = 1;
+    refusals = [refusedWithExit()];
+    await ctx.postAction(REQ, { quantity: 1 }, loadView);
+    n = posts().length;
+    failNext = 1;
+    refusals = [{ error: 'The changeover could not be cancelled' }];
+    await press(buttonOf(up()[0]));
+    eq(sentSince(n), [EXIT + ' {}'], 'the exit refused: the request is not re-sent');
+    eq(up().map(t => [words(t), sticky(t)]), [['The changeover could not be cancelled', false]],
+        'the exit toast goes and the exit\'s refusal is said');
+
+    // The ×: the toast goes and nothing is sent. Sticky, so later refusals do
+    // not push it out first.
+    resetDOM();
+    box.children = [];
+    failNext = 4;
+    refusals = [refusedWithExit(), { error: 'refused one' }, { error: 'refused two' }, { error: 'refused three' }];
+    await ctx.postAction(REQ, { quantity: 1 }, loadView);
+    for (let i = 0; i < 3; i++) await ctx.postAction('/api/process-nodes/2/request', { quantity: 1 }, loadView);
+    eq(up().map(words), ['A changeover to STYLE-2 is armed on this process', 'refused two', 'refused three'],
+        'the exit toast is sticky: three later refusals evict a plain one, not it');
+    n = posts().length;
+    await press(closeOf(up()[0]));
+    eq([up().map(words), sentSince(n)], [['refused two', 'refused three'], []], 'its × takes it down and sends nothing');
+    box.children = [];
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

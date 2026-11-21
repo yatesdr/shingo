@@ -217,6 +217,8 @@ let cutoverFlag = null;
 let flagFails = 0;
 let viewFails = 0;
 let postFails = 0;
+// refusals: the bodies the next POSTs are refused with (409), in order.
+let refusals = [];
 let notModified = 0;
 function etagOf(text) {
     let h = 0;
@@ -255,6 +257,7 @@ function fetchStub(url, opts) {
         return Promise.resolve(response(200, JSON.stringify(cutoverFlag ? { flagged: true, flag: cutoverFlag } : { flagged: false })));
     }
     if (method !== 'GET' && postFails > 0) { postFails--; return Promise.resolve(response(409, '{"error":"refused"}')); }
+    if (method !== 'GET' && refusals.length) return Promise.resolve(response(409, JSON.stringify(refusals.shift())));
     return Promise.resolve(response(200, '{}'));
 }
 function posts() { return requests.filter(r => r.method !== 'GET').map(r => r.url); }
@@ -998,15 +1001,71 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
     await settle();
 }
 
-// ── a sticky alert is not evicted by later toasts ────────────────────────────
+// ── the station's toasts: three at most, a sticky one never evicted ──────────
+//
+// Driven through the station's own doors, not its toast helper: a refused
+// action (postAction, a plain error toast in the refusal's words) and the two
+// failures Core sends on the stream (order-failed and order-cancelled for this
+// station's order, each a sticky toast). Every message differs, so a toast
+// that folds repeated words into one cannot pass or fail this for that reason.
 {
+    // How this block reads the glass, in one place: the toasts up, oldest
+    // first; a toast's words; whether it stays until closed; its ×. These four
+    // lines re-point when the station's toasts are drawn by something else.
+    const up = () => toastBox.children.filter(t => !t.removed);
+    const words = (t) => (t.children.length ? t.children[0].textContent : t.textContent);
+    const sticky = (t) => t.classList.contains('sticky');
+    const closeOf = (t) => t.querySelector('.os-toast-close');
+    const glass = () => up().map(t => (sticky(t) ? 'sticky: ' : 'plain: ') + words(t));
+    const refuse = async (said) => {
+        refusals.push({ error: said });
+        eq(await ctx.postAction('/api/process-nodes/1/request', { quantity: 1 }, null), false, 'refused: ' + said);
+        await flush();
+    };
     toastBox.children = [];
-    ctx.showToast('order failed', 'error', { sticky: true });
-    for (let i = 0; i < 5; i++) ctx.showToast('note ' + i, 'info');
-    eq(toastTexts().filter(t => t.indexOf('order failed') === 0).length, 1,
+    refusals = [];
+
+    fire('order-failed', { order_id: 501, order_type: 'retrieve', reason: 'no robot free' });
+    await flush();
+    await refuse('refused one');
+    await refuse('refused two');
+    eq(glass(), ['sticky: retrieve: no robot free (#501)', 'plain: refused one', 'plain: refused two'],
+        'three up: the sticky failure and two refusals, oldest first');
+    await refuse('refused three');
+    eq(glass(), ['sticky: retrieve: no robot free (#501)', 'plain: refused two', 'plain: refused three'],
+        'a fourth toast evicts the oldest plain one, never the sticky one: still three up');
+    await refuse('refused four');
+    await refuse('refused five');
+    eq(glass(), ['sticky: retrieve: no robot free (#501)', 'plain: refused four', 'plain: refused five'],
         'a sticky toast survives five later toasts (a bug fixed: the container dropped the oldest, sticky or not)');
-    eq(toastTexts().length <= 4, true, 'the plain toasts still give way to each other');
+
+    // A sticky arrival makes room the same way: the oldest plain one goes.
+    fire('order-cancelled', { order_id: 501, order_type: 'complex', reason: 'fleet order stopped' });
+    await flush();
+    fire('order-failed', { order_id: 501, order_type: 'retrieve', reason: 'lane blocked' });
+    await flush();
+    eq(glass(), ['sticky: retrieve: no robot free (#501)', 'sticky: Complex cancelled: fleet order stopped (#501)',
+        'sticky: retrieve: lane blocked (#501)'],
+        'two sticky arrivals evict the two plain toasts, oldest first');
+
+    // Three stickies up: nothing can be evicted, and the next toast is shown
+    // anyway, so the glass holds four; the one after evicts only that plain one.
+    await refuse('refused six');
+    eq(glass().length, 4, 'three stickies up: a fourth toast is still shown, nothing evicted');
+    await refuse('refused seven');
+    eq(glass(), ['sticky: retrieve: no robot free (#501)', 'sticky: Complex cancelled: fleet order stopped (#501)',
+        'sticky: retrieve: lane blocked (#501)', 'plain: refused seven'],
+        'with three stickies up, a new toast evicts the plain one, never a sticky one');
+
+    // A sticky toast goes when its × is tapped, and only then.
+    const x = closeOf(up()[1]);
+    eq(!!x, true, 'a sticky toast carries a ×');
+    if (x) await x.click();
+    await flush();
+    eq(glass(), ['sticky: retrieve: no robot free (#501)', 'sticky: retrieve: lane blocked (#501)', 'plain: refused seven'],
+        'the × takes its sticky toast down');
     toastBox.children = [];
+    refusals = [];
 }
 
 finished = true;
