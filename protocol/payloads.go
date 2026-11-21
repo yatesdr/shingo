@@ -1554,6 +1554,9 @@ type OrderStatusRequest struct {
 // DeliveryNode, and a legitimately unresolvable one (a Core node with no Edge
 // process node) leaves it null — which is a supported shape, not an error.
 //
+// NO station_id either: the Edge it is sent to is the station, and never stored
+// Core's copy. A Core before this build sent one; no Edge read it.
+//
 // Additive-only: an older Edge that does not register the subject logs and
 // drops the whole message, so the feed is a no-op in both mixed-version
 // directions.
@@ -1561,7 +1564,6 @@ type OrderProjection struct {
 	OrderUUID    string    `json:"order_uuid"`
 	OrderType    OrderType `json:"order_type"`
 	Status       string    `json:"status"`
-	StationID    string    `json:"station_id"`
 	Quantity     int64     `json:"quantity,omitempty"`
 	SourceNode   string    `json:"source_node,omitempty"`
 	DeliveryNode string    `json:"delivery_node,omitempty"`
@@ -1600,16 +1602,14 @@ type OrderProjection struct {
 	// field on the wire that nothing populates and nothing stores.
 }
 
-// OrderStatusSnapshot is the current Core-side view of an order.
+// OrderStatusSnapshot is the current Core-side view of an order. It carries no
+// station, source node, delivery node or vendor order id: a Core before this
+// build sent all four and no Edge read them (the Edge holds its own row).
 type OrderStatusSnapshot struct {
-	OrderUUID     string `json:"order_uuid"`
-	Found         bool   `json:"found"`
-	Status        string `json:"status,omitempty"`
-	StationID     string `json:"station_id,omitempty"`
-	SourceNode    string `json:"source_node,omitempty"`
-	DeliveryNode  string `json:"delivery_node,omitempty"`
-	VendorOrderID string `json:"vendor_order_id,omitempty"`
-	ErrorDetail   string `json:"error_detail,omitempty"`
+	OrderUUID   string `json:"order_uuid"`
+	Found       bool   `json:"found"`
+	Status      string `json:"status,omitempty"`
+	ErrorDetail string `json:"error_detail,omitempty"`
 	// QueueReason is Core's current blocking signal for a queued order
 	// (orders.queue_reason) — e.g. "no bin of requested payload in node
 	// group AMR Supermarket". Re-evaluated by the dispatcher/scanner and

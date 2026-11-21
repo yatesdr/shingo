@@ -171,7 +171,7 @@ func TestCoreWord_APlainOrderFollowsCoresVersionsEndToEnd(t *testing.T) {
 	id := r.leg(uuid, protocol.StatusSubmitted)
 
 	_, err := r.eng.ApplyOrderProjection(protocol.OrderProjection{OrderUUID: uuid, OrderType: protocol.OrderTypeRetrieve,
-		Status: string(protocol.StatusPending), StationID: "edge.test", Quantity: 1, SourceNode: "SRC",
+		Status: string(protocol.StatusPending), Quantity: 1, SourceNode: "SRC",
 		DeliveryNode: "TEST-NODE", PayloadCode: "PART-M", Version: 1})
 	testutil.MustNoErr(t, err, "Core's echo of the order")
 	r.at("the projection", id, protocol.StatusPending, 1)
@@ -764,7 +764,7 @@ func TestCoreWord_AVersionedProjectionGoesThroughTheApplier(t *testing.T) {
 	const waitText = "no bin of PART-N in AMR Supermarket"
 	projection := func(uuid string, status protocol.Status, version int64) protocol.OrderProjection {
 		return protocol.OrderProjection{OrderUUID: uuid, OrderType: protocol.OrderTypeRetrieve, Status: string(status),
-			StationID: "edge.test", Quantity: 3, SourceNode: "SRC-2", DeliveryNode: "TEST-NODE",
+			Quantity: 3, SourceNode: "SRC-2", DeliveryNode: "TEST-NODE",
 			PayloadCode: "PART-N", PayloadDesc: "part N", Version: version}
 	}
 

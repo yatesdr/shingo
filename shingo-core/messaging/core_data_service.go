@@ -684,10 +684,6 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 		if err == nil && order != nil {
 			snap.Found = true
 			snap.Status = string(order.Status)
-			snap.StationID = order.Requester()
-			snap.SourceNode = order.SourceNode
-			snap.DeliveryNode = order.DeliveryNode
-			snap.VendorOrderID = order.VendorOrderID
 			snap.ErrorDetail = order.ErrorDetail
 			snap.QueueReason = order.QueueReason
 			snap.QueueCode = order.QueueCode

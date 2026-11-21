@@ -276,7 +276,7 @@ func (c *coreRetrieve) modelPart(t *testing.T, eng *Engine, req protocol.LoaderR
 		uuid := fmt.Sprintf("%s%s-%s-%d", prefix, n, req.PayloadCode, c.asks.Load()*100+int64(len(res.Created)))
 		if _, err := eng.ApplyOrderProjection(protocol.OrderProjection{
 			OrderUUID: uuid, OrderType: protocol.OrderTypeRetrieve, Status: "pending",
-			StationID: eng.cfg.StationID(), Quantity: 1, SourceNode: source, DeliveryNode: n,
+			Quantity: 1, SourceNode: source, DeliveryNode: n,
 			PayloadCode: req.PayloadCode, RetrieveEmpty: empty, OriginID: req.OriginID, OriginClass: req.OriginClass,
 		}); err != nil {
 			t.Errorf("project %s: %v", uuid, err)

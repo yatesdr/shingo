@@ -350,7 +350,7 @@ func TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionLeaveACancelledRowCa
 	ended := r.row(id)
 
 	r.eng.HandleUnlistedOrders([]protocol.OrderProjection{{OrderUUID: "lost-cancel-leg", OrderType: protocol.OrderTypeRetrieve,
-		Status: string(protocol.StatusInTransit), StationID: "edge.test", SourceNode: "SRC", DeliveryNode: "TEST-NODE"}})
+		Status: string(protocol.StatusInTransit), SourceNode: "SRC", DeliveryNode: "TEST-NODE"}})
 
 	after := r.row(id)
 	if after.Status != protocol.StatusCancelled {

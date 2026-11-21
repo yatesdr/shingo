@@ -21,7 +21,6 @@ func projectionFixture(uuid, delivery string) protocol.OrderProjection {
 		OrderUUID:     uuid,
 		OrderType:     protocol.OrderTypeRetrieveEmpty,
 		Status:        "queued",
-		StationID:     "edge.line1",
 		Quantity:      1,
 		SourceNode:    "EMPTY-MARKET",
 		DeliveryNode:  delivery,

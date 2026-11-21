@@ -53,10 +53,10 @@ import (
 // each was a dropped field somebody had typed a reason for, and each reason
 // named the fix. The Edge now has a column for all three, so an exemption would
 // fail TestOrderProjection_KnownDroppedAreStillDropped rather than sit here
-// describing a state of the world that ended.
-var knownDropped = map[string]string{
-	"StationID": "the Edge IS the station — it knows its own id, and storing Core's copy would create a second answer that can disagree",
-}
+// describing a state of the world that ended. StationID, the one exemption
+// after that, went with the field itself (the Edge is the station and never
+// stored Core's copy), so the map is empty until a field is dropped on purpose.
+var knownDropped = map[string]string{}
 
 // TestOrderProjection_NoFieldDropsSilently is the gate.
 func TestOrderProjection_NoFieldDropsSilently(t *testing.T) {
@@ -153,6 +153,9 @@ stored row was: %v`, lost, stored)
 // should be told an exemption is no longer needed.
 func TestOrderProjection_KnownDroppedAreStillDropped(t *testing.T) {
 	t.Parallel()
+	if len(knownDropped) == 0 {
+		t.Skip("knownDropped exempts no field: there is no exemption to check")
+	}
 	order := &coreorders.Order{
 		EdgeUUID:     "mg1c-drift-known-uuid",
 		OrderType:    dispatch.OrderTypeRetrieveEmpty,

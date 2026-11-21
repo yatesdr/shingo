@@ -500,7 +500,7 @@ func subjectFixtures() map[string]subjectFixture {
 		}},
 		"data:" + protocol.SubjectOrderProjected: {moves: true, env: func(w *walk) *protocol.Envelope {
 			return w.dataEnv(protocol.SubjectOrderProjected, protocol.OrderProjection{OrderUUID: w.uniq("projected"),
-				OrderType: protocol.OrderTypeMove, Status: string(protocol.StatusQueued), StationID: "walk.edge", Quantity: 1,
+				OrderType: protocol.OrderTypeMove, Status: string(protocol.StatusQueued), Quantity: 1,
 				SourceNode: "SMN_01", DeliveryNode: "PLN_06"})
 		}},
 		"data:" + protocol.SubjectContainmentSnapshot: {env: func(w *walk) *protocol.Envelope {

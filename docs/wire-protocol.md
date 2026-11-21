@@ -1728,10 +1728,6 @@ Sent on `order.status_response`: the answer, plus `unlisted` — orders for that
 | `order_uuid` | string |  |  |
 | `found` | boolean |  |  |
 | `status` | string | omitempty |  |
-| `station_id` | string | omitempty |  |
-| `source_node` | string | omitempty |  |
-| `delivery_node` | string | omitempty |  |
-| `vendor_order_id` | string | omitempty |  |
 | `error_detail` | string | omitempty |  |
 | `queue_reason` | string | omitempty | QueueReason is Core's current blocking signal for a queued order (orders.queue_reason) — e.g. "no bin of requested payload in node group AMR Supermarket". Re-evaluated by the dispatcher/scanner and cleared on dispatch, so Edge refreshes it on each status resync. |
 | `queue_code` | string | omitempty | QueueCode is the structured category behind QueueReason (protocol.QueueCode). Carried on the snapshot (additive) so an Edge resync doesn't lose the code; old Edge ignores it. |
@@ -1755,7 +1751,6 @@ Sent on `order.projected`: a whole order row, so an order the Edge did not creat
 | `order_uuid` | string |  |  |
 | `order_type` | string (`OrderType`) |  |  |
 | `status` | string |  |  |
-| `station_id` | string |  |  |
 | `quantity` | integer | omitempty |  |
 | `source_node` | string | omitempty |  |
 | `delivery_node` | string | omitempty |  |
