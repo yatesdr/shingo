@@ -499,15 +499,22 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	}
 
 	// Q-034: persist the auto-derived cell catalog so heartbeats populate
-	// without manual setup. Additive — an old edge sends no catalog (len 0) and
-	// we leave edge_cells untouched. Non-fatal: registration succeeds regardless.
-	// The non-empty gate stays: on this field absent and empty are the same
-	// bytes, so a register cannot empty a station's cells; edge.cells
+	// without manual setup; for an Edge older than edge.cells it is the only
+	// way its cells reach Core. Non-fatal: registration succeeds regardless.
+	// An Edge older than the catalog and an Edge with no cells send the same
+	// bytes (len 0), so the non-empty gate stays: a register leaves edge_cells
+	// untouched rather than empty a station's cells, and edge.cells
 	// (HandleEdgeCells) is the message that can.
 	if len(p.Catalog) > 0 {
-		// The register carries no catalog digest: its cells are kept with "",
-		// which matches no Edge's, so an Edge that quotes its cells digest is
-		// answered with a mismatch and sends its catalog once (EdgeCellsDigest).
+		// NEVER HEALED THROUGH A REGISTER. The cells are kept with no digest
+		// (""), which matches no Edge's: an Edge that quotes the owned map is
+		// answered a cells member at "" (heldCells) and sends its catalog once,
+		// and only that message confirms the family. Core does not digest the
+		// register's catalog itself: a holder quotes the digest that arrived
+		// with the data (protocol CellCatalog.Digest), and a register, which
+		// cannot empty the cells, must not be what confirms them. The price is
+		// one edge.cells per register from a current Edge (pinned end to end by
+		// TestScenario_TwoEdges_EveryOwnedFamilyConverges).
 		if err := s.db.UpsertEdgeCells(uid, edgeCellsOf(p.Catalog), ""); err != nil {
 			log.Printf("core_handler: upsert edge_cells for %s: %v", uid, err)
 		}
