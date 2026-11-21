@@ -44,7 +44,7 @@ full:  {"core_node_name":"CoreNodeName","payload_code":"PayloadCode","state":"St
 
 ## UOPAdjustment
 empty: {"bin_id":0,"core_node_name":"","new_remaining":0,"actor":"","adjusted_at":"0001-01-01T00:00:00Z"}
-full:  {"bin_id":803,"core_node_name":"CoreNodeName","new_remaining":803,"actor":"Actor","adjusted_at":"2026-11-19T12:00:00Z","released":true,"bound":true,"epoch":803,"as_of_net":803,"as_of_seq":803,"as_of_station":"AsOfStation","payload_code":"PayloadCode","payload_known":true}
+full:  {"bin_id":803,"core_node_name":"CoreNodeName","new_remaining":803,"actor":"Actor","adjusted_at":"2026-11-19T12:00:00Z","released":true,"placed_seq":803,"bound":true,"epoch":803,"as_of_net":803,"as_of_seq":803,"as_of_station":"AsOfStation","payload_code":"PayloadCode","payload_known":true}
 
 ## PlantClaim
 empty: {"core_node_name":"","role":"","swap_mode":"","payload_code":"","allowed_payload_codes":null,"uop_capacity":0,"reorder_point":0}

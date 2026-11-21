@@ -1853,6 +1853,15 @@ type UOPAdjustment struct {
 	// NewRemaining (which is ignored when Released). Reuses this Core→Edge
 	// channel rather than a separate subject. Older Edges ignore the field.
 	Released bool `json:"released,omitempty"`
+	// PlacedSeq is set only with Released: the placement stamp (a
+	// bin_placement_seq value) of the hand move that ends the seat's landing,
+	// taken in the move's own transaction. Every landing the move ends was
+	// stamped before it, and a later return is stamped after it, so the Edge
+	// should refuse a Released when the seat's placed_seq is greater than
+	// PlacedSeq: that seat holds a landing the move did not end. Absent or 0 is
+	// an older Core, and the Edge clears as it always has. Older Edges ignore
+	// the field.
+	PlacedSeq int64 `json:"placed_seq,omitempty"`
 	// Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin
 	// Move mirroring a physical relocation the robot-delivery path never recorded
 	// — manual fork-truck recovery, a failed delivery that left the bin
