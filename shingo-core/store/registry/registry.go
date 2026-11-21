@@ -425,7 +425,8 @@ func Rebind(db *sql.DB, uid, hostname string) (bool, error) {
 // key under `orders`, `mission_telemetry`, `outbox`, `node_stations`,
 // `cell_targets` and the Edge's own backup manifest — a plant stop caused by
 // typing in a text box. display_name is read by nothing except a human, and it
-// never crosses the wire as an identifier.
+// never crosses the wire as an identifier: it crosses only as a label, on the
+// heartbeat ack (protocol.EdgeHeartbeatAck.DisplayName), for the Edge to show.
 func SetDisplayName(db *sql.DB, uid, displayName string) (bool, error) {
 	res, err := db.Exec(`UPDATE edge_registry SET display_name = $2 WHERE station_uid = $1`,
 		uid, displayName)
@@ -457,20 +458,28 @@ func SetDisplayName(db *sql.DB, uid, displayName string) (bool, error) {
 //
 // clockOffsetMS rides it too: the edge's clock minus Core's as this heartbeat
 // implied it. Nil (a heartbeat with no ts) leaves the last reading.
-func UpdateHeartbeat(db *sql.DB, uid, timezone string, lag TickLag, clockOffsetMS *int64) (found bool, err error) {
-	res, err := db.Exec(`
+//
+// displayName is the row's display_name, read back by the same statement
+// (RETURNING), so the ack carries the station's name with no second read
+// (protocol.EdgeHeartbeatAck.DisplayName). "" when the row has none, and when
+// found is false.
+func UpdateHeartbeat(db *sql.DB, uid, timezone string, lag TickLag, clockOffsetMS *int64) (displayName string, found bool, err error) {
+	err = db.QueryRow(`
 		UPDATE edge_registry SET last_heartbeat = NOW(), status = 'active', timezone = $2,
 			tick_pending              = COALESCE($3, tick_pending),
 			tick_oldest_unsent_age_ms = COALESCE($4, tick_oldest_unsent_age_ms),
 			tick_reported_at          = CASE WHEN $3::BIGINT IS NULL THEN tick_reported_at ELSE NOW() END,
 			clock_offset_ms           = COALESCE($5, clock_offset_ms)
 		WHERE station_uid = $1
-	`, uid, timezone, lag.Pending, lag.OldestUnsentAgeMS, clockOffsetMS)
-	if err != nil {
-		return false, err
+		RETURNING display_name
+	`, uid, timezone, lag.Pending, lag.OldestUnsentAgeMS, clockOffsetMS).Scan(&displayName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+	if err != nil {
+		return "", false, err
+	}
+	return displayName, true, nil
 }
 
 // AddTickRejected adds n to a station's count of production ticks Core could

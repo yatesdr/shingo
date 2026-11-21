@@ -263,6 +263,52 @@ func TestHeartbeatAck_CarriesTheConfiguredPlantTimezone(t *testing.T) {
 	}
 }
 
+// TestHeartbeatAck_CarriesTheStationsDisplayName: every ack names the station
+// as Core's registry holds it now, so a rename on Core reaches the Edge on its
+// next heartbeat; a name cleared on Core is sent as "" (Core owns the name, so
+// empty is a value); a station with no row is sent no name at all (nil), so the
+// Edge keeps the one it holds.
+func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	const st = "stn-name-test"
+	_, err := db.EnrollEdge(st, "PLANT / EDGE-2")
+	testutil.MustNoErr(t, err, "enroll edge")
+
+	ackName := func(uid string) *string {
+		t.Helper()
+		resp := &captureResponder{}
+		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+		svc.HandleEdgeHeartbeat(&protocol.Envelope{}, &protocol.EdgeHeartbeat{StationID: uid})
+		for _, r := range resp.replies {
+			if ack, ok := r.payload.(*protocol.EdgeHeartbeatAck); ok && r.subject == protocol.SubjectEdgeHeartbeatAck {
+				return ack.DisplayName
+			}
+		}
+		t.Fatal("no heartbeat ack was sent")
+		return nil
+	}
+	want := func(uid, name string) {
+		t.Helper()
+		got := ackName(uid)
+		if got == nil || *got != name {
+			t.Errorf("ack display name for %s = %v, want %q", uid, got, name)
+		}
+	}
+
+	want(st, "PLANT / EDGE-2")
+	_, err = db.RenameEdge(st, "PLANT / EDGE-3")
+	testutil.MustNoErr(t, err, "rename")
+	want(st, "PLANT / EDGE-3")
+	_, err = db.RenameEdge(st, "")
+	testutil.MustNoErr(t, err, "clear the name")
+	want(st, "")
+	if got := ackName("stn-name-never-enrolled"); got != nil {
+		t.Errorf("ack display name for a station with no row = %q, want none (nil): Core has no "+
+			"answer for it, and the Edge must keep the name it holds", *got)
+	}
+}
+
 // TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic pins D2's advertising
 // half: the registration reply and every heartbeat ack name the ephemeral
 // topic the messaging client verified, read at send time, and name nothing

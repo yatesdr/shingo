@@ -163,6 +163,18 @@ type EdgeHeartbeatAck struct {
 	// field, and an old Core sends nothing, which a new edge reads as "Core has
 	// no opinion" rather than as an instruction.
 	Timezone string `json:"timezone,omitempty"`
+	// DisplayName is the station's name for people, as Core's registry holds it
+	// (edge_registry.display_name, set on Core's Stations page). Core owns it;
+	// the Edge shows it and has no control that edits it.
+	//
+	// A POINTER, AND ABSENT IS AN ANSWER, unlike Timezone: Core owns the name,
+	// so an empty one is a value the Edge follows. nil (no key) is no answer:
+	// an older Core, or one whose registry write for this heartbeat failed or
+	// found no row; the Edge keeps the name it holds. "" is Core holding no
+	// name for the station (an unclaimed one, or a name cleared on Core); the
+	// Edge shows the uid. Anything else is the name. Additive: an older Edge
+	// ignores the key.
+	DisplayName *string `json:"display_name,omitempty"`
 	// Feeds is Core's current digest for each key the heartbeat named that Core
 	// could read. A key Core failed to read is absent — not "", which would be a
 	// digest of nothing — so the Edge confirms nothing it was not told.

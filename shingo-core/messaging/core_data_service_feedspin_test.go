@@ -120,7 +120,8 @@ func hideTable(t *testing.T, db *store.DB, table string) {
 // Every heartbeat here has no Feeds field, which is what an older Edge sends.
 // Its ack carries feeds as {} and claims as null (claimsFor is nil for an Edge
 // that does not speak feeds); bin_watch and asks are left off; timezone is
-// there only when a plant zone is configured.
+// there only when a plant zone is configured; display_name only when the
+// registry write found the station's row (EdgeHeartbeatAck.DisplayName).
 func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 	t.Parallel()
 
@@ -140,12 +141,12 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		{
 			name: "enrolled station, plant zone configured", enroll: true, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
+			wantAckKeys: []string{"claims", "display_name", "feeds", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
 		},
 		{
 			name: "enrolled station, plant zone unset", enroll: true, plantTZ: "",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id"},
+			wantAckKeys: []string{"claims", "display_name", "feeds", "server_ts", "station_id"},
 		},
 		{
 			name: "unenrolled station gets the ack and a register request", enroll: false, plantTZ: "America/Chicago",

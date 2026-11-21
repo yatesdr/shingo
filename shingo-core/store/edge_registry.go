@@ -46,8 +46,9 @@ func (db *DB) RenameEdge(uid, displayName string) (bool, error) {
 // The timezone is the zone the edge process reports being on — written from
 // the wire on every heartbeat so the /edges table tracks a restart even when
 // no register follows it. clockOffsetMS is the edge's clock minus Core's as
-// the heartbeat implied it (nil leaves the last reading).
-func (db *DB) UpdateHeartbeat(uid, timezone string, lag TickLag, clockOffsetMS *int64) (found bool, err error) {
+// the heartbeat implied it (nil leaves the last reading). displayName is the
+// row's display_name, read back by the same statement for the ack.
+func (db *DB) UpdateHeartbeat(uid, timezone string, lag TickLag, clockOffsetMS *int64) (displayName string, found bool, err error) {
 	return registry.UpdateHeartbeat(db.DB, uid, timezone, lag, clockOffsetMS)
 }
 

@@ -67,7 +67,7 @@ func TestCoverage_UpdateHeartbeat_UnknownStationIsRefusedAndWritesNothing(t *tes
 	t.Parallel()
 	db := testdb.Open(t)
 
-	found, err := registry.UpdateHeartbeat(db.DB, "stn-never-enrolled-hb", "", registry.TickLag{}, nil)
+	_, found, err := registry.UpdateHeartbeat(db.DB, "stn-never-enrolled-hb", "", registry.TickLag{}, nil)
 	if err != nil {
 		t.Fatalf("UpdateHeartbeat: %v", err)
 	}
@@ -518,12 +518,16 @@ func TestCoverage_UpdateHeartbeat_FoundThenNewer(t *testing.T) {
 	db := testdb.Open(t)
 	enrolled(t, db, "stn-fresh")
 
-	found, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "", registry.TickLag{}, nil)
+	name, found, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "", registry.TickLag{}, nil)
 	if err != nil {
 		t.Fatalf("UpdateHeartbeat first: %v", err)
 	}
 	if !found {
 		t.Fatal("heartbeat for an ENROLLED station reported found=false")
+	}
+	// Enroll with no name names the station by its uid; the heartbeat reads it back.
+	if name != "stn-fresh" {
+		t.Errorf("UpdateHeartbeat read back display_name %q, want the enrolled name %q", name, "stn-fresh")
 	}
 	e, _ := registry.GetByUID(db.DB, "stn-fresh")
 	if e.LastHeartbeat == nil {
@@ -532,7 +536,7 @@ func TestCoverage_UpdateHeartbeat_FoundThenNewer(t *testing.T) {
 	firstBeat := e.LastHeartbeat
 	// KEEP: timestamp separation — second heartbeat must record a later timestamp.
 	time.Sleep(10 * time.Millisecond)
-	if _, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "", registry.TickLag{}, nil); err != nil {
+	if _, _, err := registry.UpdateHeartbeat(db.DB, "stn-fresh", "", registry.TickLag{}, nil); err != nil {
 		t.Fatalf("UpdateHeartbeat second: %v", err)
 	}
 	e2, _ := registry.GetByUID(db.DB, "stn-fresh")

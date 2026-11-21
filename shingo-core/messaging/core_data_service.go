@@ -575,7 +575,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 		ms := env.Timestamp.Sub(clock.Now()).Milliseconds()
 		clockOffsetMS = &ms
 	}
-	found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone,
+	displayName, found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone,
 		store.TickLag{Pending: p.TickPending, OldestUnsentAgeMS: p.TickOldestUnsentAgeMS}, clockOffsetMS)
 	if err != nil {
 		// Acked anyway. The ack is the Edge's evidence that Core is alive and
@@ -604,15 +604,22 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	if err == nil {
 		claims = s.claimsFor(p)
 	}
+	// The station's name, read back by the registry write itself; none (nil)
+	// when that write failed or found no row, so the Edge keeps what it holds.
+	var name *string
+	if err == nil && found {
+		name = &displayName
+	}
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
 		&protocol.EdgeHeartbeatAck{
-			StationID: p.StationID,
-			ServerTS:  clock.Now().UTC(),
-			Timezone:  s.plantTimezone,
-			Feeds:     feeds,
-			Claims:    claims,
-			BinWatch:  binWatch,
-			Asks:      s.asksFor(p),
+			StationID:   p.StationID,
+			ServerTS:    clock.Now().UTC(),
+			Timezone:    s.plantTimezone,
+			DisplayName: name,
+			Feeds:       feeds,
+			Claims:      claims,
+			BinWatch:    binWatch,
+			Asks:        s.asksFor(p),
 			// Core's verified topic, afresh on every ack: absent, the Edge
 			// closes its ephemeral reader and writer (protocol/ephemeral.go).
 			EphemeralTopic: s.ephemeralTopicName(),
