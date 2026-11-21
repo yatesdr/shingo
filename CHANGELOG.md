@@ -16,9 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration (placeholder; the lead writes this line).
+Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 
 - A count, load or clear from Core (the Bins page, the line's count, a press finishing a cart) that reaches a station late, or after the station took the cart's new life from an epoch refresh, keeps the parts the station counted since; it used to write over them, or be ignored and leave the station's number off Core's
+- Two Edges that report the same process no longer re-send its claims every two minutes; the Edges page still flags the process on both until one of them stops reporting it, and the flag now stays through a Core restart
 
 ## v0.18.0 — 2026-11-21
 

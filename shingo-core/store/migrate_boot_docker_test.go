@@ -333,7 +333,7 @@ func TestV185_TheJSONGuardNeedsNoTempPrivilege(t *testing.T) {
 		t.Fatalf("birth on the baseline as a role without TEMP: %v", err)
 	}
 	born.Close()
-	if err := store.MigrateDown(&asRole, 185); err != nil {
+	if err := testdb.MigrateDownThrough(&asRole, 185); err != nil {
 		t.Fatalf("migrate down 185 as a role without TEMP: %v", err)
 	}
 	up, err := store.Open(&asRole)
@@ -345,8 +345,8 @@ func TestV185_TheJSONGuardNeedsNoTempPrivilege(t *testing.T) {
 	if err := su.QueryRow(`SELECT (SELECT max(version) FROM schema_migrations), (SELECT count(*) FROM pg_proc WHERE proname = 'v185_jsonb')`).Scan(&head, &guards); err != nil {
 		t.Fatal(err)
 	}
-	if head != 185 || guards != 0 {
-		t.Errorf("after down and up as a role without TEMP: head v%d, %d v185_jsonb functions left; want v185 and none", head, guards)
+	if want := store.LatestMigrationVersion(); head != want || guards != 0 {
+		t.Errorf("after down and up as a role without TEMP: head v%d, %d v185_jsonb functions left; want v%d and none", head, guards, want)
 	}
 }
 
@@ -402,7 +402,7 @@ func TestV185_PartitionIndexRenameTakesAnyChild(t *testing.T) {
 		}
 	}
 	check("at v185", "station_uid", "cell_id")
-	if err := store.MigrateDown(cfg, 185); err != nil {
+	if err := testdb.MigrateDownThrough(cfg, 185); err != nil {
 		t.Fatalf("migrate down 185 with these partitions: %v", err)
 	}
 	check("after down", "cell_id", "station_uid")
@@ -437,7 +437,7 @@ func TestV185_AHeldReaderStopsUpAndDown(t *testing.T) {
 	}
 
 	release := held()
-	err := store.MigrateDown(cfg, 185)
+	err := testdb.MigrateDownThrough(cfg, 185)
 	release()
 	if err == nil || !strings.Contains(err.Error(), "55P03") {
 		t.Fatalf("down 185 beside a reader of audit_log: err %v, want the lock timeout (55P03)", err)
@@ -445,7 +445,7 @@ func TestV185_AHeldReaderStopsUpAndDown(t *testing.T) {
 	if !schema.ColumnExists(raw, "orders", "station_uid") {
 		t.Fatal("the down stopped by the lock changed the schema: orders.station_uid is gone")
 	}
-	if err := store.MigrateDown(cfg, 185); err != nil {
+	if err := testdb.MigrateDownThrough(cfg, 185); err != nil {
 		t.Fatalf("down 185 with the reader gone: %v", err)
 	}
 

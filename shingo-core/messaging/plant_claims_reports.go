@@ -3,60 +3,72 @@ package messaging
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
 )
 
 // plant_claims_reports.go — the plant-claims direction of the feed digests
-// (Edge → Core). Core keeps, per process, the station whose report its mirror
-// holds and the digest that report carried (plant_claims_reports), and quotes
-// the digests back on that station's heartbeat ack. The Edge re-sends what
-// differs; Core never recomputes a digest from its mirror.
-
-// claimsFlagID names the Edges-page flag for a process two stations report.
-func claimsFlagID(process string) string { return "claims:" + process }
+// (Edge → Core). Core keeps, per station and process, the digest of the last
+// report that station sent (plant_claims_reports), and quotes each station its
+// own digests back on its heartbeat ack. The Edge re-sends what differs; Core
+// never recomputes a digest from its mirror.
 
 // recordClaimsReport writes a report's row after its mirror replace succeeded.
 // A failed write is logged and left: the row then quotes an older digest (or
 // none), and the Edge re-sends on its next heartbeat, which retries the write.
 //
-// A process is keyed alone, as the mirror is, so a second station reporting it
-// takes it over — last writer wins — and both stations' rows on the Edges page
-// say so until the process is reported twice running by one station, or
-// emptied.
+// The row is keyed by station and process while the mirror is keyed by process
+// alone. So a second station reporting a process takes the mirror over (last
+// writer wins, HandlePlantClaims), and each station keeps its own row: each is
+// quoted its own digest, and neither re-sends what it already sent
+// (TestScenario_TwoStationsOneProcess_EachSendsOnce). An empty report replaced
+// the process's mirror whole, so it deletes every station's row for it: a
+// station that still has the process is no longer quoted it, and re-sends.
 func (s *CoreDataService) recordClaimsReport(env *protocol.Envelope, report *protocol.PlantClaimsReport) {
 	station := ""
 	if env != nil { // a message off the wire always has one; some tests pass nil
 		station = env.Src.Station
 	}
-	id := claimsFlagID(report.ProcessID)
 	if len(report.Styles) == 0 {
-		prev, err := s.db.DeletePlantClaimsReport(report.ProcessID)
+		gone, err := s.db.DeletePlantClaimsReport(report.ProcessID)
 		if err != nil {
 			log.Printf("core_handler: plant.claims report row %s: delete: %v", report.ProcessID, err)
 			return
 		}
-		if prev != "" && prev != station {
-			log.Printf("core_handler: plant.claims %s emptied by %s, last reported by %s", report.ProcessID, station, prev)
+		if len(gone) > 0 && (len(gone) > 1 || gone[0] != station) {
+			log.Printf("core_handler: plant.claims %s emptied by %s; the report rows of %s go with the mirror, and a station that still has it re-sends it",
+				report.ProcessID, station, strings.Join(gone, ", "))
 		}
-		s.feeds.clearFlagEverywhere(id)
 		return
 	}
-	prev, err := s.db.RecordPlantClaimsReport(report.ProcessID, station, report.Digest, clock.Now().UTC())
-	if err != nil {
+	if err := s.db.RecordPlantClaimsReport(report.ProcessID, station, report.Digest, clock.Now().UTC()); err != nil {
 		log.Printf("core_handler: plant.claims report row %s: %v", report.ProcessID, err)
-		return
 	}
-	if prev == "" || prev == station {
-		s.feeds.clearFlagEverywhere(id)
-		return
+}
+
+// claimsFlags is a station's Edges-page flag for each process it and another
+// station both report, read from the report rows: it stands while both hold a
+// row and goes when one stops (its empty report deletes the process's rows).
+// Read, not kept in memory, so a Core restart does not lose it: neither station
+// re-sends a report Core quotes back to it, so nothing would raise it again. A
+// failed read is a flag of its own, never the absence of one.
+func (s *CoreDataService) claimsFlags(station string) []string {
+	shared, err := s.db.SharedPlantClaimsReports(station)
+	if err != nil {
+		log.Printf("core_feeds: plant claims shared by %s: %v", station, err)
+		return []string{"plant claims: could not read which processes another station also reports"}
 	}
-	log.Printf("core_handler: plant.claims %s reported by %s, last by %s — the mirror now holds %s's (last writer wins)",
-		report.ProcessID, station, prev, station)
-	text := fmt.Sprintf("process %s reported by both %s and %s", report.ProcessID, prev, station)
-	s.feeds.setFlag(prev, id, text)
-	s.feeds.setFlag(station, id, text)
+	out := make([]string, 0, len(shared))
+	for process, stations := range shared {
+		who := strings.Join(stations[:len(stations)-1], ", ") + " and " + stations[len(stations)-1]
+		if len(stations) == 2 {
+			who = "both " + who
+		}
+		out = append(out, fmt.Sprintf("process %s reported by %s", process, who))
+	}
+	return out
 }
 
 // claimsFor is the heartbeat ack's Claims: process → digest for every report

@@ -508,7 +508,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`payload_containment`](#core-payload_containment) | 8 | `payload_code` |  |
 | [`payload_manifest`](#core-payload_manifest) | 7 | `id` | [`parts`](#core-parts), [`payloads`](#core-payloads) |
 | [`payloads`](#core-payloads) | 13 | `id` |  |
-| [`plant_claims_reports`](#core-plant_claims_reports) | 4 | `process_id` |  |
+| [`plant_claims_reports`](#core-plant_claims_reports) | 4 | `station_uid`, `process_id` |  |
 | [`plant_confidence_daily`](#core-plant_confidence_daily) | 14 | `day` |  |
 | [`process_positions`](#core-process_positions) | 2 | `process_id`, `core_node_name` |  |
 | [`process_styles`](#core-process_styles) | 6 | `process_id`, `style_id` |  |
@@ -1547,12 +1547,13 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 
 | Column | Type | Not null | Default | Key |
 |---|---|---|---|---|
-| `process_id` | `text` | yes |  | PK |
+| `process_id` | `text` | yes |  |  |
 | `station_uid` | `text` | yes |  |  |
 | `digest` | `text` | yes |  |  |
 | `received_at` | `timestamp with time zone` | yes |  |  |
 
-- Per process, the station whose plant-claims report the mirror holds and the digest it carried (v143); read back onto each station's heartbeat ack.
+- One row per station and process: the digest of the last plant-claims report that station sent for the process (v143; keyed by station and process since v186). Each station is quoted its own rows on its heartbeat ack, so two stations reporting one process each stop re-sending; the mirror (process_styles, style_claims) holds the last writer's report. Two rows for one process are the reported-by-both flag on the Edges page. An empty report deletes every row of its process, with the mirror.
+- Primary key (station_uid, process_id)
 
 #### Core: `plant_confidence_daily`
 

@@ -164,15 +164,19 @@ func TestV185_EveryRowLandsPerTheMoveRules(t *testing.T) {
 		}
 	}
 	var head int
-	if err := db.QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&head); err != nil || head != 185 {
-		t.Fatalf("schema_migrations ends at v%d (err %v), want v185", head, err)
+	if err := db.QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&head); err != nil || head != store.LatestMigrationVersion() {
+		t.Fatalf("schema_migrations ends at v%d (err %v), want this build's v%d", head, err, store.LatestMigrationVersion())
 	}
 
 	// Down: every row as it was at v184 but the documented losses, the v184
 	// shape, and v0.17.1 boots it twice with every one of its verifies holding.
+	// The migrations above v185 come down first, newest first, as the
+	// rollback recipe runs them; none of them touches a row this test reads.
 	t0 = time.Now()
-	if err := store.MigrateDown(inst.DBConfigForTest(name), 185); err != nil {
-		t.Fatalf("migrate down 185: %v", err)
+	for v := head; v >= 185; v-- {
+		if err := store.MigrateDown(inst.DBConfigForTest(name), v); err != nil {
+			t.Fatalf("migrate down %d: %v", v, err)
+		}
 	}
 	t.Logf("v185 down on the seeded database: %v", time.Since(t0).Round(time.Millisecond))
 	downed := v184Rows(t, db)

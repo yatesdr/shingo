@@ -133,6 +133,22 @@ func IndexExists(c Querier, indexName string) bool {
 	return exists
 }
 
+// ConstraintDef returns the named constraint's definition on the named table
+// in schema public, as pg_get_constraintdef prints it (PRIMARY KEY
+// (station_uid, process_id)): "" when there is none, and on any query error,
+// so a verify comparing it with the definition it wants fails and re-runs.
+func ConstraintDef(c Querier, table, constraint string) string {
+	var def string
+	c.QueryRow(
+		`SELECT pg_get_constraintdef(k.oid) FROM pg_constraint k
+		   JOIN pg_class t ON t.oid = k.conrelid
+		   JOIN pg_namespace n ON n.oid = t.relnamespace
+		  WHERE n.nspname = 'public' AND t.relname = $1 AND k.conname = $2`,
+		table, constraint,
+	).Scan(&def)
+	return def
+}
+
 // ConstraintExists reports whether the named constraint is on the named table
 // in schema public, valid or not. Returns false on any query error.
 func ConstraintExists(c Querier, table, constraint string) bool {

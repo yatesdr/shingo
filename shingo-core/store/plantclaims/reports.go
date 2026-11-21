@@ -2,51 +2,61 @@ package plantclaims
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
 
-// reports.go — plant_claims_reports, one row per process: the station whose
-// report the mirror last took for it and the digest that report carried. Core
-// quotes the digests back on each station's heartbeat ack so the Edge can
-// re-send a report Core lost, and drop a process Core still holds that the
-// Edge no longer has. The digest is stored as it arrived, never recomputed
-// from the mirror rows, which are a projection of the report.
+// reports.go — plant_claims_reports, one row per (station, process): the
+// digest of the last report each station sent for the process. Core quotes a
+// station its own rows back on its heartbeat ack, so the Edge can re-send a
+// report Core lost and drop a process Core still holds that the Edge no longer
+// has. The digest is stored as it arrived, never recomputed from the mirror
+// rows, which are a projection of the report.
+//
+// The mirror (process_styles, style_claims) is keyed by process alone and holds
+// the last writer's report. A process two stations report has a row for each
+// here, so each is quoted its own digest and neither re-sends, while the mirror
+// holds whichever wrote last (TestScenario_TwoStationsOneProcess_EachSendsOnce);
+// SharedReports names the stations the Edges page flags.
 
-// RecordReport writes a process's report row and returns the station that held
-// it before ("" when none), in one statement: the CTE reads the row as it was
-// before the upsert, so a second station taking a process over is seen without
-// a separate read.
-func RecordReport(db *sql.DB, processID, stationID, digest string, at time.Time) (string, error) {
-	var prev string
-	err := db.QueryRow(`
-		WITH prev AS (SELECT station_uid FROM plant_claims_reports WHERE process_id = $1)
-		INSERT INTO plant_claims_reports (process_id, station_uid, digest, received_at)
+// RecordReport writes one station's report row for a process.
+func RecordReport(db *sql.DB, processID, stationUID, digest string, at time.Time) error {
+	if _, err := db.Exec(`
+		INSERT INTO plant_claims_reports (station_uid, process_id, digest, received_at)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (process_id) DO UPDATE
-		   SET station_uid = EXCLUDED.station_uid, digest = EXCLUDED.digest, received_at = EXCLUDED.received_at
-		RETURNING COALESCE((SELECT station_uid FROM prev), '')`,
-		processID, stationID, digest, at).Scan(&prev)
-	if err != nil {
-		return "", fmt.Errorf("plantclaims record report %s: %w", processID, err)
+		ON CONFLICT (station_uid, process_id) DO UPDATE
+		   SET digest = EXCLUDED.digest, received_at = EXCLUDED.received_at`,
+		stationUID, processID, digest, at); err != nil {
+		return fmt.Errorf("plantclaims record report %s from %s: %w", processID, stationUID, err)
 	}
-	return prev, nil
+	return nil
 }
 
-// DeleteReport removes a process's report row and returns the station that
-// held it ("" when there was none).
-func DeleteReport(db *sql.DB, processID string) (string, error) {
-	var prev string
-	err := db.QueryRow(`DELETE FROM plant_claims_reports WHERE process_id = $1 RETURNING station_uid`,
-		processID).Scan(&prev)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
+// DeleteReport removes every station's report row for a process and returns
+// those stations, sorted. It follows an empty report, which replaced the
+// process's mirror whole (ReplaceProcessFromStation): no row may go on quoting
+// a digest the mirror no longer holds, so every other station that still has
+// the process is no longer quoted it and re-sends it.
+func DeleteReport(db *sql.DB, processID string) ([]string, error) {
+	rows, err := db.Query(`
+		WITH gone AS (DELETE FROM plant_claims_reports WHERE process_id = $1 RETURNING station_uid)
+		SELECT station_uid FROM gone ORDER BY station_uid`, processID)
 	if err != nil {
-		return "", fmt.Errorf("plantclaims delete report %s: %w", processID, err)
+		return nil, fmt.Errorf("plantclaims delete report %s: %w", processID, err)
 	}
-	return prev, nil
+	defer rows.Close()
+	var gone []string
+	for rows.Next() {
+		var station string
+		if err := rows.Scan(&station); err != nil {
+			return nil, fmt.Errorf("plantclaims delete report %s: scan: %w", processID, err)
+		}
+		gone = append(gone, station)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("plantclaims delete report %s: %w", processID, err)
+	}
+	return gone, nil
 }
 
 // ReportDigests returns process → digest for every report row one station
@@ -83,6 +93,33 @@ func ReportDigests(db *sql.DB, stationID string) (map[string]string, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("plantclaims report digests %s: %w", stationID, err)
+	}
+	return out, nil
+}
+
+// SharedReports returns, for each process this station holds a report row for
+// that another station holds one for too, every station that holds one,
+// sorted. Never nil on success: an empty map is "no process shared".
+func SharedReports(db *sql.DB, stationUID string) (map[string][]string, error) {
+	rows, err := db.Query(`SELECT o.process_id, o.station_uid FROM plant_claims_reports o
+		 WHERE o.process_id IN (SELECT m.process_id FROM plant_claims_reports m
+		                         JOIN plant_claims_reports x ON x.process_id = m.process_id AND x.station_uid <> m.station_uid
+		                        WHERE m.station_uid = $1)
+		 ORDER BY o.process_id, o.station_uid`, stationUID)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims shared reports %s: %w", stationUID, err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var process, station string
+		if err := rows.Scan(&process, &station); err != nil {
+			return nil, fmt.Errorf("plantclaims shared reports %s: scan: %w", stationUID, err)
+		}
+		out[process] = append(out[process], station)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("plantclaims shared reports %s: %w", stationUID, err)
 	}
 	return out, nil
 }

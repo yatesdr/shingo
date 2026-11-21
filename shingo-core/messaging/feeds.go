@@ -257,25 +257,9 @@ func (f *feedState) compare(station, key, current, held string, now time.Time) b
 	return true
 }
 
-// setFlag records a plain-text flag against a station, shown on its row of the
-// Edges page. id names the flag so the condition that raised it can clear it.
-func (f *feedState) setFlag(station, id, text string) {
-	f.mu.Lock()
-	f.setFlagLocked(station, id, text)
-	f.mu.Unlock()
-}
-
-// clearFlagEverywhere clears one flag id from every station that carries it,
-// for a condition raised on several stations at once (a process two stations
-// report) whose end is seen from only one of them.
-func (f *feedState) clearFlagEverywhere(id string) {
-	f.mu.Lock()
-	for station := range f.flags {
-		f.clearFlagLocked(station, id)
-	}
-	f.mu.Unlock()
-}
-
+// setFlagLocked records a plain-text flag against a station, shown on its row
+// of the Edges page. id names the flag so the condition that raised it can
+// clear it.
 func (f *feedState) setFlagLocked(station, id, text string) {
 	if f.flags[station] == nil {
 		f.flags[station] = map[string]string{}
@@ -302,10 +286,14 @@ func (f *feedState) flagsFor(station string) []string {
 }
 
 // EdgeFeedFlags lists the plain-text feed conditions flagged for one station:
-// a key sent three times in a row without converging, a process reported by
-// two stations. Read by the Edges page; empty when nothing is wrong.
+// a key sent three times in a row without converging (held in memory, from
+// the send records), a process another station reports too (read from the
+// report rows, claimsFlags). Read by the Edges page; empty when nothing is
+// wrong.
 func (s *CoreDataService) EdgeFeedFlags(station string) []string {
-	return s.feeds.flagsFor(station)
+	out := append(s.feeds.flagsFor(station), s.claimsFlags(station)...)
+	sort.Strings(out)
+	return out
 }
 
 // answerFeeds answers a heartbeat's Feeds map: Core's current digest for every

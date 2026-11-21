@@ -59,15 +59,15 @@ func (db *DB) ProcessesByNode() (map[string][]string, error) {
 	return plantclaims.ProcessesByNode(db.DB)
 }
 
-// RecordPlantClaimsReport writes a process's report row (station, digest) and
-// returns the station that held it before. See plantclaims.RecordReport.
-func (db *DB) RecordPlantClaimsReport(processID, stationID, digest string, at time.Time) (string, error) {
-	return plantclaims.RecordReport(db.DB, processID, stationID, digest, at)
+// RecordPlantClaimsReport writes one station's report row for a process. See
+// plantclaims.RecordReport.
+func (db *DB) RecordPlantClaimsReport(processID, stationUID, digest string, at time.Time) error {
+	return plantclaims.RecordReport(db.DB, processID, stationUID, digest, at)
 }
 
-// DeletePlantClaimsReport removes a process's report row and returns the
-// station that held it. See plantclaims.DeleteReport.
-func (db *DB) DeletePlantClaimsReport(processID string) (string, error) {
+// DeletePlantClaimsReport removes every station's report row for a process and
+// returns those stations. See plantclaims.DeleteReport.
+func (db *DB) DeletePlantClaimsReport(processID string) ([]string, error) {
 	return plantclaims.DeleteReport(db.DB, processID)
 }
 
@@ -75,4 +75,11 @@ func (db *DB) DeletePlantClaimsReport(processID string) (string, error) {
 // rows. See plantclaims.ReportDigests.
 func (db *DB) PlantClaimsReportDigests(stationID string) (map[string]string, error) {
 	return plantclaims.ReportDigests(db.DB, stationID)
+}
+
+// SharedPlantClaimsReports returns, per process this station and another both
+// hold a report row for, every station that holds one. See
+// plantclaims.SharedReports.
+func (db *DB) SharedPlantClaimsReports(stationUID string) (map[string][]string, error) {
+	return plantclaims.SharedReports(db.DB, stationUID)
 }

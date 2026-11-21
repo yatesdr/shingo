@@ -1,5 +1,5 @@
 // Two stations publishing one process, both sides real: Core's plant_claims_reports
-// row and the claims its heartbeat ack quotes (shingocore messaging
+// rows and the claims its heartbeat ack quotes (shingocore messaging
 // HandlePlantClaims, HandleEdgeHeartbeat; store/plantclaims reports.go), and
 // each Edge's own plant spec, publisher and resend guard (shingoedge messaging
 // PlantClaimsPublisher.ReconcileClaims behind Engine.OnCoreAck, wired as
@@ -45,20 +45,19 @@ type twinEdge struct {
 }
 
 // Each station heartbeats every minute, the second 30 s after the first. Core
-// keeps one report row per process, last writer wins, and quotes a station only
-// the rows it holds; so each report takes the process off the other station's
-// ack, and that station re-sends as soon as its guard lets it: one station every
-// 2 minutes on the guard (protocol/resend Guard), the other every 2 minutes on
-// the "Core lost what it held" rule (resend.Record.Send), both forever. Core's
-// "reported by both" flag goes up on both stations at the second station's
-// first report and stays up; the Edge's own not-converging flag shows on the
-// first station only. All four are asserted below.
+// keeps one report row per station and process (plant_claims_reports, keyed by
+// both since v186) and quotes each station its own: so each station's first
+// report is quoted back to it on every ack after, and neither re-sends, while
+// the mirror holds the last writer's. Core's "reported by both" flag goes up on
+// both stations at the second station's first report and stays up; neither
+// Edge flags anything of its own. All four are asserted below.
 //
-// RED BY DESIGN. Lane C5 is to key plant_claims_reports by (station_uid,
-// process_id): each station is then quoted its own digest and should send
-// once, while the flag stays on both. This test then fails; replace the
-// cadence assertion with that one.
-func TestScenario_TwoStationsOneProcess_EachReSendsEveryTwoMinutes(t *testing.T) {
+// Until v186 a process had one report row, the last writer's: each report took
+// the process off the other station's ack, and each station re-sent every 2
+// minutes, forever (the first on the guard, protocol/resend Guard; the second
+// on the "Core lost what it held" rule, resend.Record.Send), and the first
+// station's Edge flagged the process not converging.
+func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 	t.Parallel()
 	const process = "TWIN-PROC"
 
@@ -205,21 +204,20 @@ func TestScenario_TwoStationsOneProcess_EachReSendsEveryTwoMinutes(t *testing.T)
 			return out
 		}
 		want := map[string][]time.Duration{
-			a.uid: at("0s", "2m", "4m", "6m", "8m"),
-			b.uid: at("30s", "2m30s", "4m30s", "6m30s", "8m30s"),
+			a.uid: at("0s"),
+			b.uid: at("30s"),
 		}
 		for _, x := range twins {
 			if got := reports[x.uid]; !slices.Equal(got, want[x.uid]) {
-				t.Errorf("%s's reports of %s reached Core at %v, want %v: each station re-sends every 2 minutes, forever "+
-					"(if lane C5 has keyed plant_claims_reports by station and process, each station sends once: "+
-					"replace this assertion with that one; the flag stays on both)", x.uid, process, got, want[x.uid])
+				t.Errorf("%s's reports of %s reached Core at %v, want %v: each station sends once, and is quoted its "+
+					"own digest after (plant_claims_reports keyed by station and process); a re-send every 2 minutes "+
+					"is the one-row-per-process key back", x.uid, process, got, want[x.uid])
 			}
 		}
-		if got := a.eng.FeedFlags(); !slices.Equal(got, []string{"claims:" + process + " not converging: sent 5 times"}) {
-			t.Errorf("%s's own flags are %v, want the process not converging after 5 sends", a.uid, got)
-		}
-		if got := b.eng.FeedFlags(); len(got) != 0 {
-			t.Errorf("%s's own flags are %v, want none: each of its sends is quoted back once before the next", b.uid, got)
+		for _, x := range twins {
+			if got := x.eng.FeedFlags(); len(got) != 0 {
+				t.Errorf("%s's own flags are %v, want none: its one send is quoted back on every ack after", x.uid, got)
+			}
 		}
 	})
 }

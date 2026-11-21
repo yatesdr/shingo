@@ -883,6 +883,30 @@ func OpenEmpty(t testing.TB) *config.DatabaseConfig {
 	}}
 }
 
+// MigrateDownThrough runs `migrate down` on the database cfg names for every
+// version from the newest it records down to version, newest first, as the
+// rollback recipe install-core.sh prints does: a down step runs only on a
+// database whose newest version is its own (store.MigrateDown). It stops at
+// the first refusal and returns it, naming the version.
+func MigrateDownThrough(cfg *config.DatabaseConfig, version int) error {
+	db, err := store.OpenWithoutMigrate(cfg)
+	if err != nil {
+		return err
+	}
+	var head int
+	err = db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&head)
+	db.Close()
+	if err != nil {
+		return fmt.Errorf("read schema_migrations: %w", err)
+	}
+	for v := head; v >= version; v-- {
+		if err := store.MigrateDown(cfg, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // wedgeSweepOff records the tests that build the pointer wedge on purpose.
 var (
 	wedgeSweepMu  lockcheck.Mutex[lockorder.TestWedgeSweep]

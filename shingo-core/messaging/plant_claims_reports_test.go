@@ -4,6 +4,7 @@ package messaging
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -13,17 +14,29 @@ import (
 	"shingocore/store"
 )
 
-// reportRow is one plant_claims_reports row as "station/digest", "" when the
-// process has none.
+// reportRow is a process's plant_claims_reports rows as "station/digest",
+// comma-joined in station order: "" when the process has none, one row when one
+// station reports it.
 func reportRow(t *testing.T, db *store.DB, process string) string {
 	t.Helper()
-	var station, digest string
-	err := db.QueryRow(`SELECT station_uid, digest FROM plant_claims_reports WHERE process_id = $1`, process).
-		Scan(&station, &digest)
-	if err != nil {
-		return ""
+	return strings.Join(processRows(t, db, process), ",")
+}
+
+// processRows is every station's plant_claims_reports row for one process, as
+// "station/digest", sorted by station; empty when it has none.
+func processRows(t *testing.T, db *store.DB, process string) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT station_uid || '/' || digest FROM plant_claims_reports WHERE process_id = $1 ORDER BY station_uid`, process)
+	testutil.MustNoErr(t, err, "read plant_claims_reports")
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var row string
+		testutil.MustNoErr(t, rows.Scan(&row), "scan plant_claims_reports")
+		out = append(out, row)
 	}
-	return station + "/" + digest
+	testutil.MustNoErr(t, rows.Err(), "iterate plant_claims_reports")
+	return out
 }
 
 func digestedReport(process, digest string, styles []styleSpec) *protocol.PlantClaimsReport {
@@ -64,46 +77,58 @@ func TestHandlePlantClaims_ReportRow(t *testing.T) {
 	}
 }
 
-// A process reported by a second station is taken over (last writer wins) and
-// flagged on both stations' rows; the flag clears when one station reports it
-// twice running, or when it is emptied.
+// A process a second station reports is taken over by the mirror (last writer
+// wins), and each station keeps its own report row, so each is quoted its own
+// digest. Both stations' rows on the Edges page carry the reported-by-both
+// flag, read from those rows: it stays while both report the process, through
+// another report from either and through a Core restart, and goes on both when
+// either empties it, which deletes every row of the process with its mirror.
 func TestHandlePlantClaims_SecondStationFlagged(t *testing.T) {
 	t.Parallel()
 	const conflict = "process P1 reported by both edge.a and edge.b"
-	cases := []struct {
-		name  string
-		final *protocol.PlantClaimsReport
-		from  string
-	}{
-		{"one station reports it again", digestedReport("P1", "b2", oneStyle), "edge.b"},
-		{"it is emptied", digestedReport("P1", "", nil), "edge.a"},
+	flags := func(t *testing.T, svc *CoreDataService, when string, want []string) {
+		t.Helper()
+		for _, st := range []string{"edge.a", "edge.b"} {
+			if got := svc.EdgeFeedFlags(st); !reflect.DeepEqual(got, want) {
+				t.Errorf("%s: %s flags = %v, want %v", when, st, got, want)
+			}
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			db := testdb.Open(t)
-			svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
-			svc.HandlePlantClaims(feedsPinEnv("edge.a"), digestedReport("P1", "a1", oneStyle))
-			if got := svc.EdgeFeedFlags("edge.a"); len(got) != 0 {
-				t.Fatalf("flags after one station = %v, want none", got)
-			}
-			svc.HandlePlantClaims(feedsPinEnv("edge.b"), digestedReport("P1", "b1", oneStyle))
-			if got := reportRow(t, db, "P1"); got != "edge.b/b1" {
-				t.Errorf("row after the second station = %q, want edge.b/b1 (last writer wins)", got)
-			}
-			for _, st := range []string{"edge.a", "edge.b"} {
-				if got := svc.EdgeFeedFlags(st); !reflect.DeepEqual(got, []string{conflict}) {
-					t.Errorf("%s flags = %v, want [%s]", st, got, conflict)
-				}
-			}
-			svc.HandlePlantClaims(feedsPinEnv(tc.from), tc.final)
-			for _, st := range []string{"edge.a", "edge.b"} {
-				if got := svc.EdgeFeedFlags(st); len(got) != 0 {
-					t.Errorf("%s flags after %s = %v, want none", st, tc.name, got)
-				}
-			}
-		})
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
+	svc.HandlePlantClaims(feedsPinEnv("edge.a"), digestedReport("P1", "a1", oneStyle))
+	flags(t, svc, "one station", []string{})
+	svc.HandlePlantClaims(feedsPinEnv("edge.b"), digestedReport("P1", "b1", oneStyle))
+	if got, want := processRows(t, db, "P1"), []string{"edge.a/a1", "edge.b/b1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rows after the second station = %v, want %v (one per station)", got, want)
 	}
+	if got := mirrorStyles(t, db, "P1"); !reflect.DeepEqual(got, []string{"A@0"}) {
+		t.Errorf("mirror after the second station = %v, want its report's", got)
+	}
+	var mirrorStation string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT station_uid FROM process_styles WHERE process_id = 'P1'`).Scan(&mirrorStation), "mirror station")
+	if mirrorStation != "edge.b" {
+		t.Errorf("mirror names %q, want edge.b (last writer wins)", mirrorStation)
+	}
+	for st, own := range map[string]string{"edge.a": "a1", "edge.b": "b1"} {
+		got, err := db.PlantClaimsReportDigests(st)
+		testutil.MustNoErr(t, err, "digests")
+		if want := map[string]string{"P1": own}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s is quoted %v, want its own digest %v", st, got, want)
+		}
+	}
+	flags(t, svc, "the second station", []string{conflict})
+
+	svc.HandlePlantClaims(feedsPinEnv("edge.b"), digestedReport("P1", "b2", oneStyle))
+	flags(t, svc, "one station reports it again", []string{conflict})
+	restarted := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
+	flags(t, restarted, "after a Core restart", []string{conflict})
+
+	svc.HandlePlantClaims(feedsPinEnv("edge.a"), digestedReport("P1", "", nil))
+	if got := processRows(t, db, "P1"); len(got) != 0 {
+		t.Errorf("rows after the empty report = %v, want none: the mirror they were quoted against is gone", got)
+	}
+	flags(t, svc, "it is emptied", []string{})
 }
 
 // The ack's Claims: this station's rows only for a newer Edge, nil for an

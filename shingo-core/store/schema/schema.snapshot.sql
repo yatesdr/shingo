@@ -1251,7 +1251,7 @@ CREATE TABLE public.plant_claims_reports (
     received_at timestamp with time zone NOT NULL
 );
 
-COMMENT ON TABLE public.plant_claims_reports IS 'Per process, the station whose plant-claims report the mirror holds and the digest it carried (v143); read back onto each station''s heartbeat ack.';
+COMMENT ON TABLE public.plant_claims_reports IS 'One row per station and process: the digest of the last plant-claims report that station sent for the process (v143; keyed by station and process since v186). Each station is quoted its own rows on its heartbeat ack, so two stations reporting one process each stop re-sending; the mirror (process_styles, style_claims) holds the last writer''s report. Two rows for one process are the reported-by-both flag on the Edges page. An empty report deletes every row of its process, with the mirror.';
 
 CREATE TABLE public.plant_confidence_daily (
     day date NOT NULL,
@@ -2085,7 +2085,7 @@ ALTER TABLE ONLY public.payloads
     ADD CONSTRAINT payloads_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.plant_claims_reports
-    ADD CONSTRAINT plant_claims_reports_pkey PRIMARY KEY (process_id);
+    ADD CONSTRAINT plant_claims_reports_pkey PRIMARY KEY (station_uid, process_id);
 
 ALTER TABLE ONLY public.plant_confidence_daily
     ADD CONSTRAINT plant_confidence_daily_pkey PRIMARY KEY (day);
