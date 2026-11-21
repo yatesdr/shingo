@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -79,48 +80,58 @@ func parseFlags() coreFlags {
 	flag.Parse()
 
 	if *showHelp {
-		printUsage()
+		printUsage(os.Stdout)
 		os.Exit(0)
 	}
 	if *showVersion {
 		fmt.Println("shingocore", Version, "("+Commit+")")
 		os.Exit(0)
 	}
+	// Core takes flags only, and flag.Parse stops at the first argument that
+	// is not one. Left unread, `shingocore -config X migrate down 185` (the
+	// migrate command after a flag instead of first) started a live Core
+	// (TestMain_AnArgumentAfterTheFlagsIsUsage).
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "shingocore: %q is not a flag, and Core takes flags only: a migrate command goes "+
+			"first (shingocore migrate -config PATH check), and a debug filter is one word (--log-debug=rds)\n\n", flag.Arg(0))
+		printUsage(os.Stderr)
+		os.Exit(2)
+	}
 
 	return coreFlags{configPath: *configPath, resetDB: *resetDB, fileFilter: fileFilter, pprofPort: *pprofPort}
 }
 
-func printUsage() {
-	fmt.Println("Usage: shingocore [options]")
-	fmt.Println("       shingocore migrate [-config PATH] check | down N   (shingocore migrate -help)")
-	fmt.Println()
-	fmt.Println("Options:")
-	fmt.Println("  --config PATH         config file path (default: shingocore.yaml)")
-	fmt.Println("  --reset-db            wipe database before starting (requires confirmation)")
-	fmt.Println("  --version             show version")
-	fmt.Println("  --log-debug[=FILTER]  enable debug log to shingo-debug.log")
-	fmt.Println("                        FILTER: comma-separated subsystems (default: all)")
-	fmt.Println("  --pprof-port PORT     serve net/http/pprof on 127.0.0.1:PORT (default 0: off)")
-	fmt.Println("  --help                show this help")
-	fmt.Println()
-	fmt.Println("Debug subsystems:")
-	fmt.Println("  rds           Fleet manager (Seer RDS) HTTP requests/responses")
-	fmt.Println("  kafka         Kafka connect, publish, subscribe, receive")
-	fmt.Println("  dispatch      Order lifecycle: request routing, fleet dispatch")
-	fmt.Println("  protocol      Protocol envelope decode/encode")
-	fmt.Println("  outbox        Outbox drain cycles and delivery")
-	fmt.Println("  core_handler  Inbound message handler dispatch")
-	fmt.Println("  inbox_dedup   Inbound duplicate-message gate (inbox_messages)")
-	fmt.Println("  engine        Engine wiring, vendor status changes")
-	fmt.Println()
-	fmt.Println("--log-debug gates the FILE only. What reaches stderr (journald under")
-	fmt.Println("systemd) is logging.stderr_subsystems in the YAML; the browser log UI")
-	fmt.Println("shows every subsystem regardless.")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  shingocore --log-debug              # all subsystems to file")
-	fmt.Println("  shingocore --log-debug=rds           # only RDS to file")
-	fmt.Println("  shingocore --log-debug=rds,dispatch  # RDS + dispatch to file")
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: shingocore [options]")
+	fmt.Fprintln(w, "       shingocore migrate [-config PATH] check | down N   (shingocore migrate -help)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  --config PATH         config file path (default: shingocore.yaml)")
+	fmt.Fprintln(w, "  --reset-db            wipe database before starting (requires confirmation)")
+	fmt.Fprintln(w, "  --version             show version")
+	fmt.Fprintln(w, "  --log-debug[=FILTER]  enable debug log to shingo-debug.log")
+	fmt.Fprintln(w, "                        FILTER: comma-separated subsystems (default: all)")
+	fmt.Fprintln(w, "  --pprof-port PORT     serve net/http/pprof on 127.0.0.1:PORT (default 0: off)")
+	fmt.Fprintln(w, "  --help                show this help")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Debug subsystems:")
+	fmt.Fprintln(w, "  rds           Fleet manager (Seer RDS) HTTP requests/responses")
+	fmt.Fprintln(w, "  kafka         Kafka connect, publish, subscribe, receive")
+	fmt.Fprintln(w, "  dispatch      Order lifecycle: request routing, fleet dispatch")
+	fmt.Fprintln(w, "  protocol      Protocol envelope decode/encode")
+	fmt.Fprintln(w, "  outbox        Outbox drain cycles and delivery")
+	fmt.Fprintln(w, "  core_handler  Inbound message handler dispatch")
+	fmt.Fprintln(w, "  inbox_dedup   Inbound duplicate-message gate (inbox_messages)")
+	fmt.Fprintln(w, "  engine        Engine wiring, vendor status changes")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "--log-debug gates the FILE only. What reaches stderr (journald under")
+	fmt.Fprintln(w, "systemd) is logging.stderr_subsystems in the YAML; the browser log UI")
+	fmt.Fprintln(w, "shows every subsystem regardless.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  shingocore --log-debug              # all subsystems to file")
+	fmt.Fprintln(w, "  shingocore --log-debug=rds           # only RDS to file")
+	fmt.Fprintln(w, "  shingocore --log-debug=rds,dispatch  # RDS + dispatch to file")
 }
 
 func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
