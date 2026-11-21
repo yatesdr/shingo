@@ -16,9 +16,12 @@ import (
 // adjustment is not a fence this station can use, and the caller then takes
 // the number as is, which is what every station did before the fence:
 //
-//   - no AsOfNet/AsOfSeq (a Core that predates the fence, or a count Core could
-//     not fence: no station, or two, counting the carrier in this generation);
-//   - AsOfStation is another station (the net measures its stream, not ours);
+//   - no AsOfNet/AsOfSeq (a Core that predates the fence; an older Core's count
+//     with no station, or two, counting the carrier in this generation; or a
+//     count whose cursor for this station carries no running net);
+//   - AsOfStation is another station (an older Core named the one counting
+//     station in the copy it sent every station; the net measures that
+//     station's stream, not ours);
 //   - the slot does not hold adj.BinID at adj.Epoch (an Edge behind on the
 //     generation takes the epoch with the absolute count, as before);
 //   - no accumulator wired.

@@ -240,27 +240,27 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	// A PERSON'S ACT IS APPLIED ONCE (condor F7; DESIGN-H §9.5, fix (b)). A
 	// LOAD or CLEAR at this station writes Core's reply here first: the
 	// carrier, its count and the generation the act started. Core's lifecycle
-	// announcement of the same act (bumpEpoch's, unfenced) arrives after, and
-	// by then the line may have counted on the new generation. Writing its
-	// number again erased those ticks here while Core applied their deltas
-	// (TestPinF7_LocalClearThenTickThenUnfencedEchoKeepsTheTick, …Load…). A
-	// lifecycle announcement always starts a generation, so one naming the
-	// generation this slot already holds for this carrier is news this slot
-	// already took: ignore it.
+	// announcement of the same act arrives after, and by then the line may
+	// have counted on the new generation. Writing its number again erased
+	// those ticks here while Core applied their deltas.
 	//
-	// Not fix (a), Core fencing the load and clear announcements (AsOfNet 0
-	// for the new generation): the fenced arm would rebase correctly, but an
-	// unfenced echo from a Core without it, or a redelivered one, still
-	// erases, and the pins are that echo. A person's count is never ignored
-	// here: its actor is the person, and a count that Core could not fence
-	// is still written as is.
+	// A Core that fences every count it states (fix (a): bumpEpoch's
+	// announcement at net 0, seq 0 of the generation it starts) is taken by
+	// the fence above, which rebases the echo onto those ticks, as it does a
+	// redelivered one (PIN: TestScenario_CountDecl_CoresEchoOfTheStationsLoadKeepsItsTicks,
+	// integration). This guard is for an older Core's unfenced echo
+	// (TestPinF7_LocalClearThenTickThenUnfencedEchoKeepsTheTick, …Load…): a
+	// lifecycle announcement always starts a generation, so an unfenced one
+	// naming the generation this slot already holds for this carrier is news
+	// this slot already took: ignore it. A person's count is never ignored
+	// here: its actor is the person, and a count Core did not fence is still
+	// written as is.
 	//
-	// What this does not close: the slot can hold the generation without its
-	// count, when Core's refresh (BinEpochRefresh, stamp only) overtook the
-	// announcement it follows. The refresh is written in a later transaction
-	// than the announcement, so that order needs the drainer to retry the
-	// announcement past it; the count is then the Edge's own until the next
-	// declaration.
+	// What this guard does not close, for an older Core: the slot can hold the
+	// generation without its count, when Core's refresh (BinEpochRefresh,
+	// stamp only) overtook the announcement it follows; the count is then the
+	// Edge's own until the next declaration. A fenced announcement is rebased
+	// whenever it lands (TestScenario_CountDecl_ALateResetIsRebasedToCores).
 	if protocol.IsLifecycleActor(adj.Actor) && adj.AsOfNet == nil && rt.ActiveBinEpoch == adj.Epoch {
 		log.Printf("uop_adjustment: bin %d at node %s epoch %d is a lifecycle announcement of the generation "+
 			"this slot already holds — the act was applied from its reply; keeping the count", adj.BinID, adj.CoreNodeName, adj.Epoch)
