@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -114,5 +115,69 @@ func TestHandleEdgeRegister_UnresolvableNodeKeepsRows(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "station="+st) || !strings.Contains(out, "outcome=refused") || !strings.Contains(out, "node_gone=1") {
 		t.Errorf("log = %q, want one derive line for %s with outcome=refused and node_gone=1", out, st)
+	}
+}
+
+// TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown pins "a new Edge
+// just works" at Core: a heartbeat from a uid Core has no row for is acked and
+// draws a register request addressed to that uid and writes no row; the
+// register that answers it introduces the station (unclaimed, unnamed, with the
+// host and version it sent) and is answered; the next heartbeat is known, so it
+// draws no second request and stamps the row.
+//
+// The envelope's source and the payload carry the same uid, as the Edge sends
+// them, so the pin holds whichever of the two Core reads the sender from.
+func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	const uid = "stn-a0a0a0a0a0a0a0a0"
+	resp := &feedsPinResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+	rowCount := func() int {
+		t.Helper()
+		var n int
+		testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM edge_registry WHERE station_uid = $1`, uid).Scan(&n), "count rows")
+		return n
+	}
+	ack := "reply " + protocol.SubjectEdgeHeartbeatAck
+
+	svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid, Feeds: map[string]string{}})
+	if got, want := resp.trace(), []string{ack, "send " + protocol.SubjectEdgeRegisterRequest + " -> " + uid}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first heartbeat: trace = %v, want %v", got, want)
+	}
+	if n := rowCount(); n != 0 {
+		t.Fatalf("the heartbeat wrote %d registry rows for an unknown uid, want 0: only the register introduces", n)
+	}
+
+	resp.events = nil
+	svc.HandleEdgeRegister(registerEnv(uid), &protocol.EdgeRegister{StationID: uid, Hostname: "pin-host",
+		Instance: "pin-run-1", Version: "v-pin", SchemaVersion: 3})
+	if got, want := resp.trace(), []string{"reply " + protocol.SubjectEdgeRegistered}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("register: trace = %v, want %v", got, want)
+	}
+	if reg, ok := resp.events[0].payload.(*protocol.EdgeRegistered); !ok || reg.Message != "registered" {
+		t.Errorf("register reply = %#v, want an edge.registered saying \"registered\"", resp.events[0].payload)
+	}
+	var name, host, version, status, boundInstance string
+	var unclaimed bool
+	var schema int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT display_name, hostname, version, status, bound_instance,
+		claimed_at IS NULL, COALESCE(schema_version, -1) FROM edge_registry WHERE station_uid = $1`, uid).Scan(
+		&name, &host, &version, &status, &boundInstance, &unclaimed, &schema), "read the introduced row")
+	if name != "" || !unclaimed || host != "pin-host" || version != "v-pin" || status != "active" ||
+		boundInstance != "pin-run-1" || schema != 3 {
+		t.Errorf("introduced row = name %q unclaimed %v host %q version %q status %q instance %q schema %d; "+
+			"want unnamed, unclaimed, pin-host, v-pin, active, pin-run-1, 3", name, unclaimed, host, version, status, boundInstance, schema)
+	}
+
+	resp.events = nil
+	svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid, Feeds: map[string]string{}})
+	if got, want := resp.trace(), []string{ack}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("heartbeat after the register: trace = %v, want %v (no second register request)", got, want)
+	}
+	var beat bool
+	testutil.MustNoErr(t, db.QueryRow(`SELECT last_heartbeat IS NOT NULL FROM edge_registry WHERE station_uid = $1`, uid).Scan(&beat), "read heartbeat")
+	if !beat || rowCount() != 1 {
+		t.Errorf("after the second heartbeat: last_heartbeat stamped %v, rows %d; want stamped, 1", beat, rowCount())
 	}
 }
