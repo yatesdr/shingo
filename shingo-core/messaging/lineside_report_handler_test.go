@@ -82,6 +82,35 @@ func TestLinesideReport_NewerIdenticalValuesStillMovesTheRow(t *testing.T) {
 	}
 }
 
+// THE STATION IS THE ENVELOPE'S. A body naming another station stores nothing
+// under that one: the handler reads env.Src.Station, as the register and the
+// heartbeat do (TestHandlers_TheStationIsTheEnvelopes). An Edge fills both
+// from one variable; the body's copy is still sent for a v0.18.0 Core.
+func TestLinesideReport_TheStationIsTheEnvelopes(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := newLinesideService(t, db)
+
+	const (
+		sender  = "stn-lineside-sender"
+		body    = "stn-lineside-not-the-sender"
+		node    = "ALN_005"
+		payload = "P-ENVELOPE"
+	)
+	svc.HandleLinesideLevelReport(linesideEnvelope(sender), &protocol.LinesideLevelReport{
+		Station:    body,
+		ReportedAt: time.Now().UTC().Truncate(time.Millisecond),
+		Entries:    []protocol.LinesideLevelEntry{linesideEntry(node, payload, 20)},
+	})
+
+	if _, ok := storedReportedAt(t, db, sender, node, payload); !ok {
+		t.Errorf("no row under the envelope's station %s", sender)
+	}
+	if _, ok := storedReportedAt(t, db, body, node, payload); ok {
+		t.Errorf("a row under the body's station %s: the body's station was read", body)
+	}
+}
+
 // An upsert that fails skips that entry and only that entry: the others are
 // still written. The failure is forced with a NUL byte in the part code, which a
 // Postgres text column refuses (it used to be a count the INTEGER column could

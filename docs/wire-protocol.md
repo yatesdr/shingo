@@ -656,8 +656,8 @@ no longer lists is marked stale.
 
 The sending station is the envelope's `src.station`, which is what Core's handlers read. The register, the
 heartbeat and the robot watch also carry the uid as `station_id`, which an edge still sends for an older Core and
-Core does not read. [`LinesideLevelReport`](#linesidelevelreport) carries a `station`, which Core reads first,
-falling back to `src.station` when it is empty.
+Core does not read. [`LinesideLevelReport`](#linesidelevelreport) carries the same uid as `station`, on the same
+terms: a v0.18.0 Core reads it, and this Core reads `src.station` only.
 
 #### CellCatalog
 

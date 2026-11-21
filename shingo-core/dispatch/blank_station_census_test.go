@@ -342,7 +342,7 @@ var blankStationSites = map[string]bsSite{
 	"engine:strandedDetail":                               notOrder(`station == "" ×1, station == station ×1`, "RDS map points (robot LastStation, CurrentStation)"),
 	"engine:strandedNote":                                 notOrder(`station == "" ×1, alias == "" ×1`, "RDS map points (robot CurrentStation, LastStation)"),
 	"messaging:CoreDataService.HandleEdgeCells":           notOrder(`station == "" ×1`, "the sending Edge's envelope station: a cell catalog with none has no station to apply to and is dropped"),
-	"messaging:CoreDataService.HandleLinesideLevelReport": notOrder(`station == "" ×2`, "the reporting Edge (the report's station, else its envelope's)"),
+	"messaging:CoreDataService.HandleLinesideLevelReport": notOrder(`station == "" ×1`, "the reporting Edge's envelope station: a report with none has no station to store and is dropped"),
 	"messaging:CoreDataService.HandlePlantClaims":         notOrder(`station == "" ×1, alias == "" ×1, station == station ×1`, "the Edge publishing a process's claims, against the one that published it before"),
 	"messaging:CoreDataService.unlistedFor":               notOrder(`station == "" ×1`, "the asking Edge's envelope station; it lists that station's active orders, which no actor asks for"),
 	"messaging:loadersNameAnEdge":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),

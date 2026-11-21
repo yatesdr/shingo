@@ -41,10 +41,12 @@ import (
 // write only when an episode opens or closes. A report with no rows costs one
 // read (the station's latest row) instead of the upserts.
 func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *protocol.LinesideLevelReport) {
-	station := r.Station
-	if station == "" {
-		station = env.Src.Station
-	}
+	// The station is the envelope's, as it is for the register, the heartbeat
+	// and every Edge-sent count: the body's station is not read. An Edge fills
+	// both from one variable and still sends the body's copy for a v0.18.0
+	// Core, which reads it. env is the router's and never nil.
+	// PIN: TestLinesideReport_TheStationIsTheEnvelopes.
+	station := env.Src.Station
 	if station == "" {
 		return
 	}
