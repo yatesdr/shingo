@@ -92,11 +92,13 @@ func TestClaimSendDue_GuardAndFlag(t *testing.T) {
 //
 // Lane D1 caches the member digests, and a quiet ack then runs 0 statements:
 // this pin fails on that change and is replaced by that assertion.
+//
+// Not parallel: the stations' bin lists the watch digest reads are held under
+// processes.NodeGeneration, which is process-wide, so a parallel test writing
+// process_nodes would force a rebuild (two more reads) inside the count.
 func TestOnCoreAck_AQuietAckReadsOnePlusTwoPerProcess(t *testing.T) {
-	t.Parallel()
 	for _, p := range []int{1, 3, 6} {
 		t.Run(fmt.Sprintf("P=%d", p), func(t *testing.T) {
-			t.Parallel()
 			db, counter := testEngineDBCounting(t)
 			e := New(Config{AppConfig: &config.Config{Namespace: "test", LineID: "test-line"}, DB: db})
 			// Process i has i%3+1 live styles of two produce claims each.
