@@ -31,19 +31,19 @@ import (
 // scene revision the Edge already holds (empty from an older binary); see
 // sceneSlices for what that decides.
 //
-// A RE-ASK FORGETS THE STATION'S NODE-LIST MEMO first. The Edge holds this
-// answer's digest from now on, and the heartbeat compares against the memo:
-// one built before a write that drops no memo (a group deleted or
-// reparented, which Core announces with NodeStructureChanged, the very
-// notice that makes the Edge re-ask) would differ from it, and a converged
-// Edge quoting a new digest reads as one that lost its copy, so the old list
+// THE REPLY IS LENIENT AND IS NEVER MEMOISED; AFTER IT, THE STATION'S
+// NODE-LIST AND SCENE MEMOS ARE FORGOTTEN. The Edge holds this answer's
+// digests from now on, and the heartbeat compares against the memo: one built
+// before a write that drops no memo (a group deleted or reparented, which Core
+// announces with NodeStructureChanged, the very notice that makes the Edge
+// re-ask; a scene sync) would differ from it, and a converged Edge quoting a
+// new digest reads as one that lost its copy, so the old list or the old scene
 // went back at once and the Edge applied it until the memo aged out. With the
-// memo gone the next heartbeat builds afresh. The window left is a heartbeat
-// whose build began before this drop and is stored after it
-// (feedState.store), healed when that memo ages out. Pinned by
-// TestNodeFeed_AReAskedListIsNotSentBack.
+// memos gone the next heartbeat builds afresh. The reply's degraded build (a
+// failed optional read still sends the rest) is not stored: only the strict
+// feed build is (feedCurrent). Pinned by TestNodeFeed_AReAskedListIsNotSentBack
+// and TestNodeFeed_ASceneChangeThenAReAskIsNotSentTheOldScene.
 func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *protocol.NodeListRequest) {
-	s.feeds.dropStation(env.Src.Station, protocol.FeedNodes)
 	resp, err := s.buildNodeList(env.Src.Station, false)
 	if err != nil {
 		log.Printf("core_handler: node list for %s: %v — not sent", env.Src.Station, err)
@@ -55,6 +55,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *pro
 	}
 	resp.ScenePoints, resp.SceneEdges, resp.SceneRevision = s.sceneSlices(edgeRevision, env.Src.Station)
 	s.resp.replyData(env, protocol.SubjectNodeListResponse, resp)
+	s.feeds.dropStation(env.Src.Station, protocol.FeedNodes)
+	s.feeds.dropStation(env.Src.Station, protocol.FeedScene)
 	logNodeList("sent node list", resp, edgeRevision, env.Src.Station)
 }
 
@@ -310,7 +312,11 @@ func (s *CoreDataService) sendNodeFeed(station string, held map[string]string) {
 	logNodeList("node list feed", &resp, heldRevision, station)
 }
 
-// HandleCatalogPayloadsRequest answers an Edge's catalog sync.
+// HandleCatalogPayloadsRequest answers an Edge's catalog sync, leniently, as
+// the node-list reply does, and then forgets the catalog memo, which is
+// plant-wide: the next heartbeat from any Edge compares against a build as new
+// as this answer, so one made before a write that called no hook is not sent
+// back over it. Pinned by TestNodeFeed_ACatalogReplyAfterAnEdit.
 func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: catalog payloads request from %s", env.Src.Station)
 	resp, err := s.buildCatalog(false)
@@ -319,6 +325,7 @@ func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 		return
 	}
 	s.resp.replyData(env, protocol.SubjectCatalogPayloadsResponse, resp)
+	s.feeds.drop(protocol.FeedCatalog)
 	log.Printf("core_handler: sent payload catalog (%d payloads, digest=%s) to %s", len(resp.Payloads), resp.Digest, env.Src.Station)
 }
 

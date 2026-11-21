@@ -249,17 +249,17 @@ func TestNodeFeed_AReAskedListIsNotSentBack(t *testing.T) {
 // TestNodeFeed_ACatalogReplyAfterAnEdit: a part is edited, one Edge's catalog
 // sync is answered with the edited catalog (a reconnect or a register asks
 // it), and that Edge's next heartbeat quotes the answer's digest inside the
-// plant-wide memo's life, a memo the heartbeats built before the edit. What
-// the heartbeat sends turns on whether the edit dropped the memo:
+// plant-wide memo's life, a memo the heartbeats built before the edit. Nothing
+// is sent and the ack quotes the answer, whether the edit dropped the memo or
+// not:
 //
 //   - through the payload service, the door every runtime catalog writer goes
 //     through, its hook wired as the composition root wires it, the hook drops
-//     the memo (PayloadsChanged), the heartbeat compares against a build made
-//     after the edit, and nothing is sent;
+//     the memo (PayloadsChanged);
 //   - a write that calls no hook (the store's own writer, which cmd/seeddev
-//     uses) leaves the memo's build from before the edit, and the heartbeat
-//     sends that catalog back over the answer. PREDICTED red
-//     (testdb.VerifyRed) until a catalog reply drops the catalog memo.
+//     uses) leaves the memo's build from before the edit, and the reply drops
+//     it (HandleCatalogPayloadsRequest). Before it did, the heartbeat sent the
+//     memo's catalog from before the edit back over the answer.
 //
 // Neither case touches the memo; the test reads it, to show it was warm.
 func TestNodeFeed_ACatalogReplyAfterAnEdit(t *testing.T) {
@@ -320,53 +320,33 @@ func TestNodeFeed_ACatalogReplyAfterAnEdit(t *testing.T) {
 			if age := clock.Now().Sub(built); age >= feedMemoPlant {
 				t.Fatalf("the heartbeat came %v after the memo was built, past its %v: the case was not exercised", age, feedMemoPlant)
 			}
-			if throughTheService {
-				if len(sends) != 0 {
-					t.Errorf("the heartbeat quoting the answer's catalog %s was sent %d messages, want none", answer.Digest, len(sends))
-				}
-				if ack.Feeds[protocol.FeedCatalog] != answer.Digest {
-					t.Errorf("the ack quotes catalog %s, want the answer's %s", ack.Feeds[protocol.FeedCatalog], answer.Digest)
-				}
-				return
-			}
-			// Today's outcome, exactly: the memo's catalog from before the
-			// edit, sent to the Edge holding the answer, and quoted on the ack.
-			var violations []string
 			for _, s := range sends {
-				cat, ok := s.payload.(*protocol.CatalogPayloadsResponse)
-				if !ok || s.station != "edge.test" {
-					t.Errorf("sent %s to %q, want a catalog to edge.test or nothing", s.subject, s.station)
-					continue
+				if cat, ok := s.payload.(*protocol.CatalogPayloadsResponse); ok && cat.Digest == old.Digest {
+					t.Errorf("the heartbeat quoting the answer's catalog %s was sent the catalog from before the edit, %s",
+						answer.Digest, old.Digest)
 				}
-				if !reflect.DeepEqual(cat, old) {
-					t.Errorf("sent the catalog %s, want today's: the build from before the edit, %s", cat.Digest, old.Digest)
-				}
-				violations = append(violations, fmt.Sprintf("the heartbeat quoting the answer's catalog %s was sent "+
-					"the catalog from before the edit, %s", answer.Digest, cat.Digest))
 			}
-			if got := ack.Feeds[protocol.FeedCatalog]; got != answer.Digest {
-				if got != old.Digest {
-					t.Errorf("the ack quotes catalog %s, want today's %s (the memo's)", got, old.Digest)
-				}
-				violations = append(violations, fmt.Sprintf("the ack quotes the memo's catalog %s, not the answer's %s", got, answer.Digest))
+			if len(sends) != 0 {
+				t.Errorf("the heartbeat quoting the answer's catalog %s was sent %d messages, want none", answer.Digest, len(sends))
 			}
-			testdb.VerifyRed(t, "a catalog reply after a write that calls no hook is sent back old", violations)
+			if ack.Feeds[protocol.FeedCatalog] != answer.Digest {
+				t.Errorf("the ack quotes catalog %s, want the answer's %s", ack.Feeds[protocol.FeedCatalog], answer.Digest)
+			}
 		})
 	}
 }
 
-// TestNodeFeed_ASceneChangeThenAReAskIsSentTheOldScene: the scene changes
-// (a sync moves a point; nothing drops a scene memo), the Edge re-asks its
-// node list (boot, a reconnect, NodeStructureChanged) quoting the scene it
-// holds, and the reply carries the new scene with its geometry. The re-ask
-// drops the station's node-list memo and not its scene memo, so the next
-// heartbeat, quoting the reply's digests inside that memo's life, is answered
-// with the scene the memo built before the change: Core sends the node list
-// with the old revision and the old geometry, and the Edge applies it until
-// the memo ages out. PREDICTED red (testdb.VerifyRed) until a node-list reply
-// drops the station's scene memo as well. The node half is
+// TestNodeFeed_ASceneChangeThenAReAskIsNotSentTheOldScene: the scene changes
+// (a sync moves a point, writing nothing that drops a scene memo), the Edge
+// re-asks its node list (boot, a reconnect, NodeStructureChanged) quoting the
+// scene it holds, and the reply carries the new scene with its geometry. The
+// next heartbeat, quoting the reply's digests inside the station memo's life,
+// is sent nothing and the ack quotes the reply's scene: the reply forgets the
+// station's scene memo as well as its node-list memo. Before it did, Core sent
+// the node list with the memo's old revision and old geometry, and the Edge
+// applied it until the memo aged out. The node half is
 // TestNodeFeed_AReAskedListIsNotSentBack. Nothing here touches the memo.
-func TestNodeFeed_ASceneChangeThenAReAskIsSentTheOldScene(t *testing.T) {
+func TestNodeFeed_ASceneChangeThenAReAskIsNotSentTheOldScene(t *testing.T) {
 	t.Parallel()
 	svc, resp := nodeFeedSetup(t)
 	ack, _ := heartbeatWith(svc, resp, map[string]string{protocol.FeedNodes: "", protocol.FeedScene: ""})
@@ -409,32 +389,22 @@ func TestNodeFeed_ASceneChangeThenAReAskIsSentTheOldScene(t *testing.T) {
 	if age := clock.Now().Sub(built); age >= feedMemoStation {
 		t.Fatalf("the heartbeat came %v after the station's memo was built, past its %v: the case was not exercised", age, feedMemoStation)
 	}
-	// Today's outcome, exactly: one node list carrying the memo's scene, from
-	// before the change, with its geometry; the ack quotes that scene.
-	var violations []string
 	for _, s := range sends {
 		nl, ok := s.payload.(*protocol.NodeListResponse)
 		if !ok {
-			t.Errorf("sent %s, want a node list or nothing", s.subject)
+			t.Errorf("sent %s, want nothing", s.subject)
 			continue
 		}
-		if nl.SceneRevision != oldScene || !hasGeometry(nl) || lm9X(nl) != oldX || nl.Digest != reply.Digest {
-			t.Errorf("sent a node list at scene %s (geometry %v, LM9 at x=%v, nodes %s); want today's: scene %s with "+
-				"LM9 at %v over nodes %s", nl.SceneRevision, hasGeometry(nl), lm9X(nl), nl.Digest, oldScene, oldX, reply.Digest)
-		}
-		violations = append(violations, fmt.Sprintf("the heartbeat quoting the reply's scene %s was sent the scene "+
-			"from before the change, %s, with LM9 at x=%v", reply.SceneRevision, nl.SceneRevision, lm9X(nl)))
+		t.Errorf("the heartbeat quoting the reply's scene %s was sent a node list at scene %s (geometry %v, LM9 at x=%v), "+
+			"want nothing", reply.SceneRevision, nl.SceneRevision, hasGeometry(nl), lm9X(nl))
 	}
 	if got := ack.Feeds[protocol.FeedScene]; got != reply.SceneRevision {
-		if got != oldScene {
-			t.Errorf("the ack quotes scene %s, want today's %s (the memo's)", got, oldScene)
-		}
-		violations = append(violations, fmt.Sprintf("the ack quotes the memo's scene %s, not the reply's %s", got, reply.SceneRevision))
+		t.Errorf("the ack quotes scene %s, want the reply's %s (the memo's from before the change was %s)",
+			got, reply.SceneRevision, oldScene)
 	}
 	if got := ack.Feeds[protocol.FeedNodes]; got != reply.Digest {
 		t.Errorf("the ack quotes nodes %s, want the reply's %s (the nodes did not change)", got, reply.Digest)
 	}
-	testdb.VerifyRed(t, "a scene change then a node-list re-ask is sent the old scene", violations)
 }
 
 // lm9X is LM9's x in a node list's geometry; NaN when it carries none.
