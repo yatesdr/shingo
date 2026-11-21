@@ -33,8 +33,9 @@ import { openLayer, closeLayer, layerDepth, openSheet, showModal, confirm as lay
 // once, where it is about, and the stale 409 the apply loop retries is not
 // put up as a failure. A 401 goes on the notice whatever the call said (only
 // the notice has Sign in), and the page draws nothing more for it (said).
-// The ten-second re-reads pass NO_NOTICE too: a dead Edge is the
-// lost-connection banner's to say (brief S5), not a toast per tick. A read
+// The re-reads on a timer pass NO_NOTICE too (the ten-second rail and health
+// strip, Setup's five-second wait for a screen, startSetupPoll): a dead Edge
+// is the lost-connection banner's to say (brief S5), not a toast per tick. A read
 // the page draws no reason for keeps the notice, which is then its one place.
 //
 // `cache: 'no-store'` went with the bare fetches: the Edge's JSON answers
@@ -823,7 +824,7 @@ function startSetupPoll() {
     const pid = S.processID;
     S.setupPoll = setInterval(async () => {
         if (S.tab !== 'setup' || S.processID !== pid) { stopSetupPoll(); return; }
-        await reloadStations();
+        await reloadStations(NO_NOTICE);
         const f = setupFacts();
         if (f.canRun && f.seen) {
             stopSetupPoll();
@@ -7794,8 +7795,9 @@ async function reloadProcesses() {
     S.processes = Array.isArray(rows) ? rows : [];
 }
 
-async function reloadStations() {
-    const res = await send('GET', '/api/operator-stations');
+// opts is send's: the Setup poll passes NO_NOTICE, every other caller none.
+async function reloadStations(opts) {
+    const res = await send('GET', '/api/operator-stations', undefined, opts);
     if (!res.ok) return;
     const rows = res.body;
     S.stations = Array.isArray(rows) ? rows : [];

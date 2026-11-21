@@ -413,11 +413,13 @@ async function pinSetup() {
     }
     {
         // The Run it step's re-read: the screens answer seen at the next tick.
-        let seen = false;
+        // While down, the Edge does not answer the re-read at all.
+        let seen = false, down = false;
         const o = pressA(c => { c.styles.forEach(st => { st.last_run = ''; }); }, NOT_RUN);
         const base = o.extra;
-        o.extra = (m, u) => (m === 'GET' && u.split('?')[0] === '/api/operator-stations' && seen
-            ? { body: T.FX.page.stations.map(st => Object.assign({}, st, { last_seen_at: '2026-11-11T14:05:20' })) } : base(m, u));
+        o.extra = (m, u) => (m === 'GET' && u.split('?')[0] === '/api/operator-stations' && down ? { reject: 'Failed to fetch' }
+            : m === 'GET' && u.split('?')[0] === '/api/operator-stations' && seen
+                ? { body: T.FX.page.stations.map(st => Object.assign({}, st, { last_seen_at: '2026-11-11T14:05:20' })) } : base(m, u));
         const page = await T.openPage(o);
         const ticks = setupTicks(page);
         check('waiting on Run it, the screens are re-read every 5 s, one timer', ticks.length === 1,
@@ -427,6 +429,18 @@ async function pinSetup() {
         await page.settle();
         check('a tick with no screen opened is one read and changes nothing', lines(page, from).join() === 'GET /api/operator-stations' &&
             page.S.tab === 'setup' && /Waiting for the screen to be opened/.test(page.root.innerHTML), lines(page, from).join(' · ') + ' tab ' + page.S.tab);
+        // A tick the Edge does not answer is the lost-connection banner's to
+        // say, not a toast per tick (the page header's NO_NOTICE rule).
+        down = true;
+        from = page.mark();
+        const shown = page.notices.length;
+        await ticks[0].fn();
+        await page.settle();
+        check('a tick the Edge does not answer puts nothing on the notice and keeps waiting',
+            page.notices.length === shown && lines(page, from).join() === 'GET /api/operator-stations' &&
+            page.S.tab === 'setup' && /Waiting for the screen to be opened/.test(page.root.innerHTML) && setupTicks(page).length === 1,
+            'notices ' + JSON.stringify(page.notices.slice(shown).map(n => n.level + ' ' + n.text)) + ' · ' + lines(page, from).join(' · '));
+        down = false;
         seen = true;
         from = page.mark();
         await ticks[0].fn();

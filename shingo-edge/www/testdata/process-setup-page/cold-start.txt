@@ -147,6 +147,7 @@ New style: "New style — a part this process runs: name it, then draw its flow.
 # its screen seen, no style with a flow · lands on setup · tabs ["Setup*","Styles","Settings"]
 ok   waiting on Run it, the screens are re-read every 5 s, one timer
 ok   a tick with no screen opened is one read and changes nothing
+ok   a tick the Edge does not answer puts nothing on the notice and keeps waiting
 # the screen opened, on the next tick: GET /api/operator-stations
   title: "Press A is set up 3 of 3 done"
   "Its operator screen “Screen A” has been opened. Setup closes now. Everything else is on Settings."

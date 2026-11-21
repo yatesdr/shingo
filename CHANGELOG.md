@@ -23,6 +23,7 @@ Deploy: Core v186–v187 (placeholder; the lead writes the full line).
 - The Edge's Configuration page shows the Station UID as text and can no longer change it; a save from a page that still sends a different one is refused. A replacement box takes the old station's uid with shingoedge --restore
 - The Edge reads nothing from namespace, line_id or messaging.station_id in its config; a file that still has them loads, and the next save drops them. An Edge known only by messaging.station_id would start as a new station: put that value in station_uid before the upgrade
 - A sim plant file names its own Edge with one station_uid key in place of namespace and line_id, and a process's edge may be any station uid, a minted stn-… one included; seeddev names the dev stations EDGE 1 and EDGE 2 on Core
+- The Edge Processes page's Setup tab no longer puts up an error every five seconds while it waits for a screen and the Edge does not answer; the lost-connection banner says it
 
 ## v0.18.0 — 2026-11-21
 
