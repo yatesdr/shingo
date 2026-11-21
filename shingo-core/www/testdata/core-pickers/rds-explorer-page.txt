@@ -3,7 +3,7 @@
 
 -- Add a block with no location
   (no request)
-  toast info: Location is required
+  toast warning: Location is required
 -- two blocks added: the rows drawn (bb-blocks)
   <span class="bb-detail">b1 &ndash; Load @ GRP-A-L1-S1</span>
   <span class="bb-detail">b9 &ndash; JackLoad @ LM&lt;b&gt;7&lt;/b&gt;</span>

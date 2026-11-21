@@ -84,7 +84,7 @@ function refusalURL(nodeID) {
 // surprises a cell that has already acted on being told. Either one is a single
 // tap on a screen being read from a forklift position.
 export function confirmRefuseSupply(nodeID, code, onDone) {
-    if (!code) { showToast('Pick a part first', 'error'); return; }
+    if (!code) { showToast('Pick a part first', 'warning'); return; }
     askConfirm(
         'NO ' + code + ' AVAILABLE?',
         'The cell waiting on this part will be told, and asked whether to keep waiting or change over.',

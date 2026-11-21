@@ -506,7 +506,7 @@ function closePLCreateModal() {
 function submitPLCreate(el, evt) {
   if (evt) evt.preventDefault();
   var manifest = collectManifestRows('plc-manifest-rows');
-  if (manifest.error) { toast(manifest.error, 'error'); return; }
+  if (manifest.error) { toast(manifest.error, 'warning'); return; }
   var body = {
     code: document.getElementById('plc-code').value,
     description: document.getElementById('plc-notes').value,
@@ -637,7 +637,7 @@ function closePLEditModal() {
 function submitPLEdit(el, evt) {
   if (evt) evt.preventDefault();
   var manifest = _pleLoaded.manifest ? collectManifestRows('ple-manifest-rows') : null;
-  if (manifest && manifest.error) { toast(manifest.error, 'error'); return; }
+  if (manifest && manifest.error) { toast(manifest.error, 'warning'); return; }
   var body = {
     id: parseInt(document.getElementById('pl-edit-id').value),
     code: document.getElementById('pl-edit-code').value,

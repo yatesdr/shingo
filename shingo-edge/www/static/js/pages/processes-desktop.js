@@ -3852,7 +3852,7 @@ async function saveFlow() {
         S.tab = 'setup';
         drawSetup();
         syncHash();
-        toast('Saved' + (style ? ' ' + style.name : '') + '. Next: Run it.', 'info');
+        toast('Saved' + (style ? ' ' + style.name : '') + '. Next: Run it.', 'success');
     }
 }
 

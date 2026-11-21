@@ -344,7 +344,7 @@ export function addKanbanLayerWant(el) {
   var layers = Number((document.getElementById('nf-kanban-add-layers-' + id) || {}).value);
   var n = Number((document.getElementById('nf-kanban-add-layer-want-' + id) || {}).value);
   if (!(layers >= 1) || Math.floor(layers) !== layers) {
-    toast('A height is a whole number of layers, 1 or more.', 'error');
+    toast('A height is a whole number of layers, 1 or more.', 'warning');
     return;
   }
   if (!(n >= 0)) n = 0;

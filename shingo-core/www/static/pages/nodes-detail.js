@@ -1004,7 +1004,7 @@ async function saveTableTurn() {
       var value = '';
       if (typed !== '') {
         var d = parseFloat(typed);
-        if (!isFinite(d)) { toast('The table angle must be a number of degrees.', 'error'); return false; }
+        if (!isFinite(d)) { toast('The table angle must be a number of degrees.', 'warning'); return false; }
         value = String(d * Math.PI / 180);
       }
       await apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'table_turn_rad', value: value});

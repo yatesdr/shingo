@@ -84,7 +84,7 @@ form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="" 
 ## complex with no staging: refused on the page
 picks: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging=""
 (no request)
-shows: toast error: "Staging and production nodes are required"
+shows: toast warning: "Staging and production nodes are required"
 form after: mo-type="complex" mo-node="" mo-qty="1" mo-pickup="" mo-delivery="PRESS-1" mo-staging=""
 
 ## complex refused (400)

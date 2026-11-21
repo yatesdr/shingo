@@ -1150,7 +1150,7 @@ async function saveStationSetting(el) {
   // put the field back the way it was and say so here.
   if (field === 'name' && !String(value).trim()) {
     el.value = item.loader.name;
-    toast('A station needs a name', 'error');
+    toast('A station needs a name', 'warning');
     return;
   }
   const body = settingUpdate(item.loader, field, value);

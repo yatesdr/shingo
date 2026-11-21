@@ -289,13 +289,13 @@ async function submitLoadBin() {
     const state = loadBinState;
     if (!state || state.submitting) return;
     if (!state.payloadCode) {
-        showToast('Select a payload first', 'error');
+        showToast('Select a payload first', 'warning');
         return;
     }
     // No template shown (the fallback read failed or is still out): the
     // operator has had nothing to check the bin against.
     if (state.manifest.length === 0) {
-        showToast('No manifest loaded', 'error');
+        showToast('No manifest loaded', 'warning');
         return;
     }
     // This station always declares a count, so uop_count is always present on
@@ -303,7 +303,7 @@ async function submitLoadBin() {
     // The absence case comes from the production page, whose field is optional.
     if (state.uopCount <= 0) {
         // OWNER-WORDS (owner, 2026-11-19: keep refusing a LOAD of 0, reworded)
-        showToast('Type the count first: a LOAD needs 1 or more', 'error');
+        showToast('Type the count first: a LOAD needs 1 or more', 'warning');
         return;
     }
     // The part and the count, and no manifest: the Edge builds the bin's lines

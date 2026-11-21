@@ -37,7 +37,7 @@ async function releaseNodeWithPrompt(nodeID, el) {
     var trimmed = String(input).trim();
     var partial = trimmed === '' ? 0 : Number(trimmed);
     if (!Number.isInteger(partial) || partial < 0) {
-        toast('Invalid count: enter 0, blank, or a positive whole number', 'error');
+        toast('Invalid count: enter 0, blank, or a positive whole number', 'warning');
         return;
     }
     try {
@@ -668,7 +668,7 @@ async function createOrder() {
         var stagingNode = pickers.staging.value();
         var productionNode = pickers.delivery.value();
         if (!stagingNode || !productionNode) {
-            toast('Staging and production nodes are required', 'error');
+            toast('Staging and production nodes are required', 'warning');
             return;
         }
         var body = {

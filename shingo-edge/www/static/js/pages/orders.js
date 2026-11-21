@@ -66,7 +66,7 @@ async function releaseOrder(orderID, el) {
     const trimmed = String(input).trim();
     const partial = trimmed === '' ? 0 : Number(trimmed);
     if (!Number.isInteger(partial) || partial < 0) {
-        toast('Invalid count: enter 0, blank, or a positive whole number', 'error');
+        toast('Invalid count: enter 0, blank, or a positive whole number', 'warning');
         return;
     }
     const body = partial > 0

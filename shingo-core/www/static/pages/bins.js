@@ -682,7 +682,7 @@ function runBinAction(action, params, reset) {
 
 function loadPayload() {
   var code = BD_PICKERS['bd-load-payload'] ? BD_PICKERS['bd-load-payload'].value() : '';
-  if (!code) { toast('Select a payload', 'info'); return; }
+  if (!code) { toast('Select a payload', 'warning'); return; }
   // Blank = template capacity (full pack). An explicit value — 0 included —
   // is the operator's declared count and must survive as-is; the old
   // `parseInt(...) || 0` collapsed a typed "0" into "use capacity".
@@ -690,7 +690,7 @@ function loadPayload() {
   var params = { payload_code: code };
   if (raw !== '') {
     var uop = parseInt(raw, 10);
-    if (isNaN(uop) || uop < 0) { toast('Count must be 0 or more', 'info'); return; }
+    if (isNaN(uop) || uop < 0) { toast('Count must be 0 or more', 'warning'); return; }
     params.uop_override = uop;
   }
   runBinAction('load_payload', params, ['bd-load-payload', 'bd-load-uop']);
@@ -708,15 +708,15 @@ function toggleManifest() {
 
 function lockBin() {
   var actor = document.getElementById('bd-lock-actor').value.trim();
-  if (!actor) { toast('Enter who is locking this bin', 'info'); return; }
+  if (!actor) { toast('Enter who is locking this bin', 'warning'); return; }
   runBinAction('lock', { actor: actor }, ['bd-lock-actor']);
 }
 
 function moveBin() {
   var nodeId = parseInt(BD_PICKERS['bd-move-node'] ? BD_PICKERS['bd-move-node'].value() : '');
-  if (!nodeId) { toast('Select a destination', 'info'); return; }
+  if (!nodeId) { toast('Select a destination', 'warning'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
-    toast('Bin is already at this location', 'info'); return;
+    toast('Bin is already at this location', 'warning'); return;
   }
   runBinAction('move', { node_id: nodeId }, ['bd-move-node']);
 }
@@ -727,15 +727,15 @@ function moveBin() {
 // hand and sends no robot. A refusal shows the door's sentence unchanged.
 function requestMove() {
   var nodeId = parseInt(BD_PICKERS['bd-move-node'] ? BD_PICKERS['bd-move-node'].value() : '');
-  if (!nodeId) { toast('Select a destination', 'info'); return; }
+  if (!nodeId) { toast('Select a destination', 'warning'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
-    toast('Bin is already at this location', 'info'); return;
+    toast('Bin is already at this location', 'warning'); return;
   }
   apiPost('/api/bins/request-move', { bin_id: currentBinId, destination_node_id: nodeId })
     .then(function(data) {
       var msg = 'Move #' + data.order_id + ' to ' + (data.to || 'the destination') + ' requested (' + data.status + ')';
       if (data.queue_reason) msg += ': ' + data.queue_reason;
-      toast(msg, 'info');
+      toast(msg, 'success');
       openBinDetail(currentBinId);
       refreshBinRow(currentBinId);
     })
@@ -761,7 +761,7 @@ async function askRobotToSetDown(binId, robot) {
   if (!id) return;
   if (!await uiConfirm('Return this bin to where it is used from? ' + (robot && typeof robot === 'string' ? robot : 'The robot') + ' will drive there and unload. If nothing declares a place for it, nothing moves.')) return;
   apiPost('/api/recovery/repair', { action: 'recover_carried_bin', order_id: 0, bin_id: id })
-    .then(function(data) { toast(data.detail || 'Recovery order created', 'info'); refreshBinRow(id); })
+    .then(function(data) { toast(data.detail || 'Recovery order created', 'success'); refreshBinRow(id); })
     .catch(function(e) { toast(e.error || e, 'error'); });
 }
 
@@ -794,8 +794,8 @@ function recordCount() {
   // refused here and at the door (owner, 2026-11-19).
   var raw = document.getElementById('bd-count-uop').value.trim();
   var uop = parseInt(raw, 10);
-  if (raw === '' || isNaN(uop)) { toast('Type the count: 0 for an empty bin', 'info'); return; }
-  if (uop < 0) { toast('Count must be 0 or more', 'info'); return; }
+  if (raw === '' || isNaN(uop)) { toast('Type the count: 0 for an empty bin', 'warning'); return; }
+  if (uop < 0) { toast('Count must be 0 or more', 'warning'); return; }
   var actor = document.getElementById('bd-count-actor').value.trim();
   runBinAction('record_count', { actual_uop: uop, actor: actor }, ['bd-count-uop', 'bd-count-actor']);
 }
@@ -817,7 +817,7 @@ function addNote() {
   var noteType = document.getElementById('bd-note-type').value;
   var msg = document.getElementById('bd-note-msg').value.trim();
   var actor = document.getElementById('bd-note-actor').value.trim();
-  if (!msg) { toast('Enter a note message', 'info'); return; }
+  if (!msg) { toast('Enter a note message', 'warning'); return; }
   runBinAction('add_note', { note_type: noteType, message: msg, actor: actor }, ['bd-note-type', 'bd-note-actor', 'bd-note-msg']);
 }
 
@@ -865,7 +865,7 @@ async function bulkAction(action) {
   var ids = getSelectedIds();
   if (ids.length === 0) return;
   if (ids.length > BULK_MAX) {
-    toast(ids.length + ' bins selected: a bulk action takes at most ' + BULK_MAX + '. Narrow the filter or untick some.', 'error');
+    toast(ids.length + ' bins selected: a bulk action takes at most ' + BULK_MAX + '. Narrow the filter or untick some.', 'warning');
     return;
   }
   var params = {};
@@ -1234,7 +1234,7 @@ async function confirmBinCreate(form, evt) {
   (PAGE_NODES || []).forEach(function(n) { nodeNames[n.name] = true; });
   var collisions = labels.filter(function(l) { return nodeNames[l]; });
   if (collisions.length > 0) {
-    toast('Label ' + collisions[0] + ' is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.', 'error');
+    toast('Label ' + collisions[0] + ' is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.', 'warning');
     return;
   }
   if (labels.length > 1) {

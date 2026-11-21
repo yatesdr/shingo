@@ -102,7 +102,7 @@ async function createOrder() {
         var stagingNode = pickers.staging.value();
         var productionNode = pickers.delivery.value();
         if (!stagingNode || !productionNode) {
-            toast('Staging and production nodes are required', 'error');
+            toast('Staging and production nodes are required', 'warning');
             return;
         }
         var body = {

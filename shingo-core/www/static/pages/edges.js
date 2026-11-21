@@ -36,7 +36,7 @@ async function renameEdge(btn) {
 
   const trimmed = next.trim();
   if (!trimmed) {
-    toast('Name cannot be empty', 'error');
+    toast('Name cannot be empty', 'warning');
     return;
   }
   if (trimmed === current) return;
@@ -76,7 +76,7 @@ async function claimEdge(btn) {
 
   const trimmed = name.trim();
   if (!trimmed) {
-    toast('Give it a name, or cancel if this replaces an existing station', 'error');
+    toast('Give it a name, or cancel if this replaces an existing station', 'warning');
     return;
   }
 

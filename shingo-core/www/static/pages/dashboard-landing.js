@@ -300,13 +300,13 @@ function openModal(d) {
 
     function doSave() {
         const name = nameInput.value.trim();
-        if (!name) { toast('Name is required', 'error'); return; }
+        if (!name) { toast('Name is required', 'warning'); return; }
         const kind = kindSelect.value;
         const payload = { name, kind, stations: kind !== 'node-report' ? Array.from(selected) : [], enabled: enabledInput.checked };
         if (kind === 'heartbeat') payload.config = buildConfig();
         if (kind === 'node-report') {
             const lid = parseInt(loaderSelect.value, 10);
-            if (!lid) { toast('Select a loader', 'error'); return; }
+            if (!lid) { toast('Select a loader', 'warning'); return; }
             payload.config = { loader_id: lid, rows: grainSelect.value || '' };
         }
         const req = isEdit ? apiPut('/api/dashboards/' + d.id, payload) : apiPost('/api/dashboards', payload);
@@ -318,13 +318,13 @@ function openModal(d) {
 
     function doSave() {
         const name = nameInput.value.trim();
-        if (!name) { toast('Name is required', 'error'); return; }
+        if (!name) { toast('Name is required', 'warning'); return; }
         const kind = kindSelect.value;
         const payload = { name, kind, stations: kind !== 'node-report' ? Array.from(selected) : [], enabled: enabledInput.checked };
         if (kind === 'heartbeat') payload.config = buildConfig();
         if (kind === 'node-report') {
             const lid = parseInt(loaderSelect.value, 10);
-            if (!lid) { toast('Select a loader', 'error'); return; }
+            if (!lid) { toast('Select a loader', 'warning'); return; }
             payload.config = { loader_id: lid, rows: grainSelect.value || '' };
         }
         const req = isEdit ? apiPut('/api/dashboards/' + d.id, payload) : apiPost('/api/dashboards', payload);

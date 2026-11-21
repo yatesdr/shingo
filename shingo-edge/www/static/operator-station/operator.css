@@ -982,6 +982,7 @@ body {
 }
 .os-toast-msg.error { border-color: var(--os-red); color: #ff8a8a; }
 .os-toast-msg.success { border-color: var(--os-green-bright); color: #8aff8a; }
+.os-toast-msg.warning { border-color: var(--os-amber); color: #ffd27a; }
 
 /* Sticky toasts don't auto-fade — they persist until the operator clicks
    the close button. Used for async failure notifications where the operator

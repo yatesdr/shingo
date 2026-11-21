@@ -451,7 +451,7 @@ function bbAddBlock() {
   var t = document.getElementById('bb-type').value;
   var blockId = document.getElementById('bb-blockId').value.trim() || ('b' + bbCounter);
   var location = document.getElementById('bb-location').value.trim();
-  if (!location) { toast('Location is required', 'info'); return; }
+  if (!location) { toast('Location is required', 'warning'); return; }
 
   var block = {blockId: blockId, location: location};
   var label = '';
@@ -465,14 +465,14 @@ function bbAddBlock() {
     var op = document.getElementById('bb-operation').value.trim();
     if (op) block.operation = op;
     var args = document.getElementById('bb-opArgs').value.trim();
-    if (args) { try { block.operationArgs = JSON.parse(args); } catch(e) { toast('Invalid operation args JSON', 'error'); return; } }
+    if (args) { try { block.operationArgs = JSON.parse(args); } catch(e) { toast('Invalid operation args JSON', 'warning'); return; } }
     label = (op || 'move') + ' @ ' + location;
   } else {
     block.operation = 'Script';
     var sn = document.getElementById('bb-scriptName').value.trim();
     if (sn) block.scriptName = sn;
     var sa = document.getElementById('bb-scriptArgs').value.trim();
-    if (sa) { try { block.scriptArgs = JSON.parse(sa); } catch(e) { toast('Invalid script args JSON', 'error'); return; } }
+    if (sa) { try { block.scriptArgs = JSON.parse(sa); } catch(e) { toast('Invalid script args JSON', 'warning'); return; } }
     label = 'Script' + (sn ? ': ' + sn : '') + ' @ ' + location;
   }
 
@@ -506,7 +506,7 @@ function bbRenderBlocks() {
 }
 
 function bbGenerate() {
-  if (bbBlocks.length === 0) { toast('Add at least one block first', 'info'); return; }
+  if (bbBlocks.length === 0) { toast('Add at least one block first', 'warning'); return; }
   var order = {
     id: document.getElementById('bb-orderId').value.trim() || '',
     complete: document.getElementById('bb-complete').value === 'true',

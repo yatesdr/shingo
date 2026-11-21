@@ -74,14 +74,14 @@ are greyed with their reason; groups and lanes stay (the server decides those).
   POST /api/bins/action {"id":50,"action":"move","params":{"node_id":8}}
 -- Move, nothing picked
   (no request)
-  toast info: Select a destination
+  toast warning: Select a destination
 -- Move to where it is
   (no request)
-  toast info: Bin is already at this location
+  toast warning: Bin is already at this location
 -- Request Move to GRP-B-N1 (the detail re-reads never answer here)
   POST /api/bins/request-move {"bin_id":50,"destination_node_id":6}
   GET /api/bins/detail?id=50&history=0
-  toast info: Move #41 to GRP-B-N1 requested (queued): the lane is busy
+  toast success: Move #41 to GRP-B-N1 requested (queued): the lane is busy
   timers: 400, 2000 ms
 -- Load PART-A, count blank
   POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A"}}
@@ -89,7 +89,7 @@ are greyed with their reason; groups and lanes stay (the server decides those).
   POST /api/bins/action {"id":50,"action":"load_payload","params":{"payload_code":"PART-A","uop_override":0}}
 -- Load, nothing picked
   (no request)
-  toast info: Select a payload
+  toast warning: Select a payload
 
 == refusals: Move to LINE-1
 -- json.400: 400 "{\"error\":\"refused: the service's sentence\"}"
@@ -128,16 +128,16 @@ are greyed with their reason; groups and lanes stay (the server decides those).
 == Create bin: confirmBinCreate, the label checked against PAGE_NODES (every node)
 -- label "LINE-1" x1: checked as ["LINE-1"]; default prevented 1, form.submit() x0
   (no request)
-  toast error: Label LINE-1 is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+  toast warning: Label LINE-1 is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
 -- label "OLD-SLOT" x1: checked as ["OLD-SLOT"]; default prevented 1, form.submit() x0
   (no request)
-  toast error: Label OLD-SLOT is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+  toast warning: Label OLD-SLOT is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
 -- label "_TRANSIT" x1: checked as ["_TRANSIT"]; default prevented 1, form.submit() x0
   (no request)
-  toast error: Label _TRANSIT is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+  toast warning: Label _TRANSIT is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
 -- label "GRP-A" x1: checked as ["GRP-A"]; default prevented 1, form.submit() x0
   (no request)
-  toast error: Label GRP-A is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
+  toast warning: Label GRP-A is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.
 -- label "CART-7" x1: checked as ["CART-7"]; default prevented 1, form.submit() x1
   (no request)
 -- label "CART-" x3: checked as ["CART-0001","CART-0002","CART-0003"]; default prevented 1, form.submit() x1

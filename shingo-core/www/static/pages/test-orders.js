@@ -278,10 +278,10 @@ async function submitKafkaOrder() {
     quantity: parseInt(document.getElementById('k-quantity').value) || 1,
     priority: parseInt(document.getElementById('k-priority').value) || 0
   };
-  if (!body.payload_code) { toast('Payload is required', 'info'); return; }
+  if (!body.payload_code) { toast('Payload is required', 'warning'); return; }
   var r = await ask('POST', '/api/test-orders/submit', body);
   if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
-  toast('Order submitted: ' + (r.body || {}).order_uuid, 'info');
+  toast('Order submitted: ' + (r.body || {}).order_uuid, 'success');
   refreshKafkaOrders();
 }
 
@@ -352,7 +352,7 @@ async function submitKafkaComplexOrder() {
     outbound_destination: TO['kc-outgoing'].value(),
     priority: parseInt(document.getElementById('kc-priority').value) || 0
   };
-  if (!body.location) { toast('Lineside location is required', 'info'); return; }
+  if (!body.location) { toast('Lineside location is required', 'warning'); return; }
   var r = await ask('POST', '/api/test-orders/submit/complex', body);
   if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
   var uuids = ((r.body || {}).orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
@@ -367,10 +367,10 @@ async function submitDirectOrder() {
     to_node_id: parseInt(TO['d-to-node'].value()),
     priority: parseInt(document.getElementById('d-priority').value) || 0
   };
-  if (!body.from_node_id || !body.to_node_id) { toast('Select both from and to nodes', 'info'); return; }
+  if (!body.from_node_id || !body.to_node_id) { toast('Select both from and to nodes', 'warning'); return; }
   var r = await ask('POST', '/api/test-orders/direct', body);
   if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
-  toast('Direct order dispatched: ' + (r.body || {}).vendor_order_id, 'info');
+  toast('Direct order dispatched: ' + (r.body || {}).vendor_order_id, 'success');
   refreshDirectOrders();
 }
 
@@ -407,7 +407,7 @@ async function submitComplexOrder() {
     outbound_destination: TO['cx-outgoing'].value(),
     priority: parseInt(document.getElementById('cx-priority').value) || 0
   };
-  if (!body.location) { toast('Lineside location is required', 'info'); return; }
+  if (!body.location) { toast('Lineside location is required', 'warning'); return; }
   var r = await ask('POST', '/api/test-orders/direct/complex', body);
   if (!r.ok) { refused(r, function(m) { showToast('Error: ' + m, 'error'); }); return; }
   var uuids = ((r.body || {}).orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
@@ -436,12 +436,12 @@ async function submitCommand() {
     container_name: document.getElementById('c-container-name').value,
     goods_id: document.getElementById('c-goods-id').value
   };
-  if (cmdType !== 'terminate' && !body.robot_id) { toast('Select a robot', 'info'); return; }
+  if (cmdType !== 'terminate' && !body.robot_id) { toast('Select a robot', 'warning'); return; }
   var r = await ask('POST', '/api/test-commands/submit', body);
   if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
   var data = r.body || {};
   var msg = data.vendor_order_id ? 'Order created: ' + data.vendor_order_id : 'Command ' + (data.status || 'sent');
-  toast(msg, 'info');
+  toast(msg, 'success');
   refreshCommands();
 }
 
@@ -455,7 +455,7 @@ async function cancelCommand(id) {
   if (!await uiConfirm('Terminate command #' + id + '?')) return;
   var r = await ask('POST', '/api/test-commands/cancel?id=' + id);
   if (!r.ok) { refused(r, function(m) { toast(m, 'error'); }); return; }
-  toast('Command terminated', 'info');
+  toast('Command terminated', 'success');
   refreshCommands();
 }
 

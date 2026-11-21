@@ -37,6 +37,8 @@ Deploy: Core v186–v190 (placeholder; the lead writes the full line).
 - A production cell is always the one Core derives from the Edge's counters; the unused save and delete endpoints for hand-made cells are gone, and the cells list answers an error instead of an empty list when it cannot read the cells
 - Core Health no longer lists the schema leftovers the v0.18.0 start reported at the plants; each one removed is written to the audit log (as a schema entry), which is what a rollback puts back
 
+- A toast that says a field is missing or wrong is amber (some were red, some grey), and one that says an order or a save went through is green (some were grey), on Core, the Edge and the station
+
 ## v0.18.0 — 2026-11-21
 
 Deploy: Core v185; no Edge install (the Edges are unchanged). A Core not yet on v0.17.1 installs v0.17.1 first. Rollback: migrate down 185 with this release's binary, then the previous binary.
