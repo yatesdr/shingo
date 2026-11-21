@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 
 	"shingocore/config"
@@ -22,13 +23,13 @@ const migrateUsage = `Usage: shingocore migrate [-config PATH] check
            it; exit 2 and the error when the database cannot be read
   down N   run the down step of version N, the newest recorded; exit 0 on success
 
-  -config PATH   config file path (default: shingocore.yaml)
+  -config PATH   config file path (default: shingocore.yaml); it must exist
 `
 
 // runMigrate is `shingocore migrate ...`: the installer's checks around a
 // deploy (install-core.sh) and the rollback's first step. It returns the
-// process's exit code. Exit 2 is a command line it does not read, or a
-// database it cannot read.
+// process's exit code. Exit 2 is a command line it does not read, a config
+// file that is not there, or a database it cannot read.
 func runMigrate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -50,6 +51,15 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 		down = n
 	default:
 		fmt.Fprint(stderr, migrateUsage)
+		return 2
+	}
+	// config.Load reads a missing file as the defaults, which name a database
+	// on localhost: from the wrong directory, `migrate down` would step
+	// whatever answers there. The file must be there; any other error reading
+	// it is config.Load's to report.
+	if _, err := os.Stat(*configPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "config %s is not there: pass -config with the file Core's service starts with "+
+			"(systemctl cat shingo-core shows its --config)\n", *configPath)
 		return 2
 	}
 	cfg, err := config.Load(*configPath)

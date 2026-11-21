@@ -37,6 +37,26 @@ func TestMigrate_ACommandLineItDoesNotReadIsExit2(t *testing.T) {
 	}
 }
 
+// TestMigrate_AConfigThatIsNotThereIsExit2: config.Load reads a missing file
+// as the defaults, a database on localhost, so `migrate down` run from the
+// wrong directory (the -config default is relative) stepped whatever answered
+// there. A config file that is not there exits 2, naming it, before any
+// database.
+func TestMigrate_AConfigThatIsNotThereIsExit2(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "shingocore.yaml")
+	for _, args := range [][]string{
+		{"-config", missing, "check"},
+		{"-config", missing, "down", "185"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := runMigrate(args, &stdout, &stderr)
+		if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "config "+missing) {
+			t.Errorf("migrate %q: exit %d stdout %q stderr %q, want exit 2 naming %s", args, code, stdout.String(), stderr.String(), missing)
+		}
+	}
+}
+
 // TestMain_AnArgumentAfterTheFlagsIsUsage: Core reads flags only, so an
 // argument left after them is a usage error: exit 2 and the usage on stderr,
 // before the boot's first line. `shingocore -config X migrate down 185`, the
