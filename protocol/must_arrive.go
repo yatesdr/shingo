@@ -131,7 +131,7 @@ var mustArrive = []MustArrive{
 		Late: "a count Core states is fenced per addressed station and rebased on its stream; a Released clears only a seat still bound to its bin",
 	},
 	{
-		Name: SubjectBinEpochRefresh, Sender: SentByCore, NeverExpires: true,
+		Name: SubjectBinEpochRefresh, Sender: SentByCore, NeverExpires: true, NeverDeadLetters: true,
 		Lost: "the station keeps counting under a generation that has ended, and Core discards every count it reports",
 		Late: "a bound carrier's stamp only moves forward (epochAssignOnBind)",
 	},

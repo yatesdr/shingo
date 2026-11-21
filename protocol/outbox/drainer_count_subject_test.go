@@ -12,10 +12,9 @@ import (
 )
 
 // drainer_count_subject_test.go — how the drainer treats the rows whose
-// failed publish spends no retry (neverDeadLetter: the counts, the lift and
-// landing, the release, the hold drop, the ask's answer, the status tell and
-// the cancel) when a publish fails. This header used to say "the two count
-// subjects"; the list has grown to ten keys (TestNeverDeadLetter_ExactMembership).
+// failed publish spends no retry (neverDeadLetter, the must-arrive table's
+// never-dead-letter rows) when a publish fails. The exact list is
+// TestNeverDeadLetter_ExactMembership's.
 
 // scriptedPublisher fails a payload as many times as failures says, panics on
 // panicOn, and records every attempt in order with its outcome.
@@ -157,15 +156,16 @@ func TestPin_P0c_PartialFailureReordersAScope(t *testing.T) {
 	}
 }
 
-// neverDeadLetterAtV0180 is the drainer's never-dead-letter list as the base
-// (v0.18.0, d2686a1d) holds it, each key spelled as the outbox row's msg_type
+// neverDeadLetterWant is the drainer's never-dead-letter list: the base's
+// (v0.18.0, d2686a1d) ten keys, then each key the must-arrive table has added
+// since, named with its commit's reason. Each key is spelled as the outbox row's msg_type
 // is written on the side that sends it: the Edge writes a data subject bare
 // and an order message as its envelope type; Core writes a data subject as
 // "data."+subject (store/messaging BuildDataEnvelope), a reply as
 // "data.reply."+subject (messaging.CoreHandler) and an order message as its
 // envelope type. The value names the sender. Literal strings, not the
 // constants, so a respelling of either side fails here too.
-var neverDeadLetterAtV0180 = map[string]string{
+var neverDeadLetterWant = map[string]string{
 	"inventory.bin_uop_delta":         "Edge (uop accumulator)",
 	"inventory.lineside_bucket_level": "Edge (uop accumulator)",
 	"inventory.hold_dropped":          "Edge (orders manager, with its ingest)",
@@ -176,6 +176,9 @@ var neverDeadLetterAtV0180 = map[string]string{
 	"data.transit.bin_landed":         "Core (bin service, the landing)",
 	"data.reply.edge.answer":          "Core (core handler, the ask's answer)",
 	"order.update":                    "Core (the status tell, queueTellTx)",
+	// Added by the must-arrive table: a lost refresh leaves the station counting
+	// under an ended generation; a late one only moves a stamp forward.
+	"data.inventory.bin_epoch_refresh": "Core (uop applier, the epoch repair)",
 }
 
 // msgTypeUniverse is every spelling a row's msg_type can take for a protocol
@@ -200,7 +203,7 @@ func msgTypeUniverse() []string {
 // dead-letters, by asking the drainer: one row per spelling in
 // msgTypeUniverse, each one failed publish short of MaxRetries, one pass
 // against a broker that refuses everything. A row that spends no retry is on
-// the list. The set must be exactly neverDeadLetterAtV0180: a key gained, a
+// the list. The set must be exactly neverDeadLetterWant: a key gained, a
 // key lost, or a key respelled (a Core subject written bare, an Edge one with
 // "data.", an order type with "data.") fails it.
 //
@@ -212,7 +215,7 @@ func msgTypeUniverse() []string {
 func TestNeverDeadLetter_ExactMembership(t *testing.T) {
 	t.Parallel()
 	universe := msgTypeUniverse()
-	for key := range neverDeadLetterAtV0180 {
+	for key := range neverDeadLetterWant {
 		found := false
 		for _, k := range universe {
 			found = found || k == key
@@ -240,7 +243,7 @@ func TestNeverDeadLetter_ExactMembership(t *testing.T) {
 	}
 	var gained, lost []string
 	for _, key := range universe {
-		_, want := neverDeadLetterAtV0180[key]
+		_, want := neverDeadLetterWant[key]
 		got := !spent[key]
 		switch {
 		case got && !want:
@@ -253,7 +256,7 @@ func TestNeverDeadLetter_ExactMembership(t *testing.T) {
 	sort.Strings(lost)
 	if len(gained) > 0 || len(lost) > 0 {
 		t.Errorf("the never-dead-letter list moved: now also never dead-lettered %v; now dead-lettered after %d "+
-			"failed publishes %v. If the change is meant, change neverDeadLetterAtV0180 in the same commit, "+
+			"failed publishes %v. If the change is meant, change neverDeadLetterWant in the same commit, "+
 			"spelled as the sending side writes the row (Edge bare, Core \"data.\"+subject), and say why in the body",
 			strings.Join(gained, ", "), MaxRetries, strings.Join(lost, ", "))
 	}
