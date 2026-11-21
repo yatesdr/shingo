@@ -43,6 +43,13 @@ concurrency:
   group: ${{ github.workflow }}-integration-${{ github.ref }}
   cancel-in-progress: true
 
+# TEST_CENSUS=1 records the test census (.github/actions/test-census) for the
+# docker and race suites: they run with -json into a file and jq gives the log
+# its text back. Off by default, because -json implies -v, which streams every
+# t.Log line (sharded-suite.yml's census input has the measurement).
+env:
+  TEST_CENSUS: ""
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -131,8 +138,6 @@ jobs:
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives; -timeout=10m accommodates
         # cold-runner container startup. Tighten once observed.
-        # -json into a file for the test census, text on the log (see
-        # sharded-suite.yml's test step).
         env:
           SLICE_RUN: ${{ matrix.slice.run }}
           SLICE_SKIP: ${{ matrix.slice.skip }}
@@ -141,12 +146,16 @@ jobs:
           slice=()
           [ -n "$SLICE_RUN" ] && slice+=(-run "$SLICE_RUN")
           [ -n "$SLICE_SKIP" ] && slice+=(-skip "$SLICE_SKIP")
-          go test -json -tags=docker,lockcheck -timeout=10m -count=1 "${slice[@]}" ./... 2>&1 \
-            | tee ../integration-docker.json \
-            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
-                | select(.Action == "output" or .Action == "build-output") | .Output'
+          if [ -n "$TEST_CENSUS" ]; then
+            go test -json -tags=docker,lockcheck -timeout=10m -count=1 "${slice[@]}" ./... 2>&1 \
+              | tee ../integration-docker.json \
+              | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                  | select(.Action == "output" or .Action == "build-output") | .Output'
+          else
+            go test -tags=docker,lockcheck -timeout=10m -count=1 "${slice[@]}" ./...
+          fi
 
-      - if: always()
+      - if: always() && env.TEST_CENSUS != ''
         uses: ./.github/actions/test-census
         with:
           json: integration-docker.json
@@ -188,12 +197,16 @@ jobs:
           slice=()
           [ -n "$SLICE_RUN" ] && slice+=(-run "$SLICE_RUN")
           [ -n "$SLICE_SKIP" ] && slice+=(-skip "$SLICE_SKIP")
-          go test -json -tags=docker,lockcheck -race -timeout=25m -count=1 "${slice[@]}" ./... 2>&1 \
-            | tee ../integration-race.json \
-            | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
-                | select(.Action == "output" or .Action == "build-output") | .Output'
+          if [ -n "$TEST_CENSUS" ]; then
+            go test -json -tags=docker,lockcheck -race -timeout=25m -count=1 "${slice[@]}" ./... 2>&1 \
+              | tee ../integration-race.json \
+              | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                  | select(.Action == "output" or .Action == "build-output") | .Output'
+          else
+            go test -tags=docker,lockcheck -race -timeout=25m -count=1 "${slice[@]}" ./...
+          fi
 
-      - if: always()
+      - if: always() && env.TEST_CENSUS != ''
         uses: ./.github/actions/test-census
         with:
           json: integration-race.json
