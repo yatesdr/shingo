@@ -41,11 +41,11 @@ func TestFeedsPin_EdgesPageRow(t *testing.T) {
 		cells = append(cells, strings.TrimSpace(space.ReplaceAllString(tags.ReplaceAllString(m[1], " "), " ")))
 	}
 
-	// Name (display name defaults to the uid), uid, host, schema, status,
-	// zone, clock, conflicts, action. The Clock cell is the station's clock
+	// Name (display name defaults to the uid), uid, host, version, schema,
+	// status, zone, clock, conflicts, action. The Clock cell is the station's clock
 	// offset from its last heartbeat: "-" here, where no heartbeat has carried
 	// one (TestEdgesPage_FlagsAClockOffsetAboveTheFlushWindow pins a reading).
-	want := []string{"edge.test", "edge.test", "edge-host-a", "v3", "active", "America/Chicago", "-", "0", "Rename"}
+	want := []string{"edge.test", "edge.test", "edge-host-a", "test", "v3", "active", "America/Chicago", "-", "0", "Rename"}
 	if !reflect.DeepEqual(cells, want) {
 		t.Errorf("edges row cells = %q, want %q", cells, want)
 	}

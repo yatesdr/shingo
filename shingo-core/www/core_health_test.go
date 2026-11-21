@@ -260,3 +260,20 @@ func TestDeriveReasons_SchemaDriftNamesEachObject(t *testing.T) {
 		t.Errorf("no drift gave reasons %q", r)
 	}
 }
+
+// TestDeriveReasons_EachStationBelowTheFloorIsAReason: a station whose release
+// is older than the oldest Edge this Core supports is a reason of its own,
+// named by uid, so the verdict says which; none gives no reason.
+func TestDeriveReasons_EachStationBelowTheFloorIsAReason(t *testing.T) {
+	below := []string{
+		"station stn-a runs v0.16.0, older than v0.17.2, the oldest Edge this Core supports",
+		"station stn-b runs v0.9.3, older than v0.17.2, the oldest Edge this Core supports",
+	}
+	got := deriveReasons(CoreHealth{EdgesBelowFloor: below}, nil)
+	if strings.Join(got, "|") != strings.Join(below, "|") {
+		t.Errorf("reasons %q, want each station below the floor named: %q", got, below)
+	}
+	if r := deriveReasons(CoreHealth{}, nil); len(r) != 0 {
+		t.Errorf("no station below the floor gave reasons %q", r)
+	}
+}

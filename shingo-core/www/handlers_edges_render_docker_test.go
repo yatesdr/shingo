@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/store"
 )
@@ -110,4 +111,47 @@ func renderEdgesPage(t *testing.T, h *Handlers) string {
 		t.Fatalf("edges page status = %d, want 200", rec.Code)
 	}
 	return rec.Body.String()
+}
+
+// TestEdgesPage_MarksAReleaseBelowTheFloor: each station's row shows the
+// release its last register carried; one older than protocol.FloorEdge is
+// marked below the floor, and the floor's own release and a version that
+// names no release (a dev build) are shown as they are, unmarked. Core Health
+// names each active station below the floor by its uid and release
+// (edgesBelowFloor), and no other.
+func TestEdgesPage_MarksAReleaseBelowTheFloor(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+	for uid, version := range map[string]string{"stn-old": "v0.16.0", "stn-at-floor": protocol.FloorEdge, "stn-dev": "dev"} {
+		_, err := db.EnrollEdge(uid, "")
+		testutil.MustNoErr(t, err, "enroll "+uid)
+		_, err = db.RegisterEdge(uid, "host-"+uid, "inst-"+uid, version, "", sql.NullInt64{})
+		testutil.MustNoErr(t, err, "register "+uid)
+	}
+
+	body := renderEdgesPage(t, h)
+	row := func(uid string) string {
+		r := regexp.MustCompile(`(?s)<tr data-uid="` + uid + `".*?</tr>`).FindString(body)
+		if r == "" {
+			t.Fatalf("no row for %s", uid)
+		}
+		return r
+	}
+	if r := row("stn-old"); !strings.Contains(r, "<code>v0.16.0</code>") || !strings.Contains(r, "edge-below-floor") {
+		t.Errorf("a station on v0.16.0 is not shown below the floor (%s):\n%s", protocol.FloorEdge, r)
+	}
+	if r := row("stn-at-floor"); !strings.Contains(r, "<code>"+protocol.FloorEdge+"</code>") || strings.Contains(r, "edge-below-floor") {
+		t.Errorf("a station on the floor's own release is not shown, or is marked below it:\n%s", r)
+	}
+	if r := row("stn-dev"); !strings.Contains(r, "<code>dev</code>") || strings.Contains(r, "edge-below-floor") {
+		t.Errorf("a dev build is not shown as it is, or is marked below the floor:\n%s", r)
+	}
+	if !strings.Contains(body, ">Version</th>") {
+		t.Error("the table has no Version column")
+	}
+
+	want := []string{"station stn-old runs v0.16.0, older than " + protocol.FloorEdge + ", the oldest Edge this Core supports"}
+	if got := h.edgesBelowFloor(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("health's below-floor sentences = %q, want %q", got, want)
+	}
 }

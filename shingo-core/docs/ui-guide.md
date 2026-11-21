@@ -307,11 +307,15 @@ travel in.
 
 **Route:** `/edges` (login)
 
-One row per enrolled edge station: its name, uid, host, schema version (beside
-Core's own), status, the plant zone it reports, its clock offset from Core and
-its register conflicts. The **name** is yours to change (**Rename**) — it is
-read by nothing but a person and never travels on the wire. The **uid** is the
-identity everything is keyed on, fixed at enrollment.
+One row per enrolled edge station: its name, uid, host, the release it last
+registered with, its schema version (beside Core's own), status, the plant zone
+it reports, its clock offset from Core and its register conflicts. A release
+older than the oldest Edge this Core supports (`protocol.FloorEdge`) is marked
+**below floor**, and Core Health names that station; nothing is refused. A
+development build shows as it is, unjudged. The **name** is yours to change
+(**Rename**) — it is read by nothing but a person, and it travels on the wire
+only as a label, on each heartbeat ack, for the station to show. The **uid** is
+the identity everything is keyed on, fixed at enrollment.
 
 An edge that has never been configured mints its own uid and comes up working,
 listed as **Unclaimed**: **Name it** to make it an ordinary station. If the box

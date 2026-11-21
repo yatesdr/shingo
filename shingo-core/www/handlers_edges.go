@@ -67,6 +67,12 @@ func (h *Handlers) handleEdgesAdmin(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		data["Clocks"] = clocks
+		versions := map[string]edgeVersion{}
+		for _, e := range edges {
+			versions[e.StationUID] = edgeVersionFor(e.Version)
+		}
+		data["Versions"] = versions
+		data["EdgeFloor"] = protocol.FloorEdge
 		data["FlushWindow"] = protocol.InventoryDeltaFlushWindow.String()
 	}
 	h.render(w, r, "edges.html", data)
@@ -92,6 +98,20 @@ func edgeClockFor(e domain.RegistryEdge) (edgeClock, bool) {
 		Text:    fmt.Sprintf("%+.1f s", off.Seconds()),
 		Flagged: off > protocol.InventoryDeltaFlushWindow || off < -protocol.InventoryDeltaFlushWindow,
 	}, true
+}
+
+// edgeVersion is one station's release as the Edges page shows it: the version
+// its last register carried, marked Below when it is older than the oldest
+// Edge this Core supports (protocol.FloorEdge). A version that names no release
+// (a dev build, a bare sha) is shown as its text, never marked: it cannot be
+// judged, so it is neither a finding nor a pass.
+type edgeVersion struct {
+	Text  string
+	Below bool
+}
+
+func edgeVersionFor(version string) edgeVersion {
+	return edgeVersion{Text: version, Below: protocol.CompareToFloor(version, protocol.FloorEdge) == protocol.FloorBelow}
 }
 
 // apiEdges lists enrolled stations, including the binding and conflict state.

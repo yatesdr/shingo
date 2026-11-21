@@ -241,6 +241,12 @@ type CoreHealth struct {
 	// is where it is seen. It refuses nothing.
 	SchemaDrift []string `json:"schema_drift,omitempty"`
 
+	// EdgesBelowFloor is one sentence per active station whose last register
+	// carried a release older than the oldest Edge this Core supports
+	// (protocol.FloorEdge), naming the uid and the release. A station whose
+	// version names no release (a dev build) is not judged. It refuses nothing.
+	EdgesBelowFloor []string `json:"edges_below_floor,omitempty"`
+
 	// Already computed by the reconciliation loop; surfaced rather than
 	// recomputed.
 	DeadLetters int `json:"dead_letters"`
@@ -355,6 +361,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 
 	c.FaultedNow, c.FaultedNotice, c.FaultedHalfGrace, c.FaultNoticeAfterSeconds, c.FaultHalfGraceSeconds = h.faultedGauge()
 	c.SchemaDrift = h.engine.HealthService().SchemaDrift()
+	c.EdgesBelowFloor = h.edgesBelowFloor()
 
 	if !depsOK {
 		c.DepsDown = depReasons
@@ -369,6 +376,24 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 		c.Verdict = verdictDegraded
 	}
 	return c
+}
+
+// edgesBelowFloor is the EdgesBelowFloor sentences, from one registry read. A
+// failed read says nothing: the registry's own surfaces report it.
+func (h *Handlers) edgesBelowFloor() []string {
+	edges, err := h.engine.NodeService().ListEdges()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range edges {
+		if e.Status != "active" || protocol.CompareToFloor(e.Version, protocol.FloorEdge) != protocol.FloorBelow {
+			continue
+		}
+		out = append(out, fmt.Sprintf("station %s runs %s, older than %s, the oldest Edge this Core supports",
+			e.StationUID, e.Version, protocol.FloorEdge))
+	}
+	return out
 }
 
 // deriveReasons is the verdict rule: worst-of across dependencies, DB pool
@@ -393,6 +418,7 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 		}
 		reasons = append(reasons, d)
 	}
+	reasons = append(reasons, c.EdgesBelowFloor...)
 
 	// A wait means a request QUEUED for a connection: the pool is the
 	// bottleneck, not the database. RECENT waits — the lifetime total this is
