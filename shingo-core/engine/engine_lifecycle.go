@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -270,10 +271,7 @@ func (e *Engine) startDispatch() *dispatch.DefaultResolver {
 // startBootScan scans, on its own goroutine, the orders queued before a restart,
 // and closes bootScanned when the scan has finished.
 func (e *Engine) startBootScan() {
-	go func() {
-		e.fulfillment.RunOnce()
-		close(e.bootScanned)
-	}()
+	e.fulfillment.StartBootScan(func() { close(e.bootScanned) })
 }
 
 func newCMSPoster(cfg *config.Config, db *store.DB, logFn func(string, ...any)) *poster.Poster {
@@ -392,12 +390,18 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 	}
 }
 
+// Stop is in this order:
+//
+//  1. stopChan closes: every loop ends and none starts another turn.
+//  2. The work in hand that reads the database is joined, all of it at once
+//     under one bound (joinStopped). Stop holds no lock while it waits, so
+//     whatever waits for the scan lock gets it when the running pass ends at
+//     its next order boundary.
+//  3. The tracker stops, after the joins, so a dispatch made by the order in
+//     hand is still tracked.
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stopChan) })
-	e.stage2.stop()
-	if e.fulfillment != nil {
-		e.fulfillment.Stop()
-	}
+	e.joinStopped()
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
@@ -405,6 +409,39 @@ func (e *Engine) Stop() {
 		e.sourceabilityMonitor.stop()
 	}
 	e.logFn("engine: stopped")
+}
+
+// joinStopped waits, for all of them at once and never past the bound, for the
+// scanner's pass and boot scan and for the window pulls in hand. The pulls wait
+// for the scan lock (their acquire), so they are not waited for ahead of the
+// scanner's stop.
+func (e *Engine) joinStopped() {
+	var joined sync.WaitGroup
+	if e.fulfillment != nil {
+		joined.Go(e.fulfillment.Stop) // bounds itself, by the same limit
+	}
+	joined.Go(func() { e.joinWithin("the window pulls", e.stage2.stop) })
+	joined.Wait()
+}
+
+// joinWithin waits for wait to return, or logs that stop gave up on what.
+func (e *Engine) joinWithin(what string, wait func()) {
+	limit := e.stopWait
+	if limit <= 0 {
+		limit = fulfillment.StopJoinLimit
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wait()
+	}()
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+		e.logFn("engine: stop gave up waiting for %s after %s; shutting down without it", what, limit)
+	}
 }
 
 // rearmReleasedOrders re-arms, on the fleet's tracker, every open order the

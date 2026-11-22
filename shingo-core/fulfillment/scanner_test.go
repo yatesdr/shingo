@@ -3,12 +3,14 @@ package fulfillment
 import (
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
@@ -956,5 +958,73 @@ func TestScanner_StopOfANeverStartedScannerReturnsAtOnce(t *testing.T) {
 	case <-stopped:
 	case <-time.After(time.Second):
 		t.Fatal("Stop of a never-started scanner waited a second")
+	}
+}
+
+// TestScanner_StopGivesUpAtItsBound: a pass hung in a call, or a worker behind
+// a holder of the scan lock that never lets go, cannot hang shutdown: Stop
+// returns at the bound with one line, and a worker that gets the lock after
+// that starts no pass. The bound is just past the fleet client's default
+// timeout, so one fleet call in hand can finish.
+func TestScanner_StopGivesUpAtItsBound(t *testing.T) {
+	t.Parallel()
+	if d, rds := StopJoinLimit, config.Defaults().RDS.Timeout; d <= rds || d > rds+5*time.Second {
+		t.Errorf("StopJoinLimit = %v, want just past the fleet client's default timeout %v", d, rds)
+	}
+	for _, hungPass := range []bool{true, false} {
+		name := "a holder of the scan lock never lets go"
+		if hungPass {
+			name = "the pass is hung in a call"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFakeStore()
+			s := newTestScanner(t, f)
+			s.stopWait = 100 * time.Millisecond
+			var lines atomic.Int32
+			s.logFn = func(format string, _ ...any) {
+				if strings.Contains(format, "stop gave up") {
+					lines.Add(1)
+				}
+			}
+			in, out := make(chan struct{}), make(chan struct{})
+			var once, outOnce sync.Once
+			letGo := func() { outOnce.Do(func() { close(out) }) }
+			t.Cleanup(letGo)
+			var scans atomic.Int32
+			hold := func() { once.Do(func() { close(in) }); <-out }
+			f.onListQueuedOrders = func() {
+				scans.Add(1)
+				if hungPass {
+					hold()
+				}
+			}
+			if !hungPass {
+				go s.Door(hold)
+				<-in
+			}
+			s.StartPeriodicSweep(time.Hour)
+			s.Trigger()
+			if hungPass {
+				<-in
+			} else {
+				testutil.Eventually(t, 2*time.Second, func() bool { return len(s.wake) == 0 })
+			}
+
+			began := time.Now()
+			s.Stop()
+			if d := time.Since(began); d > 2*time.Second {
+				t.Errorf("Stop took %v with a bound of 100 ms", d)
+			}
+			if n := lines.Load(); n != 1 {
+				t.Errorf("Stop said it gave up %d times, want one line", n)
+			}
+			at := scans.Load()
+			letGo()
+			<-s.workerDone
+			if n := scans.Load(); n != at {
+				t.Errorf("%d pass(es) started after Stop gave up", n-at)
+			}
+		})
 	}
 }
