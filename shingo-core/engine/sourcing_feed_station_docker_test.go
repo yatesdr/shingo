@@ -4,6 +4,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -12,8 +13,11 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/messaging"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/plantclaims"
+	"shingocore/store/sourceability"
 )
 
 // feedRow is one sourcing report as it left Core: the station it was addressed
@@ -201,5 +205,120 @@ func TestPlantClaims_TheLastPublishingStationIsKept(t *testing.T) {
 	testutil.MustNoErr(t, err, "read stations")
 	if stations["SNF9"] != "edge-b" {
 		t.Fatalf("SNF9 is recorded against %q, want edge-b — the last writer", stations["SNF9"])
+	}
+}
+
+// TestSourcingFeed_AnEdgeApplyingEveryPushIsNotFlagged: what the monitor sends
+// (a station's delta, a delta to every station, a snapshot for a style that
+// went) is a copy Core sent, so a heartbeat quoting it while a newer one is on
+// its way is converging (protocol/resend). An Edge that took none of them still
+// flags on the third.
+func TestSourcingFeed_AnEdgeApplyingEveryPushIsNotFlagged(t *testing.T) {
+	t.Parallel()
+	const station, process = "edge-pushed", "PRESS-Q"
+	cases := []struct {
+		name    string
+		routed  bool
+		publish func(m *SourceabilityMonitor, states []sourceability.StyleState)
+	}{
+		{"delta to its station", true, func(m *SourceabilityMonitor, s []sourceability.StyleState) {
+			m.publishDeltas(s[1:])
+		}},
+		{"delta to every station", false, func(m *SourceabilityMonitor, s []sourceability.StyleState) {
+			m.publishDeltas(s[1:])
+		}},
+		{"snapshot to its station", true, func(m *SourceabilityMonitor, s []sourceability.StyleState) {
+			m.publishSnapshots(s, map[string]bool{station: true})
+		}},
+		{"snapshot to every station", false, func(m *SourceabilityMonitor, s []sourceability.StyleState) {
+			m.publishSnapshots(s, map[string]bool{protocol.StationBroadcast: true})
+		}},
+	}
+	for _, c := range cases {
+		for _, frozen := range []bool{false, true} {
+			name := c.name
+			if frozen {
+				name += ", an Edge that took none"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				db := testDB(t)
+				_, err := db.EnrollEdge(station, "")
+				testutil.MustNoErr(t, err, "enroll")
+				eng := newTestEngine(t, db, simulator.New())
+				m := eng.SourceabilityMonitor()
+				svc := messaging.NewCoreDataService(db, messaging.NewCoreHandler(db, nil, "core", "shingo.dispatch", nil), service.EpochAnnounce{})
+				svc.SetSourcingReport(m.StationReport)
+				sent, records := any(svc).(interface{ SourcingSent(string) })
+				tells, told := any(m).(interface{ SetSentFunc(func(string)) })
+				if records && told {
+					tells.SetSentFunc(sent.SourcingSent) // as cmd/shingocore wires it
+				}
+
+				cache := map[string]protocol.SourcingState{} // the Edge's
+				apply := func(r protocol.SourcingStateReport) {
+					if r.Snapshot {
+						clear(cache)
+					}
+					for _, s := range r.States {
+						cache[s.StyleID] = s
+					}
+				}
+				quote := func() string {
+					var all []protocol.SourcingState
+					for _, s := range cache {
+						all = append(all, s)
+					}
+					d, err := protocol.SourcingDigest(all)
+					testutil.MustNoErr(t, err, "digest")
+					return d
+				}
+				m.publishFn = func(_ string, r protocol.SourcingStateReport) { apply(r) }
+				move := func(n int) {
+					states := []sourceability.StyleState{
+						{ProcessID: process, StyleID: "S0", Status: sourceability.StatusGreen},
+						{ProcessID: process, StyleID: "S1", Status: sourceability.StatusRed, Missing: []string{fmt.Sprintf("SYN-%d", n)}},
+					}
+					m.mu.Lock()
+					m.state = map[plantclaims.ProcessKey]sourceability.StyleState{}
+					for _, s := range states {
+						m.state[plantclaims.ProcessKey{ProcessID: s.ProcessID, StyleID: s.StyleID}] = s
+					}
+					m.stations = map[string]string{}
+					if c.routed {
+						m.stations[process] = station
+					}
+					m.mu.Unlock()
+					if n > 0 {
+						c.publish(m, states)
+					}
+				}
+				beat := func(quoted string) {
+					svc.HandleEdgeHeartbeat(
+						&protocol.Envelope{ID: "hb", Src: protocol.Address{Role: protocol.RoleEdge, Station: station}},
+						&protocol.EdgeHeartbeat{StationID: station, Feeds: map[string]string{protocol.FeedSourcing: quoted}})
+				}
+
+				move(0)
+				first, ok := m.StationReport(station)
+				if !ok {
+					t.Fatal("no report after the first pass")
+				}
+				apply(first)
+				held := quote()
+				beat(held)
+				for i := 0; i < 4; i++ {
+					move(2*i + 1)
+					if !frozen {
+						held = quote() // the heartbeat left between the two pushes
+					}
+					move(2*i + 2)
+					beat(held)
+				}
+				if got := len(svc.EdgeFeedFlags(station)) > 0; got != frozen {
+					t.Errorf("after four heartbeats: flagged %v (%v), want %v", got, svc.EdgeFeedFlags(station), frozen)
+				}
+			})
+		}
 	}
 }
