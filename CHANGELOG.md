@@ -55,6 +55,7 @@ Deploy: no migration
 - order.delivered drops the carrier's count, generation and part (about 67 bytes); the landing binds, and a delivery the seat doesn't hold is still said.
 - Core docs: the restore commands stop on the first error, restore nothing, and print the Postgres version.
 - Core install: a config backup that fails stops the install instead of reporting a backup that isn't there.
+- Every Edge gets a carrier's landing; the older Bound message is gone on both sides.
 
 ## v0.19.0 — 2026-11-22
 

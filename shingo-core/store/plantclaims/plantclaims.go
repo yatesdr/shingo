@@ -560,18 +560,15 @@ type Querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// AddressedStation is a station a landing could go to, with the schema
-// version that station last registered with (edge_registry.schema_version).
-// SchemaVersion is 0 for a station that has not registered or reported none.
+// AddressedStation is a station a landing could go to.
 type AddressedStation struct {
-	StationID     string
-	SchemaVersion int
+	StationID string
 }
 
 // LandingAddress is what one read tells the landing about where it goes
 // (Lane H, H.3): the stations whose processes claim the node, and the order's
 // own material station (its station, or the one a station-unaware order
-// projects to; empty when it has none), each with its schema version (H.7).
+// projects to; empty when it has none).
 //
 // Plant is the last arm's address (RULINGS-C2c-run-through §4, D19's reach
 // gap): every registered Edge (edge_registry), filled ONLY when no station
@@ -587,8 +584,8 @@ type LandingAddress struct {
 // ResolveLandingAddress reads LandingAddress for a carrier placed at nodeName
 // by orderID (0 for a placement with no order). ONE statement, the "+1 mirror
 // read per arrival at a non-storage node" the brief names: the claims mirror,
-// the order's station and both stations' schema versions together, so the
-// version check (H.7) and the fallback cost nothing more. The last arm's
+// and the order's station together, so the fallback costs nothing more. The
+// last arm's
 // Edges (Plant) come in the same statement, so it costs nothing either.
 //
 // The order's station is spelled as engine.materialStation spells it: the
@@ -602,13 +599,13 @@ func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAd
 		     o AS (SELECT CASE WHEN station_unaware THEN projects_to_station_uid
 		                 WHEN station_uid <> '' THEN station_uid ELSE requested_by END AS st, edge_uuid
 		             FROM orders WHERE id = $2)
-		SELECT 'claim', c.station_uid, COALESCE(er.schema_version, 0), ''
-		  FROM c LEFT JOIN edge_registry er ON er.station_uid = c.station_uid
+		SELECT 'claim', c.station_uid, ''
+		  FROM c
 		UNION ALL
-		SELECT 'order', o.st, COALESCE(er.schema_version, 0), o.edge_uuid
-		  FROM o LEFT JOIN edge_registry er ON er.station_uid = o.st AND o.st <> ''
+		SELECT 'order', o.st, o.edge_uuid
+		  FROM o
 		UNION ALL
-		SELECT 'plant', er.station_uid, COALESCE(er.schema_version, 0), ''
+		SELECT 'plant', er.station_uid, ''
 		  `+LastArmEdgesSQL+`
 		   AND NOT EXISTS (SELECT 1 FROM c)
 		   AND NOT EXISTS (SELECT 1 FROM o WHERE COALESCE(o.st, '') <> '')
@@ -621,7 +618,7 @@ func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAd
 	for rows.Next() {
 		var kind, uuid string
 		var st AddressedStation
-		if err := rows.Scan(&kind, &st.StationID, &st.SchemaVersion, &uuid); err != nil {
+		if err := rows.Scan(&kind, &st.StationID, &uuid); err != nil {
 			return LandingAddress{}, fmt.Errorf("plantclaims landing address %s: scan: %w", nodeName, err)
 		}
 		switch kind {

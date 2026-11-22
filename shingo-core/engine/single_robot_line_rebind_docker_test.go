@@ -70,16 +70,15 @@ func singleRobotSwapSteps(t *testing.T, line, inStage, outStage, source, outDest
 	return string(b)
 }
 
-// boundAnnouncementsFor returns every UOPAdjustment{Bound:true} sitting in the
-// outbox for coreNodeName. The outbox is the seam: SendDataToEdge enqueues
-// there, so a test can read exactly what Core would put on the wire.
-func boundAnnouncementsFor(t *testing.T, db *store.DB, coreNodeName string) []protocol.UOPAdjustment {
+// landingsAt returns every landing sitting in the outbox for coreNodeName: the
+// message that rebinds the seat.
+func landingsAt(t *testing.T, db *store.DB, coreNodeName string) []protocol.BinLanded {
 	t.Helper()
 	rows, err := db.DB.Query(`SELECT payload FROM outbox ORDER BY id`)
 	testutil.MustNoErr(t, err, "read outbox")
 	defer rows.Close()
 
-	var out []protocol.UOPAdjustment
+	var out []protocol.BinLanded
 	for rows.Next() {
 		var payload []byte
 		if err := rows.Scan(&payload); err != nil {
@@ -101,11 +100,11 @@ func boundAnnouncementsFor(t *testing.T, db *store.DB, coreNodeName string) []pr
 		if err := json.Unmarshal(payload, &env); err != nil || len(env.P.Data) == 0 {
 			continue
 		}
-		var adj protocol.UOPAdjustment
+		var adj protocol.BinLanded
 		if err := json.Unmarshal(env.P.Data, &adj); err != nil {
 			continue
 		}
-		if adj.Bound && adj.CoreNodeName == coreNodeName {
+		if env.P.Subject == protocol.SubjectBinLanded && adj.CoreNodeName == coreNodeName {
 			out = append(out, adj)
 		}
 	}
@@ -114,7 +113,7 @@ func boundAnnouncementsFor(t *testing.T, db *store.DB, coreNodeName string) []pr
 
 // TestSingleRobotSwap_LineDropoffAnnouncesTheRebind is the named question from
 // the brief, asked of Core: for a single_robot CONSUME swap's line-dropoff, is a
-// Bound=true UOPAdjustment emitted?
+// landing emitted?
 //
 // If this is red, the announcement is never emitted for this shape and that is
 // the defect. If it is green, the announcement is emitted and the question moves
@@ -173,11 +172,11 @@ func TestSingleRobotSwap_LineDropoffAnnouncesTheRebind(t *testing.T) {
 	// The fresh carrier is recorded on the line.
 	testdb.RequireBinAtNode(t, db, fresh.ID, line.ID)
 
-	got := boundAnnouncementsFor(t, db, line.Name)
+	got := landingsAt(t, db, line.Name)
 	if len(got) == 0 {
-		t.Fatalf("NO Bound=true UOPAdjustment was emitted for %s on the single_robot line dropoff.\n"+
-			"Step 7 is where the consume node rebinds. Every other arm of Edge's HandleUOPAdjustment "+
-			"refuses an empty slot, so without this the node stays unbound with no releaser — "+
+		t.Fatalf("NO landing was emitted for %s on the single_robot line dropoff.\n"+
+			"Step 7 is where the consume node rebinds. The landing is the one message that "+
+			"binds an empty slot, so without this the node stays unbound with no releaser — "+
 			"active_bin_id NULL, SimMachineReady stops the cell, and nothing re-asks. That is WELD-2.",
 			line.Name)
 	}
@@ -256,7 +255,7 @@ func TestSingleRobotSwap_LineRebindIsSilentlyDisarmedByATrailingTransitBin(t *te
 		BinTask:  "JackUnload",
 	})
 
-	if got := boundAnnouncementsFor(t, db, line.Name); len(got) != 0 {
+	if got := landingsAt(t, db, line.Name); len(got) != 0 {
 		t.Fatalf("resolveDropoffBin now resolves a two-bin _TRANSIT state — this characterization is "+
 			"stale and the disarm it records may be closed. Re-derive before deleting it. got: %+v", got)
 	}

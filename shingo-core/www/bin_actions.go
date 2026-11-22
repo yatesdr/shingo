@@ -264,8 +264,7 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 	// counting down" bug), unless that seat has bound the carrier again since,
 	// at a newer placement stamp. The NEW node gets the landing
 	// (service.announceLanding), addressed to the station claiming the node
-	// (Lane H, H.2, H.3); an Edge too old for the landing gets a Bound,
-	// addressed to it (H.7). Both used to be sent from here after the commit,
+	// (Lane H, H.2, H.3). Both used to be sent from here after the commit,
 	// the Released broadcast and the landing as a broadcast Bound.
 	return nil
 }

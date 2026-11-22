@@ -466,12 +466,11 @@ func (s *BinService) move(b *bins.Bin, toNodeID int64, left store.OnPlaced) (*Mo
 	// shuffled between slots is still live.
 	offTransit := wasUnlocated(b.NodeName) && !destNode.IsSynthetic
 	// The landing in the move's transaction (Lane H, H.2), replacing the admin
-	// move's broadcast Bound after the commit (www binMove). legacyBound: that
-	// Bound is this writer's old wire, which an Edge too old for the landing
-	// still gets, addressed (H.7). The engine's own carrier parking also comes
+	// move's broadcast Bound after the commit (www binMove). The engine's own
+	// carrier parking also comes
 	// through here, onto a robot's synthetic deck node, where nothing is sent.
 	onPlaced := func(tx *sql.Tx, p store.Placed) error {
-		if err := s.announceLanding(tx, p, 0, true, protocol.AuditActorUI); err != nil {
+		if err := s.announceLanding(tx, p, 0); err != nil {
 			return err
 		}
 		if left == nil {
@@ -1105,10 +1104,8 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	// (Lane H, H.2). The final drop used to be told to the Edge only by
 	// order.delivered after the whole order FINISHED, and the completion
 	// safety net told nobody; the set-down's Bound was broadcast after the
-	// commit by its caller (wiring_block_completed). legacyBound for the
-	// set-down only: that is the writer whose old wire was a Bound, which an
-	// Edge too old for the landing still gets, addressed (H.7).
-	if err := s.announceLanding(tx, placed, placedByOrder, !releaseClaim, ""); err != nil {
+	// commit by its caller (wiring_block_completed).
+	if err := s.announceLanding(tx, placed, placedByOrder); err != nil {
 		return nil, err
 	}
 	evictedGhosts := placed.Evicted
@@ -1330,7 +1327,7 @@ func (s *BinService) PlaceObserved(binID, toNodeID int64, staged bool, placedByO
 	}
 	// An arrival Core inferred is an arrival: the seat hears of it like any
 	// other drop (Lane H, H.2). It told nobody before.
-	if err := s.announceLanding(tx, placed, placedByOrder, false, InferredActor); err != nil {
+	if err := s.announceLanding(tx, placed, placedByOrder); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1402,7 +1399,7 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 	// The person who found the carrier placed it; the seat hears of it in the
 	// move's transaction (Lane H, H.2). It told nobody before.
 	onPlaced := func(tx *sql.Tx, p store.Placed) error {
-		return s.announceLanding(tx, p, 0, false, actor)
+		return s.announceLanding(tx, p, 0)
 	}
 	if err := s.db.RecoverBinToNode(binID, toNodeID, onPlaced); err != nil {
 		return fmt.Errorf("move bin to recovery node: %w", err)

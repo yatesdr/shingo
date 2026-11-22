@@ -549,7 +549,7 @@ other side, and closing it is what the conjunction is for.
 |---|---|---|
 | left the cell's nodes | `BinPickedUp` at the departure node | `stampDepartureIfLeftCell` |
 | left the cell's nodes | `IsTerminal` | a leg whose last cell step is its own final step never stamps; terminal covers it |
-| placement recorded | `UOPAdjustment{Bound}` from Core's intermediate dropoff | `settleCellPlacement`, wired in `HandleUOPAdjustment`'s Bound arm |
+| placement recorded | `transit.bin_landed` from Core's intermediate dropoff | `settleCellPlacement`, wired in the landing verb (`landCarrier`) |
 
 Whichever of the two facts arrives second completes the departure, so **arrival
 order does not matter**. In the ordinary case the bind lands first (the outbox

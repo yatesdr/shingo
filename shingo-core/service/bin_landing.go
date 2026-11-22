@@ -7,7 +7,6 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingo/protocol/clock"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
@@ -56,18 +55,16 @@ import (
 // longer binds (DECISIONS D19's reach gap; the orc's error, ruled 2026-10-10).
 // A wasted message is cheaper than a seat that never binds.
 //
-// What it is (H.7), per Edge: a station whose registered schema can bind a
-// landing (protocol.EdgeSchemaBinLanded) gets the landing. An older one gets
-// today's wire: the Bound this writer used to broadcast (legacyBound), now
-// addressed to that station, or nothing for a writer that sent none (a final
-// drop's carrier still rides order.delivered's bind fields for that Edge).
+// What it is: the landing, to every Edge addressed. No Edge at the floor
+// (protocol.FloorEdge) is too old to bind one, so nothing reads the schema
+// version a station registered.
 //
-// Cost: one statement (the address read, which carries both schema versions
-// and the last arm's Edges) and one outbox row per Edge addressed, only at a
+// Cost: one statement (the address read, which carries the last arm's
+// Edges) and one outbox row per Edge addressed, only at a
 // node a station may bind at. The count, the
 // generation, the part and the placement stamp come back from the move's own
 // UPDATE (helpers.ArrivalReturningSQL), +0.
-func (s *BinService) announceLanding(tx *sql.Tx, p store.Placed, orderID int64, legacyBound bool, actor string) error {
+func (s *BinService) announceLanding(tx *sql.Tx, p store.Placed, orderID int64) error {
 	if p.NotASeat || p.NodeName == "" {
 		return nil
 	}
@@ -86,44 +83,27 @@ func (s *BinService) announceLanding(tx *sql.Tx, p store.Placed, orderID int64, 
 			"sent to %d Edge(s)", p.BinID, p.NodeName, len(sts))
 	}
 	for _, st := range sts {
-		if err := s.sendLanding(tx, st, p, addr.OrderUUID, legacyBound, actor); err != nil {
+		if err := s.sendLanding(tx, st, p, addr.OrderUUID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// sendLanding writes one Edge's landing under the version rule (H.7).
+// sendLanding writes one Edge's landing.
 func (s *BinService) sendLanding(tx *sql.Tx, st plantclaims.AddressedStation, p store.Placed,
-	orderUUID string, legacyBound bool, actor string) error {
-	if st.SchemaVersion >= protocol.EdgeSchemaBinLanded {
-		if err := s.manifest.announce.SendTo(tx, protocol.SubjectBinLanded, st.StationID, &protocol.BinLanded{
-			BinID:        p.BinID,
-			CoreNodeName: p.NodeName,
-			Count:        p.Count,
-			Epoch:        p.Epoch,
-			PayloadCode:  p.PayloadCode,
-			PayloadKnown: p.PayloadCode != "",
-			OrderUUID:    orderUUID,
-			PlacedSeq:    p.PlacedSeq,
-		}); err != nil {
-			return fmt.Errorf("landing bin %d at %s: %w", p.BinID, p.NodeName, err)
-		}
-		return nil
-	}
-	if !legacyBound {
-		return nil
-	}
-	if err := s.manifest.announce.SendTo(tx, protocol.SubjectUOPAdjustment, st.StationID, &protocol.UOPAdjustment{
+	orderUUID string) error {
+	if err := s.manifest.announce.SendTo(tx, protocol.SubjectBinLanded, st.StationID, &protocol.BinLanded{
 		BinID:        p.BinID,
 		CoreNodeName: p.NodeName,
-		NewRemaining: p.Count,
+		Count:        p.Count,
 		Epoch:        p.Epoch,
-		Bound:        true,
-		Actor:        actor,
-		AdjustedAt:   clock.Now().UTC(),
+		PayloadCode:  p.PayloadCode,
+		PayloadKnown: p.PayloadCode != "",
+		OrderUUID:    orderUUID,
+		PlacedSeq:    p.PlacedSeq,
 	}); err != nil {
-		return fmt.Errorf("bound for bin %d at %s: %w", p.BinID, p.NodeName, err)
+		return fmt.Errorf("landing bin %d at %s: %w", p.BinID, p.NodeName, err)
 	}
 	return nil
 }
@@ -237,11 +217,9 @@ func addressed(stations []string) []plantclaims.AddressedStation {
 // LandingHook is the landing verb as a placement hook for the store-level
 // writers that own their transaction (store.ApplyMultiBinArrival,
 // RepairConfirmedOrderCompletion): each calls it per bin in its transaction.
-// legacyBound says whether that writer used to broadcast a Bound (none of the
-// robot writers outside the mid-order drop did).
-func (s *BinService) LandingHook(orderID int64, legacyBound bool) store.OnPlaced {
+func (s *BinService) LandingHook(orderID int64) store.OnPlaced {
 	return func(tx *sql.Tx, p store.Placed) error {
-		return s.announceLanding(tx, p, orderID, legacyBound, "")
+		return s.announceLanding(tx, p, orderID)
 	}
 }
 
@@ -250,7 +228,7 @@ func (s *BinService) LandingHook(orderID int64, legacyBound bool) store.OnPlaced
 // transaction (DESIGN-H §3: it used to announce one bin, by order.delivered,
 // and the others were silent).
 func (s *BinService) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.BinArrivalInstruction) ([]int64, error) {
-	return s.db.ApplyMultiBinArrival(placedByOrder, instructions, s.LandingHook(placedByOrder, false))
+	return s.db.ApplyMultiBinArrival(placedByOrder, instructions, s.LandingHook(placedByOrder))
 }
 
 // ErrReseatUnknownNode is a reseat asked of a name Core has no node for: not an
@@ -272,10 +250,6 @@ var ErrReseatUnknownNode = errors.New("no node by that name")
 // at an equal or newer generation keeps the seat's own count
 // (processes.BindLanding), so a repeat binds nothing new. The resident carrier
 // is the one the bins table names: the newest non-retired bin at the node.
-//
-// The asking station speaks the ask pair, a later schema than the landing's
-// (protocol.EdgeSchemaBinLanded), so it gets the landing itself, never the
-// older Bound.
 //
 // Cost: the node read, then one transaction: the bin read with the stamp, and
 // one outbox row when a carrier stands there.
@@ -302,8 +276,8 @@ func (s *BinService) Reseat(station, node string) (landed bool, err error) {
 	if s.manifest == nil || !s.manifest.announce.Wired() {
 		return false, fmt.Errorf("reseat %s: no announce topic wired, the carrier cannot be announced", node)
 	}
-	st := plantclaims.AddressedStation{StationID: station, SchemaVersion: protocol.EdgeSchemaBinLanded}
-	if err := s.sendLanding(tx, st, p, "", false, ""); err != nil {
+	st := plantclaims.AddressedStation{StationID: station}
+	if err := s.sendLanding(tx, st, p, ""); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -71,8 +71,8 @@ func newDeclRig(t *testing.T, label string, count int) *declRig {
 		broker: &declBroker{refused: map[string]bool{}, offers: map[string]int{}}}
 	w.acc = edgeuop.New(w.edge.DB, handoffStation, w.edge.DB, w.edge.DB)
 	w.edge.Engine.SetInventoryDeltaSink(w.acc)
-	if _, err := w.core.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)`,
-		handoffStation, protocol.EdgeSchemaBinLanded); err != nil {
+	if _, err := w.core.Exec(`INSERT INTO edge_registry (station_uid) VALUES ($1)`,
+		handoffStation); err != nil {
 		t.Fatalf("register the station: %v", err)
 	}
 	if err := w.core.ReleaseClaimForBin(w.binID, w.order.ID); err != nil {

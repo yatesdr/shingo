@@ -2984,3 +2984,13 @@ No assertion read any of the twelve.
 - test: `TestHandleDeliveredWithExpiry_MissingOrder` · pkg `shingoedge/orders` · run `-run '^TestHandleDeliveredWithExpiry_MissingOrder$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
 - code: DEAD (`HandleDeliveredWithExpiry` is deleted with the fields it carried).
 - assertion map: an unknown order is an error → `TestHandleDeliveredNotice_MissingOrder`, the same assertion on the wire's handler.
+
+### DEAD — `TestPinH7_AnOldEdgeGetsTodaysWireAddressed`
+- test: `TestPinH7_AnOldEdgeGetsTodaysWireAddressed` · pkg `shingocore/service` · run `-run '^TestPinH7_AnOldEdgeGetsTodaysWireAddressed$'` · `shingo-core/service/carrier_landing_pending_docker_test.go` @ `6bd55616` · tags `docker`
+- code: DEAD (`legacyBound`, the Bound for an Edge below the landing's schema, is deleted at the v0.19.0 floor).
+- assertion map: one message, to the claiming station, addressed, for a set-down → `TestPinH3_TheRegisteredSchemaDoesNotDecideTheLanding`, the message now the landing; no Bound on a final drop → the same test (one landing).
+
+### DEAD — `TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed`
+- test: `TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed` · pkg `shingocore/service` · run `-run '^TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed$'` · `shingo-core/service/carrier_landing_pending_docker_test.go` @ `6bd55616` · tags `docker`
+- code: DEAD (the same arm).
+- assertion map: each Edge of the last arm is told, addressed, once → `TestPinD19_EveryEdgeOnTheLastArmGetsTheLanding`, both by the landing.

@@ -36,7 +36,7 @@ import (
 // the double-supply race, re-opened from the other side (0cc734c3).
 //
 // The proof events are BinPickedUp and IsTerminal for (a), and the Edge's own
-// bind for (b) — HandleUOPAdjustment's Bound arm, fed by Core's intermediate
+// bind for (b) — the landing verb (landCarrier), fed by Core's intermediate
 // dropoff, which calls settleCellPlacement so arrival order cannot matter. A
 // leg's last cell step is either a pickup with steps after it (stamped) or its
 // own final step (terminal covers it). There is deliberately no
@@ -255,7 +255,7 @@ func (e *Engine) stampDepartureIfLeftCell(order *domain.Order, location string) 
 //   - "recorded" is the cell's runtime showing a bin. That pointer is cleared by
 //     the leg's own press pickup (handler_bin_picked_up.go, gated on bin
 //     identity) and re-set by the step-7 intermediate dropoff's
-//     UOPAdjustment{Bound}. It is nil across exactly this window.
+//     landing. It is nil across exactly this window.
 //
 // A node-scoped witness is unambiguous by construction: exactly one leg per
 // cycle places at claim.CoreNodeName, which
@@ -301,8 +301,8 @@ func (e *Engine) markDeparted(order *domain.Order, departNode string) {
 // settleCellPlacement is the departure's SECOND trigger: the placement record
 // landing after the robot has already left.
 //
-// Called from the Bound arm of HandleUOPAdjustment, the one Edge site that
-// records a bin onto a cell. It walks the node's live orders, and for any leg
+// Called from the landing verb (landCarrier), the Edge site that records a
+// carrier Core placed onto a cell. It walks the node's live orders, and for any leg
 // that has left the cell's nodes but was held back because its placement was
 // unrecorded, it completes the departure. Whichever of the two facts arrives
 // second finishes it, so ARRIVAL ORDER STOPS MATTERING.

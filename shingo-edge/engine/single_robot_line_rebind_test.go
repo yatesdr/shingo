@@ -53,12 +53,12 @@ func TestSingleRobotSwap_LineRebindIsProcessed(t *testing.T) {
 	// Exactly the announcement Core puts on the wire from
 	// handleStoreBlockCompleted: Bound, the fresh bin, the line node, the bin's
 	// remaining and epoch. No Actor — the broadcast carries none.
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        freshBin,
 		CoreNodeName: node.CoreNodeName,
-		NewRemaining: 100,
+		Count:        100,
 		Epoch:        7,
-		Bound:        true,
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 
 	rt, err = db.GetProcessNodeRuntime(nodeID)

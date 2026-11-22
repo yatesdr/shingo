@@ -657,13 +657,6 @@ type BinPickedUp struct {
 // overtaken landing harmless (the Edge has no inbound dedup, and this subject
 // never expires). It orders on the stamp, not a clock, because a clock can
 // step.
-// EdgeSchemaBinLanded is the first Edge schema version (its applied
-// schema_migrations version, EdgeRegister.SchemaVersion) that can bind a
-// landing: the migration that adds process_node_runtime_states.placed_seq
-// (Lane H, D10). Core sends a landing only to a station registered at or
-// above it, and today's wire (an addressed Bound) to the rest (H.7). The Edge
-// pins its own migration list against this number, so the two cannot drift.
-const EdgeSchemaBinLanded = 20
 
 type BinLanded struct {
 	BinID        int64  `json:"bin_id"`
@@ -1837,22 +1830,10 @@ type UOPAdjustment struct {
 	// Absent or 0 is an older Core, and the Edge clears as it always has. Older
 	// Edges ignore the field.
 	PlacedSeq int64 `json:"placed_seq,omitempty"`
-	// Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin
-	// Move mirroring a physical relocation the robot-delivery path never recorded
-	// — manual fork-truck recovery, a failed delivery that left the bin
-	// unregistered). Edge binds that node's runtime to the bin: active_bin_id =
-	// BinID, active_bin_epoch = Epoch, remaining_uop_cached = NewRemaining — so
-	// its PLC ticks resume counting the arrived bin. The dual of Released; Core
-	// sets exactly one of the two per message. Core's Move guarantees the
-	// destination held no other bin, so Edge binds ahead of its active-bin guard
-	// and overwrites any stale pointer. Older Edges ignore the field.
-	Bound bool `json:"bound,omitempty"`
-	// Epoch carries the bin's delta_epoch so a bind seeds active_bin_epoch
-	// correctly and subsequent BinUOPDeltas carry the right generation for
-	// Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node)
-	// and on a plain count correction (record_count): when the correction lands
-	// on a staged-but-unbound bin, Edge binds it with this epoch, so the
-	// resumed delta stream carries the bin's current generation. Zero on the
+	// Epoch carries the bin's delta_epoch. Set on a plain count correction
+	// (record_count): when the correction lands on a staged-but-unbound bin,
+	// Edge binds it with this epoch, so the resumed delta stream carries the
+	// bin's current generation, as Core's epoch-aware dedup needs. Zero on the
 	// Released path and from older Cores.
 	Epoch int64 `json:"epoch,omitempty"`
 	// AsOfNet and AsOfSeq are Core's applied_net and last_seq for

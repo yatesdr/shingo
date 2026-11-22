@@ -21,10 +21,9 @@ import (
 // itself (protocol.BinLanded), which does not exist at the base, are in
 // carrier_handoff_pending_test.go behind the laneh_pending tag.
 //
-// Where a pin needs "the landing" and the base has no landing, it uses the
-// base's nearest door: the Bound uop_adjustment (DESIGN-H §1a A1), which H.7
-// keeps for one release as the old-Core path routed through the landing verb.
-// The assertion is the ruling, not the door, so it holds through the switch.
+// Where a pin needs "the landing" it used the base's nearest door, the Bound
+// uop_adjustment (DESIGN-H §1a A1), while H.7 kept it. The assertion is the
+// ruling, not the door, so it held through the switch to the landing itself.
 
 // binPtr is a bin id as the store's pointer argument. The tests that seated a
 // carrier through the delivered bind (SetProcessNodeRuntimeForDeliveredBin,
@@ -58,11 +57,14 @@ func emptySeat(t *testing.T, eng *Engine, prefix, part string, capacity int) (pr
 	return processID, nodeID, styleID, claimID
 }
 
-// landBound is the base's landing: Core's Bound announcement of bin at node.
+// landBound is Core's landing of bin at node, stamped newer than any before.
 func landBound(eng *Engine, node string, binID, epoch int64, count int) {
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
-		BinID: binID, CoreNodeName: node, NewRemaining: count, Epoch: epoch, Bound: true,
-		Actor: protocol.ActorCoreLifecycle,
+	eng.HandleBinLanded(protocol.BinLanded{
+		BinID:        binID,
+		CoreNodeName: node,
+		Count:        count,
+		Epoch:        epoch,
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 }
 
@@ -112,7 +114,7 @@ func TestPinH5_LandingThenDeliveredKeepsTheTicks(t *testing.T) {
 // then the landing for the same bin at the same generation.
 //
 // At the base: RED. The Bound arm (handler_uop_adjustment.go
-// bindAdjustmentFromCore) writes Core's count over the bound bin's.
+// its Bound arm, since deleted) writes Core's count over the bound bin's.
 func TestPinH5_DeliveredThenLandingKeepsTheTicks(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -122,6 +124,9 @@ func TestPinH5_DeliveredThenLandingKeepsTheTicks(t *testing.T) {
 
 	const bin, epoch, n, k = int64(8102), int64(4), 100, 3
 	deliver(t, eng, nodeID, "uuid-hld2", "HLD2-NODE", bin)
+	// The delivered binds nothing, so the landing behind it is the bind; the
+	// ticks count from there, and the landing again keeps them.
+	landBound(eng, "HLD2-NODE", bin, epoch, n)
 	for i := 0; i < k; i++ {
 		tickConsume(eng, processID, styleID, 1)
 	}

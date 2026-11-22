@@ -632,8 +632,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		// the PLACEMENT RECORD half of a leg's departure (the Edge's
 		// settleCellPlacement hangs off the bind; shingo-edge/engine/
 		// leg_departure.go, docs/order-lifecycle.md § Departed legs and
-		// cell-done). An Edge too old for the landing gets that Bound, addressed
-		// to it (H.7).
+		// cell-done).
 		//
 		// The old comment's facts stand for the landing: a single_robot swap's
 		// fresh carrier is placed on the line as an INTERMEDIATE drop and the

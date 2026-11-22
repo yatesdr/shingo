@@ -129,14 +129,12 @@ func TestBoundAdjustment_StillBindsAnUnattributedTransitDropoff(t *testing.T) {
 		t.Fatalf("unbind: %v", err)
 	}
 
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        binID,
 		CoreNodeName: "FINALIZE-N5",
-		NewRemaining: 40,
+		Count:        40,
 		Epoch:        5,
-		Bound:        true,
-		// wiring_block_completed.go sets no actor on this message.
-		Actor: "",
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 
 	rt, err := eng.db.GetProcessNodeRuntime(node)

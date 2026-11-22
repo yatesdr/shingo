@@ -30,8 +30,9 @@ const (
 	costSetDownResolve = 1
 	// costFinished: handleOrderDelivered for the two-cart swap with A set down
 	// and B in hand. Budget: no more than today. 24 → 23: order.delivered no
-	// longer reads the bin for its count, generation and part.
-	costFinished = 23
+	// longer reads the bin for its count, generation and part. 23 → 24: this
+	// fixture's station registered no schema, and now gets the landing's row.
+	costFinished = 24
 	// costTerminalize: TerminalizeOrder on a live order that wins (BEGIN, the
 	// status, the history row, the anomaly stamp, the claim release, the slot
 	// release, the reservations, the station's tell, COMMIT). Main f8f22f19: 9,

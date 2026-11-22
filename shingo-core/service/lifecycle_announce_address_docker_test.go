@@ -70,8 +70,8 @@ func ownedSeat(t *testing.T, db *store.DB, name, station string) *nodes.Node {
 
 func twoEdges(t *testing.T, db *store.DB, a, b string) {
 	t.Helper()
-	registerEdgeSchema(t, db, a, protocol.EdgeSchemaBinLanded)
-	registerEdgeSchema(t, db, b, protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, a, edgeSchema)
+	registerEdgeSchema(t, db, b, edgeSchema)
 }
 
 // TestLifecycleAnnounce_ALoadAtAnOwnedSeatGoesToItsStationOnly: a load at a

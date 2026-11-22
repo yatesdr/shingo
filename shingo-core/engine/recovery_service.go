@@ -84,7 +84,7 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 
 	// The repair announces its drops like any arrival (Lane H, H.2): it may be
 	// the only record that a cart came to rest there.
-	if err := s.db.RepairConfirmedOrderCompletion(order.ID, places, e.binService.LandingHook(order.ID, false)); err != nil {
+	if err := s.db.RepairConfirmedOrderCompletion(order.ID, places, e.binService.LandingHook(order.ID)); err != nil {
 		return err
 	}
 

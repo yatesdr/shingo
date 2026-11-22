@@ -793,9 +793,8 @@ func (e *Engine) DB() *store.DB { return e.db }
 // at, -1 when it cannot be read: the read (store.DB.AppliedSchemaVersion) the
 // heartbeater's register stamps (SchemaVersionFn, wired in main.go). The debug
 // page's register sends it too, so a register sent by hand states what the
-// heartbeater's does: Core keeps the last register's version and sends a
-// station below protocol.EdgeSchemaBinLanded a Bound in place of a landing
-// (shingocore service BinService.sendLanding).
+// heartbeater's does: Core keeps the last register's version, and a v0.19.0
+// Core sends a station below v20 a Bound in place of a landing.
 func (e *Engine) SchemaVersion() int { return e.db.AppliedSchemaVersion() }
 
 // Config returns the app config.

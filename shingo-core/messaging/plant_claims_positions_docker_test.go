@@ -36,8 +36,8 @@ func TestPlantClaims_ALoaderPositionResolvesToItsStation(t *testing.T) {
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 	const a, b = "edge-pos-a.line", "edge-pos-b.line"
 	for _, st := range []string{a, b} {
-		_, err := db.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)`,
-			st, protocol.EdgeSchemaBinLanded)
+		_, err := db.Exec(`INSERT INTO edge_registry (station_uid) VALUES ($1)`,
+			st)
 		testutil.MustNoErr(t, err, "register "+st)
 	}
 
@@ -83,8 +83,8 @@ func TestPlantClaims_ALoaderPositionMovesItsRegistryRowsToItsStation(t *testing.
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 	const a, b = "edge-own-a.line", "edge-own-b.line"
 	for _, st := range []string{a, b} {
-		_, err := db.Exec(`INSERT INTO edge_registry (station_uid, schema_version) VALUES ($1, $2)`,
-			st, protocol.EdgeSchemaBinLanded)
+		_, err := db.Exec(`INSERT INTO edge_registry (station_uid) VALUES ($1)`,
+			st)
 		testutil.MustNoErr(t, err, "register "+st)
 	}
 	var ntID, nodeID int64

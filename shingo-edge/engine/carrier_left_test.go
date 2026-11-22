@@ -128,8 +128,12 @@ func TestCarrierBound_ByAdjustmentIsTheClaimsPartAssumed(t *testing.T) {
 		db := testEngineDB(t)
 		nodeID, _, core := seedCarrierAtSlot(t, db, "CB-MOVE")
 		eng := testEngine(t, db)
-		eng.HandleUOPAdjustment(protocol.UOPAdjustment{
-			CoreNodeName: core, BinID: 31008, Bound: true, NewRemaining: 60, Epoch: 3,
+		eng.HandleBinLanded(protocol.BinLanded{
+			BinID:        31008,
+			CoreNodeName: core,
+			Count:        60,
+			Epoch:        3,
+			PlacedSeq:    testPlacedSeq.Add(1),
 		})
 		rt, err := db.GetProcessNodeRuntime(nodeID)
 		testutil.MustNoErr(t, err, "read runtime")

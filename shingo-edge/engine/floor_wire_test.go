@@ -127,3 +127,55 @@ func TestFloorWire_ADeliveredWithNoNoticeOfItsOwn(t *testing.T) {
 		t.Errorf("bin-clear calls = %d, want 0", got)
 	}
 }
+
+// TestFloorWire_AV019CoresBoundIsACountHere pins what a v0.19.0 Core's Bound
+// (sent only to a station whose recorded schema is unreadable or below 20)
+// does on this Edge: the key is ignored and the message is a count like any
+// other. With no actor (a set-down) it binds nothing on an empty seat, keeps
+// the count of the same carrier at the generation held and writes Core's at
+// another; with a person's (an admin move) it binds an empty seat by the count
+// and writes Core's on the same carrier; a different carrier always stands.
+func TestFloorWire_AV019CoresBoundIsACountHere(t *testing.T) {
+	t.Parallel()
+	const bin, other = int64(9401), int64(9402)
+	for _, c := range []struct {
+		name, actor string
+		epoch       int64
+		seated      int64
+		wantBin     int64
+		wantCount   int
+	}{
+		{"set-down, empty seat", "", 4, 0, 0, 0},
+		{"set-down, the same carrier", "", 4, bin, bin, 70},
+		{"set-down, the same carrier, a newer generation", "", 5, bin, bin, 100},
+		{"set-down, the same carrier, an older generation", "", 3, bin, bin, 100},
+		{"set-down, another carrier", "", 4, other, other, 70},
+		{"admin move, empty seat", protocol.AuditActorUI, 4, 0, bin, 100},
+		{"admin move, the same carrier", protocol.AuditActorUI, 4, bin, bin, 100},
+		{"admin move, another carrier", protocol.AuditActorUI, 4, other, other, 70},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			_, nodeID, _, _ := emptySeat(t, eng, "BND", "PART-BND", 100)
+			if c.seated != 0 {
+				eng.HandleBinLanded(landing("BND-NODE", c.seated, 4, 70, "PART-BND", 51))
+			}
+			body := fmt.Sprintf(`{"bin_id":%d,"core_node_name":"BND-NODE","new_remaining":100,"epoch":%d,`+
+				`"bound":true,"actor":%q,"adjusted_at":"2026-01-02T03:04:05Z"}`, bin, c.epoch, c.actor)
+			var adj protocol.UOPAdjustment
+			testutil.MustNoErr(t, json.Unmarshal([]byte(body), &adj), "decode the adjustment")
+			eng.HandleUOPAdjustment(adj)
+
+			rt := runtimeOf(t, eng, nodeID)
+			got := int64(0)
+			if rt.ActiveBinID != nil {
+				got = *rt.ActiveBinID
+			}
+			if got != c.wantBin || rt.RemainingUOPCached != c.wantCount {
+				t.Errorf("seat = bin %d count %d, want %d/%d", got, rt.RemainingUOPCached, c.wantBin, c.wantCount)
+			}
+		})
+	}
+}

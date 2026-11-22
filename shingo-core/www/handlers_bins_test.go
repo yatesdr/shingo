@@ -451,10 +451,6 @@ func TestExecuteBinAction_LoadPayload_AnnouncesOnceAsAPerson(t *testing.T) {
 			"generation emits deltas Core drops, re-detaching the stream this repairs",
 			adj.Epoch, loaded.DeltaEpoch)
 	}
-	if adj.Bound {
-		t.Error("Bound = true, want false — a person's declaration rides the repair path with its " +
-			"mid-swap guards, not the blind bind")
-	}
 	if adj.Released {
 		t.Error("Released = true, want false — the bin did not leave the node")
 	}
