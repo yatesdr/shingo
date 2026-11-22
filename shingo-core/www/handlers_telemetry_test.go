@@ -644,12 +644,16 @@ func TestBinClearDoor_Arms(t *testing.T) {
 		}
 	}
 	clearCols := []string{"delta_epoch", "loaded_at", "manifest", "manifest_confirmed", "payload_code", "uop_remaining", "updated_at"}
+	// The default is taken into a local: the returned func runs on every
+	// parallel arm that shares it, and writing the captured cols there was a
+	// data race (the laptop probe's first cert run, 2026-11-21, race step).
 	wroteClear := func(label string, cols ...string) func(*doorFix) (map[int64][]string, map[string]int) {
 		return func(f *doorFix) (map[int64][]string, map[string]int) {
-			if cols == nil {
-				cols = clearCols
+			want := cols
+			if want == nil {
+				want = clearCols
 			}
-			return map[int64][]string{binIDOf(f, label): cols}, map[string]int{"bin_uop_ledger": 1}
+			return map[int64][]string{binIDOf(f, label): want}, map[string]int{"bin_uop_ledger": 1}
 		}
 	}
 	// heldPartial is a carrier of 7 of CL-PPH standing in a partial home of
