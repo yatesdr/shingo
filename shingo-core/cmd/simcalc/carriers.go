@@ -101,7 +101,7 @@ type poolPlan struct {
 	isKanban  bool
 	sourced   bool
 	levelWant int
-	// byType is this pool's flows by the part's carrier type, standing a kanban's
+	// byType is this pool's flows by the part's carrier type, standing its
 	// seeded empties by type, and short a kanban's spends less its returns and
 	// pull per family: below zero is surplus inflow.
 	byType   map[string]*typeFlow
@@ -357,7 +357,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 
 	// Count the swap points that need a carrier to be waiting on, regardless of
 	// rate — a station with a slow cadence still occupies one. Charged to the
-	// pool it DRAWS FROM, which is the one that has to have it.
+	// pool it DRAWS FROM, which is the one that has to have it, in the carrier
+	// type it waits on: an empty of another type is no empty to it.
+	view := newKanbanView(plant)
 	drawsFrom := map[string][]string{} // payload → pools its produce side spends from
 	for _, ac := range activeClaims(plant) {
 		c := ac.claim
@@ -385,6 +387,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			p.producePoint++
 			if src != "" {
 				pool(src).producePoint++
+				if bt, ok := view.carrierOf(c.Payload); ok {
+					pool(src).ofType(bt).points++
+				}
 			}
 		}
 		if src != "" {
@@ -413,10 +418,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	// tick rate is the answer on both sides, and the cadences are used only to
 	// flag a manual point that genuinely cannot keep up.
 	flows := walkClaims(plant, rate)
-	view := newKanbanView(plant)
 	for _, name := range sortedKeys(flows) {
 		f := flows[name]
-		binType := view.binTypeOf[name]
+		binType, typed := view.carrierOf(name)
 		cap := float64(f.uopCap)
 		if cap <= 0 {
 			continue
@@ -458,7 +462,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 				each := filled / float64(len(pools))
 				for _, q := range pools {
 					pool(q).emptyDemand += each
-					pool(q).ofType(binType).spend += each
+					if typed {
+						pool(q).ofType(binType).spend += each
+					}
 				}
 			} else {
 				p.unpooled = appendUniq(p.unpooled, name+" (spends)")
@@ -473,9 +479,11 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 				back := min(filled, emptied) / float64(len(pools))
 				for _, q := range pools {
 					pool(q).emptySupply += each
-					t := pool(q).ofType(binType)
-					t.free += each
-					t.back += back
+					if typed {
+						t := pool(q).ofType(binType)
+						t.free += each
+						t.back += back
+					}
 				}
 			} else {
 				p.unpooled = appendUniq(p.unpooled, name+" (frees)")
@@ -523,11 +531,13 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			o := pool(g.Sources[0])
 			q.keeperIn += -net
 			o.keeperOut += -net
+			o.typedKeeperOut(q, -net)
 		}
 	}
 
 	for name := range p.pools {
 		p.pools[name].isZone = isZone[name]
+		p.pools[name].standing = view.seeded[name]
 	}
 	view.keeperPulls(p.pools)
 	return p
@@ -721,12 +731,13 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 			// a dedicated home). We cannot count its stock, so we do not judge it —
 			// and we say so rather than scoring it 0 and crying wolf.
 			verdict = "not a seeded zone — stock not judged"
-		case frees-spends < -0.001:
-			ok = false
-			verdict = fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size", spends-frees)
-		case q.seededEmpty < pFloor:
-			ok = false
-			verdict = fmt.Sprintf("SHORT BY %d", pFloor-q.seededEmpty)
+		default:
+			// BY CARRIER TYPE, because an empty of one type is no empty of another:
+			// summed, SYN_MARKET's 5 STANDARD-SM stood in for the 4 STANDARD it was
+			// short (TestPlainPoolFloor_ByType). REQUIRED is the types' sum.
+			var holds bool
+			verdict, pFloor, holds = q.plainVerdict(mins, frees-spends)
+			ok = ok && holds
 		}
 		keeperCol := "—"
 		if math.Abs(keeper) > 0.001 {
@@ -748,8 +759,8 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 	fmt.Printf("\n  KEEPER is carriers crossing a pool boundary outside the swap points: the\n")
 	fmt.Printf("  shortfall of a kanban, from its first named source or, naming none, pulled\n")
 	fmt.Printf("  from where that type comes back. A kanban has no overflow: what comes back\n")
-	fmt.Printf("  past what it spends fails it. A kanban's floor is by carrier type; a plain\n")
-	fmt.Printf("  pool's REQUIRED and SEEDED count every type together.\n")
+	fmt.Printf("  past what it spends fails it. Every floor is by carrier type: REQUIRED and\n")
+	fmt.Printf("  SEEDED are the sums, and a verdict names the type that is short.\n")
 	fmt.Printf("\n  A pool short here deadlocks EVEN IF the plant total is comfortable: the\n")
 	fmt.Printf("  empties exist, in the wrong zone, and nothing routes them back. That is how\n")
 	fmt.Printf("  lane-stress passed at 24/22 and wedged with 15 empties in SYN_COMP and 0 in\n")

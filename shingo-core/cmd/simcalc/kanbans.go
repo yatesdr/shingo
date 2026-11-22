@@ -42,6 +42,21 @@ type kanbanView struct {
 	cartsAt    map[string]string            // seeded node → the cart's type
 	familyOf   map[string]string            // type → family code
 	zoneSlots  map[string]int               // zone → its slots, positions and lanes
+	noCarrier  map[string]bool              // part → declared no_bin_type
+	defaultTyp string                       // what a bin or part that names no type rides
+}
+
+// carrierOf is the carrier type a part's empties are, as the seeder types them:
+// its own, else the plant's first type. A part declared to have none, and a
+// claim that names no part, have no type to count (false).
+func (v *kanbanView) carrierOf(part string) (string, bool) {
+	if bt, ok := v.binTypeOf[part]; ok {
+		return bt, true
+	}
+	if part == "" || v.noCarrier[part] {
+		return "", false
+	}
+	return v.defaultTyp, true
 }
 
 func newKanbanView(plant *plantspec.Plant) *kanbanView {
@@ -49,13 +64,17 @@ func newKanbanView(plant *plantspec.Plant) *kanbanView {
 		plant: plant, binTypeOf: map[string]string{}, capOf: map[string]int64{},
 		seeded: map[string]map[string]int{}, stylesOf: map[string][]string{}, styleParts: map[string][]string{},
 		claimsOf: map[string][]plantspec.Claim{}, nodesOf: map[string][]string{}, cartsAt: map[string]string{},
-		familyOf: map[string]string{}, zoneSlots: map[string]int{},
+		familyOf: map[string]string{}, zoneSlots: map[string]int{}, noCarrier: map[string]bool{},
+	}
+	if len(plant.BinTypes) > 0 {
+		v.defaultTyp = plant.BinTypes[0]
 	}
 	for _, pl := range plant.Payloads {
 		v.capOf[pl.Code] = pl.UOPCapacity
 		if pl.BinType != "" {
 			v.binTypeOf[pl.Code] = pl.BinType
 		}
+		v.noCarrier[pl.Code] = pl.NoBinType
 	}
 	for _, bt := range plant.BinTypes {
 		// A type no family names is a family of one, coded by its own code.
@@ -395,10 +414,66 @@ const (
 
 // typeFlow is one carrier type's flow at one pool, in carriers a minute.
 type typeFlow struct {
-	spend float64 // empties drawn
-	free  float64 // empties returned, at the consumers' nameplate
-	back  float64 // returned no faster than the part is filled
-	lent  float64 // pulled from here by keepers
+	spend     float64 // empties drawn
+	free      float64 // empties returned, at the consumers' nameplate
+	back      float64 // returned no faster than the part is filled
+	lent      float64 // pulled from here by keepers
+	keeperOut float64 // a named kanban's shortfall of the type, carried here
+	points    int     // stations drawing it here, each waiting on one
+}
+
+// typedKeeperOut spreads a named source's keeperOut over the types its kanban is
+// short of, in proportion, so the source's floor stands it in those types.
+func (q *poolPlan) typedKeeperOut(k *poolPlan, total float64) {
+	short := map[string]float64{}
+	sum := 0.0
+	for binType, t := range k.byType {
+		if d := t.spend - t.free; d > 0 {
+			short[binType] = d
+			sum += d
+		}
+	}
+	for binType, d := range short {
+		q.ofType(binType).keeperOut += total * d / sum
+	}
+}
+
+// plainVerdict judges a plain pool: its rate, and the floor of each carrier type
+// its stations draw, demand × transit and one per station. It answers the
+// verdict, the types' summed floor and whether the pool holds.
+func (q *poolPlan) plainVerdict(mins, net float64) (string, int, bool) {
+	var fails, held []string
+	if net < -rateSlack {
+		fails = append(fails, fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size", -net))
+	}
+	required := 0
+	for _, binType := range slices.Sorted(maps.Keys(q.byType)) {
+		t := q.byType[binType]
+		need := t.points
+		if inFlight := (t.spend + t.keeperOut) * mins; inFlight > floorSlack {
+			need += int(math.Ceil(inFlight - floorSlack))
+		}
+		if need == 0 {
+			continue
+		}
+		required += need
+		name := binType
+		if name == "" {
+			name = "untyped"
+		}
+		if stands := q.standing[binType]; stands < need {
+			fails = append(fails, fmt.Sprintf("%s SHORT BY %d: stands %d, needs %d", name, need-stands, stands, need))
+		} else {
+			held = append(held, fmt.Sprintf("%s stands %d, floor %d", name, stands, need))
+		}
+	}
+	if len(fails) > 0 {
+		return strings.Join(fails, "; "), required, false
+	}
+	if len(held) == 0 {
+		return "ok", required, true
+	}
+	return "ok; " + strings.Join(held, "; "), required, true
 }
 
 // keeperPull is one kanban's plant-wide search settling on one pool.
