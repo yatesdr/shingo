@@ -1212,21 +1212,37 @@ docker_p() {
 }
 
 # docker_order <module> — the packages to hand `go test` for one module's docker
-# run: longest first, by each package's seconds in the last run the steps log
-# holds (`docker:<importpath>` lines; a later line overwrites an earlier one),
-# then every other package in `go list` order. LONGEST FIRST because `go test -p`
-# starts binaries in the order it is given them, and in-gate the module ended on
-# whichever slow package happened to start late. A package the log names that
-# the tree no longer has is dropped. `./...` when the log has no line for this
-# module (a first run, a fresh clone, GATE_STEPS_LOG off): the order is a speedup,
-# never the list of what runs.
+# run: longest first, by each package's MEDIAN seconds over the last 5 clean runs
+# the steps log holds (`docker:<importpath>` lines of a run that also logged
+# `total`, not `total-FAILED`), then every other package in `go list` order.
+# LONGEST FIRST because `go test -p` starts binaries in the order it is given
+# them, and in-gate the module ended on whichever slow package happened to start
+# late. A MEDIAN OF CLEAN RUNS because the last line alone made the order the
+# noise of one run: a package that ran short beside a quiet machine, or ended a
+# failed run early, dropped to the back, and the next run's wall was not
+# comparable with the last. A package the log names that the tree no longer has
+# is dropped. `./...` when the log has no clean line for this module (a first
+# run, a fresh clone, GATE_STEPS_LOG off): the order is a speedup, never the list
+# of what runs. Pinned by scripts/check-docker-order.sh.
+#
+# GATE_DOCKER_ORDER_LOG names a steps log to rank from instead (a snapshot), so a
+# timing before/after runs both sides in one order however the live log moves.
 docker_order() {
-  local m="$1" mod timed all
-  { [ -n "$STEPS_LOG" ] && [ -s "$STEPS_LOG" ]; } || { echo "./..."; return; }
+  local m="$1" mod timed all src="${GATE_DOCKER_ORDER_LOG:-$STEPS_LOG}"
+  { [ -n "$src" ] && [ -s "$src" ]; } || { echo "./..."; return; }
   mod="$(sed -n 's/^module[[:space:]]*//p' "$ROOT/$m/go.mod" | tr -d '\r')"
   timed="$(awk -v pre="docker:$mod" '
-      ($3 == pre || index($3, pre "/") == 1) && $4 ~ /^[0-9.]+$/ { p = $3; sub(/^docker:/, "", p); t[p] = $4 }
-      END { for (p in t) print t[p], p }' "$STEPS_LOG" | LC_ALL=C sort -k1,1gr | awk '{ print $2 }')"
+      NR == FNR { if ($3 == "total") clean[$5] = 1; next }
+      ($3 == pre || index($3, pre "/") == 1) && $4 ~ /^[0-9.]+$/ && ($5 in clean) {
+        p = $3; sub(/^docker:/, "", p); n[p]++; v[p, n[p]] = $4 }
+      END {
+        for (p in n) {
+          k = 0
+          for (i = (n[p] > 5 ? n[p] - 4 : 1); i <= n[p]; i++) s[++k] = v[p, i] + 0
+          for (i = 2; i <= k; i++) { x = s[i]; j = i - 1; while (j >= 1 && s[j] > x) { s[j + 1] = s[j]; j-- } s[j + 1] = x }
+          print (k % 2 ? s[(k + 1) / 2] : (s[k / 2] + s[k / 2 + 1]) / 2), p
+        }
+      }' "$src" "$src" | LC_ALL=C sort -k1,1gr | awk '{ print $2 }')"
   [ -n "$timed" ] || { echo "./..."; return; }
   all="$(cd "$ROOT/$m" && go list -tags docker,lockcheck ./... 2>/dev/null)" || { echo "./..."; return; }
   [ -n "$all" ] || { echo "./..."; return; }
