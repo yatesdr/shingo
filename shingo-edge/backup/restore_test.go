@@ -183,3 +183,64 @@ func TestRestore_WhatItPutsInPlace(t *testing.T) {
 		})
 	}
 }
+
+// TestRestore_AfterACrashPutsTheBackupInPlace: an Edge that was killed leaves
+// the live database's sidecars beside it. SQLite replays a write-ahead log, or
+// rolls back a hot journal, onto whatever file has the database's name, so a
+// restore that replaces only the main file does not put the backup in place.
+func TestRestore_AfterACrashPutsTheBackupInPlace(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, journal string
+		sidecars      []string
+		// left is what the killed writer had done when it died.
+		left []string
+	}{
+		{"a write-ahead log", "WAL", []string{"-wal", "-shm"},
+			[]string{`UPDATE shifts SET name = 'LIVE'`}},
+		{"a hot journal", "DELETE", []string{"-journal"},
+			[]string{`UPDATE shifts SET name = 'LIVE'`,
+				`PRAGMA cache_size = 1`,
+				`BEGIN`,
+				`UPDATE shifts SET name = 'LIVE, UNCOMMITTED'`,
+				`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
+					INSERT INTO outbox (topic, payload, msg_type) SELECT 'shingo.orders', zeroblob(2000), 'crash.pin' FROM n`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dbPath := filepath.Join(t.TempDir(), "shingoedge.db")
+			configPath, archive := shiftArchive(t, dbPath, nil)
+
+			// The box was restored from this backup, ran, and was killed. Its file
+			// and the backup then share a page layout, so what replays reads whole;
+			// with another layout the replay is a mixed file.
+			testutil.MustNoErr(t, RestoreArchiveNow(configPath, bytes.NewReader(archive), ""), "the earlier restore")
+			base, err := os.ReadFile(dbPath)
+			testutil.MustNoErr(t, err, "read the restored file")
+			// A crash image is the files as they stand while the writer still holds them.
+			writing := filepath.Join(t.TempDir(), "writing.db")
+			testutil.MustNoErr(t, os.WriteFile(writing, base, 0o644), "the writer's file")
+			writer, err := sql.Open("sqlite", "file:"+filepath.ToSlash(writing)+"?_pragma=journal_mode("+c.journal+")")
+			testutil.MustNoErr(t, err, "the killed writer")
+			writer.SetMaxOpenConns(1)
+			defer writer.Close()
+			for _, stmt := range c.left {
+				_, err := writer.Exec(stmt)
+				testutil.MustNoErr(t, err, stmt)
+			}
+			for _, suffix := range append([]string{""}, c.sidecars...) {
+				image, err := os.ReadFile(writing + suffix)
+				testutil.MustNoErr(t, err, "the crash image's "+suffix)
+				if suffix != "-shm" && len(image) == 0 {
+					t.Fatalf("the writer left an empty %q: the test has no crash to restore over", suffix)
+				}
+				testutil.MustNoErr(t, os.WriteFile(dbPath+suffix, image, 0o644), "place the crash image")
+			}
+
+			testutil.MustNoErr(t, RestoreArchiveNow(configPath, bytes.NewReader(archive), ""), "restore")
+			if got := shiftNames(t, dbPath); got != "BACKUP" {
+				t.Errorf("shifts after the restore = %q, want \"BACKUP\": the restore did not put the backup in place", got)
+			}
+		})
+	}
+}
