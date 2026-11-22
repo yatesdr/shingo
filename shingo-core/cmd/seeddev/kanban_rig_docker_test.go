@@ -806,6 +806,9 @@ func TestKanbanRig_WalkCounts(t *testing.T) {
 		if len(settled) > 4 {
 			t.Logf("WALK %s: the settled tick\n%s", state, testutil.StatementBreakdown(settled))
 		}
+		if len(build) > 10 {
+			t.Logf("WALK %s: the build\n%s", state, testutil.StatementBreakdown(build))
+		}
 		t.Logf("WALK %s: cards %s", state, r.cardsSaid())
 		if len(settled) > 4 || len(build) > 10 || len(door) > 8 {
 			t.Errorf("WALK %s: over budget: tick %d of 4, build %d of 10, door %d of 8\n%s", state, len(settled), len(build), len(door), testutil.StatementBreakdown(door))
@@ -818,6 +821,10 @@ func TestKanbanRig_WalkCounts(t *testing.T) {
 	build := r.countBuild()
 	r.leave(s)
 	w := r.standing()[0]
+	// The door counted should be the board's tap, so the CLEAR below should stamp what is lit.
+	if lit := r.lit()[w].BinType; lit != rigSmall {
+		t.Errorf("WALK steady KP-SMALL: %s lit %q, want %q: fix what lights it, or the door counted below is not the board's tap", w, lit, rigSmall)
+	}
 	door, o := r.countDoor(w, r.clear(w, rigSmall))
 	log("steady KP-SMALL", first, settled, build, door, o)
 	r.fly()

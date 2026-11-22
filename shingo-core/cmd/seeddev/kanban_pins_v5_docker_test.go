@@ -16,8 +16,8 @@ import (
 )
 
 // kanban_pins_v5_docker_test.go — the family's acceptance on the rig's plant file: the
-// walks cart by cart, the raid, the budgets at each state, and the CLEAR's family. Taken
-// before the shape changes. Predictions: PINS.md, "BRIEF v5".
+// walks cart by cart, the raid, and the CLEAR's family. Taken before the shape changes.
+// Predictions: PINS.md, "BRIEF v5". The budgets at each state are TestKanbanRig_WalkCounts'.
 //
 // THE WALK'S LEGS ARE PLAIN MOVES, as this harness's are: a position's old cart filled and
 // moved to the unloader, then a retrieve of the new type off K. It is the counts and who
@@ -334,41 +334,6 @@ func TestKanbanPin_ClaimedOnEveryRigState(t *testing.T) {
 		r.openChangeover(c.part)
 		read("open onto "+c.part, c.code)
 	}
-}
-
-// statements at each state, read after the tick has settled.
-func (r *kanbanRig) inBudget(when string) {
-	r.t.Helper()
-	r.countTick()
-	if got := r.countTick(); len(got) > 4 {
-		r.t.Errorf("%s: tick = %d statements, budget 4\n%s", when, len(got), testutil.StatementBreakdown(got))
-	}
-	if got := r.countBuild(); len(got) > 10 {
-		r.t.Errorf("%s: build = %d statements, budget 10\n%s", when, len(got), testutil.StatementBreakdown(got))
-	}
-}
-
-// TestKanbanPin_TheBudgetsAtEachState: tick at most 4, build at most 10, door at most 8, on
-// the rig's plant at steady, after a START, at the door of a cart into K.
-func TestKanbanPin_TheBudgetsAtEachState(t *testing.T) {
-	t.Parallel()
-	r := newKanbanRig(t)
-	r.inBudget("steady small")
-	s := rigSides[0]
-	r.leave(s)
-	w := r.standing()[0]
-	lit := r.lit()[w].BinType
-	cart := r.clear(w, lit)
-	door, o := r.countDoor(w, cart)
-	t.Logf("BUDGET door %d: %s to %s (%q)", len(door), o.Status, o.DeliveryNode, o.QueueCause)
-	if len(door) > 8 {
-		t.Errorf("the door = %d statements, budget 8\n%s", len(door), testutil.StatementBreakdown(door))
-	}
-	r.fly()
-	r.refill(s)
-	r.fly()
-	r.openChangeover("KP-32")
-	r.inBudget("changeover small to 32x30")
 }
 
 // clearStatements counts the CLEAR's door.
