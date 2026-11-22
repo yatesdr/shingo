@@ -366,7 +366,14 @@ func pinLines(lines ...string) string { return strings.Join(lines, "\n") }
 
 func TestBlockRecordPin_TheWireAndTheFinish(t *testing.T) {
 	t.Parallel()
-	runPinCases(t, []pinCase{
+	runPinCases(t, blockRecordPins())
+}
+
+// blockRecordPins is the pin: each shape and its transcript with no key on any
+// family. TestCarrierKeysPin_EveryPinShapeKeyed reads it as the plain side of
+// its comparison, and fails on a shape here that it has no prediction for.
+func blockRecordPins() []pinCase {
+	return []pinCase{
 		{name: "plain retrieve", run: pinPlainRetrieve, want: pinLines(
 			"retrieve create b1 STORAGE-A1 JackLoad",
 			"retrieve create b2 LINE1-IN JackUnload",
@@ -706,7 +713,7 @@ func TestBlockRecordPin_TheWireAndTheFinish(t *testing.T) {
 			"cleaning create b1 KNIFE-1 binTask=\"\" -> emitted false",
 			"cleaning create b2 KNIFE-2 binTask=\"\" -> emitted false",
 		)},
-	})
+	}
 }
 
 // walk carries an order to its end the way a fleet runs one whose waits Core

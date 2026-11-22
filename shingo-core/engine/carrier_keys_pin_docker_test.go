@@ -16,12 +16,14 @@ import (
 // carrier_keys_pin_docker_test.go — brief B's Unit 0, against brief A's pin.
 //
 // Brief A's characterisation (block_record_pin_docker_test.go) is the pin: at a
-// plant with no key on any family its 27 transcripts do not change. This file
-// runs the same 27 cases, through the pin's own run functions, twice: plain,
-// and with every carrier family keyed and every location's scene copy listing
-// every key. The two transcripts must agree line for line except for the
-// binTask a block carries (and the finish line's echo of it), and the change
-// must be the brief's rule exactly:
+// plant with no key on any family its 27 transcripts do not change, which
+// TestBlockRecordPin_TheWireAndTheFinish holds. This file runs the same 27
+// cases (blockRecordPins), through the pin's own run functions, once: with
+// every carrier family keyed and every node's scene location listing every key.
+// The plain side of the comparison is the pinned transcript, not a second plain
+// run. The two transcripts must agree line for line except for the binTask a
+// block carries (and the finish line's echo of it), and the change must be the
+// brief's rule exactly:
 //
 //   - every JackLoad becomes its cart's family lift key: a lift that stays
 //     JackLoad is a block whose cart was not on record when it was built (the
@@ -29,10 +31,12 @@ import (
 //   - a Wait becomes a family wait key only where the order's next block is a
 //     lift at the same location, and then the key of that lift's family;
 //     every other Wait (a lane gate point, a dig dwell, a turn in front of a
-//     set-down) stays Wait;
+//     set-down) stays Wait. A gate point is no node (testdb.MarkGroup) and has
+//     no scene location here, so it would stay Wait under a wrong rule too: the
+//     rule at a gate point is TestCarrierKeyNames_TheRule's to pin;
 //   - nothing else changes: JackUnload, a load sequence's names, an orderless
 //     block; and no finish line changes but for the name it echoes (the arm,
-//     steps_done and every cart's node and holder are the plain run's).
+//     steps_done and every cart's node and holder are the pinned ones).
 
 const keyedPinPrefix = "TestCarrierKeysPin_EveryPinShapeKeyed/"
 
@@ -205,45 +209,59 @@ func TestCarrierKeysPin_EveryPinShapeKeyed(t *testing.T) {
 	// wire lines the keyed run changes, as "<order> <block> lift|wait".
 	cases := []struct {
 		name string
-		run  func(t *testing.T) *pinRig
 		want []string
 	}{
-		{"plain retrieve", pinPlainRetrieve, []string{"retrieve b1 lift"}},
-		{"plain retrieve, a replayed block", pinPlainRetrieveReplay, []string{"retrieve b1 lift"}},
-		{"plain retrieve, a block finishing after the order ended", pinPlainRetrieveAfterEnd, []string{"retrieve b1 lift"}},
-		{"empty-carrier retrieve", pinEmptyRetrieve, []string{"empty b1 lift"}},
-		{"staged release [wait X, pickup X, drop]", pinStagedRelease, []string{"removal b1 wait", "removal b2 lift"}},
-		{"single-robot swap", pinSingleRobotSwap, []string{"swap b1 lift", "swap b3 wait", "swap b4 lift", "swap b6 lift", "swap b8 lift"}},
-		{"carryover round trip, one cart lifted twice", pinCarryover, []string{"carry b1 lift", "carry b3 wait", "carry b4 lift"}},
-		{"advanced load sequence, sealed", pinLoadSequenceSealed, nil},
-		{"advanced load sequence, gated", pinLoadSequenceGated, nil},
-		{"manual move", pinManualMove, []string{"move b1 lift"}},
-		{"gated store", pinGatedStore, []string{"store b1 lift"}},
-		{"gated retrieve", pinGatedRetrieve, []string{"retrieve b2 lift"}},
-		{"two-robot swap, both legs", pinTwoRobotSwap, []string{"supply b1 lift", "supply b3 wait", "supply b4 lift", "evac b1 wait", "evac b2 lift"}},
-		{"keep-staged swap", pinKeepStagedSwap, []string{"supply b1 wait", "supply b2 lift", "evac b1 wait", "evac b2 lift"}},
-		{"press-index pair", pinPressIndexPair, []string{"r1 b1 wait", "r1 b2 lift", "r1 b4 lift", "r2 b1 wait", "r2 b2 lift"}},
-		{"sequential", pinSequential, []string{"removal b1 wait", "removal b2 lift", "backfill b1 lift"}},
-		{"changeover per-position, two carrier families", pinChangeoverTwoFamilies, []string{"position b1 wait", "position b2 lift", "position b4 lift"}},
-		{"table turn, plain order, lift side", pinTurnPlainLift, []string{"move b1 wait", "move b2 lift"}},
-		{"table turn, plain order, set-down side", pinTurnPlainSetDown, []string{"move b1 lift"}},
-		{"table turn, complex order, lift side", pinTurnComplexLift, []string{"swap b1 wait", "swap b2 lift", "swap b4 lift"}},
-		{"table turn, complex order, set-down side", pinTurnComplexSetDown, []string{"swap b1 lift", "swap b3 lift"}},
-		{"dig: the reshuffle legs and the dwell", pinDig, []string{"leg1 b2 lift", "leg2 b2 lift"}},
-		{"home-clear trade", pinHomeClearTrade, []string{"P S->H b1 lift", "E H->S b1 lift"}},
-		{"carried-bin recovery", pinCarriedBinRecovery, nil},
-		{"cancel-return", pinCancelReturn, nil},
-		{"redirect", pinRedirect, []string{"retrieve b1 lift"}},
-		{"orderless door: the cleaning mission", pinCleaningDoor, nil},
+		{"plain retrieve", []string{"retrieve b1 lift"}},
+		{"plain retrieve, a replayed block", []string{"retrieve b1 lift"}},
+		{"plain retrieve, a block finishing after the order ended", []string{"retrieve b1 lift"}},
+		{"empty-carrier retrieve", []string{"empty b1 lift"}},
+		{"staged release [wait X, pickup X, drop]", []string{"removal b1 wait", "removal b2 lift"}},
+		{"single-robot swap", []string{"swap b1 lift", "swap b3 wait", "swap b4 lift", "swap b6 lift", "swap b8 lift"}},
+		{"carryover round trip, one cart lifted twice", []string{"carry b1 lift", "carry b3 wait", "carry b4 lift"}},
+		{"advanced load sequence, sealed", nil},
+		{"advanced load sequence, gated", nil},
+		{"manual move", []string{"move b1 lift"}},
+		{"gated store", []string{"store b1 lift"}},
+		{"gated retrieve", []string{"retrieve b2 lift"}},
+		{"two-robot swap, both legs", []string{"supply b1 lift", "supply b3 wait", "supply b4 lift", "evac b1 wait", "evac b2 lift"}},
+		{"keep-staged swap", []string{"supply b1 wait", "supply b2 lift", "evac b1 wait", "evac b2 lift"}},
+		{"press-index pair", []string{"r1 b1 wait", "r1 b2 lift", "r1 b4 lift", "r2 b1 wait", "r2 b2 lift"}},
+		{"sequential", []string{"removal b1 wait", "removal b2 lift", "backfill b1 lift"}},
+		{"changeover per-position, two carrier families", []string{"position b1 wait", "position b2 lift", "position b4 lift"}},
+		{"table turn, plain order, lift side", []string{"move b1 wait", "move b2 lift"}},
+		{"table turn, plain order, set-down side", []string{"move b1 lift"}},
+		{"table turn, complex order, lift side", []string{"swap b1 wait", "swap b2 lift", "swap b4 lift"}},
+		{"table turn, complex order, set-down side", []string{"swap b1 lift", "swap b3 lift"}},
+		{"dig: the reshuffle legs and the dwell", []string{"leg1 b2 lift", "leg2 b2 lift"}},
+		{"home-clear trade", []string{"P S->H b1 lift", "E H->S b1 lift"}},
+		{"carried-bin recovery", nil},
+		{"cancel-return", nil},
+		{"redirect", []string{"retrieve b1 lift"}},
+		{"orderless door: the cleaning mission", nil},
+	}
+	pins := map[string]pinCase{}
+	for _, p := range blockRecordPins() {
+		pins[p.name] = p
+	}
+	if len(cases) != len(pins) {
+		t.Fatalf("%d predictions for the %d shapes of blockRecordPins: give each shape one prediction", len(cases), len(pins))
 	}
 	for _, c := range cases {
+		pin, ok := pins[c.name]
+		if !ok {
+			t.Fatalf("blockRecordPins has no shape %q, or it is predicted twice: name each of its shapes once", c.name)
+		}
+		delete(pins, c.name)
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			var plain, keyed string
-			t.Run("plain", func(t *testing.T) { plain = c.run(t).transcript() })
-			t.Run("keyed", func(t *testing.T) { keyed = c.run(t).transcript() })
-			if plain == "" || keyed == "" {
-				t.Fatal("a run left no transcript")
+			plain := pin.want
+			if plain == "" {
+				t.Fatal("blockRecordPins pins no transcript for this shape: there is nothing to compare the keyed run with")
+			}
+			var keyed string
+			t.Run("keyed", func(t *testing.T) { keyed = pin.run(t).transcript() })
+			if keyed == "" {
+				t.Fatal("the keyed run left no transcript")
 			}
 			changes, faults := keyedDiff(plain, keyed)
 			t.Logf("keyed changes: %d\n  %s", len(changes), strings.Join(changes, "\n  "))
