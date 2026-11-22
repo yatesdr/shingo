@@ -30,21 +30,15 @@ import (
 	edgeharness "shingoedge/testharness"
 )
 
-// removeStation takes away the three things Remove station names: the claims
-// mirror of the station, its reports, and its registry row. A stand-in while
-// Core has no door.
-func removeStation(t *testing.T, db *corestore.DB, uid string) {
+// removeStation is Remove station as cmd/shingocore wires it: the node
+// service door, stale only, with the data service forgetting the feeds state.
+func removeStation(t *testing.T, db *corestore.DB, svc *coremessaging.CoreDataService, uid string) {
 	t.Helper()
-	for _, q := range []string{
-		`DELETE FROM style_claims WHERE process_id IN (SELECT process_id FROM process_styles WHERE station_uid = $1)`,
-		`DELETE FROM process_positions WHERE process_id IN (SELECT process_id FROM process_styles WHERE station_uid = $1)`,
-		`DELETE FROM process_styles WHERE station_uid = $1`,
-		`DELETE FROM plant_claims_reports WHERE station_uid = $1`,
-		`DELETE FROM edge_registry WHERE station_uid = $1`,
-	} {
-		_, err := db.Exec(q, uid)
-		mustNil(t, err, "remove the station")
-	}
+	_, err := db.Exec(`UPDATE edge_registry SET status = 'stale' WHERE station_uid = $1`, uid)
+	mustNil(t, err, "the station goes stale")
+	door := service.NewNodeService(db)
+	door.SetStationRemovedFunc(svc.StationRemoved)
+	mustNil(t, door.RemoveEdge(uid, "scenario"), "remove the station")
 }
 
 func TestScenario_RemovedStationComesBack(t *testing.T) {
@@ -132,7 +126,7 @@ func TestScenario_RemovedStationComesBack(t *testing.T) {
 		t.Fatalf("the Edge shows %q, want %q", got, name)
 	}
 
-	removeStation(t, coreDB, uid)
+	removeStation(t, coreDB, svc, uid)
 	claimants("removed")
 
 	beat()

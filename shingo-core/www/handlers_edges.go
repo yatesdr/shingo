@@ -16,7 +16,7 @@ import (
 
 // The edge-station identity surface.
 //
-// FOUR ENDPOINTS, AND THE INTERESTING ONE IS THE MISSING FIFTH. There is no
+// THE INTERESTING ENDPOINT IS THE MISSING ONE. There is no
 // "re-issue a uid to replacement hardware" call, because re-issuing is not an
 // operation Core performs — it is the operator READING the existing uid off
 // the list and typing it into the new Pi's shingoedge.yaml. That is the entire
@@ -25,7 +25,7 @@ import (
 // because the API is missing but because nobody but the dead SD card ever knew
 // the number.
 //
-// All four are auth-gated: enrolling a station and rebinding one are fleet
+// All are auth-gated: enrolling, rebinding and removing a station are fleet
 // operations, and renaming one shows up on every board in the plant.
 
 // handleEdgesAdmin renders the /edges Stations page — the operator's way to
@@ -213,8 +213,8 @@ func (h *Handlers) apiEdgeRename(w http.ResponseWriter, r *http.Request) {
 // Claiming an unclaimed row as a replacement would leave the dead station's
 // history under the OLD uid and everything since the swap under the new one —
 // the split the whole identity model exists to prevent. Replacement hardware
-// takes the existing uid onto the box; the provisional row is then deleted, not
-// claimed.
+// takes the existing uid onto the box; the provisional row is then removed once
+// it is stale (apiEdgeRemove), not claimed.
 func (h *Handlers) apiEdgeClaim(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
 	if uid == "" {
@@ -233,6 +233,34 @@ func (h *Handlers) apiEdgeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		h.jsonError(w, "no station with uid "+uid, http.StatusNotFound)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
+// apiEdgeRemove removes a stale station: its claims, its feeds state and its
+// registry row, audited to the signed-in user (owner ruling 2026-11-22).
+//
+// POST /api/edges/remove?uid=stn-…
+//
+// STALE ONLY, AND THE SERVER DECIDES. The check is in the DELETE
+// (registry.RemoveStale), so a page drawn while the station was stale cannot
+// remove one that has heartbeated since: that answers 409. A station removed
+// by mistake registers fresh on its next heartbeat and reports its claims
+// again, with no name (TestScenario_RemovedStationComesBack, integration).
+func (h *Handlers) apiEdgeRemove(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
+	if uid == "" {
+		h.jsonError(w, "uid required", http.StatusBadRequest)
+		return
+	}
+	err := h.engine.NodeService().RemoveEdge(uid, h.resolveActor(h.getUsername(r)))
+	if errors.Is(err, service.ErrStationNotStale) {
+		h.jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.jsonSuccess(w)

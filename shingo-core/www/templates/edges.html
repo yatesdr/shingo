@@ -23,7 +23,7 @@
   <strong>If it is REPLACING a station that already exists, do not name it.</strong>
   Put the existing station's uid on that box instead — from the list below, or
   by restoring its backup — so its history stays attached. The unclaimed row
-  stays listed: there is no delete for it. Naming it would leave the old station's history under one uid
+  can be removed once it is stale. Naming it would leave the old station's history under one uid
   and everything after the swap under another.
 </p>
 
@@ -88,6 +88,9 @@
           <button class="btn btn-sm" data-action="renameEdge">Rename</button>
         {{else}}
           <button class="btn btn-sm btn-primary" data-action="claimEdge">Name it</button>
+        {{end}}
+        {{if eq .Status "stale"}}
+          <button class="btn btn-sm" data-action="removeEdge">Remove station</button>
         {{end}}
       </td>
     </tr>

@@ -157,7 +157,8 @@ func TestEdgesPage_MarksAReleaseBelowTheFloor(t *testing.T) {
 }
 
 // TestEdgesPage_WhatAStaleStationsRowOffers: the actions of the row of a stale
-// station and of an active one. Both rows offer Rename alone.
+// station and of an active one: Remove station is offered on the stale one
+// alone.
 func TestEdgesPage_WhatAStaleStationsRowOffers(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -169,7 +170,7 @@ func TestEdgesPage_WhatAStaleStationsRowOffers(t *testing.T) {
 
 	body := renderEdgesPage(t, h)
 	button := regexp.MustCompile(`<button[^>]*>([^<]*)</button>`)
-	for uid, want := range map[string]string{"stn-live": "Rename", "stn-gone": "Rename"} {
+	for uid, want := range map[string]string{"stn-live": "Rename", "stn-gone": "Rename, Remove station"} {
 		row := regexp.MustCompile(`(?s)<tr data-uid="` + uid + `".*?</tr>`).FindString(body)
 		var got []string
 		for _, m := range button.FindAllStringSubmatch(row, -1) {
@@ -181,14 +182,82 @@ func TestEdgesPage_WhatAStaleStationsRowOffers(t *testing.T) {
 	}
 }
 
-// TestEdgesRemoveDoor: what the router answers a removal of a station that
-// comes with no session. There is no such door.
+// TestEdgesRemoveDoor: the removal door. With no session the router refuses it
+// before the handler. The server, not the page, holds "stale only": an active
+// station is refused and keeps its row and its claims. A stale one loses its
+// claims mirror, the report rows of the processes that cleared, and its row;
+// the removal is audited, and what else names the station stays. A process
+// another station reported last is that station's and stays.
 func TestEdgesRemoveDoor(t *testing.T) {
 	t.Parallel()
-	h, _ := testHandlersForRendering(t)
+	h, db := testHandlersForRendering(t)
+	const live, gone = "stn-live", "stn-gone"
+	for _, uid := range []string{live, gone} {
+		testutil.MustNoErr(t, enrollAndRegister(db, uid, "host-"+uid, sql.NullInt64{Int64: 1, Valid: true}), "seed "+uid)
+	}
+	for _, q := range []string{
+		`UPDATE edge_registry SET status = 'stale' WHERE station_uid = 'stn-gone'`,
+		`INSERT INTO process_styles (process_id, style_id, station_uid) VALUES ('P-GONE', 'S', 'stn-gone'), ('P-LIVE', 'S', 'stn-live')`,
+		`INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode)
+			VALUES ('P-GONE', 'S', 'N1', 'consume', 'sequential'), ('P-LIVE', 'S', 'N1', 'consume', 'sequential')`,
+		`INSERT INTO process_positions (process_id, core_node_name) VALUES ('P-GONE', 'W1'), ('P-LIVE', 'W2')`,
+		`INSERT INTO plant_claims_reports (process_id, station_uid, digest, received_at) VALUES
+			('P-GONE', 'stn-gone', 'g', now()), ('P-GONE', 'stn-live', 'l', now()),
+			('P-LIVE', 'stn-gone', 'g', now()), ('P-LIVE', 'stn-live', 'l', now())`,
+		`INSERT INTO demand_registry (station_uid, core_node_name, role, payload_code) VALUES ('stn-gone', 'W1', 'produce', 'PART')`,
+	} {
+		_, err := db.Exec(q)
+		testutil.MustNoErr(t, err, "seed: "+q)
+	}
+
 	rec := httptest.NewRecorder()
-	realRouterFor(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/edges/remove?uid=stn-gone", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("POST /api/edges/remove = %d, want 404 (no door)", rec.Code)
+	realRouterFor(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/edges/remove?uid="+gone, nil))
+	if rec.Code == http.StatusOK || rec.Code == http.StatusNotFound {
+		t.Fatalf("a removal with no session = %d, want the auth refusal", rec.Code)
+	}
+
+	remove := func(uid string) int {
+		rec := httptest.NewRecorder()
+		h.apiEdgeRemove(rec, httptest.NewRequest(http.MethodPost, "/api/edges/remove?uid="+uid, nil))
+		return rec.Code
+	}
+	count := func(q string) int {
+		var n int
+		testutil.MustNoErr(t, db.QueryRow(q).Scan(&n), q)
+		return n
+	}
+	if code := remove(live); code != http.StatusConflict {
+		t.Fatalf("removing an active station = %d, want 409", code)
+	}
+	if n := count(`SELECT count(*) FROM style_claims`) + count(`SELECT count(*) FROM edge_registry`); n != 4 {
+		t.Fatalf("a refused removal left %d claims and stations, want all 4", n)
+	}
+
+	if code := remove(gone); code != http.StatusOK {
+		t.Fatalf("removing a stale station = %d, want 200", code)
+	}
+	for what, c := range map[string]struct {
+		q    string
+		want int
+	}{
+		"its row":                         {`SELECT count(*) FROM edge_registry WHERE station_uid = 'stn-gone'`, 0},
+		"the row of the other station":    {`SELECT count(*) FROM edge_registry WHERE station_uid = 'stn-live'`, 1},
+		"its styles":                      {`SELECT count(*) FROM process_styles WHERE process_id = 'P-GONE'`, 0},
+		"its claims":                      {`SELECT count(*) FROM style_claims WHERE process_id = 'P-GONE'`, 0},
+		"its positions":                   {`SELECT count(*) FROM process_positions WHERE process_id = 'P-GONE'`, 0},
+		"its reports":                     {`SELECT count(*) FROM plant_claims_reports WHERE station_uid = 'stn-gone'`, 0},
+		"a report of a cleared process":   {`SELECT count(*) FROM plant_claims_reports WHERE process_id = 'P-GONE'`, 0},
+		"a report of a process that kept": {`SELECT count(*) FROM plant_claims_reports WHERE process_id = 'P-LIVE'`, 1},
+		"the claims of the other":         {`SELECT count(*) FROM style_claims WHERE process_id = 'P-LIVE'`, 1},
+		"the positions of the other":      {`SELECT count(*) FROM process_positions WHERE process_id = 'P-LIVE'`, 1},
+		"its demand registry row":         {`SELECT count(*) FROM demand_registry WHERE station_uid = 'stn-gone'`, 1},
+		"the audit row":                   {`SELECT count(*) FROM audit_log WHERE entity_type = 'edge' AND action = 'removed'`, 1},
+	} {
+		if got := count(c.q); got != c.want {
+			t.Errorf("after the removal %s: %d rows, want %d", what, got, c.want)
+		}
+	}
+	if code := remove(gone); code != http.StatusConflict {
+		t.Errorf("removing it again = %d, want 409", code)
 	}
 }

@@ -130,10 +130,13 @@ var feedSites = map[string]string{
 	"store/plantclaims:ReplaceProcessFromStation": "",
 	"store/plantclaims:deleteClaims":              "",
 	"store/plantclaims:WipeAll":                   "",
+	"store/plantclaims:deleteStyles":              "",
+	"store/plantclaims:RemoveStation":             "",
 	// An Edge's name: a loader that names the Edge, and a node it claims, carry it.
 	"store/registry:Claim":          "",
 	"store/registry:Enroll":         "",
 	"store/registry:SetDisplayName": "",
+	"store/registry:RemoveStale":    "",
 	// The scene.
 	"store/scene:DeleteByArea":      "",
 	"store/scene:DeleteEdgesByArea": "",
@@ -215,6 +218,8 @@ var feedWriters = map[string]censusNode{
 	"service:NodeService.ClaimEdge":  {push: pushDoor},
 	"service:NodeService.EnrollEdge": {push: pushDoor},
 	"service:NodeService.RenameEdge": {push: pushDoor},
+	// A removed station: the nodes it claimed are no longer marked.
+	"service:NodeService.RemoveEdge": {push: pushDoor},
 
 	// Loaders: every write ends in rederive, which goes through the door.
 	"service:LoaderService.CreateLoader":   {push: pushDoor, via: "service:LoaderService.rederive"},

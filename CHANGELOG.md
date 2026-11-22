@@ -35,6 +35,7 @@ Deploy: no migration
 - A count or a reset at a node two stations claim reaches both; only the station holding that bin changes.
 - Stations flags a node two stations claim, on both rows, until one of them takes it off.
 - An Edge's positions picker greys a node another station claims, with that station's name.
+- Stations can remove a stale station; its claims and name go, its history stays.
 
 ## v0.19.0 — 2026-11-22
 
