@@ -20,9 +20,9 @@ func (testEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, order
 }
 func (testEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
 }
-func (testEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool) {
+func (testEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binDestNode, deliveryNode string, fromNotice bool) {
 }
-func (testEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
+func (testEmitter) EmitOrderDeliveredFallback(binID int64, deliveryNode string) {
 }
 func (testEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {
 }

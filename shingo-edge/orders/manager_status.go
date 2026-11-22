@@ -12,65 +12,44 @@ import (
 	"shingoedge/store/processes"
 )
 
-// HandleDeliveredWithExpiry processes a delivered reply with optional staged
-// expiry. binID captures Core's bin id at delivery so the PLC tick path can
-// attribute deltas to the right bin; nil for multi-bin orders. uop+epoch are
-// Core's snapshot of that bin at delivery (from the OrderDelivered envelope)
-// — Edge seeds its runtime cache + active_bin_epoch from them so tick deltas
-// carry the right count baseline and load-lifecycle generation, with no
-// separate HTTP pull. uop nil = no count was sent; the Edge seats 0 and logs
-// the blind delivery rather than assuming a full carrier (see
-// wiring_delivered.go).
+// HandleDeliveredNotice is the wire's order.delivered. It closes the order,
+// keeps Core's bin id on it, so the PLC tick path attributes deltas to the
+// right bin (nil for an order whose cart Core could not name), and binds
+// nothing: the carrier Core placed is bound by its landing
+// (transit.bin_landed; Lane H, H.5).
 //
-// deliveryNode is the Core dot-name of the destination, forwarded from the
-// OrderDelivered protocol message. When the order isn't found by UUID (Core-
-// admin manual orders have no Edge row), a fallback bind event is emitted using
-// deliveryNode so the runtime cache can still be updated.
+// It is the one place that knows an order.delivered is behind the delivered
+// event, and says so on it (fromNotice), whatever landing_sent says: a v0.19.0
+// Edge reads that key, this one does not.
 //
-// This entry is the delivered of a Core that sends no landing (an older Core,
-// protocol.OrderDelivered.LandingSent false): its carrier fields still bind,
-// through the landing verb with no placement stamp (Lane H, H.7). The wire
-// handler calls HandleDeliveredNotice, which carries the flag.
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, deliveryNode, binDestNode string) error {
-	return m.handleDeliveredWire(orderUUID, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, deliveryNode, binDestNode, false)
-}
-
-// HandleDeliveredNotice is the wire's order.delivered. With LandingSent the
-// sending Core announced the carrier's drop on transit.bin_landed, so the
-// delivered closes the order and binds nothing (Lane H, H.5); without it the
-// carrier fields are an older Core's and bind as HandleDeliveredWithExpiry's
-// do (H.7).
+// deliveryNode is the Core dot-name of the destination. When the order isn't
+// found by UUID (a Core-admin manual order has no Edge row), the fallback
+// event carries it so the engine can check the node by its name.
 func (m *Manager) HandleDeliveredNotice(p *protocol.OrderDelivered) error {
-	return m.handleDeliveredWire(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID,
-		p.UOPRemaining, p.BinPayloadCode, p.DeltaEpoch, p.DeliveryNode, p.BinDestNode, p.LandingSent)
-}
-
-func (m *Manager) handleDeliveredWire(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, deliveryNode, binDestNode string, landingSent bool) error {
-	order, err := m.db.GetOrderByUUID(orderUUID)
+	order, err := m.db.GetOrderByUUID(p.OrderUUID)
 	if err != nil {
-		// Core-admin order — no Edge row. Emit a fallback event so the engine
-		// can check (or, for an older Core, bind) the node by its name.
-		if binID != nil && deliveryNode != "" {
-			m.emitter.EmitOrderDeliveredFallback(*binID, uop, binPayloadCode, epoch, deliveryNode, landingSent)
+		if p.BinID != nil && p.DeliveryNode != "" {
+			m.emitter.EmitOrderDeliveredFallback(*p.BinID, p.DeliveryNode)
 		}
-		return fmt.Errorf("order %s not found: %w", orderUUID, err)
+		return fmt.Errorf("order %s not found: %w", p.OrderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode, landingSent)
+	return m.handleDelivered(order, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID,
+		deliveredSeed{binDestNode: p.BinDestNode, fromNotice: true})
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, seed deliveredSeed) error {
 	if versioned(order) {
 		// The status is Core's versioned word, applied from its own tell; this
 		// message is the carrier's facts. They are written, then meet Core's
 		// delivered (core_word.go, deliveredFactsIn).
 		m.lifecycle.writeDeliveredFacts(order, stagedExpireAt, binID)
-		m.deliveredFactsIn(order, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
+		m.deliveredFactsIn(order, seed)
 		if m.OnDeliveredMessage != nil {
 			m.OnDeliveredMessage(order.ID, order.ProcessNodeID)
 		}
 		return nil
 	}
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode, landingSent); err != nil {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, seed); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -119,10 +98,9 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		return nil
 	case ReplyDelivered:
-		// Dispatch-reply delivery carries no bin snapshot (that rides the
-		// OrderDelivered envelope); pass nil/0/"" and let the OrderDelivered
-		// path seat the count when it arrives.
-		return m.handleDelivered(order, statusDetail, nil, nil, nil, nil, 0, "", false)
+		// A dispatch reply is not an order.delivered: no bin id and no notice
+		// (those ride the OrderDelivered envelope).
+		return m.handleDelivered(order, statusDetail, nil, nil, deliveredSeed{})
 	case ReplyError:
 		wasLive := !IsTerminal(order.Status)
 		if err := m.TransitionOrder(order.ID, StatusFailed, statusDetail); err != nil {

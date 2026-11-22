@@ -62,14 +62,14 @@ func newCRFixture(t *testing.T, prefix string) *crFixture {
 }
 
 // deliverU1 files a U1 at W tracked at W and drives it to delivered with bin 991
-// carrying 30.
+// aboard.
 func (f *crFixture) deliverU1(t *testing.T, at int64, core string) {
 	t.Helper()
 	id, err := f.db.CreateOrder("cr-u1-"+core, orders.TypeRetrieve, &at, false, 1, core, "", "FG-SUPER", protocol.Height{}, false, "PART-CR", "", "")
 	testutil.MustNoErr(t, err, "create U1")
 	testutil.MustNoErr(t, f.db.UpdateOrderStatus(id, string(protocol.StatusDispatched)), "dispatch")
-	bin, uop := int64(991), 30
-	testutil.MustNoErr(t, f.eng.orderMgr.HandleDeliveredWithExpiry("cr-u1-"+core, "delivered", nil, &bin, &uop, nil, 0, core, ""),
+	bin := int64(991)
+	testutil.MustNoErr(t, f.eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: "cr-u1-" + core, BinID: &bin, DeliveryNode: core}),
 		"deliver")
 }
 
@@ -80,13 +80,12 @@ func (f *crFixture) boundBin(t *testing.T, id int64) (bin *int64, uop int, claim
 	return rt.ActiveBinID, rt.RemainingUOPCached, rt.ActiveClaimID
 }
 
-// wiring_delivered.go handleNodeOrderDelivered — a delivery at a Core-owned
-// window binds the carrier, and writes NO claim id: the synthesized claim has
-// none. Before (1bb689bc) it raised "delivered but NOT bound … no active claim at
-// node" and bound nothing.
+// The landing at a Core-owned window, with its delivered behind it — binds
+// the carrier and writes NO claim id: the synthesized claim has none.
 func TestPinClaimReader_DeliveredAtACoreOwnedWindow_Binds(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRD")
+	f.eng.HandleBinLanded(landing(f.wCore, 991, 0, 30, "", 1))
 	f.deliverU1(t, f.w, f.wCore)
 	bin, uop, claimID := f.boundBin(t, f.w)
 	if bin == nil || *bin != 991 || uop != 30 {
@@ -97,13 +96,14 @@ func TestPinClaimReader_DeliveredAtACoreOwnedWindow_Binds(t *testing.T) {
 	}
 }
 
-// wiring_delivered.go handleFallbackDelivered (a delivery with no Edge row) —
-// the same reader: binds at a Core-owned window, no claim id. Before: unbound.
+// The same with a delivered that has no Edge row (handleFallbackDelivered):
+// the landing binds at a Core-owned window, no claim id.
 func TestPinClaimReader_FallbackDeliveredAtACoreOwnedWindow_Binds(t *testing.T) {
 	t.Parallel()
 	f := newCRFixture(t, "CRF")
-	bin, uop := int64(992), 30
-	if err := f.eng.orderMgr.HandleDeliveredWithExpiry("no-edge-row", "delivered", nil, &bin, &uop, nil, 0, f.wCore, ""); err == nil {
+	bin := int64(992)
+	f.eng.HandleBinLanded(landing(f.wCore, bin, 0, 30, "", 1))
+	if err := f.eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: "no-edge-row", BinID: &bin, DeliveryNode: f.wCore}); err == nil {
 		t.Fatalf("fixture: an unknown uuid must take the fallback path (the manager reports not-found)")
 	}
 	got, u, claimID := f.boundBin(t, f.w)

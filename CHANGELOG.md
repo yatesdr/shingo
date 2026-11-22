@@ -52,6 +52,7 @@ Deploy: no migration
 - The oldest supported peer is v0.19.0 on both sides: an older Edge shows as below the floor on /edges and Core Health.
 - An Edge no longer repeats its station id inside a register, heartbeat, robot watch or lineside report: about 36 bytes less on each.
 - The heartbeat answer drops its two old fields (claims, bin watch): 14 bytes less a minute on each Edge.
+- order.delivered drops the carrier's count, generation and part (about 67 bytes); the landing binds, and a delivery the seat doesn't hold is still said.
 - Core docs: the restore commands stop on the first error, restore nothing, and print the Postgres version.
 - Core install: a config backup that fails stops the install instead of reporting a backup that isn't there.
 

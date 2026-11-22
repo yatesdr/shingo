@@ -47,6 +47,11 @@ import (
 // capturingEmitter records every event so tests can assert on emitter
 // calls without printing or losing arg detail. Pointer receivers so
 // appends are visible to the caller.
+type capturedFallback struct {
+	binID int64
+	node  string
+}
+
 type capturingEmitter struct {
 	created   []string
 	status    []string // "oldStatus→newStatus"
@@ -55,9 +60,8 @@ type capturingEmitter struct {
 	// cancelledByCore records "orderType:reason" for each cancel Core sent for
 	// an order that was still live here.
 	cancelledByCore []string
-	// fallbackPayloads records what the no-Edge-row delivery path was told the
-	// carrier is. nil entries are an older Core that sends no payload.
-	fallbackPayloads []*string
+	// fallbacks records what the no-Edge-row delivery path named.
+	fallbacks []capturedFallback
 }
 
 func (e *capturingEmitter) EmitOrderCreated(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
@@ -72,11 +76,11 @@ func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, o
 	e.completed = append(e.completed, string(orderType)+":"+orderUUID)
 }
 
-func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool) {
+func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binDestNode, deliveryNode string, fromNotice bool) {
 }
 
-func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
-	e.fallbackPayloads = append(e.fallbackPayloads, binPayloadCode)
+func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, deliveryNode string) {
+	e.fallbacks = append(e.fallbacks, capturedFallback{binID, deliveryNode})
 }
 
 func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {
@@ -1424,7 +1428,7 @@ func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
 	future := time.Now().UTC().Add(1 * time.Hour)
-	testutil.MustNoErr(t, mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil, nil, nil, 0, "", ""), "HandleDeliveredWithExpiry")
+	testutil.MustNoErr(t, mgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: "uuid-he", StagedExpireAt: &future}), "HandleDeliveredWithExpiry")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusDelivered {
 		t.Errorf("Status: got %q, want delivered", o.Status)
@@ -1439,7 +1443,7 @@ func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil, nil, nil, nil, 0, "", "")
+	err := mgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: "missing-uuid"})
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
@@ -1646,34 +1650,23 @@ func TestMirrorFollowsCore_BackwardAndImpossibleStayRefused(t *testing.T) {
 	}
 }
 
-// THE FIFTH DOOR, AT THE SEAM. A Core-admin order has no Edge row, so
-// HandleDeliveredWithExpiry cannot find it by UUID and emits a bind-only
-// fallback. binPayloadCode was in scope on that line and was not passed, so the
-// one delivery path with no order row to reconstruct from was also the one that
-// recorded nothing about what landed.
-func TestHandleDelivered_FallbackCarriesThePayload(t *testing.T) {
+// A delivered with no Edge order row (a Core-admin move) can't be found by
+// UUID: HandleDeliveredNotice reports that and emits one fallback naming the
+// carrier and the node, for the check. The carrier's identity is its landing's
+// (engine TestFallbackDelivered_RecordsTheCarrier).
+func TestHandleDelivered_FallbackNamesTheCarrierAndNode(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge.station")
 
 	binID := int64(7788)
-	payload := "SYN-PART01E.06"
-	err := mgr.HandleDeliveredWithExpiry("uuid-core-admin-no-edge-row", "", nil,
-		&binID, nil, &payload, 5, "ALN_007", "")
+	err := mgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: "uuid-core-admin-no-edge-row",
+		BinID: &binID, DeliveryNode: "ALN_007"})
 	if err == nil {
 		t.Fatal("expected the not-found error — that is what puts this on the fallback path")
 	}
-	if len(emitter.fallbackPayloads) != 1 {
-		t.Fatalf("fallback emitted %d times, want 1", len(emitter.fallbackPayloads))
-	}
-	got := emitter.fallbackPayloads[0]
-	if got == nil {
-		t.Fatal("the payload was dropped on the way through. Core named the carrier on the " +
-			"envelope and this path binds a claim from the process's active style, which during " +
-			"a changeover is the outgoing one — the incident's mechanism with no record to fix it.")
-	}
-	if *got != payload {
-		t.Errorf("payload = %q, want %q", *got, payload)
+	if len(emitter.fallbacks) != 1 || emitter.fallbacks[0] != (capturedFallback{binID, "ALN_007"}) {
+		t.Fatalf("fallbacks = %+v, want one naming bin %d at ALN_007", emitter.fallbacks, binID)
 	}
 }

@@ -194,8 +194,7 @@ func (e *Engine) bindEndingHold(node *processes.Node, seat *processes.RuntimeSta
 // bindEndingHold).
 //
 // Callers: HandleBinLanded (stamped), and for one release an older Core's
-// Bound (bindAdjustmentFromCore) and delivered (landFromOldCore), unstamped
-// (H.7).
+// Bound (bindAdjustmentFromCore), unstamped (H.7).
 func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carrier domain.LinesideCarrier,
 	src domain.CarrierSource, why, by string) bool {
 	if e.inventoryDelta == nil {

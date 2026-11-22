@@ -40,7 +40,6 @@ func TestCensus_NoLegIsAimedByTheLinesidePart(t *testing.T) {
 		"engine/wiring_completion.go:applyLoaderEmptyIn":        "a loader's empty in: records it",
 		"engine/wiring_counter_delta.go:carrierIsPart":          "the tick: whether the carrier is the claim's part",
 		"engine/wiring_counter_delta.go:recordedOtherPart":      "the tick: a carrier recorded as another part",
-		"engine/wiring_delivered.go:landFromOldCore":            "a delivery from a Core that sends no landing: binds it",
 		"service/station_serves.go:servedHave":                  "the board: what the station has",
 		"store/processes/processes.go:scanRuntime":              "the runtime row's scan",
 		"domain/process.go:PartRecorded":                        "the domain's accessor",

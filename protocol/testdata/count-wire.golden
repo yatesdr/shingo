@@ -4,7 +4,7 @@ full:  {"order_uuid":"OrderUUID","order_type":"OrderType","payload_code":"Payloa
 
 ## OrderDelivered
 empty: {"order_uuid":"","delivered_at":"0001-01-01T00:00:00Z"}
-full:  {"order_uuid":"OrderUUID","delivered_at":"2026-11-19T12:00:00Z","staged_expire_at":"2026-11-19T12:00:00Z","bin_id":803,"uop_remaining":803,"delta_epoch":803,"bin_payload_code":"BinPayloadCode","delivery_node":"DeliveryNode","bin_dest_node":"BinDestNode","landing_sent":true}
+full:  {"order_uuid":"OrderUUID","delivered_at":"2026-11-19T12:00:00Z","staged_expire_at":"2026-11-19T12:00:00Z","bin_id":803,"delivery_node":"DeliveryNode","bin_dest_node":"BinDestNode","landing_sent":true}
 
 ## ComplexOrderRequest
 empty: {"order_uuid":"","quantity":0,"steps":null}

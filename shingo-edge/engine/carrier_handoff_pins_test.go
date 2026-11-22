@@ -66,17 +66,16 @@ func landBound(eng *Engine, node string, binID, epoch int64, count int) {
 	})
 }
 
-// deliver emits order.delivered for bin at the node, carrying Core's count.
-func deliver(t *testing.T, eng *Engine, nodeID int64, uuid, node string, binID, epoch int64, count int) {
+// deliver emits the event of an order.delivered for bin at the node.
+func deliver(t *testing.T, eng *Engine, nodeID int64, uuid, node string, binID int64) {
 	t.Helper()
 	orderID, err := eng.db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1, node, "", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
 	bid := binID
 	testutil.MustNoErr(t, eng.db.UpdateOrderBinID(orderID, &bid), "order bin")
-	uop := count
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
 		OrderID: orderID, OrderUUID: uuid, OrderType: orders.TypeRetrieve,
-		ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop, BinEpoch: epoch,
+		ProcessNodeID: &nodeID, BinID: &bid, FromNotice: true,
 	}})
 }
 
@@ -99,7 +98,7 @@ func TestPinH5_LandingThenDeliveredKeepsTheTicks(t *testing.T) {
 	for i := 0; i < k; i++ {
 		tickConsume(eng, processID, styleID, 1)
 	}
-	deliver(t, eng, nodeID, "uuid-hld1", "HLD1-NODE", bin, epoch, n)
+	deliver(t, eng, nodeID, "uuid-hld1", "HLD1-NODE", bin)
 
 	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != n-k {
 		t.Errorf("count = %d, want %d: the delivered wrote Core's arrival snapshot over the %d parts "+
@@ -122,7 +121,7 @@ func TestPinH5_DeliveredThenLandingKeepsTheTicks(t *testing.T) {
 	processID, nodeID, styleID, _ := emptySeat(t, eng, "HLD2", "PART-HLD2", 100)
 
 	const bin, epoch, n, k = int64(8102), int64(4), 100, 3
-	deliver(t, eng, nodeID, "uuid-hld2", "HLD2-NODE", bin, epoch, n)
+	deliver(t, eng, nodeID, "uuid-hld2", "HLD2-NODE", bin)
 	for i := 0; i < k; i++ {
 		tickConsume(eng, processID, styleID, 1)
 	}

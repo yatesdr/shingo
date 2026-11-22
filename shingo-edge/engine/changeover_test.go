@@ -248,8 +248,7 @@ func emitOrderCompletedWithEnvelopeUOP(eng *Engine, orderID int64, orderUUID str
 			OrderType:     orderType,
 			ProcessNodeID: processNodeID,
 			BinID:         binID,
-			BinUOP:        binUOP,
-			LandingSent:   true,
+			FromNotice:    true,
 		}
 		if node, nerr := eng.db.GetProcessNode(*processNodeID); oerr == nil && nerr == nil && node != nil && binID != nil &&
 			eng.deliveredAtNode(order, node, ev) {

@@ -72,9 +72,10 @@ func runFailedReleaseRetry(t *testing.T, rollback func(m *orders.Manager, uuid, 
 	// the OrderDelivered envelope (uop=175, epoch=7).
 	const snapshotUOP = 175
 	bid := newBinID
-	uop := snapshotUOP
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: node.CoreNodeName, Count: snapshotUOP, Epoch: 7,
+		OrderUUID: uuid, PlacedSeq: 1})
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "delivered on retry", nil, &bid, &uop, nil, 7, node.CoreNodeName, ""),
+		eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: uuid, BinID: &bid, DeliveryNode: node.CoreNodeName}),
 		"handle delivered on retry")
 
 	// The delivered event fired and bound the runtime to the new bin at the
@@ -91,11 +92,11 @@ func runFailedReleaseRetry(t *testing.T, rollback func(m *orders.Manager, uuid, 
 		t.Errorf("after retry: ActiveBinID=%v, want %d (bin bound on redelivery)", rt.ActiveBinID, newBinID)
 	}
 	if rt.RemainingUOPCached != snapshotUOP {
-		t.Errorf("after retry: RemainingUOPCached=%d, want %d (count snapshot from the delivered envelope)",
+		t.Errorf("after retry: RemainingUOPCached=%d, want %d (count snapshot from the landing)",
 			rt.RemainingUOPCached, snapshotUOP)
 	}
 	if rt.ActiveBinEpoch != 7 {
-		t.Errorf("after retry: ActiveBinEpoch=%d, want 7 (epoch from the delivered envelope)", rt.ActiveBinEpoch)
+		t.Errorf("after retry: ActiveBinEpoch=%d, want 7 (epoch from the landing)", rt.ActiveBinEpoch)
 	}
 }
 

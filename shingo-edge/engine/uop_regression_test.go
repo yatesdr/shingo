@@ -118,7 +118,7 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 // It used to seat claim.UOPCapacity for a consume claim: a full carrier nobody
 // had counted, written into the field Core reads as a measurement — the
 // suppressing direction (the ALN_007 shape). Then it seated 0 with a loud
-// BLIND DELIVERY line. CONVERTED with Lane H (H.5, H.7): a delivered binds
+// BLIND DELIVERY line. CONVERTED with Lane H (H.5): a delivered binds
 // through the landing verb only for an older Core, and a carrier with no count
 // is not bound at all — the blind seed is deleted. What the pin still holds is
 // the direction and the noise: the node is NOT seated with a full carrier, and

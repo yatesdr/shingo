@@ -365,21 +365,16 @@ func TestFallbackDelivered_RecordsTheCarrier(t *testing.T) {
 	payload := "SYN-PART01E.06"
 	binID := int64(9001)
 	count := 40
-	eng.handleFallbackDelivered(OrderDeliveredEvent{
-		BinID:          &binID,
-		BinUOP:         &count,
-		BinPayloadCode: &payload,
-		BinEpoch:       3,
-		DeliveryNode:   "ALN_007",
-	})
+	eng.HandleBinLanded(landing("ALN_007", binID, 3, count, payload, 1))
+	eng.handleFallbackDelivered(OrderDeliveredEvent{BinID: &binID, DeliveryNode: "ALN_007", FromNotice: true})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != binID {
-		t.Fatalf("ActiveBinID = %v, want %d — the fallback bind itself must still work", rt.ActiveBinID, binID)
+		t.Fatalf("ActiveBinID = %v, want %d — the landing binds with no Edge order row", rt.ActiveBinID, binID)
 	}
 	if string(rt.LinesidePayloadCode) != payload {
-		t.Errorf("LinesidePayloadCode = %q, want %q. Core named the carrier on the envelope; "+
+		t.Errorf("LinesidePayloadCode = %q, want %q. Core named the carrier on the landing; "+
 			"this is the one delivery path with no Edge order row to reconstruct it from.",
 			rt.LinesidePayloadCode, payload)
 	}
@@ -391,11 +386,10 @@ func TestFallbackDelivered_RecordsTheCarrier(t *testing.T) {
 	}
 }
 
-// An older Core sends no payload on the fallback envelope. That records as an
-// UNKNOWN carrier rather than being skipped: leaving the previous occupant's
-// identity standing would be a confident wrong answer about this one.
-// CONVERTED with Lane H (H.7): the envelope carries Core's count, which an
-// older Core's delivered needs to bind at all (the blind seed is gone).
+// A landing that names no payload, for a delivered with no Edge order row,
+// records as an UNKNOWN carrier rather than being skipped: leaving the
+// previous occupant's identity standing would be a confident wrong answer
+// about this one.
 func TestFallbackDelivered_NoPayloadClearsRatherThanInherits(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -405,12 +399,13 @@ func TestFallbackDelivered_NoPayloadClearsRatherThanInherits(t *testing.T) {
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PREVIOUS-OCCUPANT"), domain.CarrierFromDelivery)
 	binID := int64(9002)
 	count := 40
-	eng.handleFallbackDelivered(OrderDeliveredEvent{BinID: &binID, BinUOP: &count, BinEpoch: 4, DeliveryNode: "ALN_007"})
+	eng.HandleBinLanded(landing("ALN_007", binID, 4, count, "", 1))
+	eng.handleFallbackDelivered(OrderDeliveredEvent{BinID: &binID, FromNotice: true, DeliveryNode: "ALN_007"})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
 	if rt.LinesidePayloadKnown {
-		t.Error("LinesidePayloadKnown = true with no payload on the envelope")
+		t.Error("LinesidePayloadKnown = true with no payload on the landing")
 	}
 	if rt.LinesidePayloadCode == "PREVIOUS-OCCUPANT" {
 		t.Error("the previous occupant's identity survived a new carrier landing on the node")

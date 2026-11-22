@@ -11,12 +11,13 @@
 // WHERE node only, with Core's arrival count, so a delivered arriving after
 // the line had counted wrote the ticks away (DESIGN-H §1 A7, §6).
 //
-// An older Core sends no landing, and says so by leaving
-// protocol.OrderDelivered.LandingSent unset. For that Core, for one release,
-// the delivered's carrier fields still bind, through the landing verb with no
-// placement stamp: into an empty slot or onto the same bin only, never over a
-// different bound carrier (H.7; landFromOldCore). The pullback auto-clear
-// stays: it is a declared clear, not a bind.
+// WHETHER AN ORDER.DELIVERED IS BEHIND THE EVENT is the event's own fact
+// (OrderDeliveredEvent.FromNotice), set by the notice's handler whatever the
+// message's landing_sent says. One live origin has none: a version-0 reconcile
+// snapshot (orders.ApplyCoreStatusSnapshot). That event is always said and
+// clears nothing (TestFloorWire_ADeliveredWithNoNoticeOfItsOwn,
+// TestDeliveredNotBound_TheCheckCoversEveryOrigin). The pullback auto-clear of
+// a noticed delivery stays: it is a declared clear, not a bind.
 
 package engine
 
@@ -27,7 +28,6 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -71,9 +71,8 @@ func (e *Engine) legLeftNoBinHereByDesign(delivered OrderDeliveredEvent) bool {
 	return true
 }
 
-// handleNodeOrderDelivered closes the delivered side of an order: the check
-// (or, for an older Core, the bind through the landing verb), and the
-// pullback auto-clear. Gates on:
+// handleNodeOrderDelivered closes the delivered side of an order: the check,
+// and for a noticed delivery the pullback auto-clear. Gates on:
 //
 //   - ProcessNodeID present and resolvable (else the by-name fallback, or the
 //     multi-bin backstop alarm, as before);
@@ -102,13 +101,14 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			}
 			e.raiseDeliveredNotBound(delivered, "", "multi-bin delivery carried no bin id — no bin resolved to this node (F1b backstop)")
 		default:
-			if delivered.LandingSent {
+			if delivered.FromNotice {
 				// The landing is the bind; a delivered with nothing to check
 				// against is just a closed order.
 				return
 			}
-			// An older Core, and nothing matched: HK 2026-07-28 was two move
-			// orders matching no bind path with zero diagnostics. Say so.
+			// No order.delivered behind it, and nothing matched: HK 2026-07-28
+			// was two move orders matching no bind path with zero diagnostics.
+			// Say so.
 			e.raiseDeliveredNotBound(delivered, "",
 				"delivery matched no bind path (process_node_id and delivery_node both absent, or bin id missing) — nothing bound")
 		}
@@ -125,9 +125,8 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if !e.deliveredAtNode(order, node, delivered) {
 		return
 	}
-	if delivered.LandingSent {
-		e.checkDeliveredCarrier(node, delivered)
-	} else if !e.landFromOldCore(node, delivered) {
+	e.checkDeliveredCarrier(node, delivered)
+	if !delivered.FromNotice {
 		return
 	}
 
@@ -173,8 +172,8 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 }
 
 // deliveredAtNode reports whether the order's carried bin came to rest at
-// node, for the check and the older Core's bind. Only single-bin orders and
-// F1b multi-tote orders with a resolved bin reach here.
+// node, for the check. Only single-bin orders and F1b multi-tote orders with a
+// resolved bin reach here.
 //
 // order.DeliveryNode is NOT usable for a complex order: a complex order has
 // many dropoffs, and Edge stamps swap legs with the order's PROCESS node, which
@@ -209,6 +208,10 @@ func (e *Engine) deliveredAtNode(order *storeorders.Order, node *processes.Node,
 // something else (or nothing). Said once, by name; nothing is written. The
 // operator's front door (Record Count on the bin tab) binds it.
 //
+// A delivered with no order.delivered behind it is said even where the seat
+// holds the carrier: nothing from the wire says it landed, and the pullback
+// auto-clear does not run for it.
+//
 // One read, of a row the delivered handler used to write.
 func (e *Engine) checkDeliveredCarrier(node *processes.Node, delivered OrderDeliveredEvent) {
 	rt, err := e.db.GetProcessNodeRuntime(node.ID)
@@ -217,6 +220,10 @@ func (e *Engine) checkDeliveredCarrier(node *processes.Node, delivered OrderDeli
 		return
 	}
 	if rt.ActiveBinID != nil && *rt.ActiveBinID == *delivered.BinID {
+		if !delivered.FromNotice {
+			e.raiseDeliveredNotBound(delivered, node.CoreNodeName,
+				"delivered here with no order.delivered behind it — nothing bound or cleared")
+		}
 		return
 	}
 	bound := "nothing"
@@ -227,47 +234,10 @@ func (e *Engine) checkDeliveredCarrier(node *processes.Node, delivered OrderDeli
 		fmt.Sprintf("delivered here, but the seat holds %s — its landing has not bound it", bound))
 }
 
-// landFromOldCore is the older Core's delivered, for one release (Lane H,
-// H.7): its carrier fields bind through the landing verb with no placement
-// stamp, into an empty slot or onto the same bin only, never over a different
-// bound carrier. The same bin already bound at an equal or newer generation
-// keeps its count (H.4), so a delivered arriving after ticks no longer writes
-// them away. Reports whether the seat now holds the order's carrier.
-//
-// A nil count is a carrier Core could not read: nothing is bound (it used to
-// seat 0 and say BLIND DELIVERY), and the check names it.
-func (e *Engine) landFromOldCore(node *processes.Node, delivered OrderDeliveredEvent) bool {
-	if e.claimAtNode(node) == nil {
-		// The bin landed at a node we own but there is no active claim to bind
-		// it under (unpublished/mid-changeover style, orphaned node). A
-		// Core-owned loader window is NOT this case: claimAtNode synthesizes
-		// its claim.
-		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "no active claim at node")
-		return false
-	}
-	if delivered.BinUOP == nil {
-		e.raiseDeliveredNotBound(delivered, node.CoreNodeName, "Core sent no count for the carrier — nothing bound")
-		return false
-	}
-	carrier := domain.UnknownCarrier()
-	if delivered.BinPayloadCode != nil {
-		carrier = domain.KnownCarrier(domain.LinesidePayloadCode(*delivered.BinPayloadCode))
-	}
-	if e.landCarrier(node, processes.LandingBind{
-		BinID: *delivered.BinID, Epoch: delivered.BinEpoch, Count: *delivered.BinUOP,
-	}, carrier, domain.CarrierFromLanding, "an older Core's delivered, order "+delivered.OrderUUID,
-		e.strangerBy(e.landingOrder(delivered.OrderUUID), node.CoreNodeName)) {
-		return true
-	}
-	e.checkDeliveredCarrier(node, delivered)
-	return false
-}
-
 // handleFallbackDelivered is the delivered of an order with no Edge process
 // node (a Core-admin order with no Edge row, or a manual move order created
-// against a Core node name): the node is resolved by its Core dot-name. With
-// a landing, it is the check; for an older Core, the bind through the landing
-// verb (landFromOldCore).
+// against a Core node name): the node is resolved by its Core dot-name, and
+// the check runs against it.
 func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 	node, err := e.db.GetProcessNodeByCoreNodeName(delivered.DeliveryNode)
 	if err != nil || node == nil {
@@ -276,14 +246,7 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 		e.logFn("delivered fallback: %s is not an Edge process node — nothing to check", delivered.DeliveryNode)
 		return
 	}
-	if delivered.LandingSent {
-		e.checkDeliveredCarrier(node, delivered)
-		return
-	}
-	if e.landFromOldCore(node, delivered) {
-		log.Printf("delivered fallback: bound bin %d to node %s (remaining=%d epoch=%d) via delivery-node resolution",
-			*delivered.BinID, node.CoreNodeName, *delivered.BinUOP, delivered.BinEpoch)
-	}
+	e.checkDeliveredCarrier(node, delivered)
 }
 
 // raiseDeliveredNotBound surfaces a delivery that arrived at one of our nodes
@@ -300,8 +263,8 @@ func (e *Engine) handleFallbackDelivered(delivered OrderDeliveredEvent) {
 //
 // TODO(2026-09-10): study a better shape.
 // This alarm is the INSTRUMENT, not the fix, and its `reason` strings are
-// separate root causes wearing one label. "No active claim at node" is an order
-// that should not have been created, or a claim-resolution gap. "Multi-bin
+// separate root causes wearing one label. "The seat holds nothing" is a landing
+// that was never addressed here, or was refused by the seat. "Multi-bin
 // delivery carried no bin id" is the PRODUCER violating facts-carried-not-
 // derived: the delivery event should always name the bin it delivered.
 // The better shape is to read this alarm as a histogram BY REASON and fix the

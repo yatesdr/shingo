@@ -24,35 +24,24 @@ type LifecycleService struct {
 	emitter EventEmitter
 	debug   DebugLogFunc
 
-	// deliveredSeeds carries the bin's uop+epoch snapshot from the
-	// OrderDelivered envelope into the (generic) applyTransition emit,
-	// keyed by order id. HandleDelivered Stores it immediately before
-	// driving the StatusDelivered transition (same goroutine) and
-	// applyTransition LoadAndDeletes it in the delivered branch. Other
-	// paths to StatusDelivered (force/recovery) find no entry, so Edge
-	// falls back to its role-default seed — the pre-existing behavior.
+	// deliveredSeeds carries order.delivered's facts into the (generic)
+	// applyTransition emit, keyed by order id. HandleDelivered Stores them
+	// immediately before driving the StatusDelivered transition (same
+	// goroutine) and applyTransition LoadAndDeletes them in the delivered
+	// branch. Other paths to StatusDelivered (a forced reconcile snapshot) find
+	// no entry: the event then says no notice is behind it.
 	// A sync.Map keeps it zero-value-ready (no constructor change) and
 	// safe if deliveries for different orders ever interleave.
 	deliveredSeeds sync.Map
 }
 
-// deliveredSeed is the bin snapshot Core stamps on the OrderDelivered
-// envelope; nil uop means "no count was sent" → the Edge seats 0 and says so.
+// deliveredSeed is what an order.delivered leaves for the delivered emit.
 // binDestNode is set only for multi-tote deliveries (F1b): the Core dot-name of
-// the node the carried bin landed at, so the delivered emit can carry it to the
-// runtime-binding handler.
+// the node the carried bin landed at. fromNotice says the notice itself is
+// behind the event (EventEmitter.EmitOrderDelivered).
 type deliveredSeed struct {
-	uop *int
-	// payloadCode is what the arriving carrier IS, off the same bin row Core
-	// read for uop and epoch. nil means an older Core did not send it, which
-	// is a different thing from an empty carrier ("") — the Edge must not
-	// overwrite what it knows with a blank it was never told.
-	payloadCode *string
-	epoch       int64
 	binDestNode string
-	// landingSent: the Core that sent this delivered announces drops on
-	// transit.bin_landed, so the delivered binds nothing (Lane H, H.5, H.7).
-	landingSent bool
+	fromNotice  bool
 }
 
 func newLifecycleService(db *store.DB, emitter EventEmitter, debug DebugLogFunc) *LifecycleService {
@@ -221,18 +210,13 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		if updated != nil {
 			binID = updated.BinID
 		}
-		// Bin snapshot stashed by HandleDelivered (same goroutine);
-		// absent for force/recovery deliveries → Edge role-default seed.
-		var binUOP *int
-		var binPayloadCode *string
-		var binEpoch int64
-		var binDestNode string
-		var landingSent bool
+		// The notice's facts, stashed by HandleDelivered (same goroutine);
+		// absent for force/recovery deliveries.
+		var seed deliveredSeed
 		if v, ok := s.deliveredSeeds.LoadAndDelete(order.ID); ok {
-			seed := v.(deliveredSeed)
-			binUOP, binPayloadCode, binEpoch, binDestNode, landingSent = seed.uop, seed.payloadCode, seed.epoch, seed.binDestNode, seed.landingSent
+			seed = v.(deliveredSeed)
 		}
-		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binPayloadCode, binEpoch, binDestNode, order.DeliveryNode, landingSent)
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, seed.binDestNode, order.DeliveryNode, seed.fromNotice)
 	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
@@ -244,15 +228,12 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
-	// Capture Core's bin id at delivery so the PLC tick path can
-	// attribute deltas to the right bin. Nil for multi-bin orders /
-	// older Core builds. uop+epoch are Core's snapshot of that bin at
-	// delivery (from the OrderDelivered envelope) — stashed here for the
-	// delivered emit in applyTransition so Edge seeds its runtime cache
-	// and active_bin_epoch without an HTTP pull.
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, seed deliveredSeed) error {
+	// Capture Core's bin id at delivery so the PLC tick path can attribute
+	// deltas to the right bin. Nil for multi-bin orders. The seed is stashed
+	// for the delivered emit in applyTransition.
 	s.writeDeliveredFacts(order, stagedExpireAt, binID)
-	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
+	s.deliveredSeeds.Store(order.ID, seed)
 	defer s.deliveredSeeds.Delete(order.ID)
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }

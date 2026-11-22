@@ -114,8 +114,7 @@ func observeAfterEcho(t *testing.T, n *echoNodes, o *storeorders.Order) echoObse
 
 	// (d) then (c): deliver, then confirm if nothing auto-confirmed it.
 	bin := int64(991) // distinct from any bin id a fake Core hands the creator
-	uop := 12
-	testutil.MustNoErr(t, n.eng.orderMgr.HandleDeliveredWithExpiry(row.UUID, "delivered", nil, &bin, &uop, nil, 0, row.DeliveryNode, ""),
+	testutil.MustNoErr(t, n.eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: row.UUID, BinID: &bin, DeliveryNode: row.DeliveryNode}),
 		"deliver")
 	cur, err := n.db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "reload after delivery")

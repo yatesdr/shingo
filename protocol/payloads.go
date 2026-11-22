@@ -571,8 +571,7 @@ type OrderUpdate struct {
 }
 
 // OrderDelivered signals fleet delivery complete. It closes the order; the
-// carrier Core placed is bound by its BinLanded, not by this message, except
-// from a Core that sends no landing (see LandingSent).
+// carrier Core placed is bound by its BinLanded, never by this message.
 type OrderDelivered struct {
 	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
@@ -590,26 +589,6 @@ type OrderDelivered struct {
 	// the carrier bound at that seat.
 	BinID *int64 `json:"bin_id,omitempty"`
 
-	// UOPRemaining and DeltaEpoch are BinID's count and delta_epoch, read by
-	// Core after the bin's arrival is applied (handleOrderDelivered).
-	// UOPRemaining is nil when no bin is named or Core could not read the
-	// bin's row, and 0 for a carrier counted empty. A current Edge binds
-	// nothing from them (the landing binds); for an older Core they bind
-	// through the landing verb, and a nil count binds nothing
-	// (engine.landFromOldCore). DeltaEpoch 0 is the unknown sentinel. Both
-	// are meaningful only when BinID is set.
-	UOPRemaining *int  `json:"uop_remaining,omitempty"`
-	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
-
-	// BinPayloadCode is BinID's payload, read from the same row as
-	// UOPRemaining: what the carrier holds, which the Edge has no bins table
-	// to look up. It is not the active style's claim payload, which is what
-	// the cell asked for and differs from what stands there once a changeover
-	// moves the cell on under a carrier that stays. Pointer so "not
-	// established" (nil) is distinguishable from a carrier known to be empty
-	// (""); the Edge keeps the pair apart as RuntimeState.LinesidePayloadKnown.
-	// Meaningful only when BinID is set.
-	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Populated for all
 	// orders so the Edge can bind the runtime cache even when the order was
 	// created on Core directly (no Edge order row). Broadcast to all edges when
@@ -626,12 +605,11 @@ type OrderDelivered struct {
 	// on its steps' final dropoff or DeliveryNode.
 	BinDestNode string `json:"bin_dest_node,omitempty"`
 
-	// LandingSent says the sending Core announces every carrier's drop on
-	// SubjectBinLanded, so the Edge binds nothing from this message. Unset,
-	// the sender is an older Core that sends no landing, and the Edge routes
-	// the carrier fields above through its landing verb with no placement
-	// stamp: into an empty slot or onto the same bin only, never over a
-	// different bound carrier.
+	// LandingSent is kept for a v0.19.0 Edge, the floor: unset, that Edge takes
+	// the sender for an older Core and binds from this message. Core always
+	// sets it; this Edge does not read it (a delivered binds nothing: the
+	// carrier's landing does, SubjectBinLanded). It goes when FloorEdge is the
+	// release that stopped reading it.
 	LandingSent bool `json:"landing_sent,omitempty"`
 }
 

@@ -2964,3 +2964,13 @@ No assertion read any of the twelve.
 - test: `TestEdgeHeartbeatAck_BinWatchGolden` · pkg `shingo/protocol` · run `-run '^TestEdgeHeartbeatAck_BinWatchGolden$'` · `protocol/bins_feed_test.go` @ `6bd55616` · tags `none`
 - code: DEAD (`EdgeHeartbeatAck.bin_watch` is deleted at the v0.19.0 floor: no Core fills it for an Edge that quotes the owned map, and every Edge at the floor does).
 - assertion map: the ack's bytes, key order and the null rule → `TestOwned_AbsenceOnTheWire` "an ack with no owned answer", less `claims`; the three `bin_watch` renderings → nothing (the key is gone; `TestPeerWire_*` v0.19.0/EdgeHeartbeatAck says a v0.19.0 peer loses nothing else).
+
+### DEAD — `TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier`
+- test: `TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier` · pkg `shingoedge/engine` · run `-run '^TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier$'` · `shingo-edge/engine/carrier_handoff_pending_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`landFromOldCore`, the older Core's bind from order.delivered, is deleted at the v0.19.0 floor).
+- assertion map: a delivered never displaces a different carrier (bin and count) → `TestH5_ADeliveredNeverDisplacesADifferentCarrier`, same assertion; onto an empty seat it binds → nothing (that bind is what went; `TestFloorWire_ADeliveredWithLandingSentIsTheOrdersAlone` pins the empty seat left empty, `TestControlH_EmptySeatLandingSeedsCoresCount` the landing's bind).
+
+### DEAD — `TestHandleDelivered_FallbackCarriesThePayload`
+- test: `TestHandleDelivered_FallbackCarriesThePayload` · pkg `shingoedge/orders` · run `-run '^TestHandleDelivered_FallbackCarriesThePayload$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`OrderDelivered.bin_payload_code` is deleted at the v0.19.0 floor: only `landFromOldCore` read it).
+- assertion map: one fallback for an order with no Edge row → `TestHandleDelivered_FallbackNamesTheCarrierAndNode`, which adds the bin and node; the carrier's part on that path → `TestFallbackDelivered_RecordsTheCarrier`, through the landing that now carries it.

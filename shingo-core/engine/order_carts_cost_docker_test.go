@@ -29,8 +29,9 @@ const (
 	// is in hand. Main: 2 (GetNodeByDotName _TRANSIT, ListBinsByClaim).
 	costSetDownResolve = 1
 	// costFinished: handleOrderDelivered for the two-cart swap with A set down
-	// and B in hand. Budget: no more than today.
-	costFinished = 24
+	// and B in hand. Budget: no more than today. 24 → 23: order.delivered no
+	// longer reads the bin for its count, generation and part.
+	costFinished = 23
 	// costTerminalize: TerminalizeOrder on a live order that wins (BEGIN, the
 	// status, the history row, the anomaly stamp, the claim release, the slot
 	// release, the reservations, the station's tell, COMMIT). Main f8f22f19: 9,

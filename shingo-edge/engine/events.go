@@ -385,21 +385,6 @@ type OrderDeliveredEvent struct {
 	OrderType     protocol.OrderType `json:"order_type"`
 	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
 	BinID         *int64             `json:"bin_id,omitempty"`
-	// BinUOP and BinEpoch are the arrived bin's authoritative count and
-	// load-lifecycle epoch, carried from the OrderDelivered Kafka envelope
-	// (Core's snapshot at delivery). handleNodeOrderDelivered seeds the
-	// runtime cache + active_bin_epoch from these — no HTTP pull. BinUOP
-	// nil = no count was sent: an older Core, or a current one that named a bin
-	// and could not read its row. The Edge seats 0 and logs it (BlindDeliveryMarker)
-	// rather than assuming a full carrier.
-	BinUOP *int `json:"bin_uop,omitempty"`
-	// BinPayloadCode is what the arriving carrier IS, off the same bin row as
-	// BinUOP and BinEpoch. It is the lineside identity — the answer this side
-	// used to infer from the requested style's claim, which is right only
-	// while the two agree. nil means an older Core did not send it, which is
-	// not the same as an empty carrier ("").
-	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
-	BinEpoch       int64   `json:"bin_epoch,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Set only for
 	// Core-admin (stationless) deliveries where ProcessNodeID is nil because
 	// the Edge has no order row. handleNodeOrderDelivered uses it as a fallback
@@ -408,17 +393,17 @@ type OrderDeliveredEvent struct {
 	// BinDestNode is the Core dot-name of the node the carried bin came to rest
 	// at — set ONLY for multi-tote deliveries (F1b), where Core already selected
 	// the one bin destined for the consuming process node. When present,
-	// handleNodeOrderDelivered binds iff BinDestNode == the node's CoreNodeName,
+	// handleNodeOrderDelivered checks iff BinDestNode == the node's CoreNodeName,
 	// trusting Core's per-bin resolution instead of the steps finalDropoff (which
 	// for a swap names the last leg, not where this bin landed). Empty for
 	// single-bin orders — their existing delivery gate is unchanged.
 	BinDestNode string `json:"bin_dest_node,omitempty"`
-	// LandingSent is protocol.OrderDelivered.LandingSent: the Core announced
-	// this carrier's drop on transit.bin_landed, so the delivered binds
-	// nothing and only checks (Lane H, H.5). False is an older Core: the
-	// carrier fields above bind through the landing verb with no placement
-	// stamp, into an empty slot or onto the same bin only (H.7).
-	LandingSent bool `json:"landing_sent,omitempty"`
+	// FromNotice says an order.delivered is behind this event: the notice's
+	// handler (orders.HandleDeliveredNotice) sets it, whatever the message's
+	// landing_sent says. Either way the event binds nothing (Lane H, H.5).
+	// False is a delivered no notice carried (a version-0 reconcile snapshot):
+	// always said, and no auto-clear.
+	FromNotice bool `json:"from_notice,omitempty"`
 }
 
 // UOPAdjustedEvent is emitted when Core sends an admin-originated UOP

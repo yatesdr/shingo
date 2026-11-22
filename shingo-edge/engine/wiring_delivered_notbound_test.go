@@ -109,23 +109,24 @@ func TestF1b_MultiToteDelivered_Binds(t *testing.T) {
 
 	const snapshotUOP = 220
 	bid := supplyBinID
-	uop := snapshotUOP
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: node.CoreNodeName, Count: snapshotUOP, Epoch: 9,
+		OrderUUID: uuid, PlacedSeq: 1})
 	// deliveryNode = lossy last-dropoff (supermarket); binDestNode = the consuming
 	// node Core resolved for this bin. The bind must follow binDestNode.
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "multi-tote delivery", nil, &bid, &uop, nil, 9, "SUPERMARKET-OUT", node.CoreNodeName),
+		eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: uuid, BinID: &bid, DeliveryNode: "SUPERMARKET-OUT", BinDestNode: node.CoreNodeName}),
 		"handle multi-tote delivered")
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "get runtime")
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != supplyBinID {
-		t.Errorf("ActiveBinID = %v, want %d (multi-tote supply bin bound via BinDestNode)", rt.ActiveBinID, supplyBinID)
+		t.Errorf("ActiveBinID = %v, want %d (multi-tote supply bin bound by its landing)", rt.ActiveBinID, supplyBinID)
 	}
 	if rt.RemainingUOPCached != snapshotUOP {
-		t.Errorf("RemainingUOPCached = %d, want %d (bound at the delivered snapshot)", rt.RemainingUOPCached, snapshotUOP)
+		t.Errorf("RemainingUOPCached = %d, want %d (bound at the landing's count)", rt.RemainingUOPCached, snapshotUOP)
 	}
 	if rt.ActiveBinEpoch != 9 {
-		t.Errorf("ActiveBinEpoch = %d, want 9 (epoch from the delivered envelope)", rt.ActiveBinEpoch)
+		t.Errorf("ActiveBinEpoch = %d, want 9 (epoch from the landing)", rt.ActiveBinEpoch)
 	}
 	// Resolved bin → no backstop alarm.
 	if len(*alarms) != 0 {
@@ -182,8 +183,8 @@ func TestDeliveredNotBound_NoActiveClaimRaisesAlarm(t *testing.T) {
 	if a.CoreNodeName != "NOCLAIM-NODE" {
 		t.Errorf("alarm node = %q, want NOCLAIM-NODE", a.CoreNodeName)
 	}
-	if !strings.Contains(a.Reason, "claim") {
-		t.Errorf("alarm reason = %q, want it to mention the missing claim", a.Reason)
+	if !strings.Contains(a.Reason, "holds nothing") {
+		t.Errorf("alarm reason = %q, want it to say the seat holds nothing", a.Reason)
 	}
 }
 
@@ -216,9 +217,10 @@ func TestDeliveredNotBound_ChangeoverAutoConfirmBindsNotSilent(t *testing.T) {
 
 	const snapshotUOP = 250
 	bid := binID
-	uop := snapshotUOP
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: node.CoreNodeName, Count: snapshotUOP, Epoch: 4,
+		OrderUUID: uuid, PlacedSeq: 1})
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "changeover auto-confirm delivery", nil, &bid, &uop, nil, 4, node.CoreNodeName, ""),
+		eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: uuid, BinID: &bid, DeliveryNode: node.CoreNodeName}),
 		"handle delivered")
 
 	// Bound (not silent) — active bin + snapshot count.
@@ -228,7 +230,7 @@ func TestDeliveredNotBound_ChangeoverAutoConfirmBindsNotSilent(t *testing.T) {
 		t.Errorf("ActiveBinID = %v, want %d (changeover auto-confirm delivery must bind)", rt.ActiveBinID, binID)
 	}
 	if rt.RemainingUOPCached != snapshotUOP {
-		t.Errorf("RemainingUOPCached = %d, want %d (bound at the delivered snapshot)", rt.RemainingUOPCached, snapshotUOP)
+		t.Errorf("RemainingUOPCached = %d, want %d (bound at the landing's count)", rt.RemainingUOPCached, snapshotUOP)
 	}
 	// It bound, so there is no unbound skip to alarm.
 	if len(*alarms) != 0 {
