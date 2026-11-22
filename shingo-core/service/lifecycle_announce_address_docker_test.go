@@ -225,3 +225,128 @@ func TestLifecycleAnnounce_ALoadAtAPublishedLoaderWindowGoesToItsStation(t *test
 		t.Fatalf("load at a published loader window addressed to %q, want exactly one, to %q", got, a)
 	}
 }
+
+// twoClaimSeat is a seat two stations claim with a bin on it that only a has
+// counted: a's cursor in the generation is net -6 at seq 2, and b has none.
+func twoClaimSeat(t *testing.T, label, a, b string) (*BinService, int64, int64) {
+	t.Helper()
+	db := testDB(t)
+	testdb.SetupStandardData(t, db)
+	manifest := announcingService(db)
+	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
+	twoEdges(t, db, a, b)
+	seat := unclaimedSeat(t, db, "SEAT-"+label)
+	claimSeat(t, db, "PROC-A-"+label, a, seat.Name)
+	claimSeat(t, db, "PROC-B-"+label, b, seat.Name)
+	bin := createTestBin(t, db, seat.ID, label, "PART-A", 100)
+	epoch := binEpoch(t, db, bin.ID)
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(a, netDelta(bin.ID, epoch, 1, -4, -4)), "station a counts")
+	testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(a, netDelta(bin.ID, epoch, 2, -2, -6)), "station a counts again")
+	return NewBinService(db, manifest), bin.ID, epoch
+}
+
+// TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat: the other three
+// corrections of TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody's
+// rule, at a seat two stations claim: a person's count, a person's reset and a
+// late draw. Each is told to nobody.
+func TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat(t *testing.T) {
+	t.Parallel()
+	const a, b = "edge-tc-a.line", "edge-tc-b.line"
+	wantNone := func(t *testing.T, what string, db *store.DB, binID int64) {
+		t.Helper()
+		if got := fencedTo(t, db, binID); len(got) != 0 {
+			t.Fatalf("%s at a seat two stations claim went to %d stations (%+v), want none", what, len(got), got)
+		}
+	}
+
+	t.Run("a person's count", func(t *testing.T) {
+		t.Parallel()
+		svc, binID, _ := twoClaimSeat(t, "BIN-TC-COUNT", a, b)
+		fresh, err := svc.db.GetBin(binID)
+		testutil.MustNoErr(t, err, "read bin")
+		_, err = svc.RecordCount(fresh, 50, "operator-under-test")
+		testutil.MustNoErr(t, err, "RecordCount")
+		wantNone(t, "the count", svc.db, binID)
+	})
+
+	t.Run("a person's reset", func(t *testing.T) {
+		t.Parallel()
+		svc, binID, _ := twoClaimSeat(t, "BIN-TC-RESET", a, b)
+		_, err := svc.manifest.ClearForReuse(binID, nil, protocol.DeclaredByPerson)
+		testutil.MustNoErr(t, err, "the reset")
+		wantNone(t, "the reset", svc.db, binID)
+	})
+
+	t.Run("a late draw", func(t *testing.T) {
+		t.Parallel()
+		svc, binID, epoch := twoClaimSeat(t, "BIN-TC-LATE", a, b)
+		tx, err := svc.db.Begin()
+		testutil.MustNoErr(t, err, "begin")
+		defer func() { _ = tx.Rollback() }()
+		atSeat, err := svc.manifest.AnnounceLateDrawTx(tx, binID, epoch, 90)
+		testutil.MustNoErr(t, err, "the late draw")
+		testutil.MustNoErr(t, tx.Commit(), "commit")
+		if !atSeat {
+			t.Fatal("the late draw found no seat")
+		}
+		wantNone(t, "the late draw", svc.db, binID)
+	})
+}
+
+// TestLandingStations_SeveralClaimants: the landing's rule where several
+// stations claim the node. A landing binds, so it needs one addressee: the
+// order's station when it is one of them, else nobody (owner ruling
+// 2026-11-22: landingStations is unchanged where corrections go to all).
+func TestLandingStations_SeveralClaimants(t *testing.T) {
+	t.Parallel()
+	a, b := plantclaims.AddressedStation{StationID: "a"}, plantclaims.AddressedStation{StationID: "b"}
+	both := []plantclaims.AddressedStation{a, b}
+	for _, tc := range []struct {
+		name  string
+		order plantclaims.AddressedStation
+		want  []plantclaims.AddressedStation
+	}{
+		{name: "no order"},
+		{name: "an order of one of them", order: b, want: []plantclaims.AddressedStation{b}},
+		{name: "an order of a third", order: plantclaims.AddressedStation{StationID: "c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := landingStations(plantclaims.LandingAddress{Claiming: both, Order: tc.order}); !slices.Equal(got, tc.want) {
+				t.Errorf("landing at a seat two claim goes to %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClaimingStations_AStaleStationsClaimsCount: the claimants are read from
+// the mirror with no look at the registry's status, so a station that stopped
+// heartbeating still claims what it last reported. It stays one of two
+// claimants, and it alone takes what lands at a seat only it claims.
+func TestClaimingStations_AStaleStationsClaimsCount(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	testdb.SetupStandardData(t, db)
+	const old, live = "edge-st-old.line", "edge-st-live.line"
+	twoEdges(t, db, old, live)
+	shared, alone := unclaimedSeat(t, db, "ALN-ST-01"), unclaimedSeat(t, db, "ALN-ST-02")
+	claimSeat(t, db, "WELD-ST-OLD-1", old, shared.Name)
+	claimSeat(t, db, "WELD-ST-OLD-2", old, alone.Name)
+	claimSeat(t, db, "WELD-ST-LIVE", live, shared.Name)
+	_, err := db.Exec(`UPDATE edge_registry SET status = 'stale' WHERE station_uid = $1`, old)
+	testutil.MustNoErr(t, err, "the old station goes stale")
+
+	for node, want := range map[string][]string{shared.Name: {live, old}, alone.Name: {old}} {
+		got, err := db.StationsClaimingNode(node)
+		testutil.MustNoErr(t, err, "claimants of "+node)
+		if !slices.Equal(got, want) {
+			t.Errorf("claimants of %s = %q, want %q: a stale station's claims count", node, got, want)
+		}
+	}
+	bin := createTestBin(t, db, alone.ID, "BIN-ST-CLEAR", "PART-A", 30)
+	_, err = announcingService(db).ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle)
+	testutil.MustNoErr(t, err, "the clear")
+	if got := adjustmentDsts(t, db, bin.ID); !slices.Equal(got, []string{old}) {
+		t.Errorf("a clear at the stale station's seat went to %q, want it alone (%q)", got, old)
+	}
+}

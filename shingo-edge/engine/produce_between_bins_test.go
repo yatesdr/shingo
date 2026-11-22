@@ -750,6 +750,11 @@ func TestRecount_APersonsCountClearsTheHold(t *testing.T) {
 			return protocol.UOPAdjustment{BinID: 7301, CoreNodeName: "PRODUCE-NODE", NewRemaining: 67, Epoch: 4,
 				Actor: protocol.ActorCoreLifecycle}
 		}},
+		{name: "a fenced count in the running generation, announced as lifecycle", adj: func(eng *Engine) protocol.UOPAdjustment {
+			adj := fenced(eng, 7301, "PRODUCE-NODE", 67, 0, 1)
+			adj.Actor = protocol.ActorCoreLifecycle
+			return adj
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
