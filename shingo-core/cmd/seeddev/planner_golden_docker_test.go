@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -142,7 +141,9 @@ func newGoldenPlant(t *testing.T) *goldenPlant {
 	eng.Start()
 	eng.Stop()
 	g := &goldenPlant{t: t, db: db, cdb: cdb, counter: counter, eng: eng, backend: backend}
-	g.settle()
+	// Stop has waited for every loop Start launched (TestEngineStop_WaitsForItsGoroutines),
+	// the boot scan among them, so one scan leaves nothing in flight to wait for.
+	eng.RunFulfillmentScan()
 	if n := g.count(`SELECT COUNT(*) FROM orders`); n != 0 {
 		t.Fatalf("fixture: %d order(s) exist after the engine was started and stopped — a background "+
 			"loop wrote before it was stopped, so the cases below would not be deterministic", n)
@@ -198,20 +199,6 @@ func seedClaimsMirror(t *testing.T, db *store.DB, plant *plantspec.Plant) {
 	}
 	for _, proc := range order {
 		testutil.MustNoErr(t, db.ReplacePlantClaims(proc, styles[proc], claims[proc], 0), "seed claims mirror for "+proc)
-	}
-}
-
-// settle drains the scan Start launched and waits for the order count to hold.
-func (g *goldenPlant) settle() {
-	g.eng.RunFulfillmentScan()
-	last := -1
-	for i := 0; i < 20; i++ {
-		n := g.count(`SELECT COUNT(*) FROM orders`)
-		if n == last {
-			return
-		}
-		last = n
-		time.Sleep(25 * time.Millisecond)
 	}
 }
 

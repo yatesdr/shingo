@@ -381,7 +381,7 @@ func (r *kanbanRig) clearStatements(window, as string) []string {
 	cart := r.cartAt(window)
 	raw, err := json.Marshal(protocol.BinClearRequest{NodeName: window, BinID: cart, BinTypeCode: as})
 	testutil.MustNoErr(r.t, err, "the CLEAR")
-	r.settled()
+	r.still()
 	r.counter.Reset()
 	if res := r.doors.AskBinClear(rigStation, raw); res.Status != http.StatusOK {
 		r.t.Fatalf("CLEAR at %s refused (%d): %s", window, res.Status, res.Sentence)

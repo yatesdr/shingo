@@ -503,37 +503,26 @@ func TestKanbanRig_R1_SteadyLoop(t *testing.T) {
 	r.counts()
 }
 
-// settled waits out what a bin's move arms and Stop does not stop: the sourceability
-// monitor's debounced recompute (engine/sourceability_monitor.go arm, time.AfterFunc at
-// engine.SourceabilityDebounceWindow) reads through the counting store, and landed in a
-// counted window under a loaded package run. The count holding still for twice that window
-// is the last of it: the arm's own statements moved the count, so a still count that long
-// means the timer fired a full window ago and its first read would have moved it since.
-// Polled every 50 ms: the stillness is the wait, not the poll (a 1 s poll made every call
-// cost at least a second). Nothing in a counted window arms it before the window ends: a
-// tick, a build and a door's reads move no bin.
-func (r *kanbanRig) settled() {
+// still fails if a statement reaches the counting store in two debounce windows with
+// nobody driving the rig. A stopped engine arms and fires nothing (Engine.Stop stops the
+// sourceability monitor, TestSourceabilityMonitor_StopCancelsAnArmedDebounce), so there is
+// nothing to wait out before a count. It is asserted where a leak shows: before the intake
+// door, the CLEAR's door and the parked arm, which follow a move that would arm the
+// monitor. With that stop removed the timer's statements land there
+// (TestKanbanRig_R1_SteadyLoop, TestKanbanRig_WalkCounts, TestKanbanPin_TheClearCostsWhatItCost).
+func (r *kanbanRig) still() {
 	r.t.Helper()
-	quiet := 2 * engine.SourceabilityDebounceWindow
-	deadline := time.Now().Add(30 * time.Second)
-	last, since := r.counter.Count(), time.Now()
-	for time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-		if n := r.counter.Count(); n != last {
-			last, since = n, time.Now()
-			continue
-		}
-		if time.Since(since) >= quiet {
-			return
-		}
+	n, seen := r.counter.Count(), len(r.counter.Statements())
+	time.Sleep(2 * engine.SourceabilityDebounceWindow)
+	if got := r.counter.Count(); got != n {
+		r.t.Fatalf("%d statements reached the store with nobody driving the rig: something Engine.Stop left running\n%s",
+			got-n, testutil.StatementBreakdown(r.counter.Statements()[seen:]))
 	}
-	r.t.Fatalf("the store did not go quiet in 30 s: %d statements so far", last)
 }
 
 // countTick is one keeper tick's statements.
 func (r *kanbanRig) countTick() []string {
 	r.t.Helper()
-	r.settled()
 	r.counter.Reset()
 	r.tick()
 	return r.counter.Statements()
@@ -542,7 +531,6 @@ func (r *kanbanRig) countTick() []string {
 // countBuild is one snapshot build's statements, up to its row on the outbox.
 func (r *kanbanRig) countBuild() []string {
 	r.t.Helper()
-	r.settled()
 	r.counter.Reset()
 	r.lit()
 	stmts := r.counter.Statements()
@@ -560,7 +548,7 @@ func (r *kanbanRig) countBuild() []string {
 // order's birth, and the order it left.
 func (r *kanbanRig) countDoor(window string, cart int64) ([]string, *orders.Order) {
 	r.t.Helper()
-	r.settled()
+	r.still()
 	r.next++
 	r.counter.Reset()
 	o, _, lerr := r.eng.Dispatcher().Lifecycle().CreateInboundOrder(rigStation, &protocol.OrderRequest{
@@ -620,7 +608,7 @@ func (r *kanbanRig) counts() {
 		t.Fatalf("the push is %s (%s), want parked with no slot", got.Status, got.QueueCause)
 	}
 	r.byHand(r.oneOf(rigK, rigSmall), s.back)
-	r.settled()
+	r.still()
 	r.counter.Reset()
 	r.eng.RunFulfillmentScan()
 	stmts = r.counter.Statements()
@@ -930,7 +918,6 @@ func TestKanbanRig_FivePressSteady(t *testing.T) {
 	plant, err := plantspec.Load("../../../plants/master.yaml")
 	testutil.MustNoErr(t, err, "the plant file")
 	r := newKanbanRigOf(t, plant, windows)
-	r.settled()
 	const k = "P5-KANBAN"
 	line := func() engine.KanbanLineState { return r.card(k, rigSmall) }
 	if got := line(); got.Want != 22 || got.Resident != 2 || got.Gap != 0 || got.Held != 20 {
