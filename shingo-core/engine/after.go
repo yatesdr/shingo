@@ -74,6 +74,11 @@ func (q *afterQueue) run(stop <-chan struct{}) {
 		case <-q.wake:
 		}
 		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			q.mu.Lock()
 			if len(q.work) == 0 {
 				q.mu.Unlock()

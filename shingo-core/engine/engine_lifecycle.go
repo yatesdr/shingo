@@ -392,15 +392,39 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 	}
 }
 
-// engineStopDrainLimit bounds how long Stop waits for the engine's goroutines
-// (Engine.loops). A safety net, as the RDS poller's stopDrainLimit is: each
-// loop returns on stopChan and each hand-off is one pass or one statement
-// chain, so a wait this long means one is wedged, and returning is better than
-// holding the process's shutdown forever.
+// engineStopDrainLimit is the one deadline over every wait in Stop. A safety
+// net, as the RDS poller's stopDrainLimit is: each loop returns on stopChan and
+// each hand-off is one pass or one statement chain, so a wait this long means
+// one is wedged, and returning is better than holding the process's shutdown
+// forever. Pinned by TestEngineStop_OneDeadlineOverEveryWait.
 const engineStopDrainLimit = 30 * time.Second
 
-func (e *Engine) Stop() {
+// Stop ends the engine: it takes no new work, what is running finishes, what
+// is still queued is dropped (afterQueue.run says what a restart redoes), and
+// it returns by engineStopDrainLimit whatever is still running.
+func (e *Engine) Stop() { e.stopBounded(engineStopDrainLimit) }
+
+// stopBounded is Stop with its limit given.
+func (e *Engine) stopBounded(limit time.Duration) {
 	e.stopOnce.Do(func() { close(e.stopChan) })
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		e.stopAndWait()
+	}()
+	deadline := time.NewTimer(limit)
+	defer deadline.Stop()
+	select {
+	case <-drained:
+	case <-deadline.C:
+		e.logFn("engine: stop: work was still running after %s; not waiting longer", limit)
+	}
+	e.logFn("engine: stopped")
+}
+
+// stopAndWait stops each subsystem and waits for what it had running. No wait
+// here has a limit of its own to rely on: stopBounded's covers them all.
+func (e *Engine) stopAndWait() {
 	e.stage2.stop()
 	if e.fulfillment != nil {
 		e.fulfillment.Stop()
@@ -411,13 +435,10 @@ func (e *Engine) Stop() {
 	if e.sourceabilityMonitor != nil {
 		e.sourceabilityMonitor.stop()
 	}
-	// Last: every loop above has seen stopChan close, and a hand-off still
-	// running (an after-queue item, a scan a subscriber started) finishes
-	// here, before the caller closes the database (Engine.loops).
-	if !e.loops.stopWithin(engineStopDrainLimit) {
-		e.logFn("engine: stop: a loop or hand-off was still running after %s; not waiting longer", engineStopDrainLimit)
-	}
-	e.logFn("engine: stopped")
+	// Last: every loop has seen stopChan close, and a hand-off still running
+	// (an after-queue item, a scan a subscriber started) finishes here, before
+	// the caller closes the database (Engine.loops).
+	e.loops.stop()
 }
 
 // rearmReleasedOrders re-arms, on the fleet's tracker, every open order the

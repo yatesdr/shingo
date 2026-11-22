@@ -29,7 +29,6 @@ package engine
 import (
 	"strings"
 	"sync"
-	"time"
 
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
@@ -86,25 +85,6 @@ func (p *goGroup[R]) stop() {
 	p.stopped = true
 	p.mu.Unlock()
 	p.wg.Wait()
-}
-
-// stopWithin is stop with a bound on the wait: false means a goroutine was
-// still running after d, and it is left running.
-func (p *goGroup[R]) stopWithin(d time.Duration) bool {
-	p.mu.Lock()
-	p.stopped = true
-	p.mu.Unlock()
-	done := make(chan struct{})
-	go func() {
-		p.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return true
-	case <-time.After(d):
-		return false
-	}
 }
 
 // SaveLoader saves a loader's settings (service.LoaderService.Update) and, when
