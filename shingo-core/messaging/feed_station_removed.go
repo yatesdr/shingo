@@ -6,10 +6,14 @@ package messaging
 // one Core has never heard from.
 
 // StationRemoved forgets a removed station's builds, send records, flags and
-// quotes, and its bins watch list.
+// quotes, and its bins watch list, and re-derives every station's loader rows:
+// the positions the removed station published have no owner now, so each
+// station left keeps them (store.buildDemandRegistry), as after a positions
+// report.
 func (s *CoreDataService) StationRemoved(station string) {
 	s.feeds.stationRemoved(station)
 	s.bins.stationRemoved(station)
+	s.rederiveLoaderOwners()
 }
 
 // stationRemoved forgets one station. A push already armed for it finds no

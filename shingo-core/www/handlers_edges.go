@@ -238,8 +238,9 @@ func (h *Handlers) apiEdgeClaim(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
-// apiEdgeRemove removes a stale station: its claims, its feeds state and its
-// registry row, audited to the signed-in user (owner ruling 2026-11-22).
+// apiEdgeRemove removes a stale station: its claims, its feeds state, its
+// derived loader rows and its registry row, audited to the signed-in user
+// (owner ruling 2026-11-22).
 //
 // POST /api/edges/remove?uid=stn-…
 //

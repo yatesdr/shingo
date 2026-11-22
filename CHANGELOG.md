@@ -36,7 +36,7 @@ Deploy: Edge v60, and no new Core migration (Core's migration 190 is edited in p
 - A count or a reset at a node two stations claim reaches both; only the station holding that bin changes.
 - Stations flags a node two stations claim, on both rows, until one of them takes it off.
 - An Edge's positions picker greys a node another station claims, with that station's name.
-- Stations can remove a stale station; its claims and name go, its history stays.
+- Stations can remove a stale station; its claims, its loader refills and its name go, its history stays.
 - Restoring an Edge backup puts the backup in place after a crash too; the live rows the killed Edge left beside the database used to come back over it
 - An Edge older than v0.19.0, or a backup from one, no longer upgrades in one install: the Edge refuses it by name and changes nothing. Install v0.19.0, start it once, then this
 - A table or column missing from an Edge's database stops the Edge with its name; the table used to be made again, empty, without a word

@@ -186,7 +186,8 @@ func TestEdgesPage_WhatAStaleStationsRowOffers(t *testing.T) {
 // before the handler. The server, not the page, holds "stale only": an active
 // station is refused and keeps its row and its claims. A stale one loses its
 // claims mirror, the report rows of the processes that cleared, and its row;
-// the removal is audited, and what else names the station stays. A process
+// its derived demand registry rows go too (closing ruling 2026-11-22); the
+// removal is audited, and what else names the station stays. A process
 // another station reported last is that station's and stays.
 func TestEdgesRemoveDoor(t *testing.T) {
 	t.Parallel()
@@ -250,7 +251,7 @@ func TestEdgesRemoveDoor(t *testing.T) {
 		"a report of a process that kept": {`SELECT count(*) FROM plant_claims_reports WHERE process_id = 'P-LIVE'`, 1},
 		"the claims of the other":         {`SELECT count(*) FROM style_claims WHERE process_id = 'P-LIVE'`, 1},
 		"the positions of the other":      {`SELECT count(*) FROM process_positions WHERE process_id = 'P-LIVE'`, 1},
-		"its demand registry row":         {`SELECT count(*) FROM demand_registry WHERE station_uid = 'stn-gone'`, 1},
+		"its demand registry row":         {`SELECT count(*) FROM demand_registry WHERE station_uid = 'stn-gone'`, 0},
 		"the audit row":                   {`SELECT count(*) FROM audit_log WHERE entity_type = 'edge' AND action = 'removed'`, 1},
 	} {
 		if got := count(c.q); got != c.want {

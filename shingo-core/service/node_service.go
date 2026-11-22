@@ -628,7 +628,8 @@ func (s *NodeService) SetStationRemovedFunc(fn func(station string)) {
 }
 
 // RemoveEdge removes a stale station (store.RemoveStaleStation, which holds the
-// stale check). After the commit the station's feeds state is forgotten, and
+// stale check). After the commit the station's feeds state is forgotten and
+// the loaders it owned are re-derived for the stations left (the hook), and
 // the other stations' node lists go through the change door: they marked the
 // nodes it claimed.
 func (s *NodeService) RemoveEdge(uid, actor string) error {
