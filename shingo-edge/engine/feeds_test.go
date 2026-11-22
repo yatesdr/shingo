@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -385,5 +386,108 @@ func TestActable_TheDecisionRule(t *testing.T) {
 		if ok != c.ok || why != c.why {
 			t.Errorf("%s: Actable = %v %q, want %v %q", c.name, ok, why, c.ok, c.why)
 		}
+	}
+}
+
+// Core quotes what it held when it answered, and more may have been sent
+// since: a quote of a send made since the last one Core proved ends the streak,
+// up to the newest 256 of them. The same rule as Core's (protocol/resend).
+func TestSendDue_AQuoteOfAnOlderSendConverges(t *testing.T) {
+	t.Parallel()
+	const key = "claims:PR1"
+	cases := []struct {
+		sends, quoted int
+		kept          bool
+	}{
+		{3, 1, true}, {3, 2, true}, {3, 3, true}, {22, 1, true},
+		{256, 1, true}, {257, 1, false}, {257, 2, true}, {300, 44, false}, {300, 45, true},
+	}
+	db := testEngineDB(t)
+	for _, c := range cases {
+		e := testEngine(t, db)
+		for i := 1; i <= c.sends; i++ {
+			e.sendDue(key, fmt.Sprintf("d%d", i), "")
+		}
+		if len(e.FeedFlags()) != 1 {
+			t.Fatalf("fixture: %d sends never quoted back, flags %v", c.sends, e.FeedFlags())
+		}
+		if !e.sendDue(key, "next", fmt.Sprintf("d%d", c.quoted)) {
+			t.Fatalf("%d sends, quote %d: the newer value was held back", c.sends, c.quoted)
+		}
+		if got := len(e.FeedFlags()) == 0; got != c.kept {
+			t.Errorf("%d sends, then Core quotes send %d: converging %v, want %v", c.sends, c.quoted, got, c.kept)
+		}
+	}
+}
+
+// Core taking each copy one ack behind is converging.
+func TestSendDue_CoreOneAckBehindIsNotFlagged(t *testing.T) {
+	t.Parallel()
+	e := testEngine(t, testEngineDB(t))
+	const key = "claims:PR1"
+	for i, quoted := range []string{"d0", "d0", "d1", "d2", "d3", "d4"} {
+		if !e.sendDue(key, fmt.Sprintf("d%d", i+1), quoted) {
+			t.Fatalf("send %d held back", i+1)
+		}
+		if got := e.FeedFlags(); len(got) != 0 {
+			t.Errorf("ack %d, Core one copy behind: flags = %v, want none", i+1, got)
+		}
+	}
+}
+
+// A Core frozen at one digest is believed once at most wherever that digest
+// stands among the sends, never sent or empty: the third send flags.
+func TestSendDue_AFrozenQuoteStillFlags(t *testing.T) {
+	t.Parallel()
+	const key = "claims:PR1"
+	db := testEngineDB(t)
+	for _, frozen := range []string{"", "never-sent", "d1", "d2"} {
+		e := testEngine(t, db)
+		e.sendDue(key, "d1", "")
+		e.converged(key)
+		e.sendDue(key, "d2", "d1")
+		for i := 3; i <= 5; i++ {
+			e.sendDue(key, fmt.Sprintf("d%d", i), frozen)
+		}
+		if got := e.FeedFlags(); len(got) != 1 {
+			t.Errorf("Core frozen at %q: flags = %v, want the flag", frozen, got)
+		}
+	}
+}
+
+// The watch list a bins snapshot names ends the streak when it is any list
+// sent since the last one proved, not only the newest.
+func TestHeldByCore_AnOlderSendEndsTheStreak(t *testing.T) {
+	t.Parallel()
+	const key = "bins.watch"
+	e := testEngine(t, testEngineDB(t))
+	for _, d := range []string{"w1", "w2", "w3"} {
+		e.sendDue(key, d, "")
+	}
+	e.heldByCore(key, "w2")
+	if got := e.FeedFlags(); len(got) != 0 {
+		t.Errorf("a snapshot answered w2 with w3 on its way: flags = %v, want none", got)
+	}
+	if e.sendDue(key, "w3", "w2") {
+		t.Error("w3 is in flight: want it held back")
+	}
+}
+
+// A Core that held what was sent and restarted is sent it at once, inside the
+// guard, and that send is then in flight.
+func TestSendDue_ARestartedCoreIsHealedAtOnce(t *testing.T) {
+	t.Parallel()
+	const key = "bins.watch"
+	e := testEngine(t, testEngineDB(t))
+	e.sendDue(key, "w1", "")
+	e.heldByCore(key, "w1")
+	if !e.sendDue(key, "w1", "") {
+		t.Error("held, then quoted as nothing: want the same digest at once")
+	}
+	if e.sendDue(key, "w1", "") {
+		t.Error("that copy in flight: want it held back")
+	}
+	if got := e.FeedFlags(); len(got) != 0 {
+		t.Errorf("flags = %v, want none", got)
 	}
 }
