@@ -873,3 +873,24 @@ func TestKeeperPull_OneTransitWindowIsChargedOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestKeeperPull_ANamedSourceKeepsItsFloor: the limit on charging a transit
+// window once. A source a kanban names carries the kanban's shortfall in its
+// floor as well as its rate. GREEN at 6bd55616.
+func TestKeeperPull_ANamedSourceKeepsItsFloor(t *testing.T) {
+	t.Parallel()
+	for _, shortfall := range []float64{0.1, 0.18, 0.5, 1, 2} {
+		floor := int(math.Ceil((1+shortfall)*10)) + 1
+		for _, short := range []int{0, 1} {
+			t.Run(fmt.Sprintf("shortfall=%v/short=%d", shortfall, short), func(t *testing.T) {
+				p, rate := poolPlant(false, []testPool{
+					{name: "K", kanban: true, sources: []string{"SRC"}, stock: map[string]int{"A": 20}},
+					{name: "SRC", stock: map[string]int{"A": floor - short}},
+				}, testFlow{"A", "K", "SRC", shortfall, shortfall}, testFlow{"A", "SRC", "SRC", 1, 1})
+				if got := reportStockFloor(computeCarriers(p, rate, 0, 0), 10); got != (short == 0) {
+					t.Errorf("%d standing at a named source against its floor of %d: holds = %v", floor-short, floor, got)
+				}
+			})
+		}
+	}
+}
