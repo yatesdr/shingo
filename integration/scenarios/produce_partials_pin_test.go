@@ -269,9 +269,6 @@ const (
 func ppRows() []ppRow {
 	var rows []ppRow
 	for _, mode := range protocol.ConfigurableSwapModes() {
-		if mode == protocol.SwapModeManualSwap {
-			continue
-		}
 		rows = append(rows,
 			ppRow{door: "request", mode: mode, class: ppFull, today: ppAt40, after: ppAt40},
 			ppRow{door: "request", mode: mode, class: ppPartial, today: ppAt17, after: ppAt17},
@@ -344,9 +341,6 @@ func ppFinishLaterRows() []ppRow {
 	)
 	var rows []ppRow
 	for _, mode := range protocol.ConfigurableSwapModes() {
-		if mode == protocol.SwapModeManualSwap {
-			continue
-		}
 		rows = append(rows,
 			ppRow{door: "request", mode: mode, class: ppFull, finish: true, today: ppAt40, after: ppAt40},
 			ppRow{door: "request", mode: mode, class: ppPartial, finish: true, today: ppAt17, after: home17},
@@ -473,9 +467,6 @@ func (c *ksrCell) ppHeldPartial(label string, n int) {
 func TestProducePartials_TheLineFinishesItsPartial(t *testing.T) {
 	t.Parallel()
 	for _, mode := range protocol.ConfigurableSwapModes() {
-		if mode == protocol.SwapModeManualSwap {
-			continue
-		}
 		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
