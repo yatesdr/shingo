@@ -49,6 +49,18 @@ func (e *Engine) HardReleaseOrder(orderID int64, actor string) error {
 	return e.dispatcher.HardReleaseStagedOrder(orderID, actor)
 }
 
+// OrderFinishedError is TerminateOrder's refusal of an order that has already
+// finished: its bin is at the destination (delivered, confirmed) or the order is
+// terminal. It is a refusal, not a fault, so a door answers 409 with the order's
+// status (www apiTerminateOrder; pinned by TestPinOrders_TerminateFailureAnswers).
+type OrderFinishedError struct {
+	Status protocol.Status
+}
+
+func (e *OrderFinishedError) Error() string {
+	return fmt.Sprintf("cannot terminate order in status %q", e.Status)
+}
+
 // TerminateOrder cancels an order, unclaims any payloads, and emits a cancellation event.
 func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 	order, err := e.db.GetOrder(orderID)
@@ -56,10 +68,11 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 		return fmt.Errorf("order not found")
 	}
 
-	// Reject terminal AND post-delivery statuses. Once the bin is at the
-	// destination (Delivered/Confirmed) or terminal, terminate is a no-op.
+	// Refuse terminal AND post-delivery statuses: once the bin is at the
+	// destination (delivered, confirmed) or the order is terminal there is
+	// nothing left to stop, and nothing is written.
 	if dispatch.IsPostDelivery(order.Status) || protocol.IsTerminal(order.Status) {
-		return fmt.Errorf("cannot terminate order in status %q", order.Status)
+		return &OrderFinishedError{Status: order.Status}
 	}
 
 	// ── THE UI DOOR CASCADES NOW, LIKE THE WIRE DOOR ─────────────────────────

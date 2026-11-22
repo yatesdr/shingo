@@ -1,6 +1,7 @@
 package www
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -515,7 +516,14 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 
 	actor := h.getUsername(r)
 	if err := h.orchestration.TerminateOrder(req.OrderID, actor); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		// An order that already finished is a refusal, not a fault: 409, its
+		// sentence naming the status.
+		status := http.StatusInternalServerError
+		var finished *engine.OrderFinishedError
+		if errors.As(err, &finished) {
+			status = http.StatusConflict
+		}
+		h.jsonError(w, err.Error(), status)
 		return
 	}
 	h.jsonSuccess(w)

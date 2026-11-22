@@ -49,6 +49,7 @@ Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration)
 - A cell's demand episode that opens or closes while Core cannot be reached now reaches Core when the link is back, however long it was down; it used to be dropped after five minutes or ten tries, and Core did not see it until the episode next changed
 - A Core or Edge start that re-runs a recorded migration to repair it, and fails, now leaves that migration recorded; shingocore migrate check and migrate down used to see it as never applied
 - Core's Stations page shows each station's Edge version, marked below floor when it is older than the oldest Edge this Core supports (v0.17.2), and Core Health names such a station; nothing is refused
+- Core: cancelling an order that has already finished is answered as finished (409), with its status, not as a server error (500)
 
 ## v0.18.0 — 2026-11-21
 

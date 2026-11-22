@@ -4,6 +4,7 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -199,8 +201,10 @@ func TestPinTestOrders_ComplexSubmitWithNoRowAnswersFailure(t *testing.T) {
 
 // TestPinOrders_TerminateFailureAnswers: the Orders row Cancel posts
 // /api/orders/terminate (orders.js:85-93) and only console.errors a failure.
-// The server answers the failure; it is the row that hides it. TODAY: an unknown
-// order and a finished one are each a 500 with the reason.
+// The server answers the failure; it is the row that hides it. An unknown order
+// is a 500 with the reason; a finished one (delivered, confirmed or terminal) is
+// a refusal, not a fault: 409, its sentence naming the order's status. It was a
+// 500 (proof runs on 8aa5bf8c, order 158).
 func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
@@ -210,10 +214,16 @@ func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
 		t.Errorf("unknown order = %d %q, want 500 order not found", rec.Code, rec.Body.String())
 	}
 
-	done := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "confirmed" })
-	rec = postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": done.ID})
-	want := "{\"error\":\"cannot terminate order in status \\\"confirmed\\\"\"}\n"
-	if rec.Code != http.StatusInternalServerError || rec.Body.String() != want {
-		t.Errorf("confirmed order = %d %q, want 500 %q", rec.Code, rec.Body.String(), want)
+	for _, status := range []protocol.Status{protocol.StatusDelivered, protocol.StatusConfirmed, protocol.StatusFailed} {
+		done := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = status })
+		rec = postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": done.ID})
+		var resp struct {
+			Error string `json:"error"`
+		}
+		testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode")
+		want := fmt.Sprintf("cannot terminate order in status %q", status)
+		if rec.Code != http.StatusConflict || resp.Error != want {
+			t.Errorf("%s order = %d %q, want 409 %q", status, rec.Code, resp.Error, want)
+		}
 	}
 }
