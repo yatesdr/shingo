@@ -801,6 +801,25 @@ sim_plan() {
   [ "$total" -gt 0 ] || { echo "sim: no sim-only test found anywhere; the discovery is broken" >&2; return 1; }
 }
 
+# GATE_GO is the toolchain CI runs: every workflow's setup-go pins it, and
+# scripts/check-gate-toolchain.sh holds those pins to go.mod's go line, which is
+# where it is read from here. The steps that borrow WSL's cgo (race, sim) run it
+# too, through GOTOOLCHAIN: WSL's own go is newer (go1.26.8 on 2026-11-21), the
+# Windows steps run the host's go1.25.x, and a race verdict from a third
+# compiler is not CI's verdict (docket D7). The toolchain is fetched once into
+# WSL's module cache; wsl_go_check fails the step, saying why, if it cannot be.
+GATE_GO="go$(sed -n 's/^go[[:space:]]*//p' "$ROOT/shingo-core/go.mod" | tr -d '\r')"
+
+# wsl_go_check <step> — passes when WSL's go under GOTOOLCHAIN=$GATE_GO is
+# $GATE_GO; otherwise prints what it is and fails.
+wsl_go_check() {
+  local v
+  v="$(wsl.exe -d Ubuntu -- bash -lc "GOTOOLCHAIN=$GATE_GO go env GOVERSION" 2>&1 | tr -d '\r\0' | tail -1)"
+  [ "$v" = "$GATE_GO" ] && return 0
+  echo "FAIL $1 — WSL's go under GOTOOLCHAIN=$GATE_GO reports '$v', not $GATE_GO (CI's toolchain)"
+  return 1
+}
+
 # sim_cmd <root> <plan> — the tagged runs, one `go test` per module, each with
 # the module's sim-only tests as its -run. Every module runs even after one
 # fails, and the string exits non-zero if any did. The root is INLINED rather
@@ -855,8 +874,9 @@ step_sim() {
       echo "FAIL sim — could not translate $ROOT into a WSL path"
       return 1
     fi
-    ( wsl.exe -d Ubuntu -- bash -lc "$(sim_cmd "$wslroot" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
-    how="-race, via WSL"
+    wsl_go_check sim || return 1
+    ( wsl.exe -d Ubuntu -- bash -lc "export GOTOOLCHAIN=$GATE_GO; $(sim_cmd "$wslroot" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    how="-race, via WSL, $GATE_GO"
   else
     # NO SILENT DOWNGRADE. A plain `-tags sim` run compiles the sim files and
     # would have passed with the concurrent map write in place, so reporting it
@@ -1388,7 +1408,7 @@ step_docker() {
 RACE_PKGS="./engine/... ./www/..."
 
 step_race() {
-  local rrc addr pgenv="" inner
+  local rrc addr pgenv="" inner racego=""
   touch "$RACE_PG_MARK" 2>/dev/null
   if addr="$(pg_up "$RACE_PG")"; then
     pgenv="SHINGO_TEST_PG=$addr SHINGO_TEST_PG_TEMPLATE=template_gate_race_$$"
@@ -1417,7 +1437,9 @@ step_race() {
       echo "FAIL race — could not translate $ROOT into a WSL path"
       return 1
     fi
-    ( wsl.exe -d Ubuntu -- bash -lc "cd '$wslroot/shingo-core' && $inner" \
+    wsl_go_check race || { stop_race_pg; return 1; }
+    racego=", via WSL, $GATE_GO"
+    ( wsl.exe -d Ubuntu -- bash -lc "export GOTOOLCHAIN=$GATE_GO; cd '$wslroot/shingo-core' && $inner" \
         >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
   else
     stop_race_pg
@@ -1432,7 +1454,7 @@ step_race() {
     return 1
   fi
   if [ "$rrc" -eq 0 ]; then
-    echo "ok   race (-tags docker, $RACE_PKGS)"
+    echo "ok   race (-tags docker, $RACE_PKGS$racego)"
     return 0
   fi
   echo "FAIL race"
