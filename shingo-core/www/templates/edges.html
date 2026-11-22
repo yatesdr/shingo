@@ -84,6 +84,7 @@
         {{if gt .ConflictCount 0}}<span class="badge badge-warn">{{.ConflictCount}}</span>{{else}}0{{end}}
       </td>
       <td>
+        <div class="flex flex-wrap gap-1">
         {{if .ClaimedAt}}
           <button class="btn btn-sm" data-action="renameEdge">Rename</button>
         {{else}}
@@ -92,6 +93,7 @@
         {{if eq .Status "stale"}}
           <button class="btn btn-sm" data-action="removeEdge">Remove station</button>
         {{end}}
+        </div>
       </td>
     </tr>
     {{end}}
