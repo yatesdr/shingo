@@ -22,6 +22,7 @@ Deploy: no migration
 - In the sim plant, the finished-goods unloader sends empty carriers back to the market, so the press-empties kanban no longer fills with one type and starves a press
 - In the sim plant, the five-press kanban has ten more carts and positions, so five presses drawing a cart a minute no longer share two spares
 - A station that is applying every update is no longer flagged "not converging" on Core's Edges page or on the Edge's own status for quoting a copy a few changes old
+- A station that applies each sourcing change as Core sends it is no longer flagged "sourcing not converging" on the Edges page
 - A station stuck on the last update pushed to it is now flagged "not converging": until now that one was never flagged, so a flag may appear where none did
 
 ## v0.19.0 — 2026-11-22

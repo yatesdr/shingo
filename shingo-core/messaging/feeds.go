@@ -247,6 +247,20 @@ func (f *feedState) recordPush(station, key, digest string, now time.Time) {
 	rec.Pushed(digest, now)
 }
 
+// quotingStations is the stations that have quoted key on a heartbeat: those
+// a send to every station is recorded for.
+func (f *feedState) quotingStations(key string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for rk := range f.quoted {
+		if rk[1] == key {
+			out = append(out, rk[0])
+		}
+	}
+	return out
+}
+
 // lastSent is the digest last sent of one key to one station by either path,
 // as recorded, quoted back or not; "" when nothing has been.
 func (f *feedState) lastSent(station, key string) string {
@@ -517,6 +531,32 @@ func buildSourcingFeed(s *CoreDataService, station string) (string, any, bool, e
 	}
 	d, err := protocol.SourcingDigest(r.States)
 	return d, r, true, err
+}
+
+// SourcingSent records what the sourcing monitor is sending to station, or to
+// protocol.StationBroadcast (each station that quotes the feed): the digest of
+// the station's report as the monitor holds it now, which is what that
+// station's cache digests to once it applies the send. No read, one digest a
+// station. Pinned by engine TestSourcingFeed_AnEdgeApplyingEveryPushIsNotFlagged.
+//
+// NOT ALWAYS WHAT THE EDGE WILL QUOTE, and accepted: a verdict whose reason
+// moved with no delta (a count in it: wireChanged ignores that), or a second
+// recompute landed before this build, is in the report and not in the Edge's
+// cache. That quote is one miss, and the heal is the miss itself: the compare
+// sends the station its snapshot (pinned by
+// TestSourcingFeed_TheHeartbeatSendsTheStationItsSnapshot) and records that
+// digest, which the next heartbeat quotes. Three misses in a row would flag.
+func (s *CoreDataService) SourcingSent(station string) {
+	stations := []string{station}
+	if station == protocol.StationBroadcast {
+		stations = s.feeds.quotingStations(protocol.FeedSourcing)
+	}
+	now := clock.Now()
+	for _, st := range stations {
+		if e, ok := s.feedCurrent(st, protocol.FeedSourcing, now); ok {
+			s.feeds.recordPush(st, protocol.FeedSourcing, e.digest, now)
+		}
+	}
 }
 
 // sendFeedValue is the send of a feed whose build is the message: its value,

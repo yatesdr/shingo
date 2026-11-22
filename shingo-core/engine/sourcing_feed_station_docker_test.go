@@ -249,11 +249,7 @@ func TestSourcingFeed_AnEdgeApplyingEveryPushIsNotFlagged(t *testing.T) {
 				m := eng.SourceabilityMonitor()
 				svc := messaging.NewCoreDataService(db, messaging.NewCoreHandler(db, nil, "core", "shingo.dispatch", nil), service.EpochAnnounce{})
 				svc.SetSourcingReport(m.StationReport)
-				sent, records := any(svc).(interface{ SourcingSent(string) })
-				tells, told := any(m).(interface{ SetSentFunc(func(string)) })
-				if records && told {
-					tells.SetSentFunc(sent.SourcingSent) // as cmd/shingocore wires it
-				}
+				m.SetSentFunc(svc.SourcingSent) // as cmd/shingocore wires it
 
 				cache := map[string]protocol.SourcingState{} // the Edge's
 				apply := func(r protocol.SourcingStateReport) {

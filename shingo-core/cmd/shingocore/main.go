@@ -468,6 +468,7 @@ func main() {
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
 	if sm := eng.SourceabilityMonitor(); sm != nil {
 		coreDataService.SetSourcingReport(sm.StationReport)
+		sm.SetSentFunc(coreDataService.SourcingSent)
 	}
 	// The plant clock, configured once here and inherited by every edge at this
 	// site rather than typed into each box's yaml. The zone Core was explicitly
