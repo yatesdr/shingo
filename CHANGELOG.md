@@ -34,6 +34,7 @@ Deploy: no migration
 - Stopping Core lets the order in hand finish, waits at most 12 seconds, and starts nothing after it.
 - A count or a reset at a node two stations claim reaches both; only the station holding that bin changes.
 - Stations flags a node two stations claim, on both rows, until one of them takes it off.
+- An Edge's positions picker greys a node another station claims, with that station's name.
 
 ## v0.19.0 — 2026-11-22
 

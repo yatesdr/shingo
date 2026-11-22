@@ -470,7 +470,9 @@ func (s *StationService) livePositionsOfOtherProcesses(excludeProcessID int64) (
 // coreNodeName — the shared-window exception to the one-process-per-slot rule.
 // An unwired resolver or a clean miss is false: no loader, no exception.
 // Exported for the node list the positions checklist reads, so the page greys
-// out exactly the names SetNodes would refuse and no others.
+// out every name SetNodes would refuse as another process's. It greys one kind
+// more, which SetNodes accepts: a node another station claims
+// (protocol.NodeInfo.ClaimedBy).
 func (s *StationService) LoaderHolds(coreNodeName string) bool {
 	if s.loaders == nil || coreNodeName == "" {
 		return false

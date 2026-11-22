@@ -4645,14 +4645,16 @@ const SET_BOXES = [['positions', 'Positions', 'the spots this process works']].c
 // Settings' Positions and routing. Each is S.setPicks[key] = {pid, api}, the
 // pick for process pid (0 for one not made yet). What a box may take is its
 // field (setPickField):
-//   - Positions: a node another process holds is greyed with its name; a
+//   - Positions: a node another process holds is greyed with its name, and a
+//     node another station claims with that station's (claimedElsewhere); a
 //     group's row folds its nodes, which are positions one at a time.
 //   - Inbound and Outbound: a position of this process is greyed (every flow
 //     on it may use it already), and a group's members are not drawn: where
 //     Core picks, a source or destination names the group (legExclusion).
 //   - Staging: the same, except that a staging spot names the exact node, so
 //     a group's nodes fold under it, pickable once shown.
-// A node another process holds is behind "In use by other processes".
+// A node another process holds, here or on another station, is behind "In use
+// by other processes".
 //
 // TICKING A NODE INTO POSITIONS TAKES IT OUT OF THE ROLES (as the sheet did
 // before it was shared): one node is a position or a routing name, never both
@@ -4665,10 +4667,24 @@ function setPickValue(key, box) {
     return sp ? sp.api.value(box) : [];
 }
 
-// heldElsewhere: another process holds name as a position, and no Core
-// loader shares it (a shared loader window may be on several).
+// heldElsewhere: another process holds name as a position here, or another
+// station claims it (claimedElsewhere), and no Core loader shares it (a shared
+// loader window may be on several).
 function heldElsewhere(name, pid) {
-    return (S.livePositions || []).some(n => n.core_node_name === name && n.process_id !== pid) && !sharedLoaderNode(name);
+    return ((S.livePositions || []).some(n => n.core_node_name === name && n.process_id !== pid) ||
+        !!claimedElsewhere(name, pid)) && !sharedLoaderNode(name);
+}
+
+// claimedElsewhere is the other stations that claim name, as Core's node list
+// names them (claimed_by), or ''. It never counts against a position process
+// pid already has: that row stays tickable, so it can be taken off. It is the
+// picker's alone: no save is refused on it.
+function claimedElsewhere(name, pid) {
+    const n = (S.coreNodes || []).find(c => c.name === name);
+    if (!n || !n.claimed_by) return '';
+    if (positionScreen(name, pid) ||
+        (S.livePositions || []).some(p => p.core_node_name === name && p.process_id === pid)) return '';
+    return n.claimed_by;
 }
 
 // A group is never a position itself: in the Positions box its row is greyed
@@ -6584,13 +6600,14 @@ function positionScreen(name, pid) {
 }
 
 // positionHeld is why name cannot be a position of process pid: another
-// process holds it, and no Core loader shares it (shared_loader).
+// process holds it, here or (by its claim) on another station, and no Core
+// loader shares it (shared_loader).
 function positionHeld(name, pid) {
     if (positionScreen(name, pid)) return '';
     const rows = (S.livePositions || []).filter(n => n.core_node_name === name);
     if (rows.some(n => n.process_id === pid)) return '';
-    const other = rows[0];
-    return other && !sharedLoaderNode(name) ? 'on ' + other.process_name : '';
+    const holder = rows.length ? rows[0].process_name : claimedElsewhere(name, pid);
+    return holder && !sharedLoaderNode(name) ? 'on ' + holder : '';
 }
 
 // THE COUNTED-AT DRAFT. S.counted is each position's station counter id, 0 for

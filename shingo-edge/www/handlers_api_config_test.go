@@ -897,7 +897,8 @@ func itoa(v int64) string {
 }
 
 // TestApiConfig_GetCoreNodes_ClaimedElsewhere: what the pickers are told of a
-// node Core marks as claimed by another station. Nothing: the mark is dropped.
+// node Core marks as claimed by another station: that station, as Core named
+// it.
 func TestApiConfig_GetCoreNodes_ClaimedElsewhere(t *testing.T) {
 	t.Parallel()
 	h, router := newAdminRouter(t)
@@ -916,7 +917,7 @@ func TestApiConfig_GetCoreNodes_ClaimedElsewhere(t *testing.T) {
 		ClaimedBy string `json:"claimed_by"`
 	}
 	decodeJSON(t, resp, &rows)
-	if len(rows) != 1 || rows[0].ClaimedBy != "" {
-		t.Errorf("rows = %+v, want CT-N1 with no claimed_by", rows)
+	if len(rows) != 1 || rows[0].ClaimedBy != "Line B" {
+		t.Errorf("rows = %+v, want CT-N1 claimed by Line B", rows)
 	}
 }

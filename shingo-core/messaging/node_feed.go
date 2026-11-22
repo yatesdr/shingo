@@ -3,6 +3,7 @@ package messaging
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/domain"
@@ -103,7 +104,16 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list accept-partials windows for %s: %v", stationID, perr)
 	}
-	infos := nodeInfos(nodeList, stationScoped, kanbans, partials)
+	// Nodes other stations claim, for the Edge's picker. A failed read sends no
+	// marks on a reply, as the kanbans read does: they refuse nothing.
+	claimed, cerr := s.db.NodesClaimedElsewhere(stationID)
+	if cerr != nil {
+		if strict {
+			return nil, fmt.Errorf("list nodes claimed elsewhere: %w", cerr)
+		}
+		log.Printf("core_handler: list nodes claimed elsewhere for %s: %v", stationID, cerr)
+	}
+	infos := nodeInfos(nodeList, stationScoped, kanbans, partials, claimed)
 
 	// Loader refactor cutover: include the Core-owned loader config as a sibling
 	// slice so Edge's persistent cache receives it atomically with the topology.
@@ -227,17 +237,22 @@ func binTypeFamilies(types []*bins.BinType) map[string]string {
 
 // nodeInfos projects the node rows for the wire: a station-scoped list names
 // group children "Group.Child"; the plant-wide fallback sends the roots and the
-// children of node groups.
-func nodeInfos(nodeList []*nodes.Node, stationScoped bool, kanbans, partials map[int64]bool) []protocol.NodeInfo {
+// children of node groups. claimed is by the node's own name, as claims spell
+// it, never the dotted one.
+func nodeInfos(nodeList []*nodes.Node, stationScoped bool, kanbans, partials map[int64]bool,
+	claimed map[string][]string) []protocol.NodeInfo {
 	var infos []protocol.NodeInfo
+	info := func(n *nodes.Node, name string) protocol.NodeInfo {
+		return protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
+			AcceptsPartials: partials[n.ID], ClaimedBy: strings.Join(claimed[n.Name], ", ")}
+	}
 	if stationScoped {
 		for _, n := range nodeList {
 			name := n.Name
 			if n.ParentID != nil && !n.IsSynthetic && n.ParentName != "" {
 				name = n.ParentName + "." + n.Name
 			}
-			infos = append(infos, protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
-				AcceptsPartials: partials[n.ID]})
+			infos = append(infos, info(n, name))
 		}
 		return infos
 	}
@@ -247,14 +262,10 @@ func nodeInfos(nodeList []*nodes.Node, stationScoped bool, kanbans, partials map
 	}
 	for _, n := range nodeList {
 		if n.ParentID == nil {
-			infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
-				AcceptsPartials: partials[n.ID]})
+			infos = append(infos, info(n, n.Name))
 		} else if !n.IsSynthetic {
 			if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
-				infos = append(infos, protocol.NodeInfo{
-					Name: parent.Name + "." + n.Name, NodeType: n.NodeTypeCode, Kanban: kanbans[n.ID],
-					AcceptsPartials: partials[n.ID],
-				})
+				infos = append(infos, info(n, parent.Name+"."+n.Name))
 			}
 		}
 	}

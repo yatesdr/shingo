@@ -1084,6 +1084,7 @@ digest and `scene_revision` is the `scene` feed's value.
 | `node_type` | string |  | NodeType is the node type code (NGRP, LANE); empty for a physical node. |
 | `kanban` | boolean | omitempty | Kanban is true for a group Core keeps a level of empties in (a group with a level), so the Edge can refuse that group as a full-bin source when a claim is saved, as Core refuses it for a loader. Omitted when false, and an older Core never sends it: absent reads as false, so an Edge talking to such a Core refuses nothing on this account. |
 | `accepts_partials` | boolean | omitempty | AcceptsPartials marks a window of a loader whose windows take partly filled carriers (accept_partials), and every group above one. A claim's partial home may not be one: the two say opposite things about the same carriers. False for every other node, and from a Core predating the field. |
+| `claimed_by` | string | omitempty | ClaimedBy names the other stations that claim this physical node (a claim's own position or a paired one), by display name, comma separated. The positions picker greys the node with it; no save is refused on it. Never the receiving station itself. Empty for a group, for a node only positions name, and from a Core predating the field. |
 
 <!-- /generated -->
 

@@ -868,12 +868,16 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 	if env != nil {
 		station = env.Src.Station
 	}
-	previous, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.Positions, report.ConfigGen)
+	replaced, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.Positions, report.ConfigGen)
 	if err != nil {
 		log.Printf("core_handler: plant.claims mirror %s: %v", report.ProcessID, err)
 		return
 	}
+	previous := replaced.PreviousStation
 	s.recordClaimsReport(env, report)
+	if replaced.ClaimedNodesMoved {
+		s.claimedNodesMoved(station, previous)
+	}
 	if previous != "" && station != "" && previous != station {
 		log.Printf("core_handler: plant.claims — process %s is published by two stations, %s and now %s; "+
 			"keeping %s's (the last writer). A process belongs to one station: fix the plant spec on one of them",

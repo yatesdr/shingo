@@ -579,7 +579,7 @@ func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
 		return nil, err
 	}
 	s.invalidateStationNames()
-	s.FeedsChangedPlantWide() // a loader naming this uid carries its name
+	s.FeedsChangedPlantWide() // a loader naming this uid, and a node it claims, carry its name
 	return e, nil
 }
 
@@ -595,7 +595,7 @@ func (s *NodeService) RenameEdge(uid, displayName string) (bool, error) {
 	// ran, drop the cache" and a spurious reload of a one-row map costs nothing.
 	if err == nil {
 		s.invalidateStationNames()
-		s.FeedsChangedPlantWide() // a loader naming this Edge carries its name
+		s.FeedsChangedPlantWide() // a loader naming this Edge, and a node it claims, carry its name
 	}
 	return ok, err
 }
@@ -607,7 +607,7 @@ func (s *NodeService) ClaimEdge(uid, displayName string) (bool, error) {
 	ok, err := s.db.ClaimEdge(uid, displayName)
 	if err == nil {
 		s.invalidateStationNames()
-		s.FeedsChangedPlantWide() // a loader naming this Edge carries its name
+		s.FeedsChangedPlantWide() // a loader naming this Edge, and a node it claims, carry its name
 	}
 	return ok, err
 }

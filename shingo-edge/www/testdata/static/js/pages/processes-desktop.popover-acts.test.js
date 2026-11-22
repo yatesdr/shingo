@@ -1139,7 +1139,8 @@ async function mainAsync() {
             throw new Error('the Positions box is not every position, each screen\'s then those on none: ' + JSON.stringify(chips));
         }
         if (pk.row(host, 'PLN_03')) throw new Error('a position another process holds is drawn among the free nodes');
-        if (sp.later(host).indexOf('In use by other processes · 1') !== 0) {
+        if (pk.row(host, 'PLN_06')) throw new Error('a node another station claims is drawn among the free nodes');
+        if (sp.later(host).indexOf('In use by other processes · 2') !== 0) {
             throw new Error('the later fold reads ' + JSON.stringify(sp.later(host)));
         }
         sp.showLater(host);
@@ -1151,7 +1152,7 @@ async function mainAsync() {
         };
         const got = {};
         for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05', 'PLN_06']) got[n] = row(n);
-        const expect = { PLN_01: 'ticked: ', PLN_02: 'ticked: ', PLN_03: 'greyed: on Press 2', PLN_04: 'ticked: ', PLN_05: '', PLN_06: '' };
+        const expect = { PLN_01: 'ticked: ', PLN_02: 'ticked: ', PLN_03: 'greyed: on Press 2', PLN_04: 'ticked: ', PLN_05: '', PLN_06: 'greyed: on Line B' };
         if (JSON.stringify(got) !== JSON.stringify(expect)) {
             throw new Error('picker notes wrong: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(expect));
         }
@@ -1168,20 +1169,24 @@ async function mainAsync() {
         }
         // A click on a greyed row does nothing. Outside Positions the same
         // node only waits behind the fold: it can be picked, and is not greyed.
-        // (PLN_06, which another station claims, is a free node in both.)
-        pk.row(host, 'PLN_03').click();
-        if (sp.chips(host, 'positions').indexOf('PLN_03') >= 0) throw new Error('a click picked a greyed row into Positions');
+        // (PLN_06, which another station claims, is held the same way in both.)
+        for (const n of ['PLN_03', 'PLN_06']) {
+            pk.row(host, n).click();
+            if (sp.chips(host, 'positions').indexOf(n) >= 0) throw new Error('a click picked the greyed ' + n + ' into Positions');
+        }
         sp.open(host, 'staging');
         if (sp.active(host) !== 'staging') throw new Error('the staging box did not open: ' + sp.active(host));
-        if (sp.later(host).indexOf('In use by other processes · 1') !== 0) {
+        if (sp.later(host).indexOf('In use by other processes · 2') !== 0) {
             throw new Error('outside Positions the later fold reads ' + JSON.stringify(sp.later(host)));
         }
         for (const n of ['PLN_03', 'PLN_06']) {
             if (pk.off(host, n)) throw new Error(n + ' is greyed outside Positions: ' + pk.side(host, n));
         }
-        pk.row(host, 'PLN_03').click();
-        if (sp.chips(host, 'staging').indexOf('PLN_03') < 0) throw new Error('a held node cannot be picked outside Positions');
-        sp.drop(host, 'staging', 'PLN_03');
+        for (const n of ['PLN_03', 'PLN_06']) {
+            pk.row(host, n).click();
+            if (sp.chips(host, 'staging').indexOf(n) < 0) throw new Error(n + ' cannot be picked outside Positions');
+            sp.drop(host, 'staging', n);
+        }
         checks++;
         console.log('ok: Settings\' Positions box greys another process\'s position "on <process>" behind "In use by other processes", from one read');
     }

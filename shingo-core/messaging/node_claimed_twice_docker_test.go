@@ -159,8 +159,10 @@ func nodesDigestOf(t *testing.T, svc *CoreDataService, station string) string {
 }
 
 // TestNodeList_AClaimOfAnotherStation: what the node list of one station says
-// of a node another station claims, and whose list a claim change moves.
-// Nothing is said and no list moves.
+// of a node another station claims, and whose list a claim change moves: the
+// other station is told the claimant's name for each physical node claimed
+// (own, paired, a group's member), never of the group, and the claimant's own
+// list says nothing and does not move.
 func TestNodeList_AClaimOfAnotherStation(t *testing.T) {
 	t.Parallel()
 	svc, _ := claimedTwiceCore(t)
@@ -173,11 +175,12 @@ func TestNodeList_AClaimOfAnotherStation(t *testing.T) {
 	if got := nodesDigestOf(t, svc, ctA); got != a0 {
 		t.Errorf("its own claim moved the list of A (%s to %s), want no re-send", a0, got)
 	}
-	if got := claimedBy(t, svc, ctB); len(got) != 0 {
-		t.Errorf("the list of B marks %v for the claims of A, want nothing", got)
+	want := map[string]string{"CT-N1": ctAName, "CT-N2": ctAName, "CT-GRP.CT-M1": ctAName}
+	if got := claimedBy(t, svc, ctB); !reflect.DeepEqual(got, want) {
+		t.Errorf("the list of B marks %v for the claims of A, want %v", got, want)
 	}
-	if got := nodesDigestOf(t, svc, ctB); got != b0 {
-		t.Errorf("a claim of A moved the list of B (%s to %s), want no re-send", b0, got)
+	if got := nodesDigestOf(t, svc, ctB); got == b0 {
+		t.Errorf("a claim of A left the list of B at %s, want a re-send", b0)
 	}
 
 	// A position alone is not a claim.
@@ -189,7 +192,7 @@ func TestNodeList_AClaimOfAnotherStation(t *testing.T) {
 
 // TestNodeFeed_AnotherStationsClaimChange: how often a claim change re-sends
 // the node list. Each station converges, A reports a claim, and both heartbeat
-// again inside the life of the memo: no list goes to either.
+// again inside the life of the memo: one list to B, none to A.
 func TestNodeFeed_AnotherStationsClaimChange(t *testing.T) {
 	t.Parallel()
 	svc, resp := claimedTwiceCore(t)
@@ -207,8 +210,8 @@ func TestNodeFeed_AnotherStationsClaimChange(t *testing.T) {
 		for _, e := range sends {
 			subjects = append(subjects, e.subject)
 		}
-		if slices.Contains(subjects, protocol.SubjectNodeListResponse) {
-			t.Errorf("a claim of A re-sent the node list to %s, want none", st)
+		if got, want := slices.Contains(subjects, protocol.SubjectNodeListResponse), st == ctB; got != want {
+			t.Errorf("a claim of A re-sent the node list to %s: %v, want %v", st, got, want)
 		}
 	}
 }

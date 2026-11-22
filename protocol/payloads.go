@@ -1189,6 +1189,12 @@ type NodeInfo struct {
 	// partial home may not be one: the two say opposite things about the same
 	// carriers. False for every other node, and from a Core predating the field.
 	AcceptsPartials bool `json:"accepts_partials,omitempty"`
+	// ClaimedBy names the other stations that claim this physical node (a
+	// claim's own position or a paired one), by display name, comma separated.
+	// The positions picker greys the node with it; no save is refused on it.
+	// Never the receiving station itself. Empty for a group, for a node only
+	// positions name, and from a Core predating the field.
+	ClaimedBy string `json:"claimed_by,omitempty"`
 }
 
 // PayloadBinTypeInfo maps one payload code to one bin-type code.

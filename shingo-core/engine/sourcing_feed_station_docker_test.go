@@ -193,13 +193,13 @@ func TestPlantClaims_TheLastPublishingStationIsKept(t *testing.T) {
 	style := []plantclaims.StyleRow{{ProcessID: "SNF9", StyleID: "S1"}}
 	prev, err := plantclaims.ReplaceProcessFromStation(db.DB, "SNF9", "edge-a", style, nil, nil, 0)
 	testutil.MustNoErr(t, err, "first publish")
-	if prev != "" {
-		t.Fatalf("first publish reported previous station %q, want none", prev)
+	if prev.PreviousStation != "" {
+		t.Fatalf("first publish reported previous station %q, want none", prev.PreviousStation)
 	}
 	prev, err = plantclaims.ReplaceProcessFromStation(db.DB, "SNF9", "edge-b", style, nil, nil, 0)
 	testutil.MustNoErr(t, err, "second station publishes the same process")
-	if prev != "edge-a" {
-		t.Fatalf("second publish reported previous station %q, want edge-a (so the ingest can name both)", prev)
+	if prev.PreviousStation != "edge-a" {
+		t.Fatalf("second publish reported previous station %q, want edge-a (so the ingest can name both)", prev.PreviousStation)
 	}
 	stations, err := plantclaims.ProcessStations(db.DB)
 	testutil.MustNoErr(t, err, "read stations")

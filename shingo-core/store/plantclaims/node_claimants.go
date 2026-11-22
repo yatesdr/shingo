@@ -71,3 +71,30 @@ func SharedNodes(db *sql.DB, station string) ([]SharedNode, error) {
 	}
 	return out, nil
 }
+
+// ClaimedElsewhere maps each physical node a station other than station claims
+// to those stations, as a person reads them: what that station's node list
+// marks (protocol.NodeInfo.ClaimedBy). Positions alone are not claims, and the
+// station's own claims are never in its answer. One statement.
+func ClaimedElsewhere(db *sql.DB, station string) (map[string][]string, error) {
+	rows, err := db.Query(`SELECT c.node, `+stationLabelSQL+`
+		  FROM (SELECT DISTINCT node, station FROM (`+claimedNodesSQL+`) claimed WHERE station <> $1) c
+		  LEFT JOIN edge_registry er ON er.station_uid = c.station
+		 ORDER BY 1, 2`, station)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims claimed elsewhere %s: %w", station, err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var node, who string
+		if err := rows.Scan(&node, &who); err != nil {
+			return nil, fmt.Errorf("plantclaims claimed elsewhere %s: scan: %w", station, err)
+		}
+		out[node] = append(out[node], who)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("plantclaims claimed elsewhere %s: %w", station, err)
+	}
+	return out, nil
+}
