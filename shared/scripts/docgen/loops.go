@@ -144,7 +144,8 @@ func (w *loopsWalker) frame(fn *gosrcFunc, args []ast.Expr, parent *loopsFrame) 
 }
 
 // loopsVisit walks a body in source order, calling onGo for each go statement
-// and onCall for each other call, and does not enter closures.
+// (and each goroutine-group spawn, loopsSpawn) and onCall for each other call,
+// and does not enter closures.
 func loopsVisit(body *ast.BlockStmt, onGo func(*ast.GoStmt), onCall func(*ast.CallExpr)) {
 	if body == nil {
 		return
@@ -157,6 +158,10 @@ func loopsVisit(body *ast.BlockStmt, onGo func(*ast.GoStmt), onCall func(*ast.Ca
 			onGo(n)
 			return false
 		case *ast.CallExpr:
+			if g := loopsSpawn(n); g != nil {
+				onGo(g)
+				return false
+			}
 			onCall(n)
 		}
 		return true
@@ -1041,4 +1046,24 @@ func (w *loopsWalker) firstFuncCalled(e ast.Expr, fr *loopsFrame) string {
 		return true
 	})
 	return name
+}
+
+// loopsSpawn reads `x.spawn(f)`, a tracked goroutine group's spawn
+// (shingo-core's Engine.loops, engine/window_pulls.go goGroup), as the go
+// statement it runs: spawn(x.f) is `go x.f()`, spawn(func() { x.f(a) }) is
+// `go x.f(a)`, and any other closure is `go func() {...}()`. Anything else is
+// nil.
+func loopsSpawn(c *ast.CallExpr) *ast.GoStmt {
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "spawn" || len(c.Args) != 1 {
+		return nil
+	}
+	if lit, ok := c.Args[0].(*ast.FuncLit); ok && len(lit.Body.List) == 1 {
+		if es, ok := lit.Body.List[0].(*ast.ExprStmt); ok {
+			if call, ok := es.X.(*ast.CallExpr); ok {
+				return &ast.GoStmt{Go: c.Pos(), Call: call}
+			}
+		}
+	}
+	return &ast.GoStmt{Go: c.Pos(), Call: &ast.CallExpr{Fun: c.Args[0], Lparen: c.Lparen, Rparen: c.Rparen}}
 }

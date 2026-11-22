@@ -61,8 +61,10 @@ type Tracker interface {
 type Engine struct {
 	cfg     *config.Config
 	keeper  *Keeper
-	tracker Tracker
-	stop    chan struct{}
+	tracker  Tracker
+	stop     chan struct{}
+	loops    group
+	blocking *Blocking
 }
 
 func (e *Engine) Start() {
@@ -74,6 +76,35 @@ func (e *Engine) Start() {
 	e.tracker.Start()
 	e.subscribe(func() { go e.perEvent() })
 	go e.sweepLoop(e.cfg.Staging.SweepInterval)
+	e.loops.spawn(e.spawnedLoop)
+	e.loops.spawn(func() { e.blocking.Run(context.Background()) })
+	e.loops.spawn(func() { <-e.stop })
+}
+
+// group is a tracked goroutine group: spawn runs fn as a goroutine.
+type group struct{}
+
+func (g *group) spawn(fn func()) { go fn() }
+
+// spawnedLoop ticks on a constant, through the group.
+func (e *Engine) spawnedLoop() {
+	for range time.Tick(tickInterval) {
+	}
+}
+
+// Blocking is a keeper whose Run is the loop itself.
+type Blocking struct{}
+
+// Run ticks until ctx is cancelled.
+func (b *Blocking) Run(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // tickLoop ticks on a constant.
@@ -169,6 +200,8 @@ func TestLoops_ReadsEveryLaunchShape(t *testing.T) {
 		{"Keeper.Run", "Engine.Start", "30s"},
 		{"Tracker.Start", "Engine.Start", "set by the implementation"},
 		{"sweepLoop", "Engine.Start", "config `staging.sweep_interval`"},
+		{"spawnedLoop", "Engine.Start", "2s (`tickInterval`)"},
+		{"Blocking.Run", "Engine.Start", "1m"},
 	}
 	for _, w := range want {
 		r, ok := got[w.name]

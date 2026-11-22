@@ -38,7 +38,7 @@ func (e *Engine) Start() {
 
 	// Wire event handlers, and start the goroutine the ones that acquire hand
 	// their work to.
-	go e.after.run(e.stopChan)
+	e.loops.spawn(func() { e.after.run(e.stopChan) })
 	e.wireEventHandlers()
 
 	// Teach the fleet backend the plant's one-bin-per-node invariant. Only the
@@ -112,7 +112,7 @@ func (e *Engine) Start() {
 	// fulfillment sweep does not cover: robots dwelling at a lane's mark, and
 	// compound legs not yet handed to the fleet. Started beside it because it is
 	// the same shape at the same cadence over a different set (F-22).
-	go e.laneLivenessFloorLoop()
+	e.loops.spawn(e.laneLivenessFloorLoop)
 
 	// Start tracker
 	if e.tracker != nil {
@@ -128,7 +128,7 @@ func (e *Engine) Start() {
 	e.checkConnectionStatus()
 
 	// Start periodic connection health check
-	go e.connectionHealthLoop()
+	e.loops.spawn(e.connectionHealthLoop)
 
 	// Start robot status refresh loop (2s), and the loops that read its poll.
 	e.startRobotPollLoops()
@@ -142,7 +142,7 @@ func (e *Engine) Start() {
 	// fills on its 2-second tick, so a pass at boot would run against an empty
 	// cache and decide nothing. The first tick five minutes in is the earliest
 	// the answer means anything.
-	go e.mapSyncLoop()
+	e.loops.spawn(e.mapSyncLoop)
 
 	// Demand-episode reconciler: the correctness floor under the notification
 	// close paths. Started AFTER the threshold monitor is constructed (New
@@ -171,21 +171,21 @@ func (e *Engine) Start() {
 	// shutdown.
 	if e.thresholdMonitor != nil {
 		monCtx, cancel := context.WithCancel(context.Background())
-		go func() {
+		e.loops.spawn(func() {
 			<-e.stopChan
 			cancel()
-		}()
-		e.thresholdMonitor.Run(monCtx)
+		})
+		e.loops.spawn(func() { e.thresholdMonitor.Run(monCtx) })
 	}
 
 	// Sourceability monitor: startup full recompute + periodic safety net,
 	// with change-driven debounced recomputes via the bus subscriptions.
 	if e.sourceabilityMonitor != nil {
 		srcCtx, cancel := context.WithCancel(context.Background())
-		go func() {
+		e.loops.spawn(func() {
 			<-e.stopChan
 			cancel()
-		}()
+		})
 		e.sourceabilityMonitor.Run(srcCtx)
 	}
 
@@ -198,11 +198,11 @@ func (e *Engine) Start() {
 	// above). A keeper ticking before that would panic on its first gap.
 	if e.keeper != nil {
 		mntCtx, cancel := context.WithCancel(context.Background())
-		go func() {
+		e.loops.spawn(func() {
 			<-e.stopChan
 			cancel()
-		}()
-		e.keeper.Run(mntCtx)
+		})
+		e.loops.spawn(func() { e.keeper.Run(mntCtx) })
 	}
 
 	// The CMS poster's LOOP. The poster itself was built in New; only its
@@ -224,9 +224,9 @@ func (e *Engine) Start() {
 // mission set up (cleaning) or a fleet that can relay a laser frame (lidar),
 // and each says so once.
 func (e *Engine) startRobotPollLoops() {
-	go e.robotRefreshLoop()
-	go e.cleaningLoop()
-	go e.lidarHoursLoop()
+	e.loops.spawn(e.robotRefreshLoop)
+	e.loops.spawn(e.cleaningLoop)
+	e.loops.spawn(e.lidarHoursLoop)
 }
 
 // newCMSPoster builds the middleware poster when the site has one, and returns
@@ -270,10 +270,10 @@ func (e *Engine) startDispatch() *dispatch.DefaultResolver {
 // startBootScan scans, on its own goroutine, the orders queued before a restart,
 // and closes bootScanned when the scan has finished.
 func (e *Engine) startBootScan() {
-	go func() {
+	e.loops.spawn(func() {
 		e.fulfillment.RunOnce()
 		close(e.bootScanned)
-	}()
+	})
 }
 
 func newCMSPoster(cfg *config.Config, db *store.DB, logFn func(string, ...any)) *poster.Poster {
@@ -290,11 +290,11 @@ func (e *Engine) runCMSPoster() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
+	e.loops.spawn(func() {
 		<-e.stopChan
 		cancel()
-	}()
-	go e.cmsPoster.Run(ctx)
+	})
+	e.loops.spawn(func() { e.cmsPoster.Run(ctx) })
 
 	// An empty feed is a legitimate state before cutover, and it is
 	// indistinguishable from a broken one without saying which this is.
@@ -392,6 +392,13 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 	}
 }
 
+// engineStopDrainLimit bounds how long Stop waits for the engine's goroutines
+// (Engine.loops). A safety net, as the RDS poller's stopDrainLimit is: each
+// loop returns on stopChan and each hand-off is one pass or one statement
+// chain, so a wait this long means one is wedged, and returning is better than
+// holding the process's shutdown forever.
+const engineStopDrainLimit = 30 * time.Second
+
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stopChan) })
 	e.stage2.stop()
@@ -403,6 +410,12 @@ func (e *Engine) Stop() {
 	}
 	if e.sourceabilityMonitor != nil {
 		e.sourceabilityMonitor.stop()
+	}
+	// Last: every loop above has seen stopChan close, and a hand-off still
+	// running (an after-queue item, a scan a subscriber started) finishes
+	// here, before the caller closes the database (Engine.loops).
+	if !e.loops.stopWithin(engineStopDrainLimit) {
+		e.logFn("engine: stop: a loop or hand-off was still running after %s; not waiting longer", engineStopDrainLimit)
 	}
 	e.logFn("engine: stopped")
 }
@@ -603,7 +616,9 @@ func (e *Engine) reportMemberLegs() {
 // abandon keys.
 func (e *Engine) startReconciliationLoop() {
 	e.sayRetiredAbandonKeys()
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
+	e.loops.spawn(func() {
+		e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
+	})
 }
 
 // sayRetiredAbandonKeys logs, once at start, a config file that still sets the

@@ -94,7 +94,8 @@ type (
 	TestWedgeSweep struct{}
 	TestShared     struct{}
 
-	AfterQueue struct{}
+	AfterQueue  struct{}
+	EngineLoops struct{}
 )
 
 func (ConfigSave) Rank() int   { return 5 }
@@ -162,7 +163,8 @@ func (SimTable) Rank() int  { return 183 }
 func (TestWedgeSweep) Rank() int { return 185 }
 func (TestShared) Rank() int     { return 186 }
 
-func (AfterQueue) Rank() int { return 190 }
+func (AfterQueue) Rank() int  { return 190 }
+func (EngineLoops) Rank() int { return 191 }
 
 func (ConfigSave) Name() string   { return "www.configMu" }
 func (OnDeck) Name() string       { return "engine.onDeckMu" }
@@ -229,4 +231,5 @@ func (SimTable) Name() string  { return "simulator.table.mu" }
 func (TestWedgeSweep) Name() string { return "testdb.wedgeSweepMu" }
 func (TestShared) Name() string     { return "testdb.sharedMu" }
 
-func (AfterQueue) Name() string { return "engine.afterQueue.mu" }
+func (AfterQueue) Name() string  { return "engine.afterQueue.mu" }
+func (EngineLoops) Name() string { return "engine.Engine.loops.mu" }

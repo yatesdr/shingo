@@ -81,7 +81,7 @@ func (e *Engine) startDemandReconciler() {
 		e.logFn("demand_reconciler: DISABLED (demand.reconcile_interval <= 0) — episodes close only via the notification paths")
 		return
 	}
-	go e.runDemandReconciler()
+	e.loops.spawn(e.runDemandReconciler)
 }
 
 // runDemandReconciler runs reconcileDemandEpisodes every demand reconcile

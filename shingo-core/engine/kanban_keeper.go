@@ -152,20 +152,20 @@ func NewKanbanKeeper(eng *Engine, now func() time.Time) *KanbanKeeper {
 	return &KanbanKeeper{eng: eng, now: now, interval: keeperTickInterval}
 }
 
-// Run ticks until ctx is cancelled.
+// Run ticks until ctx is cancelled. It blocks: Engine.Start runs it on one
+// of the engine's tracked goroutines (Engine.loops), so Stop waits for a tick
+// in flight.
 func (m *KanbanKeeper) Run(ctx context.Context) {
-	go func() {
-		t := clock.Default().NewTicker(m.interval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C():
-				m.Tick()
-			}
+	t := clock.Default().NewTicker(m.interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C():
+			m.Tick()
 		}
-	}()
+	}
 }
 
 // KanbanFamilyState is one (kanban, family) of the last tick: what the card's family row

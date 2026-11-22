@@ -32,8 +32,8 @@ const (
 // budget (funlen); the two are the release-what-ended sweeps, so they start
 // together.
 func (e *Engine) startClaimAndTerminateSweeps() {
-	go e.claimSweepLoop()
-	go e.terminateChaseLoop()
+	e.loops.spawn(e.claimSweepLoop)
+	e.loops.spawn(e.terminateChaseLoop)
 }
 
 // auditOrderNote records a fleet note on the order's audit trail, which the

@@ -29,6 +29,7 @@ package engine
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
@@ -52,14 +53,21 @@ const (
 // stage2Puller tracks the trigger goroutines of both window pulls (stage 2's
 // and the drain's, each decided under its loader's own lock in dispatch) so
 // Stop can wait for them. The zero value is ready.
-type stage2Puller struct {
-	mu      lockcheck.Mutex[lockorder.Stage2Pulls]
+type stage2Puller = goGroup[lockorder.Stage2Pulls]
+
+// goGroup tracks goroutines so a stop can wait for them: the window pulls'
+// (stage2Puller) and every loop and hand-off the engine starts (Engine.loops).
+// The zero value is ready. R ranks its lock (internal/lockorder); the lock is
+// held only across the Add and the go statement, so it is a leaf.
+type goGroup[R lockcheck.Ranked] struct {
+	mu      lockcheck.Mutex[R]
 	stopped bool
 	wg      sync.WaitGroup
 }
 
-// spawn runs fn on a tracked goroutine, or not at all once stopped.
-func (p *stage2Puller) spawn(fn func()) {
+// spawn runs fn on a tracked goroutine, or not at all once stopped. The Add is
+// under mu, the lock stop sets stopped under, so it is ordered before the Wait.
+func (p *goGroup[R]) spawn(fn func()) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.stopped {
@@ -73,11 +81,30 @@ func (p *stage2Puller) spawn(fn func()) {
 }
 
 // stop refuses new goroutines and waits for the running ones.
-func (p *stage2Puller) stop() {
+func (p *goGroup[R]) stop() {
 	p.mu.Lock()
 	p.stopped = true
 	p.mu.Unlock()
 	p.wg.Wait()
+}
+
+// stopWithin is stop with a bound on the wait: false means a goroutine was
+// still running after d, and it is left running.
+func (p *goGroup[R]) stopWithin(d time.Duration) bool {
+	p.mu.Lock()
+	p.stopped = true
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 
 // SaveLoader saves a loader's settings (service.LoaderService.Update) and, when

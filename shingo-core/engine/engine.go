@@ -181,6 +181,13 @@ type Engine struct {
 	// stage2 serializes the two-stage pull per pair and tracks its trigger
 	// goroutines (window_pulls.go).
 	stage2 stage2Puller
+	// loops tracks every goroutine Start launches and every hand-off a
+	// subscriber starts, so Stop returns only once they have: a loop or a
+	// hand-off still running after Stop reads a database its caller is about
+	// to close and logs through a logger whose owner may be gone
+	// (TestEngineStop_WaitsForItsGoroutines). Email sends stay untracked: they
+	// can wait on a mail server and log nothing through the engine.
+	loops goGroup[lockorder.EngineLoops]
 	// carriersClear is true when the last carrier-node sweep left no
 	// `_ROBOT:` node at all, so the 2 s robot tick has nothing to retire or
 	// walk. False at start (a restart cannot know what the table holds), set

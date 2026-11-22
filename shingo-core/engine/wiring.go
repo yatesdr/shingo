@@ -308,12 +308,12 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher != nil && dispatch.IsChapterEndCancel(ev.Reason) {
 			if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil {
 				parentID := *order.ParentOrderID
-				go func() {
+				e.loops.spawn(func() {
 					if err := e.dispatcher.AdvanceCompoundOrder(parentID); err != nil {
 						e.logFn("engine: advance dissolved compound %d after leg %d cancelled: %v",
 							parentID, ev.OrderID, err)
 					}
-				}()
+				})
 			}
 		}
 		// The commonest way a bin is stranded: a robot is carrying it and the
@@ -428,7 +428,7 @@ func (e *Engine) wireEventHandlers() {
 	triggerFulfillment := func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.Trigger()
-			go e.fulfillment.RunOnce()
+			e.loops.spawn(func() { e.fulfillment.RunOnce() })
 		}
 	}
 	e.Events.SubscribeTypes(triggerFulfillment, EventBinUpdated)

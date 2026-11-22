@@ -23,7 +23,7 @@ func (e *Engine) StartSimWatch() {
 	if e.fulfillment == nil {
 		return
 	}
-	go func() {
+	e.loops.spawn(func() {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
 		for {
@@ -36,7 +36,7 @@ func (e *Engine) StartSimWatch() {
 				e.logFn("[sim-watch] scan lock free (waited %s)", time.Since(asked).Round(time.Millisecond))
 			}
 		}
-	}()
+	})
 }
 
 // DumpGoroutines writes every goroutine's stack to dir/core-goroutines.txt and

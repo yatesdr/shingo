@@ -25,15 +25,15 @@ func (e *Engine) checkConnectionStatus() {
 			// would otherwise race the resume handler for robotsCache.
 			baseline := e.takeReconnectBaseline()
 			e.Events.Emit(Event{Type: EventFleetConnected, Payload: ConnectionEvent{Detail: e.fleet.Name() + " connected"}})
-			go func() {
+			e.loops.spawn(func() {
 				total, created, deleted, err := e.SceneSync()
 				if err != nil {
 					e.logFn("engine: auto scene sync: %v", err)
 					return
 				}
 				e.logFn("engine: auto scene sync: %d points, created %d, deleted %d nodes", total, created, deleted)
-			}()
-			go e.autoResumeAfterFleetReconnect(baseline)
+			})
+			e.loops.spawn(func() { e.autoResumeAfterFleetReconnect(baseline) })
 		}
 	} else {
 		if e.fleetConnected.CompareAndSwap(true, false) {

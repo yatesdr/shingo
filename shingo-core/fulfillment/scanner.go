@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"shingocore/store/reservations"
-	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -65,6 +65,10 @@ type Scanner struct {
 	triggerMu lockcheck.Mutex[lockorder.ScanTrigger]
 	pending   bool // coalesce triggers during a scan
 	stopChan  chan struct{}
+	stopOnce  sync.Once
+	// sweeps tracks the periodic sweep's goroutine, so Stop returns only once
+	// a pass it started has finished (TestPeriodicSweep_StopWaitsForAPassInFlight).
+	sweeps sync.WaitGroup
 }
 
 // NewScanner constructs a Scanner wired to the provided dependencies.
@@ -141,7 +145,9 @@ func (s *Scanner) RunOnce() int {
 
 // StartPeriodicSweep runs the scanner every interval as a safety net.
 func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
+	s.sweeps.Add(1)
 	go func() {
+		defer s.sweeps.Done()
 		ticker := clock.Default().NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -155,9 +161,12 @@ func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
 	}()
 }
 
-// Stop halts the periodic sweep.
+// Stop halts the periodic sweep and waits for a pass it had started: that pass
+// would otherwise read a database the caller is about to close, and log
+// through a logger whose owner may be gone. Safe to call twice (Engine.Stop is).
 func (s *Scanner) Stop() {
-	close(s.stopChan)
+	s.stopOnce.Do(func() { close(s.stopChan) })
+	s.sweeps.Wait()
 }
 
 // yieldLostHand is the scanner's answer when its hand lost the status CAS: another

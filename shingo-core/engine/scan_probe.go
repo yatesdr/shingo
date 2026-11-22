@@ -14,7 +14,7 @@ func (e *Engine) StartScanProbe(l *liveness.Loop) {
 	if e.fulfillment == nil {
 		return
 	}
-	go func() {
+	e.loops.spawn(func() {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
 		for {
@@ -25,5 +25,5 @@ func (e *Engine) StartScanProbe(l *liveness.Loop) {
 				l.Turn(func() { e.fulfillment.Door(func() {}) })
 			}
 		}
-	}()
+	})
 }

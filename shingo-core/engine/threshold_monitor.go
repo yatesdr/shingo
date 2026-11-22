@@ -233,23 +233,19 @@ func placeKey(coreNodeName, payload string) string {
 	return protocol.ThresholdEpisodeKey(coreNodeName, payload)
 }
 
-// Run performs the startup sweep then returns. Idempotent — calling
-// twice is harmless; the second call is a no-op because the sweep flag
-// stays set.
-//
-// Sweep runs in a goroutine so it doesn't block Engine startup; ordering
-// vs. uop_backfill is handled at the cmd/shingocore wiring layer
-// (sweep runs after a backfill-completion gate). For Phase 1 the
-// monitor itself just waits a short grace period before sweeping.
+// Run waits a short grace period, performs the startup sweep, then returns;
+// ctx cancelled ends it early. It blocks: Engine.Start runs it on one of the
+// engine's tracked goroutines (Engine.loops), so Stop waits for a sweep in
+// flight and Start is not held up by it. Ordering vs. uop_backfill is handled
+// at the cmd/shingocore wiring layer (sweep runs after a backfill-completion
+// gate).
 func (m *ThresholdMonitor) Run(ctx context.Context) {
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(3 * time.Second):
-		}
-		m.startupSweep(ctx)
-	}()
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(3 * time.Second):
+	}
+	m.startupSweep(ctx)
 }
 
 // readTotal reads the authoritative in-loop UOP total for one payload straight

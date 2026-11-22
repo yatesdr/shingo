@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,5 +47,58 @@ func TestPeriodicSweep_FollowsTheSimClock(t *testing.T) {
 			t.Errorf("at %.0fx a %s sweep fired %d times in %s of wall, want %d..%d — the ticker is not "+
 				"following the sim clock", tc.speed, interval, got, window, tc.min, tc.max)
 		}
+	}
+}
+
+// TestPeriodicSweep_StopWaitsForAPassInFlight: Stop returns only once a sweep
+// pass it had started has finished. It used to return at once, and the pass
+// went on against a database the engine's caller was about to close, logging
+// through a logger whose owner could be gone (the class behind CI run
+// 43042514760; Engine.Stop calls this).
+func TestPeriodicSweep_StopWaitsForAPassInFlight(t *testing.T) {
+	f := newFakeStore()
+	entered, release := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	var once sync.Once
+	var finished atomic.Bool
+	f.onListQueuedOrders = func() {
+		once.Do(func() {
+			close(entered)
+			<-release
+			finished.Store(true)
+		})
+	}
+	s := newTestScanner(t, f)
+	s.StartPeriodicSweep(10 * time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the sweep did not start a pass in 5 s")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		s.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while a sweep pass it had started was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return after the pass finished")
+	}
+	if !finished.Load() {
+		t.Fatal("Stop returned before the pass finished")
 	}
 }
