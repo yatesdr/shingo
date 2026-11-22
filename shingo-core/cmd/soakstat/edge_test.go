@@ -163,9 +163,15 @@ func TestEdge_ReadsAnEdgeDatabaseReadOnly(t *testing.T) {
 func TestHandoff_PlacementsSplitByTheEdgesOwnNodesOverCoresMirror(t *testing.T) {
 	t.Parallel()
 	h := &handoffCore{
-		placements: []nodeCount{{node: "SLN_001", class: "SLN", n: 10}, {node: "ALN_001", class: "ALN", n: 4}},
-		stations:   []string{"line-1", "line-2"},
-		claims:     map[string]map[string]bool{"line-1": {"ALN_001": true}, "line-2": {}},
+		// Landings are addressed: each Edge was sent its own 14.
+		placements: []nodeCount{
+			{node: "SLN_001", class: "SLN", station: "line-1", n: 10}, {node: "ALN_001", class: "ALN", station: "line-1", n: 4},
+			{node: "SLN_001", class: "SLN", station: "line-2", n: 10}, {node: "ALN_001", class: "ALN", station: "line-2", n: 4},
+			{node: "SLN_001", class: "SLN", station: "line-9", n: 10}, {node: "ALN_001", class: "ALN", station: "line-9", n: 4},
+			{node: "ALN_001", class: "ALN", station: "line-other", n: 5}, // another Edge's: counted for none of these
+		},
+		stations: []string{"line-1", "line-2"},
+		claims:   map[string]map[string]bool{"line-1": {"ALN_001": true}, "line-2": {}},
 	}
 	edges := []*edgeReading{
 		{station: "line-2", owned: map[string]bool{"SLN_001": true}},
