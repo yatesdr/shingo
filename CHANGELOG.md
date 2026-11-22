@@ -52,6 +52,7 @@ Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration)
 - Core: cancelling an order that has already finished is answered as finished (409), with its status, not as a server error (500)
 - Core: a bin move or direct order a robot finished before Core answered is answered as carried out; it was refused with "the move could not be carried out" although the move was done
 - Core Payloads: a sequence check that finds nothing wrong is green, and a save Core could not verify is amber (both were grey)
+- Core: the unused GET /api/cells/processes is gone
 
 ## v0.18.0 — 2026-11-21
 

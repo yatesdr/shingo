@@ -11,16 +11,13 @@ import (
 	"shingocore/store/heartbeat"
 )
 
-// TestProcessPickerAndFootprint_OverFixture (P11) pins the two readers of
-// cell_part_events that are not the heartbeat math: the admin process picker
-// (DistinctProcesses) and the Overview's "processes managed" count (Footprint).
-// The rows go in by plain SQL naming only the columns every shape of the table
-// has, so the fixture does not depend on the projection path under change.
-//
-// Unchanged by the move onto counter_snapshots except for one arm: the
-// picker's payload hint read cell_part_events.payload_code, which nothing ever
-// wrote, and went with the column.
-func TestProcessPickerAndFootprint_OverFixture(t *testing.T) {
+// TestFootprint_ProcessesManagedOverFixture pins the reader of cell_part_events
+// that is not the heartbeat math: the Overview's "processes managed" count
+// (Footprint). The rows go in by plain SQL naming only the columns every shape
+// of the table has, so the fixture does not depend on the projection path. Its
+// other half, the retired /admin/cells process picker (DistinctProcesses), went
+// with the picker's endpoint, which nothing read.
+func TestFootprint_ProcessesManagedOverFixture(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -47,28 +44,6 @@ func TestProcessPickerAndFootprint_OverFixture(t *testing.T) {
 		if _, err := db.Exec(`INSERT INTO cell_part_events (station_uid, recorded_at, edge_snapshot_id, count_value, delta, anomaly, process_id, style_id)
 			VALUES ($1, $2, $3, 0, 1, '', $4, $5)`, r.cell, now.Add(-r.ago), r.edgeID, r.proc, r.style); err != nil {
 			t.Fatalf("seed: %v", err)
-		}
-	}
-
-	got, err := heartbeat.DistinctProcesses(db.DB, "stn-a")
-	if err != nil {
-		t.Fatalf("DistinctProcesses: %v", err)
-	}
-	type want struct {
-		pid, ticks, style int64
-		last              time.Time
-	}
-	wants := []want{
-		{7, 3, 4, now.Add(-30 * time.Minute)},
-		{9, 1, 5, now.Add(-20 * time.Minute)},
-	}
-	if len(got) != len(wants) {
-		t.Fatalf("DistinctProcesses = %+v, want %d options", got, len(wants))
-	}
-	for i, w := range wants {
-		g := got[i]
-		if g.ProcessID != w.pid || g.Ticks != w.ticks || g.StyleID != w.style || !g.LastSeen.Equal(w.last) {
-			t.Errorf("option %d = %+v, want pid=%d ticks=%d style=%d last=%v", i, g, w.pid, w.ticks, w.style, w.last)
 		}
 	}
 

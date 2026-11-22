@@ -163,20 +163,3 @@ func (h *Handlers) apiCellsCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	h.jsonOK(w, cells)
 }
-
-// GET /api/cells/processes?station= — the Processes ticking for a station in the
-// last 30 days, each with a style and tick-count hint (process_id is opaque on
-// its own). The /admin/cells picker that read it is retired; no page reads it.
-func (h *Handlers) apiCellProcesses(w http.ResponseWriter, r *http.Request) {
-	station := strings.TrimSpace(r.URL.Query().Get("station"))
-	if station == "" {
-		h.jsonError(w, "station is required", http.StatusBadRequest)
-		return
-	}
-	procs, err := h.engine.HeartbeatService().CellProcesses(station)
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, procs)
-}

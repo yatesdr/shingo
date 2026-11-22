@@ -171,13 +171,6 @@ func (s *HeartbeatService) resolveCellConfig(cellID string) (heartbeat.CellConfi
 	return heartbeat.CellConfig{}, false
 }
 
-// CellProcesses lists the Processes that have ticked for a station in the last
-// 30 days (cell_part_events), for GET /api/cells/processes. The /admin/cells
-// picker that called it is retired and no page reads it today.
-func (s *HeartbeatService) CellProcesses(station string) ([]heartbeat.ProcessOption, error) {
-	return s.db.DistinctCellProcesses(station)
-}
-
 // ResolveCellState resolves a cell_id to its primary/sub-Process split as of
 // now. When the id is no live catalog cell it falls back to the Phase B
 // station-grain behavior — the whole station stream as a single primary

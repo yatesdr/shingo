@@ -370,7 +370,6 @@ var blankStationSites = map[string]bsSite{
 	"uop:InventoryDeltaService.validateBucketLevel":       notOrder(`station == "" ×1`, "the reporting Edge's envelope station"),
 	"www:Doors.clearHome":                                 notOrder(`station == "" ×1`, "the asking Edge's station"),
 	"www:Doors.releasePoints":                             notOrder(`station == "" ×1`, "the asking Edge's station"),
-	"www:Handlers.apiCellProcesses":                       notOrder(`station == "" ×1`, "a station query parameter: the processes ticking there (cell_part_events)"),
 	"www:Handlers.apiListLoaders":                         notOrder(`station == "" ×1`, "a loader's Edge (bin_loaders.station_uid)"),
 	"www:Handlers.apiStations":                            notOrder(`station == "" ×1`, "edge_registry rows with no station_uid are skipped (v185's CHECK leaves none); the order stations come from ListDistinctStations"),
 	"www:robotsAtNodes":                                   notOrder(`alias == "" ×1`, "an RDS map point (robot CurrentStation)"),

@@ -21,10 +21,6 @@ func (db *DB) ListCellPartEvents(cellID string, since, until time.Time) ([]heart
 	return heartbeat.ListEvents(db.DB, cellID, since, until)
 }
 
-func (db *DB) DistinctCellProcesses(station string) ([]heartbeat.ProcessOption, error) {
-	return heartbeat.DistinctProcesses(db.DB, station)
-}
-
 func (db *DB) EnsureHeartbeatPartitions(ref time.Time) error {
 	return heartbeat.EnsurePartitions(db.DB, ref)
 }

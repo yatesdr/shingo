@@ -2126,8 +2126,17 @@ No assertion read any of the twelve.
 ### DEAD — `TestCoverage_CellConfig`
 - test: `TestCoverage_CellConfig` · pkg `shingocore/store/heartbeat` · run `-run '^TestCoverage_CellConfig$'` · `shingo-core/store/heartbeat/cellconfig_docker_test.go:17` @ `d2686a1d` · tags `docker`
 - code: DEAD (cell_config's CRUD; v189 drops the table and its functions)
-- assertion map: list/upsert/get/update/delete of a cell_config row → nothing; the process-picker half (`DistinctProcesses`: one row per ticking process, most ticks first, its style) → `TestDistinctProcesses_RanksAStationsTickingProcesses`, which also asserts the second row and that another station's process is not listed
-- mutation: none to run for the CRUD half; the picker half's assertions are carried whole
+- assertion map: list/upsert/get/update/delete of a cell_config row → nothing; the process-picker half (`DistinctProcesses`: one row per ticking process, most ticks first, its style) → nothing: `DistinctProcesses` and `GET /api/cells/processes`, the picker's endpoint, were deleted before merge (no Go, JS, template, sim or script reader), and `TestDistinctProcesses_RanksAStationsTickingProcesses`, which had carried it, went with them
+- mutation: none to run: the code under both halves is deleted
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestProcessPickerAndFootprint_OverFixture`
+- test: `TestProcessPickerAndFootprint_OverFixture` · pkg `shingocore/store/heartbeat` · run `-run '^TestProcessPickerAndFootprint_OverFixture$'` · `shingo-core/store/heartbeat/processes_docker_test.go:23` @ `d2686a1d` · tags `docker`
+- code: DEAD for its picker half (`DistinctProcesses` and `GET /api/cells/processes` deleted: no reader); its Footprint half is kept and the test renamed for what it still pins
+- assertion map: the picker's two options (process, ticks, style, last seen, most ticks first) → nothing (code deleted); `ProcessesManaged` = 3 distinct (cell, process) pairs over the same fixture → `TestFootprint_ProcessesManagedOverFixture`, unchanged
+- mutation: none to run for the picker half; the Footprint half's assertion is carried whole
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
