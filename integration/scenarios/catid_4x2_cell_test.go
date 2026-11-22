@@ -484,6 +484,10 @@ type w6Opts struct {
 	// passWatch hands the slot watch's ticker to the scenario to fire
 	// (watchPass); without it the watch passes on the process clock.
 	passWatch bool
+	// migrate opens the cell's Edge database through store.Open's migration
+	// chain, the path a plant's boot takes. S7 keeps it. The other cells take
+	// a copy of the migrated template (testharness.OpenDB).
+	migrate bool
 	// window is the monitor's stability window on this cell's Edges
 	// (Config.CatidStableWindow); zero is production's 60 s.
 	window time.Duration
@@ -551,9 +555,17 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 	mustNil(t, c.core.eng.DB().EnsureHeartbeatPartitions(time.Now()), "part-event partitions")
 	c.seedCore()
 
-	db, err := store.Open(filepath.Join(t.TempDir(), "edge.db"))
-	mustNil(t, err, "edge db")
-	t.Cleanup(func() { _ = db.Close() })
+	var (
+		db  *store.DB
+		err error
+	)
+	if o.migrate {
+		db, err = store.Open(filepath.Join(t.TempDir(), "edge.db"))
+		mustNil(t, err, "edge db")
+		t.Cleanup(func() { _ = db.Close() })
+	} else {
+		db = edgeharness.OpenDB(t)
+	}
 	c.edge, c.tickers, c.sink = startW6Edge(t, db, c.plc, c.boot)
 	c.configureEdge()
 	// The cell has run both styles: the Edge has seen both CATIDs, and boots

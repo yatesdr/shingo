@@ -19,7 +19,7 @@ import (
 // declaration completes the changeover.
 func TestCatid4x2_S7_Restart(t *testing.T) {
 	t.Parallel()
-	c := newW6Cell(t, w6Opts{station: []int{0, 1, 3}, window: w6ShortWindow})
+	c := newW6Cell(t, w6Opts{station: []int{0, 1, 3}, window: w6ShortWindow, migrate: true})
 	c.cycle(10)
 	c.force(1003) // a spell on a part no style pins: its draws are held
 	c.cycle(3)
