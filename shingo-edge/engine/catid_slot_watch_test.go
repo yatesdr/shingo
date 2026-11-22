@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/domain"
@@ -290,4 +291,33 @@ func TestCounting_EndOfLineCarriesTheWatchedSlots(t *testing.T) {
 	if s[2].Part || s[3].Part {
 		t.Errorf("slots 3 and 4 read -1 and 0, which name no part: %+v %+v", s[2], s[3])
 	}
+}
+
+// TestSlotWatch_TheDefaultClock: the watch's loop takes a one-minute ticker
+// from the process clock as it stands when the loop starts, a clock installed
+// after the engine was built (the sim's) included. Not parallel: it installs
+// the process clock.
+func TestSlotWatch_TheDefaultClock(t *testing.T) {
+	eng := &Engine{stopChan: make(chan struct{})}
+	cm := &catidMonitor{eng: eng}
+	prev := clock.Default()
+	def := newTickerTaker()
+	clock.SetDefault(def)
+	t.Cleanup(func() { clock.SetDefault(prev) })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cm.runSlotWatch()
+	}()
+	select {
+	case d := <-def.took:
+		if d != time.Minute {
+			t.Errorf("the watch's ticker is every %v, want a minute", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the watch took no ticker from the process clock")
+	}
+	close(eng.stopChan)
+	<-done
 }
