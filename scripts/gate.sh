@@ -74,6 +74,8 @@
 #                                         certify with this.
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
+#   bash scripts/gate.sh order            print the order each docker module's
+#                                         packages would run in (docker_order)
 #   bash scripts/gate.sh race             -race -tags docker over ./engine/... and
 #                                         ./www/... (borrows WSL's cgo on Windows;
 #                                         needs docker for its Postgres)
@@ -136,7 +138,7 @@ fi
 
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
 usage() {
-  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|docker|full|lock-status] [BASE]" >&2
+  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|order|docker|full|lock-status] [BASE]" >&2
   echo "       bash scripts/gate.sh full --unscoped                 docker whatever the diff (certification)" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
   exit 2
@@ -1449,8 +1451,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 case "${1:-all}" in
-  # fmt: the pre-push hook runs it and must never wait. scope: reads git only.
-  fmt|scope) ;;
+  # fmt: the pre-push hook runs it and must never wait. scope: reads git only. order:
+  # reads the steps log and go list only.
+  fmt|scope|order) ;;
   lock-status) gate_lock_status; exit 0 ;;
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
     gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; } ;;
@@ -1643,6 +1646,11 @@ case "${1:-all}" in
   # scope; then ...` now works, and matches step_scope's own return
   # convention, which `full` has always branched on.
   scope) step_scope "${2:-}"; exit $? ;;
+  order)
+    # The order each docker module's packages would be handed to go test
+    # (docker_order), one line per module; reads only the steps log.
+    for m in $(docker_modules); do echo "$m: $(docker_order "$m")"; done
+    exit 0 ;;
   docker) if timed step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)
     if timed step_fmt;  then note_step fmt;  else rc=1; fi
