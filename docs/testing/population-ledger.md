@@ -2302,3 +2302,246 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DUP — `TestCarrierKeysPin_EveryPinShapeKeyed`
+- test: `TestCarrierKeysPin_EveryPinShapeKeyed` · pkg `shingocore/engine` · run `-run '^TestCarrierKeysPin_EveryPinShapeKeyed$'` · `shingo-core/engine/carrier_keys_pin_docker_test.go:200` @ `d2686a1d` · tags `docker`
+- code: DUP (the plain leg of each of its 27 shapes; the test stays)
+- assertion map: the plain run and its own checks → `TestBlockRecordPin_TheWireAndTheFinish`, the same run function on the same fixture; every comparison of the keyed run against the plain one → the same comparison against that test's pinned transcript. Added: each pinned shape has exactly one prediction.
+- mutation: a wait sending its lift's key → old and new both red with the same fault (the wait in front of the lift went out jackload_default, want wait_default); a line changed beyond its binTask → both red; a break at a plant with no key → the block-record pin red in both; a prediction removed → the new test red (26 predictions for the 27 shapes). A break that shows only with no key now fails the block-record pin alone.
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DUP — `TestLoaderPlacementPicks`
+- test: `TestLoaderPlacementPicks` · pkg `shingocore/dispatch` · run `-run '^TestLoaderPlacementPicks$'` · `shingo-core/dispatch/loader_place_picks_docker_test.go:365` @ `d2686a1d` · tags `docker`
+- code: DUP (one table row, buffer-walk with the home's carrier in flight; the test stays)
+- assertion map: that row's placement, hold and want → the home-source row with the same three values. The point column is only the subtest's label.
+- mutation: none run (the two rows' inputs are identical, so whatever fails one fails the other)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestProducePartials_TheLineFinishesItsPartial`
+- test: `TestProducePartials_TheLineFinishesItsPartial` · pkg `shingo/integration/scenarios` · run `-run '^TestProducePartials_TheLineFinishesItsPartial$'` · `integration/scenarios/produce_partials_pin_test.go:473` @ `d2686a1d` · tags `docker`
+- code: DEAD (three manual_swap skips over the configurable swap modes, which do not list it; this test's, and the two in the tables behind `TestProducePartialsPin_LiftDoors`; the tests stay)
+- assertion map: every assertion kept; the subtest set is the same with the skips and without. That manual_swap is not configurable → `TestValidateNodeClaim_ManualSwapIsNotAConfigurableInput`
+- mutation: none (no assertion moved)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestCompound_AdvanceSkipsFailedChild_PrematureCompletion`
+- test: `TestCompound_AdvanceSkipsFailedChild_PrematureCompletion` · pkg `shingocore/engine` · run `-run '^TestCompound_AdvanceSkipsFailedChild_PrematureCompletion$'` · `shingo-core/engine/engine_compound_test.go:783` @ `d2686a1d` · tags `docker`
+- code: STRENGTHEN (it skipped: child 2 had gone out before the test broke it)
+- assertion map: the parent is not confirmed over a failed child → kept, and now reached; the blocker is claimed → the blocker lies at its shuffle slot unclaimed (the old assertion had never run, and the confirmed unbury releases that claim). Added: child 2 failed on its missing source node; the parent is neither terminal nor left reshuffling.
+- mutation: the chapter end's stopped-short arm skipped → red (parent confirmed despite a failed child); the empty-source arm deleted → red (child 2 failed as a config failure). The old test skipped. Not pinned: the advance that follows the failure, which stays green when removed.
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestDrainer_DeadLetter`
+- test: `TestDrainer_DeadLetter` · pkg `shingo/protocol/outbox` · run `-run '^TestDrainer_DeadLetter$'` · `protocol/outbox/drainer_test.go:192` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: one retry increment → kept, for both attempts. Added: only the last attempt is reported dead-lettered, and neither is acked.
+- mutation: five, each red at tip: the limit moved either way, the report removed, the increment removed, a dead letter acked. The old test was run on one of them, the report removed, and passed.
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestSetFireAlarm`
+- test: `TestSetFireAlarm` · pkg `shingocore/rds` · run `-run '^TestSetFireAlarm$'` · `shingo-core/rds/firealarm_test.go:92` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: no error → kept. Added: the request on the wire, for a trigger and for a clear with auto-resume.
+- mutation: on sent inverted, on dropped, auto-resume dropped → each red at tip. The old test was run on the first and passed.
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestMoveToTransit_Idempotent`
+- test: `TestMoveToTransit_Idempotent` · pkg `shingocore/service` · run `-run '^TestMoveToTransit_Idempotent$'` · `shingo-core/service/bin_service_transit_test.go:61` @ `d2686a1d` · tags `docker`
+- code: STRENGTHEN
+- assertion map: two nil errors → kept. Added: the whole stored row is the same after the second move.
+- mutation: the lift's already-in-transit guard removed → red at tip (the second move wrote to the bin); the old test survived
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestRecoveryFleetRefusalStaysTerminal`
+- test: `TestRecoveryFleetRefusalStaysTerminal` · pkg `shingocore/engine` · run `-run '^TestRecoveryFleetRefusalStaysTerminal$'` · `shingo-core/engine/carried_bin_recovery_lane_park_docker_test.go:26` @ `d2686a1d` · tags `docker`
+- code: STRENGTHEN
+- assertion map: the operator gets an error → kept. Added: the recovery order is failed, with the fleet's refusal as its detail.
+- mutation: the arm answering over a live row, parking it, failing it as a claim refusal → each red at tip (pending, queued, the wrong detail). The old test was run on the first and passed.
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestHTTPError`
+- test: `TestHTTPError` · pkg `shingocore/rds` · run `-run '^TestHTTPError$'` · `shingo-core/rds/client_test.go:283` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: an error → an APIError carrying the status the server sent.
+- mutation: the client's two status checks removed → red at tip (rds decode: invalid character, want the status check's refusal); the old test passed, because the same body fails the decode
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestGetBinDetails_ServerError`
+- test: `TestGetBinDetails_ServerError` · pkg `shingocore/rds` · run `-run '^TestGetBinDetails_ServerError$'` · `shingo-core/rds/bins_test.go:94` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestUnbindGoods_ServerError`
+- test: `TestUnbindGoods_ServerError` · pkg `shingocore/rds` · run `-run '^TestUnbindGoods_ServerError$'` · `shingo-core/rds/containers_test.go:81` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestDisableLift_ServerError`
+- test: `TestDisableLift_ServerError` · pkg `shingocore/rds` · run `-run '^TestDisableLift_ServerError$'` · `shingo-core/rds/devices_test.go:274` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestOccupyMutexGroup_HTTPError`
+- test: `TestOccupyMutexGroup_HTTPError` · pkg `shingocore/rds` · run `-run '^TestOccupyMutexGroup_HTTPError$'` · `shingo-core/rds/mutex_test.go:49` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestGetMutexGroupStatus_HTTPError`
+- test: `TestGetMutexGroupStatus_HTTPError` · pkg `shingocore/rds` · run `-run '^TestGetMutexGroupStatus_HTTPError$'` · `shingo-core/rds/mutex_test.go:139` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestUploadScene_HTTPError`
+- test: `TestUploadScene_HTTPError` · pkg `shingocore/rds` · run `-run '^TestUploadScene_HTTPError$'` · `shingo-core/rds/scenes_test.go:90` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestGetSimStateTemplate_HTTPError`
+- test: `TestGetSimStateTemplate_HTTPError` · pkg `shingocore/rds` · run `-run '^TestGetSimStateTemplate_HTTPError$'` · `shingo-core/rds/simulation_test.go:55` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestUpdateSimState_HTTPError`
+- test: `TestUpdateSimState_HTTPError` · pkg `shingocore/rds` · run `-run '^TestUpdateSimState_HTTPError$'` · `shingo-core/rds/simulation_test.go:115` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestGetProfiles_HTTPError`
+- test: `TestGetProfiles_HTTPError` · pkg `shingocore/rds` · run `-run '^TestGetProfiles_HTTPError$'` · `shingo-core/rds/system_test.go:45` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STRENGTHEN — `TestGetLicenseInfo_HTTPError`
+- test: `TestGetLicenseInfo_HTTPError` · pkg `shingocore/rds` · run `-run '^TestGetLicenseInfo_HTTPError$'` · `shingo-core/rds/system_test.go:139` @ `d2686a1d` · tags `none`
+- code: STRENGTHEN
+- assertion map: as `TestHTTPError`' row
+- mutation: as `TestHTTPError`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestCatid4x2_S8_CountedSlotStopsASiblingMoves`
+- test: `TestCatid4x2_S8_CountedSlotStopsASiblingMoves` · pkg `shingo/integration/scenarios` · run `-run '^TestCatid4x2_S8_CountedSlotStopsASiblingMoves$'` · `integration/scenarios/catid_4x2_slot_test.go:48` @ `d2686a1d` · tags `docker`
+- code: TIMING (the slot watch's passes are fired by the scenario)
+- assertion map: the item within one watch interval of the move → at the watch's first pass after the move, and not before it; a read of the struct within the interval → each fired pass read the struct; the minute → `TestSlotWatch_TheDefaultClock`; every other assertion kept
+- mutation: the interval at 2 min → the pin red (want a minute); the pass taking the tick's time → the pin red
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestCatid4x2_S4_JumpWithNoChangeover`
+- test: `TestCatid4x2_S4_JumpWithNoChangeover` · pkg `shingo/integration/scenarios` · run `-run '^TestCatid4x2_S4_JumpWithNoChangeover$'` · `integration/scenarios/catid_4x2_jump_test.go:33` @ `d2686a1d` · tags `docker`
+- code: TIMING (the tapped half's stability window is 10 s; untapped keeps 60)
+- assertion map: nothing moved after a 62 s sleep → nothing moved after the monitor's logged decision on the jumped part; the trigger by prefix → the exact auto-catid; the 60 s → `TestCatidWindow_SixtySecondsOnEveryTracker` and the untapped half
+- mutation: the window at 10 min → red waiting for that decision; the window at 2 min → the pin red
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestCatid4x2_S7_Restart`
+- test: `TestCatid4x2_S7_Restart` · pkg `shingo/integration/scenarios` · run `-run '^TestCatid4x2_S7_Restart$'` · `integration/scenarios/catid_4x2_restart_test.go:20` @ `d2686a1d` · tags `docker`
+- code: TIMING (the stability window is 10 s)
+- assertion map: still open after a 62 s sleep → still open after the refused declaration logged since the restart, with no counted-part force logged since it; every other assertion kept
+- mutation: the window at 10 min → red waiting for that decision; the window at 1 s → red (it closed before the restart the case is about)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestCatid4x2_S9_HandPlacedCart`
+- test: `TestCatid4x2_S9_HandPlacedCart` · pkg `shingo/integration/scenarios` · run `-run '^TestCatid4x2_S9_HandPlacedCart$'` · `integration/scenarios/catid_4x2_handplaced_test.go:26` @ `d2686a1d` · tags `docker`
+- code: TIMING (both halves' stability window is 10 s)
+- assertion map: as `TestCatid4x2_S4_JumpWithNoChangeover`' row
+- mutation: as `TestCatid4x2_S4_JumpWithNoChangeover`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestPinChangeover_ACommonPositionIsResuppliedWhileOpen`
+- test: `TestPinChangeover_ACommonPositionIsResuppliedWhileOpen` · pkg `shingo/integration/scenarios` · run `-run '^TestPinChangeover_ACommonPositionIsResuppliedWhileOpen$'` · `integration/scenarios/catid_4x2_common_test.go:27` @ `d2686a1d` · tags `docker`
+- code: TIMING (both halves' stability window is 10 s)
+- assertion map: the trigger by prefix → the exact auto-catid; every other assertion kept; the 60 s → `TestCatidWindow_SixtySecondsOnEveryTracker` and `TestCatid4x2_S2_LateCutover`, which keeps it
+- mutation: either constructor's copy of the window removed → that pin red
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestKanbanRig_WalkCounts`
+- test: `TestKanbanRig_WalkCounts` · pkg `shingocore/cmd/seeddev` · run `-run '^TestKanbanRig_WalkCounts$'` · `shingo-core/cmd/seeddev/kanban_rig_docker_test.go:807` @ `d2686a1d` · tags `docker`
+- code: TIMING (the rig's waits before a counted window)
+- assertion map: wait until the store is quiet → fail if a statement reaches the store with nobody driving the rig, before the intake door, the CLEAR's door and the parked arm; the waits before a tick and a build are gone; every budget kept
+- mutation: Engine.Stop without the sourceability monitor's stop → red (statements reached the store with nobody driving the rig)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestKanbanRig_R1_SteadyLoop`
+- test: `TestKanbanRig_R1_SteadyLoop` · pkg `shingocore/cmd/seeddev` · run `-run '^TestKanbanRig_R1_SteadyLoop$'` · `shingo-core/cmd/seeddev/kanban_rig_docker_test.go:448` @ `d2686a1d` · tags `docker`
+- code: TIMING
+- assertion map: as `TestKanbanRig_WalkCounts`' row
+- mutation: as `TestKanbanRig_WalkCounts`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### TIMING — `TestKanbanPin_TheClearCostsWhatItCost`
+- test: `TestKanbanPin_TheClearCostsWhatItCost` · pkg `shingocore/cmd/seeddev` · run `-run '^TestKanbanPin_TheClearCostsWhatItCost$'` · `shingo-core/cmd/seeddev/kanban_pins_v5_docker_test.go:394` @ `d2686a1d` · tags `docker`
+- code: TIMING
+- assertion map: as `TestKanbanRig_WalkCounts`' row
+- mutation: as `TestKanbanRig_WalkCounts`' row
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
