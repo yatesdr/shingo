@@ -418,6 +418,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+	// The debug page's edge.heartbeat is this heartbeater's body: Core's ack to
+	// it reaches this Edge as the answer to its own digests (engine
+	// HeartbeatBody).
+	eng.SetHeartbeatBodyFunc(hb.HeartbeatBody)
 	// Says what this build does NOT do, on purpose. Threshold replenishment moved
 	// to Core; this Edge has no receiver for it and creates no loader empties from
 	// one. The window where somebody reads this line is the Edge-first half of a

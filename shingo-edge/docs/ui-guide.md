@@ -294,6 +294,8 @@ Node lists come from Core; **Sync Nodes** re-fetches them. The Production page c
 
 Send one protocol message to Core by hand: `edge.register`, `edge.heartbeat`, `node.list_request`,
 `order.request`, `order.cancel`, `order.receipt` or `order.redirect`, built from a form with a payload preview.
+Core takes an `edge.heartbeat` from here as the station's own and answers this Edge, so it is the heartbeat this
+Edge's heartbeater would send now, and leaves the station as its own heartbeats left it.
 For testing and troubleshooting only.
 
 ## Authentication

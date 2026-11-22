@@ -41,16 +41,16 @@ func TestHeartbeater_NodeListRequestQuotesTheCachedSceneRevision(t *testing.T) {
 func TestHeartbeater_CarriesTickLag(t *testing.T) {
 	t.Parallel()
 	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
-	if b := h.heartbeatBody(); b.TickPending != nil || b.TickOldestUnsentAgeMS != nil {
+	if b := h.HeartbeatBody(); b.TickPending != nil || b.TickOldestUnsentAgeMS != nil {
 		t.Errorf("unwired: lag fields = %v/%v, want absent", b.TickPending, b.TickOldestUnsentAgeMS)
 	}
 	h.TickLagFn = func() (int64, int64, bool) { return 3, 4200, true }
-	b := h.heartbeatBody()
+	b := h.HeartbeatBody()
 	if b.TickPending == nil || *b.TickPending != 3 || b.TickOldestUnsentAgeMS == nil || *b.TickOldestUnsentAgeMS != 4200 {
 		t.Errorf("lag fields = %v/%v, want 3/4200", b.TickPending, b.TickOldestUnsentAgeMS)
 	}
 	h.TickLagFn = func() (int64, int64, bool) { return 0, 0, false }
-	if b := h.heartbeatBody(); b.TickPending != nil {
+	if b := h.HeartbeatBody(); b.TickPending != nil {
 		t.Errorf("failed read: lag fields present")
 	}
 }
@@ -62,7 +62,7 @@ func TestHeartbeater_CarriesTickLag(t *testing.T) {
 func TestHeartbeater_FeedsAndTheReAsk(t *testing.T) {
 	t.Parallel()
 	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
-	if b := h.heartbeatBody(); b.Feeds != nil {
+	if b := h.HeartbeatBody(); b.Feeds != nil {
 		t.Errorf("unwired: feeds = %v, want nil (an older Edge's heartbeat)", b.Feeds)
 	}
 	if h.coreSpeaksFeeds() {
@@ -70,7 +70,7 @@ func TestHeartbeater_FeedsAndTheReAsk(t *testing.T) {
 	}
 
 	h.FeedsFn = func() map[string]string { return map[string]string{"catalog": "c1"} }
-	if b := h.heartbeatBody(); b.Feeds["catalog"] != "c1" {
+	if b := h.HeartbeatBody(); b.Feeds["catalog"] != "c1" {
 		t.Errorf("wired: feeds = %v, want catalog c1", b.Feeds)
 	}
 	speaks := false

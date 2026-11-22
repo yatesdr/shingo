@@ -232,8 +232,10 @@ func (h *Heartbeater) sendCatalogRequest() {
 	}
 }
 
-// heartbeatBody builds the periodic heartbeat, every field read at send time.
-func (h *Heartbeater) heartbeatBody() *protocol.EdgeHeartbeat {
+// HeartbeatBody builds the periodic heartbeat, every field read at send time.
+// The one builder: the loop sends it, and so does the debug page, through the
+// engine (engine Engine.HeartbeatBody, wired in main.go).
+func (h *Heartbeater) HeartbeatBody() *protocol.EdgeHeartbeat {
 	b := &protocol.EdgeHeartbeat{StationID: h.stationID}
 	if h.TimezoneFn != nil {
 		b.Timezone = h.TimezoneFn()
@@ -253,7 +255,7 @@ func (h *Heartbeater) heartbeatBody() *protocol.EdgeHeartbeat {
 }
 
 func (h *Heartbeater) sendHeartbeat() {
-	body := h.heartbeatBody()
+	body := h.HeartbeatBody()
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},

@@ -50,7 +50,7 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 			t.Parallel()
 			h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
 			tc.wire(h)
-			got, err := json.Marshal(h.heartbeatBody())
+			got, err := json.Marshal(h.HeartbeatBody())
 			if err != nil {
 				t.Fatalf("marshal heartbeat: %v", err)
 			}
@@ -76,7 +76,7 @@ func TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat(t *testing.T) {
 	}{
 		{"heartbeat interval", func() any { return h.interval }, 60 * time.Second},
 		{"active_orders on the heartbeat body", func() any {
-			b, err := json.Marshal(h.heartbeatBody())
+			b, err := json.Marshal(h.HeartbeatBody())
 			if err != nil {
 				t.Fatalf("marshal heartbeat body: %v", err)
 			}

@@ -86,6 +86,11 @@ type stubEngine struct {
 	// lastUpdateStationCounter is UpdateStationCounter's arguments, as the
 	// handler decoded them: [label, tag, second tag or "<nil>"].
 	lastUpdateStationCounter []string
+	// lastSendEnvelope is the envelope SendEnvelope was last handed.
+	lastSendEnvelope *protocol.Envelope
+	// heartbeat is what HeartbeatBody answers: the heartbeater's body as a
+	// test sets it, or (nil) one naming the station and quoting no digest.
+	heartbeat *protocol.EdgeHeartbeat
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
@@ -173,11 +178,22 @@ func (s *stubEngine) OrderManager() *orders.Manager       { return s.orderMgr }
 func (s *stubEngine) Reconciliation() *engine.ReconciliationService {
 	return engine.NewReconciliationService(s.db)
 }
-func (s *stubEngine) CoreSync() *engine.CoreSyncService         { return nil }
-func (s *stubEngine) ApplyWarLinkConfig()                       {}
-func (s *stubEngine) ReconnectKafka() error                     { return nil }
-func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error { return nil }
-func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo   { return s.core }
+func (s *stubEngine) CoreSync() *engine.CoreSyncService { return nil }
+func (s *stubEngine) ApplyWarLinkConfig()               {}
+func (s *stubEngine) ReconnectKafka() error             { return nil }
+func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error {
+	s.lastSendEnvelope = env
+	return nil
+}
+func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo { return s.core }
+
+// HeartbeatBody stands in for the heartbeater's (engine.Engine.HeartbeatBody).
+func (s *stubEngine) HeartbeatBody() *protocol.EdgeHeartbeat {
+	if s.heartbeat != nil {
+		return s.heartbeat
+	}
+	return &protocol.EdgeHeartbeat{StationID: s.cfg.StationID(), Feeds: map[string]string{}, Owned: map[string]string{}}
+}
 func (s *stubEngine) CoreNodeKinds() domain.CoreNodeKinds {
 	return domain.CoreNodeKindsOf(s.core, s.groups, s.plantWide)
 }

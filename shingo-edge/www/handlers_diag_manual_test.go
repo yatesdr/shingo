@@ -22,7 +22,7 @@ import (
 //
 // Manual message: handleManualMessage renders a template; the API
 // endpoint apiSendManualMessage is fully testable because SendEnvelope
-// on the stubEngine is a no-op returning nil.
+// on the stubEngine records the envelope and returns nil.
 // ═══════════════════════════════════════════════════════════════════════
 
 func newDiagnosticsManualRouter(t *testing.T) (*Handlers, *chi.Mux) {
@@ -56,9 +56,9 @@ func TestApiReplayOutbox_InvalidID(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// apiSendManualMessage — switch-by-type. stubEngine.SendEnvelope is a
-// no-op, so each branch is covered end-to-end through protocol envelope
-// construction.
+// apiSendManualMessage — switch-by-type. stubEngine.SendEnvelope records
+// what it was handed and sends nothing, so each branch is covered end-to-end
+// through protocol envelope construction.
 // ═══════════════════════════════════════════════════════════════════════
 
 // sendManualPayload wraps the top-level {type, payload} shape and POSTs it.
@@ -85,6 +85,58 @@ func TestApiSendManualMessage_EdgeRegister_Success(t *testing.T) {
 	})
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
+}
+
+// sentDataBody decodes the body of the data envelope the handler last handed
+// SendEnvelope into body, checking its subject.
+func sentDataBody(t *testing.T, h *Handlers, subject string, body any) {
+	t.Helper()
+	env := h.orchestration.(*stubEngine).lastSendEnvelope
+	if env == nil {
+		t.Fatal("nothing was handed to SendEnvelope")
+	}
+	var d protocol.Data
+	if err := json.Unmarshal(env.Payload, &d); err != nil {
+		t.Fatalf("decode the data envelope: %v", err)
+	}
+	if d.Subject != subject {
+		t.Fatalf("sent subject %q, want %q", d.Subject, subject)
+	}
+	if err := json.Unmarshal(d.Body, body); err != nil {
+		t.Fatalf("decode the %s body: %v", subject, err)
+	}
+}
+
+// The page's heartbeat is the heartbeater's own body (engine.Engine.HeartbeatBody),
+// feeds, owned map and zone as it builds them: Core's ack to it reaches this
+// Edge as the answer to its own digests. The body the page used to build named
+// the station alone (end to end:
+// TestScenario_TheDebugPagesHeartbeatLeavesTheStationAsItWas).
+func TestApiSendManualMessage_EdgeHeartbeat_IsTheHeartbeatersOwn(t *testing.T) {
+	t.Parallel()
+	h, router := newDiagnosticsManualRouter(t)
+	own := &protocol.EdgeHeartbeat{
+		StationID: "test.station", Timezone: "America/Chicago",
+		Feeds: map[string]string{protocol.FeedBins: "bins-digest"},
+		Owned: map[string]string{protocol.OwnedClaims: "claims-digest"},
+	}
+	h.orchestration.(*stubEngine).heartbeat = own
+
+	resp := sendManualPayload(t, router, "edge.heartbeat", map[string]any{})
+	assertStatus(t, resp, http.StatusOK)
+	var got protocol.EdgeHeartbeat
+	sentDataBody(t, h, protocol.SubjectEdgeHeartbeat, &got)
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("encode the sent heartbeat: %v", err)
+	}
+	wantJSON, err := json.Marshal(own)
+	if err != nil {
+		t.Fatalf("encode the heartbeater's: %v", err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("the page's heartbeat is %s, want the heartbeater's %s", gotJSON, wantJSON)
+	}
 }
 
 func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {

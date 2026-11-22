@@ -8,6 +8,7 @@
 //   Accessors                   – one-liner getters for subsystems
 //   Core node sync              – SetCoreNodes, CoreNodes
 //   Func injection              – SetNodeSyncFunc, SetCatalogSyncFunc,
+//                                 SetHeartbeatBodyFunc, SetPlantClaimsFunc,
 //                                 SetSendFunc, SetKafkaReconnectFunc
 //   Payload catalog             – HandlePayloadCatalog
 //   Outbound messaging          – SendEnvelope, ReconnectKafka
@@ -247,6 +248,11 @@ type Engine struct {
 	catalogSyncFn    func()
 	sendFn           func(*protocol.Envelope) error
 	kafkaReconnFn    func() error
+	// heartbeatBodyFn builds the heartbeat as this Edge's heartbeater sends it
+	// (SetHeartbeatBodyFunc). Atomic: main.go wires it with the heartbeater,
+	// which on the Kafka retry path is after the web server is up and the
+	// debug page can read it (HeartbeatBody).
+	heartbeatBodyFn atomic.Pointer[func() *protocol.EdgeHeartbeat]
 	// plantClaimsFn publishes one process's plant.claims report so Core's
 	// mirror follows an active-style flip within one message instead of
 	// waiting for the snapshot. Wired at the composition root; nil in
@@ -957,6 +963,26 @@ func (e *Engine) RequestCatalogSync() {
 	if e.catalogSyncFn != nil {
 		e.catalogSyncFn()
 	}
+}
+
+// SetHeartbeatBodyFunc sets the builder of this Edge's heartbeat: the
+// heartbeater's own (messaging Heartbeater.HeartbeatBody), wired by main.go
+// beside the two syncs.
+func (e *Engine) SetHeartbeatBodyFunc(fn func() *protocol.EdgeHeartbeat) {
+	e.heartbeatBodyFn.Store(&fn)
+}
+
+// HeartbeatBody is the heartbeat this Edge's heartbeater would send now, as
+// the heartbeater builds it; nil while none is wired (messaging not yet
+// connected). The debug page sends it as its edge.heartbeat: Core's ack goes
+// to this Edge whoever sent the heartbeat, and the Edge takes the ack's ask
+// kinds, feed confirmations and owned answers as the answer to its own
+// digests (OnCoreAck), so the heartbeat must quote them.
+func (e *Engine) HeartbeatBody() *protocol.EdgeHeartbeat {
+	if fn := e.heartbeatBodyFn.Load(); fn != nil && *fn != nil {
+		return (*fn)()
+	}
+	return nil
 }
 
 // ── Payload catalog ─────────────────────────────────────────────────

@@ -102,11 +102,26 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		})
 
 	case "edge.heartbeat":
-		// The heartbeat carries no field a person sets: a hand-fired one names
-		// the station and no feeds, which Core answers like an older Edge.
-		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, src, dst, &protocol.EdgeHeartbeat{
-			StationID: stationID,
+		// The heartbeat carries no field a person sets. It is this Edge's own,
+		// as its heartbeater builds it (engine Engine.HeartbeatBody): Core's
+		// ack goes to this Edge whoever sent the heartbeat, and the Edge takes
+		// it as the answer to its own digests (OnCoreAck). The body the page
+		// used to send named no feeds, which Core answers as an older Edge: no
+		// ask kinds, no feed confirmed, its bins watch list forgotten. PIN:
+		// TestApiSendManualMessage_EdgeHeartbeat_IsTheHeartbeatersOwn,
+		// TestScenario_TheDebugPagesHeartbeatLeavesTheStationAsItWas.
+		hb, ok := h.orchestration.(interface {
+			HeartbeatBody() *protocol.EdgeHeartbeat
 		})
+		var body *protocol.EdgeHeartbeat
+		if ok {
+			body = hb.HeartbeatBody()
+		}
+		if body == nil {
+			writeError(w, http.StatusServiceUnavailable, "the heartbeater is not running (messaging not connected): no heartbeat sent")
+			return
+		}
+		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, src, dst, body)
 
 	case "node.list_request":
 		env, err = protocol.NewDataEnvelope(protocol.SubjectNodeListRequest, src, dst, &protocol.NodeListRequest{})
@@ -116,7 +131,7 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 	// All four are the same three steps over a different payload type, so they
 	// are a table rather than four copies. The data-channel cases above are not:
 	// each builds its envelope from something other than the posted payload
-	// (a hostname, a station id), which is why they stay written out.
+	// (a hostname, the heartbeater's body), which is why they stay written out.
 	default:
 		spec, ok := orderEnvelopeSpecs[req.Type]
 		if !ok {
