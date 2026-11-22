@@ -106,9 +106,10 @@ type Event struct {
 	Ref protocol.TermRef
 	// Tell is what the order's station is told beside the status, for the
 	// facts the row does not hold: the sentence (Detail; the write's own
-	// history detail when empty), the ETA, the fault clock. A RobotID named here
-	// (or on RobotID above) is written with the status. The status, robot, wait
-	// and version the station is sent are the row's after the write.
+	// history detail when empty), the ETA, the fault clock, a failure's code
+	// (FailWithRef). A RobotID named here (or on RobotID above) is written with
+	// the status. The status, robot, wait and version the station is sent are
+	// the row's after the write.
 	Tell protocol.OrderUpdate
 }
 
@@ -648,8 +649,9 @@ func (s *LifecycleService) Dispatch(ord *orders.Order, vendorOrderID, robotID, a
 	return nil
 }
 
-// Fail transitions any non-terminal status to Failed via FailOrderAtomic
-// (which also releases bin claims).
+// Fail transitions any non-terminal status to Failed through transition's
+// terminal write (store.TerminalizeOrderWithReason), which also releases the
+// order's claims and reservations.
 func (s *LifecycleService) Fail(ord *orders.Order, stationID, errorCode, detail string) error {
 	return s.FailWithRef(ord, stationID, errorCode, detail, protocol.TermRef{})
 }
@@ -665,6 +667,9 @@ func (s *LifecycleService) Fail(ord *orders.Order, stationID, errorCode, detail 
 //
 // An empty ref behaves exactly as before: historyReason fills in the order's own
 // node and payload.
+//
+// The station's tell carries errorCode (protocol.OrderUpdate.ErrorCode): the
+// Edge clears a changeover drop on it (engine.handleNodeOrderFailed).
 func (s *LifecycleService) FailWithRef(ord *orders.Order, stationID, errorCode, detail string, ref protocol.TermRef) error {
 	if protocol.IsTerminal(ord.Status) {
 		return IllegalTransition{From: ord.Status, To: StatusFailed}
@@ -676,6 +681,7 @@ func (s *LifecycleService) FailWithRef(ord *orders.Order, stationID, errorCode, 
 		ErrorDetail: detail,
 		StationID:   stationID,
 		Ref:         ref,
+		Tell:        protocol.OrderUpdate{ErrorCode: errorCode},
 	})
 }
 
@@ -683,7 +689,8 @@ func (s *LifecycleService) FailWithRef(ord *orders.Order, stationID, errorCode, 
 // to Skipped — the "the work was never needed" terminal. Distinct from Fail
 // because skipped orders are not alarms: the world already advanced past
 // the order's purpose (e.g. complex evac with no bin at any pickup node).
-// Same atomic-write + bin-claim-release semantics as Fail (SkipOrderAtomic).
+// The same terminal write and claim release as Fail
+// (store.TerminalizeOrderWithReason).
 func (s *LifecycleService) Skip(ord *orders.Order, stationID, errorCode, detail string) error {
 	if protocol.IsTerminal(ord.Status) {
 		return IllegalTransition{From: ord.Status, To: StatusSkipped}

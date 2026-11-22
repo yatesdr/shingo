@@ -32,7 +32,7 @@ func (NoOpOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orde
 func (NoOpOrderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
 }
 
-func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {
 }
 
 func (NoOpOrderEmitter) EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {

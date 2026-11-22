@@ -24,7 +24,7 @@ func (testEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType
 }
 func (testEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
 }
-func (testEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+func (testEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {
 }
 
 func testManagerDB(t *testing.T) *store.DB {

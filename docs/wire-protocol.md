@@ -2098,6 +2098,7 @@ Status change or ETA update for an in-progress order. May be sent multiple times
 | `eta` | string | omitempty | ETA is the updated estimated time of arrival, when there is one. |
 | `queue_reason` | string | omitempty | QueueReason carries the blocking signal from Core's orders.queue_reason when Status is "queued" — e.g. "no bin of requested payload in node group AMR Supermarket". Omitted (not cleared) for non-queued updates; omitempty means an absent field signals "leave unchanged", not "clear". Core sends it when an order's wait changes while it waits (dispatch.WriteQueueDetail). |
 | `queue_code` | string | omitempty | QueueCode is the structured category behind QueueReason (protocol.QueueCode). Additive: old Edge ignores it; new Edge with old Core sees "" and falls back to the sentence. Ships alongside QueueReason so Edge can persist the code for future branching without a schema change. |
+| `error_code` | string | omitempty | ErrorCode is the code Core failed the order with (a TermCode value, as on OrderError), on an update whose Status is "failed": Core's lifecycle writes it with the status (dispatch.LifecycleService.FailWithRef). Absent on every other status, on a failure Core gave no code, and from an older Core. The Edge reads it to clear a changeover drop whose removal found no bin to take (TermNoBin, TermNoSourceBin) rather than show it as an error. Additive: an older Edge ignores it. |
 | `robot_id` | string | omitempty | RobotID is the robot Core holds for the order when it sends the update (orders.robot_id, or the fleet's robot on a vendor-status push). The waybill names the robot on its first assignment only, so a robot that changes later reaches the Edge on the next update that carries this. Empty when Core holds none, and an empty one is absent, not a clear: the Edge keeps the robot it has. Additive: an older Edge ignores it. |
 | `fault_since` | timestamp | omitempty | FaultSince is when the order faulted — the faulted history row's created_at, not orders.updated_at, which the vendor poll rewrites. The Edge ticks its clock from this. |
 | `fault_deadline` | timestamp | omitempty | FaultDeadline is when Core gives up (FaultSince + config fault_grace). A live config change mid-grace drifts it, which is acceptable for a countdown and beats the poller's copy, which does not survive a restart. |
@@ -2403,7 +2404,8 @@ Notifies the edge that an order has entered a dwelling (wait) state at a staging
 
 ## Error Codes
 
-`error_code` on `order.error` (and on `order.skipped`) is not one closed list. It is one of two things:
+`error_code` on `order.error` (and on `order.skipped`, and on an `order.update` whose status is `failed`) is not one
+closed list. It is one of two things:
 
 - **The terminal code** when the order failed or was skipped at Core: a `TermCode` value — `no_source_bin`,
   `grace_timeout`, `same_node`, `lane_locked`, `not_needed` and the rest. The full set is `protocol.AllTermCodes`,
@@ -2415,7 +2417,9 @@ Notifies the edge that an order has entered a dwelling (wait) state at a staging
   allow), `not_found`, `redirect_failed`, `invalid_node`, `manifest_sync_failed`, and the intake and ingest codes
   (`payload_error`, `bin_error`, `stale_epoch`, `internal_error`).
 
-A consumer branches on the `TermCode` values it knows and shows `detail` for every code, known or not.
+A consumer branches on the `TermCode` values it knows and shows `detail` for every code, known or not. On a failed
+`order.update` it is the first kind only, and absent when Core's failure has no code and from an older Core; the
+Edge reads it there to clear a changeover drop whose removal found no bin to take (`no_bin`, `no_source_bin`).
 
 ---
 

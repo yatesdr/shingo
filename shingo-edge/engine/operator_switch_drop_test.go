@@ -57,60 +57,80 @@ func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
 	}
 }
 
-// TestHandleNodeOrderFailed_DropNoBinAutoClears pins the auto-skip
-// branch: when a drop task's evac order fails with Core's no_bin
-// shape (bins were present at the pickup but none claimable — e.g.
-// payload mismatch, orphan claim from a prior changeover), Edge
-// advances the task to line_cleared with a skip_note instead of
-// stamping error. Plant 2026-05-12 (SNF2 ALN_002): the failed evac
-// stranded the operator at an "error" tile that required the
-// /changeover supervisor page to clear; the changeover's intent — get
-// the bin off the line — was effectively satisfied either way.
+// TestHandleNodeOrderFailed_DropNoBinAutoClears pins the auto-clear
+// branch: when a drop task's evac order fails with Core's code for no
+// bin to take (no_bin, no_source_bin), the Edge advances the task to
+// line_cleared with a skip_note instead of stamping error. Plant
+// 2026-05-12 (SNF2 ALN_002): the failed evac stranded the operator at an
+// "error" tile that required the /changeover supervisor page to clear;
+// the changeover's intent — get the bin off the line — was effectively
+// satisfied either way. The code decides, never the wording: Core's own
+// sentence with no code (a v0.18.0 Core's tell) is an error, and so is
+// any other code.
 func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
 	t.Parallel()
-	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedDropScenarioEvacuate(t, db)
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
+	for _, tc := range []struct {
+		name  string
+		code  protocol.TermCode
+		state domain.NodeTaskState
+		note  bool
+	}{
+		{"no_bin", protocol.TermNoBin, domain.NodeTaskLineCleared, true},
+		{"no_source_bin", protocol.TermNoSourceBin, domain.NodeTaskLineCleared, true},
+		{"no code, as a v0.18.0 Core sends it", "", domain.NodeTaskError, false},
+		{"another code", protocol.TermStructural, domain.NodeTaskError, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			processID, nodeID, _, toStyleID := seedDropScenarioEvacuate(t, db)
+			eng := testEngine(t, db)
+			eng.wireEventHandlers()
 
-	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "drop no_bin test")
-	if err != nil {
-		t.Fatalf("start changeover: %v", err)
-	}
+			changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "drop no_bin test")
+			if err != nil {
+				t.Fatalf("start changeover: %v", err)
+			}
 
-	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if err != nil {
-		t.Fatalf("get node task: %v", err)
-	}
-	if task.Situation != "drop" {
-		t.Fatalf("expected drop situation, got %s", task.Situation)
-	}
-	// A tool-change mark on the from-claim → planner lands the
-	// task at empty_requested (non-terminal) so cutover waits for the
-	// physical pickup. That's the precondition for this regression.
-	if task.State != domain.NodeTaskEmptyRequested {
-		t.Fatalf("expected empty_requested at plan time (a marked node), got %s", task.State)
-	}
-	if task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected evac order on drop task")
-	}
-	evacOrderID := *task.OldMaterialReleaseOrderID
+			task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+			if err != nil {
+				t.Fatalf("get node task: %v", err)
+			}
+			if task.Situation != "drop" {
+				t.Fatalf("expected drop situation, got %s", task.Situation)
+			}
+			// A tool-change mark on the from-claim → planner lands the
+			// task at empty_requested (non-terminal) so cutover waits for the
+			// physical pickup. That's the precondition for this regression.
+			if task.State != domain.NodeTaskEmptyRequested {
+				t.Fatalf("expected empty_requested at plan time (a marked node), got %s", task.State)
+			}
+			if task.OldMaterialReleaseOrderID == nil {
+				t.Fatal("expected evac order on drop task")
+			}
+			evacOrderID := *task.OldMaterialReleaseOrderID
 
-	// Simulate Core's no_bin failure for the evac order, in the
-	// wording isNoBinFailure matches.
-	order, _ := db.GetOrder(evacOrderID)
-	emitOrderFailed(eng, evacOrderID, order.UUID, protocol.OrderType("complex"),
-		"no available bin at pickup node(s) for order "+itoa(evacOrderID))
+			// Core's failure of the evac order, in the sentence Core's
+			// dispatcher writes with no_bin, with the case's code.
+			order, _ := db.GetOrder(evacOrderID)
+			eng.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
+				OrderID: evacOrderID, OrderUUID: order.UUID, OrderType: protocol.OrderTypeComplex,
+				Code: string(tc.code), Reason: "complex order " + itoa(evacOrderID) + " has no source pickup",
+			}})
 
-	task, err = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if err != nil {
-		t.Fatalf("get node task after fail: %v", err)
-	}
-	if task.State != domain.NodeTaskLineCleared {
-		t.Errorf("drop+no_bin task state = %q, want line_cleared (auto-clear)", task.State)
-	}
-	if task.SkipNote == "" {
-		t.Errorf("drop+no_bin auto-clear left SkipNote empty; expected operator chip text")
+			task, err = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+			if err != nil {
+				t.Fatalf("get node task after fail: %v", err)
+			}
+			if task.State != tc.state {
+				t.Errorf("drop task state after a failure coded %q = %q, want %q", tc.code, task.State, tc.state)
+			}
+			if want := "evac auto-cleared: no bin to remove at " + task.NodeName; tc.note && task.SkipNote != want {
+				t.Errorf("auto-clear skip_note = %q, want %q", task.SkipNote, want)
+			} else if !tc.note && task.SkipNote != "" {
+				t.Errorf("an error tile carries skip_note %q, want none", task.SkipNote)
+			}
+		})
 	}
 }
 

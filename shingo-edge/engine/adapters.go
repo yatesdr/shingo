@@ -117,9 +117,9 @@ func (e *orderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binP
 	}})
 }
 
-func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Reason: reason,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Code: code, Reason: reason,
 	}})
 }
 

@@ -32,6 +32,11 @@ import (
 //   - today's encoding decodes on the peer's frozen type, and the peer then
 //     holds each other key as it held the golden's.
 //
+// A case also names the keys this tree adds to the message (added), each with
+// a value: absent from the peers' golden, carried by today's type, and ignored
+// by the peer's, which decodes a body that has them and holds exactly what it
+// held of its own.
+//
 // Pattern: plant_claim_legs_test.go (oldCorePlantClaim). The frozen copies use
 // the underlying kind (string, int64) where today's type is a named one, so a
 // method added to a named type later cannot change what the copy decodes.
@@ -42,39 +47,45 @@ type peerWireCase struct {
 	deletable []string // the keys allowed to differ between the peer and today
 	current   func() any
 	peer      func() any
+	added     map[string]string // the keys this tree adds, each with an encoded value
 }
 
 func peerWireCases() []peerWireCase {
 	const core, edge = "the v0.18.0 Core", "the v0.17.2 Edge"
 	return []peerWireCase{
 		{"BinUOPDelta", edge, []string{"station"},
-			func() any { return &BinUOPDelta{} }, func() any { return &peerBinUOPDelta{} }},
+			func() any { return &BinUOPDelta{} }, func() any { return &peerBinUOPDelta{} }, nil},
 		{"EdgeRegistered", core, []string{"station_id"},
-			func() any { return &EdgeRegistered{} }, func() any { return &peerEdgeRegistered{} }},
+			func() any { return &EdgeRegistered{} }, func() any { return &peerEdgeRegistered{} }, nil},
 		{"EdgeHeartbeatAck", core, []string{"station_id"},
-			func() any { return &EdgeHeartbeatAck{} }, func() any { return &peerEdgeHeartbeatAck{} }},
+			func() any { return &EdgeHeartbeatAck{} }, func() any { return &peerEdgeHeartbeatAck{} }, nil},
 		{"EdgeStale", core, []string{"station_id"},
-			func() any { return &EdgeStale{} }, func() any { return &peerEdgeStale{} }},
+			func() any { return &EdgeStale{} }, func() any { return &peerEdgeStale{} }, nil},
 		{"EdgeRegisterRequest", core, []string{"station_id"},
-			func() any { return &EdgeRegisterRequest{} }, func() any { return &peerEdgeRegisterRequest{} }},
+			func() any { return &EdgeRegisterRequest{} }, func() any { return &peerEdgeRegisterRequest{} }, nil},
 		{"OrderProjection", core, []string{"station_id"},
-			func() any { return &OrderProjection{} }, func() any { return &peerOrderProjection{} }},
+			func() any { return &OrderProjection{} }, func() any { return &peerOrderProjection{} }, nil},
 		{"OrderStatusSnapshot", core, []string{"station_id", "source_node", "delivery_node", "vendor_order_id"},
-			func() any { return &OrderStatusSnapshot{} }, func() any { return &peerOrderStatusSnapshot{} }},
+			func() any { return &OrderStatusSnapshot{} }, func() any { return &peerOrderStatusSnapshot{} }, nil},
 		{"LinesideLevelReport", edge, []string{"station"},
-			func() any { return &LinesideLevelReport{} }, func() any { return &peerLinesideLevelReport{} }},
+			func() any { return &LinesideLevelReport{} }, func() any { return &peerLinesideLevelReport{} }, nil},
 		{"NodeStructureChanged", core, []string{"node_id", "old_parent_id", "new_parent_id"},
-			func() any { return &NodeStructureChanged{} }, func() any { return &peerNodeStructureChanged{} }},
+			func() any { return &NodeStructureChanged{} }, func() any { return &peerNodeStructureChanged{} }, nil},
 		{"SupplyRefusalSnapshot", core, []string{"digest"},
-			func() any { return &SupplyRefusalSnapshot{} }, func() any { return &peerSupplyRefusalSnapshot{} }},
+			func() any { return &SupplyRefusalSnapshot{} }, func() any { return &peerSupplyRefusalSnapshot{} }, nil},
+		// The failed tell's code: the Edge clears a changeover drop on it.
+		{"OrderUpdate", core, nil,
+			func() any { return &OrderUpdate{} }, func() any { return &peerOrderUpdate{} },
+			map[string]string{"error_code": `"no_bin"`}},
 	}
 }
 
 // TestPeerWire_TheGoldensAreThePeersWholeShape checks the inputs the two
 // direction tests rely on: each golden is exactly what its frozen type encodes
 // (the copy is the tag's shape), every field of it is set (an omitempty field
-// left zero would drop its key and go unchecked), and it carries every key the
-// case lets differ (it is the shape before any deletion).
+// left zero would drop its key and go unchecked), it carries every key the
+// case lets differ (it is the shape before any deletion), and none the case
+// adds (the peers do not send them).
 func TestPeerWire_TheGoldensAreThePeersWholeShape(t *testing.T) {
 	t.Parallel()
 	for _, c := range peerWireCases() {
@@ -102,7 +113,68 @@ func TestPeerWire_TheGoldensAreThePeersWholeShape(t *testing.T) {
 					t.Errorf("the golden has no %q: it is not the peers' shape", k)
 				}
 			}
+			for k := range c.added {
+				if _, ok := keys[k]; ok {
+					t.Errorf("the golden has %q, which the case adds: a key the peers send is not added", k)
+				}
+			}
 		})
+	}
+}
+
+// TestPeerWire_AnAddedKeyIsTodaysAndThePeersIgnoreIt: a key this tree adds to
+// a peer's message is today's (a body with it set re-encodes with its value)
+// and harmless to the deployed peer, which decodes that body and holds exactly
+// what it held of its own.
+func TestPeerWire_AnAddedKeyIsTodaysAndThePeersIgnoreIt(t *testing.T) {
+	t.Parallel()
+	checked := 0
+	for _, c := range peerWireCases() {
+		if len(c.added) == 0 {
+			continue
+		}
+		checked++
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			golden := readPeerGolden(t, c.name)
+			body := peerKeys(t, golden)
+			for k, v := range c.added {
+				body[k] = json.RawMessage(v)
+			}
+			withAdded, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("add %v to the golden: %v", c.added, err)
+			}
+			cur := c.current()
+			if err := json.Unmarshal(withAdded, cur); err != nil {
+				t.Fatalf("today's %s does not decode a body with %v: %v", c.name, c.added, err)
+			}
+			now, err := json.Marshal(cur)
+			if err != nil {
+				t.Fatalf("marshal today's %s: %v", c.name, err)
+			}
+			have := peerKeys(t, now)
+			for k, v := range c.added {
+				if !bytes.Equal(have[k], []byte(v)) {
+					t.Errorf("today's %s re-encodes %q as %s, want %s: the key is not today's", c.name, k, have[k], v)
+				}
+			}
+			peer := c.peer()
+			if err := json.Unmarshal(now, peer); err != nil {
+				t.Fatalf("the deployed peers' %s no longer decodes today's body with %v: %v\n%s", c.name, c.added, err, now)
+			}
+			held, err := json.Marshal(peer)
+			if err != nil {
+				t.Fatalf("marshal the peer's copy: %v", err)
+			}
+			if !bytes.Equal(held, golden) {
+				t.Errorf("a deployed peer decoding today's %s with %v holds\n%s\nwant what it held of its own body\n%s",
+					c.name, c.added, held, golden)
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no case adds a key: this test checked nothing")
 	}
 }
 
@@ -327,6 +399,22 @@ type peerOrderStatusSnapshot struct {
 	ErrorDetail       string       `json:"error_detail,omitempty"`
 	QueueReason       string       `json:"queue_reason,omitempty"`
 	QueueCode         string       `json:"queue_code,omitempty"`
+	FaultSince        *time.Time   `json:"fault_since,omitempty"`
+	FaultDeadline     *time.Time   `json:"fault_deadline,omitempty"`
+	FaultNotice       bool         `json:"fault_notice,omitempty"`
+	FaultNoticeAfterS int          `json:"fault_notice_after_s,omitempty"`
+	FaultRef          *peerTermRef `json:"fault_ref,omitempty"`
+	Version           int64        `json:"version,omitempty"`
+}
+
+type peerOrderUpdate struct {
+	OrderUUID         string       `json:"order_uuid"`
+	Status            string       `json:"status"`
+	Detail            string       `json:"detail,omitempty"`
+	ETA               string       `json:"eta,omitempty"`
+	QueueReason       string       `json:"queue_reason,omitempty"`
+	QueueCode         string       `json:"queue_code,omitempty"`
+	RobotID           string       `json:"robot_id,omitempty"`
 	FaultSince        *time.Time   `json:"fault_since,omitempty"`
 	FaultDeadline     *time.Time   `json:"fault_deadline,omitempty"`
 	FaultNotice       bool         `json:"fault_notice,omitempty"`

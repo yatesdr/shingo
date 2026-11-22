@@ -79,7 +79,7 @@ func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, 
 	e.fallbackPayloads = append(e.fallbackPayloads, binPayloadCode)
 }
 
-func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {
 	e.failed = append(e.failed, string(orderType)+":"+reason)
 }
 func (e *capturingEmitter) EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {

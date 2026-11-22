@@ -908,28 +908,29 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	if (nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID) ||
 		(nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID) {
 		newState := domain.NodeTaskError
-		// Drop auto-skip: for a drop, "could not claim a bin at the
-		// pickup" satisfies the changeover's intent (or there was
-		// nothing to remove). Core's no_source_bin code already routes
-		// to lifecycle.Skip via HandleOrderSkipped; this branch covers
-		// the parallel no_bin case (bins present but unclaimable —
-		// e.g. payload mismatch, orphan claim from a previous
-		// changeover) which Core still routes to Fail. Pre-fix this
-		// stranded the operator at an error tile that required hunting
-		// down the /changeover supervisor page to clear. Swap-evac
-		// failures stay at "error" because the new bin can't move in
-		// until the old one leaves.
+		// A DROP WHOSE REMOVAL CORE FAILED FOR WANT OF A BIN IS CLEARED. A
+		// drop's intent is a clear line, and a removal with no bin to take has
+		// nothing left to do, so the task ends line_cleared with a note rather
+		// than at an error tile someone has to clear from the changeover page.
+		// Core says so by its code, never by a wording (failed.Code, from the
+		// failed tell's protocol.OrderUpdate.ErrorCode): TermNoBin or
+		// TermNoSourceBin. A failure with no code, which is every v0.18.0
+		// Core's, is an error, as is every other code. A removal whose line
+		// Core finds empty is skipped, not failed, and the skip clears its task
+		// (orders.Manager.HandleSkipped). A swap's evac that fails stays an
+		// error: the new bin cannot move in until the old one leaves.
+		// PIN: TestHandleNodeOrderFailed_DropNoBinAutoClears.
 		//
-		// Round-3 Item C addition: dropoff-side capacity exhaustion
-		// (destination full, NGRP saturated) is operationally distinct
-		// from "no bin at pickup" — the changeover hasn't failed, the
-		// system is waiting for storage space to open up. Tag those as
-		// NodeTaskCapacityBlocked so the HMI renders amber rather than
-		// red, and so a downstream consumer can distinguish "retry
-		// when capacity opens" from "operator must intervene."
+		// Dropoff-side capacity exhaustion (destination full, NGRP saturated)
+		// is operationally distinct: the changeover hasn't failed, the system
+		// is waiting for storage space to open up. Those are read from the
+		// reason's wording (isCapacityBlocked), after the code, and tagged
+		// NodeTaskCapacityBlocked so the HMI renders amber rather than red,
+		// and so a downstream consumer can distinguish "retry when capacity
+		// opens" from "operator must intervene."
 		if nodeTask.Situation == "drop" {
-			switch {
-			case isNoBinFailure(failed.Reason):
+			switch code := protocol.TermCode(failed.Code); {
+			case code == protocol.TermNoBin || code == protocol.TermNoSourceBin:
 				newState = domain.NodeTaskLineCleared
 			case isCapacityBlocked(failed.Reason):
 				newState = domain.NodeTaskCapacityBlocked
@@ -944,7 +945,7 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 			if err := e.db.SetChangeoverNodeTaskSkipNote(nodeTask.ID, note); err != nil {
 				log.Printf("changeover: set skip_note on drop auto-clear for task %d: %v", nodeTask.ID, err)
 			}
-			log.Printf("changeover: drop auto-cleared for node %s — order %d failed with %q", node.Name, order.ID, failed.Reason)
+			log.Printf("changeover: drop auto-cleared for node %s — order %d failed %s: %q", node.Name, order.ID, failed.Code, failed.Reason)
 		case domain.NodeTaskCapacityBlocked:
 			note := "drop waiting for downstream capacity: " + failed.Reason
 			if err := e.db.SetChangeoverNodeTaskSkipNote(nodeTask.ID, note); err != nil {
@@ -963,31 +964,6 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	}
 }
 
-// isNoBinFailure recognizes Core's bin-claim failure shape on
-// OrderFailedEvent.Reason for PICKUP-side bin unavailability — the
-// "slot was already vacant" semantics where the drop can be auto-
-// cleared as NodeTaskLineCleared because there's nothing physically to move.
-//
-// Core's planning error codes ("no_bin", "no_source_bin") are not
-// preserved end-to-end through the wire — only the detail string is —
-// so we match on the detail. Substrings cover both pickup-shaped reasons:
-//
-//   - no_bin         "no available bin at pickup node(s) for order N"
-//   - no_source_bin  "no bin at pickup node(s) for order N — source was emptied externally"
-//
-// Core has not emitted either wording since its complex orders reserve at
-// plan time; the matcher stays for an older Core on the wire. A new wording
-// goes here, or plumb the code through OrderFailedEvent.
-//
-// IMPORTANT: order of matchers in the call site matters — this matcher
-// MUST be checked before isCapacityBlocked. The capacity matcher uses a
-// looser "no available bin at " prefix that would otherwise swallow
-// pickup-side failures.
-func isNoBinFailure(reason string) bool {
-	return strings.Contains(reason, "no available bin at pickup") ||
-		strings.Contains(reason, "no bin at pickup")
-}
-
 // isCapacityBlocked recognizes Core's DROPOFF-side capacity failure
 // shapes — destination occupied, NGRP saturated, no slot available.
 // These are operationally retriable: the changeover hasn't failed,
@@ -995,19 +971,15 @@ func isNoBinFailure(reason string) bool {
 // renders these as amber tiles (NodeTaskCapacityBlocked), distinct
 // from green (NodeTaskLineCleared/NodeTaskSwitched) and red (NodeTaskError).
 //
-// Substrings match the dispatch error shapes produced by:
-//   - dispatch/binresolver/group_resolver.go:440,518
-//     "no available slot in node group %s"
-//   - dispatch/binresolver/group_resolver.go:298,323
-//     "no bin of requested payload in node group %s"
-//   - dispatch/source_finder.go OutcomeWait "no available bin at %s"
-//     (move/retrieve source-side; the source line has no claimable bin
-//     so the changeover's drop can't physically run — practically
-//     a capacity-style condition from the operator's POV)
+// Substrings match the wordings of Core's dispatch errors:
+//   - "no available slot in node group %s": binresolver.GroupResolver's
+//     store resolvers, and the dispatch slot and lane choices
+//   - "no bin of requested payload in node group %s": GroupResolver's
+//     classifyEmptyGroup
+//   - "no available bin at %s": no Core at or above v0.17.2 writes it
 //
-// Order-of-matching contract — isNoBinFailure runs FIRST in the caller
-// so the looser "no available bin at " prefix here doesn't reclassify
-// pickup-side failures as capacity blocks.
+// The caller asks it after Core's code: a drop's failure coded TermNoBin
+// or TermNoSourceBin is cleared whatever its wording.
 func isCapacityBlocked(reason string) bool {
 	return strings.Contains(reason, "no available slot in node group") ||
 		strings.Contains(reason, "no available bin at ") ||

@@ -45,7 +45,7 @@ func (noopEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64,
 func (noopEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64, *int, *string, int64, string, string, bool) {
 }
 func (noopEmitter) EmitOrderDeliveredFallback(int64, *int, *string, int64, string, bool) {}
-func (noopEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string)            {}
+func (noopEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string, string)    {}
 func (noopEmitter) EmitOrderFaulted(int64, string, string)                               {}
 func (noopEmitter) EmitOrderCancelledByCore(int64, string, protocol.OrderType, string)   {}
 func (noopEmitter) EmitOrderTouched(int64, string, *int64)                               {}

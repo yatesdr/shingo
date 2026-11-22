@@ -53,6 +53,7 @@ Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration)
 - Core: a bin move or direct order a robot finished before Core answered is answered as carried out; it was refused with "the move could not be carried out" although the move was done
 - Core Payloads: a sequence check that finds nothing wrong is green, and a save Core could not verify is amber (both were grey)
 - Core: the unused GET /api/cells/processes is gone
+- Changeover: a position the new style does not use, whose removal Core fails because it has no bin to take, shows line cleared with its note again and no longer holds the cutover; it showed an error (both Core and Edge on this release)
 
 ## v0.18.0 — 2026-11-21
 

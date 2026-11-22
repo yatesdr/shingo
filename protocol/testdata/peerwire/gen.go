@@ -9,7 +9,9 @@
 //	cp gen.go <dir>/protocol/ && cd <dir>/protocol && GOWORK=off go run gen.go <out-dir>
 //
 // Run at v0.17.2 and at v0.18.0 on 2026-11-21; the two runs wrote the same
-// bytes, and those are the files here.
+// bytes, and those are the files here. Run again at both tags the same day with
+// OrderUpdate added: both wrote the same OrderUpdate.json, and every other file
+// byte for byte as before.
 package main
 
 import (
@@ -72,6 +74,14 @@ func main() {
 			FaultRef: &protocol.TermRef{Node: "SYN-DST", Payload: "SYN-PART-A", Peer: 5, VendorCode: 52,
 				VendorDesc: "obstacle", Detail: "synthetic"},
 			Version: 11,
+		},
+		"OrderUpdate": protocol.OrderUpdate{
+			OrderUUID: "00000000-0000-4000-8000-000000000003", Status: "faulted", Detail: "replanning",
+			ETA: "2026-01-02T03:10:00Z", QueueReason: "no bin", QueueCode: "no_source_bin", RobotID: "SYN-AMR-1",
+			FaultSince: &t0, FaultDeadline: &t1, FaultNotice: true, FaultNoticeAfterS: 60,
+			FaultRef: &protocol.TermRef{Node: "SYN-DST", Payload: "SYN-PART-A", Peer: 5, VendorCode: 52,
+				VendorDesc: "obstacle", Detail: "synthetic"},
+			Version: 13,
 		},
 		"LinesideLevelReport": protocol.LinesideLevelReport{
 			Station: "stn-0e0e0e0e0e0e0e0e", ReportedAt: t0,

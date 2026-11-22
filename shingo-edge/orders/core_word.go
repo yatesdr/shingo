@@ -49,6 +49,10 @@ type CoreWord struct {
 	// QueueReason and QueueCode are kept only while the order waits
 	// (protocol.IsWaiting), as the live push always did.
 	QueueReason, QueueCode string
+	// ErrorCode is the code Core failed the order with (protocol.OrderUpdate.
+	// ErrorCode), carried to the failed event and not stored. "" from an older
+	// Core, a snapshot or a projection, none of which carries one.
+	ErrorCode string
 	// HasFault: the word carries the fault clock (an order.update, a snapshot).
 	// A projection carries none, and a faulted order keeps the clock it has.
 	HasFault          bool
@@ -92,6 +96,7 @@ func (m *Manager) ApplyCoreUpdate(p *protocol.OrderUpdate) error {
 		ETA:               p.ETA,
 		QueueReason:       p.QueueReason,
 		QueueCode:         p.QueueCode,
+		ErrorCode:         p.ErrorCode,
 		HasFault:          true,
 		FaultSince:        p.FaultSince,
 		FaultDeadline:     p.FaultDeadline,
@@ -174,7 +179,7 @@ func (m *Manager) coreMoved(order *orders.Order, w CoreWord) {
 	}
 	m.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
 	if w.Status == StatusFailed {
-		m.emitter.EmitOrderFailed(order.ID, order.UUID, order.OrderType, detail)
+		m.emitter.EmitOrderFailed(order.ID, order.UUID, order.OrderType, w.ErrorCode, detail)
 	}
 	m.coreEnded(order, w.Status, detail)
 }

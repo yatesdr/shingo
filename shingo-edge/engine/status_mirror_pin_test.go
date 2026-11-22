@@ -66,7 +66,11 @@ func newMirrorRig(t *testing.T) *mirrorRig {
 		case OrderCompletedEvent:
 			r.events = append(r.events, "completed")
 		case OrderFailedEvent:
-			r.events = append(r.events, "failed")
+			name := "failed"
+			if p.Code != "" {
+				name += " " + p.Code // Core's code, when the failure carries one
+			}
+			r.events = append(r.events, name)
 		case OrderCancelledByCoreEvent:
 			r.events = append(r.events, "cancelled by Core")
 		}

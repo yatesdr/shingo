@@ -2266,3 +2266,30 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DEAD — `TestIsNoBinFailure`
+- test: `TestIsNoBinFailure` · pkg `shingoedge/engine` · run `-run '^TestIsNoBinFailure$'` · `shingo-edge/engine/wiring_completion_matchers_test.go:7` @ `d2686a1d` · tags `none`
+- code: DEAD (`isNoBinFailure` is deleted: the changeover's drop clears on Core's code, `protocol.OrderUpdate.ErrorCode`, not on a wording; no Core at or above `protocol.FloorCore` writes either wording it matched)
+- assertion map: the two pickup wordings match, the capacity and fleet wordings do not → the code decides instead: `TestHandleNodeOrderFailed_DropNoBinAutoClears` (no_bin and no_source_bin clear, no code and another code do not) and `TestScenario_ChangeoverDrop_CoresNoBinFailureClearsTheLine` (integration)
+- mutation: not run (the matcher it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMatcherOrdering`
+- test: `TestMatcherOrdering` · pkg `shingoedge/engine` · run `-run '^TestMatcherOrdering$'` · `shingo-edge/engine/wiring_completion_matchers_test.go:73` @ `d2686a1d` · tags `none`
+- code: DEAD (as `TestIsNoBinFailure`: with the wording matcher gone there is no order of two matchers to keep)
+- assertion map: both matchers match the older pickup wording → nothing; that the capacity matcher matches it stays in `TestIsCapacityBlocked` (same file), and that a coded failure clears whatever its wording is `TestHandleNodeOrderFailed_DropNoBinAutoClears`
+- mutation: not run (the matcher it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestHandleNodeOrderFailed_DropNoBinAutoClears`
+- test: `TestHandleNodeOrderFailed_DropNoBinAutoClears` · pkg `shingoedge/engine` · run `-run '^TestHandleNodeOrderFailed_DropNoBinAutoClears$'` · `shingo-edge/engine/operator_switch_drop_test.go:69` @ `d2686a1d` · tags `none`
+- code: STALE (it failed the evac with a wording no Core sends and no code)
+- assertion map: a drop's evac failed with "no available bin at pickup …" ends line_cleared with a note → the same assertions, kept under the same name, over Core's code: no_bin and no_source_bin end line_cleared with the exact note; no code (a v0.18.0 Core's tell) and another code end error with no note
+- mutation: `shingo-edge/engine/wiring_completion.go` put back as it was before the code arm (the `isNoBinFailure` arm) · rewritten red at tip: `go test -count=1 -run '^TestHandleNodeOrderFailed_DropNoBinAutoClears$' ./engine/` → `operator_switch_drop_test.go:126: drop task state after a failure coded "no_bin" = "error", want "line_cleared"` (and the same for `no_source_bin`), `--- FAIL: TestHandleNodeOrderFailed_DropNoBinAutoClears`; the no-code and other-code cases pass
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-edge/engine/wiring_completion.go` (`handleNodeOrderFailed`'s PIN)
+- verified at: the commit that adds this row

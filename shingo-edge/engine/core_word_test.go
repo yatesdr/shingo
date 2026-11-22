@@ -462,6 +462,23 @@ func TestCoreWord_CoresEndToastsAndHoldsOnceAtTheLiveToTerminalEdge(t *testing.T
 			wantHold:   domain.ReorderHoldPaused,
 			wantDetail: fleet,
 		},
+		{
+			// The failed event carries the code the tell carries, and only that
+			// one: order.error's code is the same failure's and writes nothing.
+			name: "order.update failed with Core's code",
+			end: func(r *wordRig) {
+				r.update(protocol.OrderUpdate{OrderUUID: "end-leg", Status: string(protocol.StatusFailed), Version: 5,
+					ErrorCode: string(protocol.TermNoBin), Detail: "complex order 9 has no source pickup"})
+			},
+			envelope: func(r *wordRig) {
+				r.h.HandleOrderError(wire, &protocol.OrderError{OrderUUID: "end-leg", ErrorCode: string(protocol.TermNoBin),
+					Detail: "complex order 9 has no source pickup"})
+			},
+			wantStatus: protocol.StatusFailed,
+			wantEvents: []string{"status in_transit->failed", "completed", "failed no_bin"},
+			wantHold:   domain.ReorderHoldPaused,
+			wantDetail: "complex order 9 has no source pickup",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

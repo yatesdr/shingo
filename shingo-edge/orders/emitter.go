@@ -33,7 +33,11 @@ type EventEmitter interface {
 	// on the one path with no Edge order to reconstruct it from. nil is an older
 	// Core that does not send one, and records as an UNKNOWN carrier.
 	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool)
-	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
+	// EmitOrderFailed says the order failed: code is the code Core failed it
+	// with (protocol.OrderUpdate.ErrorCode, from Core's versioned tell), "" when
+	// Core sent none or the failure is not Core's tell; reason is the history
+	// row's sentence.
+	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string)
 	// EmitOrderCancelledByCore says Core cancelled an order that was still live
 	// here, with Core's reason (Manager.HandleDispatchReply). Not emitted for a
 	// cancel this station sent: that order is terminal before Core's echo lands.

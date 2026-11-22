@@ -515,6 +515,14 @@ type OrderUpdate struct {
 	// to the sentence. Ships alongside QueueReason so Edge can persist the code
 	// for future branching without a schema change.
 	QueueCode string `json:"queue_code,omitempty"`
+	// ErrorCode is the code Core failed the order with (a TermCode value, as on
+	// OrderError), on an update whose Status is "failed": Core's lifecycle
+	// writes it with the status (dispatch.LifecycleService.FailWithRef).
+	// Absent on every other status, on a failure Core gave no code, and from an
+	// older Core. The Edge reads it to clear a changeover drop whose removal
+	// found no bin to take (TermNoBin, TermNoSourceBin) rather than show it as
+	// an error. Additive: an older Edge ignores it.
+	ErrorCode string `json:"error_code,omitempty"`
 	// RobotID is the robot Core holds for the order when it sends the update
 	// (orders.robot_id, or the fleet's robot on a vendor-status push). The
 	// waybill names the robot on its first assignment only, so a robot that

@@ -333,7 +333,12 @@ type OrderFailedEvent struct {
 	OrderID   int64              `json:"order_id"`
 	OrderUUID string             `json:"order_uuid"`
 	OrderType protocol.OrderType `json:"order_type"`
-	Reason    string             `json:"reason"`
+	// Code is the code Core failed the order with (protocol.OrderUpdate.
+	// ErrorCode), "" when Core sent none. Its reader is the changeover's drop
+	// arm (handleNodeOrderFailed); it is not sent to the station page, which
+	// reads Reason.
+	Code   string `json:"-"`
+	Reason string `json:"reason"`
 }
 
 // OrderCancelledByCoreEvent is EventOrderCancelledByCore's payload. Same shape

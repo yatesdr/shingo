@@ -360,7 +360,7 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 	em.EmitOrderCreated(1, "uuid-1", "complex", nil, &nodeID)
 	em.EmitOrderStatusChanged(1, "uuid-1", "complex", "planning", "dispatched", "eta", nil, &nodeID)
 	em.EmitOrderCompleted(1, "uuid-1", "complex", nil, &nodeID)
-	em.EmitOrderFailed(1, "uuid-1", "complex", "timeout")
+	em.EmitOrderFailed(1, "uuid-1", "complex", "no_bin", "timeout")
 
 	if _, ok := received[EventOrderCreated]; !ok {
 		t.Error("missing EventOrderCreated")
@@ -375,7 +375,7 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 	}
 	if p, ok := received[EventOrderFailed].(OrderFailedEvent); !ok {
 		t.Error("OrderFailed payload wrong type")
-	} else if p.Reason != "timeout" {
+	} else if p.Reason != "timeout" || p.Code != "no_bin" {
 		t.Errorf("OrderFailed payload = %+v", p)
 	}
 }
