@@ -73,8 +73,22 @@ func TestMoveToTransit_Idempotent(t *testing.T) {
 	idemOrder := dispatchedHolder(t, db) // (C1.5: in transit means dispatched)
 	testdb.ClaimBinForTest(t, db, bin.ID, idemOrder.ID)
 
+	// The whole row as stored: a no-op writes none of its columns.
+	row := func() (s string) {
+		testutil.MustNoErr(t, db.QueryRow(`SELECT to_jsonb(b)::text FROM bins b WHERE id = $1`, bin.ID).Scan(&s), "read the bin row")
+		return s
+	}
+
+	atSource := row()
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "first MoveToTransit")
+	inTransit := row()
+	if inTransit == atSource {
+		t.Fatal("the first MoveToTransit wrote nothing, so the second has nothing to repeat")
+	}
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "second MoveToTransit (should be no-op)")
+	if again := row(); again != inTransit {
+		t.Errorf("the second MoveToTransit wrote to the bin:\n before %s\n after  %s", inTransit, again)
+	}
 }
 
 // TestMarkAnomaly_Sets sets the anomaly_at timestamp.
@@ -126,7 +140,7 @@ func TestClearAnomaly_Clears(t *testing.T) {
 // the whole design: a synthetic _TRANSIT node, with `is_synthetic=true`,
 // is automatically excluded from FindSourceFIFO / FindEmptyCompatible /
 // lane finders by the existing `is_synthetic = false` filters in those
-// queries. If migration v15 ever creates _TRANSIT with is_synthetic=false,
+// queries. If the schema baseline ever creates _TRANSIT with is_synthetic=false,
 // in-flight bins would be re-claimable by other orders — a silent
 // correctness break. This test guards that.
 func TestTransitNode_IsSyntheticGate(t *testing.T) {
@@ -135,7 +149,7 @@ func TestTransitNode_IsSyntheticGate(t *testing.T) {
 
 	transit, err := db.GetNodeByName(domain.TransitNodeName)
 	if err != nil {
-		t.Fatalf("migration v15 should have created %q: %v", domain.TransitNodeName, err)
+		t.Fatalf("the schema baseline (store/schema/baseline.sql) should have created %q: %v", domain.TransitNodeName, err)
 	}
 	if !transit.IsSynthetic {
 		t.Fatalf("_TRANSIT node MUST have is_synthetic=true — claim queries depend on that filter to exclude in-flight bins. Got is_synthetic=false.")
