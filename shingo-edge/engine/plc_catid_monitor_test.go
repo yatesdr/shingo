@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingoedge/config"
 	"shingoedge/domain"
+	"shingoedge/plc"
 )
 
 func TestDeriveIdentityTag(t *testing.T) {
@@ -440,5 +442,42 @@ func TestAutoCutover_OffMode_Silent(t *testing.T) {
 	mon.onConfirmedCATID(processID, st, true)
 	if prompts != 0 {
 		t.Fatalf("off mode prompted %d time(s), want 0", prompts)
+	}
+}
+
+// TestCatidWindow_SixtySecondsOnEveryTracker: at production values a value is
+// stable at 60 s and not a moment sooner, on a tracker primed at the start and
+// on one re-primed after a counter edit, the two places a tracker is made.
+func TestCatidWindow_SixtySecondsOnEveryTracker(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	pid, err := db.CreateProcess("CELL", "", "plc", "MES_Cell.Prod_Counter_01", true)
+	testutil.MustNoErr(t, err, "create process")
+	eng := New(Config{AppConfig: &config.Config{}, DB: db})
+	eng.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, &recordingWarlink{})
+	cm := &catidMonitor{eng: eng, states: map[int64]*catidState{}}
+
+	for _, made := range []struct {
+		by   string
+		make func()
+	}{
+		{"prime", cm.prime},
+		{"reprime", func() { cm.reprime(pid) }},
+	} {
+		delete(cm.states, pid)
+		made.make()
+		st := cm.states[pid]
+		if st == nil {
+			t.Fatalf("%s made no tracker for the process", made.by)
+		}
+		t0 := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+		st.seenValue, st.lastConfirmed = true, "1002"
+		st.armCandidate, st.armCount, st.armFirstSeen = "1002", autoArmStableReads, t0
+		if st.stableAt(t0.Add(time.Minute - time.Nanosecond)) {
+			t.Errorf("%s: stable before 60 s", made.by)
+		}
+		if !st.stableAt(t0.Add(time.Minute)) {
+			t.Errorf("%s: not stable at 60 s", made.by)
+		}
 	}
 }
