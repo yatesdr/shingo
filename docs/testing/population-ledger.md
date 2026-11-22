@@ -2950,3 +2950,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DEAD — `TestRoutingDerive_ALaneOnEachLeg`
+- test: `TestRoutingDerive_ALaneOnEachLeg` · pkg `shingoedge/www` · run `-run '^TestRoutingDerive_ALaneOnEachLeg$'` · `shingo-edge/www/claim_leg_writers_test.go:394` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run v25)
+- assertion map: v25's backfill derives a lane on each leg → none for the one-time move; every live writer handed a lane stays in this file's other censuses
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
