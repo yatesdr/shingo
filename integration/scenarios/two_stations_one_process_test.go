@@ -435,10 +435,6 @@ func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
 						"the family has not converged", x.uid, family, a.Digest, a.Members, quote)
 				}
 			}
-			if x.ack.Claims != nil || x.ack.BinWatch != nil {
-				t.Errorf("%s: the ack carries the old fields (claims %v, bin_watch %v) to an Edge quoting the owned map",
-					x.uid, x.ack.Claims, x.ack.BinWatch)
-			}
 			for _, subject := range []string{protocol.SubjectPlantClaims, protocol.SubjectBinsWatch, protocol.SubjectEdgeCells} {
 				if got := carried[x.uid][subject]; got != 1 {
 					t.Errorf("%s: %d %s messages reached Core in seven minutes, want 1: each family is sent once and then "+

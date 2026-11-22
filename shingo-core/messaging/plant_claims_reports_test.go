@@ -131,20 +131,19 @@ func TestHandlePlantClaims_SecondStationFlagged(t *testing.T) {
 	flags(t, svc, "it is emptied", []string{})
 }
 
-// The ack's Claims: this station's rows only for a newer Edge, nil for an
-// older one, and nil — with the ack still sent — when the read fails.
+// The ack's owned map answers a quoted claims family with this station's own
+// processes at the digests they arrived with, and leaves the family off, the
+// ack still sent, when the read fails.
 func TestHandleEdgeHeartbeat_Claims(t *testing.T) {
 	t.Parallel()
 	const st = "edge.test"
 	cases := []struct {
 		name      string
-		feeds     map[string]string
 		breakRead bool
-		want      map[string]string
+		want      map[string]string // nil: the family is left off
 	}{
-		{"newer Edge gets its own processes", map[string]string{}, false, map[string]string{"P1": "d1", "P2": "e1"}},
-		{"older Edge gets nil", nil, false, nil},
-		{"read fails: nil", map[string]string{}, true, nil},
+		{"newer Edge gets its own processes", false, map[string]string{"P1": "d1", "P2": "e1"}},
+		{"read fails: nil", true, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,14 +159,16 @@ func TestHandleEdgeHeartbeat_Claims(t *testing.T) {
 			if tc.breakRead {
 				hideTable(t, db, "plant_claims_reports")
 			}
-			svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{Feeds: tc.feeds})
+			svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{Feeds: map[string]string{},
+				Owned: map[string]string{protocol.OwnedClaims: "stale"}})
 
 			if got := resp.trace(); len(got) != 1 || got[0] != "reply "+protocol.SubjectEdgeHeartbeatAck {
 				t.Fatalf("trace = %v, want the ack alone", got)
 			}
 			ack := resp.events[0].payload.(*protocol.EdgeHeartbeatAck)
-			if !reflect.DeepEqual(ack.Claims, tc.want) {
-				t.Errorf("ack claims = %#v, want %#v", ack.Claims, tc.want)
+			answer, answered := ack.Owned[protocol.OwnedClaims]
+			if answered != (tc.want != nil) || !reflect.DeepEqual(answer.Members, tc.want) {
+				t.Errorf("ack owned claims = %#v (answered %v), want %#v", answer.Members, answered, tc.want)
 			}
 		})
 	}

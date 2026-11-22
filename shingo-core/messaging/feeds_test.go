@@ -409,20 +409,16 @@ func TestCoreFeeds_OneSendPerCarrier(t *testing.T) {
 func TestAsksFor_TheAckAdvertisesTheKinds(t *testing.T) {
 	t.Parallel()
 	s := &CoreDataService{}
-	feeds := &protocol.EdgeHeartbeat{Feeds: map[string]string{}}
-	if got := s.asksFor(feeds); got != nil {
+	if got := s.asksFor(); got != nil {
 		t.Errorf("no kinds injected: asks = %v, want nil", got)
 	}
 	s.SetAskKinds(func() []string { return nil })
-	if got := s.asksFor(feeds); got != nil {
+	if got := s.asksFor(); got != nil {
 		t.Errorf("none registered: asks = %v, want nil", got)
 	}
 	s.SetAskKinds(func() []string { return []string{protocol.AskBinClear, protocol.AskBinCount} })
-	if got := s.asksFor(feeds); !reflect.DeepEqual(got, []string{protocol.AskBinClear, protocol.AskBinCount}) {
+	if got := s.asksFor(); !reflect.DeepEqual(got, []string{protocol.AskBinClear, protocol.AskBinCount}) {
 		t.Errorf("asks = %v", got)
-	}
-	if got := s.asksFor(&protocol.EdgeHeartbeat{}); got != nil {
-		t.Errorf("an Edge without feeds: asks = %v, want nil", got)
 	}
 }
 

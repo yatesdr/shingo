@@ -296,8 +296,8 @@ func TestHandleBinWatch_AnswersEveryListWithItsSnapshot(t *testing.T) {
 	}
 
 	ack := heartbeatAck(t, svc, resp, map[string]string{protocol.FeedBins: first.Digest})
-	if ack.BinWatch == nil || *ack.BinWatch != list.Digest {
-		t.Errorf("ack bin_watch = %v, want %s", ack.BinWatch, list.Digest)
+	if got := ack.Owned[protocol.OwnedBinWatch].Members[protocol.SingletonMember]; got != list.Digest {
+		t.Errorf("ack owned bins.watch = %q, want %s", got, list.Digest)
 	}
 	if ack.Feeds[protocol.FeedBins] != first.Digest {
 		t.Errorf("ack feeds[bins] = %q, want %s", ack.Feeds[protocol.FeedBins], first.Digest)
@@ -317,7 +317,8 @@ func TestHandleBinWatch_AnswersEveryListWithItsSnapshot(t *testing.T) {
 // heartbeatAck runs one heartbeat with this Feeds map and returns its ack.
 func heartbeatAck(t *testing.T, svc *CoreDataService, resp *feedsPinResponder, feeds map[string]string) *protocol.EdgeHeartbeatAck {
 	t.Helper()
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{Feeds: feeds})
+	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{Feeds: feeds,
+		Owned: map[string]string{protocol.OwnedBinWatch: "not-the-digest"}})
 	for i := len(resp.events) - 1; i >= 0; i-- {
 		if a, ok := resp.events[i].payload.(*protocol.EdgeHeartbeatAck); ok {
 			return a
@@ -327,11 +328,10 @@ func heartbeatAck(t *testing.T, svc *CoreDataService, resp *feedsPinResponder, f
 	return nil
 }
 
-// The mixed versions Core can see. An old Edge (no Feeds) is answered as it
-// always was: no bin_watch, nothing built, nothing sent. An Edge that speaks
-// feeds and has published no list is told "" and nothing more: the bins key
-// is unknown to the compare, so it is not answered and not sent. An Edge that
-// stops quoting the bins key loses its list.
+// An Edge that has published no list, quoting no feed or the bins feed, is
+// answered no list and nothing more: the bins key is unknown to the compare,
+// so it is not answered and not sent. A list it has published stays, whatever
+// its next heartbeat quotes (the floor's Edge always quotes the bins key).
 func TestBinsFeed_EdgesWithoutAListGetNothing(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -343,8 +343,8 @@ func TestBinsFeed_EdgesWithoutAListGetNothing(t *testing.T) {
 	ackOnly := []string{"reply " + protocol.SubjectEdgeHeartbeatAck}
 
 	old := heartbeatAck(t, svc, resp, nil)
-	if old.BinWatch != nil {
-		t.Errorf("old Edge: bin_watch = %q, want absent", *old.BinWatch)
+	if got := old.Owned[protocol.OwnedBinWatch].Members; len(got) != 0 {
+		t.Errorf("no feeds: owned bins.watch = %v, want no list", got)
 	}
 	if got := resp.trace(); !reflect.DeepEqual(got, ackOnly) {
 		t.Errorf("old Edge: trace = %v, want the ack alone", got)
@@ -352,8 +352,8 @@ func TestBinsFeed_EdgesWithoutAListGetNothing(t *testing.T) {
 
 	resp.events = nil
 	fresh := heartbeatAck(t, svc, resp, map[string]string{protocol.FeedBins: ""})
-	if fresh.BinWatch == nil || *fresh.BinWatch != "" {
-		t.Errorf("no list held: bin_watch = %v, want \"\"", fresh.BinWatch)
+	if answer, ok := fresh.Owned[protocol.OwnedBinWatch]; !ok || len(answer.Members) != 0 {
+		t.Errorf("no list held: owned bins.watch = %+v (answered %v), want no member", answer, ok)
 	}
 	if _, answered := fresh.Feeds[protocol.FeedBins]; answered {
 		t.Errorf("no list held: feeds = %v, want no bins key", fresh.Feeds)
@@ -364,12 +364,12 @@ func TestBinsFeed_EdgesWithoutAListGetNothing(t *testing.T) {
 
 	svc.HandleBinWatch(feedsPinEnv("edge.a"), binsWatchList(t, binsFixtureNames...))
 	resp.events = nil
-	rolledBack := heartbeatAck(t, svc, resp, map[string]string{protocol.FeedCatalog: ""})
-	if rolledBack.BinWatch == nil || *rolledBack.BinWatch != "" {
-		t.Errorf("an Edge that stopped quoting bins: bin_watch = %v, want \"\" (its list dropped)", rolledBack.BinWatch)
+	kept := heartbeatAck(t, svc, resp, map[string]string{protocol.FeedCatalog: ""})
+	if len(kept.Owned[protocol.OwnedBinWatch].Members) != 1 {
+		t.Errorf("a heartbeat not naming bins: owned bins.watch = %+v, want the list held", kept.Owned[protocol.OwnedBinWatch])
 	}
-	if _, held := svc.bins.lists["edge.a"]; held {
-		t.Error("an Edge that stopped quoting bins still has its list")
+	if _, held := svc.bins.lists["edge.a"]; !held {
+		t.Error("a heartbeat not naming bins dropped the list")
 	}
 }
 

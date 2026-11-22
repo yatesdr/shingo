@@ -20,12 +20,11 @@ func TestHandleEdgeHeartbeat_FeedsByEdgeVersion(t *testing.T) {
 	t.Parallel()
 	const st = "edge.test"
 	cases := []struct {
-		name       string
-		feeds      map[string]string
-		wantClaims bool // non-nil and empty
+		name  string
+		feeds map[string]string
 	}{
-		{"older Edge, no feeds", nil, false},
-		{"newer Edge, a key this Core does not serve", map[string]string{"no-such-feed": "x"}, true},
+		{"older Edge, no feeds", nil},
+		{"newer Edge, a key this Core does not serve", map[string]string{"no-such-feed": "x"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,12 +42,6 @@ func TestHandleEdgeHeartbeat_FeedsByEdgeVersion(t *testing.T) {
 			ack := resp.events[0].payload.(*protocol.EdgeHeartbeatAck)
 			if ack.Feeds == nil || len(ack.Feeds) != 0 {
 				t.Errorf("ack feeds = %#v, want an empty, non-nil map", ack.Feeds)
-			}
-			if tc.wantClaims && (ack.Claims == nil || len(ack.Claims) != 0) {
-				t.Errorf("ack claims = %#v, want an empty, non-nil map", ack.Claims)
-			}
-			if !tc.wantClaims && ack.Claims != nil {
-				t.Errorf("ack claims = %#v, want nil", ack.Claims)
 			}
 		})
 	}

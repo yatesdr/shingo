@@ -471,6 +471,8 @@ func TestOwned_AbsenceOnTheWire(t *testing.T) {
 		{"a heartbeat quoting a family", EdgeHeartbeat{Feeds: map[string]string{},
 			Owned: map[string]string{OwnedCells: "0123456789abcdef"}},
 			`{"feeds":{},"owned":{"cells":"0123456789abcdef"}}`},
+		{"an ack with no owned answer", EdgeHeartbeatAck{StationID: "edge.a", Feeds: map[string]string{}},
+			`{"station_id":"edge.a","server_ts":"0001-01-01T00:00:00Z","feeds":{},"owned":null}`},
 		{"an answer that converged", OwnedAnswer{Digest: "0123456789abcdef"}, `{"digest":"0123456789abcdef"}`},
 		{"an answer with members", OwnedAnswer{Digest: "0123456789abcdef", Members: map[string]string{"PR1": ""}},
 			`{"digest":"0123456789abcdef","members":{"PR1":""}}`},

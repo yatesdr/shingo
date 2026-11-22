@@ -18,13 +18,11 @@ import (
 // names on its watch list (bins.watch), so the Edge publishes the list: the
 // names StationService.WatchedBinNodes builds from the plant, with no call to
 // Core. Core quotes the digest of the list it holds on every heartbeat ack:
-// in the Edge-owned map's bins.watch family (EdgeHeartbeatAck.Owned) for an
-// Edge that sends one, else in the old EdgeHeartbeatAck.BinWatch. The Edge
+// in the Edge-owned map's bins.watch family (EdgeHeartbeatAck.Owned). The Edge
 // publishes when that differs from its own, at once when its own list changes,
 // and on the first ack that carries it while it holds no copy (a restarted Edge
 // asks, rather than waiting out Core's resend guard). sendDue is the guard. It
-// never publishes to a Core whose last ack carried neither: that Core has no
-// handler for the list.
+// never publishes to a Core whose last ack did not answer that family.
 //
 // THE LIST GOES ON THE DIRECT PATH, NOT THE SQLITE OUTBOX: a lost publish is
 // healed by the next ack, which still quotes the old digest, so the publish
@@ -268,17 +266,6 @@ func heldWatchList(h ownedHeld) []string {
 		return nodes
 	}
 	return []string{}
-}
-
-// legacyBinWatch is an older Core's BinWatch: the digest of the list it holds
-// ("" for none), always against this Edge's list digest, empty list or not,
-// as that Core has always compared it. nil is a Core without the feed.
-func legacyBinWatch(h ownedHeld, ack *protocol.EdgeHeartbeatAck) (core, mine map[string]string, served bool) {
-	mine = map[string]string{protocol.SingletonMember: h.raw}
-	if ack == nil || ack.BinWatch == nil {
-		return nil, mine, false
-	}
-	return map[string]string{protocol.SingletonMember: *ack.BinWatch}, mine, true
 }
 
 // PublishBinWatchAtBoot sends the watch list in the heartbeater's boot burst,

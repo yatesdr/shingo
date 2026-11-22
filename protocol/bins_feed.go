@@ -67,7 +67,7 @@ package protocol
 // BinWatchList is the sorted, de-duplicated list of Core node names one Edge's
 // operator stations draw. Digest is BinWatchDigest(Nodes); Core quotes it back
 // as it arrived and never recomputes it: in the ack's Owned bins.watch family
-// to an Edge that sends Owned, else on EdgeHeartbeatAck.BinWatch.
+// to an Edge that sends Owned.
 type BinWatchList struct {
 	// Digest is BinWatchDigest(Nodes). Core quotes it back as it arrived and
 	// never recomputes it (Owned bins.watch, or BinWatch for an older Edge).

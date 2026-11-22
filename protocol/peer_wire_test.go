@@ -62,7 +62,7 @@ func deployedPeerWireCases() []peerWireCase {
 			func() any { return &BinUOPDelta{} }, func() any { return &peerBinUOPDelta{} }, nil},
 		{"EdgeRegistered", core, []string{"station_id"},
 			func() any { return &EdgeRegistered{} }, func() any { return &peerEdgeRegistered{} }, nil},
-		{"EdgeHeartbeatAck", core, []string{"station_id"},
+		{"EdgeHeartbeatAck", core, []string{"station_id", "claims", "bin_watch"},
 			func() any { return &EdgeHeartbeatAck{} }, func() any { return &peerEdgeHeartbeatAck{} }, nil},
 		{"EdgeStale", core, []string{"station_id"},
 			func() any { return &EdgeStale{} }, func() any { return &peerEdgeStale{} }, nil},

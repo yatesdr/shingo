@@ -2959,3 +2959,8 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DEAD — `TestEdgeHeartbeatAck_BinWatchGolden`
+- test: `TestEdgeHeartbeatAck_BinWatchGolden` · pkg `shingo/protocol` · run `-run '^TestEdgeHeartbeatAck_BinWatchGolden$'` · `protocol/bins_feed_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`EdgeHeartbeatAck.bin_watch` is deleted at the v0.19.0 floor: no Core fills it for an Edge that quotes the owned map, and every Edge at the floor does).
+- assertion map: the ack's bytes, key order and the null rule → `TestOwned_AbsenceOnTheWire` "an ack with no owned answer", less `claims`; the three `bin_watch` renderings → nothing (the key is gone; `TestPeerWire_*` v0.19.0/EdgeHeartbeatAck says a v0.19.0 peer loses nothing else).

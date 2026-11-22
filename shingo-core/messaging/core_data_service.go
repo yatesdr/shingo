@@ -191,10 +191,9 @@ func (s *CoreDataService) ephemeralTopicName() string {
 	return s.ephemeralTopic()
 }
 
-// asksFor is the ack's Asks: nil for an Edge that sends no Feeds (an older
-// binary, which would not read it) or when none are registered.
-func (s *CoreDataService) asksFor(p *protocol.EdgeHeartbeat) []string {
-	if p.Feeds == nil || s.askKinds == nil {
+// asksFor is the ack's Asks: nil when none are registered.
+func (s *CoreDataService) asksFor() []string {
+	if s.askKinds == nil {
 		return nil
 	}
 	if kinds := s.askKinds(); len(kinds) > 0 {
@@ -639,28 +638,13 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 		log.Printf("core_handler: update heartbeat for %s: %v — acking without the registry write", station, err)
 	}
 
-	// Feeds: an Edge that names none (nil — an older binary) gets exactly the
-	// ack it always got. A newer one gets Core's digest for every key it named
-	// that Core could read, and the feeds whose digests differ are sent to it.
-	// The ack always carries a map, so the Edge can tell this Core from an
-	// older one.
-	binWatch := s.binWatchFor(station, p)
-	feeds := map[string]string{}
-	if p.Feeds != nil {
-		feeds = s.answerFeeds(station, p.Feeds)
-	}
-	// Claims stay off an ack whose registry write failed: the Edge reads nil
-	// as "Core could not read them" and republishes nothing on the strength
-	// of a database that is failing. The owned map follows the same rule for
-	// every family it reads from the database.
-	//
-	// An Edge that quotes the owned map is answered on it alone, and one that
-	// quotes none on the old fields alone (claimsFor and binWatchFor are nil
-	// for it): never both, as protocol's EdgeHeartbeatAck.Claims says.
-	var claims map[string]string
-	if err == nil {
-		claims = s.claimsFor(station, p)
-	}
+	// Feeds: Core's digest for every key the heartbeat named that Core could
+	// read, and the feeds whose digests differ are sent. The ack always
+	// carries a map.
+	feeds := s.answerFeeds(station, p.Feeds)
+	// The owned map: every family the heartbeat named. The two read from the
+	// database stay off an ack whose registry write failed, so the Edge
+	// republishes nothing on the strength of a database that is failing.
 	var owned map[string]protocol.OwnedAnswer
 	if p.Owned != nil {
 		owned = s.answerOwned(station, p.Owned, err == nil)
@@ -679,9 +663,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			DisplayName: name,
 			Feeds:       feeds,
 			Owned:       owned,
-			Claims:      claims,
-			BinWatch:    binWatch,
-			Asks:        s.asksFor(p),
+			Asks:        s.asksFor(),
 			// Core's verified topic, afresh on every ack: absent, the Edge
 			// closes its ephemeral reader and writer (protocol/ephemeral.go).
 			EphemeralTopic: s.ephemeralTopicName(),

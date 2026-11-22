@@ -307,7 +307,7 @@ const (
 	// SubjectBinsWatch — Edge → Core: the Core node names this Edge's
 	// operator stations draw (BinWatchList). Core keeps the latest list per
 	// Edge in memory, quotes its digest on every heartbeat ack
-	// (EdgeHeartbeatAck.BinWatch), and answers each list with that Edge's
+	// (EdgeHeartbeatAck.Owned, OwnedBinWatch), and answers each list with that Edge's
 	// node-bins snapshot. Sent on the direct path: a lost list is healed by the
 	// next ack, which still quotes the old digest.
 	SubjectBinsWatch = "bins.watch"

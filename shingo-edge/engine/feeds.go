@@ -136,8 +136,8 @@ var feedRows = [...]feedRow{
 	{key: protocol.FeedNodes, quote: quoteHeld, keepRow: true},
 	{key: protocol.FeedScene, quote: quoteScene, keepRow: true},
 	{key: protocol.FeedCatalog, quote: quoteHeld, persistDigest: true, keepRow: true, aged: agedOnBoard},
-	// Always quoted, "" while nothing is held: Core drops an Edge's watch
-	// list when its heartbeat does not name the key (a build without the feed).
+	// Always quoted, "" while nothing is held, so Core answers the feed on
+	// every beat.
 	{key: protocol.FeedBins, quote: quoteHeld, aged: agedOnBoard},
 	// Quoted from the cache itself (quoteSourcing), so its digest needs no
 	// persisting and a delta that never arrived shows as a different digest.

@@ -17,9 +17,8 @@ import (
 // holds: the claims report rows, the watch list in memory, the edge_cells
 // rows, each read here as members.
 //
-// An Edge that sends no Owned is answered by the old fields instead
-// (claimsFor, binWatchFor). HandleEdgeHeartbeat fills one or the other, never
-// both (TestHeartbeatAck_TheOwnedMapPerFamily). Each family converging on two
+// An Edge that sends no Owned is answered none
+// (TestHeartbeatAck_TheOwnedMapPerFamily). Each family converging on two
 // Edges, end to end: integration TestScenario_TwoEdges_EveryOwnedFamilyConverges.
 
 // coreOwnedFamily is how Core reads what it holds of one family from one
@@ -78,7 +77,7 @@ func (s *CoreDataService) answerOwned(station string, quoted map[string]string, 
 
 // heldClaims is the claims Core holds from a station: per process, the digest
 // of the last report it sent, and every mirrored process with no report row at
-// "" (plantclaims.ReportDigests), the same read as the old field's (claimsFor).
+// "" (plantclaims.ReportDigests).
 func heldClaims(s *CoreDataService, station string) (map[string]string, error) {
 	return s.db.PlantClaimsReportDigests(station)
 }

@@ -141,13 +141,11 @@ type EdgeHeartbeat struct {
 	// family on the ack (EdgeHeartbeatAck.Owned) and the Edge sends the members
 	// that differ.
 	//
-	// Absence, three ways. nil (the key's value null; NOT omitempty, so a new
-	// Edge always sends at least {}) is an Edge that does not speak the owned
-	// map: the old fields serve it, and Core answers EdgeHeartbeatAck.Claims
-	// and .BinWatch and no Owned. A family left off is one this Edge could not
-	// read: Core answers nothing for it and nothing is sent for it. A family
-	// that holds none is present at OwnedDigest of no members, a real digest,
-	// never "".
+	// Absence, three ways. nil (the key's value null; NOT omitempty, so an
+	// Edge always sends at least {}) quotes no map, and Core answers no Owned.
+	// A family left off is one this Edge could not read: Core answers nothing
+	// for it and nothing is sent for it. A family that holds none is present at
+	// OwnedDigest of no members, a real digest, never "".
 	Owned map[string]string `json:"owned"`
 }
 
@@ -213,37 +211,16 @@ type EdgeHeartbeatAck struct {
 	// Core lacks, sends empty each member Core holds that it lacks, and
 	// confirms the rest.
 	//
-	// Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is a
-	// Core that does not speak the owned map, or a heartbeat that sent none:
-	// the old fields serve, so the Edge reads Claims and BinWatch as before and
-	// sends no SubjectEdgeCells. A family left off is one Core could not read
-	// (or does not serve): the Edge sends nothing for it and confirms nothing.
-	// A family whose answer holds no members is Core holding none.
+	// Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is no
+	// answer: the Edge sends nothing and settles nothing. A family left off is
+	// one Core could not read (or does not serve): the Edge sends nothing for
+	// it and confirms nothing. A family whose answer holds no members is Core
+	// holding none.
 	Owned map[string]OwnedAnswer `json:"owned"`
-	// Claims is, for every process Core holds a plant-claims report for from
-	// this station, the digest that arrived with that process's last report.
-	// The Edge re-publishes a process whose digest differs or is missing, and
-	// publishes an empty report for a name it no longer has. nil means Core
-	// could not read them (or is older); {} means it holds none.
-	//
-	// The old field for OwnedClaims: Core fills it only for a heartbeat with no
-	// Owned (TestHeartbeatAck_TheOwnedMapPerFamily), and the Edge reads it only
-	// from an ack with no Owned.
-	Claims map[string]string `json:"claims"`
-	// BinWatch is the digest of the bins watch list Core holds for this Edge,
-	// as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge
-	// publishes its list when this differs from its own.
-	//
-	// A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core
-	// without the bins feed, and the Edge then reads bins as it did before and
-	// publishes nothing. An Edge that sends no Feeds is not answered either.
-	//
-	// The old field for OwnedBinWatch, under the same rule as Claims.
-	BinWatch *string `json:"bin_watch,omitempty"`
 	// Asks is every ask kind this Core answers (protocol.AskKinds, as
 	// registered), sorted. The Edge sends an ask of a kind only while the last
 	// ack named it, and refuses the act otherwise: nil (absent) is a Core
-	// without the ask pair. Not sent to an Edge that sends no Feeds.
+	// without the ask pair.
 	Asks []string `json:"asks,omitempty"`
 	// EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created
 	// and whose retention it read back and verified; absent when it has none.

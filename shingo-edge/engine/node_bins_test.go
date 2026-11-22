@@ -65,6 +65,15 @@ func watchLists(t *testing.T, sent []*protocol.Envelope) []protocol.BinWatchList
 
 func quote(s string) *string { return &s }
 
+// ownedBinWatch is an ack's owned answer from a Core that holds the watch
+// list with that digest ("" for none), never equal to a quote: the members
+// decide.
+func ownedBinWatch(digest string) map[string]protocol.OwnedAnswer {
+	return map[string]protocol.OwnedAnswer{protocol.OwnedBinWatch: {
+		Digest: "core-holds:" + digest, Members: protocol.OwnedSingleton(digest, digest == ""),
+	}}
+}
+
 func binsSnapshot(t *testing.T, rows []protocol.NodeBinsRow, groups []protocol.NodeBinsGroup) protocol.NodeBinsSnapshot {
 	t.Helper()
 	snap := protocol.NodeBinsSnapshot{Rows: rows, Groups: groups}
@@ -161,7 +170,7 @@ func TestNodeBins_NoSQLiteWrite(t *testing.T) {
 	eng.feeds.mu.Lock()
 	eng.feeds.held[protocol.FeedBins].persistedAt = time.Now().Add(-time.Hour)
 	eng.feeds.mu.Unlock()
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, BinWatch: quote("")})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, Owned: ownedBinWatch("")})
 	// Writes, not every statement: the process-node generation is shared by
 	// every test in the package, so a parallel test's node write can make the
 	// watch list rebuild (one read) inside this window.
@@ -198,28 +207,28 @@ func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 	// A Core with feeds and no bins feed: nothing published, bins by HTTP.
 	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
 	if count() != 0 || speaksBins(eng) {
-		t.Fatalf("a Core without BinWatch: %d published, speaks %v", count(), speaksBins(eng))
+		t.Fatalf("an ack without the family: %d published, speaks %v", count(), speaksBins(eng))
 	}
 
 	// A restarted Edge on a Core that still holds its list: the first ack
 	// quotes this Edge's own digest, and the Edge asks anyway.
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote(ownDigest)})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch(ownDigest)})
 	if lists := watchLists(t, *sent); len(lists) != 1 || !slices.Equal(lists[0].Nodes, own) || lists[0].Digest != ownDigest {
 		t.Fatalf("first ack: published %+v, want one list %v", lists, own)
 	}
 	// The next ack quotes it: nothing.
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote(ownDigest)})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch(ownDigest)})
 	if count() != 1 {
 		t.Errorf("an ack quoting the Edge's own list published again (%d)", count())
 	}
 	// A Core that restarted quotes "": it held the list and lost it, so the
 	// same list goes at once, inside the guard, on that first ack. A second
 	// "" while that copy is in flight is held back.
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch("")})
 	if lists := watchLists(t, *sent); len(lists) != 2 || lists[1].Digest != ownDigest {
 		t.Fatalf("first ack after a Core restart: published %+v, want the list again at once", lists)
 	}
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch("")})
 	if count() != 2 {
 		t.Errorf("the guard did not hold a repeat while the re-send is in flight (%d)", count())
 	}
@@ -259,7 +268,7 @@ func TestBinWatch_AListThatMovesEveryHeartbeatIsNotFlagged(t *testing.T) {
 	sid := stationIDByCode(t, db, "LDR-BINS-ST")
 	quoted := ""
 	for i := 0; i < 4; i++ {
-		eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote(quoted)})
+		eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch(quoted)})
 		lists := watchLists(t, *sent)
 		quoted = lists[len(lists)-1].Digest // Core takes what was sent
 		name := "SMN_X" + string(rune('A'+i))
@@ -312,14 +321,14 @@ func TestBinWatch_PublishedAtBoot(t *testing.T) {
 	if len(boot) != 1 || !slices.Equal(boot[0].Nodes, own) || boot[0].Digest != ownDigest {
 		t.Fatalf("boot burst: %+v, want one list %v", boot, own)
 	}
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote(ownDigest)})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch(ownDigest)})
 	if n := len(watchLists(t, *sent)); n != 0 {
 		t.Errorf("first ack after a boot send: published %d more, want 0 (the boot send is in flight)", n)
 	}
 
 	eng, sent = binsEngine(t, testEngineDB(t))
 	eng.PublishBinWatchAtBoot(func(*protocol.BinWatchList) error { return errors.New("broker down") })
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch("")})
 	if n := len(watchLists(t, *sent)); n != 1 {
 		t.Errorf("first ack after a failed boot send: published %d, want 1", n)
 	}
@@ -352,7 +361,7 @@ func TestBinWatch_ASnapshotNamingTheListIsCoreHoldingIt(t *testing.T) {
 	if err := eng.ApplyNodeBinsSnapshot(snapNaming(own)); err != nil {
 		t.Fatalf("apply the list's snapshot: %v", err)
 	}
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch("")})
 	if lists := watchLists(t, *sent); len(lists) != 1 || lists[0].Digest != own {
 		t.Fatalf("Core restarted after the list's snapshot: published %+v, want the list again at once", lists)
 	}
@@ -362,7 +371,7 @@ func TestBinWatch_ASnapshotNamingTheListIsCoreHoldingIt(t *testing.T) {
 	if err := eng.ApplyNodeBinsSnapshot(snapNaming("an-older-list")); err != nil {
 		t.Fatalf("apply an older list's snapshot: %v", err)
 	}
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: ownedBinWatch("")})
 	if n := len(watchLists(t, *sent)); n != 0 {
 		t.Errorf("a snapshot of an older list: published %d, want the in-flight send held", n)
 	}
@@ -393,7 +402,7 @@ func TestBinsActable_FromTheBook(t *testing.T) {
 	if ok, why := eng.BinsActable(); ok || why != NotActableNoAck {
 		t.Errorf("held, no ack yet: %v %q", ok, why)
 	}
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, BinWatch: quote(own)})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, Owned: ownedBinWatch(own)})
 	if ok, why := eng.BinsActable(); !ok {
 		t.Errorf("confirmed by the last ack: not actable (%q)", why)
 	}
@@ -401,7 +410,7 @@ func TestBinsActable_FromTheBook(t *testing.T) {
 	if ok, why := eng.BinsActable(); ok || why != NotActableAckOld {
 		t.Errorf("no ack for %v: %v %q", ActableAckWithin, ok, why)
 	}
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: "a-different-digest"}, BinWatch: quote(own)})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: "a-different-digest"}, Owned: ownedBinWatch(own)})
 	if ok, why := eng.BinsActable(); ok || why != NotActableNotConfirmed {
 		t.Errorf("a Core that restarted (quotes another digest): %v %q", ok, why)
 	}
@@ -634,7 +643,7 @@ func ackHeld(eng *Engine) {
 	}
 	eng.asks.mu.Unlock()
 	_, own, _ := eng.binWatchList()
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: quote(own), Asks: asks})
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, Owned: ownedBinWatch(own), Asks: asks})
 }
 
 // binsRowsOf is what Core's bins table says for rows written as node-bins

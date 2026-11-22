@@ -107,5 +107,12 @@ func (p *BinsPush) Push() {
 		return
 	}
 	feeds := p.edge.FeedDigests()
-	p.edge.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: &listDigest, Asks: p.asks})
+	members := protocol.OwnedSingleton(listDigest, len(names) == 0)
+	held, err := protocol.OwnedDigest(members)
+	if err != nil {
+		p.t.Logf("bins push: owned digest: %v", err)
+		return
+	}
+	p.edge.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, Asks: p.asks,
+		Owned: map[string]protocol.OwnedAnswer{protocol.OwnedBinWatch: {Digest: held, Members: members}}})
 }
