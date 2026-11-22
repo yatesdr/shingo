@@ -77,7 +77,7 @@ LinesideBucketLevel                   →   lineside_buckets
 bin updated, BinUOPDelta applied,     →   threshold monitor entry points:
 pile level applied                          handleBinUpdated,
                                             OnBinUOPDelta, OnBucketApplied
-                                            evaluatePayload(code):
+                                            evaluatePayload(code), after-queue:
                                               entries = lookup bindings
                                               uop    = SystemUOPForPayload
                                               if total < threshold:

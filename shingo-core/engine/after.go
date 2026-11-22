@@ -73,7 +73,7 @@ func (q *afterQueue) later(fn func()) {
 	}
 }
 
-// run serves the queue until stop closes: the work in hand then finishes
+// run serves the queue until stop closes. The work in hand then finishes
 // (Engine.Stop joins it) and work still queued is dropped; the engine is going
 // down. What a restart does about each kind:
 //   - a threshold recheck (BinUpdated, or a count's: its message's offset is
