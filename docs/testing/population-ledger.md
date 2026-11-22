@@ -2293,3 +2293,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: `shingo-edge/engine/wiring_completion.go` (`handleNodeOrderFailed`'s PIN)
 - verified at: the commit that adds this row
+
+### DEAD — `TestDispatcher_IncompleteFakeDoesNotSatisfy`
+- test: `TestDispatcher_IncompleteFakeDoesNotSatisfy` · pkg `shingocore/messaging` · run `-run '^TestDispatcher_IncompleteFakeDoesNotSatisfy$'` · `shingo-core/messaging/dispatcher_test.go:188` @ `d2686a1d` · tags `none`
+- code: DEAD (it asked whether a struct with no methods implements a seven-method interface, which no tree that compiles can answer yes to)
+- assertion map: a struct without the handlers does not satisfy Dispatcher → the compiler, at the assertion beside the interface (`shingo-core/messaging/dispatcher.go:36`); the method set → `TestDispatcherInterface_HasAllSevenOrderHandlers`, which is unchanged
+- mutation: two, at `d18ae20d`, which still has the test. An eighth method on the interface → the build fails at the assertion and at the test's fake (cannot use ... as Dispatcher value: missing method). The interface emptied → the build fails at core_handler's seven calls. Neither tree builds, so the deleted test could not report either. Unmutated it passes.
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row

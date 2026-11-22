@@ -137,8 +137,8 @@ func TestDispatcherInterface_HasAllSevenOrderHandlers(t *testing.T) {
 
 // TestDispatcher_FakeDispatchesEachPayload exercises each Handle* method on
 // the fake and verifies the call was recorded with the correct envelope and
-// payload. This ensures the fake we use elsewhere doesn't silently drop
-// method invocations, and indirectly documents the dispatch surface.
+// payload. It checks this file's fake doesn't silently drop method
+// invocations, and indirectly documents the dispatch surface.
 func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
 	t.Parallel()
 	env := &protocol.Envelope{
@@ -178,23 +178,5 @@ func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
 		t.Errorf("lastPayload type = %T, want *protocol.OrderRelease", f.lastPayload)
 	} else if rel.OrderUUID != "rl-1" {
 		t.Errorf("lastPayload.OrderUUID = %q, want %q", rel.OrderUUID, "rl-1")
-	}
-}
-
-// TestDispatcher_IncompleteFakeDoesNotSatisfy is a negative check: a struct
-// that only implements six of the seven methods must NOT satisfy Dispatcher.
-// Verified via reflect.Type.Implements so the test compiles even when the
-// candidate is intentionally incomplete.
-func TestDispatcher_IncompleteFakeDoesNotSatisfy(t *testing.T) {
-	t.Parallel()
-	type partialDispatcher struct{}
-	// partialDispatcher has zero methods so it cannot satisfy Dispatcher.
-
-	var iface Dispatcher
-	ifaceType := reflect.TypeOf(&iface).Elem()
-	partialType := reflect.TypeOf(&partialDispatcher{})
-
-	if partialType.Implements(ifaceType) {
-		t.Fatal("partialDispatcher should NOT implement Dispatcher")
 	}
 }
