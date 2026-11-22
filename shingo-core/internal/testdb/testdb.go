@@ -23,7 +23,10 @@
 // its address in $SHINGO_TEST_PG. Processes that see it skip container creation
 // entirely and share both the server and — under an advisory lock, see
 // ensureTemplate — a single template build. Per-package setup drops from ~5.4s to
-// the price of one CREATE DATABASE ... TEMPLATE, which is a file copy.
+// the price of one CREATE DATABASE ... TEMPLATE. That is not a file copy: under
+// Postgres 16's default STRATEGY WAL_LOG the clone is written through the WAL,
+// about 5.85 MB a database, 20.6 ms median on an idle server (laptop probe,
+// 2026-11-21, work/loc-census-2026-11-20).
 //
 // With the variable unset, everything below behaves exactly as it did: this
 // process creates and owns a container of its own. That is still the path for a
@@ -256,8 +259,9 @@ func ContainerID() string { return containerID }
 
 // templateState gates one-time template-DB construction. setupTemplate runs
 // migrations against templateDBName and then marks it IS_TEMPLATE=true so
-// later CREATE DATABASE ... TEMPLATE template_test calls are file-level
-// copies that skip migrations entirely.
+// later CREATE DATABASE ... TEMPLATE template_test calls clone it and skip
+// migrations entirely (a WAL-logged clone, not a file copy: see the top of
+// this file).
 var (
 	templateOnce sync.Once
 	templateErr  error
@@ -419,10 +423,11 @@ func useSharedServer(ctx context.Context, addr string) error {
 
 // createSlot bounds how many test databases one process clones at once. Four
 // is chosen against the gate's own shape: it runs up to four packages in
-// parallel, so the server sees at most ~16 concurrent template copies instead
-// of one per parallel test. It is a burst limit, not a queue — a template copy
-// takes milliseconds, and the steady-state cost of the bound is not measurable
-// against a suite that spends its time in migrations and queries.
+// parallel, so the server sees at most ~16 concurrent clones instead of one per
+// parallel test. It is meant as a burst limit, not a queue. A clone took 20.6 ms
+// median on an idle server and 140-162 ms under the docker step's load (laptop
+// probe and design round 1, 2026-11-21); what the bound costs in waiting has
+// not been measured.
 var createSlot = make(chan struct{}, 4)
 
 // adminConn returns a connection to the server's default "postgres"
@@ -434,7 +439,7 @@ func adminConn() (*sql.DB, error) {
 }
 
 // setupTemplate makes templateName() exist and be a Postgres template, so that
-// CREATE DATABASE ... TEMPLATE calls are file copies that skip migrations.
+// CREATE DATABASE ... TEMPLATE calls clone it and skip migrations.
 func setupTemplate() {
 	if containerErr != nil {
 		templateErr = containerErr
@@ -722,9 +727,10 @@ func openClone(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	dbName := nextTestDBName(t.Name())
 
 	// BOUNDED, BECAUSE THE SERVER IS SHARED AND THIS IS THE EXPENSIVE PART.
-	// CREATE DATABASE ... TEMPLATE is a file copy, and every parallel test in
-	// every parallel package asks for one at once: 20 GOMAXPROCS x the gate's
-	// -p is a burst of ~80 concurrent copies against a single Postgres. The
+	// CREATE DATABASE ... TEMPLATE writes the whole clone through the WAL, and
+	// every parallel test in every parallel package asks for one at once: 20
+	// GOMAXPROCS (the 20-core host measured below) x the gate's -p is a burst
+	// of ~80 concurrent clones against a single Postgres. The
 	// server does not run out of connections — it runs out of CPU, and what
 	// fails is the SCRAM handshake of the NEXT connection, five seconds later,
 	// as `failed SASL auth: timeout`. MEASURED on a 20-core Windows host

@@ -97,12 +97,22 @@
 #
 #   bash scripts/gate.sh lock-status      who holds the machine gate lock, or "free"
 #
-# ONE GATE PER MACHINE AT A TIME. Every step except fmt, scope and lock-status
-# takes a lock shared by all worktrees of this clone, and a second gate waits
-# for it, printing who holds it. fmt is exempt because the pre-push hook runs it
-# and must never wait. The lock frees itself if the holding gate dies (its
-# heartbeat stops). GATE_NO_LOCK=1 skips it, for emergencies only. See
-# scripts/gate-lock.sh.
+# THE GATE LOCK. Every step except fmt, scope, order and lock-status takes a
+# lock shared by all worktrees of this clone, and a second gate waits for it,
+# printing who holds it. fmt is exempt because the pre-push hook runs it and
+# must never wait. The lock frees itself if the holding gate dies (its
+# heartbeat stops). See scripts/gate-lock.sh.
+#
+# WHAT KEEPS IT (owner, 2026-11-21): the runs whose verdict or timing must be
+# clean. `full`, `full --unscoped` and `race`; proofs, sims and rigs (they hold
+# it through scripts/gate-lock.sh); any gate-timing measurement; anything that
+# certifies a tip. It began as one gate per machine when a 16 GB laptop ran out
+# of memory under concurrent gates; memory is no longer the reason, load-
+# sensitive docker tests and timing studies are. A parallel lane MAY skip it
+# (GATE_NO_LOCK=1, said in its report) for the dev tier and for docker tests of
+# only the packages it changed (-p 1). A red from an unlocked run that could be
+# load (a timeout, a slow-path assertion, a container start) is re-run alone
+# under the lock before anyone debugs it.
 #
 
 set -uo pipefail
@@ -328,7 +338,8 @@ step_lint() {
 # window and failed ~1 run in 6 under concurrent load — and that test is now
 # gone: Stop() became synchronous (it waits on doneChan) and
 # TestPollerStop_IsSynchronous asserts the same property with no timing window
-# at all. MEASURED serial vs concurrent on the 20-core host: 45s -> ~26s bare
+# at all. MEASURED serial vs concurrent on the 20-core host of the time (not
+# re-run on the 24-thread laptop): 45s -> ~26s bare
 # (all five modules), 29.5s -> ~18s in `full` (the three modules the docker
 # step does not cover).
 #
@@ -1092,7 +1103,8 @@ step_scope() {
 # So: start one server here, hand its address to every package through
 # $SHINGO_TEST_PG, and let the first process that needs a template build it
 # under an advisory lock while the rest wait and reuse it. Per-package setup
-# becomes one CREATE DATABASE ... TEMPLATE, which is a file copy.
+# becomes one CREATE DATABASE ... TEMPLATE: a clone written through the WAL
+# (Postgres 16's default STRATEGY WAL_LOG), not a file copy.
 #
 # THE TEMPLATE NAME IS SCOPED TO THIS RUN ($$). testdb defaults the name to the
 # migration version, which is enough to stop a new migration reusing an old
@@ -1176,7 +1188,8 @@ stop_race_pg() {
 # It used to be a hardcoded `-p 1`, to stop packages fighting over containers.
 # One shared server removes that reason, but the obvious follow-up — turn the
 # packages loose — is WRONG, and measured wrong rather than argued wrong. On
-# this 20-core host, shingo-core's docker suite from a fresh container:
+# the 20-core host the gate ran on then (not today's 24-thread laptop, which
+# has not re-run this table), shingo-core's docker suite from a fresh container:
 #
 #   -p 1                183s
 #   -p 2                151s
