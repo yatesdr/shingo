@@ -153,9 +153,11 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 //     repaired dump: 0 of 57 style deletions refused, where 6 of 8 were before.
 //   - Step 1's GENERATOR is closed: the rename-rebuilds that wrote those
 //     clauses went with the retired chain, and the baseline has none
-//     (TestSchema_NoForeignKeyNamesAMissingTable). The EXISTING ones on a
-//     plant's disk are stored schema text and need a migration or
-//     RUNBOOK-0.5-edge-fk-repair-2026-07-27.md run on the box.
+//     (TestSchema_NoForeignKeyNamesAMissingTable). The EXISTING ones on the
+//     plants' disks are repaired by Edge v60 (TestPlantShapes_WhatAStartLeaves).
+//     The orphan rows are not: they are step 2's, a data decision.
+//   - A flip waits on v60 as well: its rebuilds refuse to run with enforcement
+//     on, so every Edge must have passed it first.
 //   - Step 2 is rehearsed, not applied. Against the repaired dump the full
 //     ordered plan takes 1,764 -> 1 in ~11 ms, and the 1 is a single
 //     hourly_counts row on style 32 that 90-day retention removes on its own.

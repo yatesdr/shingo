@@ -62,11 +62,14 @@ func TestOpen_AppliesConnectionPragmas(t *testing.T) {
 	//   with the retired chain, and a born database has no dangling clause
 	//   (TestSchema_NoForeignKeyNamesAMissingTable).
 	//
-	//   OPEN, and not closeable from here — the 11 dangling REFERENCES clauses
-	//   already written into the Springfield edge's stored schema, and the 1,764
-	//   rows whose parent is genuinely gone. Those live on a plant's disk. The
-	//   procedure is RUNBOOK-0.5-edge-fk-repair-2026-07-27.md; it is rehearsed
-	//   against a restored copy of that database and has not been run on the box.
+	//   CLOSED by Edge v60 — the dangling REFERENCES clauses already written
+	//   into the plants' stored schemas (TestPlantShapes_WhatAStartLeaves).
+	//
+	//   OPEN, and not closeable from here — the rows whose parent is genuinely
+	//   gone (1,764 at Springfield on 2026-07-27). Those live on a plant's disk.
+	//   The procedure is RUNBOOK-0.5-edge-fk-repair-2026-07-27.md's data plan; it
+	//   is rehearsed against a restored copy of that database and has not been
+	//   run on the box.
 	//
 	// So the remaining condition is a property of A PLANT'S FILE, not of this
 	// repository, which is exactly why it cannot be discharged by a commit and
@@ -89,12 +92,11 @@ func TestOpen_AppliesConnectionPragmas(t *testing.T) {
 		t.Fatalf("read foreign_keys: %v", err)
 	}
 	if foreignKeys != 0 {
-		t.Errorf("foreign_keys = %d, want 0 until RUNBOOK-0.5-edge-fk-repair has been RUN at "+
-			"each plant and its dangling-clause count measured at 0. The code-side gates "+
-			"(counter_snapshots CASCADE, the rename-rebuild guard) are closed; what is left is "+
-			"11 dangling REFERENCES clauses and 1,764 orphan rows sitting on Springfield's disk, "+
-			"which no commit can fix. Enabling this against an unrepaired edge blocks 19 of 37 "+
-			"FK-column writes.", foreignKeys)
+		t.Errorf("foreign_keys = %d, want 0 until RUNBOOK-0.5-edge-fk-repair's data plan has been "+
+			"RUN at each plant and every Edge has passed v60, whose rebuilds refuse to run with "+
+			"enforcement on. The code-side gates (counter_snapshots CASCADE, the dangling clauses) "+
+			"are closed; what is left is the orphan rows on the plants' disks, which no commit "+
+			"can fix.", foreignKeys)
 	}
 }
 

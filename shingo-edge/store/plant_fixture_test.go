@@ -168,8 +168,3 @@ func fixtureInt(v any) int64 {
 	}
 	return 0
 }
-
-func fixtureStr(v any) string {
-	s, _ := v.(string)
-	return strings.TrimSpace(s)
-}
