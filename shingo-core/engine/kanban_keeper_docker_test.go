@@ -337,3 +337,28 @@ func TestKanbanKeeper_OldestAskSaysWhyInWords(t *testing.T) {
 		t.Errorf("oldest ask age = %q, want 3h 05m (the one duration ladder)", st.OldestAskAge)
 	}
 }
+
+// TestKanbanKeeper_AsksNothingOfARemovedStation: a kanban whose station was
+// removed (Remove station) makes no ask addressed to it. Closing ruling
+// 2026-11-22: after the removal Core addresses nothing to the removed uid.
+func TestKanbanKeeper_AsksNothingOfARemovedStation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, simulator.New())
+	const gone = "stn-kk-gone"
+	_, err := db.EnrollEdge(gone, "Line G")
+	testutil.MustNoErr(t, err, "enroll")
+	grpID, btID := mntFixture(t, db, "MNT-GONE", 2, "MNT-GONE-45", 2)
+	testdb.KanbanStation(t, db, grpID, gone)
+	mntOutsideEmpty(t, db, btID, "MNT-GONE-MARKET")
+	_, err = db.Exec(`UPDATE edge_registry SET status = 'stale' WHERE station_uid = $1`, gone)
+	testutil.MustNoErr(t, err, "stale")
+	testutil.MustNoErr(t, eng.NodeService().RemoveEdge(gone, "test"), "remove the station")
+
+	eng.KanbanKeeper().Tick()
+	var asked int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM orders WHERE station_uid = $1`, gone).Scan(&asked), "orders")
+	if asked != 0 {
+		t.Errorf("the keeper made %d asks addressed to the removed station, want none", asked)
+	}
+}
