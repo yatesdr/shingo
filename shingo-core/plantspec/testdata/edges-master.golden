@@ -268,7 +268,7 @@ edge edge1.line1
   operator P5-PRESS-4-OPS
   operator P5-PRESS-5-OPS
   operator P5-UNLOAD-OPS
-  core bin_types=8 payloads=29 zones=13 stations=95 bins=211 demands=13 kanbans=4 loader_settings=2
+  core bin_types=8 payloads=29 zones=13 stations=95 bins=221 demands=13 kanbans=4 loader_settings=2
 
 edge edge2.line1
   view station edge2.line1
@@ -304,4 +304,4 @@ edge edge2.line1
   operator SMN-10-OPS
   operator SMN-10X-OPS
   operator DRAIN-10-OPS
-  core bin_types=8 payloads=29 zones=13 stations=95 bins=211 demands=13 kanbans=4 loader_settings=2
+  core bin_types=8 payloads=29 zones=13 stations=95 bins=221 demands=13 kanbans=4 loader_settings=2

@@ -635,15 +635,23 @@ zones:
   #
   # THE POOL. Minimum is the mix plus, summed over the supported processes, each one's most
   # positions in the family: 6 + 5x4 = 26 of 45x48, and 2 + 5x4 = 22 of 32x30. A family must fit
-  # every press running it at once, so the pool is the sum, and slots are at least the pool.
+  # every press running it at once, so the pool is at least the sum, and slots at least the pool.
   #
-  #   45x48 carts, 26                               small  big  totes
+  # 45x48 IS TEN OVER ITS MINIMUM, THE CARTS EXPECTED AT THE WINDOWS ([kanban]'s AT POOL =
+  # MINIMUM rule): every P5 part rides small, ten positions draw 1.00 cart a minute and fill in
+  # phase, and a kanban with no source stands demand x transit itself: 10 over the 10 minutes
+  # simcalc allows. Do not cut it back to the minimum: at 26 two carts went round, and the
+  # presses starved for an empty (2026-11-22; simcalc -carriers fails it, UNDER ITS FLOOR;
+  # TestMasterCarriers_P5FloorOverABand). It would hold at fewer only if the presses drew less.
+  #
+  #   45x48 carts, 36                               small  big  totes
   #     the five presses' 20 positions                 20               20
-  #     P5-KANBAN, P5B_001..006                         2    2    2      6
+  #     P5-KANBAN, P5B_001..016                        12    2    2     16
   #   32x30 carts, 22: all in P5-KANBAN, P5B_027..048
   #
-  # 26 + 22 = 48 slots, and 48 carts. A second press changing onto a type in the same cycle waits
-  # on the re-types through one unloader, which is what sharing it means.
+  # 36 + 22 = 58 slots (45x48 on P5B_001..026 and P5B_049..058), and 58 carts. A second press
+  # changing onto a type in the same cycle waits on the re-types through one unloader, which is
+  # what sharing it means.
   #
   - name: P5-KANBAN
     retrieve_algorithm: FIFO
@@ -697,6 +705,16 @@ zones:
       - {name: P5B_046, depth: 1, admits: [CART-32]}
       - {name: P5B_047, depth: 1, admits: [CART-32]}
       - {name: P5B_048, depth: 1, admits: [CART-32]}
+      - {name: P5B_049, depth: 1, admits: [45x48]}
+      - {name: P5B_050, depth: 1, admits: [45x48]}
+      - {name: P5B_051, depth: 1, admits: [45x48]}
+      - {name: P5B_052, depth: 1, admits: [45x48]}
+      - {name: P5B_053, depth: 1, admits: [45x48]}
+      - {name: P5B_054, depth: 1, admits: [45x48]}
+      - {name: P5B_055, depth: 1, admits: [45x48]}
+      - {name: P5B_056, depth: 1, admits: [45x48]}
+      - {name: P5B_057, depth: 1, admits: [45x48]}
+      - {name: P5B_058, depth: 1, admits: [45x48]}
   - name: P5-UNLOAD
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -1346,6 +1364,17 @@ bins:
   - {name: P5-K-04, slot: P5B_004, bin_type: BIG-45}
   - {name: P5-K-05, slot: P5B_005, bin_type: TOTES-45}
   - {name: P5-K-06, slot: P5B_006, bin_type: TOTES-45}
+  # The ten spares over the minimum: the carts expected at the windows.
+  - {name: P5-K-07, slot: P5B_007, bin_type: SMALL-45}
+  - {name: P5-K-08, slot: P5B_008, bin_type: SMALL-45}
+  - {name: P5-K-09, slot: P5B_009, bin_type: SMALL-45}
+  - {name: P5-K-10, slot: P5B_010, bin_type: SMALL-45}
+  - {name: P5-K-11, slot: P5B_011, bin_type: SMALL-45}
+  - {name: P5-K-12, slot: P5B_012, bin_type: SMALL-45}
+  - {name: P5-K-13, slot: P5B_013, bin_type: SMALL-45}
+  - {name: P5-K-14, slot: P5B_014, bin_type: SMALL-45}
+  - {name: P5-K-15, slot: P5B_015, bin_type: SMALL-45}
+  - {name: P5-K-16, slot: P5B_016, bin_type: SMALL-45}
   - {name: P5-K-27, slot: P5B_027, bin_type: CART-32}
   - {name: P5-K-28, slot: P5B_028, bin_type: CART-32}
   - {name: P5-K-29, slot: P5B_029, bin_type: CART-32}
@@ -2654,11 +2683,12 @@ kanbans:
     supports: [KW-WELD]
 
   # ══ [kanban5] one kanban over five presses ═══════════════════════════════════════════════════
-  # One kanban over all five presses: mix once, pool the summed minimum, cover from the claims.
+  # One kanban over all five presses: mix once, cover from the claims, 45x48 ten over the summed
+  # minimum (the zone's note says why), 32x30 at it.
   - group: P5-KANBAN
     station: edge1.line1
     strict: false
-    pools: {45x48: 26, CART-32: 22}
+    pools: {45x48: 36, CART-32: 22}
     levels:
       - {bin_type: SMALL-45, want: 2}
       - {bin_type: BIG-45, want: 2}

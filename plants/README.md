@@ -24,7 +24,7 @@ types, so no section's keeper or loader draws another's carts.
 | `[4x2]` | WELD-6: a two-robot weld, five consume positions fed by five loaders; RUN and ALT share COMMON-1..3 and run MIRROR-L / MIRROR-R at the two mirror positions; CATID pins 1001 / 1002; production counter `MES_WELD_6.Prod_Counter_01` (identity `CATID_01` beside it); load-station counter `STA_W6_LOAD.Load_Count` over all five positions; `line_depth` 16 in `shingoedge.dev.yaml` | EDGE 1 | CORRIDOR |
 | `[corridor]` | The lane-stress storage, slot for slot: `SYN_STAMP` and `SYN_COMP`, single-file lanes of depth 1-5 behind their zones' wait points, the oldest carts buried at depth 5 and 4; two lanes' worth of headroom per group (`headroom: free_lanes: 2`). It is `[4x2]`'s market | (Core) | CORRIDOR |
 | `[kanban]` | KP-PRESS (two-off, four positions) on `PRESS-KANBAN` (the 45x48 family and CART-32, pools 10 and 6), KW-WELD on `WELD-KANBAN`, their unloaders pushing back, and `KP-SM`, the plain supermarket a family deficit raids | EDGE 1 | SMALL-45, BIG-45, TOTES-45, CART-32 |
-| `[kanban5]` | Five presses of KP-PRESS's shape on one `P5-KANBAN` (pools 26 and 22) through one unloader of ten windows; its raid supermarket is `KP-SM` | EDGE 1 | (kanban's) |
+| `[kanban5]` | Five presses of KP-PRESS's shape on one `P5-KANBAN` (pools 36 and 22) through one unloader of ten windows; its raid supermarket is `KP-SM` | EDGE 1 | (kanban's) |
 | `[window]` | Line 2, the observable-window line: LINE-2 (A/B direct and staged consume, a weld producing), its two loaders and its drain. Its processes name `edge: edge2.line1`: EDGE 2's operator pacing (60 s release, 30 s loads, `shingoedge.edge2.yaml`) is the window under test, and that pacing is per Edge | EDGE 2 | STANDARD-L2 |
 
 Core is seeded from the whole file and every Edge it names is enrolled; each Edge is
@@ -69,6 +69,9 @@ must show the plant lasting the run before a number taken on it counts.
   STARVE. It costs WELD-1/2 at their 6/min nameplate where their swap cadence draws
   about a third of it (the PRESS-1 block of `shingoedge.dev.yaml`). The measured tick
   rates are not retuned to the model. Re-measure before retuning.
+- `P5-KANBAN`'s 45x48 pool is 36, ten over its minimum of 26 (2026-11-22): 12 small
+  stand against a floor of 10 (1.00 a minute, 10 minutes). At 26, two carts went round
+  for five presses and they starved for an empty.
 - UNLOADER-A returns ASSY's drained carriers to `SYN_MARKET`, where ASSY drew them
   (2026-11-22). Into the press empties they were three STANDARD in for one drawn: the
   kanban filled, and the carrier check's `SYN_MARKET RATE DEFICIT` was the other end

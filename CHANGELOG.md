@@ -20,6 +20,7 @@ Deploy: no migration
 
 - The sim plant's sizing check (simcalc) fails a kanban that takes back more carts than it draws, or that names no source and stands fewer than a transit's worth, and counts what its keeper pulls from elsewhere
 - In the sim plant, the finished-goods unloader sends empty carriers back to the market, so the press-empties kanban no longer fills with one type and starves a press
+- In the sim plant, the five-press kanban has ten more carts and positions, so five presses drawing a cart a minute no longer share two spares
 
 ## v0.19.0 — 2026-11-22
 

@@ -921,9 +921,10 @@ func (r *kanbanRig) cardsSaid() string {
 	return strings.Join(out, "; ")
 }
 
-// TestKanbanRig_FivePressSteady: the master's [kanban5] on its one kanban: steady, each press
-// lets a pair go and takes a pair back, the family stays whole, and the counts are the one-press
-// counts whatever the presses.
+// TestKanbanRig_FivePressSteady: the master's [kanban5] on its one kanban, as seeded and at rest:
+// small stands at its mix and the ten spares, the family is whole, nothing is asked, and the tick
+// costs the one-press count whatever the presses. No cart moves here; the push-in is
+// TestKanbanRig_PressAndP5KanbansKeepThePushIn's.
 func TestKanbanRig_FivePressSteady(t *testing.T) {
 	t.Parallel()
 	windows := []string{"ULN_501", "ULN_502", "ULN_503", "ULN_504", "ULN_505", "ULN_506", "ULN_507", "ULN_508", "ULN_509", "ULN_510"}
@@ -933,8 +934,8 @@ func TestKanbanRig_FivePressSteady(t *testing.T) {
 	r.settled()
 	const k = "P5-KANBAN"
 	line := func() engine.KanbanLineState { return r.card(k, rigSmall) }
-	if got := line(); got.Want != 22 || got.Resident != 2 || got.Gap != 0 || got.Held != 20 {
-		t.Fatalf("steady: %+v, want 22 wanted, 2 standing, 20 on the line, short 0", got)
+	if got := line(); got.Want != 22 || got.Resident != 12 || got.Gap != -10 || got.Held != 20 {
+		t.Fatalf("steady: %+v, want 22 wanted, 12 standing, 20 on the line, the 10 spares over", got)
 	}
 	if stmts := r.countTick(); len(stmts) > 3 {
 		t.Errorf("tick = %d statements on five presses\n%s", len(stmts), testutil.StatementBreakdown(stmts))
