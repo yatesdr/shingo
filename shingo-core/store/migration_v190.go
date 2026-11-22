@@ -87,9 +87,10 @@ type v190Record struct {
 }
 
 // v190Step is one leftover. gone is a catalog query, on args, answering true
-// when the leftover is not there (or is there in a shape up leaves alone);
-// read, run only when it is there, returns the record of what up will change;
-// up is the change and down its inverse, both from the record.
+// when the leftover is not there (for a rename: the from name is absent,
+// whoever holds the other); read, run only when it is there, returns the
+// record of what up will change, or the reason up must not change it; up is
+// the change and down its inverse, both from the record.
 type v190Step struct {
 	action string
 	gone   string
@@ -121,7 +122,12 @@ func (s v190Step) find(tx *sql.Tx) (*v190Record, error) {
 	return s.read(tx)
 }
 
+// The tables go first: at one plant payload_instances was the old payloads
+// table, and it held the names the renames below give back to payloads.
 var v190Steps = []v190Step{
+	v190DropTable("db_test"),
+	v190DropTable("payload_instances"),
+	v190DropTable("lane_access"),
 	v190SetDefault("demand_registry", "payload_code", "''::text"),
 	v190DropConstraint("payloads", "payloads_bin_id_fkey1"),
 	v190DropColumn("payloads", "bin_id"),
@@ -133,9 +139,6 @@ var v190Steps = []v190Step{
 	v190DropConstraint("nodes", "nodes_node_type_id_fkey"),
 	v190Retype("nodes", "node_type_id", "bigint"),
 	v190Retype("nodes", "parent_id", "bigint"),
-	v190DropTable("db_test"),
-	v190DropTable("payload_instances"),
-	v190DropTable("lane_access"),
 }
 
 // v190Tables are the tables the steps touch, locked first where there.
@@ -159,7 +162,7 @@ func v190Up(tx *sql.Tx) error {
 	for _, s := range v190Steps {
 		r, err := s.find(tx)
 		if err != nil {
-			return fmt.Errorf("v190 %s: read the catalog: %w", s.action, err)
+			return fmt.Errorf("v190 %s: %w", s.action, err)
 		}
 		if r == nil {
 			continue
@@ -288,6 +291,65 @@ const (
 	v190SequenceSQL = `SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE n.nspname = 'public' AND c.relkind = 'S' AND c.relname = `
 )
+
+// Who holds a name a rename wants. v190RelationHolderSQL ($1 the name): every
+// table, index, sequence and view of schema public shares it, so the holder
+// may be any of them; it is named with the table it belongs to.
+// v190ConstraintHolderSQL ($1 the table, $2 from, $3 to): a constraint shares
+// its table's constraint names and, where an index backs it, the index's
+// name, a relation's.
+const (
+	v190RelationHolderSQL = `SELECT pg_describe_object('pg_class'::regclass, c.oid, 0) || COALESCE(
+		 (SELECT ' of table ' || h.relname FROM pg_index x JOIN pg_class h ON h.oid = x.indrelid WHERE x.indexrelid = c.oid),
+		 (SELECT ' owned by table ' || h.relname FROM pg_depend d JOIN pg_class h ON h.oid = d.refobjid
+		   WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND c.relkind = 'S'
+		     AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i') LIMIT 1), '')
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relname = $1`
+	v190ConstraintHolderSQL = `SELECT pg_describe_object('pg_constraint'::regclass, k.oid, 0)
+		  FROM pg_constraint k JOIN pg_class t ON t.oid = k.conrelid
+		  JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		 WHERE t.relname = $1 AND k.conname = $3
+		UNION ALL
+		SELECT pg_describe_object('pg_class'::regclass, c.oid, 0) || COALESCE(
+		 (SELECT ' of table ' || h.relname FROM pg_index x JOIN pg_class h ON h.oid = x.indrelid WHERE x.indexrelid = c.oid), '')
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relname = $3
+		   AND EXISTS (SELECT 1 FROM pg_constraint k JOIN pg_class t ON t.oid = k.conrelid
+		                WHERE t.relname = $1 AND t.relnamespace = n.oid AND k.conname = $2 AND k.conindid <> 0)`
+)
+
+// v190NameFree refuses a rename of from to a name that is held, by q on args,
+// with a sentence naming each holder.
+func v190NameFree(tx *sql.Tx, from, to, q string, args ...any) error {
+	held, err := v190Lines(tx, q, args...)
+	if err != nil {
+		return err
+	}
+	if len(held) > 0 {
+		return fmt.Errorf("%s cannot take the name %s: %s holds it; rename or drop that, then start Core again (nothing was changed)",
+			from, to, strings.Join(held, " and "))
+	}
+	return nil
+}
+
+// v190Lines runs a one-column catalog query.
+func v190Lines(tx *sql.Tx, q string, args ...any) ([]string, error) {
+	rows, err := tx.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
 
 // v190ReadColumn is a column of a table in public as the catalog defines it;
 // nil when it is not there.
@@ -435,9 +497,12 @@ func v190DropColumn(table, column string) v190Step {
 func v190RenameConstraint(table, from, to string) v190Step {
 	return v190Step{
 		action: "rename constraint",
-		gone:   `SELECT NOT (EXISTS (` + v190ConstraintSQL + `$2) AND NOT EXISTS (` + v190ConstraintSQL + `$3))`,
-		args:   []any{table, from, to},
-		read: func(*sql.Tx) (*v190Record, error) {
+		gone:   `SELECT NOT EXISTS (` + v190ConstraintSQL + `$2)`,
+		args:   []any{table, from},
+		read: func(tx *sql.Tx) (*v190Record, error) {
+			if err := v190NameFree(tx, from, to, v190ConstraintHolderSQL, table, from, to); err != nil {
+				return nil, err
+			}
 			return &v190Record{Table: table, Name: from, To: to}, nil
 		},
 		up: func(r *v190Record) []string {
@@ -452,9 +517,12 @@ func v190RenameConstraint(table, from, to string) v190Step {
 func v190RenameSequence(from, to string) v190Step {
 	return v190Step{
 		action: "rename sequence",
-		gone:   `SELECT NOT (EXISTS (` + v190SequenceSQL + `$1) AND NOT EXISTS (` + v190SequenceSQL + `$2))`,
-		args:   []any{from, to},
-		read: func(*sql.Tx) (*v190Record, error) {
+		gone:   `SELECT NOT EXISTS (` + v190SequenceSQL + `$1)`,
+		args:   []any{from},
+		read: func(tx *sql.Tx) (*v190Record, error) {
+			if err := v190NameFree(tx, from, to, v190RelationHolderSQL, to); err != nil {
+				return nil, err
+			}
 			return &v190Record{Name: from, To: to}, nil
 		},
 		up: func(r *v190Record) []string {

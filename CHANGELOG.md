@@ -47,6 +47,7 @@ Deploy: no migration
 - An Edge whose database differs from its release's schema says so on /status and Diagnostics, naming what differs; it still starts
 - The Edge upgrade drops columns and two leftover tables nothing reads, and repairs a Springfield Edge's links to renamed tables; rows are kept, and v0.19.0 still runs on the result
 - Core: `migrate down 190` puts a removed table's id sequence back with the type it had.
+- Core: a database restored from a backup older than v0.19.0 upgrades through migration 190 without a hand fix; a name something else holds stops it with a sentence naming the holder.
 
 ## v0.19.0 — 2026-11-22
 
