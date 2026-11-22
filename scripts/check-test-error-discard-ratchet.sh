@@ -123,7 +123,9 @@ cd "$(dirname "$0")/.."
 # after the count was last set.
 # 1365 → 1364: the dispatched fixtures that came to name their job checked
 # the creates they had discarded.
-FROZEN=1356
+# 1356 → 1349: the failed-child compound test was rewritten to run every time,
+# and the seven reads it had discarded became checked ones or went.
+FROZEN=1349
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"
