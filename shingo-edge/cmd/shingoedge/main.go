@@ -1166,7 +1166,7 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 	subjectRouter := router.NewSubject()
 
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
-		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", eng.StationID(), reg.Message)
 		// Core's verified ephemeral topic, or none: the live robot feed's
 		// link opens and closes on what each registration and ack say.
 		eng.OfferEphemeralTopic(reg.EphemeralTopic)
@@ -1210,7 +1210,7 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 		goSafe("engine-SweepPushLoaders", func() { eng.SweepPushLoaders() })
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
-		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
+		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", eng.StationID(), ack.ServerTS)
 		adoptPlantTimezone(eng.AppConfig(), eng.ConfigPath(), ack.Timezone)
 		eng.OnCoreAck(ack)
 	})

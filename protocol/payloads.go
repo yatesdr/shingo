@@ -151,7 +151,9 @@ type EdgeHeartbeat struct {
 
 // EdgeRegistered acknowledges edge registration.
 type EdgeRegistered struct {
-	// StationID echoes the registered station's UID.
+	// StationID echoes the registered station's UID, for a v0.19.0 Edge, the
+	// floor, which logs it. This Edge logs its own and does not read it: the
+	// key goes when FloorEdge is the release that stopped reading it.
 	StationID string `json:"station_id"`
 	// Message is a human-readable status message.
 	Message string `json:"message,omitempty"`
@@ -163,7 +165,8 @@ type EdgeRegistered struct {
 
 // EdgeHeartbeatAck acknowledges a heartbeat.
 type EdgeHeartbeatAck struct {
-	// StationID echoes the heartbeating station's UID.
+	// StationID echoes the heartbeating station's UID, kept for a v0.19.0
+	// Edge's log line as EdgeRegistered.StationID is.
 	StationID string `json:"station_id"`
 	// ServerTS is Core's clock when it answered. The edge compares it with its
 	// own and shows the offset on /status; the offset includes Core's outbox
