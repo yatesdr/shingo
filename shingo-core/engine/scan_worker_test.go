@@ -507,12 +507,65 @@ func TestScanWorker_StopIsClean(t *testing.T) {
 			if n := r.store.passes.Load(); n != at {
 				t.Errorf("%d pass(es) started after Stop returned", n-at)
 			}
+			// A goroutine that has said it is done is still on the stack for the
+			// instant it takes to return, so the read is repeated for a second.
 			buf := make([]byte, 4<<20)
-			for _, g := range strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
-				if strings.Contains(g, "fulfillment.(*Scanner)") {
-					t.Errorf("a scanner goroutine outlived Stop:\n%s", g)
+			var left []string
+			for deadline := time.Now().Add(time.Second); ; time.Sleep(10 * time.Millisecond) {
+				left = left[:0]
+				for _, g := range strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+					if strings.Contains(g, "fulfillment.(*Scanner)") {
+						left = append(left, g)
+					}
+				}
+				if len(left) == 0 || time.Now().After(deadline) {
+					break
 				}
 			}
+			for _, g := range left {
+				t.Errorf("a scanner goroutine outlived Stop:\n%s", g)
+			}
 		})
+	}
+}
+
+// Stop joins the after-queue: the work in hand finishes before Stop returns, so
+// none runs on a closed database, and none queued behind it starts. Work that
+// waits for the scan lock under a running pass is no deadlock: Stop holds no
+// lock, the pass ends, the work takes the lock and ends. RED at 6bd55616, where
+// Stop closed the channel of the queue and returned.
+func TestAfterQueue_StopWaitsForTheWorkInHand(t *testing.T) {
+	t.Parallel()
+	r := newScanRig(t, time.Hour, false)
+	go r.e.after.run(r.e.stopChan)
+	held, release := r.holdFirstPass(0)
+	r.trigger()
+	r.await(held, "first pass")
+
+	inHand := make(chan struct{})
+	var did, next atomic.Bool
+	r.e.after.later(func() {
+		close(inHand)
+		r.e.fulfillment.Door(func() {})
+		did.Store(true)
+	})
+	r.e.after.later(func() { next.Store(true) })
+	r.await(inHand, "work in hand")
+
+	stopped := make(chan struct{})
+	go func() { r.stop(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Error("Stop returned with after-queue work in hand: the database closes next")
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	r.await(stopped, "return from Stop")
+	if !did.Load() {
+		t.Error("Stop returned before the work in hand had finished")
+	}
+	time.Sleep(100 * time.Millisecond) // negative assertion: the next work never starts
+	if next.Load() {
+		t.Error("work queued behind it started after Stop")
 	}
 }

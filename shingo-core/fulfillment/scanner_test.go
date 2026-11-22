@@ -870,3 +870,83 @@ func (d *recordingDispatcher) ChooseWindowPush(*orders.Order, *nodes.Node, plan.
 func (d *recordingDispatcher) ReserveChosenPush(o *orders.Order, _ *nodes.Node) dispatch.StorageDropoff {
 	return d.ReserveStorageDropoff(o)
 }
+
+// pairActDispatcher's one dispatch call is the whole act of a pair: two writes,
+// with a wait between them that the test holds open.
+type pairActDispatcher struct {
+	*stubDispatcher
+	calls, writes atomic.Int32
+	betweenLegs   chan struct{}
+	goOn          chan struct{}
+}
+
+func (d *pairActDispatcher) DispatchPreparedComplex(*orders.Order) error {
+	first := d.calls.Add(1) == 1
+	d.writes.Add(1)
+	if first {
+		close(d.betweenLegs)
+		<-d.goOn
+	}
+	d.writes.Add(1)
+	return nil
+}
+
+// TestScanner_StopEndsAPassBetweenOrdersNeverBetweenAPairsLegs: Stop during a
+// pass lets the order in hand finish whole (both legs of a pair are the act of
+// one order: the pair leader dispatches them in one call), waits for it, and
+// asks no order after it. RED at 6bd55616: Stop returned at once and the pass
+// asked every order left.
+func TestScanner_StopEndsAPassBetweenOrdersNeverBetweenAPairsLegs(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	for id := int64(1); id <= 3; id++ {
+		o := seedQueuedRetrieve(f, id, "dest-stop")
+		o.OrderType, o.Coordinated = protocol.OrderTypeComplex, true
+		o.StepsJSON = `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"dest-stop"}]`
+	}
+	d := &pairActDispatcher{stubDispatcher: &stubDispatcher{}, betweenLegs: make(chan struct{}), goOn: make(chan struct{})}
+	s := newTestScannerWithDispatcher(t, f, d)
+	s.logFn = func(string, ...any) {}
+	s.StartPeriodicSweep(10 * time.Millisecond)
+	select {
+	case <-d.betweenLegs:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no pass reached the first order in 5 s")
+	}
+
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Error("Stop returned between the legs of the pair in hand")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(d.goOn)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return after the order in hand finished")
+	}
+	time.Sleep(50 * time.Millisecond) // negative assertion: nothing more is asked
+	if c, w := d.calls.Load(), d.writes.Load(); c != 1 || w != 2 {
+		t.Errorf("after Stop the pass had asked %d order(s) with %d leg writes, want the one in hand with both its legs (1, 2)", c, w)
+	}
+}
+
+// TestScanner_StopOfANeverStartedScannerReturnsAtOnce: with no worker there is
+// nothing to join, and Stop does not wait for the scan lock, whoever holds it.
+func TestScanner_StopOfANeverStartedScannerReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestScanner(t, newFakeStore())
+	held, letGo := make(chan struct{}), make(chan struct{})
+	defer close(letGo)
+	go s.Door(func() { close(held); <-letGo })
+	<-held
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop of a never-started scanner waited a second")
+	}
+}
