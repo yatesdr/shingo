@@ -7,7 +7,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 )
 
 // TestCatid4x2_S9_HandPlacedCart: RUN runs on carts whose seats at the two
@@ -40,10 +39,9 @@ func TestCatid4x2_S9_HandPlacedCart(t *testing.T) {
 			run := c.counted()
 			before := c.lastID()
 			c.force(catALT)
-			forced := time.Now()
 			c.cycle(6) // ALT's first counts, off-plan: the mirror shares held, the common positions charged
 			c.wantMirrorShares("S9 the jump", c.counted()-run)
-			item := c.asksAndMovesNothing("S9 "+half, forced, before)
+			item := c.asksAndMovesNothing("S9 "+half, before)
 			if half == "untapped" {
 				c.untapped("S9", run, before)
 				for _, i := range mirror {

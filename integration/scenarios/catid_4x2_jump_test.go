@@ -40,12 +40,11 @@ func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 			run := c.counted()
 			before := c.lastID()
 			c.force(catALT)
-			forced := time.Now()
 			c.cycle(6) // ALT's first counts: the parts that were in the line
 			offPlan := c.counted() - run
 			c.wantMirrorShares("S4 the jump", offPlan)
 			c.ledger("S4 the jump", true)
-			item := c.asksAndMovesNothing("S4 "+half, forced, before)
+			item := c.asksAndMovesNothing("S4 "+half, before)
 			if half == "untapped" {
 				c.untapped("S4", run, before)
 				return
@@ -71,15 +70,17 @@ func (c *w6Cell) wantMirrorShares(label string, n int64) {
 	}
 }
 
-// asksAndMovesNothing waits out the stability window the automatic switch
-// once acted after (from forced, the confirm) and counts one more part, then
-// fails unless nothing moved — the process on RUN, no changeover row, no order
-// made since before — and returns the wrong-part item, which must be red and
-// offer the changeover to ALT, its sentence naming the mirror positions' held
-// strokes.
-func (c *w6Cell) asksAndMovesNothing(label string, forced time.Time, before int64) edgeengine.CatidHealthItem {
+// asksAndMovesNothing waits for the monitor's decision on the jumped part,
+// logged once the stability window has closed on it (the window the automatic
+// switch once acted after), and counts one more part. Then it fails unless
+// nothing moved — the process on RUN, no changeover row, no order made since
+// before — and returns the wrong-part item, which must be red and offer the
+// changeover to ALT, its sentence naming the mirror positions' held strokes.
+func (c *w6Cell) asksAndMovesNothing(label string, before int64) edgeengine.CatidHealthItem {
 	c.t.Helper()
-	time.Sleep(time.Until(forced.Add(declareWindow)))
+	c.waitFor(label+": the window closed on the jumped part", declareWindow+10*time.Second, func() bool {
+		return c.boot.log.since(0, fmt.Sprintf("CATID %d counted", catALT), "with no changeover open — nothing moves")
+	})
 	c.cycle(1)
 	c.afterTheDoor()
 	if a := c.active(); a != c.run {

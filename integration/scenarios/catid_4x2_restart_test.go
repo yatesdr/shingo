@@ -5,6 +5,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -41,10 +42,16 @@ func TestCatid4x2_S7_Restart(t *testing.T) {
 	c.cycle(w6Depth + 1) // the run-out, then the program change to ALT
 	run := c.counted()
 	c.cycle(w6Depth + 2) // ALT's first counts, before the restart
+	mark := c.boot.log.mark()
 	c.restart("mid-changeover")
 	c.cycle(3) // and after it
 	c.ledger("S7 after the restart mid-changeover", false)
-	time.Sleep(declareWindow)
+	c.waitFor("the window closed on the part standing at the restart", declareWindow+10*time.Second, func() bool {
+		return c.boot.log.since(mark, fmt.Sprintf("predicate held on CATID %d", catALT), "waiting on", "not cut over")
+	})
+	if c.boot.log.since(mark, "counted on the target since the change") {
+		t.Fatal("the counted-part force fired on the part standing at the restart")
+	}
 	if co := c.open(); co == nil {
 		t.Fatalf("the changeover completed on the part standing at the restart, with its gate red: %s",
 			describeChangeovers(c.changeovers()))

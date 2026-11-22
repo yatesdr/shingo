@@ -399,7 +399,7 @@ func (w6Preflight) PreflightInventory([]string) (*edgeservice.PreflightCoreResul
 // startW6Edge boots an Edge on db with the cell's PLC behind WarLink, wired as
 // testharness.NewEdge wires one (its handlers and ingestor), and returns it
 // with its driven tickers. A restart is this again on the same database.
-func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient, passWatch bool) (*edgeharness.Edge, *w6Tickers, *edgeuop.Mutator) {
+func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient, boot *w6Boot) (*edgeharness.Edge, *w6Tickers, *edgeuop.Mutator) {
 	t.Helper()
 	cfg := edgeconfig.Defaults()
 	cfg.StationUID = w6Edge
@@ -408,16 +408,16 @@ func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient, passWatch boo
 	// tag lists, publishing, a direct read) answer from the line.
 	cfg.WarLink.Enabled = false
 	clocks := &w6Clocks{}
-	ecfg := edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf, Warlink: wl,
+	ecfg := edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: boot.log.logf(t), Warlink: wl,
 		PollClock: &clocks.poll, DemandReconcileClock: &clocks.sweep, StrandedClock: &clocks.stranded}
-	if passWatch {
+	if boot.passWatch {
 		ecfg.SlotWatchClock = &clocks.watch
 	}
 	eng := edgeengine.New(ecfg)
 	eng.SetReleasePointSource(releasefake.DB{DB: db})
 	eng.SetPreflightSource(w6Preflight{})
 	eng.Start()
-	tickers := clocks.started(t, passWatch)
+	tickers := clocks.started(t, boot.passWatch)
 	t.Cleanup(eng.Stop) // a second Stop, after a restart's, is a no-op
 	// The inventory sink, as a plant runs it: a pickup clears the seat and a
 	// draw reaches Core's bin through it (flushed at a pickup, and by the
@@ -485,6 +485,12 @@ type w6Opts struct {
 	passWatch bool
 }
 
+// w6Boot is what the cell gives each Edge it starts.
+type w6Boot struct {
+	passWatch bool // w6Opts.passWatch
+	log       *w6Log
+}
+
 // w6Tenure is one cart's stay at a position: the station clicks and the
 // counter's counts at its landing and its departure.
 type w6Tenure struct {
@@ -515,8 +521,8 @@ type w6Cell struct {
 	unbound  bool // the load station's counter is made, bound to no position
 	tenures  [5][]*w6Tenure
 	reorder  int
-	// passWatch is w6Opts.passWatch, kept for a restart.
-	passWatch bool
+	// boot is what every Edge the cell starts is given, a restart's included.
+	boot *w6Boot
 }
 
 // newW6Cell builds the cell on RUN, each position holding a full RUN cart
@@ -529,7 +535,7 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 		c.station[p] = true
 	}
 	c.unbound = o.unbound
-	c.passWatch = o.passWatch
+	c.boot = &w6Boot{passWatch: o.passWatch, log: &w6Log{}}
 	c.reorder = o.reorder
 	if c.reorder == 0 {
 		c.reorder = 10
@@ -543,7 +549,7 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 	db, err := store.Open(filepath.Join(t.TempDir(), "edge.db"))
 	mustNil(t, err, "edge db")
 	t.Cleanup(func() { _ = db.Close() })
-	c.edge, c.tickers, c.sink = startW6Edge(t, db, c.plc, c.passWatch)
+	c.edge, c.tickers, c.sink = startW6Edge(t, db, c.plc, c.boot)
 	c.configureEdge()
 	// The cell has run both styles: the Edge has seen both CATIDs, and boots
 	// knowing it (the monitor reads the observations at its start).
@@ -708,7 +714,7 @@ func (c *w6Cell) restart(label string) {
 	c.edge.Engine.Stop()
 	v := c.plc.state().Identity
 	seen := c.observations(v)
-	c.edge, c.tickers, c.sink = startW6Edge(c.t, c.edge.DB, c.plc, c.passWatch)
+	c.edge, c.tickers, c.sink = startW6Edge(c.t, c.edge.DB, c.plc, c.boot)
 	c.wireBus()
 	c.publish()
 	// The monitor's first read after a start is its baseline.
@@ -1359,4 +1365,46 @@ func (c *w6Cell) confirmedAll(label string) int {
 		n++
 	}
 	return n
+}
+
+// w6Log is what a cell's Edges logged, across its restarts: the monitor logs
+// each decision, so a scenario can wait for the decision itself where a sleep
+// past the window could not tell one that was taken from one that never was.
+type w6Log struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// logf is an Edge's LogFunc: the test's log, and the lines kept.
+func (l *w6Log) logf(t *testing.T) func(string, ...any) {
+	return func(format string, args ...any) {
+		t.Logf(format, args...)
+		line := fmt.Sprintf(format, args...)
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.lines = append(l.lines, line)
+	}
+}
+
+// mark is how many lines have been kept.
+func (l *w6Log) mark() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.lines)
+}
+
+// since reports whether a line kept after mark has every one of parts.
+func (l *w6Log) since(mark int, parts ...string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+next:
+	for _, line := range l.lines[mark:] {
+		for _, p := range parts {
+			if !strings.Contains(line, p) {
+				continue next
+			}
+		}
+		return true
+	}
+	return false
 }
