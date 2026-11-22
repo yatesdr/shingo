@@ -38,12 +38,23 @@ type afterQueue struct {
 	wake  chan struct{}
 	logFn func(string, ...any)
 
+	started atomic.Bool
+	ended   chan struct{} // closed when run returns
+
 	turnover atomic.Pointer[liveness.Loop]
 	depth    atomic.Int64
 }
 
 func newAfterQueue(logFn func(string, ...any)) *afterQueue {
-	return &afterQueue{wake: make(chan struct{}, 1), logFn: logFn}
+	return &afterQueue{wake: make(chan struct{}, 1), ended: make(chan struct{}), logFn: logFn}
+}
+
+// join waits, after stop has closed, for the work in hand: run starts no more
+// (TestAfterQueue_StopWaitsForTheWorkInHand). A queue never run returns at once.
+func (q *afterQueue) join() {
+	if q.started.Load() {
+		<-q.ended
+	}
 }
 
 // later hands fn to the queue's goroutine.
@@ -58,8 +69,9 @@ func (q *afterQueue) later(fn func()) {
 	}
 }
 
-// run serves the queue until stop closes. Work still queued at stop is dropped;
-// the engine is going down. What a restart does about each kind:
+// run serves the queue until stop closes: the work in hand then finishes
+// (Engine.Stop joins it) and work still queued is dropped; the engine is going
+// down. What a restart does about each kind:
 //   - a threshold recheck (BinUpdated): the monitor's startup sweep evaluates
 //     every binding;
 //   - a swap request's contradiction note: lost; it is a log line and a chip;
@@ -67,6 +79,8 @@ func (q *afterQueue) later(fn func()) {
 //     station notice ("dispatched", resumeAcquire) is not sent again by
 //     anything here.
 func (q *afterQueue) run(stop <-chan struct{}) {
+	q.started.Store(true)
+	defer close(q.ended)
 	for {
 		select {
 		case <-stop:
@@ -74,6 +88,13 @@ func (q *afterQueue) run(stop <-chan struct{}) {
 		case <-q.wake:
 		}
 		for {
+			// Read before each piece: a join that found the queue not yet
+			// started returned at once, and stop had closed before it looked.
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			q.mu.Lock()
 			if len(q.work) == 0 {
 				q.mu.Unlock()

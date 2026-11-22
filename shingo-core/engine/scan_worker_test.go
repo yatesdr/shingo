@@ -571,9 +571,9 @@ func TestAfterQueue_StopWaitsForTheWorkInHand(t *testing.T) {
 }
 
 // Engine.Stop gives up at one bound whatever is hung under it: here a holder of
-// the scan lock, and a
-// window pull that waits for that lock. The joins share the wait, so a hung call
-// costs the bound once, and each that gave up says so in one line.
+// the scan lock, with a window pull and after-queue work waiting for that lock.
+// The joins share the wait, so a hung call costs the bound once, and each that
+// gave up says so in one line.
 func TestEngineStop_GivesUpAtTheBound(t *testing.T) {
 	t.Parallel()
 	const bound = 300 * time.Millisecond
@@ -595,6 +595,11 @@ func TestEngineStop_GivesUpAtTheBound(t *testing.T) {
 		r.e.fulfillment.Door(func() {})
 	}()
 
+	go r.e.after.run(r.e.stopChan)
+	inHand := make(chan struct{})
+	r.e.after.later(func() { close(inHand); r.e.fulfillment.Door(func() {}) })
+	r.await(inHand, "after-queue work")
+
 	stopped := make(chan struct{})
 	began := time.Now()
 	go func() { r.stop(); close(stopped) }()
@@ -602,7 +607,7 @@ func TestEngineStop_GivesUpAtTheBound(t *testing.T) {
 	if d := time.Since(began); d < bound || d > bound+5*time.Second {
 		t.Errorf("Stop took %v with a bound of %v", d, bound)
 	}
-	if n := gaveUp.Load(); n != 1 {
-		t.Errorf("Stop logged %d give-up lines, want one, for the window pulls", n)
+	if n := gaveUp.Load(); n != 2 {
+		t.Errorf("Stop logged %d give-up lines, want two: the window pulls and the after-queue", n)
 	}
 }

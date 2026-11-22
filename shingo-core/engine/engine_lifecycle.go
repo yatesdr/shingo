@@ -412,15 +412,18 @@ func (e *Engine) Stop() {
 }
 
 // joinStopped waits, for all of them at once and never past the bound, for the
-// scanner's pass and boot scan and for the window pulls in hand. The pulls wait
-// for the scan lock (their acquire), so they are not waited for ahead of the
-// scanner's stop.
+// scanner's pass and boot scan, the window pulls in hand and the after-queue's
+// work in hand. The last two wait for the scan lock (their acquires), so they
+// are not waited for ahead of the scanner's stop.
 func (e *Engine) joinStopped() {
 	var joined sync.WaitGroup
 	if e.fulfillment != nil {
 		joined.Go(e.fulfillment.Stop) // bounds itself, by the same limit
 	}
 	joined.Go(func() { e.joinWithin("the window pulls", e.stage2.stop) })
+	if e.after != nil {
+		joined.Go(func() { e.joinWithin("the after-emit queue", e.after.join) })
+	}
 	joined.Wait()
 }
 
