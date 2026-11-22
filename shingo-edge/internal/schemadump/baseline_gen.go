@@ -28,9 +28,13 @@ const BaselineRegenCommand = "make schema-baseline (go run ./cmd/schemabaseline)
 //     built from git (BuildRelease): the chain v1..RetiredChain, by the code
 //     the plants ran.
 //  2. This tree's migrations above RetiredChain run on it (store.Migrate).
-//  3. Its sqlite_master statements are written out, tables first, with the
-//     schema_migrations rows. The text is the statements SQLite stored, so
-//     their comments are the docs' column notes (shared/scripts/docgen).
+//  3. Its sqlite_master statements are written out in the order the file
+//     made them, with the schema_migrations rows. The text is the statements
+//     SQLite stored, so their comments are the docs' column notes
+//     (shared/scripts/docgen). The order is the plants': where two indexes
+//     cost a query the same, SQLite's planner takes the one made later, so a
+//     born file sorted by name planned a query differently from every
+//     migrated one (TestKeptSpotRows_ReadsNoHistory).
 //
 // It refuses a result with a row in any other table: the Edge's chain seeds
 // none, and the baseline carries none.
@@ -63,7 +67,7 @@ func renderBaseline(path string) (string, error) {
 		return "", err
 	}
 	defer db.Close()
-	stmts, err := catalogue(db, `type <> 'table', type, name`)
+	stmts, err := catalogue(db, `rowid`)
 	if err != nil {
 		return "", err
 	}
