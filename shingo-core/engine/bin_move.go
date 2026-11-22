@@ -304,7 +304,10 @@ func (e *Engine) acquireOne(order *orders.Order) {
 //
 // A move that waits is real and is not refused: it holds its bin, and the
 // scanner drives it in when its wait clears. The sentence on the row says what
-// it waits for. Only a move acquiring ended (a structural fault) is refused.
+// it waits for. A move already confirmed by the re-read (a fast robot, a slow
+// reply under load) was carried out and is answered as dispatched. Only a move
+// that ended any other way (failed, cancelled, skipped) is refused, as a fault.
+// Pinned by TestBinMoveAsItStands_ConfirmedIsCarriedOut.
 func (e *Engine) binMoveAsItStands(order *orders.Order, p plan.Plan) (*BinMoveResult, error) {
 	res := &BinMoveResult{
 		OrderID:  order.ID,
@@ -318,6 +321,8 @@ func (e *Engine) binMoveAsItStands(order *orders.Order, p plan.Plan) (*BinMoveRe
 		return res, nil
 	}
 	switch {
+	case fresh.Status == protocol.StatusConfirmed:
+		res.VendorOrderID = fresh.VendorOrderID
 	case protocol.IsTerminal(fresh.Status):
 		return nil, refuse(BinMoveFault, nil, "the move could not be carried out: %s", fresh.ErrorDetail)
 	case fresh.VendorOrderID != "":

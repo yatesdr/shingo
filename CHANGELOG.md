@@ -50,6 +50,7 @@ Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration)
 - A Core or Edge start that re-runs a recorded migration to repair it, and fails, now leaves that migration recorded; shingocore migrate check and migrate down used to see it as never applied
 - Core's Stations page shows each station's Edge version, marked below floor when it is older than the oldest Edge this Core supports (v0.17.2), and Core Health names such a station; nothing is refused
 - Core: cancelling an order that has already finished is answered as finished (409), with its status, not as a server error (500)
+- Core: a bin move or direct order a robot finished before Core answered is answered as carried out; it was refused with "the move could not be carried out" although the move was done
 
 ## v0.18.0 — 2026-11-21
 

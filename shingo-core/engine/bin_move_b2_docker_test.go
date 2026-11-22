@@ -3,13 +3,16 @@
 package engine
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -274,5 +277,42 @@ func TestAcquireOne_TriesOneOrderAndNotTheWaitingSet(t *testing.T) {
 	if after.QueueCause != "" || !after.UpdatedAt.Equal(waiting.UpdatedAt) {
 		t.Errorf("the waiting order was re-asked (cause %q, updated %v -> %v): the move's acquire walked the waiting set",
 			after.QueueCause, waiting.UpdatedAt, after.UpdatedAt)
+	}
+}
+
+// TestBinMoveAsItStands_ConfirmedIsCarriedOut: the door re-reads the move after
+// acquiring, and under load a fast robot has already delivered and confirmed it
+// by then. That move was carried out and is answered as dispatched, with its
+// job. It was refused as a fault, "the move could not be carried out: " with an
+// empty detail (proof runs on 8aa5bf8c: the direct door's 500 on orders that
+// confirmed). A move that ended any other way is still refused.
+func TestBinMoveAsItStands_ConfirmedIsCarriedOut(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newUnstartedEngine(t, db, testdb.NewTrackingBackend())
+	p := plan.Plan{
+		Bin:  &bins.Bin{Label: "AIS-BIN"},
+		Node: &nodes.Node{Name: "AIS-FROM"},
+		Dest: &nodes.Node{Name: "AIS-TO"},
+	}
+
+	done := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusConfirmed })
+	_, err := db.DB.Exec(`UPDATE orders SET vendor_order_id='AIS-JOB' WHERE id=$1`, done.ID)
+	testutil.MustNoErr(t, err, "name the confirmed move's job")
+	res, err := eng.binMoveAsItStands(done, p)
+	if err != nil {
+		t.Fatalf("confirmed move refused: %v", err)
+	}
+	if res.OrderID != done.ID || res.VendorOrderID != "AIS-JOB" || res.Queued {
+		t.Errorf("confirmed move = %+v, want carried out with job AIS-JOB", res)
+	}
+
+	failed := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusFailed })
+	_, err = db.DB.Exec(`UPDATE orders SET error_detail='no robot' WHERE id=$1`, failed.ID)
+	testutil.MustNoErr(t, err, "give the failed move its detail")
+	_, err = eng.binMoveAsItStands(failed, p)
+	var refused *BinMoveError
+	if !errors.As(err, &refused) || refused.Kind != BinMoveFault || refused.Sentence != "the move could not be carried out: no robot" {
+		t.Errorf("failed move = %v, want the fault refusal with its detail", err)
 	}
 }
