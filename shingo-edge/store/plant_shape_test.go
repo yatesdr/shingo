@@ -1,0 +1,184 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"shingo/protocol/testutil"
+)
+
+// The two plants' Edge schemas at v59, as sqlite_master holds them
+// (testdata/plant_*_v59.sql): shingo's own tables, no rows. A migration that
+// assumes a plant's file has a born database's shape is wrong on that Pi, so
+// the shapes are the plants' catalogues and not typed from a list of findings.
+
+// plantShapeDB is a database in a plant's schema, recorded at v1..v59, with two
+// synthetic rows in every table (one where a CHECK holds it to one) and each
+// AUTOINCREMENT sequence left five above its rows, as deleted rows leave it.
+func plantShapeDB(t *testing.T, file string) string {
+	t.Helper()
+	ddl, err := os.ReadFile(filepath.Join("testdata", file))
+	testutil.MustNoErr(t, err, "read the plant's schema")
+	path := filepath.Join(t.TempDir(), "plant.db")
+	db := rawDB(t, path)
+	execAll(t, db, string(ddl))
+	for v := 1; v <= 59; v++ {
+		execAll(t, db, fmt.Sprintf(`INSERT INTO schema_migrations (version) VALUES (%d)`, v))
+	}
+	// The chain copies these over live columns at each start, where they hold a
+	// value: left at their defaults, as both plants hold them.
+	blank := map[string]bool{
+		"staging_node": true, "release_node": true,
+		"inbound_source_node": true, "inbound_source_node_group": true,
+		"outbound_source_node": true, "outbound_source_node_group": true,
+	}
+	// The columns a CHECK holds to a vocabulary.
+	checked := map[string]string{
+		"node_lineside_bucket.state":   "'active'",
+		"process_routing_nodes.role":   "'source'",
+		"process_routing_nodes.origin": "'engineer'",
+	}
+	oneRow := map[string]bool{"production_tick_cursor": true, "scene_geometry_meta": true}
+	for _, table := range queryLines(t, db, `SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY name`) {
+		var names, kinds []string
+		for _, col := range queryLines(t, db, `SELECT name, upper(type) FROM pragma_table_info(?)`, table) {
+			name, kind, _ := strings.Cut(col, " ")
+			if table == "style_node_claims" && blank[name] {
+				continue
+			}
+			names = append(names, `"`+name+`"`)
+			kinds = append(kinds, kind)
+		}
+		for n := 1; n <= 2; n++ {
+			if n > 1 && oneRow[table] {
+				break
+			}
+			vals := make([]string, len(names))
+			for i, kind := range kinds {
+				vals[i] = fmt.Sprintf("'syn-%d'", n)
+				if strings.Contains(kind, "INT") || kind == "REAL" {
+					vals[i] = fmt.Sprint(n)
+				}
+				if v, ok := checked[table+"."+strings.Trim(names[i], `"`)]; ok {
+					vals[i] = v
+				}
+			}
+			execAll(t, db, `INSERT INTO "`+table+`" (`+strings.Join(names, ", ")+`) VALUES (`+strings.Join(vals, ", ")+`)`)
+		}
+	}
+	execAll(t, db, `UPDATE sqlite_sequence SET seq = seq + 5`)
+	testutil.MustNoErr(t, db.Close(), "close")
+	return path
+}
+
+// shapeOf is a database's shape as SQLite's pragmas report it, one line per
+// fact: tables, columns, foreign keys, indexes, triggers. Of the stored text it
+// reads only a partial index's predicate, so two spellings of one shape are one
+// shape.
+func shapeOf(t *testing.T, db *sql.DB) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	for _, q := range []string{
+		`SELECT m.type, m.name FROM sqlite_master m WHERE m.type IN ('table', 'view', 'trigger') AND m.name NOT LIKE 'sqlite_%'`,
+		`SELECT 'column', m.name || '.' || c.name, upper(c.type) || CASE WHEN c."notnull" THEN ' not null' ELSE '' END
+			|| COALESCE(' default ' || c.dflt_value, '') || CASE WHEN c.pk THEN ' key ' || c.pk ELSE '' END
+			FROM sqlite_master m, pragma_table_info(m.name) c WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'`,
+		`SELECT 'key', m.name || '.' || f."from", '-> ' || f."table", 'on delete ' || f.on_delete
+			FROM sqlite_master m, pragma_foreign_key_list(m.name) f WHERE m.type = 'table'`,
+		`SELECT 'index', m.name || '.' || CASE i.origin WHEN 'c' THEN i.name ELSE i.origin END,
+			(SELECT group_concat(COALESCE(x.name, '(expr)') || CASE WHEN x."desc" THEN ' desc' ELSE '' END)
+				FROM pragma_index_xinfo(i.name) x WHERE x.key),
+			CASE WHEN i."unique" THEN 'unique' ELSE '' END,
+			COALESCE((SELECT substr(s.sql, instr(upper(s.sql), 'WHERE')) FROM sqlite_master s WHERE s.name = i.name AND i.partial), '')
+			FROM sqlite_master m, pragma_index_list(m.name) i WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'`,
+	} {
+		for _, line := range queryLines(t, db, q) {
+			out[strings.Join(strings.Fields(line), " ")] = true
+		}
+	}
+	return out
+}
+
+// shapeAgainst is what got has that want does not (+) and lacks (-), sorted.
+// An extra table is one line, not one per column, key and index it carries.
+func shapeAgainst(got, want map[string]bool) []string {
+	var out []string
+	for line := range got {
+		if want[line] {
+			continue
+		}
+		kind, rest, _ := strings.Cut(line, " ")
+		if table, _, ok := strings.Cut(rest, "."); ok && kind != "table" && !want["table "+table] {
+			continue
+		}
+		out = append(out, "+ "+line)
+	}
+	for line := range want {
+		if !got[line] {
+			out = append(out, "- "+line)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestPlantShapes_WhatAStartLeaves starts an Edge on each plant's shape: every
+// row and every sequence is kept, and the differences from a born database are
+// exactly these.
+func TestPlantShapes_WhatAStartLeaves(t *testing.T) {
+	t.Parallel()
+	both := []string{
+		"+ column orders.bin_uop_remaining INTEGER",
+		"+ column style_node_claims_quarantine.curtain_required INTEGER",
+		"+ column style_node_claims_quarantine.keep_staged INT",
+		"- column style_node_claims_quarantine.curtain_required INT",
+	}
+	for _, c := range []struct {
+		file string
+		want []string
+	}{
+		{"plant_a_v59.sql", both},
+		{"plant_b_v59.sql", append(slices.Clone(both),
+			"+ column orders.payload_id INTEGER",
+			"+ key operator_stations.process_id -> processes_legacy on delete CASCADE",
+			"+ key orders.payload_id -> payloads on delete NO ACTION",
+			"+ key process_changeovers.from_style_id -> styles_legacy on delete SET NULL",
+			"+ key process_changeovers.process_id -> processes_legacy on delete CASCADE",
+			"+ key process_changeovers.to_style_id -> styles_legacy on delete CASCADE",
+			"+ key processes.active_style_id -> styles_legacy on delete SET NULL",
+			"+ key processes.target_style_id -> styles_legacy on delete SET NULL",
+			"+ table payloads",
+			"+ table processes_legacy",
+			"- key operator_stations.process_id -> processes on delete CASCADE",
+			"- key process_changeovers.from_style_id -> styles on delete SET NULL",
+			"- key process_changeovers.process_id -> processes on delete CASCADE",
+			"- key process_changeovers.to_style_id -> styles on delete CASCADE",
+			"- key processes.active_style_id -> styles on delete SET NULL",
+			"- key processes.target_style_id -> styles on delete SET NULL")},
+	} {
+		t.Run(c.file, func(t *testing.T) {
+			t.Parallel()
+			path := plantShapeDB(t, c.file)
+			before := fileState(t, path)
+			testutil.MustNoErr(t, startEdge(t, path), "start")
+			after := fileState(t, path)
+			for _, table := range slices.Sorted(maps.Keys(before)) {
+				if table != "sqlite_master" && before[table] != after[table] {
+					t.Errorf("a start changed %s:\nbefore:\n%s\nafter:\n%s", table, before[table], after[table])
+				}
+			}
+			got := shapeAgainst(shapeOf(t, rawDB(t, path)), shapeOf(t, rawDB(t, bornDB(t))))
+			want := slices.Sorted(slices.Values(c.want))
+			if !slices.Equal(got, want) {
+				t.Errorf("against a born database:\n got  %s\n want %s", strings.Join(got, "\n      "), strings.Join(want, "\n      "))
+			}
+		})
+	}
+}
