@@ -33,23 +33,23 @@ func (m *Manager) HandleDeliveredNotice(p *protocol.OrderDelivered) error {
 		}
 		return fmt.Errorf("order %s not found: %w", p.OrderUUID, err)
 	}
-	return m.handleDelivered(order, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID,
+	return m.handleDelivered(order, p.DeliveredAt.Format(time.RFC3339), p.BinID,
 		deliveredSeed{binDestNode: p.BinDestNode, fromNotice: true})
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, seed deliveredSeed) error {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, binID *int64, seed deliveredSeed) error {
 	if versioned(order) {
 		// The status is Core's versioned word, applied from its own tell; this
 		// message is the carrier's facts. They are written, then meet Core's
 		// delivered (core_word.go, deliveredFactsIn).
-		m.lifecycle.writeDeliveredFacts(order, stagedExpireAt, binID)
+		m.lifecycle.writeDeliveredFacts(order, binID)
 		m.deliveredFactsIn(order, seed)
 		if m.OnDeliveredMessage != nil {
 			m.OnDeliveredMessage(order.ID, order.ProcessNodeID)
 		}
 		return nil
 	}
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, seed); err != nil {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, binID, seed); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -100,7 +100,7 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	case ReplyDelivered:
 		// A dispatch reply is not an order.delivered: no bin id and no notice
 		// (those ride the OrderDelivered envelope).
-		return m.handleDelivered(order, statusDetail, nil, nil, deliveredSeed{})
+		return m.handleDelivered(order, statusDetail, nil, deliveredSeed{})
 	case ReplyError:
 		wasLive := !IsTerminal(order.Status)
 		if err := m.TransitionOrder(order.ID, StatusFailed, statusDetail); err != nil {

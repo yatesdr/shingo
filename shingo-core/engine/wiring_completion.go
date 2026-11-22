@@ -113,9 +113,7 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		// the arrival's transaction (applyArrival above), so an Edge binds
 		// nothing from this message (H.5). The flag stays for a v0.19.0 Edge,
 		// which binds from it when it is unset.
-		LandingSent: true,
-		// StagedExpireAt stays unset: staging no longer expires
-		// (resolveNodeStaging). The field stays on the wire for older Edges.
+		LandingSent:  true,
 		BinID:        binID,
 		DeliveryNode: order.DeliveryNode,
 		BinDestNode:  binDestNode,

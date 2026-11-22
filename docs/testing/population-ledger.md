@@ -2974,3 +2974,13 @@ No assertion read any of the twelve.
 - test: `TestHandleDelivered_FallbackCarriesThePayload` · pkg `shingoedge/orders` · run `-run '^TestHandleDelivered_FallbackCarriesThePayload$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
 - code: DEAD (`OrderDelivered.bin_payload_code` is deleted at the v0.19.0 floor: only `landFromOldCore` read it).
 - assertion map: one fallback for an order with no Edge row → `TestHandleDelivered_FallbackNamesTheCarrierAndNode`, which adds the bin and node; the carrier's part on that path → `TestFallbackDelivered_RecordsTheCarrier`, through the landing that now carries it.
+
+### DEAD — `TestHandleDeliveredWithExpiry_StoresStagedExpireAt`
+- test: `TestHandleDeliveredWithExpiry_StoresStagedExpireAt` · pkg `shingoedge/orders` · run `-run '^TestHandleDeliveredWithExpiry_StoresStagedExpireAt$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`OrderDelivered.staged_expire_at` and its writer are deleted at the v0.19.0 floor: no Core sends it, staging no longer expires).
+- assertion map: the order goes delivered → `TestFloorWire_ADeliveredWithLandingSentIsTheOrdersAlone`; the expiry is stored → nothing (no writer). An old row's value still read → the store's order round-trip test.
+
+### DEAD — `TestHandleDeliveredWithExpiry_MissingOrder`
+- test: `TestHandleDeliveredWithExpiry_MissingOrder` · pkg `shingoedge/orders` · run `-run '^TestHandleDeliveredWithExpiry_MissingOrder$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`HandleDeliveredWithExpiry` is deleted with the fields it carried).
+- assertion map: an unknown order is an error → `TestHandleDeliveredNotice_MissingOrder`, the same assertion on the wire's handler.

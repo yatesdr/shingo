@@ -577,10 +577,6 @@ type OrderDelivered struct {
 	OrderUUID string `json:"order_uuid"`
 	// DeliveredAt is when the fleet reported the physical delivery.
 	DeliveredAt time.Time `json:"delivered_at"`
-	// StagedExpireAt, when present, puts the order in staged (dwelling) until
-	// this time or until an order.release arrives. Absent on a delivery that
-	// does not stage.
-	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
 	// BinID is the Core id of the carrier the order leaves at its process
 	// node: the order's one cart, or, for an order that carries several, the
 	// cart its plan sets down last at the process node (see BinDestNode). Nil

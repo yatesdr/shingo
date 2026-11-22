@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"shingo/protocol"
 	"shingoedge/store"
@@ -228,26 +227,20 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, seed deliveredSeed) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, binID *int64, seed deliveredSeed) error {
 	// Capture Core's bin id at delivery so the PLC tick path can attribute
 	// deltas to the right bin. Nil for multi-bin orders. The seed is stashed
 	// for the delivered emit in applyTransition.
-	s.writeDeliveredFacts(order, stagedExpireAt, binID)
+	s.writeDeliveredFacts(order, binID)
 	s.deliveredSeeds.Store(order.ID, seed)
 	defer s.deliveredSeeds.Delete(order.ID)
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }
 
 // writeDeliveredFacts writes what order.delivered says about the carrier onto
-// the order: the staged expiry when one is sent, and Core's bin id at delivery
-// (nil for a multi-bin order, or an older Core), which the PLC tick path
-// attributes deltas by.
-func (s *LifecycleService) writeDeliveredFacts(order *orders.Order, stagedExpireAt *time.Time, binID *int64) {
-	if stagedExpireAt != nil {
-		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
-			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
-		}
-	}
+// the order: Core's bin id at delivery (nil for a multi-bin order), which the
+// PLC tick path attributes deltas by.
+func (s *LifecycleService) writeDeliveredFacts(order *orders.Order, binID *int64) {
 	if binID != nil {
 		if err := s.db.UpdateOrderBinID(order.ID, binID); err != nil {
 			log.Printf("update order bin_id: %v", err)

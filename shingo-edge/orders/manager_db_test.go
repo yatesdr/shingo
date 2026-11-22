@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -37,7 +36,7 @@ import (
 //   active-style-only, target-style overrides active during changeover),
 //   ReleaseOrder and AbortOrder happy paths plus their
 //   terminal-rejection guards, TransitionOrder delegation, and
-//   HandleDeliveredWithExpiry persisting the expiry timestamp.
+//   HandleDeliveredNotice on an order it cannot find.
 // ═══════════════════════════════════════════════════════════════════════
 
 // ───────────────────────────────────────────────────────────────────────
@@ -675,7 +674,7 @@ func TestHandleDispatchReply_MissingOrder(t *testing.T) {
 
 // ═══════════════════════════════════════════════════════════════════════
 // PR 3.3 — ApplyCoreStatusSnapshot, lookupPayloadMeta, Release/Abort/
-// Redirect, TransitionOrder, HandleDeliveredWithExpiry.
+// Redirect, TransitionOrder, HandleDeliveredNotice.
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApplyCoreStatusSnapshot_NotFoundIsNoop(t *testing.T) {
@@ -1418,27 +1417,7 @@ func TestTransitionOrder_DelegatesToLifecycle(t *testing.T) {
 	}
 }
 
-func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
-	t.Parallel()
-	db := testManagerDB(t)
-	mgr := NewManager(db, testEmitter{}, "edge")
-
-	oid, _ := db.CreateOrder("uuid-he", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
-	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
-	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
-
-	future := time.Now().UTC().Add(1 * time.Hour)
-	testutil.MustNoErr(t, mgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: "uuid-he", StagedExpireAt: &future}), "HandleDeliveredWithExpiry")
-	o, _ := db.GetOrder(oid)
-	if o.Status != StatusDelivered {
-		t.Errorf("Status: got %q, want delivered", o.Status)
-	}
-	if o.StagedExpireAt == nil {
-		t.Error("StagedExpireAt: got nil, want future timestamp")
-	}
-}
-
-func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
+func TestHandleDeliveredNotice_MissingOrder(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
