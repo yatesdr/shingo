@@ -894,3 +894,66 @@ func TestKeeperPull_ANamedSourceKeepsItsFloor(t *testing.T) {
 		}
 	}
 }
+
+// TestPlainPoolFloor_ByType: a plain pool stands demand × transit and one per
+// station of each carrier type its stations draw, since an empty of one type is
+// no empty of another. RED at 1c3df0ec: the floor summed the types, and
+// SYN_MARKET's 5 STANDARD-SM stood in for 4 STANDARD it is short.
+func TestPlainPoolFloor_ByType(t *testing.T) {
+	t.Parallel()
+	holds := func(stock map[string]int, flows ...testFlow) bool {
+		p, rate := poolPlant(false, []testPool{{name: "M", stock: stock}}, flows...)
+		return reportStockFloor(computeCarriers(p, rate, 0, 0), 10)
+	}
+	// A: 9.5 a minute over 10 minutes and its one station, 96; 500 of B beside it.
+	const floor = 96
+	drawA := testFlow{"A", "M", "M", 9.5, 9.5}
+	check := func(stand int, want bool) {
+		t.Run(fmt.Sprintf("A=%d beside 500 of B", stand), func(t *testing.T) {
+			if got := holds(map[string]int{"A": stand, "B": 500}, drawA); got != want {
+				t.Errorf("%d of A against a floor of %d: holds = %v, want %v", stand, floor, got, want)
+			}
+		})
+	}
+	check(floor, true)
+	for _, m := range checkMargins {
+		check(floor-int(math.Round(floor*m)), false)
+		check(floor+int(math.Round(floor*m)), true)
+	}
+
+	// Two types drawn: each stands its own floor (B: 4.9 a minute, 49 and its station).
+	drawB := testFlow{"B", "M", "M", 4.9, 4.9}
+	for _, tc := range []struct {
+		a, b int
+		want bool
+	}{{120, 49, false}, {120, 50, true}, {95, 70, false}, {96, 50, true}} {
+		t.Run(fmt.Sprintf("A=%d,B=%d", tc.a, tc.b), func(t *testing.T) {
+			if got := holds(map[string]int{"A": tc.a, "B": tc.b}, drawA, drawB); got != tc.want {
+				t.Errorf("A %d of 96 and B %d of 50: holds = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+
+	// A station waits on an empty of its own type even while it draws nothing.
+	idleB := testFlow{"B", "M", "M", 0, 0}
+	for _, b := range []int{0, 1} {
+		t.Run(fmt.Sprintf("an idle B station/B=%d", b), func(t *testing.T) {
+			if got := holds(map[string]int{"A": 500, "B": b}, idleB); got != (b == 1) {
+				t.Errorf("%d of B for one B station, 500 of A beside it: holds = %v", b, got)
+			}
+		})
+	}
+
+	// A named source stands a kanban's shortfall in the type the kanban is short of.
+	for _, a := range []int{9, 10} {
+		t.Run(fmt.Sprintf("a named source/A=%d", a), func(t *testing.T) {
+			p, rate := poolPlant(false, []testPool{
+				{name: "K", kanban: true, sources: []string{"SRC"}, stock: map[string]int{"A": 20}},
+				{name: "SRC", stock: map[string]int{"A": a, "B": 500}},
+			}, testFlow{"A", "K", "ELSEWHERE", 1, 1}, testFlow{"A", "ELSEWHERE", "SRC", 1, 1})
+			if got := reportStockFloor(computeCarriers(p, rate, 0, 0), 10); got != (a == 10) {
+				t.Errorf("%d of A at the source of a kanban 1 a minute short of A: holds = %v", a, got)
+			}
+		})
+	}
+}

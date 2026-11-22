@@ -243,13 +243,16 @@ const (
 	newUnloaderOutbound = "SYN_MARKET"        // it returns them where ASSY drew them
 	oldP5SmallSpares    = 2                   // 45x48 pool 26
 	newP5SmallSpares    = 12                  // 45x48 pool 36
+	oldMarketStandard   = 12                  // empty STANDARD standing in SYN_MARKET
+	newMarketStandard   = 16                  // 10 in flight and its 6 stations, by type
 	simcalcChildEnv     = "SIMCALC_CHILD_MASTER"
 )
 
 // setRepairs puts the master at one state of the two repairs, whichever state
 // the file ships in, so "the old one" stays a case after the file is repaired.
-func setRepairs(t *testing.T, p *plantspec.Plant, outbound string, spares int) {
+func setRepairs(t *testing.T, p *plantspec.Plant, outbound string, spares, market int) {
 	t.Helper()
+	setMarketStandard(t, p, market)
 	const k = "P5-KANBAN"
 	claims, zones, kanbans := 0, 0, 0
 	for i := range p.Claims {
@@ -343,11 +346,11 @@ func TestSimcalcChild_CarriersOnTheMaster(t *testing.T) {
 	}
 	if state != "shipped" {
 		var outbound string
-		var spares int
-		if _, err := fmt.Sscanf(state, "%s %d", &outbound, &spares); err != nil {
+		var spares, market int
+		if _, err := fmt.Sscanf(state, "%s %d %d", &outbound, &spares, &market); err != nil {
 			t.Fatalf("state %q: %v", state, err)
 		}
-		setRepairs(t, p, outbound, spares)
+		setRepairs(t, p, outbound, spares, market)
 	}
 	edge, err := loadEdge(filepath.Join(root, "shingo-edge", "shingoedge.dev.yaml") + "," +
 		filepath.Join(root, "shingo-edge", "shingoedge.edge2.yaml"))
@@ -374,38 +377,48 @@ func TestMasterCarriers_TheShippedPlantPasses(t *testing.T) {
 	}
 }
 
-// TestMasterCarriers_EachRepairIsNeededOnItsOwn: the repaired plant passes, the
-// old one fails, and each repair alone fails by the finding of the one missing
-// and by that one only. RED at 6bd55616: neither finding existed, and the
-// repaired plant read as draining.
+// TestMasterCarriers_EachRepairIsNeededOnItsOwn: the three repairs, every one of
+// the eight ways to have some: all three pass, and each missing one fails by its
+// own finding and no other's. RED at 6bd55616: neither kanban finding existed,
+// and the repaired plant read as draining. RED at 1c3df0ec: a plain pool's
+// floor summed its types, and SYN_MARKET's 5 STANDARD-SM stood in for the 4
+// STANDARD it is short.
 func TestMasterCarriers_EachRepairIsNeededOnItsOwn(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name           string
-		outbound       string
-		spares         int
-		surplus, short bool
+		edge, carts, market bool
 	}{
-		{"both repairs", newUnloaderOutbound, newP5SmallSpares, false, false},
-		{"old edge, old carts", oldUnloaderOutbound, oldP5SmallSpares, true, true},
-		{"old edge, new carts", oldUnloaderOutbound, newP5SmallSpares, true, false},
-		{"new edge, old carts", newUnloaderOutbound, oldP5SmallSpares, false, true},
+		{true, true, true}, {false, true, true}, {true, false, true}, {true, true, false},
+		{false, false, true}, {false, true, false}, {true, false, false}, {false, false, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		outbound, spares, market := oldUnloaderOutbound, oldP5SmallSpares, oldMarketStandard
+		if tc.edge {
+			outbound = newUnloaderOutbound
+		}
+		if tc.carts {
+			spares = newP5SmallSpares
+		}
+		if tc.market {
+			market = newMarketStandard
+		}
+		t.Run(fmt.Sprintf("edge=%v,P5=%v,market=%v", tc.edge, tc.carts, tc.market), func(t *testing.T) {
 			t.Parallel()
-			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d", tc.outbound, tc.spares))
-			if wantFail := tc.surplus || tc.short; (code == 1) != wantFail {
+			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d %d", outbound, spares, market))
+			if wantFail := !tc.edge || !tc.carts || !tc.market; (code == 1) != wantFail {
 				t.Errorf("exit %d, want failing = %v", code, wantFail)
 			}
-			if got := failsNaming(out, "SYN_PRESS_EMPTIES", "RATE SURPLUS"); got != tc.surplus {
-				t.Errorf("SYN_PRESS_EMPTIES reads RATE SURPLUS = %v, want %v", got, tc.surplus)
+			if got := failsNaming(out, "SYN_PRESS_EMPTIES", "RATE SURPLUS"); got != !tc.edge {
+				t.Errorf("SYN_PRESS_EMPTIES reads RATE SURPLUS = %v, want %v", got, !tc.edge)
 			}
-			if got := failsNaming(out, "P5-KANBAN", "UNDER ITS FLOOR"); got != tc.short {
-				t.Errorf("P5-KANBAN reads UNDER ITS FLOOR = %v, want %v", got, tc.short)
+			if got := failsNaming(out, "P5-KANBAN", "UNDER ITS FLOOR"); got != !tc.carts {
+				t.Errorf("P5-KANBAN reads UNDER ITS FLOOR = %v, want %v", got, !tc.carts)
+			}
+			if got := failsNaming(out, "SYN_MARKET", "STANDARD SHORT BY"); got != !tc.market {
+				t.Errorf("SYN_MARKET reads STANDARD SHORT BY = %v, want %v", got, !tc.market)
 			}
 			// The deficit of the market under the old edge is the same missing
 			// repair; with the edge repaired no line may read a deficit.
-			if !tc.surplus && strings.Contains(out, "RATE DEFICIT") {
+			if tc.edge && strings.Contains(out, "RATE DEFICIT") {
 				t.Errorf("a pool reads RATE DEFICIT with the edge repaired: %v",
 					regexp.MustCompile(`(?m)^.*RATE DEFICIT.*$`).FindAllString(out, -1))
 			}
@@ -429,10 +442,95 @@ func TestMasterCarriers_P5FloorOverABand(t *testing.T) {
 	for _, n := range slices.Compact(spares) {
 		t.Run(fmt.Sprintf("spares=%d", n), func(t *testing.T) {
 			t.Parallel()
-			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d", newUnloaderOutbound, n))
+			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d %d", newUnloaderOutbound, n, newMarketStandard))
 			short := n < floor
 			if (code == 1) != short || failsNaming(out, "P5-KANBAN", "UNDER ITS FLOOR") != short {
 				t.Errorf("%d spares against a floor of %d: exit %d, want failing on the floor = %v", n, floor, code, short)
+			}
+		})
+	}
+}
+
+// setMarketStandard stands n empty STANDARD in SYN_MARKET, whichever count the
+// file ships: the last seeded go, or each one more stands in a one-slot lane of
+// its own, so no dig and no other lane changes.
+func setMarketStandard(t *testing.T, p *plantspec.Plant, n int) {
+	t.Helper()
+	const market = "SYN_MARKET"
+	var z *plantspec.Zone
+	inMarket := map[string]bool{}
+	for i := range p.Zones {
+		if p.Zones[i].Name == market {
+			z = &p.Zones[i]
+			for _, l := range z.Lanes {
+				for _, s := range l.Slots {
+					inMarket[s.Name] = true
+				}
+			}
+		}
+	}
+	if z == nil {
+		t.Fatalf("fixture: no zone %s", market)
+	}
+	standard := func(b plantspec.Bin) bool {
+		return inMarket[b.Slot] && b.Payload == "" && (b.BinType == "" || b.BinType == "STANDARD")
+	}
+	var stands []int
+	for i, b := range p.Bins {
+		if standard(b) {
+			stands = append(stands, i)
+		}
+	}
+	if len(stands) > n {
+		drop := map[int]bool{}
+		for _, i := range stands[n:] {
+			drop[i] = true
+		}
+		var kept []plantspec.Bin
+		for i, b := range p.Bins {
+			if !drop[i] {
+				kept = append(kept, b)
+			}
+		}
+		p.Bins = kept
+	}
+	for j := len(stands); j < n; j++ {
+		slot := fmt.Sprintf("MKT_T_%02d", j)
+		z.Lanes = append(z.Lanes, plantspec.Lane{Name: "MKT_T_L" + slot[6:], Slots: []plantspec.Slot{{Name: slot, Depth: 1}}})
+		p.Bins = append(p.Bins, plantspec.Bin{Name: "BIN-MKT-T-" + slot[6:], Slot: slot, BinType: "STANDARD"})
+	}
+	got := 0
+	for _, b := range p.Bins {
+		if standard(b) || strings.HasPrefix(b.Slot, "MKT_T_") {
+			got++
+		}
+	}
+	if got != n {
+		t.Fatalf("fixture: %d empty STANDARD in %s, want %d", got, market, n)
+	}
+}
+
+// TestMasterCarriers_MarketStandardFloorOverABand: with the kanban repairs in,
+// SYN_MARKET's STANDARD floor is 1.00 a minute over a 10 minute transit and its 6
+// stations, 16, and its empty STANDARD stand either side of it by 1/5/10/25/50%,
+// to the cart, beside 5 STANDARD-SM that no draw there takes. RED at 1c3df0ec
+// on the short side: the floor summed the types.
+func TestMasterCarriers_MarketStandardFloorOverABand(t *testing.T) {
+	t.Parallel()
+	const floor = newMarketStandard
+	stands := []int{floor}
+	for _, m := range checkMargins {
+		n := int(math.Ceil(floor * m))
+		stands = append(stands, floor-n, floor+n)
+	}
+	slices.Sort(stands)
+	for _, n := range slices.Compact(stands) {
+		t.Run(fmt.Sprintf("standard=%d", n), func(t *testing.T) {
+			t.Parallel()
+			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d %d", newUnloaderOutbound, newP5SmallSpares, n))
+			short := n < floor
+			if (code == 1) != short || failsNaming(out, "SYN_MARKET", "STANDARD SHORT BY") != short {
+				t.Errorf("%d empty STANDARD against a floor of %d: exit %d, want failing on the floor = %v", n, floor, code, short)
 			}
 		})
 	}
