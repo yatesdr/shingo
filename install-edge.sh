@@ -702,18 +702,30 @@ fi
 #
 # This is the artifact you fall back to when a repair or migration goes
 # wrong, so it has to be restorable, not merely present.
+# ROOT'S ALONE, AND NOT IN /tmp. The tarball holds the config (the signing
+# key, the backup store's keys) and the whole database, and after a migration
+# that drops columns it is the only copy of what they held. It sits under
+# root-owned /var/backups and not in /var/lib/shingo-edge, which the service
+# user owns and could swap a directory of. The directory is 0700 and the file
+# is 0600 from its creation (the umask below), never by a later chmod.
+BACKUP_DIR=/var/backups/shingo-edge
+mkdir -p /var/backups
+if [ -L "$BACKUP_DIR" ]; then
+    echo "ERROR: $BACKUP_DIR is a symlink; refusing to write the backup through it."
+    exit 1
+fi
+install -d -m 0700 -o root -g root "$BACKUP_DIR"
 BACKUP_TS=$(date +%Y%m%d-%H%M%S)
-BACKUP_PATH="/tmp/shingo-pre-install-${BACKUP_TS}.tar.gz"
+BACKUP_PATH="${BACKUP_DIR}/shingo-pre-install-${BACKUP_TS}.tar.gz"
 echo "==> Creating backup at ${BACKUP_PATH}"
 
 # Prune older backups before creating the new one — keep the most
-# recent 3. systemd-tmpfiles also cleans /tmp at the OS level on a
-# 10-day window, but on Pi SD cards the SQLite DB makes each tarball
-# meaningful (tens to hundreds of MB) so we don't want to wait. ls -t
+# recent 3. On Pi SD cards the SQLite DB makes each tarball meaningful
+# (tens to hundreds of MB) and nothing else cleans this directory. ls -t
 # orders by mtime newest-first; tail -n +4 skips the first 3 and
 # emits everything older. xargs -r is a no-op when input is empty
 # (fresh install, no prior backups).
-ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
 
 BACKUP_FILES=()
 for f in "$LEGACY_DB" "${LEGACY_DB}-wal" "${LEGACY_DB}-shm" "${LEGACY_DB}-journal" \
@@ -728,7 +740,7 @@ if [ ${#BACKUP_FILES[@]} -gt 0 ]; then
     # No `|| true`. A backup that failed silently is indistinguishable from
     # one that succeeded right up until you need it, and everything below
     # this line mutates the DB or the binary.
-    if ! tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}"; then
+    if ! (umask 077; tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}"); then
         echo "ERROR: backup failed; aborting before touching the DB or binary."
         echo "       files: ${BACKUP_FILES[*]}"
         exit 1
@@ -779,9 +791,10 @@ done
 # the mv above put the new build back). Otherwise the live binary goes into the
 # slot, copied to a temp name and renamed, so a failed copy leaves the old slot.
 # A fresh install (no live binary) writes none. The Edge has no down step, so,
-# unlike Core's, the slot needs no record. For a release older than the slot's:
-# the backup in /tmp/shingo-pre-install-*.tar.gz (config + DB) plus a checkout
-# of that release's tag and a reinstall.
+# unlike Core's, the slot needs no record: each Edge migration leaves the
+# release before it able to run. For a release older than the slot's: the
+# backup in /var/backups/shingo-edge/shingo-pre-install-*.tar.gz (config + DB,
+# root's alone) plus a checkout of that release's tag and a reinstall.
 if [ -f /opt/shingo/shingoedge ]; then
     NEW_SHA=$(sha256sum /tmp/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
     LIVE_SHA=$(sha256sum /opt/shingo/shingoedge 2>/dev/null | cut -d' ' -f1 || true)

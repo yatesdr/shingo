@@ -41,6 +41,7 @@ Deploy: no migration
 - A table or column missing from an Edge's database stops the Edge with its name; the table used to be made again, empty, without a word
 - An Edge with styles and no process no longer makes up a process named Line 1 when it starts
 - An Edge starts with a few statements instead of about 400, and refuses a database a newer release wrote
+- The Edge installer keeps its pre-install copy of the config and database in /var/backups/shingo-edge, readable by root alone; copies older installs left in /tmp are not removed
 - shingoedge migrate check says, writing nothing, whether a build will start on an Edge's database; a backup it would refuse is refused when it is staged and again before it replaces anything
 - An Edge whose database differs from its release's schema says so on /status and Diagnostics, naming what differs; it still starts
 - The Edge upgrade drops columns and two leftover tables nothing reads, and repairs a Springfield Edge's links to renamed tables; rows are kept, and v0.19.0 still runs on the result
