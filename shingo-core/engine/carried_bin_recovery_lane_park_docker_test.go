@@ -3,8 +3,10 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 )
 
@@ -35,5 +37,11 @@ func TestRecoveryFleetRefusalStaysTerminal(t *testing.T) {
 	backend.SetFail(true)
 	if _, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil {
 		t.Fatal("a fleet refusal must still answer the operator, not park silently")
+	}
+
+	// AND THE ORDER IS OVER: an answer alone can sit on a row left live.
+	order := testdb.RequireOrderStatus(t, db, recoveryEdgeUUID(bin.ID, "AMR-FLEET"), protocol.StatusFailed)
+	if want := "the fleet did not accept the order"; !strings.Contains(order.ErrorDetail, want) {
+		t.Errorf("recovery order failed with %q, want the fleet's refusal (%q)", order.ErrorDetail, want)
 	}
 }
