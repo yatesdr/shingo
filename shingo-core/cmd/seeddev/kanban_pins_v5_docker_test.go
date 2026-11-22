@@ -200,10 +200,18 @@ func TestKanbanPin_TheWalkSmall32Big(t *testing.T) {
 // TestKanbanPin_TheWalkAllBigsToSmall is the owner's literal case: all ten of the family
 // dressed big. 8 re-types: the line's 4 at the windows on their way back, K's 4 through the
 // arm.
+//
+// Its first step is also the raid on a change: START small to big with KP-SM stocked. Big is
+// short 4 inside a whole family, which is the arm's: an ask outside would end the loop at
+// found 14.
 func TestKanbanPin_TheWalkAllBigsToSmall(t *testing.T) {
 	t.Parallel()
 	r := newKanbanRig(t)
+	stock := r.stockSM()
 	r.change("small to big", "KP-BIG", rigBig)
+	r.smUnchanged("small to big", stock)
+	r.foundIsPool("small to big")
+	r.inK("small to big", 2, 2, 2, 6)
 	r.reType(rigBig, "PKB_001", "PKB_002", "PKB_005", "PKB_006", "PKB_007", "PKB_008", "PKB_009", "PKB_010")
 	r.tick()
 	r.inK("all bigs", 0, 6, 0, 6)
@@ -281,18 +289,6 @@ func TestKanbanPin_TheRaidSteady(t *testing.T) {
 		r.smUnchanged(fmt.Sprintf("cycle %d", cycle), stock)
 		r.foundIsPool(fmt.Sprintf("cycle %d", cycle))
 	}
-}
-
-// TestKanbanPin_TheRaidOnAChange: START small to big with KP-SM stocked. Big is short 4 inside
-// a whole family, which is the arm's: an ask outside would end the loop at found 14.
-func TestKanbanPin_TheRaidOnAChange(t *testing.T) {
-	t.Parallel()
-	r := newKanbanRig(t)
-	stock := r.stockSM()
-	r.change("small to big", "KP-BIG", rigBig)
-	r.smUnchanged("small to big", stock)
-	r.foundIsPool("small to big")
-	r.inK("small to big", 2, 2, 2, 6)
 }
 
 // TestKanbanPin_TheArmLeavesWindowsForTheEvacs: at START the line's four carts have no leg
