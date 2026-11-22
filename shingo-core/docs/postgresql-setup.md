@@ -203,8 +203,27 @@ pg_dump -h localhost -U shingocore shingocore > shingocore_backup.sql
 ### Restore
 
 ```sh
-psql -h localhost -U shingocore shingocore < shingocore_backup.sql
+psql -h localhost -U shingocore -d shingocore -v ON_ERROR_STOP=1 --single-transaction -f shingocore_backup.sql || {
+  echo "restore FAILED on PostgreSQL $(psql -h localhost -U shingocore -d shingocore -Atc 'SHOW server_version'): nothing was restored, the reason is above" >&2
+  false
+}
 ```
+
+A custom-format backup (`pg_dump -Fc`) restores the same way, all or nothing:
+
+```sh
+pg_restore -h localhost -U shingocore -d shingocore --exit-on-error --single-transaction shingocore_backup.dump || {
+  echo "restore FAILED on PostgreSQL $(psql -h localhost -U shingocore -d shingocore -Atc 'SHOW server_version'): nothing was restored, the reason is above" >&2
+  false
+}
+```
+
+Don't drop the stop options. Without them `psql` exits 0 whatever failed, and `pg_restore` skips each table it
+cannot create and keeps the rest, `schema_migrations` with it.
+
+**`unrecognized parameter "pg_attver"`.** PostgreSQL's 2026-11-12 minors (14.25, 15.20, 16.16, 17.12, 18.7) record
+that column option, and a `pg_dump` older than those minors writes it into the dump. A server older than them
+rejects it. Restore onto one of those minors or a later one of the same branch: check with `SHOW server_version`.
 
 Restore into an empty database, and restore the whole dump: Core refuses to start on tables, sequences or functions
 that arrived without their `schema_migrations` rows, because nothing can then tell what shape they are.

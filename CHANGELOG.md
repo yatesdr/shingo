@@ -49,6 +49,7 @@ Deploy: no migration
 - Core: `migrate down 190` puts a removed table's id sequence back with the type it had.
 - Core: a database restored from a backup older than v0.19.0 upgrades through migration 190 without a hand fix; a name something else holds stops it with a sentence naming the holder.
 - Core install: `migrate check` refuses a database whose restore skipped tables, naming them and the Postgres version, before the running Core is stopped.
+- Core docs: the restore commands stop on the first error, restore nothing, and print the Postgres version.
 - Core install: a config backup that fails stops the install instead of reporting a backup that isn't there.
 
 ## v0.19.0 — 2026-11-22
