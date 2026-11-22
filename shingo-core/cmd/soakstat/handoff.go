@@ -16,22 +16,21 @@ import (
 // row knows its Edge.
 //
 // A carrier changes hands at a seat in three messages: Core's placement record
-// (a UOPAdjustment with Bound, the PLACEMENT RECORD half of a departure), the
-// release that ends the carrier's generation at the seat, and, when a count
-// arrives for the ended generation, Core's BinEpochRefresh. Every one of them is
-// broadcast (station "*"), so every Edge receives every placement, and an Edge
-// that does not model the node logs `process node "X" not found` and drops it.
-// The 2026-10-09 demo read 400 of 486 placements unowned. Each number here is
-// one the handoff work is meant to move:
+// (transit.bin_landed, addressed to the station that binds there, or to every
+// Edge on the last arm), the release that ends the carrier's generation at the
+// seat, and, when a count arrives for the ended generation, Core's
+// BinEpochRefresh. The 2026-10-09 demo, when a placement was a broadcast, read
+// 400 of 486 placements unowned. Each number here is one the handoff work is
+// meant to move:
 //
 //	a. placements per Edge, owned against unowned, by node class. Counted from
-//	   Core's outbox (the Bound messages Core enqueued, every one sent to every
-//	   Edge). An Edge owns a node it has a process node for: read from the
-//	   Edge's own process_nodes when -edge-db names it, otherwise from Core's
-//	   plant-claims mirror (style_claims through process_styles, the rows
-//	   plantclaims.StationsClaimingNode reads, plus demand_registry). Class is
-//	   the node name up to its first '_', with the node type's code after a '/'
-//	   where Core has one.
+//	   Core's outbox (the landings Core enqueued), each against the Edge it was
+//	   addressed to. An Edge owns a node it has a process node for: read from
+//	   the Edge's own process_nodes when -edge-db names it, otherwise from
+//	   Core's plant-claims mirror (style_claims through process_styles, the
+//	   rows plantclaims.StationsClaimingNode reads, plus demand_registry).
+//	   Class is the node name up to its first '_', with the node type's code
+//	   after a '/' where Core has one.
 //	b. stale-epoch drops per station: bin_uop_exception kind stale_epoch, whose
 //	   station_uid is the counting station (kept forever, unlike the ledger).
 //	c. releases whose after_uop differs from before_uop, per op.
@@ -56,8 +55,8 @@ import (
 const measureHandoff = "[S.4] HANDOFF"
 
 var (
-	msgTypeUOPAdjustment = "data." + protocol.SubjectUOPAdjustment
-	msgTypeEpochRefresh  = "data." + protocol.SubjectBinEpochRefresh
+	msgTypeBinLanded    = "data." + protocol.SubjectBinLanded
+	msgTypeEpochRefresh = "data." + protocol.SubjectBinEpochRefresh
 	// handoffReleaseOps are the release click's ops: the operator let the
 	// carrier go. clear_for_reuse (a clear) and released_capture_empty (a
 	// pull-parts count reaching zero) are not a seat letting a carrier go.
@@ -68,6 +67,7 @@ var (
 // nodeCount is a count at one node, with the node's class.
 type nodeCount struct {
 	node, class string
+	station     string // the addressee, where the count is per station
 	n           int
 }
 
@@ -114,7 +114,7 @@ type handoffCore struct {
 func readHandoff(db *sql.DB) (*handoffCore, error) {
 	h := &handoffCore{}
 	var err error
-	if h.placements, err = outboxByNode(db, msgTypeUOPAdjustment, true); err != nil {
+	if h.placements, err = outboxByNode(db, msgTypeBinLanded, true); err != nil {
 		return nil, fmt.Errorf("handoff placements: %w", err)
 	}
 	if h.stations, h.claims, err = claimsMirror(db); err != nil {
@@ -139,19 +139,19 @@ func readHandoff(db *sql.DB) (*handoffCore, error) {
 }
 
 // outboxByNode counts Core's outbox rows of msgType per target node (the body's
-// core_node_name), only the Bound ones when bound. The payload is the encoded
-// envelope: the body is p.data.
-func outboxByNode(db *sql.DB, msgType string, bound bool) ([]nodeCount, error) {
+// core_node_name), and per addressee when byStation. The payload is the
+// encoded envelope: the body is p.data.
+func outboxByNode(db *sql.DB, msgType string, byStation bool) ([]nodeCount, error) {
 	rows, err := db.Query(`
 		WITH m AS (
-			SELECT convert_from(payload, 'UTF8')::jsonb #> '{p,data}' AS b
+			SELECT convert_from(payload, 'UTF8')::jsonb #> '{p,data}' AS b,
+			       CASE WHEN $2::boolean THEN dst_station ELSE '' END AS dst
 			FROM outbox WHERE msg_type = $1)
-		SELECT m.b->>'core_node_name', COALESCE(MAX(nt.code), ''), COUNT(*)
+		SELECT m.b->>'core_node_name', COALESCE(MAX(nt.code), ''), m.dst, COUNT(*)
 		FROM m
 		LEFT JOIN nodes n ON n.name = m.b->>'core_node_name'
 		LEFT JOIN node_types nt ON nt.id = n.node_type_id
-		WHERE NOT $2::boolean OR (m.b->>'bound')::boolean IS TRUE
-		GROUP BY 1 ORDER BY 3 DESC, 1`, msgType, bound)
+		GROUP BY 1, 3 ORDER BY 4 DESC, 1, 3`, msgType, byStation)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func outboxByNode(db *sql.DB, msgType string, bound bool) ([]nodeCount, error) {
 		var c nodeCount
 		var name sql.NullString
 		var typeCode string
-		if err := rows.Scan(&name, &typeCode, &c.n); err != nil {
+		if err := rows.Scan(&name, &typeCode, &c.station, &c.n); err != nil {
 			return nil, err
 		}
 		c.node = name.String
@@ -339,11 +339,11 @@ func ticksAfterReleases(db *sql.DB) (ticksAfterRelease, error) {
 
 // placementSplit is one Edge's placements, owned against unowned, per class.
 type placementSplit struct {
-	station, ownedBy      string // ownedBy: "edge-db" or "core-mirror"
-	owned, unowned        int
-	unownedByClass        map[string]int
-	ownedByClass          map[string]int
-	logNotFound, logBound int // -1 when no Edge log was read
+	station, ownedBy string // ownedBy: "edge-db" or "core-mirror"
+	owned, unowned   int
+	unownedByClass   map[string]int
+	ownedByClass     map[string]int
+	logNotFound      int // -1 when no Edge log was read
 }
 
 // splitPlacements divides every placement between owned and unowned for each
@@ -366,15 +366,18 @@ func splitPlacements(h *handoffCore, edges []*edgeReading) []placementSplit {
 	var out []placementSplit
 	for _, s := range stations {
 		p := placementSplit{station: s, ownedBy: "core-mirror", unownedByClass: map[string]int{},
-			ownedByClass: map[string]int{}, logNotFound: -1, logBound: -1}
+			ownedByClass: map[string]int{}, logNotFound: -1}
 		owns := h.claims[s]
 		if e := byStation[s]; e != nil {
 			p.ownedBy, owns = "edge-db", e.owned
 			if e.logRead {
-				p.logNotFound, p.logBound = e.logNotFound, e.logBound
+				p.logNotFound = e.logNotFound
 			}
 		}
 		for _, c := range h.placements {
+			if c.station != s && c.station != protocol.StationBroadcast {
+				continue // addressed to another Edge
+			}
 			if owns[c.node] {
 				p.owned += c.n
 				p.ownedByClass[c.class] += c.n
@@ -442,13 +445,13 @@ func printHandoff(h *handoffCore, edges []*edgeReading, logs *logStats, unrun bo
 		return
 	}
 	fmt.Println("  the carrier-handoff before-numbers (class = name prefix, /node type where Core has one)")
-	fmt.Printf("        a. placements (Bound adjustments, each broadcast to every Edge): %d\n", sumCounts(h.placements))
+	fmt.Printf("        a. placements (landings, each against the Edge it was addressed to): %d\n", sumCounts(h.placements))
 	fmt.Printf("           %-14s %-11s %7s %8s  %s\n", "station", "owns-by", "owned", "unowned", "unowned by class")
 	for _, p := range splitPlacements(h, edges) {
 		fmt.Printf("           %-14s %-11s %7d %8d  %s\n", p.station, p.ownedBy, p.owned, p.unowned, classText(p.unownedByClass))
 		if p.logNotFound >= 0 {
-			fmt.Printf("           %-14s edge log: %d `process node not found` (every adjustment kind), %d bound\n",
-				"", p.logNotFound, p.logBound)
+			fmt.Printf("           %-14s edge log: %d `process node not found` (every adjustment kind)\n",
+				"", p.logNotFound)
 		}
 	}
 	staleN, staleU := 0, 0

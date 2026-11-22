@@ -120,8 +120,7 @@ func TestEdge_ReadsAnEdgeDatabaseReadOnly(t *testing.T) {
 	mustExec(`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', X'7b7d', 'inventory.bin_uop_delta')`)
 	w.Close()
 	log := "uop_adjustment: process node \"SLN_004\" not found: sql: no rows\n" +
-		"uop_adjustment: process node \"UTN_001\" not found: sql: no rows\n" +
-		"uop_adjustment: bound bin 12 to node ALN_001 (remaining=50 epoch=3, moved in Core)\n"
+		"uop_adjustment: process node \"UTN_001\" not found: sql: no rows\n"
 	if err := os.WriteFile(filepath.Join(svc, "edge.log"), []byte(log), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +142,8 @@ func TestEdge_ReadsAnEdgeDatabaseReadOnly(t *testing.T) {
 	if e.reports != 3 || len(e.seats) != 1 || e.seats[0].starved != 5*time.Minute {
 		t.Errorf("%d report(s), seats %+v; want 3 and ALN_001 starved 5m", e.reports, e.seats)
 	}
-	if !e.logRead || e.logNotFound != 2 || e.logBound != 1 {
-		t.Errorf("log read %v: not-found %d, bound %d; want 2 and 1", e.logRead, e.logNotFound, e.logBound)
+	if !e.logRead || e.logNotFound != 2 {
+		t.Errorf("log read %v: not-found %d; want 2", e.logRead, e.logNotFound)
 	}
 
 	ro, err := openEdgeReadOnly(path)
