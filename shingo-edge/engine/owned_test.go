@@ -690,3 +690,43 @@ func TestCells_ACounterSaveSendsTheCatalog(t *testing.T) {
 		t.Errorf("after the counter save edge.cells sent %+v, want the re-pointed catalog once", got)
 	}
 }
+
+// TestOwned_ASavesPublishQuotedBackConverges: the report a save publishes
+// (PublishChanged, ClaimsReported) is a copy this Edge sent, so a Core quoting
+// it while the next save's is on its way is converging; a Core that took none
+// still flags on the third send.
+func TestOwned_ASavesPublishQuotedBackConverges(t *testing.T) {
+	t.Parallel()
+	for _, frozen := range []bool{false, true} {
+		t.Run(map[bool]string{false: "Core takes each", true: "Core takes none"}[frozen], func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			e, pub := claimsEngine(t, db)
+			pid := seedStyledProcess(t, db, "SAVES", 1)
+			n := 0
+			save := func() string {
+				n++
+				sid, err := db.CreateStyle(fmt.Sprintf("SAVES-X%d", n), "", pid)
+				testutil.MustNoErr(t, err, "create style")
+				seedProduceClaim(t, db, sid, "QA-N0", fmt.Sprintf("SYN-SAVES-%d", n))
+				testutil.MustNoErr(t, pub.PublishChanged(pid), "publish the save")
+				return drainClaimsReports(t, db)["SAVES"]
+			}
+			coreHolds := save()
+			for i := 0; i < 4; i++ {
+				took := save()
+				save() // published, not yet at Core when it answers
+				if !frozen {
+					coreHolds = took
+				}
+				e.OwnedDigests()
+				e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
+					protocol.OwnedClaims: differs(map[string]string{"SAVES": coreHolds})}})
+				drainClaimsReports(t, db)
+			}
+			if got := e.FeedFlags(); (len(got) > 0) != frozen {
+				t.Errorf("after four acks: flags %v, want flagged %v", got, frozen)
+			}
+		})
+	}
+}
