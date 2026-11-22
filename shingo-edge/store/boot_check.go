@@ -171,3 +171,33 @@ func settleJournal(path string, connect connector) error {
 	var n int
 	return db.QueryRow(`SELECT COUNT(*) FROM sqlite_master`).Scan(&n)
 }
+
+// CheckDatabase is `shingoedge migrate check`: what a start of this build
+// would do to the file at path, found by reading alone. cur is the newest
+// version recorded, 0 for an empty file that would be born on the baseline;
+// target is this build's. A *Refusal is the refusal a start would give; any
+// other error is a failure to read the file.
+//
+// A file at this build's version is also held to the baseline's tables and
+// columns. One below it cannot be: what the migrations above it will leave is
+// known only by running them, so a table dropped by hand there is the start's
+// failure and not this check's (TestAHandDroppedTableBelowHead).
+func CheckDatabase(path string) (cur, target int, err error) {
+	target = latestVersion()
+	if cur, err = checkFile(path, connectSQLite); err != nil || cur != target {
+		return cur, target, err
+	}
+	q, err := openReadOnly(path, connectSQLite)
+	if err != nil || q == nil {
+		return cur, target, err
+	}
+	defer q.Close()
+	missing, _, err := compareSchema(q)
+	if err != nil {
+		return cur, target, err
+	}
+	if len(missing) > 0 {
+		return cur, target, missingObjects(missing)
+	}
+	return cur, target, nil
+}

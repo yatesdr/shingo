@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"shingo/protocol/testutil"
@@ -150,40 +151,6 @@ func shiftNames(t *testing.T, path string) string {
 	return names.String
 }
 
-// TestRestore_WhatItPutsInPlace is which backups replace the live database: one
-// of this build's schema, and one from before it.
-func TestRestore_WhatItPutsInPlace(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		name  string
-		plant string
-		want  string
-	}{
-		{"this build's schema", "", "BACKUP"},
-		{"a schema below v59", `DELETE FROM schema_migrations WHERE version > 40`, "BACKUP"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			dbPath := filepath.Join(t.TempDir(), "shingoedge.db")
-			var plant func(*store.DB) error
-			if c.plant != "" {
-				plant = func(db *store.DB) error { _, err := db.Exec(c.plant); return err }
-			}
-			configPath, archive := shiftArchive(t, dbPath, plant)
-			live, err := store.Open(dbPath)
-			testutil.MustNoErr(t, err, "the live database")
-			_, err = live.Exec(`INSERT INTO shifts (name, shift_number, start_time, end_time) VALUES ('LIVE', 1, '07:00', '15:00')`)
-			testutil.MustNoErr(t, err, "the live row")
-			testutil.MustNoErr(t, live.Close(), "a clean stop")
-
-			testutil.MustNoErr(t, RestoreArchiveNow(configPath, bytes.NewReader(archive), ""), "restore")
-			if got := shiftNames(t, dbPath); got != c.want {
-				t.Errorf("shifts after the restore = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
 // TestRestore_AfterACrashPutsTheBackupInPlace: an Edge that was killed leaves
 // the live database's sidecars beside it. SQLite replays a write-ahead log, or
 // rolls back a hot journal, onto whatever file has the database's name, so a
@@ -240,6 +207,76 @@ func TestRestore_AfterACrashPutsTheBackupInPlace(t *testing.T) {
 			testutil.MustNoErr(t, RestoreArchiveNow(configPath, bytes.NewReader(archive), ""), "restore")
 			if got := shiftNames(t, dbPath); got != "BACKUP" {
 				t.Errorf("shifts after the restore = %q, want \"BACKUP\": the restore did not put the backup in place", got)
+			}
+		})
+	}
+}
+
+// TestRestore_WhatItPutsInPlace is which backups replace the live database:
+// one of this build's schema does; one from below v59 is refused by name when
+// it is staged, while it waits and when it is applied, with the live database
+// and the config untouched.
+func TestRestore_WhatItPutsInPlace(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		plant string
+		want  string
+	}{
+		{"this build's schema", "", "BACKUP"},
+		{"a schema below v59", `DELETE FROM schema_migrations WHERE version > 40`, "LIVE"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dbPath := filepath.Join(t.TempDir(), "shingoedge.db")
+			var plant func(*store.DB) error
+			if c.plant != "" {
+				plant = func(db *store.DB) error { _, err := db.Exec(c.plant); return err }
+			}
+			configPath, archive := shiftArchive(t, dbPath, plant)
+			live, err := store.Open(dbPath)
+			testutil.MustNoErr(t, err, "the live database")
+			_, err = live.Exec(`INSERT INTO shifts (name, shift_number, start_time, end_time) VALUES ('LIVE', 1, '07:00', '15:00')`)
+			testutil.MustNoErr(t, err, "the live row")
+			testutil.MustNoErr(t, live.Close(), "a clean stop")
+			configBefore, err := os.ReadFile(configPath)
+			testutil.MustNoErr(t, err, "read the config")
+			dbBefore, err := os.ReadFile(dbPath)
+			testutil.MustNoErr(t, err, "read the live database")
+
+			refused := c.plant != ""
+			judge := func(door string, err error) {
+				t.Helper()
+				var refusal *store.Refusal
+				switch {
+				case !refused && err != nil:
+					t.Errorf("%s: %v, want it passed", door, err)
+				case refused && !errors.As(err, &refusal):
+					t.Errorf("%s: %v, want a refusal", door, err)
+				case refused && !strings.Contains(err.Error(), store.RetiredChainRelease):
+					t.Errorf("%s: %v does not name %s", door, err, store.RetiredChainRelease)
+				}
+			}
+			judge("staging", checkArchiveData(archive, ""))
+			testutil.MustNoErr(t, StageRestoreArchive(configPath, "key", bytes.NewReader(archive), ""), "leave one staged")
+			staged, err := CheckPendingRestore(configPath)
+			if !staged {
+				t.Error("the staged restore was not seen")
+			}
+			judge("migrate check", err)
+			judge("applying", RestoreArchiveNow(configPath, bytes.NewReader(archive), ""))
+
+			if refused {
+				configAfter, err := os.ReadFile(configPath)
+				testutil.MustNoErr(t, err, "read the config after")
+				dbAfter, err := os.ReadFile(dbPath)
+				testutil.MustNoErr(t, err, "read the live database after")
+				if !bytes.Equal(configBefore, configAfter) || !bytes.Equal(dbBefore, dbAfter) {
+					t.Error("a refused restore changed the config or the live database")
+				}
+			}
+			if got := shiftNames(t, dbPath); got != c.want {
+				t.Errorf("shifts after the restore = %q, want %q", got, c.want)
 			}
 		})
 	}

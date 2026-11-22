@@ -82,7 +82,7 @@ func parseFlags() edgeFlags {
 	restoreMode := flag.Bool("restore", false, "interactive restore from backup storage before starting")
 	pprofPort := flag.Int("pprof-port", 0, "serve net/http/pprof on 127.0.0.1 at this port (0 = off)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n\nFlags:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n       shingoedge migrate [-config PATH] check\n\nFlags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(flag.CommandLine.Output(), "  --log-debug[=FILTER]\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "        Enable debug log file. FILTER is optional comma-separated subsystems:\n")
@@ -465,6 +465,11 @@ func awaitShutdown(srv *http.Server, stopWeb func()) {
 }
 
 func main() {
+	// Before flags, the restore check and the debug log: migrate check writes
+	// nothing.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(runMigrate(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
