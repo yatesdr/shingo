@@ -11,16 +11,17 @@ import (
 // one or changes what is sent to it. It is the line below which this build
 // owes a peer nothing: a path kept only for a release older than the floor may
 // be deleted, and a peer found below it should be shown to a person (Core's
-// /edges page and Core Health). A wire key or a subject a peer at the floor
-// still sends or reads stays.
+// /edges page and Core Health). A wire key a peer at the floor reads stays, and
+// so does a subject it sends; a key it sends that nothing here reads is ignored
+// (the decoders refuse no unknown field). PIN: TestPeerWire_*.
 
 // The floor, by binary: the Core and Edge releases deployed at every plant
 // when this build was cut. Raise one only when no plant runs anything older.
 const (
 	// FloorCore is the oldest Core this build's Edge supports.
-	FloorCore = "v0.18.0"
+	FloorCore = "v0.19.0"
 	// FloorEdge is the oldest Edge this build's Core supports.
-	FloorEdge = "v0.17.2"
+	FloorEdge = "v0.19.0"
 )
 
 // FloorStanding is where a peer's version stands against a floor.
@@ -49,8 +50,8 @@ var releaseRe = regexp.MustCompile(`^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.
 // FloorEdge).
 //
 // HOW A VERSION COMPARES: by its release, MAJOR then MINOR then PATCH as
-// numbers (v0.9.3 is below v0.17.2). A build N commits past a release tag
-// (v0.17.2-3-gabc1234) is that release: it carries every change up to the tag,
+// numbers (v0.9.3 is below v0.19.0). A build N commits past a release tag
+// (v0.19.0-3-gabc1234) is that release: it carries every change up to the tag,
 // so it stands at least there. -dirty (local edits) changes nothing. Anything
 // that names no release, "dev" or a bare sha among them, is FloorUnknown.
 func CompareToFloor(version, floor string) FloorStanding {

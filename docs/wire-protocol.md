@@ -2924,7 +2924,7 @@ The `v` field in the envelope is an integer protocol version. The current versio
 **The peer floor.** `FloorCore` and `FloorEdge` (`protocol/peer_floor.go`) name the oldest Core and Edge releases
 this build supports. The floor is reported, never enforced: nothing is refused, and a path kept only for a peer
 older than it may be deleted. `CompareToFloor` compares a release by MAJOR, MINOR and PATCH as numbers; a build
-past a tag (`v0.17.2-3-gabc1234`) stands at that tag, `-dirty` changes nothing, and a version that names no release
+past a tag (`v0.19.0-3-gabc1234`) stands at that tag, `-dirty` changes nothing, and a version that names no release
 (`dev`, a bare sha) is unknown, neither below nor above. Guard: `TestCompareToFloor_EveryShapeAStampCanTake`.
 
 ---

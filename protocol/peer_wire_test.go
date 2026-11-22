@@ -12,9 +12,10 @@ import (
 	"time"
 )
 
-// peer_wire_test.go — the bodies the deployed peers encode, decoded both ways.
+// peer_wire_test.go — the bodies released peers encode, decoded both ways. The
+// floor's (v0.19.0) are peer_floor_wire_test.go's. The cases below are older.
 //
-// The deployed peers are a v0.18.0 Core and a v0.17.2 Edge. Every message here
+// Their peers are a v0.18.0 Core and a v0.17.2 Edge, below the floor. Every message here
 // keeps the shape it has at both tags (git diff v0.17.2 v0.18.0 changes none of
 // these types), so one frozen copy of each type, below, stands for both peers,
 // and testdata/peerwire holds the body both tags encode, every field set

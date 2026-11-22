@@ -266,8 +266,8 @@ func TestDeriveReasons_SchemaDriftNamesEachObject(t *testing.T) {
 // named by uid, so the verdict says which; none gives no reason.
 func TestDeriveReasons_EachStationBelowTheFloorIsAReason(t *testing.T) {
 	below := []string{
-		"station stn-a runs v0.16.0, older than v0.17.2, the oldest Edge this Core supports",
-		"station stn-b runs v0.9.3, older than v0.17.2, the oldest Edge this Core supports",
+		"station stn-a runs v0.16.0, older than v0.19.0, the oldest Edge this Core supports",
+		"station stn-b runs v0.9.3, older than v0.19.0, the oldest Edge this Core supports",
 	}
 	got := deriveReasons(CoreHealth{EdgesBelowFloor: below}, nil)
 	if strings.Join(got, "|") != strings.Join(below, "|") {
