@@ -386,7 +386,7 @@ The `data` message type provides a generic, extensible channel for non-order com
   "exp": "2026-02-18T10:06:00Z",
   "p": {
     "subject": "edge.heartbeat",
-    "data": {"station_id": "stn-4f8a1c02b7e39d15", "feeds": {"nodes": "3f9c0a1b2d4e5f60", "scene": "", "catalog": "a3c26451e6bac0e0"}}
+    "data": {"feeds": {"nodes": "3f9c0a1b2d4e5f60", "scene": "", "catalog": "a3c26451e6bac0e0"}}
   }
 }
 ```
@@ -597,7 +597,7 @@ These schemas are used as the `data` field inside `data`-type messages. See [Dat
 
 Sent by an edge node on startup and on every reconnect via `data` message with subject `edge.register`.
 
-Core resolves the station by its uid (`station_id`). A uid Core holds is updated in place (`registry.Register`):
+Core resolves the station by its uid (the envelope's `src.station`). A uid Core holds is updated in place (`registry.Register`):
 hostname, instance, version, timezone and schema version, with the hostname and instance compared against the
 station's binding so a second machine on one uid is recorded as a conflict. A uid Core has never seen is
 introduced as an unclaimed station (`registry.Introduce`: no display name, `claimed_at` empty) and then
@@ -609,7 +609,6 @@ no longer lists is marked stale.
 
 ```json
 {
-  "station_id": "stn-4f8a1c02b7e39d15",
   "hostname":   "edge-01.local",
   "instance":   "9a3f7c21d0b45e88",
   "version":    "1.2.0"
@@ -620,7 +619,6 @@ no longer lists is marked stale.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the station UID, which the edge mints at first start and keeps in its config. A station from before station UIDs carries its old station string as its uid. Core resolves the station by the envelope's Address.Station, which carries the same uid, and introduces a uid it has never seen as an unclaimed station; it does not read this copy, which the Edge still sends for a Core older than that. |
 | `hostname` | string |  | Hostname is the OS hostname: attribute data and a weak duplicate signal, since two Pis flashed from one SD image share it. |
 | `instance` | string | omitempty | Instance is a random id drawn once per process at boot; absent means "cannot judge". It is the only field that separates two clones of one SD card, and Core alarms when a displaced instance returns — one machine cannot produce that, because a reboot draws a value it has never used and a live process keeps the one it holds. |
 | `version` | string |  | Version is the edge application's software version. |
@@ -655,9 +653,8 @@ no longer lists is marked stale.
 <!-- /generated -->
 
 The sending station is the envelope's `src.station`, which is what Core's handlers read. The register, the
-heartbeat and the robot watch also carry the uid as `station_id`, which an edge still sends for an older Core and
-Core does not read. [`LinesideLevelReport`](#linesidelevelreport) carries the same uid as `station`, on the same
-terms: a v0.18.0 Core reads it, and this Core reads `src.station` only.
+heartbeat, the robot watch and [`LinesideLevelReport`](#linesidelevelreport) don't repeat it in the body. A v0.19.0
+Edge still does (`station_id`, `station`); Core ignores those keys.
 
 #### CellCatalog
 
@@ -682,7 +679,6 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 
 ```json
 {
-  "station_id": "stn-4f8a1c02b7e39d15",
   "feeds":      {"nodes": "3f9c0a1b2d4e5f60", "scene": "", "catalog": "a3c26451e6bac0e0"}
 }
 ```
@@ -691,12 +687,11 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the heartbeating station's UID, as registered. Core reads the envelope's Address.Station instead; the Edge still sends this copy for a Core older than that. |
 | `timezone` | string | omitempty | Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads it once at boot (not live), so the wire value flips only when a process that actually renders the new zone comes up — Core's table shows what each edge is ON, never "saved but not yet restarted". |
 | `tick_pending` | integer | omitempty | TickPending and TickOldestUnsentAgeMS are the production-tick shipper's lag at send time: shippable counter_snapshots rows past its cursor, and the age of the oldest of them in ms (0 when none). Core keeps the latest per station and flags one whose feed has stalled. Absent from an Edge without the shipper, or when the read failed — never a zero nobody measured. |
 | `tick_oldest_unsent_age_ms` | integer | omitempty | See `tick_pending`. |
 | `feeds` | object (string → string) |  | Feeds names, per Core feed this Edge holds (FeedContainment, ...), the digest it holds — "" when it holds nothing yet. Core answers each key on the ack and sends the feed where they differ (see feeds.go). NOT omitempty: nil is how Core recognises an Edge that predates feeds and does nothing new for it, so a new Edge always sends at least {}. |
-| `owned` | object (string → string) |  | Owned is the other direction of THE RULE (feeds.go): per family of data this Edge owns and Core holds a copy of (AllOwned), the family's digest as this Edge holds it, OwnedDigest of its members. Core answers each family on the ack (EdgeHeartbeatAck.Owned) and the Edge sends the members that differ. Absence, three ways. nil (the key's value null; NOT omitempty, so a new Edge always sends at least {}) is an Edge that does not speak the owned map: the old fields serve it, and Core answers EdgeHeartbeatAck.Claims and .BinWatch and no Owned. A family left off is one this Edge could not read: Core answers nothing for it and nothing is sent for it. A family that holds none is present at OwnedDigest of no members, a real digest, never "". |
+| `owned` | object (string → string) |  | Owned is the other direction of THE RULE (feeds.go): per family of data this Edge owns and Core holds a copy of (AllOwned), the family's digest as this Edge holds it, OwnedDigest of its members. Core answers each family on the ack (EdgeHeartbeatAck.Owned) and the Edge sends the members that differ. Absence, three ways. nil (the key's value null; NOT omitempty, so an Edge always sends at least {}) quotes no map, and Core answers no Owned. A family left off is one this Edge could not read: Core answers nothing for it and nothing is sent for it. A family that holds none is present at OwnedDigest of no members, a real digest, never "". |
 
 <!-- /generated -->
 
@@ -715,7 +710,7 @@ Acknowledges a successful edge registration via `data` message with subject `edg
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID echoes the registered station's UID. |
+| `station_id` | string |  | StationID echoes the registered station's UID, for a v0.19.0 Edge, the floor, which logs it. This Edge logs its own and does not read it: the key goes when FloorEdge is the release that stopped reading it. |
 | `message` | string | omitempty | Message is a human-readable status message. |
 | `ephemeral_topic` | string | omitempty | EphemeralTopic is the ephemeral topic (ephemeral.go) Core has created and verified, as on EdgeHeartbeatAck.EphemeralTopic; absent when it has none. Every registration and every ack states it afresh. |
 
@@ -729,8 +724,7 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 {
   "station_id": "stn-4f8a1c02b7e39d15",
   "server_ts":  "2026-02-18T10:01:01Z",
-  "feeds":      {"nodes": "3f9c0a1b2d4e5f60", "scene": "9d1e", "catalog": "a3c26451e6bac0e0"},
-  "claims":     {"PR1": "f407896ad88a27dd"}
+  "feeds":      {"nodes": "3f9c0a1b2d4e5f60", "scene": "9d1e", "catalog": "a3c26451e6bac0e0"}
 }
 ```
 
@@ -738,15 +732,13 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID echoes the heartbeating station's UID. |
+| `station_id` | string |  | StationID echoes the heartbeating station's UID, kept for a v0.19.0 Edge's log line as EdgeRegistered.StationID is. |
 | `server_ts` | timestamp |  | ServerTS is Core's clock when it answered. The edge compares it with its own and shows the offset on /status; the offset includes Core's outbox delay. |
 | `timezone` | string | omitempty | Timezone is the plant's IANA zone as EXPLICITLY CONFIGURED on Core, and empty when Core has not been told either. It is deliberately not Core's RESOLVED zone: resolving folds in Core's own default, so an unconfigured site would broadcast that default to every edge with the confidence of an answer, the blank-zone warnings would clear, and a value nobody chose would quietly become the plant's clock. Empty propagates nothing and leaves every box visibly unset, which is the honest state. An edge adopts it only to FILL A BLANK — see the edge handler. Config arriving over a network must never overwrite a zone somebody typed locally. Additive, like EdgeRegister.Timezone: an old edge ignores the unknown field, and an old Core sends nothing, which a new edge reads as "Core has no opinion" rather than as an instruction. |
 | `display_name` | string | omitempty | DisplayName is the station's name for people, as Core's registry holds it (edge_registry.display_name, set on Core's Stations page). Core owns it; the Edge shows it and has no control that edits it. A POINTER, AND ABSENT IS AN ANSWER, unlike Timezone: Core owns the name, so an empty one is a value the Edge follows. nil (no key) is no answer: an older Core, or one whose registry write for this heartbeat failed or found no row; the Edge keeps the name it holds. "" is Core holding no name for the station (an unclaimed one, or a name cleared on Core); the Edge shows the uid. Anything else is the name. Additive: an older Edge ignores the key. |
 | `feeds` | object (string → string) |  | Feeds is Core's current digest for each key the heartbeat named that Core could read. A key Core failed to read is absent — not "", which would be a digest of nothing — so the Edge confirms nothing it was not told. NOT omitempty: a new Core always sends at least {}, and nil is how the Edge recognises an older Core and keeps its own timers running. |
-| `owned` | object (string → [`OwnedAnswer`](#ownedanswer)) |  | Owned answers the heartbeat's Owned: per family it named that Core could read, Core's digest of what it holds from this Edge and, only when that digest differs from the heartbeat's, the members themselves (OwnedAnswer). The Edge sends each member it holds that differs or that Core lacks, sends empty each member Core holds that it lacks, and confirms the rest. Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is a Core that does not speak the owned map, or a heartbeat that sent none: the old fields serve, so the Edge reads Claims and BinWatch as before and sends no SubjectEdgeCells. A family left off is one Core could not read (or does not serve): the Edge sends nothing for it and confirms nothing. A family whose answer holds no members is Core holding none. |
-| `claims` | object (string → string) |  | Claims is, for every process Core holds a plant-claims report for from this station, the digest that arrived with that process's last report. The Edge re-publishes a process whose digest differs or is missing, and publishes an empty report for a name it no longer has. nil means Core could not read them (or is older); {} means it holds none. The old field for OwnedClaims: Core fills it only for a heartbeat with no Owned (TestHeartbeatAck_TheOwnedMapPerFamily), and the Edge reads it only from an ack with no Owned. |
-| `bin_watch` | string | omitempty | BinWatch is the digest of the bins watch list Core holds for this Edge, as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge publishes its list when this differs from its own. A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core without the bins feed, and the Edge then reads bins as it did before and publishes nothing. An Edge that sends no Feeds is not answered either. The old field for OwnedBinWatch, under the same rule as Claims. |
-| `asks` | string[] | omitempty | Asks is every ask kind this Core answers (protocol.AskKinds, as registered), sorted. The Edge sends an ask of a kind only while the last ack named it, and refuses the act otherwise: nil (absent) is a Core without the ask pair. Not sent to an Edge that sends no Feeds. |
+| `owned` | object (string → [`OwnedAnswer`](#ownedanswer)) |  | Owned answers the heartbeat's Owned: per family it named that Core could read, Core's digest of what it holds from this Edge and, only when that digest differs from the heartbeat's, the members themselves (OwnedAnswer). The Edge sends each member it holds that differs or that Core lacks, sends empty each member Core holds that it lacks, and confirms the rest. Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is no answer: the Edge sends nothing and settles nothing. A family left off is one Core could not read (or does not serve): the Edge sends nothing for it and confirms nothing. A family whose answer holds no members is Core holding none. |
+| `asks` | string[] | omitempty | Asks is every ask kind this Core answers (protocol.AskKinds, as registered), sorted. The Edge sends an ask of a kind only while the last ack named it, and refuses the act otherwise: nil (absent) is a Core without the ask pair. |
 | `ephemeral_topic` | string | omitempty | EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created and whose retention it read back and verified; absent when it has none. AN EDGE TOUCHES THE TOPIC ONLY WHILE THE LAST ACK OR REGISTRATION NAMED IT: absent from a later one (an older Core, or one that could not verify it) stops the Edge's reader and writer. Additive: an older Edge ignores the key and never reads the topic. |
 
 <!-- /generated -->
@@ -758,8 +750,8 @@ The heartbeat's `owned` quotes, per family, the edge's digest (`OwnedDigest` ove
 `owned` answers, per family Core could read, Core's digest and, only when it differs, the members Core holds; the
 edge sends the members that differ. The families are `AllOwned` in `protocol/feeds.go`: `claims` (a member per
 process, carried by `plant.claims`), `bins.watch` and `cells` (one member each, carried by `bins.watch` and
-`edge.cells`; an empty list or catalog is no member). Absence: `owned` null is a peer that does not speak the map,
-for which the old `claims` and `bin_watch` serve; a family left off is one the sender could not read, and nothing is
+`edge.cells`; an empty list or catalog is no member). Absence: `owned` null quotes or answers nothing,
+and nothing is sent for it; a family left off is one the sender could not read, and nothing is
 sent for it; a family with no members is one that holds none.
 
 <!-- generated: protocol struct OwnedAnswer -->
@@ -816,7 +808,6 @@ composition root registers it behind `router.ReadEphemeral`.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station_id` | string |  | StationID is the watching Edge's station uid. Core keys the watch on the envelope's source station and does not read this copy (a Core before that dropped a watch whose StationID was another station). |
 | `order_uuids` | string[] |  | OrderUUIDs are the Core order uuids this Edge's operator stations are showing, together, sorted and each once. Core honours only the ones whose order is this station's. Every watch replaces the one before it. |
 
 <!-- /generated -->
@@ -852,13 +843,13 @@ composition root registers it behind `router.ReadEphemeral`.
 #### Node bins feed
 
 The bins at the nodes an edge's operator stations draw, held by the edge as a copy. The edge owns the watch
-list and Core quotes its digest on the ack (`bin_watch`); Core owns the snapshot, feed key `bins`, one per edge.
+list and Core quotes its digest on the ack (`owned`, family `bins.watch`); Core owns the snapshot, feed key `bins`, one per edge.
 Both digests are in `protocol/feeds.go` (`BinWatchDigest`, `NodeBinsDigest`).
 
 #### BinWatchList
 
 Sent on `bins.watch`: the Core node names an edge's operator stations draw, sorted, each once, with their digest.
-Core keeps the latest per edge in memory, quotes its digest on every heartbeat ack (`bin_watch`) and answers each
+Core keeps the latest per edge in memory, quotes its digest on every heartbeat ack (`owned`, family `bins.watch`) and answers each
 list with that edge's `bins` snapshot.
 
 <!-- generated: protocol struct BinWatchList -->
@@ -1259,7 +1250,7 @@ full snapshot. Edge publishes (`PlantClaimsPublisher`):
 - every process, at boot and on every `edge.registered` (which is how a restarted Core is refilled: it asks an
   edge it does not know to re-register);
 - every process whose digest differs from the one Core holds, as the heartbeat ack answers the `claims` family
-  (`owned`, or `claims` from an older Core; the Edge compares from its cached digests and sends through
+  (`owned`; the Edge compares from its cached digests and sends through
   `(*PlantClaimsPublisher).SendClaims`), which heals a lost or out-of-order report within a heartbeat or two;
 - every process on `plant_claims.snapshot_interval` (60 min by default), only while Core does not quote digests.
 
@@ -1657,8 +1648,7 @@ Sent on `inventory.uop_adjustment`: an operator's UoP correction on Core, pushed
 | `adjusted_at` | timestamp |  |  |
 | `released` | boolean | omitempty | Released, when true, means the bin was MOVED off CoreNodeName in Core (admin Move). Edge clears that node's active_bin_id so its PLC ticks stop attributing consumption to a bin that has left, instead of applying NewRemaining (which is ignored when Released). Reuses this Core→Edge channel rather than a separate subject. Older Edges ignore the field. |
 | `placed_seq` | integer | omitempty | PlacedSeq is set only with Released: the move's own placement stamp (a bin_placement_seq value), taken in the hand move's transaction. Every landing the move ends was stamped before it, and a later return is stamped after it, so the Edge refuses a Released when the seat's placed_seq is greater than PlacedSeq: that seat holds a landing the move did not end (processes.ClearActiveBinIfBound; PIN: TestHandleUOPAdjustment_ALateReleasedDoesNotClearTheCarrierLandedAgain). Absent or 0 is an older Core, and the Edge clears as it always has. Older Edges ignore the field. |
-| `bound` | boolean | omitempty | Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin Move mirroring a physical relocation the robot-delivery path never recorded — manual fork-truck recovery, a failed delivery that left the bin unregistered). Edge binds that node's runtime to the bin: active_bin_id = BinID, active_bin_epoch = Epoch, remaining_uop_cached = NewRemaining — so its PLC ticks resume counting the arrived bin. The dual of Released; Core sets exactly one of the two per message. Core's Move guarantees the destination held no other bin, so Edge binds ahead of its active-bin guard and overwrites any stale pointer. Older Edges ignore the field. |
-| `epoch` | integer | omitempty | Epoch carries the bin's delta_epoch so a bind seeds active_bin_epoch correctly and subsequent BinUOPDeltas carry the right generation for Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node) and on a plain count correction (record_count): when the correction lands on a staged-but-unbound bin, Edge binds it with this epoch, so the resumed delta stream carries the bin's current generation. Zero on the Released path and from older Cores. |
+| `epoch` | integer | omitempty | Epoch carries the bin's delta_epoch. Set on a plain count correction (record_count): when the correction lands on a staged-but-unbound bin, Edge binds it with this epoch, so the resumed delta stream carries the bin's current generation, as Core's epoch-aware dedup needs. Zero on the Released path and from older Cores. |
 | `as_of_net` | integer | omitempty | AsOfNet and AsOfSeq are Core's applied_net and last_seq for (AsOfStation, BinID, Epoch), read in the transaction that wrote NewRemaining: how much of that station's running net Core had applied when it set the count. The station named, holding BinID at Epoch, rebases: remaining = NewRemaining + (flushed_net - AsOfNet) + unflushed and ignores an adjustment whose AsOfSeq is below the one it last took for the same (bin, epoch). Set on every count Core states, per addressed station: that station's cursor for the carrier in this generation, or net 0 at seq 0 when it has none (always so for a reset, whose generation is new). nil only when the station's cursor has no running net (an Edge built before it), on a placement, and from an older Core; the station then writes NewRemaining as is, which is also what an Edge that predates the fields does. |
 | `as_of_seq` | integer | omitempty | See `as_of_net`. |
 | `as_of_station` | string | omitempty | AsOfStation is the station whose stream AsOfNet measures: the copy's own addressee. Any other station modelling the node takes NewRemaining as is. |
@@ -1860,7 +1850,6 @@ comparison.
 
 | Field | Type | Omitted when zero | Description |
 |---|---|---|---|
-| `station` | string |  |  |
 | `reported_at` | timestamp |  |  |
 | `entries` | [`LinesideLevelEntry`](#linesidelevelentry)[] |  |  |
 
@@ -2133,7 +2122,9 @@ Fleet reports that the robot has completed delivery at the destination node. The
 {
   "order_uuid":        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "delivered_at":      "2026-02-18T10:13:45Z",
-  "staged_expire_at":  "2026-02-18T10:23:45Z"
+  "bin_id":            4711,
+  "delivery_node":     "ALN_001",
+  "landing_sent":      true
 }
 ```
 
@@ -2143,14 +2134,10 @@ Fleet reports that the robot has completed delivery at the destination node. The
 |---|---|---|---|
 | `order_uuid` | string |  | OrderUUID is the edge's order UUID. |
 | `delivered_at` | timestamp |  | DeliveredAt is when the fleet reported the physical delivery. |
-| `staged_expire_at` | timestamp | omitempty | StagedExpireAt, when present, puts the order in staged (dwelling) until this time or until an order.release arrives. Absent on a delivery that does not stage. |
 | `bin_id` | integer | omitempty | BinID is the Core id of the carrier the order leaves at its process node: the order's one cart, or, for an order that carries several, the cart its plan sets down last at the process node (see BinDestNode). Nil when the order carries no cart at delivery, or when no cart of a multi-bin order rests at the process node. The Edge checks it against the carrier bound at that seat. |
-| `uop_remaining` | integer | omitempty | UOPRemaining and DeltaEpoch are BinID's count and delta_epoch, read by Core after the bin's arrival is applied (handleOrderDelivered). UOPRemaining is nil when no bin is named or Core could not read the bin's row, and 0 for a carrier counted empty. A current Edge binds nothing from them (the landing binds); for an older Core they bind through the landing verb, and a nil count binds nothing (engine.landFromOldCore). DeltaEpoch 0 is the unknown sentinel. Both are meaningful only when BinID is set. |
-| `delta_epoch` | integer | omitempty | See `uop_remaining`. |
-| `bin_payload_code` | string | omitempty | BinPayloadCode is BinID's payload, read from the same row as UOPRemaining: what the carrier holds, which the Edge has no bins table to look up. It is not the active style's claim payload, which is what the cell asked for and differs from what stands there once a changeover moves the cell on under a carrier that stays. Pointer so "not established" (nil) is distinguishable from a carrier known to be empty (""); the Edge keeps the pair apart as RuntimeState.LinesidePayloadKnown. Meaningful only when BinID is set. |
 | `delivery_node` | string | omitempty | DeliveryNode is the Core dot-name of the destination. Populated for all orders so the Edge can bind the runtime cache even when the order was created on Core directly (no Edge order row). Broadcast to all edges when the order has no station (stationID==""); omitempty so older Edge builds ignore the field silently. |
 | `bin_dest_node` | string | omitempty | BinDestNode is the Core dot-name of the node BinID's cart comes to rest at, set only for an order that carries several carts. For a swap it is the authoritative per-bin landing node, unlike DeliveryNode (the last dropoff — the supermarket for the evac leg) or a steps-derived final dropoff. The Edge's check applies when BinDestNode equals its process node's CoreNodeName. Empty for a single-cart order, which the Edge gates on its steps' final dropoff or DeliveryNode. |
-| `landing_sent` | boolean | omitempty | LandingSent says the sending Core announces every carrier's drop on SubjectBinLanded, so the Edge binds nothing from this message. Unset, the sender is an older Core that sends no landing, and the Edge routes the carrier fields above through its landing verb with no placement stamp: into an empty slot or onto the same bin only, never over a different bound carrier. |
+| `landing_sent` | boolean | omitempty | LandingSent is kept for a v0.19.0 Edge, the floor: unset, that Edge takes the sender for an older Core and binds from this message. Core always sets it; this Edge does not read it (a delivered binds nothing: the carrier's landing does, SubjectBinLanded). It goes when FloorEdge is the release that stopped reading it. |
 
 <!-- /generated -->
 
@@ -2735,8 +2722,8 @@ An analytics system can subscribe to one or both topics to build a complete pict
 | Acknowledgement time | Time between `order.request` `ts` and `order.ack` `ts` (use `cor` or match `order_uuid`) |
 | Error rate | Count `order.error` / count `order.request` per time window |
 | Error breakdown | Group `order.error` by `error_code` |
-| Edge uptime | Track `data` messages with subject `edge.heartbeat` gaps per `station_id`; the interval is 60 s, and Core itself calls a station stale after `messaging.stale_edge_threshold` (15 min by default) |
-| Active edges | Count distinct `station_id` from `data` messages with subject `edge.heartbeat` in the last few heartbeat intervals |
+| Edge uptime | Track `data` messages with subject `edge.heartbeat` gaps per `src.station`; the interval is 60 s, and Core itself calls a station stale after `messaging.stale_edge_threshold` (15 min by default) |
+| Active edges | Count distinct `src.station` from `data` messages with subject `edge.heartbeat` in the last few heartbeat intervals |
 | Orders per edge | Group `order.request` by `src.station` |
 | Material demand | Group `order.request` by `payload_code` and `delivery_node` |
 | Robot utilization | Track `waybill_id` and `robot_id` from `order.waybill` messages |
@@ -2788,7 +2775,6 @@ shingo.dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
   "p": {
     "subject": "edge.register",
     "data": {
-      "station_id": "stn-4f8a1c02b7e39d15",
       "hostname": "edge-01.local",
       "version": "1.2.0"
     }
@@ -2832,7 +2818,6 @@ shingo.dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
   "p": {
     "subject": "edge.heartbeat",
     "data": {
-      "station_id": "stn-4f8a1c02b7e39d15",
       "feeds": {}
     }
   }
