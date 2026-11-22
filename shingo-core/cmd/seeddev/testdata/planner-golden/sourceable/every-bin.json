@@ -511,6 +511,26 @@
       "sourceable_sql": false
     },
     {
+      "bin": "BIN-MT-18",
+      "node": "UTN_016",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-19",
+      "node": "UTN_017",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-20",
+      "node": "UTN_018",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-21",
+      "node": "UTN_021",
+      "sourceable_sql": false
+    },
+    {
       "bin": "BIN-PA-01",
       "payload": "PANEL-A",
       "node": "SMN_001",

@@ -51,9 +51,10 @@ must show the plant lasting the run before a number taken on it counts.
 
 - Every part is balanced, drained, loader-fed or IDLE (a loader whose part only a style
   not running consumes) but `[demo]`'s PANEL-A and PANEL-B; every pool holds its floor
-  (`SYN_STAMP` 9 empties against 5, `SYN_COMP` 16 against 7, `SMN_L2` 7 against 7,
-  `SYN_MARKET` 17 against 16). A plain pool's floor counts every carrier type together:
-  it does not say `SYN_MARKET` stands enough of each type. Every kanban stands at its
+  by carrier type (`SYN_STAMP` 9 empties against 5, `SYN_COMP` 16 against 7, `SMN_L2` 7
+  against 6, `SYN_MARKET` STANDARD 16 against 16, with no margin, and 5 STANDARD-SM that
+  no draw there needs). Summed, `SYN_MARKET` stood 17 against 16 while its STANDARD was
+  4 short; Lane_21-22 hold the four (2026-11-22). Every kanban stands at its
   want and every family at its pool.
 - simcalc `-carriers` fails a kanban that takes back more than it spends, and a kanban
   that names no source and stands under demand × transit (10 minutes unless `-transit`)

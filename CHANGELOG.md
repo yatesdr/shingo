@@ -21,6 +21,7 @@ Deploy: Edge v60, and no new Core migration (Core's migration 190 is edited in p
 - The sim plant's sizing check (simcalc) fails a kanban that takes back more carts than it draws, or that names no source and stands fewer than a transit's worth, and counts what its keeper pulls from elsewhere
 - In the sim plant, the finished-goods unloader sends empty carriers back to the market, so the press-empties kanban no longer fills with one type and starves a press
 - In the sim plant, the five-press kanban has ten more carts and positions, so five presses drawing a cart a minute no longer share two spares
+- The sim plant's sizing check counts each carrier type's empties in a store against that type's own need, and the sim plant's market has four more empty carts of the type it was short
 - A station that is applying every update is no longer flagged "not converging" on Core's Edges page or on the Edge's own status for quoting a copy a few changes old
 - A station that applies each sourcing change as Core sends it is no longer flagged "sourcing not converging" on the Edges page
 - A station that applies each containment change as Core sends it is no longer flagged "containment not converging" when several come close together

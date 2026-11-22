@@ -52,8 +52,8 @@
 #     -edge shingo-edge/shingoedge.dev.yaml,shingo-edge/shingoedge.edge2.yaml [-carriers -run 400m]
 #
 # (make dev-rates / dev-carriers.) -carriers passes: every pool, kanban and family
-# holds the run as it counts them (a plain pool's floor counts every carrier type
-# together); the [demo] press-empties kanban is seeded to its family pools for it
+# holds the run, each floor by carrier type; the [demo] press-empties kanban is
+# seeded to its family pools for it
 # (its zone says how). One [demo] finding stands, demo-sim's and nameplate: the rate
 # check's PANEL-A and PANEL-B STARVE, because a weld's effective draw is set by its
 # swap cadence, about a third of nameplate (shingoedge.dev.yaml's PRESS-1 block),
@@ -297,7 +297,8 @@ zones:
     # whole group: a robot parked at Lane_05's own mark had already committed to
     # Lane_05 before anybody asked whether Lane_05 was the right answer.
     #
-    # FIFTEEN, one per lane, and the count is deliberate for this migration
+    # FIFTEEN, one per lane when they moved here (Lane_21/22 came later, for
+    # carts, not for waiting room), and the count is deliberate for this migration
     # rather than a model of anything. It preserves the fixture's total waiting
     # capacity so a run here stays comparable to the per-lane runs before it —
     # the sim's position gate treats a wait point as an exclusive place (one
@@ -336,8 +337,8 @@ zones:
   # so it doesn't need deep buffer — 3 lanes was oversized. Freed nodes go to the tight markets.
       # -- finished-goods ASSY (folded from SYN_SM_FG into SYN_MARKET) --
       - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
-  # Empty-carrier segment. Empties cycle unloader→here→press/loader. FIVE lanes
-  # (Lane_11-14 plus Lane_19's headroom), all depth-3, and they store LKND like every other
+  # Empty-carrier segment. Empties cycle unloader→here→press/loader. SEVEN lanes
+  # (Lane_11-14, Lane_19's headroom, Lane_21-22), all depth-3, and they store LKND like every other
   # lane in this zone -- this said "4 lanes" and "DPTH store (fill shallow-first)", both
   # left over from the standalone SYN_MT_Return zone that was folded into SYN_MARKET
   # (2026-07-12). The store algorithm is a property of the GROUP, and SYN_MARKET's is LKND,
@@ -350,6 +351,14 @@ zones:
       - {name: Lane_14, slots: [{name: UTN_010, depth: 1}, {name: UTN_011, depth: 2}, {name: UTN_012, depth: 3}]}
       # Lane_19 = extra empty headroom so returned empties don't leave air bubbles behind.
       - {name: Lane_19, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}]}
+      # Lane_21/22 = four more empty STANDARD (2026-11-22), in lanes of their own so no
+      # headroom lane is eaten. SYN_MARKET's STANDARD floor is 16: 1.00 a minute over the
+      # 10 minutes simcalc allows, and the 6 stations drawing STANDARD here (the two ASSY
+      # welds and the BRKT, CLIP and STUD loaders). It stood 12, and its 5 STANDARD-SM
+      # are no empty to a STANDARD station (simcalc -carriers, SHORT BY;
+      # TestMasterCarriers_MarketStandardFloorOverABand). 16 on 16: no margin.
+      - {name: Lane_21, slots: [{name: UTN_016, depth: 1}, {name: UTN_017, depth: 2}, {name: UTN_018, depth: 3}]}
+      - {name: Lane_22, slots: [{name: UTN_019, depth: 1}, {name: UTN_020, depth: 2}, {name: UTN_021, depth: 3}]}
 
   # ── A lineside kanban, and the only flat zone here. ──
   #
@@ -1145,7 +1154,7 @@ stations:
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
 # nodes seeded ABOVE reorder so flow establishes before the first reorder. Empties pool in
-# SYN_MARKET's empties lanes (Lane_11-14, Lane_19) -- there is no SYN_MT_Return zone in
+# SYN_MARKET's empties lanes (Lane_11-14, Lane_19, Lane_21-22) -- there is no SYN_MT_Return zone in
 # this file. Bin LABELS are a separate namespace from node names.
 bins:
 
@@ -1258,6 +1267,12 @@ bins:
   # making silently.
   - {name: BIN-MT-16, slot: SMN_035, bin_type: STANDARD-SM}
   - {name: BIN-MT-17, slot: SMN_036, bin_type: STANDARD-SM}
+  # FOUR MORE STANDARD, in lanes added for them (Lane_21/22's note says why), so the
+  # trade above is not made: Lane_21 full, Lane_22 packed from the back.
+  - {name: BIN-MT-18, slot: UTN_016}
+  - {name: BIN-MT-19, slot: UTN_017}
+  - {name: BIN-MT-20, slot: UTN_018}
+  - {name: BIN-MT-21, slot: UTN_021}
 
   # ══ [corridor] SYN_STAMP and SYN_COMP ════════════════════════════════════════════════════════
   # The corridor at birth: lane-stress-packed's placements, slot for slot, ages kept.
