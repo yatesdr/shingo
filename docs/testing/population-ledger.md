@@ -2293,3 +2293,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: `shingo-edge/engine/wiring_completion.go` (`handleNodeOrderFailed`'s PIN)
 - verified at: the commit that adds this row
+
+### STALE — `TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack`
+- test: `TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack` · pkg `shingocore/cmd/seeddev` · run `-run '^TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack$'` · `shingo-core/cmd/seeddev/seed_demo_mg2_test.go:190` @ `6bd55616` · tags `docker`
+- code: STALE (the return edge it required is the rig defect edge-db-followups Lane E removed)
+- assertion map: renamed `TestSeedDemo_PressesDrawFromTheGroupAndOnlyTheKeeperRefillsIt` (same file). "some claim's outbound_destination is SYN_PRESS_EMPTIES" → "none is, and UNLOADER-A returns drained carriers to the pool ASSY draws its empties from". The push-in and the `coming` term it wanted exercised → `TestKanbanRig_PressAndP5KanbansKeepThePushIn` (`shingo-core/cmd/seeddev/kanban_rig_docker_test.go`), end to end on the two lineside press kanbans. The presses' draw and the second-style assertions are unchanged.
+- mutation: `plants/master.yaml`, UNLOADER-A's `outbound_destination` put back to SYN_PRESS_EMPTIES · the renamed test red on both new assertions
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none (`git grep` found the name only at its declaration)
+- verified at: the commit that adds this row

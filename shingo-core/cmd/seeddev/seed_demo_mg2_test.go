@@ -25,9 +25,8 @@ import (
 //
 // SO IT ASSERTS THE LOOP, NOT THE PLANT. No row counts, no totals, nothing that
 // changes when somebody adds a weld — only the four facts that make the loop a
-// loop: the group is flat and has spare positions, it is seeded at its declared
-// level in both types, the presses draw from it, and the unloader pushes back
-// into it.
+// loop: the group is flat and has spare positions, it is seeded at its pools
+// in both types, the presses draw from it, and only the keeper refills it.
 
 func demoPlant(t *testing.T) *plantspec.Plant {
 	t.Helper()
@@ -187,7 +186,7 @@ func TestSeedDemo_KanbanIsSeededAtItsPools(t *testing.T) {
 //
 // Without these the group is a shape with nothing routed to it — which is
 // exactly what MG1 left behind, and what MG2-0 exists to finish.
-func TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack(t *testing.T) {
+func TestSeedDemo_PressesDrawFromTheGroupAndOnlyTheKeeperRefillsIt(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "edge.db")
@@ -243,18 +242,26 @@ func TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack(t *testing.T) 
 		t.Fatalf("no produce claim on any process %s supports", group)
 	}
 
-	// And something must push carriers back in, or the keeper is the only supply
-	// and the loop never exercises the `coming` term.
-	pushesBack := 0
+	// And nothing pushes into it. UNLOADER-A did, three STANDARD in for one
+	// drawn (TestMasterCarriers_EachRepairIsNeededOnItsOwn). Its carriers go back
+	// where ASSY draws them; the `coming` term and the push-in are PRESS-KANBAN's
+	// and P5-KANBAN's (TestKanbanRig_PressAndP5KanbansKeepThePushIn).
+	drewFrom, returnsTo := map[string]bool{}, ""
 	for _, c := range plant.Claims {
 		if c.OutboundDestination == group {
-			pushesBack++
+			t.Errorf("claim %s/%s has outbound_destination %s. The keeper is that group's only "+
+				"supply: send the carrier back to the pool its part drew it from", c.CoreNode, c.Style, group)
+		}
+		if c.Role == "produce" && c.Payload == "ASSY" {
+			drewFrom[c.InboundSource] = true
+		}
+		if c.CoreNode == "FGN_001" && c.Style == "UNLOADER-A-RUN" {
+			returnsTo = c.OutboundDestination
 		}
 	}
-	if pushesBack == 0 {
-		t.Errorf("no claim has outbound_destination %s. Without a return path the keeper is "+
-			"the only supply, and CountTypedInboundToGroup — the `coming` term the whole "+
-			"subtraction turns on — is never exercised by the loop", group)
+	if len(drewFrom) != 1 || !drewFrom[returnsTo] {
+		t.Errorf("UNLOADER-A returns drained carriers to %q and ASSY draws its empties from %v; "+
+			"set its outbound_destination to that pool", returnsTo, drewFrom)
 	}
 
 	// The changeover the campaign runs needs somewhere to change over TO.

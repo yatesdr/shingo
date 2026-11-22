@@ -19,6 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration
 
 - The sim plant's sizing check (simcalc) fails a kanban that takes back more carts than it draws, or that names no source and stands fewer than a transit's worth, and counts what its keeper pulls from elsewhere
+- In the sim plant, the finished-goods unloader sends empty carriers back to the market, so the press-empties kanban no longer fills with one type and starves a press
 
 ## v0.19.0 — 2026-11-22
 

@@ -77,20 +77,19 @@ dev-rates: ## Fill/starve AND carrier-deadlock check on $(PLANT) (no Docker need
 	# full, zero empty, PRESS-2 stalled, retrieve_empty orders queued for the
 	# rest of the run. What that run exposed was a tool defect too: simcalc
 	# read SYN_MARKET at a 0.45 bins/min deficit it created itself (half a
-	# closed loader loop charged as a market draw; a kanban's surplus
-	# stranded instead of overflowing back — fixed in the simcalc rework). The
+	# closed loader loop charged as a market draw — fixed in the simcalc rework). The
 	# rig jam was real anyway — the pool DID run dry — and the corrected
 	# checker still names the mechanism that dries it: input coupling, where a
 	# consumer with a second part waits, its producer keeps filling, and that
 	# bin type's empties go to zero.
 	#
 	# ON THE MASTER (plants/README.md, "Sized for the run"): every pool, kanban and
-	# family holds $(RUN). Two [demo] lines stay red, demo-sim's: the rate check's
-	# PANEL-A/B STARVE and the carrier check's SYN_MARKET RATE DEFICIT. Both cost
-	# WELD-1/2 at their 6/min nameplate, while the presses tick at the welds' measured
-	# swap-cadence draw (23 s / 22 s, set 2026-10-09; the PRESS-1 block of
-	# shingoedge.dev.yaml says why), and a rate deficit fails whatever the stock.
-	# Re-measure before retuning.
+	# family holds $(RUN) as the carrier check counts them. The rate check stays red
+	# on [demo]'s PANEL-A/B STARVE, demo-sim's, so this target stops there and
+	# `make dev-carriers` is the one that passes. STARVE costs WELD-1/2 at their
+	# 6/min nameplate, while the presses tick at the welds' measured swap-cadence
+	# draw (23 s / 22 s, set 2026-10-09; the PRESS-1 block of shingoedge.dev.yaml
+	# says why). Re-measure before retuning.
 	#
 	# The carrier check EXITS NON-ZERO on a pool that cannot circulate, so this
 	# target fails on a plant that will deadlock. That is the point — a verdict

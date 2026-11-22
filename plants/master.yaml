@@ -11,8 +11,8 @@
 # Search for the tag to read one section whole.
 #
 #   [demo]      THE DEMO LOOP. PRESS-1/2 make panels into SYN_MARKET, WELD-1..5 eat them
-#               and the loader-fed components, UNLOADER-A drains ASSY into the press
-#               empties kanban, the level keeper tops it up. All four swap modes, a
+#               and the loader-fed components, UNLOADER-A drains ASSY back into the
+#               market, the level keeper feeds the press empties. All four swap modes, a
 #               multi-window, two single-window and a dedicated-positions loader. Ticks
 #               on EDGE 1 (edge1.line1).
 #   [multi-cart] Not a block of its own: the demo's PRESS-1 (two_robot_press_index, R2
@@ -51,12 +51,13 @@
 #   simcalc -plant plants/master.yaml \
 #     -edge shingo-edge/shingoedge.dev.yaml,shingo-edge/shingoedge.edge2.yaml [-carriers -run 400m]
 #
-# (make dev-rates / dev-carriers.) Every pool, kanban and family holds the run; the
-# [demo] press-empties kanban is seeded to its family pools for it (its zone says
-# how). Two [demo] findings stand, both demo-sim's and both nameplate: PANEL-A and
-# PANEL-B STARVE, and SYN_MARKET shows a rate deficit, because a weld's effective draw
-# is set by its swap cadence, about a third of nameplate (shingoedge.dev.yaml's
-# PRESS-1 block), and the measured tick rates are not retuned to the model.
+# (make dev-rates / dev-carriers.) -carriers passes: every pool, kanban and family
+# holds the run as it counts them (a plain pool's floor counts every carrier type
+# together); the [demo] press-empties kanban is seeded to its family pools for it
+# (its zone says how). One [demo] finding stands, demo-sim's and nameplate: the rate
+# check's PANEL-A and PANEL-B STARVE, because a weld's effective draw is set by its
+# swap cadence, about a third of nameplate (shingoedge.dev.yaml's PRESS-1 block),
+# and the measured tick rates are not retuned to the model.
 # plants/README.md has the figures.
 
 station_uid: edge1.line1
@@ -253,12 +254,12 @@ zones:
   # THE KANBAN LOOP (MG2-0) — the empty side of the same circle:
   #   SYN_PRESS_EMPTIES ──(empties)──→ PRESS-1, PRESS-2 ──(fulls)──→ SYN_MARKET
   #           ↑                                                          │
-  #           ├──────── UNLOADER-A pushes drained STANDARD carriers ──────┘
-  #           └──────── the level keeper covers the rest, from SYN_MARKET
+  #           └──────── the level keeper, and nothing else ──────────────┘
   #
-  #   4 STANDARD + 2 STANDARD-SM across 8 positions. The SM half has no direct
-  #   return path on purpose: it is refilled by the keeper alone, so a scenario
-  #   that breaks the keeper shows on one type while the other keeps running.
+  #   4 STANDARD + 2 STANDARD-SM across 12 positions. Neither half has a direct
+  #   return path: the welds' spent panel carriers go to SYN_MARKET and so do
+  #   UNLOADER-A's drained ASSY carriers, where ASSY drew them, and the keeper
+  #   brings back one for each the presses send out.
   #   PRESS-1 can change over to PANEL-C, which rides STANDARD-SM — that is how a
   #   changeover changes WHICH TYPE the group is asked for.
   #   PLK_LOADER (BRKT, multi-window) ─┐
@@ -361,9 +362,8 @@ zones:
   # front of it.
   #
   # LIVE AS OF MG2-0. Both presses source their empties from here
-  # (inbound_source below), the unloader pushes its drained carriers back in
-  # (outbound_destination), and the level keeper refills whatever that leaves
-  # short.
+  # (inbound_source below), and the level keeper is the only thing that refills
+  # it (TestSeedDemo_PressesDrawFromTheGroupAndOnlyTheKeeperRefillsIt).
   #
   # SIZED TO ITS POOLS (the master, 2026-11-06). A family's pool is the carts its
   # loop owns: its level plus, for each supported press, the most positions any
@@ -2064,20 +2064,17 @@ claims:
 
   # ── UNLOADER-A (manual_swap: pull full ASSY, return empty) ──
   #
-  # OUTBOUND INTO THE KANBAN (MG2-0). The drained carrier goes straight
-  # to the lineside kanban rather than back to the market, which closes the loop
-  # the keeper sits in: presses draw the group down, the unloader pushes some of
-  # it back, and the keeper covers whatever difference is left.
+  # OUTBOUND TO THE MARKET (2026-11-22), WHERE ASSY DREW THE CARRIER. Do not point
+  # it at SYN_PRESS_EMPTIES. It did from MG2-0: both welds make ASSY, 20 to a
+  # carrier, and only PRESS-1 takes STANDARD from that kanban, 30 to a carrier,
+  # so three came in for one drawn. A kanban has no overflow: it stood full of
+  # STANDARD, the keeper could land no STANDARD-SM, and PANEL-B stopped.
+  # simcalc -carriers fails that edge (RATE SURPLUS;
+  # TestMasterCarriers_EachRepairIsNeededOnItsOwn). It would hold again only if
+  # the presses drew STANDARD as fast as ASSY frees it.
   #
-  # It refills the STANDARD half only — ASSY rides STANDARD — and that asymmetry
-  # is wanted. The STANDARD-SM half has NO direct return path, so it is refilled
-  # by the keeper alone, and a scenario that breaks the keeper shows up on one
-  # type while the other keeps running. A loop where both halves self-heal would
-  # hide exactly the failure the campaign is looking for.
-  #
-  # Queue-on-full applies here like everywhere: a full group parks the push, and
-  # nothing cancels it. The two spare positions are what keep that from being the
-  # normal case.
+  # The push-into-kanban path is PRESS-KANBAN's and P5-KANBAN's
+  # (TestKanbanRig_PressAndP5KanbansKeepThePushIn).
   - core_node: FGN_001
     style: UNLOADER-A-RUN
     role: consume
@@ -2087,7 +2084,7 @@ claims:
     reorder_point: 0
     auto_reorder: false
     inbound_source: SYN_MARKET
-    outbound_destination: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
     auto_push: true
 
   # UNLOADER-B IS GONE. It drained PANEL-A, which WELD-1 consumes, and it existed
