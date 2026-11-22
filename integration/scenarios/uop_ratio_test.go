@@ -521,7 +521,27 @@ func (u *uopCell) consumeLine(line, part string, pack int) (proc, node, style in
 	})
 	mustNil(t, err, line+": the claim")
 	mustNil(t, edb.SetProcessNodeRuntime(node, &claim, 0), line+": the seat")
-	u.settle()
+	// The watch list is held by the process-wide node generation
+	// (processes.NodeGeneration), which a claim does not move. A bins push
+	// between the node's write and the claim's holds a list without the claim's
+	// stagings, and a parallel test's node write would rebuild it under the
+	// REQUEST, which then reads "built for another list" as occupied. So the
+	// list is rebuilt here, and the line is returned once the Edge may decide
+	// from a copy that answers its three places.
+	edge := u.edge.Engine
+	edge.StationService().InvalidateBinNodes()
+	u.waitFor(line+": the bins copy answers the new line", 15*time.Second, func() bool {
+		if ok, _ := edge.BinsActable(); !ok {
+			return false
+		}
+		rows := edge.LocalNodeBins().Rows
+		for _, n := range []string{line, line + "-IN", line + "-OUT"} {
+			if _, ok := rows[n]; !ok {
+				return false
+			}
+		}
+		return true
+	})
 	return proc, node, style
 }
 
