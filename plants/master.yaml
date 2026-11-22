@@ -2096,8 +2096,8 @@ claims:
   # OUTBOUND TO THE MARKET (2026-11-22), WHERE ASSY DREW THE CARRIER. Do not point
   # it at SYN_PRESS_EMPTIES. It did from MG2-0: both welds make ASSY, 20 to a
   # carrier, and only PRESS-1 takes STANDARD from that kanban, 30 to a carrier,
-  # so three came in for one drawn. A kanban has no overflow: it stood full of
-  # STANDARD, the keeper could land no STANDARD-SM, and PANEL-B stopped.
+  # so three came in for one drawn. A kanban has no overflow: STANDARD took the
+  # spare positions, the keeper could land no STANDARD-SM, and PANEL-B stopped.
   # simcalc -carriers fails that edge (RATE SURPLUS;
   # TestMasterCarriers_EachRepairIsNeededOnItsOwn). It would hold again only if
   # the presses drew STANDARD as fast as ASSY frees it.
