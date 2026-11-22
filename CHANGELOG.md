@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.19.0 — 2026-11-22
+
 Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration). The two run mixed either way: this Core serves a v0.17.2 Edge and this Edge a v0.18.0 Core, so an Edge may follow later. Nothing below the floor (Core v0.18.0, Edge v0.17.2) is refused; /edges marks it. Rollback: on Core, migrate down 190, 189, 188, 187 and 186 with this release's binary (newest first, as the installer prints them), then the previous binary; an Edge rolls back on its own.
 
 - A count, load or clear from Core (the Bins page, the line's count, a press finishing a cart) that reaches a station late, or after the station took the cart's new life from an epoch refresh, keeps the parts the station counted since; it used to write over them, or be ignored and leave the station's number off Core's
