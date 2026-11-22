@@ -91,3 +91,42 @@ func TestOpen_FailsWhenSchemaIncomplete(t *testing.T) {
 		t.Errorf("the failure does not name the table: %v", err)
 	}
 }
+
+// TestSchemaDrift_IsReportedAndRefusesNothing: a difference that is not a
+// missing table or column starts the Edge and is one line naming the object;
+// a born database reports none.
+func TestSchemaDrift_IsReportedAndRefusesNothing(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "drift.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if drift := db.DriftAtBoot(); len(drift) != 0 {
+		t.Fatalf("a born database reports drift: %v", drift)
+	}
+	for _, stmt := range []string{
+		"DROP INDEX idx_orders_status",
+		"ALTER TABLE orders ADD COLUMN by_hand TEXT",
+		"CREATE TABLE left_over (id INTEGER)",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	db.Close()
+
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("drift refused the start: %v", err)
+	}
+	defer db2.Close()
+	want := []string{
+		"schema drift: column orders.by_hand is in the database and not in this build's schema",
+		"schema drift: index idx_orders_status is missing (this build ships it)",
+		"schema drift: table left_over is in the database and not in this build's schema",
+	}
+	if got := strings.Join(db2.DriftAtBoot(), "\n"); got != strings.Join(want, "\n") {
+		t.Errorf("drift:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+}

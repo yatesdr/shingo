@@ -331,7 +331,9 @@ func (e *Engine) heldByCore(key, digest string) {
 	}
 }
 
-// FeedFlags lists the Edge-owned keys flagged as not converging, for /status.
+// FeedFlags is the Edge's flag list, for /status and Diagnostics: the
+// Edge-owned keys flagged as not converging, then the start's schema drift
+// (store.DriftAtBoot), which stands until a start finds none.
 func (e *Engine) FeedFlags() []string {
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
@@ -340,7 +342,7 @@ func (e *Engine) FeedFlags() []string {
 		out = append(out, text)
 	}
 	sort.Strings(out)
-	return out
+	return append(out, e.db.DriftAtBoot()...)
 }
 
 // LastCoreAck returns the local time of the last heartbeat ack and Core's

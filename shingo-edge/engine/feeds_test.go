@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
+	"shingoedge/internal/testdb"
+	"shingoedge/store"
 )
 
 // Whether Core speaks feeds is read off the ack's Feeds map: nil is an older
@@ -489,5 +492,25 @@ func TestSendDue_ARestartedCoreIsHealedAtOnce(t *testing.T) {
 	}
 	if got := e.FeedFlags(); len(got) != 0 {
 		t.Errorf("flags = %v, want none", got)
+	}
+}
+
+// TestFeedFlags_CarryTheStartsSchemaDrift: the start's drift report is on the
+// Edge's flag list, the one /status and Diagnostics read.
+func TestFeedFlags_CarryTheStartsSchemaDrift(t *testing.T) {
+	t.Parallel()
+	path := testdb.Path(t)
+	planted, err := store.OpenMigrated(path)
+	testutil.MustNoErr(t, err, "open")
+	_, err = planted.Exec(`ALTER TABLE orders ADD COLUMN by_hand TEXT`)
+	testutil.MustNoErr(t, err, "drift")
+	testutil.MustNoErr(t, planted.Close(), "close")
+
+	db, err := store.Open(path)
+	testutil.MustNoErr(t, err, "start")
+	defer db.Close()
+	const want = "schema drift: column orders.by_hand is in the database and not in this build's schema"
+	if got := testEngine(t, db).FeedFlags(); len(got) != 1 || got[0] != want {
+		t.Errorf("flags = %v, want %q", got, want)
 	}
 }

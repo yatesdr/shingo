@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -14,6 +15,11 @@ import (
 // and the file lacks fails the start, every one named at once. Nothing
 // creates it again at a start, so a hand-dropped table is this failure and
 // not an empty table made in silence (TestBoot_TheFilesAStartTakes).
+//
+// Every other difference (another column, index, trigger, type or foreign key)
+// is drift: it refuses nothing, is logged once at the start, and stands on the
+// Edge's /status flag list and Diagnostics for the life of the process
+// (DriftAtBoot; engine.FeedFlags).
 
 // shippedShape is the baseline's shape, parsed once per process.
 var shippedShape = sync.OnceValue(func() schema.Shape { return schema.ParseShape(schema.Baseline) })
@@ -62,14 +68,29 @@ func missingObjects(missing []string) error {
 		len(missing), strings.Join(missing, "\n  "), RetiredChainRelease)}
 }
 
-// verifySchema fails for a file that lacks a table or column this build ships.
+// verifySchema fails for a file that lacks a table or column this build ships,
+// and keeps every other difference as the start's drift report.
 func (db *DB) verifySchema() error {
-	missing, _, err := compareSchema(db.DB)
+	missing, differs, err := compareSchema(db.DB)
 	if err != nil {
 		return err
 	}
 	if len(missing) > 0 {
 		return missingObjects(missing)
 	}
+	for _, d := range differs {
+		line := "schema drift: " + d
+		log.Printf("store: %s", line)
+		db.driftAtBoot = append(db.driftAtBoot, line)
+	}
 	return nil
+}
+
+// DriftAtBoot is the drift report Open took: nil for a file with the shape
+// this build ships, and for a DB that was not opened.
+func (db *DB) DriftAtBoot() []string {
+	if db == nil {
+		return nil
+	}
+	return db.driftAtBoot
 }

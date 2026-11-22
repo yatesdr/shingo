@@ -28,6 +28,10 @@ type DB struct {
 	// OWN connection to the same database can get one. SnapshotTo is the
 	// reason it exists; see there.
 	path string
+
+	// driftAtBoot is verifySchema's report (DriftAtBoot). Written once, before
+	// the DB is handed out.
+	driftAtBoot []string
 }
 
 // dsnFor is the ONE DSN this module opens databases with.

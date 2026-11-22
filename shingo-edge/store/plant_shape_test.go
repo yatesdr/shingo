@@ -152,7 +152,12 @@ func TestPlantShapes_WhatAStartLeaves(t *testing.T) {
 			t.Parallel()
 			path, born := plantShapeDB(t, file), bornDB(t)
 			before := keptRows(t, path, born)
-			testutil.MustNoErr(t, startEdge(t, path), "start")
+			db, err := Open(path)
+			testutil.MustNoErr(t, err, "start")
+			if drift := db.DriftAtBoot(); len(drift) > 0 {
+				t.Errorf("the start reports drift:\n  %s", strings.Join(drift, "\n  "))
+			}
+			testutil.MustNoErr(t, db.Close(), "close")
 			after := keptRows(t, path, born)
 			if len(after) != len(before) || len(before) < 60 {
 				t.Errorf("%d tables and sequences after a start, %d before", len(after), len(before))
