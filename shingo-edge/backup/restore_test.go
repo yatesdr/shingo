@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"shingo/protocol/testutil"
@@ -11,6 +12,7 @@ import (
 
 	"shingoedge/config"
 	"shingoedge/internal/testdb"
+	"shingoedge/store"
 )
 
 func TestStageAndLoadRestoreMarker(t *testing.T) {
@@ -109,5 +111,75 @@ func TestRestoreArchiveNow_TheRestoredUIDIsTheOneTheEdgeBootsWith(t *testing.T) 
 	}
 	if db, err := os.ReadFile(dbPath); err != nil || len(db) < 16 || string(db[:15]) != "SQLite format 3" {
 		t.Errorf("the restored database at %s: %d bytes, err %v; want the archived SQLite file", dbPath, len(db), err)
+	}
+}
+
+// shiftArchive backs up a database whose one shift is named BACKUP, after
+// plant (nil = none) changed it, as the archive of a box whose config puts the
+// database at dbPath. It returns that config's path and the archive.
+func shiftArchive(t *testing.T, dbPath string, plant func(*store.DB) error) (configPath string, archive []byte) {
+	t.Helper()
+	const uid = "stn-0d0d0d0d0d0d0d0d"
+	configPath = filepath.Join(t.TempDir(), "shingoedge.yaml")
+	testutil.MustNoErr(t, os.WriteFile(configPath,
+		[]byte("station_uid: "+uid+"\ndatabase_path: "+filepath.ToSlash(dbPath)+"\n"), 0o644), "write config")
+	cfg, err := config.Load(configPath)
+	testutil.MustNoErr(t, err, "load config")
+	src := testdb.Open(t)
+	_, err = src.Exec(`INSERT INTO shifts (name, shift_number, start_time, end_time) VALUES ('BACKUP', 1, '06:00', '14:00')`)
+	testutil.MustNoErr(t, err, "the backup's row")
+	if plant != nil {
+		testutil.MustNoErr(t, plant(src), "plant the backup's shape")
+	}
+	archivePath, _, _, cleanup, err := createSnapshotArchive(src, cfg, configPath, "v-pin")
+	testutil.MustNoErr(t, err, "back up")
+	defer cleanup()
+	archive, err = os.ReadFile(archivePath)
+	testutil.MustNoErr(t, err, "read the archive")
+	return configPath, archive
+}
+
+// shiftNames reads the shifts of the database at path as a plain SQLite client.
+func shiftNames(t *testing.T, path string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	testutil.MustNoErr(t, err, "open")
+	defer db.Close()
+	var names sql.NullString
+	testutil.MustNoErr(t, db.QueryRow(`SELECT group_concat(name) FROM shifts`).Scan(&names), "read the shifts")
+	return names.String
+}
+
+// TestRestore_WhatItPutsInPlace is which backups replace the live database: one
+// of this build's schema, and one from before it.
+func TestRestore_WhatItPutsInPlace(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		plant string
+		want  string
+	}{
+		{"this build's schema", "", "BACKUP"},
+		{"a schema below v59", `DELETE FROM schema_migrations WHERE version > 40`, "BACKUP"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dbPath := filepath.Join(t.TempDir(), "shingoedge.db")
+			var plant func(*store.DB) error
+			if c.plant != "" {
+				plant = func(db *store.DB) error { _, err := db.Exec(c.plant); return err }
+			}
+			configPath, archive := shiftArchive(t, dbPath, plant)
+			live, err := store.Open(dbPath)
+			testutil.MustNoErr(t, err, "the live database")
+			_, err = live.Exec(`INSERT INTO shifts (name, shift_number, start_time, end_time) VALUES ('LIVE', 1, '07:00', '15:00')`)
+			testutil.MustNoErr(t, err, "the live row")
+			testutil.MustNoErr(t, live.Close(), "a clean stop")
+
+			testutil.MustNoErr(t, RestoreArchiveNow(configPath, bytes.NewReader(archive), ""), "restore")
+			if got := shiftNames(t, dbPath); got != c.want {
+				t.Errorf("shifts after the restore = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
