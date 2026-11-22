@@ -136,8 +136,8 @@ func (e *Engine) notifyContainmentChanged() {
 
 // EdgeFeedFlags lists the plain-text feed conditions flagged for one station —
 // a feed resent three times without converging, a process two stations both
-// report. Read-only; nil until the messaging layer is wired, and empty when
-// nothing is wrong.
+// report, a node two stations claim. Read-only; nil until the messaging layer
+// is wired, and empty when nothing is wrong.
 func (e *Engine) EdgeFeedFlags(station string) []string {
 	if fn := e.edgeFeedFlags.Load(); fn != nil {
 		return (*fn)(station)

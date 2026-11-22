@@ -51,8 +51,8 @@ func (h *Handlers) handleEdgesAdmin(w http.ResponseWriter, r *http.Request) {
 		data["RegistryError"] = err.Error()
 	} else {
 		data["Edges"] = edges
-		// Feed flags per station, plain text under its status. Memory reads,
-		// one per row.
+		// Feed and claims flags per station, plain text under its status: a
+		// memory read and two statements a row (EdgeFeedFlags).
 		flags := map[string][]string{}
 		for _, e := range edges {
 			if f := h.engine.EdgeFeedFlags(e.StationUID); len(f) > 0 {

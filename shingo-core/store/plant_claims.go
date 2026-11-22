@@ -83,3 +83,9 @@ func (db *DB) PlantClaimsReportDigests(stationID string) (map[string]string, err
 func (db *DB) SharedPlantClaimsReports(stationUID string) (map[string][]string, error) {
 	return plantclaims.SharedReports(db.DB, stationUID)
 }
+
+// SharedClaimedNodes lists the physical nodes a station shares with another
+// where one side is a claim. See plantclaims.SharedNodes.
+func (db *DB) SharedClaimedNodes(stationUID string) ([]plantclaims.SharedNode, error) {
+	return plantclaims.SharedNodes(db.DB, stationUID)
+}

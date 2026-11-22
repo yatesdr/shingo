@@ -400,10 +400,11 @@ func (f *feedState) flagsFor(station string) []string {
 // EdgeFeedFlags lists the plain-text feed conditions flagged for one station:
 // a key sent three times in a row without converging (held in memory, from
 // the send records), a process another station reports too (read from the
-// report rows, claimsFlags). Read by the Edges page; empty when nothing is
-// wrong.
+// report rows, claimsFlags), a node another station names too (read from the
+// mirror, nodeFlags). Read by the Edges page; empty when nothing is wrong.
 func (s *CoreDataService) EdgeFeedFlags(station string) []string {
 	out := append(s.feeds.flagsFor(station), s.claimsFlags(station)...)
+	out = append(out, s.nodeFlags(station)...)
 	sort.Strings(out)
 	return out
 }

@@ -68,7 +68,7 @@ func reportNames(svc *CoreDataService, station, process string, claims []string,
 // TestEdgeFeedFlags_ANodeTwoStationsName: what the Edges page flags for a node
 // two stations name. The states the ruling flags have at least one side that
 // is a claim (its own position or a paired one) and are a physical node; the
-// others never are. None is flagged here.
+// others never are. Each flagged state is one line, the same on both rows.
 func TestEdgeFeedFlags_ANodeTwoStationsName(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -76,19 +76,19 @@ func TestEdgeFeedFlags_ANodeTwoStationsName(t *testing.T) {
 		make func(svc *CoreDataService)
 		want []string
 	}{
-		{name: "two claims", want: []string{}, make: func(svc *CoreDataService) {
+		{name: "two claims", want: []string{ctFlag("CT-N1")}, make: func(svc *CoreDataService) {
 			reportNames(svc, ctA, "PA", []string{"CT-N1"}, "")
 			reportNames(svc, ctB, "PB", []string{"CT-N1"}, "")
 		}},
-		{name: "a claim and a position", want: []string{}, make: func(svc *CoreDataService) {
+		{name: "a claim and a position", want: []string{ctFlag("CT-N1")}, make: func(svc *CoreDataService) {
 			reportNames(svc, ctA, "PA", []string{"CT-N1"}, "")
 			reportNames(svc, ctB, "PB", nil, "", "CT-N1")
 		}},
-		{name: "a paired position and a claim", want: []string{}, make: func(svc *CoreDataService) {
+		{name: "a paired position and a claim", want: []string{ctFlag("CT-N1")}, make: func(svc *CoreDataService) {
 			reportNames(svc, ctA, "PA", []string{"CT-N2"}, "CT-N1")
 			reportNames(svc, ctB, "PB", []string{"CT-N1"}, "")
 		}},
-		{name: "a group member, which is physical", want: []string{}, make: func(svc *CoreDataService) {
+		{name: "a group member, which is physical", want: []string{ctFlag("CT-M1")}, make: func(svc *CoreDataService) {
 			reportNames(svc, ctA, "PA", []string{"CT-M1"}, "")
 			reportNames(svc, ctB, "PB", []string{"CT-M1"}, "")
 		}},
@@ -121,6 +121,11 @@ func TestEdgeFeedFlags_ANodeTwoStationsName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ctFlag is the Edges-page line for a node both stations name.
+func ctFlag(node string) string {
+	return "node " + node + " claimed by " + ctAName + " and " + ctBName
 }
 
 // claimedBy is the claimed_by key of each node of the list Core builds for
