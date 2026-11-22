@@ -795,3 +795,40 @@ func TestPlan_AProtocolDocOrTestIsPatch(t *testing.T) {
 		t.Errorf("a protocol/ doc and test plan %q, want PATCH", line)
 	}
 }
+
+// TestCheckChangelog_TheEdgesRetiredChainAddsNoMigration: the Edge's registry
+// at the tag declares 2..N over an adopted v1, so a RetiredChain of N declares
+// a v1 the tag's registry does not. A retired version at or below the tag's
+// head is not added; a retired one above it is.
+func TestCheckChangelog_TheEdgesRetiredChainAddsNoMigration(t *testing.T) {
+	t.Parallel()
+	work, _ := clone(t) // the Edge at the tag declares 2..2
+	cases := []struct {
+		retired         int
+		entries, deploy string
+		want            []string
+	}{
+		{2, "", "Deploy: no migration.", nil},
+		{2, "\t\t{Version: 3, Name: \"m\"},\n", "Deploy: Edge v3.", nil},
+		{2, "\t\t{Version: 3, Name: \"m\"},\n", "Deploy: no migration.", []string{"does not name Edge v3"}},
+		{3, "", "Deploy: Edge v3.", nil},
+	}
+	for _, c := range cases {
+		squashed := "package store\n\nconst RetiredChain = " + itoa(c.retired) + "\n\n" +
+			strings.TrimPrefix(strings.Replace(edgeMigrations, "%s", c.entries, 1), "package store\n\n")
+		write(t, work, map[string]string{
+			"shingo-edge/store/migrations.go": squashed,
+			ChangelogPath:                     withUnreleased(c.deploy + "\n\n- A change"),
+		})
+		r := check(t, work)
+		if len(r.Problems) != len(c.want) {
+			t.Errorf("%q, retired v%d, entries %q: problems %q, want %q", c.deploy, c.retired, c.entries, r.Problems, c.want)
+			continue
+		}
+		for i := range c.want {
+			if !strings.Contains(r.Problems[i], c.want[i]) {
+				t.Errorf("%q: problem %q, want it to say %q", c.deploy, r.Problems[i], c.want[i])
+			}
+		}
+	}
+}
