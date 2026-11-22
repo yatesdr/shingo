@@ -36,6 +36,7 @@ Deploy: no migration
 - Stations flags a node two stations claim, on both rows, until one of them takes it off.
 - An Edge's positions picker greys a node another station claims, with that station's name.
 - Stations can remove a stale station; its claims and name go, its history stays.
+- Restoring an Edge backup puts the backup in place after a crash too; the live rows the killed Edge left beside the database used to come back over it
 
 ## v0.19.0 — 2026-11-22
 

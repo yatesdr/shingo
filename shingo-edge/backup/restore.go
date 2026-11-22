@@ -172,8 +172,32 @@ func restoreArchivePath(configPath, archivePath, expectedStationID string) error
 	if err := atomicWrite(configPath, cfgData, 0o644); err != nil {
 		return fmt.Errorf("write restored config: %w", err)
 	}
-	if err := atomicWrite(restoredCfg.DatabasePath, dbData, 0o644); err != nil {
+	if err := replaceDatabase(restoredCfg.DatabasePath, dbData); err != nil {
 		return fmt.Errorf("write restored db: %w", err)
+	}
+	return nil
+}
+
+// replaceDatabase puts data in place as the database at path. The sidecars go
+// between the write and the rename: SQLite replays a -wal, and rolls back a
+// hot -journal, onto whatever file has the database's name, so either left by
+// a killed Edge would undo the restore
+// (TestRestore_AfterACrashPutsTheBackupInPlace). Removed no earlier, so a
+// write that fails leaves the live database whole.
+func replaceDatabase(path string, data []byte) error {
+	next := path + ".restore"
+	if err := atomicWrite(next, data, 0o644); err != nil {
+		return err
+	}
+	for _, sidecar := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.Remove(path + sidecar); err != nil && !os.IsNotExist(err) {
+			_ = os.Remove(next)
+			return fmt.Errorf("remove the live database's %s: %w", sidecar, err)
+		}
+	}
+	if err := os.Rename(next, path); err != nil {
+		_ = os.Remove(next)
+		return fmt.Errorf("rename %s: %w", path, err)
 	}
 	return nil
 }
