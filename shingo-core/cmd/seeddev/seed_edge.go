@@ -241,7 +241,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		}
 		if _, err := db.Exec(`
 			INSERT OR IGNORE INTO style_node_claims
-			  (style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
+			  (style_id, core_node_name, role, swap_mode, payload_code,
 			   reorder_point, auto_reorder, inbound_staging, outbound_staging,
 			   inbound_source, outbound_destination, allowed_payload_codes,
 			   paired_core_node, second_paired_core_node, refill_by,
@@ -249,8 +249,8 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   changeover_carryover_disposition,
 			   key_route, key_task,
 			   auto_push, auto_confirm, keep_staged_node, partial_destination)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
 			c.PairedCoreNode, c.SecondPairedCoreNode, string(c.RefillBy.OrDefault()),

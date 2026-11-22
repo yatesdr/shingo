@@ -85,9 +85,8 @@ func assertWindows(t *testing.T, got []CoreLoaderPosition, want []string, why st
 
 // TestTheSyncCachesNoFactTheEdgeDoesNotRead pins what the loader sync leaves out
 // of the cache: the loader's config generation. Nothing on the Edge reads it,
-// so the sync leaves core_loaders.config_gen at its default. (Each position's
-// kind and the carrier mix have no place in the schema since Edge v27:
-// loader_wire_drop_migration_test.go.)
+// and neither it nor the position kind and carrier mix has a place in the
+// schema (Edge v27 and v60; TestBaselineIsCurrent).
 func TestTheSyncCachesNoFactTheEdgeDoesNotRead(t *testing.T) {
 	db := testDB(t)
 
@@ -103,13 +102,6 @@ func TestTheSyncCachesNoFactTheEdgeDoesNotRead(t *testing.T) {
 		t.Fatalf("write the cache: %v", err)
 	}
 
-	var configGen int
-	if err := db.QueryRow(`SELECT config_gen FROM core_loaders WHERE loader_key = 'loader:9'`).Scan(&configGen); err != nil {
-		t.Fatalf("read config_gen: %v", err)
-	}
-	if configGen != 0 {
-		t.Errorf("cached config_gen = %d, want 0: the Edge reads none of it", configGen)
-	}
 	l, err := db.GetCoreLoader("loader:9")
 	if err != nil || l == nil || len(l.Positions) != 2 || len(l.Payloads) != 1 {
 		t.Fatalf("read the cache = %+v, %v; want the loader with its two windows and one payload", l, err)

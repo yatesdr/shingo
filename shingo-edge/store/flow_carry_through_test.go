@@ -54,30 +54,6 @@ var composerRestamps = map[string]bool{
 // notAColumnOfItsOwn are row identity and the resolved-not-stored capacity.
 var notAColumnOfItsOwn = map[string]bool{
 	"id": true, "style_id": true, "created_at": true,
-	// Resolved from payload_catalog on read; the column is dead and its value
-	// follows payload_code, which the composer does speak. See
-	// claim_capacity_test.go.
-	"uop_capacity": true,
-}
-
-// vestigial columns are the claim columns nothing speaks: they stood so
-// that an upgrade did not drop what a plant row
-// happens to hold, and are named by nothing else: not claimSelect, not the
-// INSERT, not the UPDATE, not cloneClaimColumns. They cannot be flattened by a
-// composer save because no writer mentions them at all — which is a weaker
-// guarantee than carry-through and a different one, so they are listed apart
-// rather than folded in.
-//
-// They are listed BY NAME and not matched by a pattern: if one of them ever
-// acquires a reader, whoever adds it has to move it into unspokenColumns and
-// say what carries it.
-var vestigialColumns = map[string]bool{
-	"mode": true, "staging_node": true, "release_node": true,
-	"outbound_source":            true,
-	"inbound_source_node":        true,
-	"inbound_source_node_group":  true,
-	"outbound_source_node":       true,
-	"outbound_source_node_group": true,
 }
 
 // unspokenColumn is one column the composer does not author, named, with the
@@ -139,7 +115,7 @@ func TestFlowCarryThrough_EveryUnspokenColumnIsAccountedFor(t *testing.T) {
 		}
 		actual[col] = true
 		if composerSpeaks[col] || composerRestamps[col] || notAColumnOfItsOwn[col] ||
-			vestigialColumns[col] || named[col] {
+			named[col] {
 			continue
 		}
 		unclassified = append(unclassified, col)
@@ -154,8 +130,8 @@ func TestFlowCarryThrough_EveryUnspokenColumnIsAccountedFor(t *testing.T) {
 	if len(unclassified) > 0 {
 		t.Errorf("style_node_claims columns nobody has classified: %v\n"+
 			"Add each to composerSpeaks (the composer authors it), to unspokenColumns "+
-			"(the composer must carry it through), to vestigialColumns (nothing reads "+
-			"or writes it), or to notAColumnOfItsOwn.", unclassified)
+			"(the composer must carry it through), or to "+
+			"notAColumnOfItsOwn.", unclassified)
 	}
 	if len(missing) > 0 {
 		t.Errorf("unspokenColumns names columns the table does not have: %v", missing)

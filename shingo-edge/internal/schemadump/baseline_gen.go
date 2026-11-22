@@ -100,7 +100,36 @@ func renderBaseline(path string) (string, error) {
 	}
 	body := Normalize(strings.Join(stmts, "\n\n") + "\n\nINSERT INTO schema_migrations (version) VALUES\n" +
 		strings.Join(rows, ",\n") + ";\n")
+	for _, note := range retiredNotes {
+		if n := strings.Count(body, note); n != 1 {
+			return "", fmt.Errorf("a retired note is in the dump %d times, want 1; correct retiredNotes: %.60q", n, note)
+		}
+		body = strings.Replace(body, note, "", 1)
+	}
 	return baselineHeader(versions[len(versions)-1]) + "\n" + body, nil
+}
+
+// retiredNotes are notes in RetiredChainRelease's DDL that are false once v60
+// has run, taken out by their text; one not found stops the generator. DROP
+// COLUMN removes a column and leaves the note above it, which would then be
+// read as the next column's (load_type's over waybill_id, uop_capacity's over
+// reorder_point). The third described the CREATE IF NOT EXISTS pass.
+var retiredNotes = []string{
+	`    -- load_type: dormant. Nothing on either module read it, and its writers went
+    -- (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs.
+`,
+	`    -- DEAD. Capacity is Core's fact, resolved from payload_catalog on every
+    -- claim read (capacity.SQL) and keyed on payload_code above.
+    -- Nothing reads or writes this column; it holds whatever it held when the
+    -- copies stopped, and it goes on the next rebuildStyleNodeClaims(). It is
+    -- not dropped here because a column rebuild is its own change with its own
+    -- risk, and because the old numbers are the only record of how far the
+    -- copies had drifted.
+`,
+	` Fresh databases only: this is
+    -- CREATE TABLE IF NOT EXISTS and there is no ALTER for this column, so an
+    -- existing plant DB keeps its current table definition and its current
+    -- per-claim values either way.`,
 }
 
 func baselineHeader(head string) string {

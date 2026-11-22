@@ -31,7 +31,9 @@ const (
 // There is no down step: protocol/migrate has none, and a migration here
 // leaves the previous release able to run on what it leaves.
 func edgeMigrations() []migrate.Migration {
-	return []migrate.Migration{}
+	return []migrate.Migration{
+		{Version: 60, Name: "converge_and_drop_dead_columns", Fn: v60Up, Verify: v60Verify},
+	}
 }
 
 // latestVersion is the highest version this build records: the last entry of

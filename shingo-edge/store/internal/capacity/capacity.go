@@ -25,8 +25,8 @@ import (
 // "bin is full" demand edge that can never stamp.
 //
 // So capacity is resolved on every claim read instead — keyed on the payload
-// code the claim binds, from the catalog Core syncs. The column stays in the
-// table, dead, and nothing writes it.
+// code the claim binds, from the catalog Core syncs. The claim row holds no
+// copy (Edge v60 dropped the column).
 //
 // IT IS SQL, NOT A PER-READER LOOKUP, for one reason: the claim reads it hangs
 // off are the ones the per-process publish work made single-query. A Go

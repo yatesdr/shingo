@@ -31,13 +31,6 @@ func plantShapeDB(t *testing.T, file string) string {
 	for v := 1; v <= 59; v++ {
 		execAll(t, db, fmt.Sprintf(`INSERT INTO schema_migrations (version) VALUES (%d)`, v))
 	}
-	// The chain copies these over live columns at each start, where they hold a
-	// value: left at their defaults, as both plants hold them.
-	blank := map[string]bool{
-		"staging_node": true, "release_node": true,
-		"inbound_source_node": true, "inbound_source_node_group": true,
-		"outbound_source_node": true, "outbound_source_node_group": true,
-	}
 	// The columns a CHECK holds to a vocabulary.
 	checked := map[string]string{
 		"node_lineside_bucket.state":   "'active'",
@@ -50,9 +43,6 @@ func plantShapeDB(t *testing.T, file string) string {
 		var names, kinds []string
 		for _, col := range queryLines(t, db, `SELECT name, upper(type) FROM pragma_table_info(?)`, table) {
 			name, kind, _ := strings.Cut(col, " ")
-			if table == "style_node_claims" && blank[name] {
-				continue
-			}
 			names = append(names, `"`+name+`"`)
 			kinds = append(kinds, kind)
 		}
@@ -129,55 +119,51 @@ func shapeAgainst(got, want map[string]bool) []string {
 	return out
 }
 
+// keptRows is every row of every table the born database has, over that
+// database's columns, and those tables' AUTOINCREMENT sequences: what v60
+// keeps of a plant's file.
+func keptRows(t *testing.T, path, born string) map[string]string {
+	t.Helper()
+	db, shape := rawDB(t, path), rawDB(t, born)
+	out := map[string]string{}
+	tables := queryLines(t, shape, `SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY name`)
+	for _, table := range tables {
+		cols := queryLines(t, shape, `SELECT name FROM pragma_table_info(?)`, table)
+		lines := queryLines(t, db, `SELECT "`+strings.Join(cols, `", "`)+`" FROM "`+table+`"`)
+		slices.Sort(lines)
+		out[table] = strings.Join(lines, "\n")
+		if seq := queryLines(t, db, `SELECT seq FROM sqlite_sequence WHERE name = ?`, table); len(seq) > 0 {
+			out["sequence of "+table] = strings.Join(seq, ",")
+		}
+	}
+	testutil.MustNoErr(t, db.Close(), "close")
+	testutil.MustNoErr(t, shape.Close(), "close")
+	return out
+}
+
 // TestPlantShapes_WhatAStartLeaves starts an Edge on each plant's shape: every
-// row and every sequence is kept, and the differences from a born database are
-// exactly these.
+// kept column's rows and every sequence are kept, and the shape is a born
+// database's, by the pragmas (shapeOf).
 func TestPlantShapes_WhatAStartLeaves(t *testing.T) {
 	t.Parallel()
-	both := []string{
-		"+ column orders.bin_uop_remaining INTEGER",
-		"+ column style_node_claims_quarantine.curtain_required INTEGER",
-		"+ column style_node_claims_quarantine.keep_staged INT",
-		"- column style_node_claims_quarantine.curtain_required INT",
-	}
-	for _, c := range []struct {
-		file string
-		want []string
-	}{
-		{"plant_a_v59.sql", both},
-		{"plant_b_v59.sql", append(slices.Clone(both),
-			"+ column orders.payload_id INTEGER",
-			"+ key operator_stations.process_id -> processes_legacy on delete CASCADE",
-			"+ key orders.payload_id -> payloads on delete NO ACTION",
-			"+ key process_changeovers.from_style_id -> styles_legacy on delete SET NULL",
-			"+ key process_changeovers.process_id -> processes_legacy on delete CASCADE",
-			"+ key process_changeovers.to_style_id -> styles_legacy on delete CASCADE",
-			"+ key processes.active_style_id -> styles_legacy on delete SET NULL",
-			"+ key processes.target_style_id -> styles_legacy on delete SET NULL",
-			"+ table payloads",
-			"+ table processes_legacy",
-			"- key operator_stations.process_id -> processes on delete CASCADE",
-			"- key process_changeovers.from_style_id -> styles on delete SET NULL",
-			"- key process_changeovers.process_id -> processes on delete CASCADE",
-			"- key process_changeovers.to_style_id -> styles on delete CASCADE",
-			"- key processes.active_style_id -> styles on delete SET NULL",
-			"- key processes.target_style_id -> styles on delete SET NULL")},
-	} {
-		t.Run(c.file, func(t *testing.T) {
+	for _, file := range []string{"plant_a_v59.sql", "plant_b_v59.sql"} {
+		t.Run(file, func(t *testing.T) {
 			t.Parallel()
-			path := plantShapeDB(t, c.file)
-			before := fileState(t, path)
+			path, born := plantShapeDB(t, file), bornDB(t)
+			before := keptRows(t, path, born)
 			testutil.MustNoErr(t, startEdge(t, path), "start")
-			after := fileState(t, path)
-			for _, table := range slices.Sorted(maps.Keys(before)) {
-				if table != "sqlite_master" && before[table] != after[table] {
-					t.Errorf("a start changed %s:\nbefore:\n%s\nafter:\n%s", table, before[table], after[table])
+			after := keptRows(t, path, born)
+			if len(after) != len(before) || len(before) < 60 {
+				t.Errorf("%d tables and sequences after a start, %d before", len(after), len(before))
+			}
+			for _, key := range slices.Sorted(maps.Keys(before)) {
+				if before[key] != after[key] {
+					t.Errorf("a start changed %s:\nbefore:\n%s\nafter:\n%s", key, before[key], after[key])
 				}
 			}
-			got := shapeAgainst(shapeOf(t, rawDB(t, path)), shapeOf(t, rawDB(t, bornDB(t))))
-			want := slices.Sorted(slices.Values(c.want))
-			if !slices.Equal(got, want) {
-				t.Errorf("against a born database:\n got  %s\n want %s", strings.Join(got, "\n      "), strings.Join(want, "\n      "))
+			if got := shapeAgainst(shapeOf(t, rawDB(t, path)), shapeOf(t, rawDB(t, born))); len(got) > 0 {
+				t.Errorf("against a born database:\n  %s", strings.Join(got, "\n  "))
 			}
 		})
 	}

@@ -151,28 +151,14 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dump aged database: %v", err)
 			}
-			var unexplained []string
 			missing, differs := schema.Compare(fresh, schema.ParseShape(aged))
-			for _, d := range append(missing, differs...) {
-				if !isKnown(d) {
-					unexplained = append(unexplained, d)
-				}
-			}
+			unexplained := append(missing, differs...)
 			if len(unexplained) > 0 {
 				t.Fatalf("an edge database created at %s and brought up to today does NOT match a born one.\n"+
 					"vintage: %s\n\n  %s", v.Rev, v.Why, strings.Join(unexplained, "\n  "))
 			}
 		})
 	}
-}
-
-func isKnown(diff string) bool {
-	for _, kd := range schemadump.KnownDivergences {
-		if kd.Key == diff {
-			return true
-		}
-	}
-	return false
 }
 
 func buildFresh(t *testing.T) string {

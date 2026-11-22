@@ -41,6 +41,7 @@ Deploy: no migration
 - A table or column missing from an Edge's database stops the Edge with its name; the table used to be made again, empty, without a word
 - An Edge with styles and no process no longer makes up a process named Line 1 when it starts
 - An Edge starts with a few statements instead of about 400, and refuses a database a newer release wrote
+- The Edge upgrade drops columns and two leftover tables nothing reads, and repairs a Springfield Edge's links to renamed tables; rows are kept, and v0.19.0 still runs on the result
 
 ## v0.19.0 — 2026-11-22
 

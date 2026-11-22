@@ -244,7 +244,7 @@ func TestStyleDeleteImpact_Keys(t *testing.T) {
 	want := []string{
 		"changeover_node_tasks", "changeover_participants", "changeover_station_tasks",
 		"changeovers_from_detached", "changeovers_to", "claims", "counter_snapshots", "hourly_counts",
-		"name", "parts_counted", "payloads", "reporting_points", "retired", "style_id", "total_deleted",
+		"name", "parts_counted", "reporting_points", "retired", "style_id", "total_deleted",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("keys:\n got  %v\n want %v", got, want)

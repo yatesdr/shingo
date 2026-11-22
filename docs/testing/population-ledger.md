@@ -2941,3 +2941,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### DEAD — `TestClaimCapacity_StoredColumnIsNoLongerWritten`
+- test: `TestClaimCapacity_StoredColumnIsNoLongerWritten` · pkg `shingoedge/store` · run `-run '^TestClaimCapacity_StoredColumnIsNoLongerWritten$'` · `shingo-edge/store/claim_capacity_test.go:289` @ `6bd55616` · tags `none`
+- code: DEAD (Edge v60 drops style_node_claims.uop_capacity)
+- assertion map: no writer fills the dead claim column → none: the column is gone (TestBaselineIsCurrent); that capacity is the catalog's stays in TestClaimCapacity_ResolvesFromCatalogNotTheStoredCopy
+- mutation: not run (the column it pinned is dropped)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
