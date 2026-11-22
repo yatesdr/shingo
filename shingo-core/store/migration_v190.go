@@ -64,10 +64,13 @@ type v190Named struct {
 	Def  string `json:"def"`
 }
 
-// v190Sequence is a sequence a dropped table owned, and the owning column.
+// v190Sequence is a sequence a dropped table owned, its type and the owning
+// column. A record written before the type was kept has none: down then makes
+// Postgres's default, a bigint sequence.
 type v190Sequence struct {
 	Name   string `json:"name"`
 	Column string `json:"column"`
+	Type   string `json:"type,omitempty"`
 }
 
 // v190Record is what up read before one change: the audit row's old_value.
@@ -497,7 +500,11 @@ func v190DropTable(table string) v190Step {
 		down: func(r *v190Record) []string {
 			var out []string
 			for _, s := range r.Sequences {
-				out = append(out, `CREATE SEQUENCE `+s.Name)
+				create := `CREATE SEQUENCE ` + s.Name
+				if s.Type != "" {
+					create += ` AS ` + s.Type
+				}
+				out = append(out, create)
 			}
 			cols := make([]string, len(r.Columns))
 			for i, c := range r.Columns {
@@ -545,9 +552,18 @@ func v190ReadTable(tx *sql.Tx, table string) (*v190Record, error) {
 	if r.Indexes, err = v190Indexes(tx, table, ""); err != nil {
 		return nil, err
 	}
-	seqs, err := v190ReadNamed(tx, `SELECT s.relname, a.attname
+	if r.Sequences, err = v190Sequences(tx, table); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// v190Sequences are the sequences a table's columns own.
+func v190Sequences(tx *sql.Tx, table string) ([]v190Sequence, error) {
+	rows, err := tx.Query(`SELECT s.relname, a.attname, format_type(q.seqtypid, NULL)
 		  FROM pg_depend d
 		  JOIN pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+		  JOIN pg_sequence q ON q.seqrelid = s.oid
 		  JOIN pg_class t ON t.oid = d.refobjid
 		  JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
 		  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
@@ -557,10 +573,16 @@ func v190ReadTable(tx *sql.Tx, table string) (*v190Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range seqs {
-		r.Sequences = append(r.Sequences, v190Sequence{Name: s.Name, Column: s.Def})
+	defer rows.Close()
+	var out []v190Sequence
+	for rows.Next() {
+		var s v190Sequence
+		if err := rows.Scan(&s.Name, &s.Column, &s.Type); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
 	}
-	return r, nil
+	return out, rows.Err()
 }
 
 // v190ColumnDef is a column definition for CREATE TABLE or ADD COLUMN.

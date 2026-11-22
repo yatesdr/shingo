@@ -46,6 +46,7 @@ Deploy: no migration
 - shingoedge migrate check says, writing nothing, whether a build will start on an Edge's database; a backup it would refuse is refused when it is staged and again before it replaces anything
 - An Edge whose database differs from its release's schema says so on /status and Diagnostics, naming what differs; it still starts
 - The Edge upgrade drops columns and two leftover tables nothing reads, and repairs a Springfield Edge's links to renamed tables; rows are kept, and v0.19.0 still runs on the result
+- Core: `migrate down 190` puts a removed table's id sequence back with the type it had.
 
 ## v0.19.0 — 2026-11-22
 
