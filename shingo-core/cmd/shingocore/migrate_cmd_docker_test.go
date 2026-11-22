@@ -176,3 +176,39 @@ func TestMigrateDown_RunsOnlyTheNewest(t *testing.T) {
 		t.Errorf("check after down: exit %d stdout %q", code, stdout)
 	}
 }
+
+// TestMigrateCheck_ARestoreThatSkippedTablesIsRefusedByName: a database whose
+// schema_migrations is whole and whose shipped tables are not all there (a
+// pg_restore that skipped them: a dump from a fixed minor on an older one) is
+// refused by check, exit 1, naming the tables and the server's minor, writing
+// nothing. At this build's version and at the one before.
+func TestMigrateCheck_ARestoreThatSkippedTablesIsRefusedByName(t *testing.T) {
+	t.Parallel()
+	for _, before := range []bool{false, true} {
+		t.Run(fmt.Sprintf("the version before=%t", before), func(t *testing.T) {
+			t.Parallel()
+			db, cfg := testdb.OpenWithConfig(t)
+			var minor string
+			testutil.MustNoErr(t, db.QueryRow(`SELECT split_part(current_setting('server_version'), ' ', 1)`).Scan(&minor), "read the server's minor")
+			if before {
+				testutil.MustNoErr(t, store.MigrateDown(cfg, store.LatestMigrationVersion()), "down to the version before")
+			}
+			_, err := db.Exec(`DROP TABLE orders, mission_telemetry CASCADE`)
+			testutil.MustNoErr(t, err, "skip two tables")
+
+			was := catalog(t, cfg)
+			code, stdout, stderr := run(t, "-config", configFor(t, cfg), "check")
+			if code != 1 || stdout != "" {
+				t.Errorf("exit %d stdout %q, want exit 1 and no line for the installer", code, stdout)
+			}
+			for _, want := range []string{"orders", "mission_telemetry", "PostgreSQL " + minor} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("the refusal %q does not name %q", stderr, want)
+				}
+			}
+			if now := catalog(t, cfg); now != was {
+				t.Errorf("the refused check changed the catalog")
+			}
+		})
+	}
+}
