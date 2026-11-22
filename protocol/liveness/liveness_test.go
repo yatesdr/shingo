@@ -61,6 +61,46 @@ func TestATurnUnderTheLimitIsNotFrozen(t *testing.T) {
 	}
 }
 
+func TestAConditionAlarmsInItsOwnWordsWhileItHolds(t *testing.T) {
+	w, lines := watchWithLog()
+	var held time.Duration
+	w.Condition("the worker", "the worker has stopped: nothing for %s", func(time.Time) time.Duration { return held })
+
+	w.check(time.Now())
+	if len(*lines) != 0 || len(w.Frozen()) != 0 {
+		t.Fatalf("a condition that does not hold alarmed: %v", *lines)
+	}
+
+	// The condition judged its own threshold: the 30 s of a turn does not apply.
+	held = 2 * time.Second
+	w.check(time.Now())
+	w.check(time.Now())
+	if len(*lines) != 1 || !strings.HasPrefix((*lines)[0], "FROZEN: the worker has stopped: nothing for 2s;") ||
+		!strings.Contains((*lines)[0], "goroutine 1 [running]:") {
+		t.Fatalf("logged %v; want one entry in the condition's words, with the dump", *lines)
+	}
+	if got := Sentences(w.Frozen()); len(got) != 1 || got[0] != "the worker has stopped: nothing for 2s" {
+		t.Fatalf("the page reads %v; want the condition's words", got)
+	}
+
+	held = 0
+	w.check(time.Now())
+	if len(*lines) != 2 || (*lines)[1] != "FROZEN cleared: the worker turned over again" {
+		t.Fatalf("after it stopped holding: %v; want one recovery line", *lines)
+	}
+	if f := w.Frozen(); len(f) != 0 {
+		t.Fatalf("Frozen() after it cleared = %v", f)
+	}
+}
+
+func TestANilWatchTakesNoCondition(t *testing.T) {
+	var w *Watch
+	w.Condition("the worker", "stopped for %s", func(time.Time) time.Duration { return time.Hour })
+	if w.Frozen() != nil {
+		t.Fatal("a nil watch reported a condition")
+	}
+}
+
 func TestANilLoopMarksNothing(t *testing.T) {
 	var l *Loop
 	l.Enter()
