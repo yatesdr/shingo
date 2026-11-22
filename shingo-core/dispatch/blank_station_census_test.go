@@ -358,6 +358,7 @@ var blankStationSites = map[string]bsSite{
 	"store/dashboards:scanRow":                            notOrder(`station == "" ×1`, "blank stations_json text reads as no scope"),
 	"store/orders:filterWhere":                            notOrder(`StationID == "" ×1`, "a filter: blank means unscoped; DECIDED (names lane): a picked actor name is matched in requested_by (RequesterColumn), so it still matches that actor's orders"),
 	"store/plantclaims:LastArmEdgesSQL":                   notOrder(`SQL station = '' ×1`, "edge_registry.station_uid: the plant arm's registered Edges"),
+	"store/plantclaims:ReplaceProcessFromStation":         notOrder(`station == station ×1`, "the station that reported a process's claims last, against this report's sender: whether the other Edges' claimed-elsewhere marks moved"),
 	"store/telemetry:GetDailyConcurrency":                 notOrder(`station == "" ×1`, "a filter on mission_telemetry's requester: blank is unscoped; DECIDED (names lane): an actor name is matched in requested_by (RequesterColumn), so it still matches that actor's rows"),
 	"store/telemetry:GetHourlyConcurrency":                notOrder(`station == "" ×1`, "a filter on mission_telemetry's requester, as GetDailyConcurrency"),
 	"store/telemetry:GetRobotMissionAggs":                 notOrder(`StationID == "" ×1`, "a filter on mission_telemetry's requester, as GetDailyConcurrency"),
