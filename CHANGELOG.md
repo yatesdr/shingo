@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration
+
+- The sim plant's sizing check (simcalc) fails a kanban that takes back more carts than it draws, or that names no source and stands fewer than a transit's worth, and counts what its keeper pulls from elsewhere
+
 ## v0.19.0 — 2026-11-22
 
 Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration). The two run mixed either way: this Core serves a v0.17.2 Edge and this Edge a v0.18.0 Core, so an Edge may follow later. Nothing below the floor (Core v0.18.0, Edge v0.17.2) is refused; /edges marks it. Rollback: on Core, migrate down 190, 189, 188, 187 and 186 with this release's binary (newest first, as the installer prints them), then the previous binary; an Edge rolls back on its own.
