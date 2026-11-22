@@ -53,17 +53,24 @@ func (s *CoreDataService) buildContainmentSnapshot() (*protocol.ContainmentSnaps
 // arrival). It drops the memo, rebuilds once and broadcasts the snapshot to
 // every Edge, so a flag set on Core reaches the Edge screens in seconds rather
 // than at the next heartbeat. The rebuilt value is the memo's, so the next
-// heartbeats compare against exactly what was broadcast.
+// heartbeats compare against exactly what was broadcast. The broadcast is
+// recorded as a push for each station that quotes the feed, so a heartbeat
+// quoting it while a newer one is on its way is converging (pinned by
+// TestContainmentChanged_ABroadcastQuotedBackConverges).
 //
 // Writers with no hook (a bin moved into a destination by an ordinary order)
 // are caught by the heartbeat once the memo expires. An Edge older than this
 // subject logs "no handler" once per broadcast and is otherwise unaffected.
 func (s *CoreDataService) ContainmentChanged() {
 	s.feeds.drop(protocol.FeedContainment)
-	e, ok := s.feedCurrent("", protocol.FeedContainment, clock.Now())
+	now := clock.Now()
+	e, ok := s.feedCurrent("", protocol.FeedContainment, now)
 	if !ok {
 		log.Printf("core_feeds: containment changed but the snapshot did not build — nothing broadcast; the next heartbeats retry")
 		return
 	}
 	s.resp.sendData(protocol.SubjectContainmentSnapshot, protocol.StationBroadcast, e.value)
+	for _, st := range s.feeds.quotingStations(protocol.FeedContainment) {
+		s.feeds.recordPush(st, protocol.FeedContainment, e.digest, now)
+	}
 }
