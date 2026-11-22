@@ -3,6 +3,9 @@
 # inputs: .github/workflows/*.yml */go.mod scripts/gate.sh scripts/check-gate-toolchain.sh
 # check-gate-toolchain.sh — one Go toolchain for CI and the gate's WSL steps.
 #
+# Two toolchains remain in a local gate: the native steps run the host's go,
+# which this does not check.
+#
 # CI's setup-go pins its version by hand in each workflow (`go-version:`), and
 # gate.sh reads GATE_GO, the toolchain its WSL steps (race, sim) run under
 # GOTOOLCHAIN, from shingo-core/go.mod's go line. This holds every pin and every

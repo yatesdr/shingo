@@ -827,8 +827,11 @@ sim_plan() {
 # where it is read from here. The steps that borrow WSL's cgo (race, sim) run it
 # too, through GOTOOLCHAIN: WSL's own go is newer (go1.26.8 on 2026-11-21), the
 # Windows steps run the host's go1.25.x, and a race verdict from a third
-# compiler is not CI's verdict (docket D7). The toolchain is fetched once into
-# WSL's module cache; wsl_go_check fails the step, saying why, if it cannot be.
+# compiler is not CI's verdict (docket D7). Two toolchains remain in one local
+# verdict: the host's for every native step, and GATE_GO for race and sim in
+# WSL. Only the second is CI's; nothing pins the first. The toolchain is
+# fetched once into WSL's module cache; wsl_go_check fails the step, saying
+# why, if it cannot be.
 GATE_GO="go$(sed -n 's/^go[[:space:]]*//p' "$ROOT/shingo-core/go.mod" | tr -d '\r')"
 
 # wsl_go_check <step> — passes when WSL's go under GOTOOLCHAIN=$GATE_GO is
