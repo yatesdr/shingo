@@ -275,16 +275,9 @@ func (e *Engine) sendDue(key, digest, quoted string) bool {
 	now := e.feeds.clock()
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
-	if e.feeds.sent == nil {
-		e.feeds.sent = map[string]*resend.Record{}
-	}
-	rec := e.feeds.sent[key]
-	if rec != nil && rec.Quoted(quoted) {
+	rec := e.feeds.sentLocked(key)
+	if rec.Quoted(quoted) {
 		delete(e.feeds.flags, key)
-	}
-	if rec == nil {
-		rec = &resend.Record{}
-		e.feeds.sent[key] = rec
 	}
 	if !rec.Send(digest, quoted, now) {
 		return false
@@ -299,6 +292,16 @@ func (e *Engine) sendDue(key, digest, quoted string) bool {
 		e.feeds.flags[key] = fmt.Sprintf("%s not converging: sent %d times", key, rec.Streak())
 	}
 	return true
+}
+
+// recordPush records a send of an Edge-owned key made outside sendDue (the
+// claims publisher's publish on a save), as Core records its own: a quote of
+// it converges, and the resend guard and the streak are left alone.
+func (e *Engine) recordPush(key, digest string) {
+	now := e.feeds.clock()
+	e.feeds.mu.Lock()
+	defer e.feeds.mu.Unlock()
+	e.feeds.sentLocked(key).Pushed(digest, now)
 }
 
 // converged records that Core quoted an Edge-owned key back with the digest
@@ -368,6 +371,19 @@ func persistedRow(key string, h *feedHold) store.FeedCopy {
 		row.Digest, row.Body = h.digest, h.body
 	}
 	return row
+}
+
+// sentLocked is the send record of one Edge-owned key, made when there is none.
+func (b *feedBook) sentLocked(key string) *resend.Record {
+	if b.sent == nil {
+		b.sent = map[string]*resend.Record{}
+	}
+	rec := b.sent[key]
+	if rec == nil {
+		rec = &resend.Record{}
+		b.sent[key] = rec
+	}
+	return rec
 }
 
 func (b *feedBook) holdLocked(key string) *feedHold {

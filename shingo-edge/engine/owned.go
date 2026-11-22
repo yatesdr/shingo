@@ -488,10 +488,13 @@ func (e *Engine) claimsSourceNow() ClaimsSource {
 }
 
 // ClaimsReported is the publisher's save hook: it built one process's report
-// (an edit, a style flip) and published it. The claims family takes the
-// digest, so the next heartbeat quotes it. styled false: the process has no
-// styles, or no longer exists, and is no member.
+// (an edit, a style flip) and publishes it. The claims family takes the
+// digest, so the next heartbeat quotes it, and the publish is recorded as a
+// push, so a Core quoting it while a later save's is on its way is converging
+// (pinned by TestOwned_ASavesPublishQuotedBackConverges). styled false: the
+// process has no styles, or no longer exists, and is no member.
 func (e *Engine) ClaimsReported(process, digest string, styled bool) {
+	e.recordPush(claimsGuardKey(process), digest)
 	e.updateOwnedMember(protocol.OwnedClaims, process, digest, styled)
 }
 

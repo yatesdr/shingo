@@ -24,6 +24,7 @@ Deploy: no migration
 - A station that is applying every update is no longer flagged "not converging" on Core's Edges page or on the Edge's own status for quoting a copy a few changes old
 - A station that applies each sourcing change as Core sends it is no longer flagged "sourcing not converging" on the Edges page
 - A station that applies each containment change as Core sends it is no longer flagged "containment not converging" when several come close together
+- Several claim or style saves a minute on an Edge no longer flag that process's claims "not converging" while Core is taking each one
 - A station stuck on the last update pushed to it is now flagged "not converging": until now that one was never flagged, so a flag may appear where none did
 
 ## v0.19.0 — 2026-11-22
