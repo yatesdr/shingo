@@ -438,7 +438,16 @@ for f in "$LEGACY_CONFIG" /etc/shingo/shingocore.yaml; do
 done
 
 if [ ${#BACKUP_FILES[@]} -gt 0 ]; then
-    tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}" 2>/dev/null || true
+    # A failed backup stops the install: the rollback recipe below points at
+    # this file. tar's stderr is shown only then (on success it is the notice
+    # that it stored the paths without their leading slash).
+    if ! tar_err=$(tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}" 2>&1); then
+        rm -f "$BACKUP_PATH"
+        echo "ERROR: could not back up ${BACKUP_FILES[*]} to ${BACKUP_PATH}:"
+        printf '%s\n' "$tar_err" | sed 's/^/       /'
+        echo "       Nothing was stopped or installed: Core is still running the previous build."
+        exit 1
+    fi
     echo "    backup contains: ${BACKUP_FILES[*]}"
 else
     echo "    nothing to back up (fresh install)"
