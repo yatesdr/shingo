@@ -67,6 +67,15 @@ type Scanner struct {
 	started  atomic.Bool
 	stopWait time.Duration // StopJoinLimit, shorter in a test
 
+	// What the freeze alarm reads of the worker (WorkerStopped, RunningLong):
+	// monotonic nanoseconds since born, wall time whatever the sim's clock. Each
+	// mark is an atomic, so the watch takes no lock the worker could hold.
+	born         time.Time
+	interval     atomic.Int64 // the safety timer's, on the wall; 0 until started
+	askedAt      atomic.Int64 // the first trigger no pass start has answered; 0 none
+	lockWait     atomic.Bool  // the worker is waiting for the scan lock, and nothing else
+	runningSince atomic.Int64 // the worker's pass running now; 0 none
+
 	// What Stop joins: each is set before its goroutine starts and closed when
 	// that ends, and is nil when it never started.
 	workerDone, timerDone, bootDone chan struct{}
@@ -108,7 +117,44 @@ func NewScanner(
 		wake:       make(chan struct{}, 1),
 		stopChan:   make(chan struct{}),
 		stopWait:   StopJoinLimit,
+		born:       time.Now(),
 	}
+}
+
+// mono is t on the worker marks' scale: never 0, which says "none".
+func (s *Scanner) mono(t time.Time) int64 { return int64(t.Sub(s.born)) + 1 }
+
+// WorkerStopped is how long a trigger has gone with no pass started by a
+// worker that is neither running one nor waiting for the scan lock: a worker
+// dead, or wedged outside the lock, while the lock still turns over. 0 until
+// that is the timer's interval on the wall: the timer triggers every interval,
+// so a live worker has started a pass within it. A worker that waits for the
+// lock is not stopped; the probe on the lock names who holds that up.
+func (s *Scanner) WorkerStopped(now time.Time) time.Duration {
+	// The worker's marks are read before askedAt: a pass that ends moves
+	// askedAt to its end before it clears them (passEnded).
+	if s.lockWait.Load() || s.runningSince.Load() != 0 || s.stopping() {
+		return 0
+	}
+	return s.pastInterval(now, s.askedAt.Load())
+}
+
+// RunningLong is how long the worker's pass running now has run, 0 until that
+// is past the interval. It and WorkerStopped are never both true of one state.
+func (s *Scanner) RunningLong(now time.Time) time.Duration {
+	return s.pastInterval(now, s.runningSince.Load())
+}
+
+// pastInterval is the time since the mark once it is past the interval, else 0.
+func (s *Scanner) pastInterval(now time.Time, mark int64) time.Duration {
+	interval := time.Duration(s.interval.Load())
+	if mark == 0 || interval == 0 {
+		return 0
+	}
+	if d := time.Duration(s.mono(now) - mark); d >= interval {
+		return d
+	}
+	return 0
 }
 
 // Trigger asks the worker for a pass that starts after this call. It fills the
@@ -118,6 +164,11 @@ func NewScanner(
 // make one more pass (TestScanWorker_NTriggersDuringAPassMakeOneMorePass) and
 // none is lost (TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost).
 func (s *Scanner) Trigger() {
+	// Marked before the send: the pass that answers the send clears the mark
+	// when it starts, and could start before a mark made after it.
+	if s.askedAt.Load() == 0 {
+		s.askedAt.CompareAndSwap(0, s.mono(time.Now()))
+	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -155,6 +206,7 @@ func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
 	if s.stopping() || !s.started.CompareAndSwap(false, true) {
 		return
 	}
+	s.interval.Store(int64(interval))
 	s.workerDone, s.timerDone = make(chan struct{}), make(chan struct{})
 	go s.runPasses()
 	go func() {
@@ -189,12 +241,28 @@ func (s *Scanner) runPasses() {
 // workerPass is one triggered pass. A Stop while it waited for the scan lock
 // leaves it unrun.
 func (s *Scanner) workerPass() {
+	s.lockWait.Store(true)
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
+	defer s.passEnded()
 	if s.stopping() {
 		return
 	}
+	s.askedAt.Store(0)
+	s.runningSince.Store(s.mono(time.Now()))
+	s.lockWait.Store(false)
 	s.passLocked(true)
+}
+
+// passEnded clears the worker's marks, by defer, so a pass that ends in a
+// Goexit reads as a stopped worker and not as one running long. A trigger that
+// waited behind the pass starts waiting on a free worker now.
+func (s *Scanner) passEnded() {
+	if at := s.askedAt.Load(); at != 0 {
+		s.askedAt.CompareAndSwap(at, s.mono(time.Now()))
+	}
+	s.lockWait.Store(false)
+	s.runningSince.Store(0)
 }
 
 // StartBootScan runs the boot pass on its own goroutine, directly and not

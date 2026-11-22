@@ -2,6 +2,7 @@ package fulfillment
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1026,5 +1027,101 @@ func TestScanner_StopGivesUpAtItsBound(t *testing.T) {
 				t.Errorf("%d pass(es) started after Stop gave up", n-at)
 			}
 		})
+	}
+}
+
+// markedScanner is a scanner whose timer interval is a minute and whose worker
+// is the test: it takes the wake, and runs workerPass, when the test says.
+func markedScanner(t *testing.T, f *fakeStore) *Scanner {
+	t.Helper()
+	s := newTestScanner(t, f)
+	s.interval.Store(int64(time.Minute))
+	return s
+}
+
+// TestScanner_AWorkerWedgedOutsideTheLockReadsStopped: a worker that took the
+// wake and went no further, with the scan lock turning over, reads as stopped
+// once a trigger has gone unanswered for the interval, and never as running
+// long.
+func TestScanner_AWorkerWedgedOutsideTheLockReadsStopped(t *testing.T) {
+	t.Parallel()
+	s := markedScanner(t, newFakeStore())
+	s.Trigger()
+	<-s.wake // the worker took it, and is wedged before the lock
+	s.Door(func() {})
+	now := time.Now()
+	if d := s.WorkerStopped(now.Add(59 * time.Second)); d != 0 {
+		t.Errorf("stopped after 59 s (%v), inside the interval", d)
+	}
+	if d := s.WorkerStopped(now.Add(61 * time.Second)); d < time.Minute {
+		t.Errorf("stopped for %v at 61 s, want over a minute", d)
+	}
+	if d := s.RunningLong(now.Add(time.Hour)); d != 0 {
+		t.Errorf("a wedged worker read as a pass running long (%v)", d)
+	}
+}
+
+// TestScanner_AGoexitInsideAPassReadsStoppedNotRunningLong: the running mark
+// clears by defer, whatever ends the pass.
+func TestScanner_AGoexitInsideAPassReadsStoppedNotRunningLong(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	s := markedScanner(t, f)
+	f.onListQueuedOrders = func() {
+		s.Trigger() // waiting behind the pass
+		runtime.Goexit()
+	}
+	died := make(chan struct{})
+	go func() {
+		defer close(died)
+		s.workerPass()
+	}()
+	<-died
+	later := time.Now().Add(61 * time.Second)
+	if d := s.RunningLong(later); d != 0 {
+		t.Errorf("a pass that ended in Goexit still reads as running long (%v)", d)
+	}
+	if d := s.WorkerStopped(later); d == 0 {
+		t.Error("a worker dead of a Goexit inside its pass does not read as stopped")
+	}
+}
+
+// TestScanner_AWorkerBusyIsNotStopped: waiting for the scan lock is neither
+// sentence, a pass running is only the long one, and a trigger that waited
+// behind a long pass starts waiting when the pass ends.
+func TestScanner_AWorkerBusyIsNotStopped(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	s := markedScanner(t, f)
+	inPass, endPass := make(chan struct{}), make(chan struct{})
+	f.onListQueuedOrders = func() { close(inPass); <-endPass }
+	held, letGo := make(chan struct{}), make(chan struct{})
+	go s.Door(func() { close(held); <-letGo })
+	<-held
+
+	s.Trigger()
+	<-s.wake
+	done := make(chan struct{})
+	go func() { defer close(done); s.workerPass() }()
+	testutil.Eventually(t, 2*time.Second, s.lockWait.Load)
+	later := time.Now().Add(time.Hour)
+	if a, b := s.WorkerStopped(later), s.RunningLong(later); a != 0 || b != 0 {
+		t.Errorf("waiting for the lock read stopped %v, long %v; want neither", a, b)
+	}
+
+	close(letGo)
+	<-inPass
+	s.Trigger()
+	later = time.Now().Add(time.Hour)
+	if a, b := s.WorkerStopped(later), s.RunningLong(later); a != 0 || b == 0 {
+		t.Errorf("a long pass read stopped %v, long %v; want only long", a, b)
+	}
+
+	// The trigger behind the pass is made old: the pass ran for an hour.
+	s.askedAt.Store(s.mono(time.Now().Add(-time.Hour)))
+	close(endPass)
+	<-done
+	if d := s.WorkerStopped(time.Now()); d != 0 {
+		t.Errorf("the wait behind a long pass counted as stopped (%v)", d)
 	}
 }

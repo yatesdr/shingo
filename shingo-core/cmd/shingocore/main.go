@@ -377,7 +377,8 @@ func main() {
 	// ── Messaging (Kafka) ───────────────────────────────────────────────
 	// The freeze alarm (plant build): the inbound consumer's handler, the
 	// scan lock and the after-emit queue's drain each mark their turns; a turn past 30 s logs one entry with the
-	// goroutine dump and shows on the Core Health strip. Alarm only.
+	// goroutine dump and shows on the Core Health strip, and so does the scan
+	// worker stopped or one pass running long (Engine.WatchScanWorker). Alarm only.
 	watch := liveness.New(log.Printf)
 	watchStop := make(chan struct{})
 	defer close(watchStop)
@@ -415,6 +416,7 @@ func main() {
 	defer eng.Stop()
 	eng.StartScanProbe(watch.Loop("the scan pass"))
 	eng.WatchAfterQueue(watch.Loop("the after-emit queue"))
+	eng.WatchScanWorker(watch)
 	go watch.Run(watchStop)
 	if cfg.Sim.Enabled {
 		simWatch(eng) // sim_watch_*.go (sim build) / sim_disabled.go (!sim build)

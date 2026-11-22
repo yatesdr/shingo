@@ -137,14 +137,10 @@ func (r *scanRig) quietPasses(settle time.Duration) int64 {
 	}
 }
 
-// watched is the freeze alarm as main wires it over the scan worker. It asks
-// through an optional method so this file compiles on an engine that has none,
-// and then reads as a watch that raises nothing.
+// watched is the freeze alarm as main wires it over the scan worker.
 func (r *scanRig) watched() *liveness.Watch {
 	w := liveness.New(r.t.Logf)
-	if e, ok := any(r.e).(interface{ WatchScanWorker(*liveness.Watch) }); ok {
-		e.WatchScanWorker(w)
-	}
+	r.e.WatchScanWorker(w)
 	return w
 }
 
