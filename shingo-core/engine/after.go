@@ -22,6 +22,10 @@ import (
 // one goroutine waits for itself: Core hears no Edge and starts no order until
 // it is restarted (carry-edge2, RULINGS-carry-and-core-freeze §2).
 //
+// The two count hooks hand their checks here too, for the other side of the
+// same wait: they run on the one inbound reader, and every message of every
+// station waited behind a refill's acquire (ThresholdMonitor.evaluateAfter).
+//
 // So such a subscriber hands its work here, and returns. One goroutine runs the
 // work in the order it was handed, after the emitter has gone on; when the
 // emitter held the scan lock, the work waits for it like any caller. Handing
@@ -72,8 +76,8 @@ func (q *afterQueue) later(fn func()) {
 // run serves the queue until stop closes: the work in hand then finishes
 // (Engine.Stop joins it) and work still queued is dropped; the engine is going
 // down. What a restart does about each kind:
-//   - a threshold recheck (BinUpdated): the monitor's startup sweep evaluates
-//     every binding;
+//   - a threshold recheck (BinUpdated, or a count's: its message's offset is
+//     committed by then): the monitor's startup sweep evaluates every binding;
 //   - a swap request's contradiction note: lost; it is a log line and a chip;
 //   - a resumed parent's acquire: the boot pass and the sweep ask it, but its
 //     station notice ("dispatched", resumeAcquire) is not sent again by

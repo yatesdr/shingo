@@ -22,8 +22,8 @@ machinery.
 | `startupSweep` | `engine/threshold_monitor.go` | boot (`ThresholdMonitor.Run`) | one-shot, 3s after Start | evaluates every monitored place once, reading the open-episode set once for the pass; seeds the cold-start warm-up allowance. No rehydrate — the monitor keeps no copy |
 | `checkBindings` + debounce | `engine/threshold_monitor.go` | every eval path | per pass, 15s debounce | the single fire gate; emits the below-threshold signal |
 | `evaluatePayload` | `engine/threshold_monitor.go` | the callers below | per event | re-reads the authoritative sum (`decisionTotalFor` = `SystemUOPForPayload`), funnels to `checkBindings` |
-| `OnBinUOPDelta` | `engine/threshold_monitor.go` | Edge UOP delta | per delta | → `evaluatePayload` |
-| `OnBucketApplied` | `engine/threshold_monitor.go` | bucket delta | per delta | → `evaluatePayload` |
+| `OnBinUOPDelta` | `engine/threshold_monitor.go` | Edge UOP delta | per delta | → after-queue → `evaluatePayload` |
+| `OnBucketApplied` | `engine/threshold_monitor.go` | bucket delta | per delta | → after-queue → `evaluatePayload` |
 | `handleBinUpdated` | `engine/threshold_monitor.go` | `EventBinUpdated` | every bin move | → `evaluatePayload` |
 | `NoteSwapRequestContradiction` | `engine/threshold_monitor.go` | complex order received | per order | contradiction re-check |
 | `OnThresholdChanges` | `engine/threshold_monitor.go` | loader config edit | per registry change | clears debounce so a new threshold takes effect at once |

@@ -356,9 +356,9 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 		s.binCountEmitter(d.BinID)
 	}
 
-	// Notify the UOP-threshold monitor, which re-reads the payload's
-	// authoritative total (the just-applied write included) and checks its
-	// thresholds. An unmonitored payload stops at the bindings lookup.
+	// Notify the UOP-threshold monitor, which hands the check off the reader:
+	// it re-reads the payload's authoritative total (the just-applied write
+	// included) a moment later and checks its thresholds.
 	if s.thresholdMonitor != nil && d.PayloadCode != "" {
 		s.thresholdMonitor.OnBinUOPDelta(d.PayloadCode, d.Delta)
 	}
@@ -430,8 +430,9 @@ func (s *CoreDataService) HandleLinesideBucketLevel(env *protocol.Envelope, l *p
 		station, l.CoreNodeName, l.PayloadCode, l.State, l.SequenceID, l.Qty, l.Drained)
 
 	// A level changes on-hand (an active pile counts), so the payload is
-	// re-evaluated. A stranded level changes nothing the count reads; its
-	// evaluation is one bindings lookup and keeps this path branch-free.
+	// re-evaluated, off the reader. A stranded level changes nothing the count
+	// reads; its evaluation is one bindings lookup, later, and keeps this path
+	// branch-free.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.OnBucketApplied(l.PayloadCode)
 	}

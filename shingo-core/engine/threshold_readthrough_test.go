@@ -66,6 +66,7 @@ func newRTRig(t *testing.T, payload string, uop int) *rtRig {
 	db := testDB(t)
 	sink := &logSink{}
 	eng := newLoggingEngine(t, db, sink)
+	runAfterQueue(t, eng)
 	clk := &rtClock{now: time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC)}
 	m := eng.thresholdMonitor
 	m.now = clk.Now
@@ -91,8 +92,12 @@ func (r *rtRig) setUOP(n int) {
 // boot is the startup sweep, run synchronously.
 func (r *rtRig) boot() { r.m.startupSweep(context.Background()) }
 
-// delta is one bin-UOP delta for the payload — the hot path's door.
-func (r *rtRig) delta() { r.m.OnBinUOPDelta(r.b.payloadCode, -1) }
+// delta is one bin-UOP delta for the payload — the hot path's door — and the
+// check it hands to the after-queue, run.
+func (r *rtRig) delta() {
+	r.m.OnBinUOPDelta(r.b.payloadCode, -1)
+	r.eng.after.settle()
+}
 
 // pastDebounce moves the monitor's clock beyond the debounce window.
 func (r *rtRig) pastDebounce() { r.clock.advance(thresholdDebounceWindow + time.Second) }
@@ -339,6 +344,7 @@ func TestReadThrough_RestartMidEpisode(t *testing.T) {
 	restarted.startupSweep(context.Background())
 	restarted.OnBinUOPDelta(r.b.payloadCode, -1) // inside the window: the warm-up bypass
 	restarted.OnBinUOPDelta(r.b.payloadCode, -1) // inside the window: debounced
+	r.eng.after.settle()
 
 	if n := len(r.rows()); n != 1 {
 		t.Errorf("%d episodes after a restart, want 1 — no second mint", n)
@@ -597,7 +603,9 @@ func TestReadThrough_ConcurrentFallingEdgeOpensOne(t *testing.T) {
 		var wg sync.WaitGroup
 		for g := 0; g < 2; g++ {
 			wg.Add(1)
-			go func() { defer wg.Done(); r.delta() }()
+			// Two counts' checks cannot race each other (one queue runs them); a
+			// check can race any other door's, so the race is of two checks.
+			go func() { defer wg.Done(); r.m.evaluatePayload(r.b.payloadCode, "below_threshold") }()
 		}
 		wg.Wait()
 		open := r.openRows()
@@ -655,6 +663,7 @@ func measureStatements(t *testing.T) map[string]int64 {
 
 		sink := &logSink{}
 		eng := newLoggingEngine(t, cdb, sink)
+		runAfterQueue(t, eng)
 		m := eng.thresholdMonitor
 		clk := &rtClock{now: time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC)}
 		m.now = clk.Now
@@ -677,6 +686,7 @@ func measureStatements(t *testing.T) map[string]int64 {
 		}
 		counter.Reset()
 		m.OnBinUOPDelta(target, -1)
+		eng.after.settle()
 		out[c.name] = counter.Count()
 	}
 	return out

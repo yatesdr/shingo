@@ -37,6 +37,7 @@ func decisionFixture(t *testing.T, payload string, ledgerUOP, edgeUOP int) (*Thr
 	db := testDB(t)
 	sink := &logSink{}
 	eng := newLoggingEngine(t, db, sink)
+	runAfterQueue(t, eng)
 	m := eng.thresholdMonitor
 	fires := captureThresholdFires(t, eng)
 
@@ -67,6 +68,7 @@ var decisionEntryPoints = []struct {
 }{
 	{"evaluatePayload", "EP", func(m *ThresholdMonitor, b thresholdEntry) {
 		m.OnBinUOPDelta(b.payloadCode, -1)
+		m.eng.after.settle()
 	}},
 	{"startupSweep", "SS", func(m *ThresholdMonitor, _ thresholdEntry) {
 		m.startupSweep(context.Background())

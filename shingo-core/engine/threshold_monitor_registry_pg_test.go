@@ -150,7 +150,7 @@ func TestThresholdMonitor_ReadsAuthoritativeSum_NotAStaleCache(t *testing.T) {
 	preCount := fires.count(stationID)
 
 	m.OnBinUOPDelta(payload, -1)
-	time.Sleep(300 * time.Millisecond)
+	eng.after.settle()
 
 	if got := fires.count(stationID); got != preCount {
 		t.Errorf("stocked payload (DB total 200 >= threshold 50) produced %d new signal(s); want 0 — the monitor must read DB truth, not a stale below-threshold cache (outbox=%v)",
@@ -369,7 +369,7 @@ func TestThresholdMonitor_ReportBelowTheLedger_HoldsAndOpensADivergence(t *testi
 
 	// And a delta, which evaluates the payload against Core's count.
 	eng.thresholdMonitor.OnBinUOPDelta(payload, -1)
-	time.Sleep(200 * time.Millisecond)
+	eng.after.settle()
 
 	if got := fires.count(stationID); got != preCount {
 		t.Errorf("fired %d signal(s); want 0 — the ledger reads 150 against a threshold of 100 and the report decides nothing (outbox=%v)",
@@ -440,8 +440,7 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 	// Drive the hot path the way a real delta would: the monitor re-reads the
 	// authoritative sum (-443), which is below threshold and must be acted on.
 	m.OnBinUOPDelta(payload, -1)
-
-	time.Sleep(300 * time.Millisecond)
+	eng.after.settle()
 
 	if got := fires.count(stationID); got <= preCount {
 		t.Errorf("negative in-loop total produced no LoopBelowThresholdSignal; want at least one — a wrong count must not starve the line (outbox=%v)",
