@@ -144,9 +144,10 @@ func landingStations(addr plantclaims.LandingAddress) []plantclaims.AddressedSta
 		return addr.Plant
 	}
 	if len(addr.Claiming) > 1 {
-		// No node is claimed by two stations on any fixture (DESIGN-H §4). If
-		// one is, the order's station decides only when it is one of them;
-		// otherwise nobody is told rather than a guess.
+		// Two stations claiming one node is flagged on the Edges page and
+		// refused nowhere (owner ruling 2026-11-22). The order's station decides
+		// only when it is one of them; otherwise nobody is told rather than a
+		// guess (TestLandingStations_SeveralClaimants).
 		for _, c := range addr.Claiming {
 			if c.StationID == addr.Order.StationID {
 				return []plantclaims.AddressedStation{c}
