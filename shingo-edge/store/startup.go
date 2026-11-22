@@ -1,14 +1,18 @@
 package store
 
-import "log"
+import (
+	"log"
+
+	"shingo/protocol"
+)
 
 // What a start does to rows, once the schema is settled. It is this one step.
 
-const (
+var (
 	clearEndedActiveOrderSQL = `UPDATE process_node_runtime_states SET active_order_id = NULL
-		WHERE active_order_id IN (SELECT id FROM orders WHERE status IN ('confirmed','cancelled','failed','skipped'))`
+		WHERE active_order_id IN (SELECT id FROM orders WHERE status IN (` + protocol.TerminalStatusSQLList() + `))`
 	clearEndedStagedOrderSQL = `UPDATE process_node_runtime_states SET staged_order_id = NULL
-		WHERE staged_order_id IN (SELECT id FROM orders WHERE status IN ('confirmed','cancelled','failed','skipped'))`
+		WHERE staged_order_id IN (SELECT id FROM orders WHERE status IN (` + protocol.TerminalStatusSQLList() + `))`
 )
 
 // clearEndedOrderPointers clears a position's active_order_id and
