@@ -95,9 +95,7 @@ func TestUploadScene_HTTPError(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.UploadScene(strings.NewReader("x")); err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
+	requireHTTPError(t, client.UploadScene(strings.NewReader("x")), http.StatusInternalServerError)
 }
 
 func TestSyncScene(t *testing.T) {

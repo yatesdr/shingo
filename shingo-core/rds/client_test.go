@@ -21,6 +21,17 @@ func testServer(handler http.HandlerFunc) (*httptest.Server, *Client) {
 	return srv, client
 }
 
+// requireHTTPError fails unless err is the status check's refusal of status.
+// An error status usually comes with a body that fails the decode as well, so
+// err != nil alone does not show that the status was read.
+func requireHTTPError(t *testing.T, err error, status int) {
+	t.Helper()
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.HTTPStatus != status {
+		t.Fatalf("err = %v, want the status check's refusal (rds HTTP %d)", err, status)
+	}
+}
+
 func TestCreateJoinOrder(t *testing.T) {
 	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
@@ -289,9 +300,7 @@ func TestHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	err := client.CreateJoinOrder(&SetJoinOrderRequest{ID: "fail"})
-	if err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
+	requireHTTPError(t, err, http.StatusInternalServerError)
 }
 
 // TestAPIError pins that a refusal RDS ANSWERED is typed — dispatch tells "the

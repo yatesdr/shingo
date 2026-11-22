@@ -100,9 +100,7 @@ func TestGetBinDetails_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := client.GetBinDetails()
-	if err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
+	requireHTTPError(t, err, http.StatusInternalServerError)
 }
 
 func TestCheckBins(t *testing.T) {

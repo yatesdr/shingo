@@ -85,9 +85,7 @@ func TestUnbindGoods_ServerError(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.UnbindGoods("AMB-02", "G-1"); err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
+	requireHTTPError(t, client.UnbindGoods("AMB-02", "G-1"), http.StatusInternalServerError)
 }
 
 func TestUnbindContainerGoods(t *testing.T) {

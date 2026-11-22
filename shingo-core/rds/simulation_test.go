@@ -61,9 +61,7 @@ func TestGetSimStateTemplate_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := client.GetSimStateTemplate()
-	if err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
+	requireHTTPError(t, err, http.StatusInternalServerError)
 }
 
 func TestUpdateSimState(t *testing.T) {
@@ -121,7 +119,5 @@ func TestUpdateSimState_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	err := client.UpdateSimState(map[string]any{"vehicle": "x"})
-	if err == nil {
-		t.Fatal("expected error for HTTP 400")
-	}
+	requireHTTPError(t, err, http.StatusBadRequest)
 }

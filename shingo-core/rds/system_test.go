@@ -51,9 +51,7 @@ func TestGetProfiles_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := client.GetProfiles("missing.cfg")
-	if err == nil {
-		t.Fatal("expected error for HTTP 404")
-	}
+	requireHTTPError(t, err, http.StatusNotFound)
 }
 
 func TestGetLicenseInfo(t *testing.T) {
@@ -145,7 +143,5 @@ func TestGetLicenseInfo_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := client.GetLicenseInfo()
-	if err == nil {
-		t.Fatal("expected error for HTTP 401")
-	}
+	requireHTTPError(t, err, http.StatusUnauthorized)
 }

@@ -279,7 +279,5 @@ func TestDisableLift_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	err := client.DisableLift(&DisableDeviceRequest{Names: []string{"L"}, Disabled: true})
-	if err == nil {
-		t.Fatal("expected error for HTTP 502")
-	}
+	requireHTTPError(t, err, http.StatusBadGateway)
 }

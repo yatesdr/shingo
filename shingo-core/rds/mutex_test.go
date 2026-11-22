@@ -55,9 +55,7 @@ func TestOccupyMutexGroup_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := client.OccupyMutexGroup("wp-1", []string{"g"})
-	if err == nil {
-		t.Fatal("expected error for HTTP 500")
-	}
+	requireHTTPError(t, err, http.StatusInternalServerError)
 }
 
 func TestReleaseMutexGroup(t *testing.T) {
@@ -145,9 +143,7 @@ func TestGetMutexGroupStatus_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := client.GetMutexGroupStatus(nil)
-	if err == nil {
-		t.Fatal("expected error for HTTP 502")
-	}
+	requireHTTPError(t, err, http.StatusBadGateway)
 }
 
 func TestGetMutexGroupStatus_BadJSON(t *testing.T) {
