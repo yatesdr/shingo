@@ -1,8 +1,10 @@
 package messaging
 
 import (
+	"cmp"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 
 	"shingo/protocol"
@@ -104,8 +106,8 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list accept-partials windows for %s: %v", stationID, perr)
 	}
-	// Nodes other stations claim, for the Edge's picker. A failed read sends no
-	// marks on a reply, as the kanbans read does: they refuse nothing.
+	// Nodes other stations claim, by uid, for the Edge's picker. A failed read
+	// sends no marks on a reply, as the kanbans read does: they refuse nothing.
 	claimed, cerr := s.db.NodesClaimedElsewhere(stationID)
 	if cerr != nil {
 		if strict {
@@ -113,7 +115,6 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		log.Printf("core_handler: list nodes claimed elsewhere for %s: %v", stationID, cerr)
 	}
-	infos := nodeInfos(nodeList, stationScoped, kanbans, partials, claimed)
 
 	// Loader refactor cutover: include the Core-owned loader config as a sibling
 	// slice so Edge's persistent cache receives it atomically with the topology.
@@ -126,13 +127,16 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 	if lerr != nil {
 		return nil, fmt.Errorf("build loader infos: %w", lerr)
 	}
-	// The display name of the Edge each loader names, from ONE registry read,
-	// and none when no loader names an Edge. Filled here, before the digest, so
-	// the digest covers what is sent and a rename moves it. A name is display
-	// only (the Edge falls back to the uid), so a reply degrades as the kanbans
-	// read does: the uids go, without names.
-	if loadersNameAnEdge(loaderInfos) {
-		edges, eerr := s.db.ListEdges()
+	// The display name of the Edge each loader names and of each station
+	// claiming a node elsewhere, from ONE registry read, and none when nothing
+	// names an Edge. Filled here, before the digest, so the digest covers what
+	// is sent and a rename moves it. A name is display only (the Edge falls
+	// back to the uid, and a claimant reads as its uid), so a reply degrades as
+	// the kanbans read does: the uids go, without names.
+	var edges []domain.RegistryEdge
+	if loadersNameAnEdge(loaderInfos) || len(claimed) > 0 {
+		var eerr error
+		edges, eerr = s.db.ListEdges()
 		if eerr != nil {
 			if strict {
 				return nil, fmt.Errorf("list edges: %w", eerr)
@@ -141,6 +145,7 @@ func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protoco
 		}
 		nameLoaderEdges(loaderInfos, edges)
 	}
+	infos := nodeInfos(nodeList, stationScoped, kanbans, partials, claimantNames(claimed, edges))
 	// Payload→dunnage mapping: one query replaces the N+1 per-node
 	// GetEffectiveBinTypes calls. Edge uses this to derive picker options
 	// from the node's allowed payloads (claim.AllowedPayloadCodes).
@@ -217,6 +222,30 @@ func nameLoaderEdges(infos []protocol.LoaderInfo, edges []domain.RegistryEdge) {
 			infos[i].EdgeDisplayName = names[uid]
 		}
 	}
+}
+
+// claimantNames is each claimed node's claimants as a person reads them: the
+// display name the registry holds, else the uid, sorted.
+func claimantNames(claimed map[string][]string, edges []domain.RegistryEdge) map[string][]string {
+	if len(claimed) == 0 {
+		return nil
+	}
+	names := make(map[string]string, len(edges))
+	for _, e := range edges {
+		if e.DisplayName != "" {
+			names[e.StationUID] = e.DisplayName
+		}
+	}
+	out := make(map[string][]string, len(claimed))
+	for node, uids := range claimed {
+		labels := make([]string, 0, len(uids))
+		for _, uid := range uids {
+			labels = append(labels, cmp.Or(names[uid], uid))
+		}
+		slices.Sort(labels)
+		out[node] = labels
+	}
+	return out
 }
 
 // binTypeFamilies is NodeListResponse.Family: each type's carrier family, as the walk compares

@@ -91,7 +91,7 @@ func (db *DB) SharedClaimedNodes(stationUID string) ([]plantclaims.SharedNode, e
 }
 
 // NodesClaimedElsewhere maps each physical node other stations claim to those
-// stations. See plantclaims.ClaimedElsewhere.
+// stations' uids. See plantclaims.ClaimedElsewhere.
 func (db *DB) NodesClaimedElsewhere(stationUID string) (map[string][]string, error) {
 	return plantclaims.ClaimedElsewhere(db.DB, stationUID)
 }
