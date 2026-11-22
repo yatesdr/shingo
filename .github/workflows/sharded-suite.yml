@@ -45,6 +45,17 @@ on:
         required: false
         default: false
         type: boolean
+      census:
+        description: >
+          Record the test census (.github/actions/test-census): the suite runs
+          with -json into a file and jq gives the log its text back. Off by
+          default because -json implies -v, which streams every t.Log line:
+          MEASURED 1.9x on dispatch's race shard (143s against 76s without it,
+          ci-speed runs 2026-11-21). Turn it on to show a change to the split
+          runs the same tests.
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   plan:
@@ -143,18 +154,38 @@ jobs:
 
       - name: Test — shard ${{ matrix.shard.id }}
         working-directory: ${{ inputs.module }}
-        # NOT -json, deliberately: shardplan reads plain output too, and a race
-        # report is a multi-page stack dump that JSON would make unreadable on
-        # the one run where somebody has to read it.
+        # Plain text by default, and NOT -json, deliberately: shardplan reads
+        # plain output, and a race report is a multi-page stack dump that JSON
+        # would make unreadable on the one run where somebody has to read it.
+        # With census on: -json into a file (the census's input), and jq turns
+        # it back into the text go test prints (as -v would) for the log and
+        # for shardplan; a line that is not an event (stderr) passes as text.
         #
         # pipefail so `tee` cannot mask a failing exit code. -p 1 because the
         # runner has 2-4 cores and in-package parallelism already uses them.
+        env:
+          CENSUS: ${{ inputs.census && '1' || '' }}
         run: |
           set -o pipefail
           mkdir -p ../.shard
-          go test -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
-            ${{ matrix.shard.pkgs }} \
-            | tee ../.shard/results-${{ matrix.shard.id }}.log
+          if [ -n "$CENSUS" ]; then
+            go test -json -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
+              ${{ matrix.shard.pkgs }} 2>&1 \
+              | tee ../.shard/results-${{ matrix.shard.id }}.json \
+              | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                  | select(.Action == "output" or .Action == "build-output") | .Output' \
+              | tee ../.shard/results-${{ matrix.shard.id }}.log
+          else
+            go test -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
+              ${{ matrix.shard.pkgs }} \
+              | tee ../.shard/results-${{ matrix.shard.id }}.log
+          fi
+
+      - if: always() && inputs.census
+        uses: ./.github/actions/test-census
+        with:
+          json: .shard/results-${{ matrix.shard.id }}.json
+          name: ${{ inputs.cache-prefix }}${{ matrix.shard.id }}
 
       # always(): a shard that went red still produced timings for whatever ran
       # before it, and losing those would unbalance the next run.
