@@ -19,24 +19,21 @@ import (
 const (
 	w6Counter2  = "MES_WELD_6.Prod_Counter_02"
 	w6Identity2 = "MES_WELD_6.CATID_02"
-	// slotWatch is the Edge's slot watch interval (engine.slotWatchInterval):
-	// a pass a minute of the process clock (the wall's here), with no knob.
-	slotWatch = time.Minute
-	// w6Cadence is the line's machine cycle while S8 waits on the watch.
-	w6Cadence = 10 * time.Second
-	// slotSlack is the scheduling slack on the watch's minute (its ticker and
-	// the scenario's read of the strip).
-	slotSlack = 2 * time.Second
+	// w6WatchCycles is the line between two passes of the slot watch: a pass a
+	// minute (TestSlotWatch_TheDefaultClock), a machine cycle every 10 s. S8
+	// fires the passes itself.
+	w6WatchCycles = 6
 )
 
 // TestCatid4x2_S8_CountedSlotStopsASiblingMoves: WELD-6 counts on
-// Prod_Counter_01, the line running a cycle every 10 s, its positions counted
-// at the load station in one half and at the production counter in the other.
+// Prod_Counter_01, the line running six cycles between two passes of the slot
+// watch (which the scenario fires), its positions counted at the load station
+// in one half and at the production counter in the other.
 // Once the Edge's slot watch has read the struct twice (the counter rising
 // between the reads, standing from the second), the PLC's program moves the
 // count to Prod_Counter_02: it ticks from then and CATID_02 reads the part;
-// Prod_Counter_01 stops, CATID_01 stays. Within one watch interval the strip
-// carries the red counter_slot_idle item naming Prod_Counter_02, and its click
+// Prod_Counter_01 stops, CATID_01 stays. At the watch's first pass after the
+// move, and not before it, the strip carries the red counter_slot_idle item naming Prod_Counter_02, and its click
 // (the counter edit POST /api/processes/{id}/counter makes) re-points the
 // counter: the item goes, the identity follows to CATID_02 (nothing is
 // confirmed while WarLink does not publish it, though CATID_01 names the same
@@ -59,6 +56,7 @@ func TestCatid4x2_S8_CountedSlotStopsASiblingMoves(t *testing.T) {
 
 // s8 is one half of S8, on a cell counted as o says.
 func s8(t *testing.T, label string, o w6Opts) {
+	o.passWatch = true
 	c := newW6Cell(t, o)
 	c.cycle(w6Depth + 2) // the line full: the counter counts
 	c.ledger(label+" steady", true)
@@ -70,8 +68,12 @@ func s8(t *testing.T, label string, o w6Opts) {
 	c.plc.do(func(l *simwarlink.Line) { mustNil(t, l.CountOn(2), "the count to slot 2") })
 	moved := time.Now()
 	stood := c.plc.state().Slots[0]
-	c.cycle(1) // the first part counted on Prod_Counter_02, which no point reads
-	item := c.awaitSlotIdle(label, moved)
+	// The parts counted on Prod_Counter_02, which no point reads, until the
+	// watch's next pass.
+	c.cycle(w6WatchCycles)
+	c.noSlotItem(label + " moved, before the watch's pass")
+	c.watchPass(label + " the pass after the move")
+	item := c.slotIdle(label)
 	shown := time.Since(moved)
 	if item.Severity != edgeengine.CatidHealthRed || item.Data["tag"] != w6Counter2 || item.Data["catid"] != fmt.Sprint(catRUN) ||
 		item.Data["counted_tag"] != w6Counter {
@@ -122,54 +124,48 @@ func s8(t *testing.T, label string, o w6Opts) {
 	}
 	c.confirmedAll(label)
 	c.line(label, l)
-	t.Logf("CATCH-UP %s: the item %.1fs after the move (watch interval %v); the %d parts counted on %s in the %.1fs to the "+
-		"monitor's read of CATID_02 are in the record, in %d row(s) under CATID %d and RUN", label, shown.Seconds(), slotWatch,
+	t.Logf("CATCH-UP %s: the item %.1fs after the move, at the watch's next pass; the %d parts counted on %s in the %.1fs to the "+
+		"monitor's read of CATID_02 are in the record, in %d row(s) under CATID %d and RUN", label, shown.Seconds(),
 		since, w6Counter2, caught.Seconds(), len(rows), catRUN)
 }
 
-// twoPasses runs the line until the slot watch has read the struct twice,
-// the second time after the line's last count reached the cache: the counted
-// slot rose between the two reads, so the watch saw it counting, and it
-// stands from the second to the move.
+// twoPasses runs the line through two passes of the slot watch, each after
+// the line's last count reached the cache: the counted slot rose between the
+// two reads, so the watch saw it counting, and it stands from the second to
+// the move.
 func (c *w6Cell) twoPasses(label string) {
 	c.t.Helper()
-	var first time.Time
-	if !c.runUntil(slotWatch+slotSlack, func() bool {
-		first = c.plc.structReadAfter(time.Time{})
-		return !first.IsZero()
-	}) {
-		c.t.Fatalf("%s: no read of %s in %v", label, w6Struct, slotWatch+slotSlack)
-	}
-	if !c.runUntil(slotWatch+slotSlack, func() bool {
-		after := c.lastPublish.Add(50 * time.Millisecond)
-		if first.After(after) {
-			after = first
-		}
-		return !c.plc.structReadAfter(after).IsZero()
-	}) {
-		c.t.Fatalf("%s: no second read of %s in %v", label, w6Struct, slotWatch+slotSlack)
+	for _, pass := range []string{" the first pass", " the second pass"} {
+		c.cycle(w6WatchCycles)
+		c.watchPass(label + pass)
 	}
 }
 
-// awaitSlotIdle runs the line until the strip carries the red
-// counter_slot_idle item, within one watch interval of the move.
-func (c *w6Cell) awaitSlotIdle(label string, moved time.Time) edgeengine.CatidHealthItem {
+// watchPass fires the slot watch once, and fails unless that pass read the
+// struct.
+func (c *w6Cell) watchPass(label string) {
 	c.t.Helper()
-	var item edgeengine.CatidHealthItem
-	if !c.runUntil(slotWatch+slotSlack-time.Since(moved), func() bool {
-		for _, it := range c.slotItems() {
-			if it.Kind == "counter_slot_idle" {
-				item = it
-				return true
-			}
-		}
-		return false
-	}) {
-		c.dump(label + ": no slot item")
-		c.t.Fatalf("%s: no counter_slot_idle item within one watch interval (%v) of the move to Prod_Counter_02; slot items %+v",
-			label, slotWatch+slotSlack, c.slotItems())
+	before := c.plc.structReadCount()
+	c.tickers.watch.pass(c.t, label)
+	if c.plc.structReadCount() == before {
+		c.t.Fatalf("%s: the slot watch's pass did not read %s", label, w6Struct)
 	}
-	return item
+}
+
+// slotIdle is the strip's red counter_slot_idle item, which the pass just
+// fired must have left there.
+func (c *w6Cell) slotIdle(label string) edgeengine.CatidHealthItem {
+	c.t.Helper()
+	items := c.slotItems()
+	for _, it := range items {
+		if it.Kind == "counter_slot_idle" {
+			return it
+		}
+	}
+	c.dump(label + ": no slot item")
+	c.t.Fatalf("%s: no counter_slot_idle item at the watch's first pass after the move to Prod_Counter_02; slot items %+v",
+		label, items)
+	return edgeengine.CatidHealthItem{}
 }
 
 // click is the item's click: the counter edit to the item's tag, everything
@@ -204,25 +200,6 @@ func (c *w6Cell) click(label string, item edgeengine.CatidHealthItem) int64 {
 			label, catRUN, w6Identity2, seen, n, w6Identity)
 	}
 	return seen
-}
-
-// runUntil runs the line a machine cycle every w6Cadence until ok holds,
-// asked every 50 ms between cycles, or the budget is spent; false then.
-func (c *w6Cell) runUntil(budget time.Duration, ok func() bool) bool {
-	c.t.Helper()
-	deadline := time.Now().Add(budget)
-	next := time.Now().Add(w6Cadence)
-	for time.Now().Before(deadline) {
-		if ok() {
-			return true
-		}
-		if !time.Now().Before(next) {
-			c.cycle(1)
-			next = next.Add(w6Cadence)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return ok()
 }
 
 // slotItems are the strip's items on the MES struct's slots.

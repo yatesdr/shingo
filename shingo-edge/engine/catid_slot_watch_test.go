@@ -295,29 +295,92 @@ func TestCounting_EndOfLineCarriesTheWatchedSlots(t *testing.T) {
 
 // TestSlotWatch_TheDefaultClock: the watch's loop takes a one-minute ticker
 // from the process clock as it stands when the loop starts, a clock installed
-// after the engine was built (the sim's) included. Not parallel: it installs
-// the process clock.
+// after the engine was built (the sim's) included, or from
+// Config.SlotWatchClock when that is set. A pass's time is the process clock's
+// either way. Not parallel: it installs the process clock.
 func TestSlotWatch_TheDefaultClock(t *testing.T) {
-	eng := &Engine{stopChan: make(chan struct{})}
-	cm := &catidMonitor{eng: eng}
+	given := newTickerTaker()
+	cfg := &config.Config{}
+	built := New(Config{AppConfig: cfg, DB: testEngineDB(t)})
+	givenTo := New(Config{AppConfig: cfg, DB: testEngineDB(t), SlotWatchClock: given})
 	prev := clock.Default()
 	def := newTickerTaker()
 	clock.SetDefault(def)
 	t.Cleanup(func() { clock.SetDefault(prev) })
 
+	for _, tc := range []struct {
+		name  string
+		e     *Engine
+		from  *tickerTaker
+		other *tickerTaker
+	}{
+		{"New", built, def, given},
+		{"bare", &Engine{}, def, given},
+		{"given", givenTo, given, def},
+	} {
+		tc.e.stopChan = make(chan struct{})
+		cm := &catidMonitor{eng: tc.e}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			cm.runSlotWatch()
+		}()
+		select {
+		case d := <-tc.from.took:
+			if d != time.Minute {
+				t.Errorf("%s engine: the watch's ticker is every %v, want a minute", tc.name, d)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s engine: the watch took no ticker from the clock it should run on", tc.name)
+		}
+		close(tc.e.stopChan)
+		<-done
+		select {
+		case <-tc.other.took:
+			t.Errorf("%s engine: the watch took a ticker from the wrong clock as well", tc.name)
+		default:
+		}
+	}
+
+	// The pass stamps the process clock's time, whatever clock gave the tick.
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	clock.SetDefault(fixedNow{Clock: clock.Real(), at: at})
+	tick := &oneTick{Clock: clock.Real(), c: make(chan time.Time)}
+	e := New(Config{AppConfig: cfg, DB: testEngineDB(t), SlotWatchClock: tick})
+	e.stopChan = make(chan struct{})
+	pid, err := e.db.CreateProcess("Cell", "", "plc", "MES_Cell.Prod_Counter_01", true)
+	testutil.MustNoErr(t, err, "create process")
+	e.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, &recordingWarlink{})
+	cm := &catidMonitor{eng: e}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		cm.runSlotWatch()
 	}()
-	select {
-	case d := <-def.took:
-		if d != time.Minute {
-			t.Errorf("the watch's ticker is every %v, want a minute", d)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("the watch took no ticker from the process clock")
-	}
-	close(eng.stopChan)
+	tick.c <- at.Add(-time.Hour)
+	close(e.stopChan)
 	<-done
+	f := cm.slotFactsOf(pid)
+	if f == nil || !f.slots[0].at.Equal(at) {
+		t.Fatalf("the pass fired by the given ticker left %+v, want a pass stamped %v, the process clock's", f, at)
+	}
 }
+
+// fixedNow is a clock that reads one instant.
+type fixedNow struct {
+	clock.Clock
+	at time.Time
+}
+
+func (k fixedNow) Now() time.Time { return k.at }
+
+// oneTick is a clock whose ticker the test fires.
+type oneTick struct {
+	clock.Clock
+	c chan time.Time
+}
+
+func (k *oneTick) NewTicker(time.Duration) clock.Ticker { return k }
+func (k *oneTick) C() <-chan time.Time                  { return k.c }
+func (k *oneTick) Stop()                                {}
+func (k *oneTick) Reset(time.Duration)                  {}

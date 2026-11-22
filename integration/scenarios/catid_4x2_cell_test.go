@@ -95,11 +95,12 @@ var (
 // ── the clock ───────────────────────────────────────────────────────────────
 
 // w6LoopClock is one loop's clock on one Edge the cell starts: the PLC poll's,
-// the demand reconciler's or the parked-ticks monitor's, given to the Edge
-// through its Config (PollClock, DemandReconcileClock, StrandedClock). It is
-// the real clock but for the loop's ticker, which it hands the cell to fire
-// (passTicker). Nothing here is process-wide, so the scenarios run beside the
-// package's others; a restarted Edge is built with clocks of its own.
+// the demand reconciler's, the parked-ticks monitor's or, in S8, the slot
+// watch's, given to the Edge through its Config (PollClock,
+// DemandReconcileClock, StrandedClock, SlotWatchClock). It is the real clock
+// but for the loop's ticker, which it hands the cell to fire (passTicker).
+// Nothing here is process-wide, so the scenarios run beside the package's
+// others; a restarted Edge is built with clocks of its own.
 type w6LoopClock struct {
 	mu sync.Mutex
 	tk *passTicker
@@ -126,28 +127,30 @@ func (k *w6LoopClock) ticker() *passTicker {
 	return k.tk
 }
 
-// w6Clocks are one Edge's three loop clocks.
+// w6Clocks are one Edge's loop clocks. watch is given only to an Edge whose
+// scenario fires the slot watch (w6Opts.passWatch).
 type w6Clocks struct {
-	poll, sweep, stranded w6LoopClock
+	poll, sweep, stranded, watch w6LoopClock
 }
 
 // w6Tickers are one Edge's driven tickers: the poll's, the reconciler's and
-// the parked-ticks monitor's (stranded).
+// the parked-ticks monitor's (stranded), and the slot watch's (watch), nil
+// unless the scenario fires it.
 type w6Tickers struct {
-	poll, sweep, stranded *passTicker
+	poll, sweep, stranded, watch *passTicker
 }
 
-// started waits for each of the Edge's three loops to take its ticker, and
-// returns them.
-func (k *w6Clocks) started(t *testing.T) *w6Tickers {
+// started waits for each loop the Edge was given a clock for to take its
+// ticker, and returns them.
+func (k *w6Clocks) started(t *testing.T, passWatch bool) *w6Tickers {
 	t.Helper()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
-		c := &w6Tickers{poll: k.poll.ticker(), sweep: k.sweep.ticker(), stranded: k.stranded.ticker()}
-		if c.poll != nil && c.sweep != nil && c.stranded != nil {
+		c := &w6Tickers{poll: k.poll.ticker(), sweep: k.sweep.ticker(), stranded: k.stranded.ticker(), watch: k.watch.ticker()}
+		if c.poll != nil && c.sweep != nil && c.stranded != nil && (c.watch != nil || !passWatch) {
 			return c
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the Edge's poll, reconciler or parked-ticks monitor never took its ticker")
+			t.Fatal("the Edge's poll, reconciler, parked-ticks monitor or driven slot watch never took its ticker")
 		}
 	}
 }
@@ -229,9 +232,9 @@ type w6WarLink struct {
 	// (the one it was loaded under, LineState.ByIdentity) and of each count it
 	// has made (the one the counter read), in order: load k is loadIDs[k].
 	loadIDs, countIDs []int64
-	// structReads are the times the struct was read whole: the Edge's slot
+	// structReads counts the reads of the whole struct: the Edge's slot
 	// watch reads so the members WarLink does not publish.
-	structReads []time.Time
+	structReads int
 }
 
 var _ plc.WarlinkClient = (*w6WarLink)(nil)
@@ -317,17 +320,11 @@ func (f *w6WarLink) values() map[string]float64 {
 	return out
 }
 
-// structReadAfter is the first read of the whole struct after t, zero when
-// there has been none.
-func (f *w6WarLink) structReadAfter(t time.Time) time.Time {
+// structReadCount is how many times the whole struct has been read.
+func (f *w6WarLink) structReadCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, r := range f.structReads {
-		if r.After(t) {
-			return r
-		}
-	}
-	return time.Time{}
+	return f.structReads
 }
 
 func (f *w6WarLink) ListPLCs(context.Context) ([]plc.WarlinkPLC, error) {
@@ -364,7 +361,7 @@ func (f *w6WarLink) ReadTagValue(_ context.Context, _, tag string) (any, error) 
 	defer f.mu.Unlock()
 	all := f.members()
 	if tag == w6Struct {
-		f.structReads = append(f.structReads, time.Now())
+		f.structReads++
 		out := map[string]any{}
 		for t, v := range all {
 			if m, ok := strings.CutPrefix(t, w6Struct+"."); ok {
@@ -402,7 +399,7 @@ func (w6Preflight) PreflightInventory([]string) (*edgeservice.PreflightCoreResul
 // startW6Edge boots an Edge on db with the cell's PLC behind WarLink, wired as
 // testharness.NewEdge wires one (its handlers and ingestor), and returns it
 // with its driven tickers. A restart is this again on the same database.
-func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient) (*edgeharness.Edge, *w6Tickers, *edgeuop.Mutator) {
+func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient, passWatch bool) (*edgeharness.Edge, *w6Tickers, *edgeuop.Mutator) {
 	t.Helper()
 	cfg := edgeconfig.Defaults()
 	cfg.StationUID = w6Edge
@@ -411,12 +408,16 @@ func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient) (*edgeharness
 	// tag lists, publishing, a direct read) answer from the line.
 	cfg.WarLink.Enabled = false
 	clocks := &w6Clocks{}
-	eng := edgeengine.New(edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf, Warlink: wl,
-		PollClock: &clocks.poll, DemandReconcileClock: &clocks.sweep, StrandedClock: &clocks.stranded})
+	ecfg := edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf, Warlink: wl,
+		PollClock: &clocks.poll, DemandReconcileClock: &clocks.sweep, StrandedClock: &clocks.stranded}
+	if passWatch {
+		ecfg.SlotWatchClock = &clocks.watch
+	}
+	eng := edgeengine.New(ecfg)
 	eng.SetReleasePointSource(releasefake.DB{DB: db})
 	eng.SetPreflightSource(w6Preflight{})
 	eng.Start()
-	tickers := clocks.started(t)
+	tickers := clocks.started(t, passWatch)
 	t.Cleanup(eng.Stop) // a second Stop, after a restart's, is a no-op
 	// The inventory sink, as a plant runs it: a pickup clears the seat and a
 	// draw reaches Core's bin through it (flushed at a pickup, and by the
@@ -479,6 +480,9 @@ type w6Opts struct {
 	// reorder is every claim's reorder point; 0 is 10. The demand sweep runs
 	// only when a scenario fires it (sweep).
 	reorder int
+	// passWatch hands the slot watch's ticker to the scenario to fire
+	// (watchPass); without it the watch passes on the process clock.
+	passWatch bool
 }
 
 // w6Tenure is one cart's stay at a position: the station clicks and the
@@ -511,9 +515,8 @@ type w6Cell struct {
 	unbound  bool // the load station's counter is made, bound to no position
 	tenures  [5][]*w6Tenure
 	reorder  int
-	// lastPublish is when the scenario last wrote the PLC's tags into the
-	// Edge's cache (publish).
-	lastPublish time.Time
+	// passWatch is w6Opts.passWatch, kept for a restart.
+	passWatch bool
 }
 
 // newW6Cell builds the cell on RUN, each position holding a full RUN cart
@@ -526,6 +529,7 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 		c.station[p] = true
 	}
 	c.unbound = o.unbound
+	c.passWatch = o.passWatch
 	c.reorder = o.reorder
 	if c.reorder == 0 {
 		c.reorder = 10
@@ -539,7 +543,7 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 	db, err := store.Open(filepath.Join(t.TempDir(), "edge.db"))
 	mustNil(t, err, "edge db")
 	t.Cleanup(func() { _ = db.Close() })
-	c.edge, c.tickers, c.sink = startW6Edge(t, db, c.plc)
+	c.edge, c.tickers, c.sink = startW6Edge(t, db, c.plc, c.passWatch)
 	c.configureEdge()
 	// The cell has run both styles: the Edge has seen both CATIDs, and boots
 	// knowing it (the monitor reads the observations at its start).
@@ -704,7 +708,7 @@ func (c *w6Cell) restart(label string) {
 	c.edge.Engine.Stop()
 	v := c.plc.state().Identity
 	seen := c.observations(v)
-	c.edge, c.tickers, c.sink = startW6Edge(c.t, c.edge.DB, c.plc)
+	c.edge, c.tickers, c.sink = startW6Edge(c.t, c.edge.DB, c.plc, c.passWatch)
 	c.wireBus()
 	c.publish()
 	// The monitor's first read after a start is its baseline.
@@ -782,7 +786,6 @@ func (c *w6Cell) publish() {
 	for tag, v := range c.plc.values() {
 		pm.SetTagValueForTest(w6PLC, tag, v)
 	}
-	c.lastPublish = time.Now()
 }
 
 // cycle turns the line n machine cycles, one Edge poll pass after each. When

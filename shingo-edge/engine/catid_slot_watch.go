@@ -129,9 +129,15 @@ func mesSlotOf(p *processes.Process) (prefix, base string, counted int, ok bool)
 }
 
 // runSlotWatch is the watch's goroutine: a pass a minute of the process
-// clock until the engine stops. It never runs on the monitor's tick.
+// clock until the engine stops. It never runs on the monitor's tick. A test
+// may give the ticker through Config.SlotWatchClock to fire the passes itself;
+// a pass's time stays the process clock's (TestSlotWatch_TheDefaultClock).
 func (cm *catidMonitor) runSlotWatch() {
-	ticker := clock.Default().NewTicker(slotWatchInterval)
+	clk := cm.eng.slotWatchClock
+	if clk == nil {
+		clk = clock.Default()
+	}
+	ticker := clk.NewTicker(slotWatchInterval)
 	defer ticker.Stop()
 	for {
 		select {

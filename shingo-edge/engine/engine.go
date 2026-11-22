@@ -184,6 +184,9 @@ type Engine struct {
 	// tickers from.
 	pollClock     clock.Clock
 	strandedClock clock.Clock
+	// slotWatchClock is Config.SlotWatchClock: what the slot watch takes its
+	// ticker from, and only that (runSlotWatch).
+	slotWatchClock clock.Clock
 
 	hourlyTracker  *HourlyTracker
 	reconciliation *ReconciliationService
@@ -380,6 +383,10 @@ type Config struct {
 	// clocks of its own, so nothing it runs is process-wide.
 	PollClock     clock.Clock
 	StrandedClock clock.Clock
+	// SlotWatchClock is the same for the MES slot watch's ticker, and for
+	// nothing else: the time a pass records is the process clock's, so the
+	// watch keeps one clock with the monitor beside it (runSlotWatch).
+	SlotWatchClock clock.Clock
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -408,6 +415,7 @@ func New(c Config) *Engine {
 		reconcileClock: c.DemandReconcileClock,
 		pollClock:      c.PollClock,
 		strandedClock:  c.StrandedClock,
+		slotWatchClock: c.SlotWatchClock,
 		Events:         NewEventBus(),
 		stopChan:       make(chan struct{}),
 		cutoverPokes:   make(chan int64, 64),
