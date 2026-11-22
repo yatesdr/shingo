@@ -1,0 +1,1 @@
+{"station":"stn-0e0e0e0e0e0e0e0e","reported_at":"2026-01-02T03:04:05Z","entries":[{"core_node_name":"SYN-LINE","payload_code":"SYN-PART-A","bin_count":40,"bin_uop":5,"bucket_qty":2,"bin_id":31,"bin_epoch":4,"flushed_seq":12}]}

@@ -1,0 +1,1 @@
+{"order_uuid":"00000000-0000-4000-8000-000000000002","delivered_at":"2026-01-02T03:04:05Z","staged_expire_at":"2026-01-02T03:05:06Z","bin_id":31,"uop_remaining":40,"delta_epoch":4,"bin_payload_code":"SYN-PART-A","delivery_node":"SYN-DST","bin_dest_node":"SYN-LINE","landing_sent":true}

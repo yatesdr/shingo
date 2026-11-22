@@ -51,6 +51,10 @@ type peerWireCase struct {
 }
 
 func peerWireCases() []peerWireCase {
+	return append(deployedPeerWireCases(), peerFloorWireCases()...)
+}
+
+func deployedPeerWireCases() []peerWireCase {
 	const core, edge = "the v0.18.0 Core", "the v0.17.2 Edge"
 	return []peerWireCase{
 		{"BinUOPDelta", edge, []string{"station"},
@@ -101,8 +105,8 @@ func TestPeerWire_TheGoldensAreThePeersWholeShape(t *testing.T) {
 				t.Fatalf("marshal the frozen copy: %v", err)
 			}
 			if !bytes.Equal(again, golden) {
-				t.Fatalf("the frozen copy encodes\n%s\nbut %s encoded\n%s\nThe copy has drifted from the tag: copy the "+
-					"type from `git show v0.17.2:protocol/` again; do not regenerate the golden from this tree", again, c.sender, golden)
+				t.Fatalf("the frozen copy encodes\n%s\nbut %s encoded\n%s\nThe copy has drifted from the tag: copy the type "+
+					"from that release's protocol/ (git show <tag>:protocol/) again; do not regenerate the golden from this tree", again, c.sender, golden)
 			}
 			if path, ok := firstZeroField(reflect.ValueOf(peer).Elem(), c.name); !ok {
 				t.Errorf("%s is zero in the golden: set it in testdata/peerwire/gen.go and rerun it at both tags", path)

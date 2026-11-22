@@ -155,6 +155,11 @@ func TestF1b_MultiToteDelivered_ShipsConsumingBin(t *testing.T) {
 	if delivered.BinDestNode != lineNodeName {
 		t.Errorf("delivered.BinDestNode = %q, want the consuming node %q", delivered.BinDestNode, lineNodeName)
 	}
+	// landing_sent stays on the wire while a v0.19.0 Edge is at the floor:
+	// without it that Edge binds from order.delivered.
+	if !delivered.LandingSent {
+		t.Errorf("delivered.LandingSent = false: a v0.19.0 Edge would bind from this message")
+	}
 	// The count snapshot must be for the SELECTED (supply) bin, present so Edge
 	// seeds the runtime cache from it rather than a role default.
 	if delivered.UOPRemaining == nil {
