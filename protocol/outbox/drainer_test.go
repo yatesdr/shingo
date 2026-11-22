@@ -2,6 +2,9 @@ package outbox
 
 import (
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -189,21 +192,51 @@ func TestDrainer_RetryOnPublishFail(t *testing.T) {
 	}
 }
 
+// TestDrainer_DeadLetter: the failed publish that spends a message's last
+// attempt dead-letters it, and the one before that does not. A dead letter is
+// a spent, undelivered row, so it takes the increment and no ack. The drainer
+// itself says which failure that was only in its DEAD-LETTER log line; that
+// the stores stop offering such a row is their retries < MaxRetries filter,
+// which this mock does not model.
 func TestDrainer_DeadLetter(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		pending: []Message{
-			{ID: 1, Payload: []byte("hello"), MsgType: "test", Retries: MaxRetries - 1},
-		},
-	}
-	pub := &mockPublisher{connected: true, publishErr: errors.New("kafka down")}
+	for _, tc := range []struct {
+		name    string
+		retries int
+		dead    bool
+	}{
+		{"last attempt", MaxRetries - 1, true},
+		{"one attempt left", MaxRetries - 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &mockStore{
+				pending: []Message{
+					{ID: 1, Payload: []byte("hello"), MsgType: "test", Retries: tc.retries},
+				},
+			}
+			pub := &mockPublisher{connected: true, publishErr: errors.New("kafka down")}
 
-	d := NewDrainer(store, pub, "orders", 10*time.Millisecond, 50)
-	d.drain()
+			d := NewDrainer(store, pub, "orders", 10*time.Millisecond, 50)
+			var deadLettered []string
+			d.DebugLog = func(format string, args ...any) {
+				if line := fmt.Sprintf(format, args...); strings.HasPrefix(line, "DEAD-LETTER: msg 1 ") {
+					deadLettered = append(deadLettered, line)
+				}
+			}
+			d.drain()
 
-	// Should increment retries (which marks it as dead-lettered in DB)
-	if len(store.retried) != 1 {
-		t.Fatal("expected 1 retry increment")
+			if !slices.Equal(store.retried, []int64{1}) {
+				t.Errorf("retried = %v, want one increment of msg 1", store.retried)
+			}
+			if len(store.acked) != 0 {
+				t.Errorf("acked = %v, want none: an ack records the message as delivered", store.acked)
+			}
+			if got := len(deadLettered) == 1; got != tc.dead {
+				t.Errorf("dead-lettered = %v %q with %d of %d attempts spent, want %v",
+					got, deadLettered, tc.retries+1, MaxRetries, tc.dead)
+			}
+		})
 	}
 }
 
@@ -228,7 +261,7 @@ func TestDrainer_PurgeOld(t *testing.T) {
 	d := NewDrainer(store, pub, "orders", 1*time.Millisecond, 50)
 	d.Start()
 	defer d.Stop()
-	// Poll until purge fires (drainer runs at 1ms interval with purgeAge=50ms).
+	// Poll until purge fires (drainer runs at 1ms interval, purging every PurgeCycleInterval ticks).
 	testutil.Eventually(t, 2*time.Second, func() bool {
 		store.mu.Lock()
 		defer store.mu.Unlock()
