@@ -89,20 +89,21 @@ func assertNoLegColumnsBut(t *testing.T, what, src, allow string) {
 // style_claims, each with the reason it may. A new reader is a decision, not an
 // accident: add it here with its reason, or move the read behind one of these.
 var sanctionedLegReaders = map[string]string{
-	"store/kanbans.go":                 "a node rename lists what joins it by name, a claim's legs among them (ReferencesToNodeName): a warning read at a save, never a decision",
-	"store/plantclaims/plantclaims.go": "the writer (ReplaceProcess), and the addressing read: a station binds at its cell's paired positions too (Lane H, H.3)",
-	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
-	"store/partial_route.go":           "where a carrier lifted off a line goes by what it holds: the outbounds the claims at the lift node name (ClaimOutboundsAt), read by the other-part arm",
-	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
-	"store/kanban_picture.go":          "the kanban's running processes: a claim belongs to a kanban when its core, paired or second paired node is supported",
-	"store/nodes/kanban.go":            "which kanbans a process's claims have a supported position in, by the picture's own match: a claim's move rings their lines",
-	"store/migrations.go":              "the schema",
-	"store/bins/bins.go":               "the empty scan leaves a cell's own positions alone, a press-index cell's paired positions included",
-	"store/bins/tote_want.go":          "the height an empty is wanted at: 0 at the press of a cell fed from its paired position (FedClaimSQL's shape test), read with the set-down node",
-	"store/bins/fed_claim.go":          "the fed press's shape (FedClaimSQL) and where it draws from for a vacant pickup at its outside or second paired position (FedInboundSource)",
-	"store/bins/tote_lift.go":          "the lift's tote hook: is the node a fed cell's outside position (FedClaimSQL), and which press is its front",
-	"store/sourceability/read.go":      "the two-minute pass's claim load carries inbound_source for the forecaster (D2.1); the verdict does not read it",
-	"cmd/soakstat/main.go":             "the sim reader's vacated-line holds: a pair parked while its fed press's paired or second paired position holds no bin, the shape composed through FedClaimSQL; read-only instrumentation",
+	"store/kanbans.go":                    "a node rename lists what joins it by name, a claim's legs among them (ReferencesToNodeName): a warning read at a save, never a decision",
+	"store/plantclaims/plantclaims.go":    "the writer (ReplaceProcess), and the addressing read: a station binds at its cell's paired positions too (Lane H, H.3)",
+	"store/plantclaims/node_claimants.go": "who claims a physical node, for the Edges page flag and the node list's claimed_by: a claim's paired positions are positions it names, as the addressing read counts them",
+	"store/return_sources.go":             "the cancel-return policy: where a line's bins come from and its empties go",
+	"store/partial_route.go":              "where a carrier lifted off a line goes by what it holds: the outbounds the claims at the lift node name (ClaimOutboundsAt), read by the other-part arm",
+	"store/containment.go":                "the containment divert scopes itself to the claim's own outbound flow",
+	"store/kanban_picture.go":             "the kanban's running processes: a claim belongs to a kanban when its core, paired or second paired node is supported",
+	"store/nodes/kanban.go":               "which kanbans a process's claims have a supported position in, by the picture's own match: a claim's move rings their lines",
+	"store/migrations.go":                 "the schema",
+	"store/bins/bins.go":                  "the empty scan leaves a cell's own positions alone, a press-index cell's paired positions included",
+	"store/bins/tote_want.go":             "the height an empty is wanted at: 0 at the press of a cell fed from its paired position (FedClaimSQL's shape test), read with the set-down node",
+	"store/bins/fed_claim.go":             "the fed press's shape (FedClaimSQL) and where it draws from for a vacant pickup at its outside or second paired position (FedInboundSource)",
+	"store/bins/tote_lift.go":             "the lift's tote hook: is the node a fed cell's outside position (FedClaimSQL), and which press is its front",
+	"store/sourceability/read.go":         "the two-minute pass's claim load carries inbound_source for the forecaster (D2.1); the verdict does not read it",
+	"cmd/soakstat/main.go":                "the sim reader's vacated-line holds: a pair parked while its fed press's paired or second paired position holds no bin, the shape composed through FedClaimSQL; read-only instrumentation",
 }
 
 // TestLegColumnsHaveOnlySanctionedReaders walks shingo-core for any file that
