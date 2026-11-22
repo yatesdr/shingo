@@ -112,7 +112,7 @@ func TestHeartbeatOffset_CarriesAtMostTwoPassesOfTheScanLock(t *testing.T) {
 		PayloadCode: sd.Payload.Code, DeliveryNode: sd.LineNode.Name,
 	})
 	testutil.MustNoErr(t, err, "the order request ahead")
-	hb, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, edge, core, &protocol.EdgeHeartbeat{StationID: station})
+	hb, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, edge, core, &protocol.EdgeHeartbeat{})
 	testutil.MustNoErr(t, err, "the heartbeat")
 	var inbound [][]byte
 	for _, env := range []*protocol.Envelope{req, hb} {

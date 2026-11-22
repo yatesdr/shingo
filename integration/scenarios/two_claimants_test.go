@@ -159,6 +159,9 @@ func newTwoClaimants(t *testing.T) *twoClaimants {
 	return c
 }
 
+// twoClaimantsSchema is what both stations registered at: a v0.19.0 Edge's.
+const twoClaimantsSchema = 59
+
 // claimant is one station with a process of its own claiming the seat: a
 // single-robot consume cell that reorders itself at tcLevel.
 func (c *twoClaimants) claimant(uid, process string, askKinds []string) *claimantEdge {
@@ -166,7 +169,7 @@ func (c *twoClaimants) claimant(uid, process string, askKinds []string) *claiman
 	t.Helper()
 	db := c.core.eng.DB()
 	if _, err := db.Exec(`INSERT INTO edge_registry (station_uid, display_name, schema_version) VALUES ($1, $2, $3)`,
-		uid, process+" station", protocol.EdgeSchemaBinLanded); err != nil {
+		uid, process+" station", twoClaimantsSchema); err != nil {
 		t.Fatalf("register %s: %v", uid, err)
 	}
 	kicks := newKickClock()

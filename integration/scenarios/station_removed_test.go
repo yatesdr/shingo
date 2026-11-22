@@ -99,7 +99,7 @@ func TestScenario_RemovedStationComesBack(t *testing.T) {
 	// As cmd/shingoedge main.go answers it: a register.
 	router.RegisterSubject(edgeSubjects, protocol.SubjectEdgeRegisterRequest, func(*protocol.Envelope, *protocol.EdgeRegisterRequest) {
 		registers++
-		sendData(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{StationID: uid, Hostname: "rm-host", SchemaVersion: protocol.EdgeSchemaBinLanded})
+		sendData(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{Hostname: "rm-host", SchemaVersion: db.AppliedSchemaVersion()})
 	})
 	edgeRouter := router.New[string]()
 	router.Register(edgeRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { edgeSubjects.Dispatch(env, p) })
@@ -108,7 +108,7 @@ func TestScenario_RemovedStationComesBack(t *testing.T) {
 	bus := harness.NewBus(t, harness.EdgeSide{EdgeStore: db, EdgeIngestor: edgeIn},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIn})
 	beat := func() {
-		sendData(protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{StationID: uid, Feeds: eng.FeedDigests(), Owned: eng.OwnedDigests()})
+		sendData(protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{Feeds: eng.FeedDigests(), Owned: eng.OwnedDigests()})
 		bus.PumpAll()
 	}
 	claimants := func(when string, want ...string) {

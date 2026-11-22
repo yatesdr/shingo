@@ -255,7 +255,7 @@ func TestContainmentChanged_ABroadcastQuotedBackConverges(t *testing.T) {
 		return resp.events[0].payload.(*protocol.ContainmentSnapshot).Digest
 	}
 	beat := func(st, quote string) {
-		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{StationID: st,
+		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{
 			Feeds: map[string]string{protocol.FeedContainment: quote}})
 	}
 	stuck := change()

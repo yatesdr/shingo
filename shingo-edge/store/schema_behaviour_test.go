@@ -180,14 +180,15 @@ func TestLoaderWindow_TheMarkOnlySets(t *testing.T) {
 	}
 }
 
-// TestSchema_EveryBornDatabaseCanBindALanding: Core sends a landing to a
-// station registered at protocol.EdgeSchemaBinLanded or above, and the bind
-// names placed_seq. A born database reports at least that version and has it.
+// TestSchema_EveryBornDatabaseCanBindALanding: a v0.19.0 Core sends a landing
+// only to a station registered at schema 20 or above, and the bind names
+// placed_seq. A born database reports at least that version and has it.
 func TestSchema_EveryBornDatabaseCanBindALanding(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	if v := db.AppliedSchemaVersion(); v < protocol.EdgeSchemaBinLanded {
-		t.Errorf("a born database reports v%d, below protocol.EdgeSchemaBinLanded v%d", v, protocol.EdgeSchemaBinLanded)
+	const v019LandingSchema = 20
+	if v := db.AppliedSchemaVersion(); v < v019LandingSchema {
+		t.Errorf("a born database reports v%d, below a v0.19.0 Core's landings (v%d)", v, v019LandingSchema)
 	}
 	var n int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')

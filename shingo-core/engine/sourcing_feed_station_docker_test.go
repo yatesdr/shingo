@@ -292,7 +292,7 @@ func TestSourcingFeed_AnEdgeApplyingEveryPushIsNotFlagged(t *testing.T) {
 				beat := func(quoted string) {
 					svc.HandleEdgeHeartbeat(
 						&protocol.Envelope{ID: "hb", Src: protocol.Address{Role: protocol.RoleEdge, Station: station}},
-						&protocol.EdgeHeartbeat{StationID: station, Feeds: map[string]string{protocol.FeedSourcing: quoted}})
+						&protocol.EdgeHeartbeat{Feeds: map[string]string{protocol.FeedSourcing: quoted}})
 				}
 
 				move(0)
