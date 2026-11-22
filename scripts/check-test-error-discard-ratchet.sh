@@ -123,7 +123,7 @@ cd "$(dirname "$0")/.."
 # after the count was last set.
 # 1365 → 1364: the dispatched fixtures that came to name their job checked
 # the creates they had discarded.
-FROZEN=1356
+FROZEN=1352
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"
