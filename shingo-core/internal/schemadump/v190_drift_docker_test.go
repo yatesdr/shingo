@@ -15,7 +15,9 @@ import (
 
 // v190Fixtures are the two plants' leftovers (schemadump.DriftA, DriftB), each
 // with the drift report's lines for it as the plant's boot logged them, and
-// the objects migration 190 changes on it (one audit_log row each).
+// the objects migration 190 changes on it (one audit_log row each). Where a
+// leftover table's shape is the plant's own and where it is a stand-in is
+// schemadump's to say (drift.go).
 var v190Fixtures = []struct {
 	name    string
 	drift   string
