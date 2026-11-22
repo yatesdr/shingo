@@ -9,8 +9,10 @@
 package scenarios
 
 import (
+	"database/sql"
 	"slices"
 	"testing"
+	"time"
 
 	"shingo/integration/harness"
 	"shingo/protocol"
@@ -19,7 +21,9 @@ import (
 	coremessaging "shingocore/messaging"
 	"shingocore/service"
 	corestore "shingocore/store"
+	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
+	corepayloads "shingocore/store/payloads"
 	coreharness "shingocore/testharness"
 
 	"shingoedge/config"
@@ -148,5 +152,128 @@ func TestScenario_RemovedStationComesBack(t *testing.T) {
 	beat()
 	if got := eng.StationName(); got != "" {
 		t.Fatalf("the Edge shows %q after the fresh row, want no name", got)
+	}
+}
+
+// After Remove station Core addresses nothing to the removed uid (owner and orc
+// ruling 2026-11-22, the closing task): not a refill its derived loader rows
+// would make, not an order, not a correction. Run on a real Core: a loader
+// whose window the removed station published, a seat only it claimed, and a
+// live station beside it. The count that drives the refill comes through the
+// data service, as a station's count does.
+func TestScenario_RemovedStationIsAddressedByNothing(t *testing.T) {
+	t.Parallel()
+	const live, gone, part = "edge.rm-live", "edge.rm-gone", "RM-PART"
+	core := startKeepStagedCore(t)
+	db := core.eng.DB()
+	announce := service.EpochAnnounce{Topic: "shingo.dispatch", CoreStation: "core"}
+	h := coremessaging.NewCoreHandler(db, nil, "core", "shingo.dispatch", core.eng.Dispatcher())
+	svc := coremessaging.NewCoreDataService(db, h, announce)
+	svc.SetThresholdMonitor(core.eng.ThresholdMonitor())
+	core.eng.SetStationRemovedFunc(svc.StationRemoved)
+	for uid, name := range map[string]string{live: "Line A", gone: "Line G"} {
+		_, err := db.EnrollEdge(uid, name)
+		mustNil(t, err, "enroll "+uid)
+		_, err = db.RegisterEdge(uid, "host-"+uid, "i", "test", "", sql.NullInt64{Int64: 60, Valid: true})
+		mustNil(t, err, "register "+uid)
+	}
+	node := func(name string) *corenodes.Node {
+		n := &corenodes.Node{Name: name, Enabled: true}
+		mustNil(t, db.CreateNode(n), "node "+name)
+		return n
+	}
+	window, seat := node("RM-W1"), node("RM-SEAT")
+	node("RM-MKT")
+	node("RM-DEST")
+	tote := &corebins.BinType{Code: "RM-TOTE"}
+	mustNil(t, db.CreateBinType(tote), "bin type")
+	pl := &corepayloads.Payload{Code: part, UOPCapacity: 10}
+	mustNil(t, db.CreatePayload(pl), "payload")
+	mustNil(t, db.SetPayloadBinTypes(pl.ID, []int64{tote.ID}), "carrier rule")
+	// 60 parts stand at the seat, above the loader's threshold of 50, so
+	// nothing is refilled before the removal.
+	b := &corebins.Bin{BinTypeID: tote.ID, Label: "RM-BIN", NodeID: &seat.ID, Status: "available"}
+	mustNil(t, db.CreateBin(b), "a bin at the seat")
+	mustNil(t, db.SetBinManifest(b.ID, `{"items":[]}`, part, 60), "manifest")
+	mustNil(t, db.ConfirmBinManifest(b.ID, ""), "confirm")
+
+	// The removed station publishes the window and claims the seat, then the
+	// loader is made over the window it published.
+	report := func(process string, claims []protocol.PlantClaim, positions ...string) {
+		svc.HandlePlantClaims(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: gone}},
+			&protocol.PlantClaimsReport{ProcessID: process, Digest: process, Positions: positions,
+				Styles: []protocol.PlantClaimsStyle{{StyleID: "RUN", Active: true, Claims: claims}}})
+	}
+	report("RM-LOADER", nil, window.Name)
+	report("RM-WELD", []protocol.PlantClaim{{CoreNodeName: seat.Name, Role: protocol.ClaimRoleConsume,
+		SwapMode: protocol.SwapModeSequential, PayloadCode: part, UOPCapacity: 10}})
+	loader, err := core.eng.LoaderService().CreateLoader(service.LoaderCreate{Name: "RM-LDR", Role: "produce",
+		Replenishment: "threshold", InboundSource: "RM-MKT", OutboundDest: "RM-DEST"})
+	mustNil(t, err, "loader")
+	mustNil(t, core.eng.LoaderService().SetPayload(loader, part, 50), "the part, threshold 50")
+	mustNil(t, core.eng.LoaderService().SetHome(loader, window.ID, "", "home", 0), "the window")
+	var owned int
+	mustNil(t, db.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_uid = $1`, gone).Scan(&owned), "registry")
+	if owned == 0 {
+		t.Fatal("setup: the removed station owns no loader row")
+	}
+	var before int
+	mustNil(t, db.QueryRow(`SELECT count(*) FROM orders`).Scan(&before), "orders")
+	if before != 0 {
+		t.Fatalf("setup: %d orders before the removal, want none", before)
+	}
+
+	_, err = db.Exec(`UPDATE edge_registry SET status = 'stale' WHERE station_uid = $1`, gone)
+	mustNil(t, err, "the station goes stale")
+	var mark int64
+	mustNil(t, db.QueryRow(`SELECT COALESCE(max(id), 0) FROM outbox`).Scan(&mark), "outbox mark")
+	mustNil(t, core.eng.NodeService().RemoveEdge(gone, "scenario"), "remove the station")
+
+	// A person counts the bin at the seat only the removed station claimed:
+	// 8, below the threshold. Then a count from the live station drives the
+	// threshold check on the inbound path, as a station's count does.
+	fresh, err := db.GetBin(b.ID)
+	mustNil(t, err, "bin")
+	_, err = core.eng.BinService().RecordCount(fresh, 8, "clerk")
+	mustNil(t, err, "the count")
+	fresh, err = db.GetBin(b.ID)
+	mustNil(t, err, "bin")
+	now := time.Now().UTC()
+	svc.HandleBinUOPDelta(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: live}},
+		&protocol.BinUOPDelta{BinID: b.ID, PayloadCode: part, Delta: -1, Reason: protocol.ReasonConsumeTick,
+			SequenceID: 1, Epoch: fresh.DeltaEpoch, WindowStart: now.Add(-time.Second), WindowEnd: now})
+
+	refills := func() (to map[string]int) {
+		rows, err := db.Query(`SELECT station_uid FROM orders WHERE delivery_node = $1 OR source_node = $1`, window.Name)
+		mustNil(t, err, "orders")
+		defer rows.Close()
+		to = map[string]int{}
+		for rows.Next() {
+			var st string
+			mustNil(t, rows.Scan(&st), "scan")
+			to[st]++
+		}
+		return to
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for len(refills()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	got := refills()
+	t.Logf("refill orders by station: %v", got)
+	if got[gone] != 0 || got[live] == 0 {
+		t.Errorf("refill orders by station %v, want some to %s and none to %s", got, live, gone)
+	}
+	rows, err := db.Query(`SELECT msg_type FROM outbox WHERE id > $1 AND dst_station = $2`, mark, gone)
+	mustNil(t, err, "outbox")
+	defer rows.Close()
+	var sent []string
+	for rows.Next() {
+		var m string
+		mustNil(t, rows.Scan(&m), "scan")
+		sent = append(sent, m)
+	}
+	if len(sent) != 0 {
+		t.Errorf("after the removal Core addressed %v to %s, want nothing", sent, gone)
 	}
 }
