@@ -139,8 +139,10 @@ func TestFeedReplay_TheSavedRunsFlagNothing(t *testing.T) {
 }
 
 // The instrument: the same runs with only the sends the v0.18.0 and v0.19.0
-// Cores recorded (the sourcing monitor's left out). At v0.19.0 this is the
-// count of flags those runs logged, 4, 5, 8, 6.
+// Cores recorded (the sourcing monitor's left out). At v0.19.0 this was the
+// count of flags those runs logged, 4, 5, 8, 6. What is left under the sent
+// ledger (2, 3, 3, 2) is the sourcing feed's, which is why the monitor's sends
+// are recorded.
 func TestFeedReplay_OnlyTheSendsTheSavedCoresRecorded(t *testing.T) {
 	t.Parallel()
 	got := map[string]int{}
@@ -148,10 +150,10 @@ func TestFeedReplay_OnlyTheSendsTheSavedCoresRecorded(t *testing.T) {
 		got[s.run] += len(s.play(false, -1))
 	}
 	want := map[string]int{
-		"p4-tip-8aa5bf8c":          4,
-		"p4-tip-44bf04a3":          5,
-		"p4-base-v0.18.0-8aa5bf8c": 8,
-		"p4-base-v0.18.0-44bf04a3": 6,
+		"p4-tip-8aa5bf8c":          2,
+		"p4-tip-44bf04a3":          3,
+		"p4-base-v0.18.0-8aa5bf8c": 3,
+		"p4-base-v0.18.0-44bf04a3": 2,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("flags by run = %v, want %v", got, want)

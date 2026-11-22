@@ -56,17 +56,15 @@ type feedMemoEntry struct {
 	at     time.Time
 }
 
-// feedSendRecord is the last send of one key to one station. The Record is
-// the heartbeat compare's send under the shared resend guard (protocol/resend;
-// two minutes, which was the old re-ask's cost for a key that never converges);
-// pushed and pushedAt are the last send made outside the compare (a bins push),
-// kept apart so a lost push does not hold back the heartbeat send that heals
-// it.
+// feedSendRecord is what Core sent of one key to one station, under the shared
+// rule (protocol/resend): the heartbeat compare's sends, which the resend
+// guard reads (two minutes, which was the old re-ask's cost for a key that
+// never converges), and the sends made outside it (recordPush), which a quote
+// may prove too and the guard ignores, so a lost push does not hold back the
+// heartbeat send that heals it.
 type feedSendRecord struct {
 	resend.Record
-	flagged  bool
-	pushed   string
-	pushedAt time.Time
+	flagged bool
 }
 
 // feedState is the memo, the send records, the flags and the change doors'
@@ -234,9 +232,9 @@ func (f *feedState) dropStation(station, key string) {
 	f.mu.Unlock()
 }
 
-// recordPush records a send made outside the heartbeat compare. It leaves the
-// compare's digest and time alone, so the resend guard holds back only what a
-// heartbeat sent.
+// recordPush records a send made outside the heartbeat compare, so a quote of
+// it converges. It leaves the compare's digest, time and streak alone, so the
+// resend guard holds back only what a heartbeat sent.
 func (f *feedState) recordPush(station, key, digest string, now time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -246,11 +244,11 @@ func (f *feedState) recordPush(station, key, digest string, now time.Time) {
 		rec = &feedSendRecord{}
 		f.sent[rk] = rec
 	}
-	rec.pushed, rec.pushedAt = digest, now
+	rec.Pushed(digest, now)
 }
 
 // lastSent is the digest last sent of one key to one station by either path,
-// "" when nothing has been.
+// as recorded, quoted back or not; "" when nothing has been.
 func (f *feedState) lastSent(station, key string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -258,10 +256,7 @@ func (f *feedState) lastSent(station, key string) string {
 	if rec == nil {
 		return ""
 	}
-	digest, at := rec.Last()
-	if rec.pushedAt.After(at) {
-		return rec.pushed
-	}
+	digest, _ := rec.Last()
 	return digest
 }
 
@@ -314,11 +309,16 @@ func (f *feedState) store(station, key string, e feedMemoEntry, drops uint64) {
 // a restarted Edge gets it on its first heartbeat. A matching digest ends any
 // streak and clears the key's flag.
 //
-// SO DOES THE EDGE HOLDING WHAT WAS LAST SENT, by the compare or by a push. Converging means the Edge took
-// the copy it was sent, not that Core's value stood still: a value that moves
-// on three heartbeats in a row (a destination added, a bin in, the bin out) is
-// sent three times to an Edge that applied every one, and counting those as a
-// streak flagged a healthy station "not converging".
+// SO DOES THE EDGE QUOTING A COPY SENT SINCE THE LAST ONE IT PROVED, by the
+// compare or by a push (resend.Record.Quoted). Converging means the Edge took
+// what it was sent, not that Core's value stood still: a value that moves on
+// three heartbeats in a row (a destination added, a bin in, the bin out) is
+// sent three times to an Edge that applied every one. And the quote is as old
+// as the heartbeat: the copies pushed since it left are newer than it, and
+// counting either as a streak flagged a healthy station "not converging". An
+// Edge frozen at one digest is believed once and flags on its third send.
+// Pinned by TestFeedState_AQuoteOfACopySentSinceTheLastProvedConverges and
+// TestFeedState_AFrozenQuoteStillFlags.
 func (f *feedState) compare(station, key, current, held string, now time.Time) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -326,9 +326,12 @@ func (f *feedState) compare(station, key, current, held string, now time.Time) b
 	f.quoted[rk] = feedQuote{digest: held, at: now}
 	rec := f.sent[rk]
 	converged := current == held
-	if rec != nil && (converged || rec.IsLast(held) || (rec.pushed != "" && held == rec.pushed)) {
-		rec.Converged()
-		if rec.flagged {
+	if rec != nil {
+		proved := rec.Quoted(held)
+		if converged {
+			rec.Converged()
+		}
+		if (proved || converged) && rec.flagged {
 			rec.flagged = false
 			f.clearFlagLocked(station, key)
 		}

@@ -265,9 +265,12 @@ func (b *feedBook) clock() time.Time {
 // reads its own. The same digest inside the guard is in flight and is held
 // back, unless Core held it and now quotes otherwise (a restarted Core): then
 // it goes at once. A third send in a row raises a flag. quoted is the digest
-// Core holds for the key: when it is the one sent last, that send converged
-// and the streak starts over: a key whose value moves on every heartbeat is
-// not stuck.
+// Core holds for the key: when it is any copy sent since the last one Core
+// proved (resend.Record.Quoted, Core's rule) the streak starts over and the
+// flag clears, because Core's answer is as old as its ack and a key whose
+// value moves on every heartbeat is not stuck. A Core frozen at one digest is
+// believed once. Pinned by TestSendDue_AQuoteOfAnOlderSendConverges and
+// TestSendDue_AFrozenQuoteStillFlags.
 func (e *Engine) sendDue(key, digest, quoted string) bool {
 	now := e.feeds.clock()
 	e.feeds.mu.Lock()
@@ -276,8 +279,7 @@ func (e *Engine) sendDue(key, digest, quoted string) bool {
 		e.feeds.sent = map[string]*resend.Record{}
 	}
 	rec := e.feeds.sent[key]
-	if rec != nil && rec.IsLast(quoted) {
-		rec.Converged()
+	if rec != nil && rec.Quoted(quoted) {
 		delete(e.feeds.flags, key)
 	}
 	if rec == nil {
@@ -312,14 +314,16 @@ func (e *Engine) converged(key string) {
 
 // heldByCore records that Core holds digest for an Edge-owned key, learned
 // from something other than an ack's quote: the bins snapshot names the watch
-// list it answers. When it is the digest last sent, that send converged, as if
-// an ack had quoted it, so a Core that restarts before its next ack is healed
-// on its first one (resend.Record: a held send quoted otherwise was lost).
+// list it answers. It is a quote like an ack's: any copy sent since the last
+// one proved ends the streak, and when it is the last send, a Core that
+// restarts before its next ack is healed on its first one (resend.Record: a
+// held send quoted otherwise was lost). Pinned by
+// TestHeldByCore_AnOlderSendEndsTheStreak and
+// TestSendDue_ARestartedCoreIsHealedAtOnce.
 func (e *Engine) heldByCore(key, digest string) {
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
-	if rec := e.feeds.sent[key]; rec != nil && rec.IsLast(digest) {
-		rec.Converged()
+	if rec := e.feeds.sent[key]; rec != nil && rec.Quoted(digest) {
 		delete(e.feeds.flags, key)
 	}
 }

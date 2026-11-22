@@ -131,9 +131,6 @@ func (f *feedState) lastKnown(station, key string) (digest string, speaks bool) 
 	rec := f.sent[rk]
 	if rec != nil {
 		digest, at = rec.Last()
-		if rec.pushedAt.After(at) {
-			digest, at = rec.pushed, rec.pushedAt
-		}
 	}
 	q, quoted := f.quoted[rk]
 	if quoted && q.at.After(at) {
