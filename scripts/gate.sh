@@ -294,11 +294,19 @@ step_lint() {
   # invocation and this loop makes five short ones per module set rather than
   # one long one. The thing being bought is that the gate's verdict is about
   # the code. A gate that can fail for a reason outside the diff is not a gate.
-  local m failed=0 t0
+  #
+  # AND A HANDOFF CAN STILL FAIL WITH THE FLAG ON: the laptop probe's second
+  # cert run (2026-11-21) had its scripts step exit 3 with it. So the run goes through
+  # golangci_run (scripts/golangci-run.sh), which retries exactly that exit and
+  # message a bounded number of times, and says when it did.
+  local m failed=0 t0 err
+  mkdir -p "$ROOT/.gate"
   for m in $MODULES; do
     t0="$EPOCHREALTIME"
-    ( cd "$ROOT/$m" && golangci-lint run --allow-serial-runners --build-tags docker,lockcheck \
+    err="$ROOT/.gate/lint-$m.err"
+    ( cd "$ROOT/$m" && golangci_run "$err" run --allow-serial-runners --build-tags docker,lockcheck \
         --config="$ROOT/.golangci.yml" --issues-exit-code=1 ./... ) || failed=1
+    cat "$err" >&2
     steps_log "lint:$m" "$(_secs "$t0")"
   done
   [ "$failed" -eq 0 ] && echo "ok   lint" || echo "FAIL lint"
@@ -1425,6 +1433,8 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # the gate lock. INT and TERM exit explicitly so the EXIT trap runs for them
 # too.
 . "$ROOT/scripts/gate-lock.sh"
+# golangci_run: golangci-lint with a bounded retry on its lock handoff (step_lint).
+. "$ROOT/scripts/golangci-run.sh"
 # FAN_PIDS are the steps `all` and `full` run at once (fan): an interrupted
 # gate takes them down too, rather than leaving them running against a tree
 # nobody is gating.

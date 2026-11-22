@@ -132,6 +132,9 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
 fi
 
 ROOT="$(pwd)"
+# golangci_run: golangci-lint with a bounded retry on its lock handoff.
+# shellcheck source=/dev/null
+source "$ROOT/scripts/golangci-run.sh"
 MODULES="protocol shared shingo-core shingo-edge integration"
 
 # GOWORK=off IS AN UNDERCOUNT, NOT A NEUTRAL SETTING, and it does not announce
@@ -192,9 +195,14 @@ for m in $MODULES; do
   #
   # --build-tags docker or the *_docker_test.go files are not compiled and
   # every site in them is invisible, which would silently lower the count.
+  #
+  # Through golangci_run (scripts/golangci-run.sh): a lock handoff can still
+  # fail with the flag on, exit 3, and this script would read it as a run that
+  # measured nothing. It retries exactly that, bounded, and notes it in ERRLOG.
   rc=0
-  ( cd "$ROOT/$m" && golangci-lint run --allow-serial-runners --build-tags docker \
-      --config="$CFG" ./... 2>"$ERRLOG" ) >"$TMPD/out.txt" || rc=$?
+  ( cd "$ROOT/$m" && golangci_run "$ERRLOG" run --allow-serial-runners --build-tags docker \
+      --config="$CFG" ./... ) >"$TMPD/out.txt" || rc=$?
+  grep "lock handoff failed" "$ERRLOG" | sed "s/^/  $m: /" || true
   # Exit 1 is "issues found", which is the normal case here and not an error.
   # ANY OTHER non-zero is a run that produced no findings for a reason that has
   # nothing to do with the code — a config it could not read, a package that
