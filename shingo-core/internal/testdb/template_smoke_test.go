@@ -3,6 +3,7 @@
 package testdb
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -167,4 +168,40 @@ func TestTemplateDB_RanItsTests(t *testing.T) {
 			"code was still 0", before, after)
 	}
 	_ = db
+}
+
+// TestAdminConn_OnePoolPerProcess: every CREATE and DROP DATABASE this process
+// issues goes through one pool on the server's "postgres" database, not a new
+// *sql.DB and a fresh backend each. adminConn used to open a pool per call: the
+// levers study counted 9,046 admin backends in one docker step (28.6 ms of
+// Postgres CPU each, work/loc-census-2026-11-20 REPORT-levers L1), one per
+// create and one per drop. Cloning and dropping a database after the change
+// must leave the same pool, holding at most 8 idle backends (adminIdle).
+func TestAdminConn_OnePoolPerProcess(t *testing.T) {
+	_ = Open(t)
+	a, err := adminConn()
+	testutilMustNoErr(t, err)
+	b, err := adminConn()
+	testutilMustNoErr(t, err)
+	if a != b {
+		t.Fatal("adminConn returned two pools in one process: each CREATE or DROP opens a backend of its own")
+	}
+	for i := 0; i < 3; i++ {
+		t.Run(fmt.Sprintf("clone %d", i), func(t *testing.T) { _ = Open(t) })
+	}
+	c, err := adminConn()
+	testutilMustNoErr(t, err)
+	if c != a {
+		t.Fatal("the pool changed across clones and drops")
+	}
+	if idle := c.Stats().Idle; idle > 8 {
+		t.Errorf("the admin pool holds %d idle backends, want at most 8 (adminIdle)", idle)
+	}
+}
+
+func testutilMustNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }

@@ -93,6 +93,7 @@ type (
 
 	TestWedgeSweep struct{}
 	TestShared     struct{}
+	TestAdmin      struct{}
 
 	AfterQueue  struct{}
 	EngineLoops struct{}
@@ -162,6 +163,7 @@ func (SimTable) Rank() int  { return 183 }
 
 func (TestWedgeSweep) Rank() int { return 185 }
 func (TestShared) Rank() int     { return 186 }
+func (TestAdmin) Rank() int      { return 187 }
 
 func (AfterQueue) Rank() int  { return 190 }
 func (EngineLoops) Rank() int { return 191 }
@@ -230,6 +232,7 @@ func (SimTable) Name() string  { return "simulator.table.mu" }
 
 func (TestWedgeSweep) Name() string { return "testdb.wedgeSweepMu" }
 func (TestShared) Name() string     { return "testdb.sharedMu" }
+func (TestAdmin) Name() string      { return "testdb.adminMu" }
 
 func (AfterQueue) Name() string  { return "engine.afterQueue.mu" }
 func (EngineLoops) Name() string { return "engine.Engine.loops.mu" }

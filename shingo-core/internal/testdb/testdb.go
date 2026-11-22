@@ -399,7 +399,7 @@ func useSharedServer(ctx context.Context, addr string) error {
 	}
 	containerHost, containerPort = host, port
 
-	admin, err := adminConn()
+	admin, err := openAdmin()
 	if err != nil {
 		return fmt.Errorf("connect shared postgres at %s: %w", addr, err)
 	}
@@ -430,9 +430,46 @@ func useSharedServer(ctx context.Context, addr string) error {
 // not been measured.
 var createSlot = make(chan struct{}, 4)
 
-// adminConn returns a connection to the server's default "postgres"
+// adminIdle is how many idle backends the admin pool keeps: twice createSlot,
+// for the clones it bounds and the drops beside them.
+const adminIdle = 8
+
+var (
+	adminMu   lockcheck.Mutex[lockorder.TestAdmin]
+	adminPool *sql.DB
+	adminAddr string
+)
+
+// adminConn returns the process's one pool on the server's default "postgres"
 // database, used for CREATE/DROP DATABASE and template metadata changes.
+// Callers never close it. It used to open a new pool per call, so each create
+// and each drop paid a fresh backend: 9,046 of them in one docker step, 28.6 ms
+// of Postgres CPU each (REPORT-levers L1, work/loc-census-2026-11-20). A server
+// address that changes (a failed shared server falling back to a container)
+// gets a new pool. Pinned by TestAdminConn_OnePoolPerProcess.
 func adminConn() (*sql.DB, error) {
+	adminMu.Lock()
+	defer adminMu.Unlock()
+	addr := fmt.Sprintf("%s:%d", containerHost, containerPort)
+	if adminPool != nil && adminAddr == addr {
+		return adminPool, nil
+	}
+	if adminPool != nil {
+		_ = adminPool.Close()
+	}
+	db, err := openAdmin()
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxIdleConns(adminIdle)
+	adminPool, adminAddr = db, addr
+	return db, nil
+}
+
+// openAdmin opens a new pool on the "postgres" database, for a caller that
+// must own and close it: ensureTemplate holds a session-level advisory lock on
+// its connection, which must never go back into the shared pool.
+func openAdmin() (*sql.DB, error) {
 	return sql.Open("pgx", fmt.Sprintf(
 		"host=%s port=%d dbname=postgres user=test password=test sslmode=disable",
 		containerHost, containerPort))
@@ -470,7 +507,7 @@ func ensureTemplate() error {
 	if containerHost == "" || containerPort == 0 {
 		return fmt.Errorf("server vars not set: host=%q port=%d (startContainer didn't populate)", containerHost, containerPort)
 	}
-	admin, err := adminConn()
+	admin, err := openAdmin()
 	if err != nil {
 		return fmt.Errorf("connect admin for template build: %w", err)
 	}
@@ -752,7 +789,6 @@ func openClone(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	}
 	_, createErr := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName()))
 	<-createSlot
-	defer admin.Close()
 	if createErr != nil {
 		t.Fatalf("create test database %s from template: %v%s", dbName, createErr, ownContainerHint())
 	}
@@ -783,7 +819,6 @@ func openClone(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		if err != nil {
 			return
 		}
-		defer cleanup.Close()
 		_, dropErr := cleanup.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
 		if dropErr == nil {
 			return
@@ -870,7 +905,6 @@ func OpenEmpty(t testing.TB) *config.DatabaseConfig {
 	if err != nil {
 		t.Fatalf("open admin connection: %v", err)
 	}
-	defer admin.Close()
 	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
 		t.Fatalf("create empty database %s: %v%s", dbName, err, ownContainerHint())
 	}
@@ -879,7 +913,6 @@ func OpenEmpty(t testing.TB) *config.DatabaseConfig {
 		if err != nil {
 			return
 		}
-		defer cleanup.Close()
 		cleanup.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, dbName)
 		cleanup.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
 	})
@@ -1085,7 +1118,6 @@ func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.Database
 		sharedMu.Unlock()
 		t.Fatalf("open admin connection: %v", err)
 	}
-	defer admin.Close()
 	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName())); err != nil {
 		sharedMu.Unlock()
 		t.Fatalf("create shared database %s: %v%s", dbName, err, ownContainerHint())
@@ -1144,7 +1176,6 @@ func releaseShared(key string) {
 	if err != nil {
 		return
 	}
-	defer admin.Close()
 	if _, err := admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", name)); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "is being accessed") {
 			admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, name)
