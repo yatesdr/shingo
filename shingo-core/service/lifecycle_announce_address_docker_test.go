@@ -18,7 +18,7 @@ import (
 // Lane 0 item 5 (BRIEF-unification-D1; RULINGS-C2c-certification §4.1). A
 // lifecycle announcement (bumpEpoch's, announceCount's) is addressed by the
 // landing's rule for a placement with no order: not a seat, not sent; one
-// claiming station, to it; several, to nobody; none, the last arm (every
+// claiming station, to it; several, to each; none, the last arm (every
 // registered Edge). It used to go to every Edge, and on a two-Edge plant the
 // Edge that does not model the node logged "process node not found" for each.
 
@@ -179,9 +179,9 @@ func TestLifecycleAnnounce_AnUnclaimedSeatTakesTheLastArm(t *testing.T) {
 	}
 }
 
-// TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody: several claiming
-// and no order station to decide: nobody (a guess binds at the wrong Edge).
-func TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody(t *testing.T) {
+// TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToBoth: several claiming: a
+// correction goes to each (owner ruling 2026-11-22; it went to nobody).
+func TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToBoth(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
@@ -196,8 +196,10 @@ func TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody(t *testing.T) {
 	_, err := svc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle)
 	testutil.MustNoErr(t, err, "the clear")
 
-	if got := adjustmentDsts(t, db, bin.ID); len(got) != 0 {
-		t.Fatalf("a seat two stations claim got announcement rows to %q, want none", got)
+	got := adjustmentDsts(t, db, bin.ID)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{a, b}) {
+		t.Fatalf("a seat two stations claim got announcement rows to %q, want one to each of %q and %q", got, a, b)
 	}
 }
 
@@ -246,35 +248,50 @@ func twoClaimSeat(t *testing.T, label, a, b string) (*BinService, int64, int64) 
 }
 
 // TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat: the other three
-// corrections of TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody's
+// corrections of TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToBoth's
 // rule, at a seat two stations claim: a person's count, a person's reset and a
-// late draw. Each is told to nobody.
+// late draw. Each goes to both as Core's own, so it binds neither, and each
+// copy is fenced at its own station's stream.
 func TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat(t *testing.T) {
 	t.Parallel()
 	const a, b = "edge-tc-a.line", "edge-tc-b.line"
-	wantNone := func(t *testing.T, what string, db *store.DB, binID int64) {
+	wantBoth := func(t *testing.T, what string, db *store.DB, binID int64, count int, epoch, aNet, aSeq int64) map[string]protocol.UOPAdjustment {
 		t.Helper()
-		if got := fencedTo(t, db, binID); len(got) != 0 {
-			t.Fatalf("%s at a seat two stations claim went to %d stations (%+v), want none", what, len(got), got)
+		got := fencedTo(t, db, binID)
+		if len(got) != 2 {
+			t.Fatalf("%s at a seat two stations claim went to %d stations (%+v), want both", what, len(got), got)
 		}
+		for st, fence := range map[string][2]int64{a: {aNet, aSeq}, b: {0, 0}} {
+			adj := got[st]
+			if adj.Actor != protocol.ActorCoreLifecycle || adj.NewRemaining != count || adj.Epoch != epoch {
+				t.Errorf("%s to %s says %d at epoch %d by %q, want %d at %d by %q (a person would bind the empty seat)",
+					what, st, adj.NewRemaining, adj.Epoch, adj.Actor, count, epoch, protocol.ActorCoreLifecycle)
+			}
+			assertFence(t, what, st, adj, fence[0], fence[1])
+		}
+		return got
 	}
 
 	t.Run("a person's count", func(t *testing.T) {
 		t.Parallel()
-		svc, binID, _ := twoClaimSeat(t, "BIN-TC-COUNT", a, b)
+		svc, binID, epoch := twoClaimSeat(t, "BIN-TC-COUNT", a, b)
 		fresh, err := svc.db.GetBin(binID)
 		testutil.MustNoErr(t, err, "read bin")
 		_, err = svc.RecordCount(fresh, 50, "operator-under-test")
 		testutil.MustNoErr(t, err, "RecordCount")
-		wantNone(t, "the count", svc.db, binID)
+		wantBoth(t, "the count", svc.db, binID, 50, epoch, -6, 2)
 	})
 
 	t.Run("a person's reset", func(t *testing.T) {
 		t.Parallel()
-		svc, binID, _ := twoClaimSeat(t, "BIN-TC-RESET", a, b)
+		svc, binID, epoch := twoClaimSeat(t, "BIN-TC-RESET", a, b)
 		_, err := svc.manifest.ClearForReuse(binID, nil, protocol.DeclaredByPerson)
 		testutil.MustNoErr(t, err, "the reset")
-		wantNone(t, "the reset", svc.db, binID)
+		for st, adj := range wantBoth(t, "the reset", svc.db, binID, 0, epoch+1, 0, 0) {
+			if !adj.PayloadKnown {
+				t.Errorf("the reset to %s names no part: a person's reset says what the carrier holds", st)
+			}
+		}
 	})
 
 	t.Run("a late draw", func(t *testing.T) {
@@ -289,7 +306,7 @@ func TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat(t *testing.T) {
 		if !atSeat {
 			t.Fatal("the late draw found no seat")
 		}
-		wantNone(t, "the late draw", svc.db, binID)
+		wantBoth(t, "the late draw", svc.db, binID, 90, epoch, -6, 2)
 	})
 }
 

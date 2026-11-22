@@ -158,14 +158,20 @@ func landingStations(addr plantclaims.LandingAddress) []plantclaims.AddressedSta
 }
 
 // announceLifecycle writes a lifecycle announcement (a generation bump's, a
-// count's) on tx, addressed by the landing's rule for a placement with no
-// order (Lane 0 item 5; RULINGS-C2c-certification §4.1): addr is what the
-// bump's or count's own UPDATE read (bins.LifecycleAddressSQL), and the rule
-// is landingStations, the landing's, so the two cannot drift.
+// count's) on tx, addressed from what the bump's or count's own UPDATE read
+// (bins.LifecycleAddressSQL) by the landing's rule for a placement with no
+// order (Lane 0 item 5; RULINGS-C2c-certification §4.1), with one difference:
 //
 //   - not a seat (storage, synthetic, a lane or group slot): not sent;
 //   - exactly one station claims the node (a claim or a position): to it;
-//   - several claim it: nobody (no order station to decide);
+//   - several claim it: to each, as Core's own (ActorCoreLifecycle), whoever
+//     declared it (owner ruling 2026-11-22). A landing needs one addressee
+//     because it binds; a correction goes to everyone who could hold the bin.
+//     From that actor the Edge binds no empty seat, so the holder takes the
+//     correction and nobody else moves; a person's actor would bind the second
+//     Edge to the same bin. That actor also leaves a held pile where it is
+//     (TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat,
+//     TestScenario_TwoClaimants_DoubleCountPath);
 //   - none claims it: the last arm, every registered Edge, each addressed;
 //     logged per announcement ("bin_landing: last arm") so soakstat [S.4]
 //     counts it with the landings' last arm.
@@ -187,8 +193,12 @@ func announceLifecycle(ann EpochAnnounce, tx *sql.Tx, addr bins.LifecycleAddress
 		log.Printf("bin_landing: last arm (%s) — bin %d at %s: no station claims it and no order; "+
 			"sent to %d Edge(s)", what, adj.BinID, adj.CoreNodeName, len(sts))
 	}
+	several := !lastArm && len(sts) > 1
 	for _, st := range sts {
 		a := *adj
+		if several {
+			a.Actor = protocol.ActorCoreLifecycle
+		}
 		f := fence(st.StationID)
 		a.AsOfNet, a.AsOfSeq, a.AsOfStation = f.net, f.seq, f.station
 		if err := ann.SendTo(tx, protocol.SubjectUOPAdjustment, st.StationID, &a); err != nil {
@@ -198,8 +208,9 @@ func announceLifecycle(ann EpochAnnounce, tx *sql.Tx, addr bins.LifecycleAddress
 	return nil
 }
 
-// lifecycleStations is landingStations for a placement with no order: the
-// stations addr names, and whether they are the last arm's.
+// lifecycleStations is the stations a correction for addr goes to, and whether
+// they are the last arm's: every claimant where several claim the seat, else
+// landingStations' answer for a placement with no order.
 func lifecycleStations(addr bins.LifecycleAddress) ([]plantclaims.AddressedStation, bool) {
 	if addr.NotASeat {
 		return nil, false
@@ -207,6 +218,9 @@ func lifecycleStations(addr bins.LifecycleAddress) ([]plantclaims.AddressedStati
 	la := plantclaims.LandingAddress{Claiming: addressed(addr.Claiming)}
 	if len(la.Claiming) == 0 {
 		la.Plant = addressed(addr.Plant)
+	}
+	if len(la.Claiming) > 1 {
+		return la.Claiming, false
 	}
 	return landingStations(la), len(la.Claiming) == 0
 }

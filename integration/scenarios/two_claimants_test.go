@@ -421,8 +421,8 @@ func (c *twoClaimants) whilePumping(what string, act func() error) {
 //   - the reseat a cancelled changeover asks binds it, and the two stations
 //     each count five parts of the one line: Core takes ten off for five made.
 //
-// At 6bd55616 neither correction reaches A (Core tells nobody at a seat two
-// stations claim), so A also keeps a count nobody believes.
+// Both corrections reach A, as lifecycle (owner ruling 2026-11-22; at 6bd55616
+// neither did, and A kept a count nobody believed).
 func TestScenario_TwoClaimants_DoubleCountPath(t *testing.T) {
 	t.Parallel()
 	t.Run("the second line records a count", func(t *testing.T) {
@@ -435,16 +435,16 @@ func TestScenario_TwoClaimants_DoubleCountPath(t *testing.T) {
 		_, err = c.core.eng.BinService().RecordCount(fresh, 35, "clerk")
 		mustNil(t, err, "the count on the bins page")
 		c.settle()
-		c.wantBooks("counted 35 on the bins page", seatBooks{bin, 35, bin, 40, 0, 0})
+		c.wantBooks("counted 35 on the bins page", seatBooks{bin, 35, bin, 35, 0, 0})
 
 		c.whilePumping("the count at the line of B", func() error {
 			return c.b.edge.Engine.RecordBinCount(c.b.node, 30, "operator-b")
 		})
-		c.wantBooks("counted 30 at the line of B", seatBooks{bin, 30, bin, 40, 0, 30})
+		c.wantBooks("counted 30 at the line of B", seatBooks{bin, 30, bin, 30, 0, 30})
 
 		c.strokes(c.a, 5)
 		c.strokes(c.b, 5)
-		c.wantBooks("five parts, drawn by A alone", seatBooks{bin, 25, bin, 35, 0, 30})
+		c.wantBooks("five parts, drawn by A alone", seatBooks{bin, 25, bin, 25, 0, 30})
 
 		rt, err := c.b.edge.DB.GetProcessNodeRuntime(c.b.node)
 		mustNil(t, err, "runtime of B")

@@ -32,6 +32,7 @@ Deploy: no migration
 - Core Health and the log say when the order-matching worker has stopped, and, separately, when one pass is running long and for how long.
 - The freeze alarm for Core's scan lock now calls it "the scan lock" (it said "the scan pass").
 - Stopping Core lets the order in hand finish, waits at most 12 seconds, and starts nothing after it.
+- A count or a reset at a node two stations claim reaches both; only the station holding that bin changes.
 
 ## v0.19.0 — 2026-11-22
 

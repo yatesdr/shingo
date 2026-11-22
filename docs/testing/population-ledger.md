@@ -2320,3 +2320,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: `shingo-core/fulfillment/scanner.go` (`passLocked`)
 - verified at: the commit that adds this row
+
+### STALE — `TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody`
+- test: `TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody` · pkg `shingocore/service` · run `-run '^TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody$'` · `shingo-core/service/lifecycle_announce_address_docker_test.go:184` @ `6bd55616` · tags `docker`
+- code: STALE (owner ruling 2026-11-22: a correction at a seat several stations claim goes to every claimant)
+- assertion map: renamed `TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToBoth` (same file): a lifecycle clear at a seat two stations claim sends no row (flipped: one row to each). The person's count and reset and the late draw are `TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat`
+- mutation: the old assertions over the new rule, on a scratch copy at `f804d6946`, went red: `lifecycle_announce_address_docker_test.go:200: a seat two stations claim got announcement rows to ["edge-l2-a.line" "edge-l2-b.line"], want none`; the rewritten test against the old rule was not run
+- coverage Δ: not measured for this row (the same function runs under the new name)
+- citations rewritten: `TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat`'s header
+- verified at: the commit that adds this row

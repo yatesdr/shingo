@@ -25,8 +25,8 @@ type Execer interface {
 // up with something that changes generations and tells nobody — which is the
 // state both plants were in.
 //
-// Point-to-point: every sender addresses the station behind the carrier, by the
-// landing's address rule (service.announceLifecycle). A broadcast made every Edge
+// Point-to-point: every sender addresses the stations that could hold the
+// carrier (service.announceLifecycle has the rule). A broadcast made every Edge
 // that does not model the node parse it and log "process node not found".
 type EpochAnnounce struct {
 	// Topic is the dispatch topic the outbox row is written to. Empty means

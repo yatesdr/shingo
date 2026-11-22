@@ -155,8 +155,8 @@ func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, payload,
 //
 // Where it goes is the landing's rule for a placement with no order
 // (announceLifecycle; Lane 0 item 5): not to a place no station binds at, to
-// the one station that claims the seat, to nobody when several do, and to
-// every registered Edge (the last arm) when none does. It used to go to every
+// the one station that claims the seat, to each as Core's own when several do,
+// and to every registered Edge (the last arm) when none does. It used to go to every
 // Edge, and an Edge that does not model the node parsed it and logged "process
 // node not found".
 func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Declarer) (int64, error) {
