@@ -46,9 +46,8 @@ func TestClaimReads_CarryTheLivePredicate(t *testing.T) {
 
 	// Files whose every statement is outside the live-behaviour question.
 	skipFiles := map[string]string{
-		"migrations.go":              "migrations run over all rows, retired included",
-		"migrations_style_claims.go": "the legacy table backfill",
-		"claim_quarantine.go":        "quarantine moves rows BY swap_mode, deliberately including retired ones",
+		"migrations.go":       "migrations run over all rows, retired included",
+		"claim_quarantine.go": "quarantine moves rows BY swap_mode, deliberately including retired ones",
 	}
 
 	root := moduleRoot(t)

@@ -101,12 +101,11 @@ func (c *QueryCounter) Drain() []string {
 	return out
 }
 
-// OpenCounting is Open with every statement counted. Same DSN pragmas, same
-// single-connection pin, same migrate + verifySchema — the only difference is
-// that the connection is reached through a counting driver.Connector rather
-// than the registered "sqlite" name. Keep the open sequence in lockstep with
-// Open: a test that counts against a differently-configured store is
-// measuring something other than production.
+// OpenCounting is Open with every statement counted: the same sequence
+// (openStore), the only difference being that each connection, the read-only
+// decision's too, is reached through a counting driver.Connector rather than
+// the registered "sqlite" name. A test that counts against a
+// differently-configured store is measuring something other than production.
 //
 // Test fixtures only. Production opens must use Open.
 //
@@ -115,9 +114,9 @@ func (c *QueryCounter) Drain() []string {
 // service and store itself), and export_test.go reaches one package. It cannot
 // move to a store/storetest subpackage either, because it has to open the store
 // EXACTLY as Open does or it is measuring something else — and that means
-// dsnFor, (*DB).migrate, (*DB).verifySchema and the DB.path field, all four of
-// them unexported. Moving it would export four internals to hide one
-// constructor, which is the worse trade. A build tag is the other option and it
+// openStore and connector, both unexported. Moving it would export internals
+// to hide one constructor, which is the worse trade. A build tag is the other
+// option and it
 // takes the budget pins out of the gate, which is the point of having them.
 //
 // So it is exported deliberately. Reviewed and left in place 2026-09-13; the
@@ -134,19 +133,10 @@ func OpenCounting(path string) (*DB, *QueryCounter, error) {
 	_ = probe.Close()
 
 	counter := &QueryCounter{}
-	// dsnFor, not a copy of it: a counting store opened with different
-	// pragmas would be measuring something other than production, which is
-	// the one thing a measurement must not do.
-	sqlDB := sql.OpenDB(&countingConnector{drv: drv, dsn: dsnFor(path), counter: counter})
-	sqlDB.SetMaxOpenConns(1)
-
-	db := &DB{DB: sqlDB, path: path}
-	if err := db.migrate(); err != nil {
-		sqlDB.Close()
-		return nil, nil, fmt.Errorf("migrate: %w", err)
-	}
-	if err := db.verifySchema(); err != nil {
-		sqlDB.Close()
+	db, err := openStore(path, func(dsn string) (*sql.DB, error) {
+		return sql.OpenDB(&countingConnector{drv: drv, dsn: dsn, counter: counter}), nil
+	})
+	if err != nil {
 		return nil, nil, err
 	}
 	counter.Reset()

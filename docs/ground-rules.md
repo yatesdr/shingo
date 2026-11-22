@@ -66,6 +66,13 @@ These are the rules the codebase's comments cite.
   numbered migration above the retired chain (v184) with its down entry (`shingocore migrate down N`), after which
   the baseline is regenerated. Guards: `TestBaselineIsCurrent`, `TestBaseline_CreatesEveryShippedTable`,
   `TestSchemaConvergesAcrossVintages`, `TestV185_EveryOpHasItsInverse`.
+- **The Edge's schema has the same one home, with no down step.** A new Edge database is born on
+  `shingo-edge/store/schema/baseline.sql`, generated (`make schema-baseline` in `shingo-edge`, then
+  `make schema-snapshot`; no Docker) and never edited; every change is a numbered migration in `edgeMigrations`
+  above the retired chain (v59), one the previous release can run on, and a claim column it adds is added to the
+  quarantine mirror too. A start refuses a file without v1–v59, or newer than its build, and changes nothing; a
+  missing table or column fails the start. Guards: `TestBaselineIsCurrent`, `TestBoot_TheFilesAStartTakes`,
+  `TestTheRefusalsRemedy`, `TestClaimQuarantine_MirrorsEveryClaimColumn`.
 
 ## The gate
 

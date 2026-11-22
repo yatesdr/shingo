@@ -58,9 +58,9 @@ func TestOpen_AppliesConnectionPragmas(t *testing.T) {
 	//   whole delete: 6 of 8 style deletions REFUSED. It is ON DELETE CASCADE
 	//   now, and the same probe on the repaired dump refuses 0 of 57.
 	//
-	//   CLOSED — the source of new dangling clauses. db.rebuildTable holds
-	//   PRAGMA legacy_alter_table across every rename-rebuild, so a migration
-	//   can no longer re-point a child at a scratch table and drop it.
+	//   CLOSED — the source of new dangling clauses. The rename-rebuilds went
+	//   with the retired chain, and a born database has no dangling clause
+	//   (TestSchema_NoForeignKeyNamesAMissingTable).
 	//
 	//   OPEN, and not closeable from here — the 11 dangling REFERENCES clauses
 	//   already written into the Springfield edge's stored schema, and the 1,764

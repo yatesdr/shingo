@@ -6,15 +6,14 @@ import (
 	"testing"
 )
 
-// TestVerifySchema_FreshDBSatisfiesManifest is the guard that keeps
-// requiredTables/requiredColumns honest. A database migrated by THIS build must
-// satisfy the manifest this build asserts; if it doesn't, the manifest names an
-// object no migration creates and every edge would refuse to start.
+// TestVerifySchema_FreshDBSatisfiesManifest keeps the check honest: a database
+// born by THIS build satisfies what this build asserts (the baseline's tables
+// and columns), or every edge would refuse to start.
 func TestVerifySchema_FreshDBSatisfiesManifest(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "fresh.db")
-	db, err := Open(dbPath) // Open runs migrate() then verifySchema()
+	db, err := Open(dbPath) // Open migrates, then runs verifySchema
 	if err != nil {
 		t.Fatalf("fresh DB must migrate and verify cleanly, got: %v", err)
 	}
@@ -27,8 +26,7 @@ func TestVerifySchema_FreshDBSatisfiesManifest(t *testing.T) {
 
 // TestVerifySchema_ReportsMissingObjects proves the assertion actually fires and
 // that its message names what is missing — the property that matters during a
-// deploy. A dropped column stands in for the real-world cause (an old binary
-// whose migrations never created it).
+// deploy. A dropped column stands in for a partial restore or a hand change.
 func TestVerifySchema_ReportsMissingObjects(t *testing.T) {
 	t.Parallel()
 
@@ -39,8 +37,7 @@ func TestVerifySchema_ReportsMissingObjects(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Drop one asserted column and one asserted table, mimicking a schema that
-	// an older build would have produced.
+	// Drop one asserted column and one asserted table.
 	if _, err := db.Exec("ALTER TABLE orders DROP COLUMN queue_code"); err != nil {
 		t.Fatalf("drop column: %v", err)
 	}
@@ -83,11 +80,14 @@ func TestOpen_FailsWhenSchemaIncomplete(t *testing.T) {
 	}
 	db.Close()
 
-	// Re-open. migrate() recreates sourcing_state (it is in the DDL), so this
-	// must SUCCEED — the assertion must not fight a migration that self-heals.
+	// Re-open. Nothing creates a table again at a start, so this must fail,
+	// naming it.
 	db2, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("re-open must succeed once migrate() recreates the table, got: %v", err)
+	if err == nil {
+		db2.Close()
+		t.Fatal("re-open succeeded on a file without sourcing_state")
 	}
-	db2.Close()
+	if !strings.Contains(err.Error(), "table sourcing_state") {
+		t.Errorf("the failure does not name the table: %v", err)
+	}
 }

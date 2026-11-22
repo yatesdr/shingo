@@ -3,8 +3,8 @@ package schemadump
 // Known shape divergences between a fresh edge database and an upgraded one.
 //
 // These all predate the convergence test — they are what it found the first
-// time it ran, and every one of them is the same bug: schema.Apply runs
-// CREATE TABLE IF NOT EXISTS, so a change to sqlite_ddl.go's CREATE TABLE
+// time it ran, and every one of them was the same bug: the retired chain ran
+// CREATE TABLE IF NOT EXISTS, so a change to the DDL's CREATE TABLE
 // reaches a fresh edge and never reaches a plant.
 //
 // They are listed rather than fixed because every fix is a decision, not a
@@ -19,7 +19,7 @@ package schemadump
 var KnownDivergences = []KnownDivergence{
 	// GONE 2026-07-25 — style_node_claims.auto_reorder (DEFAULT 1 at plants,
 	// none fresh) and .swap_mode (DEFAULT 'simple' at plants, none fresh) were
-	// here. Both are fixed by the v33 rebuild in store/migrations_style_claims.go,
+	// here. Both were fixed by the retired chain's v33 rebuild,
 	// which folds them into the same table rebuild that adds
 	// below_reorder_since — one rebuild, three changes, rather than rebuilding
 	// style_node_claims twice in a week.
@@ -29,7 +29,7 @@ var KnownDivergences = []KnownDivergence{
 	// if the rebuild ever silently stops taking. That is the difference between
 	// "known and accepted" and "hidden".
 	{
-		Key: "table orders: upgraded only: bin_uop_remaining INTEGER",
+		Key: "column orders.bin_uop_remaining is in the database and not in this build's schema",
 		Why: "a column removed from the baseline and never dropped from plant databases. " +
 			"Nothing reads or writes it. Dropping it destroys whatever is in it, which is a " +
 			"decision rather than a cleanup — an unread column costs a few bytes a row.",

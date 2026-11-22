@@ -4,7 +4,7 @@
 # here. This exists so `make schema-snapshot` means the same thing in both
 # modules, which is what the staleness test's failure message tells you to run.
 
-.PHONY: build test vet schema-snapshot defaults-snapshot
+.PHONY: build test vet schema-baseline schema-snapshot defaults-snapshot
 
 build:
 	go build ./...
@@ -15,9 +15,16 @@ test:
 vet:
 	go vet ./...
 
+# Regenerate the committed baseline, store/schema/baseline.sql, which a new
+# file is born on: build the retired chain's release from its tag, boot an
+# empty file with it, run this tree's migrations, write sqlite_master out.
+# No Docker. Needs the tag in this clone. Run schema-snapshot after it.
+schema-baseline:
+	go run ./cmd/schemabaseline
+
 # Regenerate the committed schema snapshot: create an empty SQLite database,
-# run the FULL migrate path, read sqlite_master, write
-# store/schema/schema.snapshot.sql.
+# open it as an Edge's start does (born on the baseline), read sqlite_master,
+# write store/schema/schema.snapshot.sql.
 #
 # No Docker and no external tools — SQLite is a file. TestSchemaSnapshotIsCurrent
 # fails with this command's name when the file goes stale, and it runs in the

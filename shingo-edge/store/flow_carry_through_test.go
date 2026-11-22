@@ -60,8 +60,8 @@ var notAColumnOfItsOwn = map[string]bool{
 	"uop_capacity": true,
 }
 
-// vestigial columns are carried by the style_node_claims rebuild
-// (migrations_style_claims.go) so an upgrade does not drop what a plant row
+// vestigial columns are the claim columns nothing speaks: they stood so
+// that an upgrade did not drop what a plant row
 // happens to hold, and are named by nothing else: not claimSelect, not the
 // INSERT, not the UPDATE, not cloneClaimColumns. They cannot be flattened by a
 // composer save because no writer mentions them at all — which is a weaker

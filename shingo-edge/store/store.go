@@ -69,7 +69,10 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 	return tx.Commit()
 }
 
-// Open opens (or creates) a SQLite database and runs migrations.
+// Open opens (or creates) a SQLite database as an Edge's start does: it
+// decides on the file reading alone (checkFile; a refusal changes nothing),
+// brings it to this build's schema, holds it to the baseline (verifySchema),
+// and runs the one startup step (clearEndedOrderPointers).
 //
 // DSN parameter syntax is driver-specific and the two common SQLite drivers do
 // NOT share it. This is modernc.org/sqlite (registered as "sqlite"); the
@@ -142,14 +145,13 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 // is worth being precise about which parts moved:
 //
 //   - Step 3 is closed. counter_snapshots.reporting_point_id is ON DELETE
-//     CASCADE (schema/sqlite_ddl.go, and migrateCounterSnapshotCascade for
-//     databases that already exist). Re-probed on the repaired dump: 0 of 57
-//     style deletions refused, where 6 of 8 were before.
-//   - Step 1's GENERATOR is closed — db.rebuildTable now holds
-//     legacy_alter_table across every rename-rebuild, so no new dangling clause
-//     can be created. The EXISTING 11 on the Springfield disk are not, and no
-//     code change can close them: they are stored schema text on a plant's file
-//     and need RUNBOOK-0.5-edge-fk-repair-2026-07-27.md run on the box.
+//     CASCADE (the baseline, and every database at v59). Re-probed on the
+//     repaired dump: 0 of 57 style deletions refused, where 6 of 8 were before.
+//   - Step 1's GENERATOR is closed: the rename-rebuilds that wrote those
+//     clauses went with the retired chain, and the baseline has none
+//     (TestSchema_NoForeignKeyNamesAMissingTable). The EXISTING ones on a
+//     plant's disk are stored schema text and need a migration or
+//     RUNBOOK-0.5-edge-fk-repair-2026-07-27.md run on the box.
 //   - Step 2 is rehearsed, not applied. Against the repaired dump the full
 //     ordered plan takes 1,764 -> 1 in ~11 ms, and the 1 is a single
 //     hourly_counts row on style 32 that 90-day retention removes on its own.
@@ -167,45 +169,60 @@ func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
 // assertion in open_pragmas_test.go is where that decision gets made in the
 // open, and it carries its own reason so changing it cannot be a silent edit.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", dsnFor(path))
-	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
+	return openStore(path, connectSQLite)
+}
 
-	db := &DB{DB: sqlDB, path: path}
-	if err := db.migrate(); err != nil {
-		sqlDB.Close()
+// openStore is Open over a connector, so OpenCounting opens exactly as
+// production does.
+func openStore(path string, connect connector) (*DB, error) {
+	if err := settleJournal(path, connect); err != nil {
+		return nil, fmt.Errorf("open db: roll back the journal a crash left: %w", err)
+	}
+	cur, err := checkFile(path, connect)
+	if err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	// migrate() cannot report a failed ADD COLUMN (see schema_assert.go), and a
-	// stale binary migrates cleanly to its own older schema. Verify the result
-	// against what this build actually needs before handing the DB out.
-	if err := db.verifySchema(); err != nil {
-		sqlDB.Close()
+	db, err := connectStore(path, connect)
+	if err != nil {
 		return nil, err
 	}
+	if err := db.migrate(cur == 0); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	if err := db.verifySchema(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	db.clearEndedOrderPointers()
 	return db, nil
 }
 
-// OpenMigrated opens a database that is ALREADY at this build's schema and
-// skips the migration chain. verifySchema still runs: it is the assert that
-// every table and column this build needs is present, so a file that is not
-// actually migrated fails loudly instead of behaving subtly wrong.
-//
-// For test fixtures copied from a pre-migrated template — the engine package's
-// test pool — where the migration chain's ~120 statements per open were the
-// package's dominant cost. Production opens must use Open.
-func OpenMigrated(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", dsnFor(path))
+// connectStore opens path with the store's DSN, pinned to one connection.
+func connectStore(path string, connect connector) (*DB, error) {
+	sqlDB, err := connect(dsnFor(path))
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
+	return &DB{DB: sqlDB, path: path}, nil
+}
 
-	db := &DB{DB: sqlDB, path: path}
+// OpenMigrated opens a database that is ALREADY at this build's schema and
+// skips the decision, the migrations and the startup step. verifySchema still
+// runs: it is the assert that every table and column this build ships is
+// present, so a file that is not actually migrated fails loudly instead of
+// behaving subtly wrong.
+//
+// For test fixtures copied from a pre-migrated template. Production opens must
+// use Open.
+func OpenMigrated(path string) (*DB, error) {
+	db, err := connectStore(path, connectSQLite)
+	if err != nil {
+		return nil, err
+	}
 	if err := db.verifySchema(); err != nil {
-		sqlDB.Close()
+		db.Close()
 		return nil, err
 	}
 	return db, nil

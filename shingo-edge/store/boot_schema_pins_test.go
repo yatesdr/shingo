@@ -182,8 +182,9 @@ func TestBoot_ASecondStartChangesNothing(t *testing.T) {
 	}
 }
 
-// TestBoot_TheDataStepsAStartRuns is each row a start rewrites besides the
-// pointers above, on the smallest file that shows it.
+// TestBoot_TheDataStepsAStartRuns: a start rewrites no row but the pointers
+// above. Each case is the smallest file on which the retired chain rewrote one
+// at every start.
 func TestBoot_TheDataStepsAStartRuns(t *testing.T) {
 	t.Parallel()
 	const claim = `INSERT INTO style_node_claims (style_id, core_node_name, swap_mode, role, payload_code, allowed_payload_codes) VALUES `
@@ -193,32 +194,32 @@ func TestBoot_TheDataStepsAStartRuns(t *testing.T) {
 		query string
 		want  string
 	}{
-		{"styles and no process: a process is invented",
+		{"styles and no process: none is invented",
 			[]string{`INSERT INTO styles (name, deleted_at) VALUES ('GONE-STYLE', datetime('now'))`},
 			`SELECT COUNT(*), COALESCE(MAX(name), '-') FROM processes`,
-			"1 Line 1"},
-		{"a legacy staging column overwrites the staging a person set",
+			"0 -"},
+		{"a legacy staging column leaves the staging a person set",
 			[]string{claim + `(1, 'LEG-1', 'two_robot', 'consume', '', '')`,
 				`UPDATE style_node_claims SET inbound_staging = 'EDITED', staging_node = 'OLD'`},
 			`SELECT inbound_staging FROM style_node_claims`,
-			"OLD"},
-		{"a legacy source column refills a source a person cleared",
+			"EDITED"},
+		{"a legacy source column leaves a source a person cleared",
 			[]string{claim + `(1, 'LEG-2', 'two_robot', 'consume', '', '')`,
 				`UPDATE style_node_claims SET inbound_source = '', inbound_source_node = 'OLD'`},
 			`SELECT inbound_source FROM style_node_claims`,
-			"OLD"},
-		{"a bin_loader role is rewritten",
+			""},
+		{"a bin_loader role is left",
 			[]string{claim + `(1, 'LEG-3', 'two_robot', 'bin_loader', '', '')`},
 			`SELECT role, swap_mode FROM style_node_claims`,
-			"produce manual_swap"},
-		{"a manual_swap claim's allowed parts are filled from its part",
+			"bin_loader two_robot"},
+		{"a manual_swap claim's allowed parts are left",
 			[]string{claim + `(1, 'LEG-4', 'manual_swap', 'produce', 'SYN-LEG', '')`},
 			`SELECT allowed_payload_codes FROM style_node_claims`,
-			`["SYN-LEG"]`},
-		{"the retired bucket delta's bookkeeping is purged",
+			""},
+		{"the retired bucket delta's bookkeeping is left",
 			[]string{`INSERT INTO inventory_delta_seq (scope_kind, scope_key, epoch) VALUES ('bucket', 'LEG-5', 0)`},
 			`SELECT COUNT(*) FROM inventory_delta_seq`,
-			"0"},
+			"1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -229,38 +230,6 @@ func TestBoot_TheDataStepsAStartRuns(t *testing.T) {
 			testutil.MustNoErr(t, startEdge(t, path), "start")
 			if got := strings.Join(queryLines(t, rawDB(t, path), c.query), "; "); got != c.want {
 				t.Errorf("after a start: %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-// TestBoot_TheFilesAStartTakes is what a start does with a file that is not
-// this build's whole chain: the version rows, the head and shifts afterwards.
-func TestBoot_TheFilesAStartTakes(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		name  string
-		plant string
-		want  string
-	}{
-		{"a hole is refilled", `DELETE FROM schema_migrations WHERE version = 30`, "59 59 1"},
-		{"a head below the last is run forward", `DELETE FROM schema_migrations WHERE version > 40`, "59 59 1"},
-		{"an empty version table is adopted", `DELETE FROM schema_migrations`, "59 59 1"},
-		{"tables with no version table are adopted", `DROP TABLE schema_migrations`, "59 59 1"},
-		{"a newer database is accepted", `INSERT INTO schema_migrations (version) VALUES (999)`, "60 999 1"},
-		{"a hand-dropped table is created again, empty", `DROP TABLE shifts`, "59 59 1"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			path := bornDB(t)
-			raw := rawDB(t, path)
-			execAll(t, raw, c.plant)
-			testutil.MustNoErr(t, raw.Close(), "close")
-			testutil.MustNoErr(t, startEdge(t, path), "start")
-			got := strings.Join(queryLines(t, rawDB(t, path), `SELECT COUNT(*), MAX(version),
-				(SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'shifts') FROM schema_migrations`), "; ")
-			if got != c.want {
-				t.Errorf("versions, head, shifts present after a start: %q, want %q", got, c.want)
 			}
 		})
 	}

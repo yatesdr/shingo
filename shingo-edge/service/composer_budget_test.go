@@ -98,7 +98,7 @@ func seedBudgetFixture(t *testing.T) budgetFixture {
 	}
 	// OpenCounting, not OpenMigrated: the counter is the instrument these
 	// tests exist for, and it has to open the store exactly as production
-	// does. migrate() over an already-migrated copy is a no-op; verifySchema
+	// does. The runner over an already-migrated copy writes nothing; verifySchema
 	// still runs, so a bad template fails loudly here rather than as a wrong
 	// number.
 	db, counter, err := store.OpenCounting(path)

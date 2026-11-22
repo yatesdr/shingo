@@ -141,11 +141,11 @@ func CheckOrder(migrations []Migration) error {
 // baseline seeds the adoption seam for chains adopted mid-life: when
 // baseline > 0 and the freshly-created table is EMPTY, one row for
 // baseline is inserted, declaring every migration up to and including
-// baseline already applied. Baseline 0 (Core) means the chain has owned
-// the table since v1 — nothing to seed. Apply-once and self-heal
-// behaviour is pinned by shingo-edge/store versioned_migration_test.go;
-// Edge's frozen pre-baseline chain being untouched by adoption is pinned
-// by shingo-edge/store frozen_chain_pin_test.go.
+// baseline already applied. Baseline 0 means the chain has owned the table
+// since v1 — nothing to seed; it is what both modules pass since the Edge
+// retired its chain at v59. Apply-once and self-heal behaviour is pinned by
+// shingo-edge/store versioned_migration_test.go; a baseline above 0 by
+// TestRun_SeedsTheBaselineWithTheDialectsPlaceholder.
 func Run(db *sql.DB, dialect Dialect, baseline int, migrations []Migration) error {
 	if _, err := db.Exec(createTableSQL[dialect]); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)

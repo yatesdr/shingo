@@ -440,7 +440,7 @@ delivery move (`protocol.SwapModeSimple`). A **seventh** value,
 persist.
 
 There is no default. `swap_mode` is `TEXT NOT NULL` with no DDL default
-(`shingo-edge/store/schema/sqlite_ddl.go`), and `UpsertClaim` rejects both a
+(`shingo-edge/store/schema/baseline.sql`), and `UpsertClaim` rejects both a
 blank value and anything outside `ConfigurableSwapModes()` with
 `protocol.ErrInvalidSwapMode` — a 400, not a silent normalization.
 

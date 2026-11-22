@@ -72,7 +72,7 @@ linters:
       # maintainable. That is an actively harmful incentive, so lines is off.
       #
       # Statements also auto-exempt the flat registries, which is the right
-      # answer for a different reason: shingo-edge/store/migrations.go's
+      # answer for a different reason: shingo-core/store/migrations.go's
       # migrationList is one statement across ~931 lines, and both NewRouter
       # functions and wireEventHandlers pass comfortably. A registry read
       # top-to-bottom is the point of a registry; splitting one to satisfy a
@@ -469,13 +469,6 @@ linters:
       # reads top-to-bottom on purpose.
       - path: "shingo-edge/cmd/shingoedge/main\\.go"
         text: "Function 'setupKafkaSubscribers' has too many statements"
-        linters:
-          - funlen
-      # migrate: permanent
-      # The migration driver. Append-only by construction and it grows one step
-      # per schema change; that growth is the design, not decay.
-      - path: "shingo-edge/store/migrations\\.go"
-        text: "Function 'migrate' has too many statements"
         linters:
           - funlen
       # seedCore: permanent

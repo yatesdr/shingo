@@ -37,6 +37,10 @@ Deploy: no migration
 - An Edge's positions picker greys a node another station claims, with that station's name.
 - Stations can remove a stale station; its claims and name go, its history stays.
 - Restoring an Edge backup puts the backup in place after a crash too; the live rows the killed Edge left beside the database used to come back over it
+- An Edge older than v0.19.0, or a backup from one, no longer upgrades in one install: the Edge refuses it by name and changes nothing. Install v0.19.0, start it once, then this
+- A table or column missing from an Edge's database stops the Edge with its name; the table used to be made again, empty, without a word
+- An Edge with styles and no process no longer makes up a process named Line 1 when it starts
+- An Edge starts with a few statements instead of about 400, and refuses a database a newer release wrote
 
 ## v0.19.0 — 2026-11-22
 

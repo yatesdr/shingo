@@ -10,7 +10,7 @@ import "time"
 // those put a timezone into the data, which made a wrong or unset zone
 // permanent instead of cosmetic, and merged two real hours into one row every
 // autumn when the local clock repeated 01:00. The plant zone is applied on
-// read, where it belongs. See store/schema/sqlite_ddl.go.
+// read, where it belongs. See store/schema/baseline.sql.
 type HourlyCount struct {
 	ID          int64 `json:"id"`
 	ProcessID   int64 `json:"process_id"`
