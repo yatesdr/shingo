@@ -189,7 +189,7 @@ func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64
 		return c.open() == nil
 	})
 	co := c.changeovers()[0]
-	if co.ToStyleID != c.alt || c.active() != c.alt || !strings.HasPrefix(co.TriggeredBy, "auto-catid") {
+	if co.ToStyleID != c.alt || c.active() != c.alt || co.TriggeredBy != autoCompleted {
 		c.dump(label)
 		c.t.Fatalf("%s: changeover #%d %s by %q to %d, the cell on %d; want completed by the monitor on ALT", label, co.ID,
 			co.State, co.TriggeredBy, co.ToStyleID, c.active())

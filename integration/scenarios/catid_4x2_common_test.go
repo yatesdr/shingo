@@ -8,12 +8,16 @@ package scenarios
 
 import (
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	edgeengine "shingoedge/engine"
 )
+
+// autoCompleted is the triggered_by of a changeover the monitor completed on a
+// green gate (shingo-edge/engine triggeredAutoCATID). Asserted exactly:
+// "auto-catid-forced", a completion past a red gate, is another outcome.
+const autoCompleted = "auto-catid"
 
 // TestPinChangeover_ACommonPositionIsResuppliedWhileOpen: a changeover RUN ->
 // ALT is open, its mirror legs landed, the PLC still on RUN's part. The
@@ -86,7 +90,7 @@ func TestPinChangeover_ACommonPositionIsResuppliedWhileOpen(t *testing.T) {
 				return c.open() == nil
 			})
 			co := c.changeovers()[0]
-			if co.ToStyleID != c.alt || c.active() != c.alt || !strings.HasPrefix(co.TriggeredBy, "auto-catid") {
+			if co.ToStyleID != c.alt || c.active() != c.alt || co.TriggeredBy != autoCompleted {
 				c.dump(when)
 				t.Fatalf("changeover #%d %s by %q to %d, want completed by the monitor on ALT", co.ID, co.State, co.TriggeredBy,
 					co.ToStyleID)
