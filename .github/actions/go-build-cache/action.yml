@@ -1,0 +1,114 @@
+name: Go build cache
+description: >
+  A rolling GOCACHE per module and flavour (plain or race) for the docker test
+  suites. Restore mode puts the newest saved entry into Go's default cache
+  directory. Warm mode then compiles the module's whole docker test closure in
+  that flavour, prunes the directory to exactly what that compile used, and
+  saves it under a new key, so the next run's test jobs start warm.
+
+# WHY. setup-go's own cache is keyed on go.sum, saved once per key by whichever
+# job finishes first, and never again: core's and edge's entries were saved on
+# 2026-10-29 by their shard-plan jobs, which compiled only shardplan's stdlib
+# closure, and integration's by its lint job's untagged build (G1,
+# work/loc-census-2026-11-20/raw/g1/SUMMARY.md). -race reaches every compile
+# action's id, stdlib included, so a race job reused nothing and compiled all
+# of it: core's docker closure MEASURED 324s cold under -race, 178s cold and 35s
+# warm plain (G1 probe, job 136757247572).
+#
+# ONE SAVER PER MODULE AND FLAVOUR, in the module's build job, off the long
+# chains; every test job of that flavour only restores. No test job compiles
+# the whole closure under -race (each shard compiles its own packages), so the
+# saver compiles it itself, with -exec true: every test binary is built and
+# linked, vetted as go test vets it, and none is run.
+#
+# PRUNED TO ONE CLOSURE. Before the compile every entry is dated 2000-01-01;
+# Go re-dates an entry it uses (cmd/go/internal/cache: markUsed, when the mtime
+# is over an hour old), so after the compile everything still dated before it
+# is a stale version or another flavour's, and is deleted. An entry therefore
+# never grows past one closure, whatever the number of pushes since.
+#
+# WHEN IT SAVES. On main every run. Elsewhere only when nothing was restored
+# (a repository with no main entry yet), because a branch's entries are scoped
+# to that branch: saving on every branch push would fill the 10 GB cache with
+# entries one branch can read and evict main's, which every branch reads.
+#
+# A wrong or stale entry is a miss, never a bad build: Go's cache is
+# content-addressed and checks what it reuses. The test jobs run -count=1, so
+# no test result is read from it either.
+
+inputs:
+  module:
+    description: The module directory whose docker test closure the cache holds.
+    required: true
+  flavour:
+    description: plain, or race (compiled with -race).
+    required: true
+  warm:
+    description: >
+      "true" in the one saver job per module and flavour: compile, prune and
+      save after the restore. Anything else: restore only.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # The path below is Go's default GOCACHE on the runner. A job that moved
+    # GOCACHE would restore into a directory Go never reads: say so, loudly.
+    - shell: bash
+      env:
+        FLAVOUR: ${{ inputs.flavour }}
+      run: |
+        case "$FLAVOUR" in plain|race) ;; *) echo "::error::go-build-cache: flavour must be plain or race, not '$FLAVOUR'"; exit 1 ;; esac
+        if [ "$(go env GOCACHE)" != "$HOME/.cache/go-build" ]; then
+          echo "::warning::go-build-cache: GOCACHE is $(go env GOCACHE), not ~/.cache/go-build; the $FLAVOUR cache will not be used"
+        fi
+
+    # A saver off main only asks whether an entry exists (lookup-only): it
+    # warms only when none does, and then there is nothing to download.
+    - id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/go-build
+        key: go-build-${{ inputs.module }}-${{ inputs.flavour }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          go-build-${{ inputs.module }}-${{ inputs.flavour }}-
+        lookup-only: ${{ inputs.warm == 'true' && github.ref != 'refs/heads/main' }}
+
+    - id: warm
+      if: inputs.warm == 'true' && (github.ref == 'refs/heads/main' || steps.restore.outputs.cache-matched-key == '')
+      shell: bash
+      working-directory: ${{ inputs.module }}
+      env:
+        FLAVOUR: ${{ inputs.flavour }}
+        MODULE: ${{ inputs.module }}
+      run: |
+        set -uo pipefail
+        gc="$HOME/.cache/go-build"
+        mkdir -p "$gc"
+        find "$gc" -mindepth 2 -maxdepth 2 -name '*-[ad]' -exec touch -h -d '2000-01-01' {} +
+        stamp="$RUNNER_TEMP/go-build-cache.stamp"
+        touch -d '1 minute ago' "$stamp"
+        race=()
+        if [ "$FLAVOUR" = race ]; then race=(-race); fi
+        start=$(date +%s)
+        rc=0
+        go test "${race[@]}" -tags=docker,lockcheck -count=1 -run '^$' -exec true ./... \
+          > "$RUNNER_TEMP/go-build-cache.log" 2>&1 || rc=$?
+        echo "compile ($FLAVOUR, nothing run): rc=$rc in $(( $(date +%s) - start ))s"
+        if [ "$rc" -ne 0 ]; then
+          # Not this job's verdict: the test jobs compile the same code and
+          # fail on it themselves. The cache keeps what did compile.
+          echo "::warning::go-build-cache: the $FLAVOUR compile of $MODULE exited $rc; the test jobs carry the verdict"
+          tail -n 40 "$RUNNER_TEMP/go-build-cache.log"
+        fi
+        before=$(find "$gc" -mindepth 2 -maxdepth 2 -name '*-[ad]' | wc -l)
+        find "$gc" -mindepth 2 -maxdepth 2 -name '*-[ad]' ! -newer "$stamp" -exec rm -rf {} +
+        after=$(find "$gc" -mindepth 2 -maxdepth 2 -name '*-[ad]' | wc -l)
+        echo "pruned to the $FLAVOUR closure: $after of $before entries kept, $(du -sh "$gc" | cut -f1)"
+
+    - if: steps.warm.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/go-build
+        key: go-build-${{ inputs.module }}-${{ inputs.flavour }}-${{ github.run_id }}-${{ github.run_attempt }}

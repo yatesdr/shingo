@@ -24,7 +24,8 @@ on:
       # exactly this gap that let a restructuring of the jobs below sit
       # unverified, because nothing in the diff matched any other path.
       - ".github/workflows/integration.yml"
-      # The composite actions its jobs call (the test census), one level out.
+      # The composite actions its jobs call (the test census, the build
+      # cache), one level out.
       - ".github/actions/**"
   pull_request:
     paths:
@@ -106,6 +107,24 @@ jobs:
         # and any non-tagged tests added in the future.
         run: go test -tags lockcheck -count=1 ./...
 
+      # The rolling build caches the docker and docker-race slices restore,
+      # saved here, off the slices' chains (core.yml's build job has the note).
+      # The race one is saved on main too, where the race slices do not run,
+      # because branches can read only main's entries and their own.
+      - name: Build cache (plain)
+        uses: ./.github/actions/go-build-cache
+        with:
+          module: integration
+          flavour: plain
+          warm: "true"
+
+      - name: Build cache (race)
+        uses: ./.github/actions/go-build-cache
+        with:
+          module: integration
+          flavour: race
+          warm: "true"
+
   # THE DOCKER SUITES ARE THEIR OWN JOBS, EACH IN THREE SLICES BY TEST NAME.
   #
   # They were steps of the build job, after the builds, the vet and the unit
@@ -147,6 +166,11 @@ jobs:
           cache-dependency-path: |
             integration/go.sum
             protocol/go.sum
+
+      - uses: ./.github/actions/go-build-cache
+        with:
+          module: integration
+          flavour: plain
 
       - name: Test (Docker integration) — slice ${{ matrix.slice }}
         working-directory: integration
@@ -199,6 +223,11 @@ jobs:
           cache-dependency-path: |
             integration/go.sum
             protocol/go.sum
+
+      - uses: ./.github/actions/go-build-cache
+        with:
+          module: integration
+          flavour: race
 
       - name: Test (Docker integration, race) — slice ${{ matrix.slice }}
         working-directory: integration

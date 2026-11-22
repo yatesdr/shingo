@@ -58,6 +58,14 @@ on:
         required: false
         default: false
         type: boolean
+      build-cache:
+        description: >
+          The flavour of the module's rolling build cache each shard restores
+          (.github/actions/go-build-cache): race for a -race suite, plain
+          otherwise. The module's build job saves it. Blank: none.
+        required: false
+        default: ""
+        type: string
       split-package:
         description: >
           One package run as slices of its tests instead of as one shard's
@@ -182,6 +190,12 @@ jobs:
           cache-dependency-path: |
             ${{ inputs.module }}/go.sum
             protocol/go.sum
+
+      - if: inputs.build-cache != ''
+        uses: ./.github/actions/go-build-cache
+        with:
+          module: ${{ inputs.module }}
+          flavour: ${{ inputs.build-cache }}
 
       - if: ${{ inputs.needs-postgres }}
         uses: ./.github/actions/shared-postgres

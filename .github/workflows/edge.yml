@@ -123,6 +123,22 @@ jobs:
         working-directory: shingo-edge
         run: go test -run NONE -count=1 ./...
 
+      # The rolling build caches the docker and docker-race jobs restore,
+      # saved here, off the docker chains (core.yml's build job has the note).
+      - name: Build cache (plain)
+        uses: ./.github/actions/go-build-cache
+        with:
+          module: shingo-edge
+          flavour: plain
+          warm: "true"
+
+      - name: Build cache (race)
+        uses: ./.github/actions/go-build-cache
+        with:
+          module: shingo-edge
+          flavour: race
+          warm: "true"
+
   # THE PLAIN SUITE STAYS ONE JOB; THE RACE SUITE IS SHARDED, AND ITS ENGINE
   # PACKAGE IS SPLIT BY TEST NAME.
   #
@@ -158,6 +174,11 @@ jobs:
             shingo-edge/go.sum
             protocol/go.sum
 
+      - uses: ./.github/actions/go-build-cache
+        with:
+          module: shingo-edge
+          flavour: plain
+
       - name: Test (Docker integration)
         working-directory: shingo-edge
         run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
@@ -191,5 +212,6 @@ jobs:
       test-flags: "-race -timeout=25m"
       cache-prefix: shard-timings-edge-race-
       needs-postgres: false
+      build-cache: race
       split-package: shingoedge/engine
       split-ranges: "A-C D-P"
