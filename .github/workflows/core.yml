@@ -126,9 +126,10 @@ jobs:
           #
           # A wrong key is a MISS, never a bad build — Go's cache is
           # content-addressed and re-verifies everything it reuses. shared/ is
-          # deliberately not named: it has a go.mod but no go.sum, so hashing
-          # it would resolve nothing and throw exactly the way the unset
-          # default did.
+          # not named. The reason this note gave, that shared has a go.mod but
+          # no go.sum to hash, has been false since a60497c4 (2026-11-08) added
+          # one (G1 in work/loc-census-2026-11-20 found it); naming it now would
+          # only move every Core job to a new key.
           cache-dependency-path: |
             shingo-core/go.sum
             protocol/go.sum

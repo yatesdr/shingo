@@ -54,10 +54,11 @@ jobs:
       #
       # Each module keys on its own go.sum plus protocol/go.sum (go.work
       # builds every module against protocol, so its deps are part of what
-      # got compiled) — except shared, which has no go.sum of its own, and
-      # hashing a file that does not exist resolves nothing and throws the
-      # way the unset default did. protocol appears twice in its own key;
-      # the duplicate hash input is harmless and keeps the list uniform.
+      # got compiled) — except shared, which keys on protocol/go.sum alone.
+      # The reason first given, that shared has no go.sum of its own, has
+      # been false since a60497c4 (2026-11-08) added one; the key was left as
+      # it is. protocol appears twice in its own key; the duplicate hash input
+      # is harmless and keeps the list uniform.
       matrix:
         include:
           - module: protocol
