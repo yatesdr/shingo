@@ -455,7 +455,7 @@ function checkSequence(id, sequence) {
       if (c.missing && c.missing.length) { toast('Missing: ' + c.missing.join('; '), 'error'); return; }
       if (c.warnings && c.warnings.length) { toast('Unverified — ' + c.warnings.join('; '), 'info'); return; }
       if (c.verified) { toast('Sequence verified at all load locations', 'success'); return; }
-      toast('Check complete', 'info');
+      toast('Check complete', 'success');
     })
     .catch(function(err) { toast('Check failed: ' + err, 'error'); });
 }
@@ -473,7 +473,7 @@ function checkPLEditSequence() {
 function surfaceSaveWarnings(data) {
   var warnings = (data && data.data && data.data.warnings) || (data && data.warnings) || [];
   if (warnings.length) {
-    toast('Saved unverified — ' + warnings.join('; '), 'info');
+    toast('Saved unverified — ' + warnings.join('; '), 'warning');
     setTimeout(function() { location.href = '/payloads'; }, 2000);
   } else {
     location.href = '/payloads';

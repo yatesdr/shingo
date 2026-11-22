@@ -129,6 +129,7 @@ function load(gets) {
     let src = fs.readFileSync(path.join(SRC_DIR, 'payloads.js'), 'utf8');
     src = src.replace(/^import .*$/mg, '');
     const posts = [];
+    const toasts = [];
     const doc = newDocument();
     // The edit form's carrier checkboxes, as the template draws them.
     const host = doc.getElementById('ple-bin-types');
@@ -145,7 +146,7 @@ function load(gets) {
         location: { href: '' },
         window: { location: { reload() {} } },
         setTimeout() {},
-        toast() {},
+        toast(text, level) { toasts.push([text, level]); },
         api() {},
         el() { return fakeEl(); },
         escapeHtml: (s) => String(s == null ? '' : s),
@@ -170,7 +171,7 @@ function load(gets) {
     };
     vm.createContext(ctx);
     vm.runInContext(src, ctx);
-    return { ctx, posts, doc };
+    return { ctx, posts, doc, toasts };
 }
 
 function editButton(id) {
@@ -320,6 +321,24 @@ async function main() {
             { part_number: 'SYN-PL-L', catid: '', parts_per_cycle: 2 },
             { part_number: 'SYN-PL-R', catid: '', parts_per_cycle: 1 }]);
         same('a kit: the boxes keep their words (a kit counts kits)', kit.words, ['UoP Capacity', 'UoP per tote']);
+    }
+
+    console.log('the sequence check and the save say their outcome at its level (orc, 2026-11-22)');
+    {
+        // A check with nothing missing, unverified or verified is a clean pass:
+        // success. It was info.
+        const { ctx, toasts } = load({
+            '/api/payloads/templates/check-sequence': () => Promise.resolve(okJSON({})),
+        });
+        ctx.checkSequence(7, 'LOAD-A');
+        await settle(); await settle();
+        same('a clean check is a success', toasts, [['Check complete', 'success']]);
+    }
+    {
+        // A save the server could not verify is saved, with a warning. It was info.
+        const { ctx, toasts } = load({});
+        ctx.surfaceSaveWarnings({ data: { warnings: ['no RDS'] } });
+        same('a save unverified is a warning', toasts, [['Saved unverified — no RDS', 'warning']]);
     }
 
     if (failures) {
