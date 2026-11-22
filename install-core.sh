@@ -498,9 +498,11 @@ echo "==> Build succeeded (sha256 ${BUILD_SHA:0:16})"
 # ----------------------------------------------------------------------
 # Can the new build start on this database? Asked before anything stops.
 # ----------------------------------------------------------------------
-# The new binary's own `migrate check` reads the database and answers with the
-# decision its boot would make, writing nothing. A database this build will not
-# start on (one below the release its baseline retires, a partial restore) is
+# The new binary's own `migrate check` reads the database and answers whether
+# this build may be installed on it, writing nothing. It is stricter than the
+# boot: besides a database the build will not start on (one below the release
+# its baseline retires, one with no schema_migrations) it refuses one whose
+# shipped tables are not all there (a restore that skipped them). Each is
 # refused here, by name, while the old Core still serves, instead of by a crash
 # loop after the stop. Exit 1 is that refusal; exit 2 is a database the check
 # could not read, which the new Core could not start on either. On exit 0 it
@@ -523,8 +525,8 @@ else
     printf '%s\n' "$check_out" | sed 's/^/    /'
     if [ "$check_rc" -ne 0 ]; then
         case "$check_rc" in
-            1) echo "ERROR: the new build would not start on this database (migrate check refused it)."
-               echo "       Do what the sentence above says (it names the release to install first), then rerun." ;;
+            1) echo "ERROR: the new build will not be installed on this database (migrate check refused it)."
+               echo "       Do what the sentence above says, then rerun." ;;
             2) echo "ERROR: migrate check could not read the database or its config (exit 2; the reason is above)."
                echo "       Fix that (connection, credentials, $CHECK_CONFIG readable by the shingo user), then rerun." ;;
             *) echo "ERROR: migrate check did not run (exit $check_rc): the reason is above, not the database."

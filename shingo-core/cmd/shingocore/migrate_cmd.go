@@ -18,10 +18,11 @@ import (
 const migrateUsage = `Usage: shingocore migrate [-config PATH] check
        shingocore migrate [-config PATH] down N
 
-  check    say what this build's boot would do to the database, writing nothing:
-           exit 0 and "database v<cur> -> v<target>" on stdout when Core would
-           start on it; exit 1 and the refusal on stderr when it would refuse
-           it; exit 2 and the error when the database cannot be read
+  check    say whether this build may be installed on the database, writing
+           nothing: exit 0 and "database v<cur> -> v<target>" on stdout when it
+           may; exit 1 and the refusal on stderr when Core would refuse it, or
+           when shipped tables are missing (a restore skipped them); exit 2 and
+           the error when the database cannot be read
   down N   run the down step of version N, the newest recorded; exit 0 on success
 
   -config PATH   config file path (default: shingocore.yaml); it must exist

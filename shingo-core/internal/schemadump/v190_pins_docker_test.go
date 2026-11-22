@@ -198,6 +198,9 @@ func TestV190_ADatabaseAtV190IsUntouched(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if _, _, err := store.CheckDatabase(r.inst.DBConfigForTest(r.name)); err != nil {
+				t.Errorf("migrate check refuses a database at v190: %v", err)
+			}
 			if err := r.inst.Reboot(r.ctx, r.name); err != nil {
 				t.Fatalf("the next boot: %v", err)
 			}
