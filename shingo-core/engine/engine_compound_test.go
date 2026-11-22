@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -191,10 +192,9 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 // the destination to file a receipt, so on fleet FINISHED the engine now
 // auto-confirms it immediately rather than leaving it Delivered until the
 // 5-minute reconciliation sweep. Without the fix, driving a child to
-// FINISHED leaves it Delivered (non-terminal), the sibling-in-flight guard
-// blocks the next child, and this test fails at child 2 with no
-// VendorOrderID. Crucially it calls NO HandleOrderReceipt — the existing
-// reshuffle tests mask the bug by confirming each child manually.
+// FINISHED leaves it Delivered (non-terminal), which the terminal-status
+// assertion below should catch. Crucially it calls NO HandleOrderReceipt — the
+// existing reshuffle tests mask the bug by confirming each child manually.
 func TestReshuffle_ChildAutoConfirmsWithoutReceipt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -415,17 +415,16 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 //
 // Scenario: A 2-step reshuffle is in progress (unbury blocker → retrieve
 // target; no restock). Step 1 completes: blocker moved to shuffle slot. Step 2
-// (retrieve target) fails — robot breaks down. HandleChildOrderFailure cancels
-// remaining children and fails the parent.
+// (retrieve target) fails — robot breaks down. The fleet's FAILED puts the leg
+// in faulted, a grace period, and nothing has terminated yet.
 //
 // Key question: The blocker bin is now physically at the shuffle slot (moved by
 // completed step 1). Its claim was released on completion. Is it visible to
 // normal operations? Can it be retrieved? Or is it orphaned?
 //
-// Expected: After failure, the blocker bin should be at the shuffle slot,
-// unclaimed, and accessible for manual recovery or a new reshuffle. The lane
-// lock should be released so a retry can proceed. The target bin should still
-// be at its original slot (step 2 never completed), unclaimed.
+// Expected, during that grace period: the blocker bin is at the shuffle slot,
+// the parent is not terminal and the lane stays locked. What follows the
+// grace's expiry is not driven here.
 func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -492,7 +491,7 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	sim.DriveState(child2.VendorOrderID, "RUNNING")
 	sim.DriveState(child2.VendorOrderID, "FAILED")
 
-	// Verify parent order failed
+	// Verify the child faulted and the parent did not end
 	// Note: FAILED vendor state now maps to faulted (non-terminal) instead of failed.
 	// The parent cascade only fires on grace expiry (faulted -> failed).
 	// This test now verifies the child enters faulted state.
@@ -508,14 +507,14 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 		t.Errorf("parent should not be terminal while child is in grace period, got %q", order.Status)
 	}
 
-	// Verify lane lock released
+	// Verify lane lock held
 	// Lane lock is still held while child is in faulted grace period.
 	// It will be released when grace expires and the child transitions to failed.
 	if !eng.Dispatcher().LaneLock().IsLocked(lane.ID) {
 		t.Errorf("lane lock released during grace period — should stay locked until terminal")
 	}
 
-	// Verify remaining children cancelled
+	// Log the children as the grace period leaves them
 	children, _ = db.ListChildOrders(order.ID)
 	for _, c := range children {
 		c, _ = db.GetOrder(c.ID)
@@ -562,8 +561,8 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 // loaded_at age, not slot depth, so a bin in a different slot keeps its order.
 //
 // This is the full two-robot swap pattern. The test verifies:
-// - All 5 children created and dispatched sequentially
-// - Target arrives at line, blockers packed deepest-first (depths 2 and 3)
+// - All 3 children created and dispatched sequentially
+// - Target arrives at line, both blockers out of their lane slots
 // - All claims released, lane lock freed, parent completed
 func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 	t.Parallel()
@@ -767,19 +766,25 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 
 // --- Test: AdvanceCompoundOrder skips failed children — premature completion (TC-51) ---
 //
-// OBSERVATIONAL TEST: This test always passes. It uses t.Logf (not t.Errorf)
-// to document the skip-failed-child behavior. When AdvanceCompoundOrder is
-// updated to halt on child failure, convert the Logf calls to assertions.
+// Scenario: a two-leg dig (unbury the blocker, retrieve the target). While the
+// unbury is out, the retrieve leg waits its turn with no vendor order, and its
+// source node is cleared, as a damaged row would have it. The unbury's landing
+// advances the compound, which fails that leg ("missing source node") and
+// advances past it to the chapter's end.
 //
-// Scenario: A 3-step compound order where child 2 has invalid source/dest
-// (empty string). AdvanceCompoundOrder dispatches child 1 which completes.
-// When advancing to child 2, lines 77-98 in compound.go detect missing
-// source/delivery, mark child 2 failed, and recursively call
-// AdvanceCompoundOrder. This advances to child 3.
+// Expected: the parent does not complete over the failed leg, and is not left
+// in reshuffling either. The demand goes back to be re-planned, and the blocker
+// lies at its shuffle slot, unclaimed.
 //
-// Expected: The parent should NOT complete normally if a child was skipped
-// due to failure. This test documents whether the current behavior causes
-// silent data loss (blocker not restocked but parent "confirmed").
+// Scope: the failed leg is the chapter's last one. This test does not cover a
+// failed leg with another still pending behind it. Nor does it pin the advance
+// that follows the failure inside advanceCompound: the unbury's own completion
+// re-drives the compound, so the test stays green with that advance removed.
+//
+// MUTATION (verified), in dispatch/compound.go:
+//   - skip the stopped-short arm of advanceCompoundChapterEnd: the parent
+//     confirms.
+//   - delete the empty-source arm: the leg fails as a config failure instead.
 func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -787,7 +792,6 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "SKIP"})
 	grp := sc.Grp
 	lineNode, bp := sc.LineNode, sc.Payload
-	blockerBin := sc.Blockers[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -806,47 +810,47 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 
 	order := testdb.RequireOrderStatus(t, db, "skip-reshuffle-1", dispatch.StatusReshuffling)
 
-	children, _ := db.ListChildOrders(order.ID)
-	if len(children) < 2 {
-		t.Fatalf("expected >= 2 children (unbury + retrieve), got %d", len(children))
+	children, err := db.ListChildOrders(order.ID)
+	testutil.MustNoErr(t, err, "list the legs")
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children (unbury + retrieve), got %d", len(children))
 	}
-
-	// Complete child 1 (unbury blocker)
-	child1, _ := db.GetOrder(children[0].ID)
+	child1, child2 := children[0], children[1]
 	if child1.VendorOrderID == "" {
 		t.Fatalf("child 1 not dispatched")
 	}
-	driveLegRunToFinish(t, db, sim, child1.ID, child1.VendorOrderID)
-	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
-		OrderUUID: child1.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
-	})
 
-	// Break child 2 by clearing its source node (simulates data corruption / race)
-	child2, _ := db.GetOrder(children[1].ID)
+	// Break child 2 before child 1's landing can dispatch it.
 	if child2.VendorOrderID != "" {
-		t.Skip("child 2 already dispatched before we could break it — cannot reproduce race in this run")
+		t.Fatalf("child 2 went out (%s) with child 1 still in the lane", child2.VendorOrderID)
 	}
-	db.Exec(`UPDATE orders SET source_node = '' WHERE id = $1`, child2.ID)
-	d.AdvanceCompoundOrder(order.ID)
+	_, err = db.Exec(`UPDATE orders SET source_node = '' WHERE id = $1`, child2.ID)
+	testutil.MustNoErr(t, err, "clear child 2's source node")
 
-	// Parent must NOT be confirmed if any child failed
-	order, _ = db.GetOrderByUUID("skip-reshuffle-1")
-	children, _ = db.ListChildOrders(order.ID)
-	failedCount := 0
-	for _, c := range children {
-		c, _ = db.GetOrder(c.ID)
-		if c.Status == dispatch.StatusFailed {
-			failedCount++
-		}
-	}
-	if failedCount > 0 && order.Status == dispatch.StatusConfirmed {
-		t.Errorf("parent confirmed despite %d failed children — data inconsistent", failedCount)
+	// The landing confirms child 1 and advances the compound over child 2.
+	driveLegRunToFinish(t, db, sim, child1.ID, child1.VendorOrderID)
+
+	child2, err = db.GetOrder(child2.ID)
+	testutil.MustNoErr(t, err, "reload child 2")
+	if child2.Status != dispatch.StatusFailed || child2.ErrorDetail != "missing source node" {
+		t.Fatalf("child 2 = %q (%q), want failed on its missing source node", child2.Status, child2.ErrorDetail)
 	}
 
-	// Blocker bin should not be stranded without a claim
-	blockerBin, _ = db.GetBin(blockerBin.ID)
-	if blockerBin.ClaimedBy == nil {
-		t.Errorf("blocker bin %d stranded (unclaimed) after partial reshuffle failure", blockerBin.ID)
+	// The re-planned parent may already be pending, dispatched or on its robot.
+	order = testdb.RequireOrder(t, db, "skip-reshuffle-1")
+	switch {
+	case order.Status == dispatch.StatusConfirmed:
+		t.Errorf("parent confirmed despite a failed child — data inconsistent")
+	case order.Status.IsTerminal():
+		t.Errorf("parent %q (%q) with one failed leg, want the demand re-planned", order.Status, order.ErrorDetail)
+	case order.Status == dispatch.StatusReshuffling:
+		t.Errorf("parent still reshuffling after its last leg failed, want the chapter closed")
+	}
+
+	blockerBin := testdb.RequireBin(t, db, sc.Blockers[0].ID)
+	if blockerBin.NodeID == nil || *blockerBin.NodeID != sc.ShuffleSlots[0].ID || blockerBin.ClaimedBy != nil {
+		t.Errorf("blocker at node=%s claimed_by=%v, want %s and unclaimed",
+			blockerBin.NodeName, blockerBin.ClaimedBy, sc.ShuffleSlots[0].Name)
 	}
 }
 
@@ -857,9 +861,8 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 // lane (same or different payload). The planning service should detect the
 // lane lock and return a lane_locked planningError.
 //
-// Current behavior: lane_locked goes through failOrder, not queueOrder.
-// This means the second order FAILS rather than being retried when the
-// lane unlocks. This test documents that behavior and whether it's correct.
+// Expected: lane_locked queues the second order (a transient planningError)
+// rather than failing it, so it can be retried when the lane unlocks.
 func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
