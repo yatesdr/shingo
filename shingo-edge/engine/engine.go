@@ -187,6 +187,9 @@ type Engine struct {
 	// slotWatchClock is Config.SlotWatchClock: what the slot watch takes its
 	// ticker from, and only that (runSlotWatch).
 	slotWatchClock clock.Clock
+	// catidStableWindow is Config.CatidStableWindow, read where a tracker is
+	// made (catidState.stableWindow).
+	catidStableWindow time.Duration
 
 	hourlyTracker  *HourlyTracker
 	reconciliation *ReconciliationService
@@ -387,6 +390,12 @@ type Config struct {
 	// nothing else: the time a pass records is the process clock's, so the
 	// watch keeps one clock with the monitor beside it (runSlotWatch).
 	SlotWatchClock clock.Clock
+	// CatidStableWindow, when set, is the CATID monitor's stability window in
+	// place of its 60 s. Production leaves it zero (pinned by
+	// TestCatidWindow_SixtySecondsOnEveryTracker). A duration and not a clock:
+	// the confirm is compared with the changeover's started_at, so both stay
+	// on the process clock (forceHolds).
+	CatidStableWindow time.Duration
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────
@@ -405,20 +414,21 @@ func New(c Config) *Engine {
 		debugFn = func(string, ...any) {}
 	}
 	e := &Engine{
-		cfg:            c.AppConfig,
-		configPath:     c.ConfigPath,
-		db:             c.DB,
-		logFn:          logFn,
-		debugFn:        debugFn,
-		debugLogger:    c.DebugLogger,
-		warlinkClient:  c.Warlink,
-		reconcileClock: c.DemandReconcileClock,
-		pollClock:      c.PollClock,
-		strandedClock:  c.StrandedClock,
-		slotWatchClock: c.SlotWatchClock,
-		Events:         NewEventBus(),
-		stopChan:       make(chan struct{}),
-		cutoverPokes:   make(chan int64, 64),
+		cfg:               c.AppConfig,
+		configPath:        c.ConfigPath,
+		db:                c.DB,
+		logFn:             logFn,
+		debugFn:           debugFn,
+		debugLogger:       c.DebugLogger,
+		warlinkClient:     c.Warlink,
+		reconcileClock:    c.DemandReconcileClock,
+		pollClock:         c.PollClock,
+		strandedClock:     c.StrandedClock,
+		slotWatchClock:    c.SlotWatchClock,
+		catidStableWindow: c.CatidStableWindow,
+		Events:            NewEventBus(),
+		stopChan:          make(chan struct{}),
+		cutoverPokes:      make(chan int64, 64),
 	}
 	// SEEDED FROM THE CLOCK, not from zero: this counter lives in memory and a
 	// browser outlives a restart of this process. Starting every run at a fresh

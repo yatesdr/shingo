@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
@@ -35,7 +34,11 @@ func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 	for _, half := range []string{"untapped", "tapped"} {
 		t.Run(half, func(t *testing.T) {
 			t.Parallel()
-			c := newW6Cell(t, w6Opts{})
+			var o w6Opts // untapped holds the production window: no changeover open, nothing moves
+			if half == "tapped" {
+				o.window = w6ShortWindow
+			}
+			c := newW6Cell(t, o)
 			c.cycle(14)
 			run := c.counted()
 			before := c.lastID()
@@ -78,7 +81,7 @@ func (c *w6Cell) wantMirrorShares(label string, n int64) {
 // changeover to ALT, its sentence naming the mirror positions' held strokes.
 func (c *w6Cell) asksAndMovesNothing(label string, before int64) edgeengine.CatidHealthItem {
 	c.t.Helper()
-	c.waitFor(label+": the window closed on the jumped part", declareWindow+10*time.Second, func() bool {
+	c.waitFor(label+": the window closed on the jumped part", c.declared(), func() bool {
 		return c.boot.log.since(0, fmt.Sprintf("CATID %d counted", catALT), "with no changeover open — nothing moves")
 	})
 	c.cycle(1)
@@ -186,7 +189,7 @@ func (c *w6Cell) tapped(label string, item edgeengine.CatidHealthItem, run int64
 	// Core is sent nothing to refuse.
 	c.cycle(1)
 	c.carryAll(label+" the changeover's legs", before, nil)
-	c.waitFor(label+" the changeover completed by the monitor", declareWindow+10*time.Second, func() bool {
+	c.waitFor(label+" the changeover completed by the monitor", c.declared(), func() bool {
 		return c.open() == nil
 	})
 	co := c.changeovers()[0]

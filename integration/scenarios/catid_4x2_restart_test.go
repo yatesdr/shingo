@@ -7,7 +7,6 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 )
 
 // TestCatid4x2_S7_Restart: a mixed cell (both counting paths) holding an
@@ -20,7 +19,7 @@ import (
 // declaration completes the changeover.
 func TestCatid4x2_S7_Restart(t *testing.T) {
 	t.Parallel()
-	c := newW6Cell(t, w6Opts{station: []int{0, 1, 3}})
+	c := newW6Cell(t, w6Opts{station: []int{0, 1, 3}, window: w6ShortWindow})
 	c.cycle(10)
 	c.force(1003) // a spell on a part no style pins: its draws are held
 	c.cycle(3)
@@ -46,7 +45,7 @@ func TestCatid4x2_S7_Restart(t *testing.T) {
 	c.restart("mid-changeover")
 	c.cycle(3) // and after it
 	c.ledger("S7 after the restart mid-changeover", false)
-	c.waitFor("the window closed on the part standing at the restart", declareWindow+10*time.Second, func() bool {
+	c.waitFor("the window closed on the part standing at the restart", c.declared(), func() bool {
 		return c.boot.log.since(mark, fmt.Sprintf("predicate held on CATID %d", catALT), "waiting on", "not cut over")
 	})
 	if c.boot.log.since(mark, "counted on the target since the change") {
@@ -58,7 +57,7 @@ func TestCatid4x2_S7_Restart(t *testing.T) {
 	}
 
 	c.carryAll("the held legs", after, nil)
-	c.waitFor("the gated declaration completes the changeover", declareWindow+10*time.Second, func() bool {
+	c.waitFor("the gated declaration completes the changeover", c.declared(), func() bool {
 		return c.open() == nil
 	})
 	if co := c.changeovers()[0]; co.TriggeredBy != "auto-catid" || c.active() != c.alt {

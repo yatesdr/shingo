@@ -9,7 +9,6 @@ package scenarios
 import (
 	"errors"
 	"testing"
-	"time"
 
 	edgeengine "shingoedge/engine"
 )
@@ -35,7 +34,7 @@ func TestPinChangeover_ACommonPositionIsResuppliedWhileOpen(t *testing.T) {
 			t.Parallel()
 			// Every claim's level at 30: ten counts bring a cart to it. The line
 			// fills w6Depth loads deep before its first count.
-			c := newW6Cell(t, w6Opts{reorder: 30})
+			c := newW6Cell(t, w6Opts{reorder: 30, window: w6ShortWindow})
 			c.cycle(14)
 			after := c.startChangeover(c.alt)
 			c.carryAll("the changeover's legs", after, nil)
@@ -86,7 +85,7 @@ func TestPinChangeover_ACommonPositionIsResuppliedWhileOpen(t *testing.T) {
 			}
 			run := c.counted()
 			c.cycle(w6Depth + 4) // ALT refills the line and its first parts are counted
-			c.waitFor("the changeover completed by the monitor", declareWindow+10*time.Second, func() bool {
+			c.waitFor("the changeover completed by the monitor", c.declared(), func() bool {
 				return c.open() == nil
 			})
 			co := c.changeovers()[0]

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -150,6 +151,9 @@ type catidState struct {
 	armCandidate string
 	armCount     int
 	armFirstSeen time.Time
+	// stableWindow is Config.CatidStableWindow, copied in where a tracker is
+	// made (prime, reprime); zero is autoArmStableWindow.
+	stableWindow time.Duration
 	armDecided   bool
 	armRefusedAt time.Time
 	poked        bool
@@ -170,11 +174,12 @@ func (st *catidState) raiseOnce() bool {
 }
 
 // stableAt reports whether the confirmed value has held for the declaration's
-// window at now: at least autoArmStableReads consecutive reads AND
-// autoArmStableWindow since the tracker first saw it.
+// window at now: at least autoArmStableReads consecutive reads AND the window
+// (autoArmStableWindow, unless Config.CatidStableWindow is set) since the
+// tracker first saw it.
 func (st *catidState) stableAt(now time.Time) bool {
 	return st.seenValue && st.armCandidate != "" && st.armCandidate == st.lastConfirmed &&
-		st.armCount >= autoArmStableReads && now.Sub(st.armFirstSeen) >= autoArmStableWindow
+		st.armCount >= autoArmStableReads && now.Sub(st.armFirstSeen) >= cmp.Or(st.stableWindow, autoArmStableWindow)
 }
 
 // facts reads the tracker at now; the tick and the last good read are the
@@ -342,7 +347,8 @@ func (cm *catidMonitor) prime() {
 			cancel()
 		}
 		log.Printf("plc-catid: monitoring process %d (%s) on %s.%s", p.ID, p.Name, p.CounterPLCName, tag)
-		cm.states[p.ID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name}
+		cm.states[p.ID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name,
+			stableWindow: cm.eng.catidStableWindow}
 		cm.snapshots.Store(p.ID, &catidSnapshot{tag: tag, observed: observed[p.ID]})
 	}
 }
@@ -386,7 +392,8 @@ func (cm *catidMonitor) reprime(processID int64) {
 		cm.snapshots.Delete(processID)
 		return
 	}
-	cm.states[processID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name}
+	cm.states[processID] = &catidState{plcName: p.CounterPLCName, tagName: tag, processName: p.Name,
+		stableWindow: cm.eng.catidStableWindow}
 	var observed map[string]struct{}
 	if old, ok := cm.snapshot(processID); ok {
 		observed = old.observed

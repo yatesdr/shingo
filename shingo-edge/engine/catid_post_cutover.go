@@ -21,8 +21,8 @@ import (
 )
 
 // postCutoverVerifyWindow is how long after a cutover completes the monitor
-// watches the press's live part id before flagging a disagreement. Var so tests
-// can compress it.
+// watches the press's live part id before flagging a disagreement. No test sets
+// it: they step past it (checkPostCutoverVerify takes the time).
 var postCutoverVerifyWindow = 2 * time.Minute
 
 // openPostCutoverVerify starts the post-cutover watch for a just-completed

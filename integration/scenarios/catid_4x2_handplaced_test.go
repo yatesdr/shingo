@@ -27,7 +27,7 @@ func TestCatid4x2_S9_HandPlacedCart(t *testing.T) {
 	for _, half := range []string{"untapped", "tapped"} {
 		t.Run(half, func(t *testing.T) {
 			t.Parallel()
-			c := newW6Cell(t, w6Opts{})
+			c := newW6Cell(t, w6Opts{window: w6ShortWindow})
 			mirror := []int{3, 4}
 			for _, i := range mirror {
 				mustNil(t, c.edge.DB.SetProcessNodeRuntimeLinesidePayload(c.nodes[i], w6RunParts[i], false, "assumed"),

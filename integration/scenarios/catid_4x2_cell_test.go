@@ -410,6 +410,7 @@ func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient, boot *w6Boot)
 	clocks := &w6Clocks{}
 	ecfg := edgeengine.Config{AppConfig: cfg, DB: db, LogFunc: boot.log.logf(t), Warlink: wl,
 		PollClock: &clocks.poll, DemandReconcileClock: &clocks.sweep, StrandedClock: &clocks.stranded}
+	ecfg.CatidStableWindow = boot.window
 	if boot.passWatch {
 		ecfg.SlotWatchClock = &clocks.watch
 	}
@@ -483,11 +484,15 @@ type w6Opts struct {
 	// passWatch hands the slot watch's ticker to the scenario to fire
 	// (watchPass); without it the watch passes on the process clock.
 	passWatch bool
+	// window is the monitor's stability window on this cell's Edges
+	// (Config.CatidStableWindow); zero is production's 60 s.
+	window time.Duration
 }
 
 // w6Boot is what the cell gives each Edge it starts.
 type w6Boot struct {
-	passWatch bool // w6Opts.passWatch
+	passWatch bool          // w6Opts.passWatch
+	window    time.Duration // w6Opts.window
 	log       *w6Log
 }
 
@@ -535,7 +540,7 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 		c.station[p] = true
 	}
 	c.unbound = o.unbound
-	c.boot = &w6Boot{passWatch: o.passWatch, log: &w6Log{}}
+	c.boot = &w6Boot{passWatch: o.passWatch, window: o.window, log: &w6Log{}}
 	c.reorder = o.reorder
 	if c.reorder == 0 {
 		c.reorder = 10
@@ -1407,4 +1412,19 @@ next:
 		return true
 	}
 	return false
+}
+
+// w6ShortWindow is the stability window of the leaves that do not hold the
+// production one. S2's halves and S4 untapped hold the 60 s end to end.
+const w6ShortWindow = 10 * time.Second
+
+// declared is how long the cell waits for a decision the monitor takes when
+// its window closes. With a short window it is shorter than the monitor's
+// retry of a refusal (cutoverRetryInterval, a minute), so a decision taken
+// before what it needed fails here and cannot pass late on the retry.
+func (c *w6Cell) declared() time.Duration {
+	if c.boot.window == 0 {
+		return declareWindow + 10*time.Second
+	}
+	return c.boot.window + 12*time.Second
 }
