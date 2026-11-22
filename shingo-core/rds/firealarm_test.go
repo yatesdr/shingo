@@ -2,6 +2,7 @@ package rds
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"shingo/protocol/testutil"
@@ -19,18 +20,6 @@ func fireAlarmServer(t *testing.T, isFire bool, createOn string) *httptest.Serve
 				"msg":       "ok",
 				"is_fire":   isFire,
 				"create_on": createOn,
-			})
-		case "/fireOperations":
-			var req fireAlarmRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(400)
-				json.NewEncoder(w).Encode(map[string]any{"code": 50000, "msg": "parse json error"})
-				return
-			}
-			json.NewEncoder(w).Encode(map[string]any{
-				"code":      0,
-				"msg":       "ok",
-				"create_on": "2024-01-15T10:30:00Z",
 			})
 		default:
 			w.WriteHeader(404)
@@ -91,9 +80,34 @@ func TestGetFireAlarmStatus_EpochZeroSuppressed(t *testing.T) {
 
 func TestSetFireAlarm(t *testing.T) {
 	t.Parallel()
-	srv := fireAlarmServer(t, false, "")
-	defer srv.Close()
+	for _, tc := range []struct {
+		name           string
+		on, autoResume bool
+		want           map[string]any
+	}{
+		{"trigger", true, false, map[string]any{"on": true}},
+		{"clear and resume", false, true, map[string]any{"on": false, "autoResume": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got map[string]any
+			srv, c := testServer(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/fireOperations" {
+					t.Errorf("request = %s %s, want POST /fireOperations", r.Method, r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				if err := json.NewEncoder(w).Encode(Response{Code: 0, Msg: "ok"}); err != nil {
+					t.Errorf("write the reply: %v", err)
+				}
+			})
+			defer srv.Close()
 
-	c := NewClient(srv.URL, 5*time.Second)
-	testutil.MustNoErr(t, c.SetFireAlarm(true, false), "unexpected error")
+			testutil.MustNoErr(t, c.SetFireAlarm(tc.on, tc.autoResume), "unexpected error")
+			if !maps.Equal(got, tc.want) {
+				t.Errorf("SetFireAlarm(%v, %v) sent %v, want %v", tc.on, tc.autoResume, got, tc.want)
+			}
+		})
+	}
 }
