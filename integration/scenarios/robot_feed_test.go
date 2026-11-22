@@ -218,7 +218,7 @@ func startFeedEdge(t *testing.T, core *feedCore) *feedEdge {
 	drainOutbox(t, fe.edge)
 	hb, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: feedStation}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.EdgeHeartbeat{StationID: feedStation, Feeds: map[string]string{}})
+		&protocol.EdgeHeartbeat{Feeds: map[string]string{}})
 	mustNil(t, err, "build heartbeat")
 	data, err := hb.Encode()
 	mustNil(t, err, "encode heartbeat")
@@ -297,17 +297,19 @@ func TestScenario_RobotFeed_WatchPositionsRoundTripWithThePath(t *testing.T) {
 	}
 
 	var watch protocol.RobotWatch
+	var watchFrom string
 	for _, m := range core.topic.Messages() {
 		if m.Header.Type == protocol.TypeRobotWatch {
 			env, ok := protocol.DecodeEphemeral(m.Raw, feedKey, nil)
 			if ok {
 				mustNil(t, env.DecodePayload(&watch), "decode watch")
+				watchFrom = env.Src.Station
 			}
 		}
 	}
 	want := []string{core.uuids["own"], core.uuids["theirs"], core.uuids["unpolled"]}
 	slices.Sort(want)
-	if watch.StationID != feedStation || !slices.Equal(watch.OrderUUIDs, want) {
+	if watchFrom != feedStation || !slices.Equal(watch.OrderUUIDs, want) {
 		t.Errorf("the last watch = %+v, want %s watching the union %v", watch, feedStation, want)
 	}
 

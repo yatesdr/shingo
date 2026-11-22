@@ -217,7 +217,7 @@ func newDebugRig(t *testing.T) *debugRig {
 	// the Edge's quote.
 	cells, err := catalog()
 	mustNil(t, err, "read the cell catalog")
-	r.send(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{StationID: debugStation, Hostname: "debug-host",
+	r.send(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{Hostname: "debug-host",
 		Instance: "inst-debug", Version: "v-test", Timezone: debugZone, SchemaVersion: db.AppliedSchemaVersion(), Catalog: cells})
 	r.eng.PublishBinWatchAtBoot(func(l *protocol.BinWatchList) error {
 		r.send(protocol.SubjectBinsWatch, l)

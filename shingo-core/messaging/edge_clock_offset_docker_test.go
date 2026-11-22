@@ -39,20 +39,20 @@ func TestHeartbeat_RecordsTheEdgesClockOffset(t *testing.T) {
 
 	env := ticksEnv(uid)
 	env.Timestamp = clock.Now().Add(12 * time.Second)
-	svc.HandleEdgeHeartbeat(env, &protocol.EdgeHeartbeat{StationID: uid})
+	svc.HandleEdgeHeartbeat(env, &protocol.EdgeHeartbeat{})
 	ms := storedClockOffsetMS(t, db, uid)
 	if !ms.Valid || ms.Int64 < 11000 || ms.Int64 > 12000 {
 		t.Fatalf("stored offset = %v ms, want about +12000 (the Edge's ts 12 s ahead of Core's receipt)", ms)
 	}
 
-	svc.HandleEdgeHeartbeat(ticksEnv(uid), &protocol.EdgeHeartbeat{StationID: uid})
+	svc.HandleEdgeHeartbeat(ticksEnv(uid), &protocol.EdgeHeartbeat{})
 	if again := storedClockOffsetMS(t, db, uid); again != ms {
 		t.Errorf("a heartbeat with no ts moved the offset %v -> %v", ms, again)
 	}
 
 	env = ticksEnv(uid)
 	env.Timestamp = clock.Now()
-	svc.HandleEdgeHeartbeat(env, &protocol.EdgeHeartbeat{StationID: uid})
+	svc.HandleEdgeHeartbeat(env, &protocol.EdgeHeartbeat{})
 	if ms := storedClockOffsetMS(t, db, uid); !ms.Valid || ms.Int64 < -1000 || ms.Int64 > 0 {
 		t.Errorf("stored offset for an Edge on Core's time = %v ms, want about 0", ms)
 	}

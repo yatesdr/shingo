@@ -236,7 +236,7 @@ func (e *Engine) sendRobotWatch(link EphemeralLink, union []string) {
 	env, err := protocol.NewEnvelope(protocol.TypeRobotWatch,
 		protocol.Address{Role: protocol.RoleEdge, Station: station},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.RobotWatch{StationID: station, OrderUUIDs: union})
+		&protocol.RobotWatch{OrderUUIDs: union})
 	if err != nil {
 		e.debugFn("robot feed: build watch: %v", err)
 		return

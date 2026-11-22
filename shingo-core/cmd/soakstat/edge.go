@@ -295,7 +295,7 @@ func decodeLinesideReport(payload []byte) (linesideSample, bool) {
 		json.Unmarshal(data.Body, &rep) != nil || env.Timestamp.IsZero() {
 		return linesideSample{}, false
 	}
-	return linesideSample{at: env.Timestamp, wall: rep.ReportedAt, station: rep.Station, entries: rep.Entries}, true
+	return linesideSample{at: env.Timestamp, wall: rep.ReportedAt, station: env.Src.Station, entries: rep.Entries}, true
 }
 
 // starved is the seat's state in one report.

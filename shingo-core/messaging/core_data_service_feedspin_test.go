@@ -183,7 +183,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 			pending := int64(4)
 			before := time.Now().UTC().Add(-time.Second)
 			svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{
-				StationID: st, Timezone: "America/New_York", TickPending: &pending,
+				Timezone: "America/New_York", TickPending: &pending,
 			})
 			afterCall := time.Now().UTC().Add(time.Second)
 

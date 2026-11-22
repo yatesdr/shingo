@@ -3,10 +3,12 @@
 package messaging
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/service"
 	"shingocore/store"
@@ -73,9 +75,9 @@ func TestLinesideReport_NewerIdenticalValuesStillMovesTheRow(t *testing.T) {
 	t0 := time.Now().UTC().Truncate(time.Millisecond)
 	entries := []protocol.LinesideLevelEntry{linesideEntry(node, payload, 25)}
 
-	svc.HandleLinesideLevelReport(linesideEnvelope(station), &protocol.LinesideLevelReport{Station: station, ReportedAt: t0, Entries: entries})
+	svc.HandleLinesideLevelReport(linesideEnvelope(station), &protocol.LinesideLevelReport{ReportedAt: t0, Entries: entries})
 	t1 := t0.Add(time.Minute)
-	svc.HandleLinesideLevelReport(linesideEnvelope(station), &protocol.LinesideLevelReport{Station: station, ReportedAt: t1, Entries: entries})
+	svc.HandleLinesideLevelReport(linesideEnvelope(station), &protocol.LinesideLevelReport{ReportedAt: t1, Entries: entries})
 
 	if at, ok := storedReportedAt(t, db, station, node, payload); !ok || !at.UTC().Equal(t1) {
 		t.Errorf("reported_at = %v (row present %v), want %v — the refresh must move the row", at, ok, t1)
@@ -85,7 +87,7 @@ func TestLinesideReport_NewerIdenticalValuesStillMovesTheRow(t *testing.T) {
 // THE STATION IS THE ENVELOPE'S. A body naming another station stores nothing
 // under that one: the handler reads env.Src.Station, as the register and the
 // heartbeat do (TestHandlers_TheStationIsTheEnvelopes). An Edge fills both
-// from one variable; the body's copy is still sent for a v0.18.0 Core.
+// from one variable at v0.19.0, whose JSON copy is what the body here carries.
 func TestLinesideReport_TheStationIsTheEnvelopes(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -97,11 +99,12 @@ func TestLinesideReport_TheStationIsTheEnvelopes(t *testing.T) {
 		node    = "ALN_005"
 		payload = "P-ENVELOPE"
 	)
-	svc.HandleLinesideLevelReport(linesideEnvelope(sender), &protocol.LinesideLevelReport{
-		Station:    body,
+	report := protocol.LinesideLevelReport{
 		ReportedAt: time.Now().UTC().Truncate(time.Millisecond),
 		Entries:    []protocol.LinesideLevelEntry{linesideEntry(node, payload, 20)},
-	})
+	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(`{"station":"`+body+`"}`), &report), "decode the body's station")
+	svc.HandleLinesideLevelReport(linesideEnvelope(sender), &report)
 
 	if _, ok := storedReportedAt(t, db, sender, node, payload); !ok {
 		t.Errorf("no row under the envelope's station %s", sender)
@@ -124,7 +127,6 @@ func TestLinesideReport_UpsertErrorSkipsOnlyThatEntry(t *testing.T) {
 	const station = "stn-lineside-err"
 	const badPart = "P-ERR-BAD\x00"
 	svc.HandleLinesideLevelReport(linesideEnvelope(station), &protocol.LinesideLevelReport{
-		Station:    station,
 		ReportedAt: time.Now().UTC().Truncate(time.Millisecond),
 		Entries: []protocol.LinesideLevelEntry{
 			linesideEntry("ALN_003", badPart, 30),
@@ -165,7 +167,6 @@ func TestLinesideReport_StatementsPerEnvelope(t *testing.T) {
 
 	const station = "stn-lineside-count"
 	r := &protocol.LinesideLevelReport{
-		Station:    station,
 		ReportedAt: time.Now().UTC().Truncate(time.Millisecond),
 		Entries: []protocol.LinesideLevelEntry{
 			linesideEntry("ALN_005", "P-COUNT-A", 10),
@@ -201,7 +202,7 @@ func TestLinesideReport_StatementsPerEnvelope(t *testing.T) {
 	// one read of the station's latest row instead of the upserts, then the
 	// comparison's two reads, and closes the episode: BEGIN, one UPDATE,
 	// COMMIT. The next one finds nothing to close and costs the three reads.
-	empty := &protocol.LinesideLevelReport{Station: station, ReportedAt: r.ReportedAt.Add(time.Minute)}
+	empty := &protocol.LinesideLevelReport{ReportedAt: r.ReportedAt.Add(time.Minute)}
 	for _, c := range []struct {
 		report string
 		want   int64

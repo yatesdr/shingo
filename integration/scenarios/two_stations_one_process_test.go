@@ -172,7 +172,7 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		beat := func(x *twinEdge) {
 			env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
 				protocol.Address{Role: protocol.RoleEdge, Station: x.uid}, protocol.Address{Role: protocol.RoleCore},
-				&protocol.EdgeHeartbeat{StationID: x.uid, Feeds: x.eng.FeedDigests(), Owned: x.eng.OwnedDigests()})
+				&protocol.EdgeHeartbeat{Feeds: x.eng.FeedDigests(), Owned: x.eng.OwnedDigests()})
 			mustNil(t, err, "build heartbeat")
 			data, err := env.Encode()
 			mustNil(t, err, "encode heartbeat")
@@ -396,7 +396,7 @@ func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
 		// store holds it.
 		beat := func(x *ownedEdge) {
 			x.quoted = x.eng.OwnedDigests()
-			send(x, protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{StationID: x.uid, Feeds: x.eng.FeedDigests(), Owned: x.quoted})
+			send(x, protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{Feeds: x.eng.FeedDigests(), Owned: x.quoted})
 		}
 
 		for _, x := range edges {
@@ -405,7 +405,7 @@ func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
 			if len(cells) == 0 {
 				t.Fatalf("%s has no cell: its catalog family would converge on none, and show nothing", x.uid)
 			}
-			send(x, protocol.SubjectEdgeRegister, &protocol.EdgeRegister{StationID: x.uid, Hostname: "owned-host", Version: "v-test", Catalog: cells})
+			send(x, protocol.SubjectEdgeRegister, &protocol.EdgeRegister{Hostname: "owned-host", Version: "v-test", Catalog: cells})
 			if d, held, err := coreDB.EdgeCellsDigest(x.uid); err != nil || !held || d != "" {
 				t.Fatalf("%s: after the register Core holds cells %v at digest %q (err %v), want held with none", x.uid, held, d, err)
 			}

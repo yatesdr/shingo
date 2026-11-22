@@ -439,8 +439,7 @@ func (s *CoreDataService) HandleLinesideBucketLevel(env *protocol.Envelope, l *p
 }
 
 func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
-	// The station is the envelope's (HandleEdgeHeartbeat): the body's station_id,
-	// which an Edge still sends for an older Core, is not read.
+	// The station is the envelope's (HandleEdgeHeartbeat): the body names none.
 	uid := env.Src.Station
 	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s, schema_version=%d)",
 		uid, p.Hostname, p.Instance, p.Version, p.SchemaVersion)
@@ -620,7 +619,7 @@ func edgeCellsOf(catalog []protocol.CellCatalogEntry) []store.EdgeCell {
 // leaves the last reading.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
 	// The station is the envelope's, as it is for every Edge-sent count
-	// (HandleProductionTicks): the body's station_id is not read. env is the
+	// (HandleProductionTicks): the body names none. env is the
 	// router's and never nil.
 	station := env.Src.Station
 	var clockOffsetMS *int64

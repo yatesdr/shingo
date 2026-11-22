@@ -18,6 +18,7 @@ type fakeEphemeralLink struct {
 	starts  []string
 	stops   int
 	watches []protocol.RobotWatch
+	from    []string // each watch's envelope station
 	open    bool
 }
 
@@ -50,6 +51,7 @@ func (l *fakeEphemeralLink) Publish(env *protocol.Envelope) error {
 		return err
 	}
 	l.watches = append(l.watches, w)
+	l.from = append(l.from, env.Src.Station)
 	return nil
 }
 
@@ -121,7 +123,7 @@ func TestRobotWatch_SentOnlyWhileShownAndNamed(t *testing.T) {
 		t.Error("the link is open and RobotPositionsAvailable says not")
 	}
 	_, _, watches := link.state()
-	if w := watches[0]; w.StationID != "edge.a" || !slices.Equal(w.OrderUUIDs, []string{"u-1", "u-2"}) {
+	if w := watches[0]; link.from[0] != "edge.a" || !slices.Equal(w.OrderUUIDs, []string{"u-1", "u-2"}) {
 		t.Errorf("first watch = %+v, want edge.a watching [u-1 u-2]", w)
 	}
 

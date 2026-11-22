@@ -317,7 +317,7 @@ func TestHandleBinWatch_AnswersEveryListWithItsSnapshot(t *testing.T) {
 // heartbeatAck runs one heartbeat with this Feeds map and returns its ack.
 func heartbeatAck(t *testing.T, svc *CoreDataService, resp *feedsPinResponder, feeds map[string]string) *protocol.EdgeHeartbeatAck {
 	t.Helper()
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{StationID: "edge.a", Feeds: feeds})
+	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{Feeds: feeds})
 	for i := len(resp.events) - 1; i >= 0; i-- {
 		if a, ok := resp.events[i].payload.(*protocol.EdgeHeartbeatAck); ok {
 			return a

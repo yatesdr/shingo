@@ -42,9 +42,8 @@ import (
 // read (the station's latest row) instead of the upserts.
 func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *protocol.LinesideLevelReport) {
 	// The station is the envelope's, as it is for the register, the heartbeat
-	// and every Edge-sent count: the body's station is not read. An Edge fills
-	// both from one variable and still sends the body's copy for a v0.18.0
-	// Core, which reads it. env is the router's and never nil.
+	// and every Edge-sent count: the body names none. env is the router's and
+	// never nil.
 	// PIN: TestLinesideReport_TheStationIsTheEnvelopes.
 	station := env.Src.Station
 	if station == "" {

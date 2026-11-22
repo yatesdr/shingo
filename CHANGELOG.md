@@ -50,6 +50,7 @@ Deploy: no migration
 - Core: a database restored from a backup older than v0.19.0 upgrades through migration 190 without a hand fix; a name something else holds stops it with a sentence naming the holder.
 - Core install: `migrate check` refuses a database whose restore skipped tables, naming them and the Postgres version, before the running Core is stopped.
 - The oldest supported peer is v0.19.0 on both sides: an older Edge shows as below the floor on /edges and Core Health.
+- An Edge no longer repeats its station id inside a register, heartbeat, robot watch or lineside report: about 36 bytes less on each.
 - Core docs: the restore commands stop on the first error, restore nothing, and print the Postgres version.
 - Core install: a config backup that fails stops the install instead of reporting a backup that isn't there.
 

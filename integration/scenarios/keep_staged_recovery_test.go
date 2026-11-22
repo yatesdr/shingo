@@ -1928,7 +1928,7 @@ func (c *ksrCell) registerEdge() {
 	c.t.Helper()
 	env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeRegister,
 		protocol.Address{Role: protocol.RoleEdge, Station: "edge.test"}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.EdgeRegister{StationID: "edge.test", SchemaVersion: c.edge.DB.AppliedSchemaVersion()})
+		&protocol.EdgeRegister{SchemaVersion: c.edge.DB.AppliedSchemaVersion()})
 	mustNil(c.t, err, "edge.register")
 	raw, err := env.Encode()
 	mustNil(c.t, err, "encode edge.register")

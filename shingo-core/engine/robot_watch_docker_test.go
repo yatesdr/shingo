@@ -44,7 +44,7 @@ func TestRobotPositions_NoLeaseNoWork(t *testing.T) {
 	}
 	watchOn := func(e *Engine, station string, uuids ...string) {
 		e.HandleRobotWatch(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: station}},
-			&protocol.RobotWatch{StationID: station, OrderUUIDs: uuids})
+			&protocol.RobotWatch{OrderUUIDs: uuids})
 	}
 
 	// No publisher wired (no verified topic): a watch arrives, and the poll
@@ -128,7 +128,7 @@ func TestRobotPositions_ANewWatchIsAnsweredFromTheLatestPoll(t *testing.T) {
 	e.SetRobotPositionsPublisher(func(env *protocol.Envelope) error { sent = append(sent, env); return nil })
 	watch := func(station string, uuids ...string) {
 		e.HandleRobotWatch(&protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: station}},
-			&protocol.RobotWatch{StationID: station, OrderUUIDs: uuids})
+			&protocol.RobotWatch{OrderUUIDs: uuids})
 	}
 	polledAt := time.Now().Add(-time.Second)
 	e.latestPoll = []fleet.RobotStatus{{VehicleID: "AMR-01", Connected: true, X: 1, Y: 2, Moving: true}}

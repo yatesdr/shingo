@@ -198,7 +198,7 @@ func TestUnknownSubjectIsDroppedAndTheNextIsHandled(t *testing.T) {
 		map[string]any{"node": "ALN_011", "payload_code": "SYN44-PARTA.06", "qty": 3, "reason": "sweep"}))
 	unknownType := raw(protocol.NewEnvelope("order.not_yet_invented", src, dst, map[string]any{"x": 1}))
 	report := protocol.NewDataEnvelope
-	next, err := report(protocol.SubjectLinesideLevelReport, src, dst, &protocol.LinesideLevelReport{Station: "plant-a.line-1"})
+	next, err := report(protocol.SubjectLinesideLevelReport, src, dst, &protocol.LinesideLevelReport{})
 	nextRaw := raw(next, err)
 
 	ing.HandleRaw(drop)

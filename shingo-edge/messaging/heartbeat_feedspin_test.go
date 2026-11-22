@@ -32,7 +32,7 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 		{
 			name: "unwired",
 			wire: func(h *Heartbeater) {},
-			want: `{"station_id":"edge.test","feeds":null,"owned":null}`,
+			want: `{"feeds":null,"owned":null}`,
 		},
 		{
 			// The name predates the order count's removal: only the zone and
@@ -42,7 +42,7 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 				h.TimezoneFn = func() string { return "America/Chicago" }
 				h.TickLagFn = func() (int64, int64, bool) { return 2, 1500, true }
 			},
-			want: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null,"owned":null}`,
+			want: `{"timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null,"owned":null}`,
 		},
 	}
 	for _, tc := range cases {

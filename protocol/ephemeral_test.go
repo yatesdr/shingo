@@ -107,7 +107,7 @@ func TestEphemeral_PositionsRoundTripSignedAndAddressed(t *testing.T) {
 	w, err := protocol.NewEnvelope(protocol.TypeRobotWatch,
 		protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1", "u-2"}})
+		&protocol.RobotWatch{OrderUUIDs: []string{"u-1", "u-2"}})
 	if err != nil {
 		t.Fatalf("build robot.watch: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestEphemeral_PositionsRoundTripSignedAndAddressed(t *testing.T) {
 		t.Fatal("Core dropped a fresh, signed robot.watch")
 	}
 	var watch protocol.RobotWatch
-	if err := wenv.DecodePayload(&watch); err != nil || watch.StationID != "edge.a" ||
+	if err := wenv.DecodePayload(&watch); err != nil ||
 		!slices.Equal(watch.OrderUUIDs, []string{"u-1", "u-2"}) || wenv.Src.Station != "edge.a" {
 		t.Errorf("robot.watch decoded as %+v from %q (%v), want edge.a watching [u-1 u-2]", watch, wenv.Src.Station, err)
 	}
@@ -143,7 +143,7 @@ func TestEphemeral_ReadableForTenSecondsAfterItWasStamped(t *testing.T) {
 	}
 	w, err := protocol.NewEnvelope(protocol.TypeRobotWatch,
 		protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.RobotWatch{StationID: "edge.a"})
+		&protocol.RobotWatch{})
 	if err != nil {
 		t.Fatalf("build robot.watch: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestEphemeral_EveryDropIsSilent(t *testing.T) {
 	}
 	watch, err := protocol.NewEnvelope(protocol.TypeRobotWatch,
 		protocol.Address{Role: protocol.RoleEdge, Station: "edge.b"},
-		protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, &protocol.RobotWatch{StationID: "edge.b"})
+		protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, &protocol.RobotWatch{})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

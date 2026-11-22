@@ -164,11 +164,11 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 		n = bootCount{}
 		mu.Unlock()
 		// The boot burst, in SendBootBurst's order.
-		send(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{StationID: station, Hostname: "boot-host", Version: "v-test"})
+		send(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{Hostname: "boot-host", Version: "v-test"})
 		send(protocol.SubjectNodeListRequest, &protocol.NodeListRequest{SceneRevision: eng.SceneRevision()})
 		send(protocol.SubjectCatalogPayloadsRequest, &protocol.CatalogPayloadsRequest{})
 		eng.PublishBinWatchAtBoot(func(l *protocol.BinWatchList) error { send(protocol.SubjectBinsWatch, l); return nil })
-		send(protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{StationID: station, Feeds: eng.FeedDigests()})
+		send(protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{Feeds: eng.FeedDigests()})
 		// Then main.go's StartupReconcile, after the burst.
 		mustNil(t, eng.StartupReconcile(), "StartupReconcile")
 		bus.PumpAll()
@@ -179,7 +179,7 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 		if !eng.CoreSpeaksFeeds() {
 			t.Fatal("no ack from a Core that answers feeds reached the Edge: the boot was not against a feeds Core")
 		}
-		send(protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{StationID: station, Feeds: eng.FeedDigests()})
+		send(protocol.SubjectEdgeHeartbeat, &protocol.EdgeHeartbeat{Feeds: eng.FeedDigests()})
 		bus.PumpAll()
 		mu.Lock()
 		after = n

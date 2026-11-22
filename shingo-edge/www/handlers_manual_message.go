@@ -108,7 +108,6 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		// process claiming the station, and stamping the real instance here
 		// would let a click move the binding lease.
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeRegister, src, dst, &protocol.EdgeRegister{
-			StationID:     stationID,
 			Hostname:      hostname,
 			Version:       p.Version,
 			SchemaVersion: sv.SchemaVersion(),

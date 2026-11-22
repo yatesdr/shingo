@@ -147,7 +147,7 @@ func TestContainmentChanged_BroadcastsThenHeartbeatsCompare(t *testing.T) {
 	first := resp.events[0].payload.(*protocol.ContainmentSnapshot)
 
 	resp.events = nil
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{StationID: "edge.a",
+	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{
 		Feeds: map[string]string{protocol.FeedContainment: first.Digest}})
 	if got := resp.trace(); !reflect.DeepEqual(got, []string{"reply " + protocol.SubjectEdgeHeartbeatAck}) {
 		t.Errorf("edge holding the broadcast: trace = %v, want the ack alone", got)
@@ -157,7 +157,7 @@ func TestContainmentChanged_BroadcastsThenHeartbeatsCompare(t *testing.T) {
 	}
 
 	resp.events = nil
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.b"), &protocol.EdgeHeartbeat{StationID: "edge.b",
+	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.b"), &protocol.EdgeHeartbeat{
 		Feeds: map[string]string{protocol.FeedContainment: ""}})
 	if got := resp.trace(); !reflect.DeepEqual(got, []string{
 		"send " + protocol.SubjectContainmentSnapshot + " -> edge.b", "reply " + protocol.SubjectEdgeHeartbeatAck}) &&

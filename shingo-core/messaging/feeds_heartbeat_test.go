@@ -35,7 +35,7 @@ func TestHandleEdgeHeartbeat_FeedsByEdgeVersion(t *testing.T) {
 			testutil.MustNoErr(t, err, "enroll")
 			resp := &feedsPinResponder{}
 			svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
-			svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{StationID: st, Feeds: tc.feeds})
+			svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{Feeds: tc.feeds})
 
 			if got := resp.trace(); len(got) != 1 || got[0] != "reply "+protocol.SubjectEdgeHeartbeatAck {
 				t.Fatalf("trace = %v, want the ack alone", got)

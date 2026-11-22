@@ -34,7 +34,7 @@ func lsReport(t *testing.T, at time.Time, station string, entries ...protocol.Li
 	t.Helper()
 	env, err := protocol.NewDataEnvelope(protocol.SubjectLinesideLevelReport,
 		protocol.Address{Role: protocol.RoleEdge, Station: station}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.LinesideLevelReport{Station: station, ReportedAt: at, Entries: entries})
+		&protocol.LinesideLevelReport{ReportedAt: at, Entries: entries})
 	if err != nil {
 		t.Fatal(err)
 	}

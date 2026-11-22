@@ -240,7 +240,7 @@ func TestHeartbeatAck_CarriesTheConfiguredPlantTimezone(t *testing.T) {
 		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 		svc.SetPlantTimezone(configured)
 
-		svc.HandleEdgeHeartbeat(feedsPinEnv("stn-tz-test"), &protocol.EdgeHeartbeat{StationID: "stn-tz-test"})
+		svc.HandleEdgeHeartbeat(feedsPinEnv("stn-tz-test"), &protocol.EdgeHeartbeat{})
 
 		for _, r := range resp.replies {
 			if r.subject != protocol.SubjectEdgeHeartbeatAck {
@@ -282,7 +282,7 @@ func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
 		t.Helper()
 		resp := &captureResponder{}
 		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
-		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid})
+		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{})
 		for _, r := range resp.replies {
 			if ack, ok := r.payload.(*protocol.EdgeHeartbeatAck); ok && r.subject == protocol.SubjectEdgeHeartbeatAck {
 				return ack.DisplayName
@@ -360,7 +360,7 @@ func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
 	ack := func(uid string, owned map[string]string) *protocol.EdgeHeartbeatAck {
 		t.Helper()
 		resp.events = nil
-		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid,
+		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{
 			Feeds: map[string]string{protocol.FeedBins: ""}, Owned: owned})
 		for _, e := range resp.events {
 			if a, ok := e.payload.(*protocol.EdgeHeartbeatAck); ok && e.kind == "reply" {
@@ -524,8 +524,8 @@ func TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic(t *testing.T) {
 		if wire {
 			svc.SetEphemeralTopic(func() string { return verified })
 		}
-		svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
-		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{StationID: st, Feeds: map[string]string{}})
+		svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
+		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{Feeds: map[string]string{}})
 		for _, r := range resp.replies {
 			switch p := r.payload.(type) {
 			case *protocol.EdgeRegistered:

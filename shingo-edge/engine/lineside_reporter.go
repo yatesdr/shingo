@@ -156,7 +156,6 @@ func (e *Engine) buildAndEnqueueLinesideReport(pending uop.Pending) error {
 		protocol.Address{Role: protocol.RoleEdge, Station: station},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.LinesideLevelReport{
-			Station:    station,
 			ReportedAt: time.Now().UTC(),
 			Entries:    entries,
 		},

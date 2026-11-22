@@ -109,7 +109,7 @@ func (w *robotWatches) live(now time.Time) []stationWatch {
 // HandleRobotWatch takes one Edge's robot.watch, read off the ephemeral topic.
 // Memory only: it reads no row and sends nothing. The station is the
 // envelope's, as every Edge-sent count's is (messaging.HandleProductionTicks);
-// the body's station_id is not read, and a watch with no envelope station is
+// the body names none, and a watch with no envelope station is
 // dropped. Whether each order is that station's is checked where the orders
 // are read, on the poll (buildRobotPositions), so a watch costs nothing but
 // the map write. A watch

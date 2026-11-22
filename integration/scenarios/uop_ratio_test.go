@@ -479,7 +479,7 @@ func (u *uopCell) catalogBeat(label, code string, ok func(*catalog.CatalogEntry)
 	held := u.edge.Engine.FeedDigests()[protocol.FeedCatalog]
 	env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: "edge.test"}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.EdgeHeartbeat{StationID: "edge.test", Feeds: map[string]string{protocol.FeedCatalog: held}})
+		&protocol.EdgeHeartbeat{Feeds: map[string]string{protocol.FeedCatalog: held}})
 	mustNil(u.t, err, label+": the heartbeat")
 	raw, err := env.Encode()
 	mustNil(u.t, err, label+": encode the heartbeat")

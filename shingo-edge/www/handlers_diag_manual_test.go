@@ -144,9 +144,9 @@ func TestApiSendManualMessage_EdgeHeartbeat_IsTheHeartbeatersOwn(t *testing.T) {
 	t.Parallel()
 	h, router := newDiagnosticsManualRouter(t)
 	own := &protocol.EdgeHeartbeat{
-		StationID: "test.station", Timezone: "America/Chicago",
-		Feeds: map[string]string{protocol.FeedBins: "bins-digest"},
-		Owned: map[string]string{protocol.OwnedClaims: "claims-digest"},
+		Timezone: "America/Chicago",
+		Feeds:    map[string]string{protocol.FeedBins: "bins-digest"},
+		Owned:    map[string]string{protocol.OwnedClaims: "claims-digest"},
 	}
 	h.orchestration.(*stubEngine).heartbeat = own
 
