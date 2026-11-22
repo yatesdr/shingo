@@ -455,6 +455,16 @@ diff_go_only() {
   return 0
 }
 
+# module_uncached <module> — why the dev tier must run <module>'s unit tests
+# -count=1, or nothing when Go's test cache may serve them. Today: whenever
+# the diff is not Go-only, for every module (diff_go_only). `gate.sh
+# cachescope -` prints it per module for a path list on stdin
+# (scripts/check-cache-scope.sh).
+module_uncached() {
+  diff_go_only && return 0
+  echo "the diff has non-Go files"
+}
+
 # guard_header <file> <key> — a guard's `# key: value` header line (first 30
 # lines), or empty.
 guard_header() {
@@ -1503,8 +1513,8 @@ trap 'exit 143' TERM
 
 case "${1:-all}" in
   # fmt: the pre-push hook runs it and must never wait. scope: reads git only. order:
-  # reads the steps log and go list only.
-  fmt|scope|order) ;;
+  # reads the steps log and go list only. cachescope: reads stdin.
+  fmt|scope|order|cachescope) ;;
   lock-status) gate_lock_status; exit 0 ;;
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
     gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; } ;;
@@ -1697,6 +1707,15 @@ case "${1:-all}" in
   # scope; then ...` now works, and matches step_scope's own return
   # convention, which `full` has always branched on.
   scope) step_scope "${2:-}"; exit $? ;;
+  cachescope)
+    # Which modules the dev tier would run -count=1 for a diff given as paths on
+    # stdin (module_uncached), one line per module: `gate.sh cachescope -`.
+    [ "${2:-}" = - ] || { echo "usage: bash scripts/gate.sh cachescope -   (paths on stdin)" >&2; exit 2; }
+    DIFF_FILE="$ROOT/.gate/cachescope.$$"
+    cat >"$DIFF_FILE"
+    for m in $MODULES; do why="$(module_uncached "$m")"; echo "$m: ${why:-cached}"; done
+    rm -f "$DIFF_FILE"
+    exit 0 ;;
   order)
     # The order each docker module's packages would be handed to go test
     # (docker_order), one line per module; reads only the steps log.
