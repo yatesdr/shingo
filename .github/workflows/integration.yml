@@ -24,6 +24,8 @@ on:
       # exactly this gap that let a restructuring of the jobs below sit
       # unverified, because nothing in the diff matched any other path.
       - ".github/workflows/integration.yml"
+      # The composite actions its jobs call (the test census), one level out.
+      - ".github/actions/**"
   pull_request:
     paths:
       - "integration/**"
@@ -32,6 +34,7 @@ on:
       - "protocol/**"
       - "shared/**"
       - ".github/workflows/integration.yml"
+      - ".github/actions/**"
   workflow_call:
 
 # See core.yml for rationale — same idempotent burst-coalescing.
@@ -42,6 +45,22 @@ concurrency:
   # release run whole).
   group: ${{ github.workflow }}-integration-${{ github.ref }}
   cancel-in-progress: true
+
+# TEST_CENSUS=1 records the test census (.github/actions/test-census) for the
+# docker and race suites: they run with -json into a file and jq gives the log
+# its text back. Off by default, because -json implies -v, which streams every
+# t.Log line (sharded-suite.yml's census input has the measurement).
+#
+# SLICE_A and SLICE_B name the docker suites' slices a and b by test name, once,
+# for both the plain and the race job. Slice c is not a list: it is -skip of a's
+# and b's patterns together, built from these two, so a test that neither
+# names runs in c, and no test can fall out of every slice. A new named slice
+# goes into c's -skip as well; missing it there runs a test twice, never zero
+# times.
+env:
+  TEST_CENSUS: ""
+  SLICE_A: "Catid4x2_S[1-5]|ProducePartials|Pin"
+  SLICE_B: "Catid4x2_S[6-9]|Scenario_PressMatrix"
 
 jobs:
   build:
@@ -87,21 +106,125 @@ jobs:
         # and any non-tagged tests added in the future.
         run: go test -tags lockcheck -count=1 ./...
 
-      - name: Test (Docker integration)
+  # THE DOCKER SUITES ARE THEIR OWN JOBS, EACH IN THREE SLICES BY TEST NAME.
+  #
+  # They were steps of the build job, after the builds, the vet and the unit
+  # run, and the race suite after the plain one: one serial job that MEASURED
+  # 536s median over the last 20 Auto Release runs on main (2026-11-20), its
+  # plain docker step 391s of it, the third-longest job in the run. Nothing in
+  # the race run depends on the plain one, nor either on the build steps.
+  #
+  # integration/scenarios is one package, so the slices are by test name. EVERY
+  # scenario test is t.Parallel, so the package is bound by its total test time
+  # over -parallel (GOMAXPROCS, 4 on the runner): the race run's 2,522 summed
+  # test-seconds took 707s. The slices are cut by those summed seconds, about a
+  # third each (ci-speed run 44858100662): a = catid 4x2 S1-S5 + the produce
+  # partials pins + the changeover pins; b = catid 4x2 S6-S9 + the press
+  # matrix; c = every other test, by -skip of a's and b's patterns together, so
+  # each test runs in exactly one slice (SLICE_A and SLICE_B, above). The test
+  # set is unchanged since: 66 top-level tests, 10 / 6 / 50 by slice at
+  # d2686a1d, and the race run's summed seconds split 32% / 36% / 32% (the
+  # plain run's 40% / 42% / 18%; slice b is floored by S8's 183-186s subtests
+  # either way). A first cut of two (S1-S5 against the rest) put 25% of the
+  # time on one side and ran its other slice for 801s.
+  # MEASURED with the three (run 44862808560, census off): docker slices 176-
+  # 256s, race slices 330-450s, the workflow 455s against 1,241s as one job,
+  # running the same tests (the census, runs 44858100662 and 44861630659).
+  # testcontainers starts each job's own Postgres.
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [a, b, c]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.0"
+          # Per-module key; see the build job above and core.yml.
+          cache-dependency-path: |
+            integration/go.sum
+            protocol/go.sum
+
+      - name: Test (Docker integration) — slice ${{ matrix.slice }}
         working-directory: integration
         # testcontainers manages its own Postgres container; the
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives; -timeout=10m accommodates
         # cold-runner container startup. Tighten once observed.
-        run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
+        env:
+          SLICE: ${{ matrix.slice }}
+        run: |
+          set -o pipefail
+          case "$SLICE" in
+            a) slice=(-run "^Test($SLICE_A)") ;;
+            b) slice=(-run "^Test($SLICE_B)") ;;
+            c) slice=(-skip "^Test($SLICE_A|$SLICE_B)") ;;
+            *) echo "::error::slice $SLICE has no pattern"; exit 1 ;;
+          esac
+          if [ -n "$TEST_CENSUS" ]; then
+            go test -json -tags=docker,lockcheck -timeout=10m -count=1 "${slice[@]}" ./... 2>&1 \
+              | tee ../integration-docker.json \
+              | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                  | select(.Action == "output" or .Action == "build-output") | .Output'
+          else
+            go test -tags=docker,lockcheck -timeout=10m -count=1 "${slice[@]}" ./...
+          fi
 
-      - name: Test (Docker integration, race)
-        # Branches and PRs only. On main this suite runs as a gate of every
-        # release, where its race pass is the longest single step; the race
-        # detector still covers Core's engine and www (core.yml's docker-race
-        # shards) and Edge's (edge.yml's), on main too.
-        if: github.ref != 'refs/heads/main'
+      - if: always() && env.TEST_CENSUS != ''
+        uses: ./.github/actions/test-census
+        with:
+          json: integration-docker.json
+          name: integration-docker-${{ matrix.slice }}
+
+  docker-race:
+    # Branches and PRs only. On main this suite runs as a gate of every
+    # release, where its race pass was the longest single step; the race
+    # detector still covers Core's engine and www (core.yml's docker-race
+    # shards) and Edge's (edge.yml's), on main too.
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [a, b, c]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            integration/go.sum
+            protocol/go.sum
+
+      - name: Test (Docker integration, race) — slice ${{ matrix.slice }}
         working-directory: integration
         # Promoted to gating in Phase 2 (2026-05-22), matching
-        # core.yml / edge.yml.
-        run: go test -tags=docker,lockcheck -race -timeout=25m -count=1 ./...
+        # core.yml / edge.yml. The slices are the docker job's.
+        env:
+          SLICE: ${{ matrix.slice }}
+        run: |
+          set -o pipefail
+          case "$SLICE" in
+            a) slice=(-run "^Test($SLICE_A)") ;;
+            b) slice=(-run "^Test($SLICE_B)") ;;
+            c) slice=(-skip "^Test($SLICE_A|$SLICE_B)") ;;
+            *) echo "::error::slice $SLICE has no pattern"; exit 1 ;;
+          esac
+          if [ -n "$TEST_CENSUS" ]; then
+            go test -json -tags=docker,lockcheck -race -timeout=25m -count=1 "${slice[@]}" ./... 2>&1 \
+              | tee ../integration-race.json \
+              | jq -rRj --unbuffered '. as $l | (try fromjson catch {Action: "output", Output: ($l + "\n")})
+                  | select(.Action == "output" or .Action == "build-output") | .Output'
+          else
+            go test -tags=docker,lockcheck -race -timeout=25m -count=1 "${slice[@]}" ./...
+          fi
+
+      - if: always() && env.TEST_CENSUS != ''
+        uses: ./.github/actions/test-census
+        with:
+          json: integration-race.json
+          name: integration-race-${{ matrix.slice }}
