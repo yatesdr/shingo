@@ -789,6 +789,15 @@ func (e *Engine) ApplyWarLinkConfig() {
 // DB returns the database handle.
 func (e *Engine) DB() *store.DB { return e.db }
 
+// SchemaVersion is the version the boot migration left this Edge's database
+// at, -1 when it cannot be read: the read (store.DB.AppliedSchemaVersion) the
+// heartbeater's register stamps (SchemaVersionFn, wired in main.go). The debug
+// page's register sends it too, so a register sent by hand states what the
+// heartbeater's does: Core keeps the last register's version and sends a
+// station below protocol.EdgeSchemaBinLanded a Bound in place of a landing
+// (shingocore service BinService.sendLanding).
+func (e *Engine) SchemaVersion() int { return e.db.AppliedSchemaVersion() }
+
 // Config returns the app config.
 func (e *Engine) AppConfig() *config.Config { return e.cfg }
 

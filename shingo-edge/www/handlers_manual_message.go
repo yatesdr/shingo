@@ -91,14 +91,27 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
 			return
 		}
+		// The schema version is this Edge's, the heartbeater's register's read
+		// (engine Engine.SchemaVersion). Core keeps the last register's and
+		// sends a station below protocol.EdgeSchemaBinLanded a Bound in place
+		// of a landing, so a register without it (v0) demoted the station until
+		// its next real register. PIN:
+		// TestApiSendManualMessage_EdgeRegister_CarriesTheEdgesSchemaVersion,
+		// TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings.
+		sv, ok := h.orchestration.(interface{ SchemaVersion() int })
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "this Edge cannot say its schema version: no register sent")
+			return
+		}
 		hostname, _ := os.Hostname()
 		// No Instance: a hand-fired register from the debug page is not this
 		// process claiming the station, and stamping the real instance here
 		// would let a click move the binding lease.
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeRegister, src, dst, &protocol.EdgeRegister{
-			StationID: stationID,
-			Hostname:  hostname,
-			Version:   p.Version,
+			StationID:     stationID,
+			Hostname:      hostname,
+			Version:       p.Version,
+			SchemaVersion: sv.SchemaVersion(),
 		})
 
 	case "edge.heartbeat":
@@ -131,7 +144,8 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 	// All four are the same three steps over a different payload type, so they
 	// are a table rather than four copies. The data-channel cases above are not:
 	// each builds its envelope from something other than the posted payload
-	// (a hostname, the heartbeater's body), which is why they stay written out.
+	// (a hostname, the schema version, the heartbeater's body), which is why
+	// they stay written out.
 	default:
 		spec, ok := orderEnvelopeSpecs[req.Type]
 		if !ok {

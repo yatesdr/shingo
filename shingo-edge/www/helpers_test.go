@@ -187,6 +187,10 @@ func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error {
 }
 func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo { return s.core }
 
+// SchemaVersion is the stub database's, read as the engine's is
+// (engine.Engine.SchemaVersion).
+func (s *stubEngine) SchemaVersion() int { return s.db.AppliedSchemaVersion() }
+
 // HeartbeatBody stands in for the heartbeater's (engine.Engine.HeartbeatBody).
 func (s *stubEngine) HeartbeatBody() *protocol.EdgeHeartbeat {
 	if s.heartbeat != nil {

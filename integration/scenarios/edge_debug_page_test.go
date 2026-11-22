@@ -3,10 +3,10 @@
 // takes each as that station's own and its answer goes to that station's Edge.
 // Both sides real: Core's register, heartbeat and owned-family handlers
 // (shingocore messaging HandleEdgeRegister, HandleEdgeHeartbeat, HandleBinWatch,
-// HandlePlantClaims, HandleEdgeCells); the Edge's engine, its heartbeater's body
-// (shingoedge messaging Heartbeater, wired as cmd/shingoedge main.go wires it)
-// and the page itself, served by the Edge's own router (www.NewRouter) and
-// posted as manual-message.js posts it.
+// HandlePlantClaims, HandleEdgeCells) and its landing (service BinService); the
+// Edge's engine, its heartbeater's body (shingoedge messaging Heartbeater, wired
+// as cmd/shingoedge main.go wires it) and the page itself, served by the Edge's
+// own router (www.NewRouter) and posted as manual-message.js posts it.
 //
 //go:build docker
 
@@ -31,6 +31,7 @@ import (
 	coremessaging "shingocore/messaging"
 	"shingocore/service"
 	corestore "shingocore/store"
+	corenodes "shingocore/store/nodes"
 	coreharness "shingocore/testharness"
 
 	"shingoedge/config"
@@ -327,6 +328,102 @@ func (r *debugRig) answered(when string) {
 		"read the station's zone on Core")
 	if zone != debugZone {
 		r.t.Errorf("%s: Core holds the station's zone as %q, want %s", when, zone, debugZone)
+	}
+}
+
+// landingVersion is the schema version Core's landing reads for the station at
+// the line node (plantclaims.ResolveLandingAddress, the read sendLanding gates
+// on), from whichever arm addresses it.
+func (r *debugRig) landingVersion() int {
+	r.t.Helper()
+	addr, err := r.core.ResolveLandingAddress(r.core.DB, r.sd.LineNode.Name, 0)
+	mustNil(r.t, err, "read the landing address")
+	for _, st := range append(append(addr.Claiming, addr.Order), addr.Plant...) {
+		if st.StationID == debugStation {
+			return st.SchemaVersion
+		}
+	}
+	r.t.Fatalf("Core's landing at %s addresses %+v, not the station", r.sd.LineNode.Name, addr)
+	return 0
+}
+
+// newCarrier is a carrier in storage, and the last row of Core's outbox before
+// it moves.
+func (r *debugRig) newCarrier(label string) (binID, mark int64) {
+	r.t.Helper()
+	bin := coreharness.CreateBinAtNode(r.t, r.core, r.sd.Payload.Code, r.sd.StorageNode.ID, label)
+	mustNil(r.t, r.core.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM outbox`).Scan(&mark), "read Core's outbox")
+	return bin.ID, mark
+}
+
+// sentToStation counts what Core has written to the station since mark: its
+// landings, and the Bounds Core writes in their place to a station too old for
+// one.
+func (r *debugRig) sentToStation(mark int64) (landed, bound int) {
+	r.t.Helper()
+	rows, err := r.core.Query(`SELECT msg_type FROM outbox WHERE id > $1 AND dst_station = $2`, mark, debugStation)
+	mustNil(r.t, err, "read what Core wrote to the station")
+	defer rows.Close()
+	for rows.Next() {
+		var msgType string
+		mustNil(r.t, rows.Scan(&msgType), "scan Core's outbox")
+		switch msgType {
+		case "data." + protocol.SubjectBinLanded:
+			landed++
+		case "data." + protocol.SubjectUOPAdjustment:
+			bound++
+		}
+	}
+	mustNil(r.t, rows.Err(), "read Core's outbox")
+	return landed, bound
+}
+
+// The page's register carries the Edge's schema version (engine SchemaVersion),
+// so the station keeps its landings. Core keeps the last register's version, and
+// a station below protocol.EdgeSchemaBinLanded gets a Bound in place of a
+// set-down's landing and nothing for an order's final drop (service
+// BinService.sendLanding). The page's register used to carry none: Core stored
+// v0, and the station got those until its next real register, which comes at a
+// restart, a reconnect or when Core asks for one.
+func TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings(t *testing.T) {
+	t.Parallel()
+	r := newDebugRig(t)
+	applied := r.edgeDB.AppliedSchemaVersion()
+	if applied < protocol.EdgeSchemaBinLanded {
+		t.Fatalf("the Edge's database stands at v%d, below protocol.EdgeSchemaBinLanded (%d): no landing to keep", applied, protocol.EdgeSchemaBinLanded)
+	}
+	if got := r.landingVersion(); got != applied {
+		t.Fatalf("after the Edge's own register Core's landing reads the station at v%d, want v%d", got, applied)
+	}
+
+	registers := r.reachedCore(protocol.SubjectEdgeRegister)
+	r.postPage("edge.register", map[string]any{"version": "dev"})
+	if got := r.reachedCore(protocol.SubjectEdgeRegister) - registers; got != 1 {
+		t.Fatalf("%d registers from the page reached Core, want 1", got)
+	}
+	if got := r.landingVersion(); got != applied {
+		t.Errorf("after the page's register Core's landing reads the station at v%d, want the Edge's v%d", got, applied)
+	}
+
+	// A set-down at the station's node, and a final drop at a node no station
+	// claims, which Core tells every Edge (the last arm): this one alone here.
+	announce := service.EpochAnnounce{Topic: "shingo.dispatch", CoreStation: "core.test"}
+	bins := service.NewBinService(r.core, service.NewBinManifestService(r.core, announce))
+	id, mark := r.newCarrier("DBG-SET-DOWN")
+	_, err := bins.ApplyIntermediateStore(id, r.sd.LineNode.ID, false, nil, 0)
+	mustNil(t, err, "set the carrier down")
+	if landed, bound := r.sentToStation(mark); landed != 1 || bound != 0 {
+		t.Errorf("a carrier set down at the station's node after the page's register: %d landing(s) and %d Bound(s) "+
+			"to the station, want 1 and 0: Core takes it for an Edge too old to bind a landing", landed, bound)
+	}
+	drop := &corenodes.Node{Name: "DBG-LINE-2", Enabled: true}
+	mustNil(t, r.core.CreateNode(drop), "create the drop node")
+	id, mark = r.newCarrier("DBG-DELIVERED")
+	_, err = bins.ApplyArrival(id, drop.ID, false, nil, 0)
+	mustNil(t, err, "deliver the carrier")
+	if landed, bound := r.sentToStation(mark); landed != 1 || bound != 0 {
+		t.Errorf("a carrier delivered after the page's register: %d landing(s) and %d Bound(s) to the station, "+
+			"want 1 and 0: with no landing the station never binds it", landed, bound)
 	}
 }
 

@@ -107,6 +107,34 @@ func sentDataBody(t *testing.T, h *Handlers, subject string, body any) {
 	}
 }
 
+// The page's register carries the Edge's schema version, the one its
+// heartbeater's register sends (engine.Engine.SchemaVersion): on a migrated
+// database at or above protocol.EdgeSchemaBinLanded. A register without it
+// was stored at Core as v0, and Core sent the station a Bound in place of
+// each landing until its next real register (end to end:
+// TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings).
+func TestApiSendManualMessage_EdgeRegister_CarriesTheEdgesSchemaVersion(t *testing.T) {
+	t.Parallel()
+	h, router := newDiagnosticsManualRouter(t)
+
+	resp := sendManualPayload(t, router, "edge.register", map[string]any{"version": "dev"})
+	assertStatus(t, resp, http.StatusOK)
+	var reg protocol.EdgeRegister
+	sentDataBody(t, h, protocol.SubjectEdgeRegister, &reg)
+	want := dbOf(h).AppliedSchemaVersion()
+	if want < protocol.EdgeSchemaBinLanded {
+		t.Fatalf("the test database stands at v%d, below protocol.EdgeSchemaBinLanded (%d): the check would pass on a demoting value",
+			want, protocol.EdgeSchemaBinLanded)
+	}
+	if reg.SchemaVersion != want {
+		t.Errorf("the page's register carries schema_version %d, want the Edge's %d (engine SchemaVersion): Core keeps "+
+			"it and sends a station below %d a Bound in place of a landing", reg.SchemaVersion, want, protocol.EdgeSchemaBinLanded)
+	}
+	if reg.Version != "dev" || reg.Instance != "" {
+		t.Errorf("the page's register carries version %q and instance %q, want the typed dev and none", reg.Version, reg.Instance)
+	}
+}
+
 // The page's heartbeat is the heartbeater's own body (engine.Engine.HeartbeatBody),
 // feeds, owned map and zone as it builds them: Core's ack to it reaches this
 // Edge as the answer to its own digests. The body the page used to build named

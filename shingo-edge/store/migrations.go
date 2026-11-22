@@ -3403,9 +3403,10 @@ func (db *DB) runVersioned(ms []migrate.Migration) error {
 }
 
 // AppliedSchemaVersion is the version the boot migration left this database
-// at — what the register payload reports to Core's /edges page. The one
-// reader is the heartbeater's SchemaVersionFn (wired in main.go); it exists
-// as a DB method so the accessor travels with the runner it reads for.
+// at — what the register payload reports to Core's /edges page and its landing
+// gate. The readers are the heartbeater's SchemaVersionFn (wired in main.go)
+// and the engine's SchemaVersion, which the debug page's register sends; it
+// exists as a DB method so the accessor travels with the runner it reads for.
 // -1 on a read failure, which the wire carries as "knows but cannot read"
 // rather than as the pre-runner 0.
 func (db *DB) AppliedSchemaVersion() int {

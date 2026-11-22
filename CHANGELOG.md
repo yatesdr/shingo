@@ -55,6 +55,7 @@ Deploy: Core v186–v190 first, then every Edge of the plant (no Edge migration)
 - Core: the unused GET /api/cells/processes is gone
 - Changeover: a position the new style does not use, whose removal Core fails because it has no bin to take, shows line cleared with its note again and no longer holds the cutover; it showed an error (both Core and Edge on this release)
 - A heartbeat sent from the Edge's Kafka Direct page is the Edge's own: Core's answer to it no longer makes the station refuse every ask to Core and stop deciding from the bins it holds until its next heartbeat, nor makes Core forget which bins the station watches
+- A register sent from the Edge's Kafka Direct page carries the Edge's schema version: Core no longer takes the station for an Edge too old for carrier landings, which left a carrier delivered to the station unbound until the Edge next registered (a restart, a reconnect, or Core asking)
 
 ## v0.18.0 — 2026-11-21
 
