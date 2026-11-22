@@ -397,6 +397,13 @@ WHERE o.status IN ('in_transit', 'staged') AND NOT o.station_unaware
 // each hand-off is one pass or one statement chain, so a wait this long means
 // one is wedged, and returning is better than holding the process's shutdown
 // forever. Pinned by TestEngineStop_OneDeadlineOverEveryWait.
+//
+// It has to fit inside the service's stop timeout. The unit install-core.sh
+// installs (shingo-core/deploy/shingo-core.service) sets no TimeoutStopSec, so
+// systemd's DefaultTimeoutStopSec applies: 90 s unless the host changes it.
+// The same shutdown also spends up to 5 s in the HTTP server's (awaitShutdown),
+// and waits on the outbox drainer and the Kafka client's Close, which this
+// limit does not cover.
 const engineStopDrainLimit = 30 * time.Second
 
 // Stop ends the engine: it takes no new work, what is running finishes, what

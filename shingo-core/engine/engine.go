@@ -181,12 +181,27 @@ type Engine struct {
 	// stage2 serializes the two-stage pull per pair and tracks its trigger
 	// goroutines (window_pulls.go).
 	stage2 stage2Puller
-	// loops tracks every goroutine Start launches and every hand-off a
-	// subscriber starts, so Stop returns only once they have: a loop or a
-	// hand-off still running after Stop reads a database its caller is about
-	// to close and logs through a logger whose owner may be gone
-	// (TestEngineStop_WaitsForItsGoroutines). Email sends stay untracked: they
-	// can wait on a mail server and log nothing through the engine.
+	// loops tracks the engine's own loops and hand-offs, so Stop waits for
+	// them, up to its deadline: one still running after Stop reads a database
+	// its caller is about to close and logs through a logger whose owner may be
+	// gone (TestEngineStop_WaitsForItsGoroutines). It does not track these,
+	// and each says why:
+	//   - eta.Cache.run: the cache starts it and it returns on stopChan. A
+	//     refresh in flight reads only, and logs through the log package.
+	//   - the SourceabilityMonitor.Run ticker: the monitor starts it. The
+	//     monitor counts each pass (begin) and its stop waits for one running
+	//     (TestSourceabilityMonitor_StopWaitsForARunningRecompute).
+	//   - the simulator's driver (SimulatorBackend.StartDriver): handed
+	//     context.Background, it lives as long as the process. Simulator only.
+	//   - the fault email's timer (faultTimers, wiring.go): it waits three
+	//     minutes, longer than Stop does. It and the other email sends can wait
+	//     on a mail server, and neither read the database nor log through the
+	//     engine.
+	//   - the re-drive in Dispatcher.HandleChildOrderFailure: the dispatcher
+	//     has no handle on this group. It writes, so it can meet a closed
+	//     database; AdvanceStuckReshuffleParents re-drives that parent at boot.
+	// Subscribers other packages register (www's EventHub, messaging's bins
+	// feed) start work of their own, which Stop does not know of.
 	loops goGroup[lockorder.EngineLoops]
 	// carriersClear is true when the last carrier-node sweep left no
 	// `_ROBOT:` node at all, so the 2 s robot tick has nothing to retire or

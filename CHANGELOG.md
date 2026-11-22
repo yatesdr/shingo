@@ -18,7 +18,7 @@ binary is built from has changed since the last tag, the section opens with
 
 Deploy: no migration; Core only.
 
-- At shutdown Core lets work already started finish before it closes the database, drops what is still queued, and gives up waiting after 30 s in all
+- At shutdown Core's engine lets the work it tracks finish before the database closes, drops what is still queued, and stops waiting for it after 30 s
 
 ## v0.19.0 — 2026-11-22
 
