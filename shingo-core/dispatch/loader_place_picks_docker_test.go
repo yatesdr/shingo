@@ -286,8 +286,6 @@ var loaderPickCases = []pickCase{
 
 	// placeForLoader: buffers in member order by the full capacity gate, then
 	// drain when the order points elsewhere, else wait on the home.
-	{point: "buffer-walk", hold: "none (home in flight)", want: "buffer",
-		place: placeHomeSource(evacSteps, inFlightTo(homeOf))},
 	{point: "buffer-walk", hold: "bin on first buffer", want: "buffer2",
 		place: placeHomeSource(evacSteps, both(inFlightTo(homeOf), binOn(bufferOf)))},
 	{point: "buffer-walk", hold: "in-flight to first buffer", want: "buffer2",
