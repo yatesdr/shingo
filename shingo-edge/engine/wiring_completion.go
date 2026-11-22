@@ -919,7 +919,8 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		// Core finds empty is skipped, not failed, and the skip clears its task
 		// (orders.Manager.HandleSkipped). A swap's evac that fails stays an
 		// error: the new bin cannot move in until the old one leaves.
-		// PIN: TestHandleNodeOrderFailed_DropNoBinAutoClears.
+		// PIN: TestScenario_ChangeoverDrop_CoresNoBinFailureClearsTheLine,
+		// TestHandleNodeOrderFailed_DropNoBinAutoClears.
 		//
 		// Dropoff-side capacity exhaustion (destination full, NGRP saturated)
 		// is operationally distinct: the changeover hasn't failed, the system

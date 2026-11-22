@@ -22,6 +22,10 @@ type memPublisher struct {
 	// once and then reset. Used by failure-injection scenario tests
 	// (retries, dead-letter behavior). Default nil = always succeed.
 	failNext error
+
+	// rewrite, when set, is what the target ingestor is handed in place of
+	// each payload (Bus.RewriteCoreToEdge). Default nil = the payload as sent.
+	rewrite func(payload []byte) []byte
 }
 
 func newMemPublisher(target *protocol.Ingestor) *memPublisher {
@@ -37,6 +41,9 @@ func (p *memPublisher) Publish(topic string, payload []byte) error {
 		err := p.failNext
 		p.failNext = nil
 		return err
+	}
+	if p.rewrite != nil {
+		payload = p.rewrite(payload)
 	}
 	p.target.HandleRaw(payload)
 	return nil

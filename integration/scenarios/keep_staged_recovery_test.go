@@ -215,6 +215,10 @@ type ksrOpts struct {
 	// inbound staging of every mode, and a two-robot or single-robot supply
 	// stages its carrier there.
 	bareSpot bool
+	// dropB: style B claims nothing at the line, so a changeover to B drops
+	// it (its bin goes and nothing replaces it), and A's claim marks the line
+	// for a tool change, so the cutover waits for the line to be clear.
+	dropB bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -409,11 +413,17 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 			claimIDOut *int64
 			mode       protocol.SwapMode
 		}{{c.styleA, ksrPartA, ksrMktA, &c.claimA, o.mode}, {c.styleB, partB, mktB, nil, cmp.Or(o.modeB, o.mode)}} {
+			if o.dropB && pos == ksrLine && s.style == c.styleB {
+				continue
+			}
 			in := processes.NodeClaimInput{
 				StyleID: s.style, CoreNodeName: pos, Role: o.role, SwapMode: s.mode,
 				PayloadCode: s.part, UOPCapacity: 40, ReorderPoint: 10,
 				InboundSource: s.mkt, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
 				OutboundDestination: ksrDest, KeepStagedNode: domain.Ptr(""), AutoReorder: domain.Ptr(true),
+			}
+			if o.dropB && pos == ksrLine {
+				in.ChangeoverEvacNodes = domain.Ptr([]string{ksrLine})
 			}
 			if !o.plain {
 				// The spot is the keep-staged node. On the two staging modes it is

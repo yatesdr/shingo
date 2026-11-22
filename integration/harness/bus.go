@@ -157,6 +157,15 @@ func (b *Bus) PumpAll() int {
 	return n
 }
 
+// RewriteCoreToEdge hands every later Core → Edge message to f, and the
+// Edge's ingestor the bytes f returns. A scenario reads what Core sent there,
+// or stands in for an older Core by taking out what that Core does not send.
+// Call it from the goroutine that pumps.
+func (b *Bus) RewriteCoreToEdge(f func(raw []byte) []byte) {
+	b.t.Helper()
+	b.corePub.rewrite = f
+}
+
 // EdgeFailNext arms the Edge → Core publisher to fail its next
 // Publish call once. Used by tests that verify retry behavior on
 // the Edge outbox without needing real Kafka.
