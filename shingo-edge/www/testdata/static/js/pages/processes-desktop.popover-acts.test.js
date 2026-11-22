@@ -1107,9 +1107,14 @@ async function mainAsync() {
             fetch: url => {
                 fetched.push(url);
                 if (url === '/api/core-nodes') {
-                    return ok(['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']
-                        .map(name => ({ name, node_type: 'PLN' })));
+                    // claimed_by: another station claims the node. PLN_04 is
+                    // also a position of this process, PLN_06 of none here.
+                    const claimed = { PLN_04: 'Line B', PLN_06: 'Line B' };
+                    return ok(['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05', 'PLN_06']
+                        .map(name => Object.assign({ name, node_type: 'PLN' }, claimed[name] ? { claimed_by: claimed[name] } : {})));
                 }
+                // The routing set reads, so its boxes open.
+                if (url === '/api/processes/1/routing-nodes') return ok({ rows: [] });
                 if (url === '/api/process-nodes') {
                     return ok([
                         { process_id: 1, core_node_name: 'PLN_01', process_name: 'Press 1', operator_station_id: 10 },
@@ -1145,8 +1150,8 @@ async function mainAsync() {
             return (pk.off(host, name) ? 'greyed: ' : '') + (pk.on(host, name) ? 'ticked: ' : '') + pk.side(host, name);
         };
         const got = {};
-        for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05']) got[n] = row(n);
-        const expect = { PLN_01: 'ticked: ', PLN_02: 'ticked: ', PLN_03: 'greyed: on Press 2', PLN_04: 'ticked: ', PLN_05: '' };
+        for (const n of ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05', 'PLN_06']) got[n] = row(n);
+        const expect = { PLN_01: 'ticked: ', PLN_02: 'ticked: ', PLN_03: 'greyed: on Press 2', PLN_04: 'ticked: ', PLN_05: '', PLN_06: '' };
         if (JSON.stringify(got) !== JSON.stringify(expect)) {
             throw new Error('picker notes wrong: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(expect));
         }
@@ -1161,6 +1166,22 @@ async function mainAsync() {
             'data-act="loose-onto" data-station="11">Put them on Screen B</button>']) {
             if (scrLines.innerHTML.indexOf(want) < 0) throw new Error('the screen lines do not draw ' + want + ': ' + scrLines.innerHTML);
         }
+        // A click on a greyed row does nothing. Outside Positions the same
+        // node only waits behind the fold: it can be picked, and is not greyed.
+        // (PLN_06, which another station claims, is a free node in both.)
+        pk.row(host, 'PLN_03').click();
+        if (sp.chips(host, 'positions').indexOf('PLN_03') >= 0) throw new Error('a click picked a greyed row into Positions');
+        sp.open(host, 'staging');
+        if (sp.active(host) !== 'staging') throw new Error('the staging box did not open: ' + sp.active(host));
+        if (sp.later(host).indexOf('In use by other processes · 1') !== 0) {
+            throw new Error('outside Positions the later fold reads ' + JSON.stringify(sp.later(host)));
+        }
+        for (const n of ['PLN_03', 'PLN_06']) {
+            if (pk.off(host, n)) throw new Error(n + ' is greyed outside Positions: ' + pk.side(host, n));
+        }
+        pk.row(host, 'PLN_03').click();
+        if (sp.chips(host, 'staging').indexOf('PLN_03') < 0) throw new Error('a held node cannot be picked outside Positions');
+        sp.drop(host, 'staging', 'PLN_03');
         checks++;
         console.log('ok: Settings\' Positions box greys another process\'s position "on <process>" behind "In use by other processes", from one read');
     }

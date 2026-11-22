@@ -1,12 +1,36 @@
 package engine
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/store/stations"
 )
+
+// A node list that marks a node as claimed by another station refuses no save:
+// the node becomes a position here as any other does (owner ruling 2026-11-22:
+// greyed in the picker, no save refusal).
+func TestSetNodes_ANodeAnotherStationClaimsIsSaved(t *testing.T) {
+	t.Parallel()
+	e := testEngine(t, testEngineDB(t))
+	var resp protocol.NodeListResponse
+	testutil.MustNoErr(t, json.Unmarshal([]byte(`{"nodes":[{"name":"CT-N1","node_type":"","claimed_by":"Line B"}],"digest":"ct1"}`), &resp), "decode")
+	e.ApplyNodeList(&resp)
+	pid, err := e.db.CreateProcess("CT-PROC", "", "", "", false)
+	testutil.MustNoErr(t, err, "process")
+	screen, err := e.db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "CT screen"})
+	testutil.MustNoErr(t, err, "screen")
+	_, err = e.stationService.SetNodes(screen, []string{"CT-N1"})
+	testutil.MustNoErr(t, err, "the save")
+	rows, err := e.db.ListProcessNodesByStation(screen)
+	testutil.MustNoErr(t, err, "positions")
+	if len(rows) != 1 || rows[0].CoreNodeName != "CT-N1" {
+		t.Fatalf("positions after the save = %+v, want CT-N1", rows)
+	}
+}
 
 // The node-list digest is held only once the reply applied; an empty loader
 // set from Core is a value like any other and its digest is held; a reply with

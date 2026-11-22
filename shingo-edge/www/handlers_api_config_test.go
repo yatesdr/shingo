@@ -1,6 +1,7 @@
 package www
 
 import (
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -893,4 +894,29 @@ func TestApiConfig_BadPathParams(t *testing.T) {
 
 func itoa(v int64) string {
 	return strconv.FormatInt(v, 10)
+}
+
+// TestApiConfig_GetCoreNodes_ClaimedElsewhere: what the pickers are told of a
+// node Core marks as claimed by another station. Nothing: the mark is dropped.
+func TestApiConfig_GetCoreNodes_ClaimedElsewhere(t *testing.T) {
+	t.Parallel()
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+
+	var node protocol.NodeInfo
+	if err := json.Unmarshal([]byte(`{"name":"CT-N1","node_type":"","claimed_by":"Line B"}`), &node); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{node.Name: node}
+
+	resp := doRequest(t, router, "GET", "/api/core-nodes", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var rows []struct {
+		Name      string `json:"name"`
+		ClaimedBy string `json:"claimed_by"`
+	}
+	decodeJSON(t, resp, &rows)
+	if len(rows) != 1 || rows[0].ClaimedBy != "" {
+		t.Errorf("rows = %+v, want CT-N1 with no claimed_by", rows)
+	}
 }
