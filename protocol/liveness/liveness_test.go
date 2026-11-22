@@ -25,7 +25,7 @@ func TestAQuietLoopNeverAlarms(t *testing.T) {
 
 func TestALoopInsideOneTurnPastTheLimitAlarmsOnceWithTheDump(t *testing.T) {
 	w, lines := watchWithLog()
-	l := w.Loop("the scan pass")
+	l := w.Loop("the scan lock")
 	l.since.Store(time.Now().Add(-Limit - time.Second).UnixNano())
 
 	w.check(time.Now())
@@ -33,16 +33,16 @@ func TestALoopInsideOneTurnPastTheLimitAlarmsOnceWithTheDump(t *testing.T) {
 	if len(*lines) != 1 {
 		t.Fatalf("logged %d entries, want one: %v", len(*lines), *lines)
 	}
-	if got := (*lines)[0]; !strings.HasPrefix(got, "FROZEN: the scan pass has not turned over for 31s") || !strings.Contains(got, "goroutine 1 [running]:") {
+	if got := (*lines)[0]; !strings.HasPrefix(got, "FROZEN: the scan lock has not turned over for 31s") || !strings.Contains(got, "goroutine 1 [running]:") {
 		t.Fatalf("the entry: %q; want the loop, how long, and the goroutine dump", got)
 	}
-	if f := w.Frozen(); len(f) != 1 || f[0].Loop != "the scan pass" {
-		t.Fatalf("Frozen() = %v; want the scan pass", f)
+	if f := w.Frozen(); len(f) != 1 || f[0].Loop != "the scan lock" {
+		t.Fatalf("Frozen() = %v; want the scan lock", f)
 	}
 
 	l.Leave()
 	w.check(time.Now())
-	if len(*lines) != 2 || (*lines)[1] != "FROZEN cleared: the scan pass turned over again" {
+	if len(*lines) != 2 || (*lines)[1] != "FROZEN cleared: the scan lock turned over again" {
 		t.Fatalf("after the loop left its turn: %v; want one recovery line", *lines)
 	}
 	if f := w.Frozen(); len(f) != 0 {

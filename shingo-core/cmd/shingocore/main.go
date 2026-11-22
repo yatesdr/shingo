@@ -414,7 +414,7 @@ func main() {
 
 	eng.Start()
 	defer eng.Stop()
-	eng.StartScanProbe(watch.Loop("the scan pass"))
+	eng.StartScanProbe(watch.Loop("the scan lock"))
 	eng.WatchAfterQueue(watch.Loop("the after-emit queue"))
 	eng.WatchScanWorker(watch)
 	go watch.Run(watchStop)
