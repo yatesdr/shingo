@@ -1,7 +1,15 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"math"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"shingocore/plantspec"
@@ -226,5 +234,206 @@ func TestMasterKanbans_EveryKanbanHoldsTheRun(t *testing.T) {
 	rate := processRates(p, edgeRates(edge))
 	if !reportKanbans(p, computeCarriers(p, rate, 7.5, 7.5), rate, 400) {
 		t.Error("a kanban of the master is under its want or its pool, or drains inside the run")
+	}
+}
+
+// The two repairs of the master, as data a test can set either way.
+const (
+	oldUnloaderOutbound = "SYN_PRESS_EMPTIES" // UNLOADER-A pushed into the press empties
+	newUnloaderOutbound = "SYN_MARKET"        // it returns them where ASSY drew them
+	oldP5SmallSpares    = 2                   // 45x48 pool 26
+	newP5SmallSpares    = 12                  // 45x48 pool 36
+	simcalcChildEnv     = "SIMCALC_CHILD_MASTER"
+)
+
+// setRepairs puts the master at one state of the two repairs, whichever state
+// the file ships in, so "the old one" stays a case after the file is repaired.
+func setRepairs(t *testing.T, p *plantspec.Plant, outbound string, spares int) {
+	t.Helper()
+	const k = "P5-KANBAN"
+	claims, zones, kanbans := 0, 0, 0
+	for i := range p.Claims {
+		if p.Claims[i].CoreNode == "FGN_001" && p.Claims[i].Style == "UNLOADER-A-RUN" {
+			p.Claims[i].OutboundDestination = outbound
+			claims++
+		}
+	}
+	smallSlot, otherSlot := map[string]bool{}, map[string]bool{}
+	for _, b := range p.Bins {
+		if b.BinType == "SMALL-45" {
+			smallSlot[b.Slot] = true
+		} else {
+			otherSlot[b.Slot] = true
+		}
+	}
+	inK := map[string]bool{}
+	for i := range p.Zones {
+		z := &p.Zones[i]
+		if z.Name != k {
+			continue
+		}
+		zones++
+		// The slots the other types stand on, then one for each small cart of
+		// the loop, standing or on the line: room is the pool.
+		var slots []plantspec.Slot
+		for _, s := range z.Positions {
+			inK[s.Name] = true
+			if otherSlot[s.Name] {
+				slots = append(slots, s)
+			}
+		}
+		for j := range spares + 20 {
+			slots = append(slots, plantspec.Slot{Name: fmt.Sprintf("P5T_%03d", j), Depth: 1, Admits: []string{"45x48"}})
+		}
+		z.Positions = slots
+	}
+	p.Bins = slices.DeleteFunc(p.Bins, func(b plantspec.Bin) bool { return inK[b.Slot] && smallSlot[b.Slot] })
+	for j := range spares {
+		p.Bins = append(p.Bins, plantspec.Bin{Name: fmt.Sprintf("P5-T-%03d", j), Slot: fmt.Sprintf("P5T_%03d", j), BinType: "SMALL-45"})
+	}
+	for i := range p.Kanbans {
+		if p.Kanbans[i].Group == k {
+			p.Kanbans[i].Pools["45x48"] = 20 + 4 + spares // the line, 2 big and 2 totes, the small
+			kanbans++
+		}
+	}
+	if claims != 1 || zones != 1 || kanbans != 1 {
+		t.Fatalf("fixture: %d UNLOADER-A claims, %d zones and %d kanbans named %s, want one of each", claims, zones, kanbans, k)
+	}
+}
+
+// runCarriersAsTheCommand runs `simcalc -carriers -run 400m` on the master at a
+// state of the repairs in a child of this binary, because the failing verdict
+// of the check is os.Exit(1). state is "shipped", or "<outbound> <spares>".
+func runCarriersAsTheCommand(t *testing.T, state string) (int, string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("find the test binary: %v", err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestSimcalcChild_CarriersOnTheMaster$")
+	cmd.Env = append(os.Environ(), simcalcChildEnv+"="+state)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		code = exit.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run the child: %v", err)
+	}
+	// A verdict, not a child that died on the way to one: both exit 1.
+	headlines := map[int]string{0: "SUSTAINS", 1: "WILL JAM"}
+	if want, ok := headlines[code]; !ok || !strings.Contains(string(out), "\n"+want+"\n") {
+		t.Fatalf("the child printed no verdict for exit %d:\n%s", code, out)
+	}
+	return code, string(out)
+}
+
+// TestSimcalcChild_CarriersOnTheMaster is the child of runCarriersAsTheCommand,
+// and does nothing as a test of its own.
+func TestSimcalcChild_CarriersOnTheMaster(t *testing.T) {
+	state := os.Getenv(simcalcChildEnv)
+	if state == "" {
+		return
+	}
+	root := filepath.Join("..", "..", "..")
+	p, err := plantspec.Load(filepath.Join(root, "plants", "master.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if state != "shipped" {
+		var outbound string
+		var spares int
+		if _, err := fmt.Sscanf(state, "%s %d", &outbound, &spares); err != nil {
+			t.Fatalf("state %q: %v", state, err)
+		}
+		setRepairs(t, p, outbound, spares)
+	}
+	edge, err := loadEdge(filepath.Join(root, "shingo-edge", "shingoedge.dev.yaml") + "," +
+		filepath.Join(root, "shingo-edge", "shingoedge.edge2.yaml"))
+	if err != nil {
+		t.Fatalf("load edges: %v", err)
+	}
+	runCarriers(p, processRates(p, edgeRates(edge)), "", "plants/master.yaml", 400,
+		capacityPerMin(edge.Sim.Operators.LoaderAutoLoad), capacityPerMin(edge.Sim.Operators.UnloaderAutoClear))
+	os.Exit(0)
+}
+
+// failsNaming says the line of the named pool carries the verdict.
+func failsNaming(out, pool, verdict string) bool {
+	return regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(pool) + ` .*` + regexp.QuoteMeta(verdict)).MatchString(out)
+}
+
+// TestMasterCarriers_TheShippedPlantPasses: the command passes the plant the
+// repo ships. RED at 6bd55616, the unrepaired plant.
+func TestMasterCarriers_TheShippedPlantPasses(t *testing.T) {
+	t.Parallel()
+	if code, out := runCarriersAsTheCommand(t, "shipped"); code != 0 {
+		t.Errorf("simcalc -carriers -run 400m on plants/master.yaml exits %d, want 0: %v", code,
+			regexp.MustCompile(`(?m)^.*(RATE DEFICIT|RATE SURPLUS|UNDER ITS|SHORT BY|BELOW WANT|BELOW LEVEL).*$`).FindAllString(out, -1))
+	}
+}
+
+// TestMasterCarriers_EachRepairIsNeededOnItsOwn: the repaired plant passes, the
+// old one fails, and each repair alone fails by the finding of the one missing
+// and by that one only. RED at 6bd55616: neither finding existed, and the
+// repaired plant read as draining.
+func TestMasterCarriers_EachRepairIsNeededOnItsOwn(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		outbound       string
+		spares         int
+		surplus, short bool
+	}{
+		{"both repairs", newUnloaderOutbound, newP5SmallSpares, false, false},
+		{"old edge, old carts", oldUnloaderOutbound, oldP5SmallSpares, true, true},
+		{"old edge, new carts", oldUnloaderOutbound, newP5SmallSpares, true, false},
+		{"new edge, old carts", newUnloaderOutbound, oldP5SmallSpares, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d", tc.outbound, tc.spares))
+			if wantFail := tc.surplus || tc.short; (code == 1) != wantFail {
+				t.Errorf("exit %d, want failing = %v", code, wantFail)
+			}
+			if got := failsNaming(out, "SYN_PRESS_EMPTIES", "RATE SURPLUS"); got != tc.surplus {
+				t.Errorf("SYN_PRESS_EMPTIES reads RATE SURPLUS = %v, want %v", got, tc.surplus)
+			}
+			if got := failsNaming(out, "P5-KANBAN", "UNDER ITS FLOOR"); got != tc.short {
+				t.Errorf("P5-KANBAN reads UNDER ITS FLOOR = %v, want %v", got, tc.short)
+			}
+			// The deficit of the market under the old edge is the same missing
+			// repair; with the edge repaired no line may read a deficit.
+			if !tc.surplus && strings.Contains(out, "RATE DEFICIT") {
+				t.Errorf("a pool reads RATE DEFICIT with the edge repaired: %v",
+					regexp.MustCompile(`(?m)^.*RATE DEFICIT.*$`).FindAllString(out, -1))
+			}
+		})
+	}
+}
+
+// TestMasterCarriers_P5FloorOverABand: with the edge repaired, the floor of P5
+// is 1.00 a minute over a 10 minute transit, and its spares stand either side
+// of it by 1/5/10/25/50%, to the cart. RED at 6bd55616: no count of spares
+// changed the verdict.
+func TestMasterCarriers_P5FloorOverABand(t *testing.T) {
+	t.Parallel()
+	const floor = 10
+	spares := []int{floor}
+	for _, m := range checkMargins {
+		n := int(math.Ceil(floor * m))
+		spares = append(spares, floor-n, floor+n)
+	}
+	slices.Sort(spares)
+	for _, n := range slices.Compact(spares) {
+		t.Run(fmt.Sprintf("spares=%d", n), func(t *testing.T) {
+			t.Parallel()
+			code, out := runCarriersAsTheCommand(t, fmt.Sprintf("%s %d", newUnloaderOutbound, n))
+			short := n < floor
+			if (code == 1) != short || failsNaming(out, "P5-KANBAN", "UNDER ITS FLOOR") != short {
+				t.Errorf("%d spares against a floor of %d: exit %d, want failing on the floor = %v", n, floor, code, short)
+			}
+		})
 	}
 }

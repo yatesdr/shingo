@@ -582,3 +582,294 @@ func TestCoupling_SaysNothingWhenBothSidesAreEquallyExposed(t *testing.T) {
 			"for; it cannot run ahead of a stopped consumer: %+v", len(cs), cs)
 	}
 }
+
+// ── THE THREE RULES A KEPT POOL IS HELD TO (edge-db-followups, Lane E) ───────
+//
+// A level-kept pool with surplus inflow fails, a kanban with no sources holds
+// demand × transit, and the keeper's pull is a term. Each is asserted over a
+// band of margins, through the sections that fail the command.
+
+// checkMargins is how far each side of a rule's line its tests stand.
+var checkMargins = []float64{0.01, 0.05, 0.10, 0.25, 0.50}
+
+// testFlow is one part's carts: filled off empties drawn from `from`, emptied
+// into `to`, in carts a minute. A place that is no testPool is no seeded zone.
+type testFlow struct {
+	binType        string
+	from, to       string
+	fills, empties float64
+}
+
+// testPool is one zone and the empties standing in it.
+type testPool struct {
+	name    string
+	kanban  bool
+	sources []string
+	stock   map[string]int
+}
+
+// poolPlant builds a plant of those pools and flows, and its rates. A kanban
+// supports what fills from it, each such press holds its one cart, and its
+// pools are what the file seeds, so the only lines left to fail are the ones
+// under test. A and B are the carrier types; family makes them one family.
+func poolPlant(family bool, pools []testPool, flows ...testFlow) (*plantspec.Plant, map[string]float64) {
+	p := &plantspec.Plant{BinTypes: []string{"A", "B"}}
+	familyOf := map[string]string{"A": "A", "B": "B"}
+	if family {
+		p.CarrierFamilies = []plantspec.CarrierFamily{{Code: "AB", Types: []string{"A", "B"}}}
+		familyOf = map[string]string{"A": "AB", "B": "AB"}
+	}
+	rate := map[string]float64{}
+	cell := func(i int, role, part, in, out string, perMin float64) {
+		name := fmt.Sprintf("%s-%d", role, i)
+		p.Processes = append(p.Processes, plantspec.Process{Name: name, ActiveStyle: name + "-RUN"})
+		p.Styles = append(p.Styles, plantspec.Style{Name: name + "-RUN", Process: name, Payload: part})
+		p.Claims = append(p.Claims, plantspec.Claim{CoreNode: name + "-N", Style: name + "-RUN", Role: role,
+			SwapMode: "single_robot", Payload: part, UOPCapacity: 1, InboundSource: in, OutboundDestination: out})
+		rate[name] = perMin
+	}
+	for i, f := range flows {
+		part := fmt.Sprintf("PART-%d", i)
+		p.Payloads = append(p.Payloads, plantspec.Payload{Code: part, UOPCapacity: 1, BinType: f.binType})
+		cell(i, "produce", part, f.from, "", f.fills)
+		cell(i, "consume", part, "", f.to, f.empties)
+	}
+	for _, pl := range pools {
+		z := plantspec.Zone{Name: pl.name}
+		k := plantspec.Kanban{Group: pl.name, Sources: pl.sources, Pools: map[string]int{}}
+		levelled := map[string]bool{}
+		for _, bt := range p.BinTypes {
+			for i := range pl.stock[bt] {
+				slot := fmt.Sprintf("%s-%s-%d", pl.name, bt, i)
+				z.Positions = append(z.Positions, plantspec.Slot{Name: slot, Depth: 1})
+				p.Bins = append(p.Bins, plantspec.Bin{Name: slot, Slot: slot, BinType: bt})
+			}
+			levelled[bt] = pl.stock[bt] > 0
+			k.Pools[familyOf[bt]] += pl.stock[bt]
+		}
+		for i, f := range flows {
+			if !pl.kanban || f.from != pl.name {
+				continue
+			}
+			press := fmt.Sprintf("produce-%d", i)
+			k.Supports = append(k.Supports, press)
+			p.Bins = append(p.Bins, plantspec.Bin{Name: press, Slot: press + "-N", BinType: f.binType})
+			k.Pools[familyOf[f.binType]]++
+			levelled[f.binType] = true
+			// the free position that press's cart comes back to
+			z.Positions = append(z.Positions, plantspec.Slot{Name: pl.name + "-" + press, Depth: 1})
+		}
+		p.Zones = append(p.Zones, z)
+		if !pl.kanban {
+			continue
+		}
+		for _, bt := range p.BinTypes {
+			if levelled[bt] {
+				k.Levels = append(k.Levels, plantspec.KanbanLevel{BinType: bt})
+			}
+		}
+		p.Kanbans = append(p.Kanbans, k)
+	}
+	return p, rate
+}
+
+// poolsHold is the verdict of the two sections that judge pools and kanbans.
+func poolsHold(p *plantspec.Plant, rate map[string]float64, transitMins, runMins float64) bool {
+	plan := computeCarriers(p, rate, 0, 0)
+	stock := reportStockFloor(plan, transitMins)
+	return reportKanbans(p, plan, rate, runMins) && stock
+}
+
+// TestKanbanFloor_NoSourcesHoldsDemandTimesTransit: a kanban that names no
+// source stands demand × transit of each type it spends, whatever its level
+// and whatever else stands in it. RED at 6bd55616: any stock passed, because a
+// level-kept pool was exempt from the floor.
+func TestKanbanFloor_NoSourcesHoldsDemandTimesTransit(t *testing.T) {
+	t.Parallel()
+	// The same floor of 100 reached by three rates and transits.
+	for _, at := range []struct{ spend, transit float64 }{{10, 10}, {20, 5}, {5, 20}} {
+		check := func(stock int, want bool) {
+			t.Run(fmt.Sprintf("%vx%vm/stock=%d", at.spend, at.transit, stock), func(t *testing.T) {
+				p, rate := poolPlant(false, []testPool{{name: "K", kanban: true, stock: map[string]int{"A": stock}}},
+					testFlow{"A", "K", "K", at.spend, at.spend})
+				if got := poolsHold(p, rate, at.transit, 400); got != want {
+					t.Errorf("%d standing against a floor of 100: holds = %v, want %v", stock, got, want)
+				}
+			})
+		}
+		check(100, true)
+		for _, m := range checkMargins {
+			check(100-int(math.Round(100*m)), false)
+			check(100+int(math.Round(100*m)), true)
+		}
+	}
+
+	// The type that is spent is the type that is counted: P5-KANBAN read 28
+	// standing, and 2 of them were the type its presses draw.
+	t.Run("another type is no stock of it", func(t *testing.T) {
+		p, rate := poolPlant(false, []testPool{{name: "K", kanban: true, stock: map[string]int{"A": 2, "B": 500}}},
+			testFlow{"A", "K", "K", 1, 1})
+		if poolsHold(p, rate, 10, 400) {
+			t.Error("2 of A beside 500 of B held a floor of 10 of A")
+		}
+	})
+
+	// Sums of tenths are not exact in a float; the floor of them is.
+	for _, presses := range []int{2, 3, 7, 10} {
+		for _, short := range []int{0, 1} {
+			t.Run(fmt.Sprintf("%d presses of a tenth/short=%d", presses, short), func(t *testing.T) {
+				var flows []testFlow
+				for range presses {
+					flows = append(flows, testFlow{"A", "K", "K", 0.1, 0.1})
+				}
+				p, rate := poolPlant(false, []testPool{{name: "K", kanban: true, stock: map[string]int{"A": presses - short}}}, flows...)
+				if got := poolsHold(p, rate, 10, 400); got != (short == 0) {
+					t.Errorf("%d standing against a floor of %d: holds = %v", presses-short, presses, got)
+				}
+			})
+		}
+	}
+
+	// A kanban with a source keeps its level: the source carries the transit.
+	for _, m := range checkMargins {
+		t.Run(fmt.Sprintf("with a source/%v under", m), func(t *testing.T) {
+			p, rate := poolPlant(false, []testPool{
+				{name: "K", kanban: true, sources: []string{"SRC"}, stock: map[string]int{"A": 100 - int(math.Round(100*m))}},
+				{name: "SRC", stock: map[string]int{"A": 200}},
+			}, testFlow{"A", "K", "K", 10, 10})
+			if !poolsHold(p, rate, 10, 400) {
+				t.Error("a kanban with a source was held to the floor of one with none")
+			}
+		})
+	}
+}
+
+// TestLevelKept_SurplusInflowFails: a kanban has no overflow, so what returns
+// to it faster than it spends fills it. Judged per family, because the shortfall
+// of one family is no room for the surplus of another. RED at 6bd55616: the
+// rate of a kanban was no verdict in that direction.
+func TestLevelKept_SurplusInflowFails(t *testing.T) {
+	t.Parallel()
+	stock := map[string]int{"A": 20, "B": 20}
+	loop := testFlow{"A", "K", "K", 1, 1}
+	for _, m := range checkMargins {
+		for _, tc := range []struct {
+			name    string
+			sources []string
+			flows   []testFlow
+		}{
+			{"no sources", nil, []testFlow{loop, {"A", "ELSEWHERE", "K", m, m}}},
+			{"with a source", []string{"M"}, []testFlow{loop, {"A", "ELSEWHERE", "K", m, m}}},
+			{"a type it does not spend", nil, []testFlow{loop, {"B", "ELSEWHERE", "K", m, m}}},
+			{"beside the shortfall of another family", nil, []testFlow{loop, {"A", "ELSEWHERE", "K", m, m}, {"B", "K", "M", m, m}}},
+		} {
+			t.Run(fmt.Sprintf("%s/%v over", tc.name, m), func(t *testing.T) {
+				p, rate := poolPlant(false, []testPool{
+					{name: "K", kanban: true, sources: tc.sources, stock: stock},
+					{name: "M", stock: map[string]int{"A": 100, "B": 100}},
+				}, tc.flows...)
+				if poolsHold(p, rate, 10, 10000) {
+					t.Errorf("a level-kept pool taking %v carts a minute more than it spends passed", m)
+				}
+			})
+		}
+		// One family: what comes back as B is set as A at the unloader.
+		t.Run(fmt.Sprintf("inside one family/%v re-typed", m), func(t *testing.T) {
+			p, rate := poolPlant(true, []testPool{{name: "K", kanban: true, stock: stock}},
+				testFlow{"A", "K", "ELSEWHERE", m, m}, testFlow{"B", "ELSEWHERE", "K", m, m})
+			if !poolsHold(p, rate, 10, 10000) {
+				t.Error("a family in balance read as a surplus of one of its types")
+			}
+		})
+	}
+}
+
+// TestKeeperPull_FeedsAKanbanFromWhatComesBackElsewhere: a kanban with no
+// sources searches the plant, so a pool the keeper may take from that gets its
+// carts back is what feeds it. RED at 6bd55616: with no source named the pull
+// had no term, and a fed kanban read as draining.
+func TestKeeperPull_FeedsAKanbanFromWhatComesBackElsewhere(t *testing.T) {
+	t.Parallel()
+	for _, over := range append([]float64{0}, checkMargins...) {
+		t.Run(fmt.Sprintf("one kanban/%v over", over), func(t *testing.T) {
+			p, rate := poolPlant(false, []testPool{
+				{name: "K", kanban: true, stock: map[string]int{"A": 20}},
+				{name: "M", stock: map[string]int{"A": 100}},
+			}, testFlow{"A", "K", "M", 1, 1}, testFlow{"A", "ELSEWHERE", "M", over, over})
+			if !poolsHold(p, rate, 10, 10000) {
+				t.Error("a kanban whose every cart comes back where its keeper looks read as draining")
+			}
+		})
+	}
+	t.Run("two kanbans share what comes back", func(t *testing.T) {
+		p, rate := poolPlant(false, []testPool{
+			{name: "K1", kanban: true, stock: map[string]int{"A": 20}},
+			{name: "K2", kanban: true, stock: map[string]int{"A": 20}},
+			{name: "M", stock: map[string]int{"A": 100}},
+		}, testFlow{"A", "K1", "M", 0.5, 0.5}, testFlow{"A", "K2", "M", 0.5, 0.5})
+		if !poolsHold(p, rate, 10, 10000) {
+			t.Error("two kanbans drawing exactly what comes back read as draining")
+		}
+	})
+}
+
+// TestKeeperPull_DoesNotHideADeficit: the pull moves only what really comes
+// back, of the type, to a place the keeper takes from, and once. Each case is
+// short by the margin and must fail. GREEN at 6bd55616, where there was no
+// pull to hide one: these guard the term.
+func TestKeeperPull_DoesNotHideADeficit(t *testing.T) {
+	t.Parallel()
+	for _, m := range checkMargins {
+		for _, tc := range []struct {
+			name    string
+			sources []string
+			flows   []testFlow
+		}{
+			{"less comes back than is drawn", nil, []testFlow{{"A", "K", "M", 1, 1 - m}}},
+			{"a consumer nameplate past what is made", nil, []testFlow{
+				{"A", "K", "M", 1, 1 + 2*m}, {"A", "M", "ELSEWHERE", m, m}}},
+			{"the surplus is of another type", nil, []testFlow{
+				{"A", "K", "ELSEWHERE", m, m}, {"B", "ELSEWHERE", "M", 1, 1}}},
+			{"it comes back where no keeper looks", nil, []testFlow{{"A", "K", "ELSEWHERE", m, m}}},
+			{"two kanbans and the surplus for one", nil, []testFlow{
+				{"A", "ELSEWHERE", "M", 1, 1}, {"A", "K", "ELSEWHERE", (1 + m) / 2, (1 + m) / 2},
+				{"A", "K2", "ELSEWHERE", (1 + m) / 2, (1 + m) / 2}}},
+			{"the first source has none to spare", []string{"M"}, []testFlow{
+				{"A", "M", "M", 1, 1}, {"A", "K", "ELSEWHERE", m, m}}},
+		} {
+			t.Run(fmt.Sprintf("%s/%v short", tc.name, m), func(t *testing.T) {
+				p, rate := poolPlant(false, []testPool{
+					{name: "K", kanban: true, sources: tc.sources, stock: map[string]int{"A": 20}},
+					{name: "K2", kanban: true, stock: map[string]int{"A": 20}},
+					{name: "M", stock: map[string]int{"A": 100, "B": 100}},
+				}, tc.flows...)
+				if poolsHold(p, rate, 10, 10000) {
+					t.Errorf("the pull of the keeper hid a deficit of %v carts a minute", m)
+				}
+			})
+		}
+	}
+}
+
+// TestKeeperPull_OneTransitWindowIsChargedOnce: the carts a pull has on the way
+// stand in the kanban, which holds demand × transit itself when it names no
+// source, so the pool they come from holds the floor of its own swap points and
+// no second window for the same carts. RED at 6bd55616: the kanban read as
+// draining.
+func TestKeeperPull_OneTransitWindowIsChargedOnce(t *testing.T) {
+	t.Parallel()
+	for _, pull := range []float64{0.1, 0.18, 0.5, 1, 2} {
+		for _, short := range []int{0, 1} {
+			t.Run(fmt.Sprintf("pull=%v/short=%d", pull, short), func(t *testing.T) {
+				// The floor of M: 1 a minute over 10 minutes, and its one press.
+				p, rate := poolPlant(false, []testPool{
+					{name: "K", kanban: true, stock: map[string]int{"A": 20}},
+					{name: "M", stock: map[string]int{"A": 11 - short}},
+				}, testFlow{"A", "K", "M", pull, pull}, testFlow{"A", "M", "M", 1, 1})
+				if got := poolsHold(p, rate, 10, 10000); got != (short == 0) {
+					t.Errorf("%d standing against the lender floor of 11: holds = %v", 11-short, got)
+				}
+			})
+		}
+	}
+}
