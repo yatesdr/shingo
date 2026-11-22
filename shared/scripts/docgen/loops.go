@@ -143,10 +143,11 @@ func (w *loopsWalker) frame(fn *gosrcFunc, args []ast.Expr, parent *loopsFrame) 
 	return fr
 }
 
-// loopsVisit walks a body in source order, calling onGo for each go statement
-// (and each goroutine-group spawn, loopsSpawn) and onCall for each other call,
-// and does not enter closures.
-func loopsVisit(body *ast.BlockStmt, onGo func(*ast.GoStmt), onCall func(*ast.CallExpr)) {
+// visit walks the body of fr's function in source order, calling onGo for
+// each go statement (and each goroutine-group spawn) and onCall for each other
+// call, and does not enter closures.
+func (w *loopsWalker) visit(fr *loopsFrame, onGo func(*ast.GoStmt), onCall func(*ast.CallExpr)) {
+	body := fr.fn.decl.Body
 	if body == nil {
 		return
 	}
@@ -158,7 +159,7 @@ func loopsVisit(body *ast.BlockStmt, onGo func(*ast.GoStmt), onCall func(*ast.Ca
 			onGo(n)
 			return false
 		case *ast.CallExpr:
-			if g := loopsSpawn(n); g != nil {
+			if g := w.spawn(n, fr); g != nil {
 				onGo(g)
 				return false
 			}
@@ -170,7 +171,7 @@ func loopsVisit(body *ast.BlockStmt, onGo func(*ast.GoStmt), onCall func(*ast.Ca
 
 // record keeps every call Start and its helpers make.
 func (w *loopsWalker) record(fr *loopsFrame, depth int) {
-	loopsVisit(fr.fn.decl.Body, func(*ast.GoStmt) {}, func(c *ast.CallExpr) {
+	w.visit(fr, func(*ast.GoStmt) {}, func(c *ast.CallExpr) {
 		w.calls = append(w.calls, loopsCall{c, fr})
 		if depth == 0 {
 			if h := w.helper(c, fr); h != nil {
@@ -183,7 +184,7 @@ func (w *loopsWalker) record(fr *loopsFrame, depth int) {
 // walk reads Start (depth 0) or a helper (depth 1).
 func (w *loopsWalker) walk(fr *loopsFrame, depth int) {
 	var lits []*ast.FuncLit
-	loopsVisit(fr.fn.decl.Body,
+	w.visit(fr,
 		func(g *ast.GoStmt) {
 			if lit, ok := g.Call.Fun.(*ast.FuncLit); ok {
 				if loopsLoops(lit.Body) {
@@ -272,7 +273,7 @@ func (w *loopsWalker) launcher(c *ast.CallExpr, fr *loopsFrame) {
 	}
 	lf := w.frame(callee.fn, c.Args, fr)
 	var lits []*ast.FuncLit
-	loopsVisit(callee.fn.decl.Body,
+	w.visit(lf,
 		func(g *ast.GoStmt) {
 			if lit, ok := g.Call.Fun.(*ast.FuncLit); ok {
 				if loopsLoops(lit.Body) {
@@ -357,6 +358,9 @@ func loopsLoops(body *ast.BlockStmt) bool {
 	return found
 }
 
+// loopsGroupType is the tracked goroutine group's type name.
+const loopsGroupType = "goGroup"
+
 // loopsTimerFuncs are the calls that set a loop's pace.
 var loopsTimerFuncs = map[string]bool{"NewTicker": true, "Tick": true, "After": true, "NewTimer": true, "Sleep": true}
 
@@ -419,7 +423,7 @@ func (w *loopsWalker) cadence(fr *loopsFrame) string {
 		return loopsPace(w.value(c.Args[0], fr, 0), periodic)
 	}
 	out := ""
-	loopsVisit(fr.fn.decl.Body, func(g *ast.GoStmt) {
+	w.visit(fr, func(g *ast.GoStmt) {
 		if out != "" {
 			return
 		}
@@ -1048,14 +1052,19 @@ func (w *loopsWalker) firstFuncCalled(e ast.Expr, fr *loopsFrame) string {
 	return name
 }
 
-// loopsSpawn reads `x.spawn(f)`, a tracked goroutine group's spawn
+// spawn reads `x.spawn(f)`, a tracked goroutine group's spawn
 // (shingo-core's Engine.loops, engine/window_pulls.go goGroup), as the go
 // statement it runs: spawn(x.f) is `go x.f()`, spawn(func() { x.f(a) }) is
-// `go x.f(a)`, and any other closure is `go func() {...}()`. Anything else is
-// nil.
-func loopsSpawn(c *ast.CallExpr) *ast.GoStmt {
+// `go x.f(a)`, and any other closure is `go func() {...}()`. A spawn that
+// resolves to a method of another type is not one. A receiver this resolver
+// cannot read (an alias) still counts as one, so no loop drops out of the
+// table unseen. Anything else is nil (TestLoops_ReadsEveryLaunchShape).
+func (w *loopsWalker) spawn(c *ast.CallExpr, fr *loopsFrame) *ast.GoStmt {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "spawn" || len(c.Args) != 1 {
+		return nil
+	}
+	if fn := w.callee(c.Fun, fr).fn; fn != nil && fn.recv != loopsGroupType {
 		return nil
 	}
 	if lit, ok := c.Args[0].(*ast.FuncLit); ok && len(lit.Body.List) == 1 {

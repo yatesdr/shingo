@@ -63,7 +63,8 @@ type Engine struct {
 	keeper  *Keeper
 	tracker  Tracker
 	stop     chan struct{}
-	loops    group
+	loops    goGroup
+	jobs     jobList
 	blocking *Blocking
 }
 
@@ -79,12 +80,24 @@ func (e *Engine) Start() {
 	e.loops.spawn(e.spawnedLoop)
 	e.loops.spawn(func() { e.blocking.Run(context.Background()) })
 	e.loops.spawn(func() { <-e.stop })
+	e.jobs.spawn(e.queuedLoop)
 }
 
-// group is a tracked goroutine group: spawn runs fn as a goroutine.
-type group struct{}
+// goGroup is a tracked goroutine group: spawn runs fn as a goroutine.
+type goGroup struct{}
 
-func (g *group) spawn(fn func()) { go fn() }
+func (g *goGroup) spawn(fn func()) { go fn() }
+
+// jobList is not a goroutine group: its spawn only keeps fn.
+type jobList struct{ kept []func() }
+
+func (j *jobList) spawn(fn func()) { j.kept = append(j.kept, fn) }
+
+// queuedLoop loops, and nothing Start calls runs it.
+func (e *Engine) queuedLoop() {
+	for range time.Tick(tickInterval) {
+	}
+}
 
 // spawnedLoop ticks on a constant, through the group.
 func (e *Engine) spawnedLoop() {
@@ -216,7 +229,7 @@ func TestLoops_ReadsEveryLaunchShape(t *testing.T) {
 			t.Errorf("%s: no doc sentence", w.name)
 		}
 	}
-	for _, not := range []string{"oneShot", "perEvent", "Engine.Start"} {
+	for _, not := range []string{"oneShot", "perEvent", "queuedLoop", "Engine.Start"} {
 		if _, ok := got[not]; ok {
 			t.Errorf("%s is in the inventory; it is not a background loop", not)
 		}
