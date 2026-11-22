@@ -239,6 +239,6 @@ up:
 3. Then install this release, which applies the migrations above v184.
 
 `shingocore migrate -config /etc/shingo/shingocore.yaml check` says, without changing anything, which of these a
-database needs: `database v<cur> -> v<target>` when this build would start on it, or the refusal and the release to
-start first.
+database needs: `database v<cur> -> v<target>` when this build may be installed on it, or the refusal: the release to
+start first, or the tables a restore skipped.
 

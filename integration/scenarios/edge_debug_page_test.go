@@ -428,9 +428,9 @@ func TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings(t *testing.T) {
 // and may decide from its bins copy, and Core still holds the station's zone and
 // every family the Edge owns: the next heartbeat sends none of them again.
 //
-// The page used to send a heartbeat naming the station alone, which Core takes
+// The page used to send a heartbeat naming the station alone, which a v0.19.0 Core took
 // as an older Edge's (HandleEdgeHeartbeat): an ack with no ask kinds and no feed
-// confirmed, the station's watch list forgotten (binWatchFor) and its zone
+// confirmed, the station's watch list forgotten and its zone
 // blanked. On the Edge, OnCoreAck took that ack as Core's last word: every ask
 // refused and every bins decision held until the next real heartbeat, up to a
 // minute, and the watch list sent again then.

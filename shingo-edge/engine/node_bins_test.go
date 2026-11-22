@@ -63,8 +63,6 @@ func watchLists(t *testing.T, sent []*protocol.Envelope) []protocol.BinWatchList
 	return out
 }
 
-func quote(s string) *string { return &s }
-
 // ownedBinWatch is an ack's owned answer from a Core that holds the watch
 // list with that digest ("" for none), never equal to a quote: the members
 // decide.

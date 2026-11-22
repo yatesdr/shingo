@@ -109,7 +109,7 @@ derived, not hand-maintained): **confirmed, failed, cancelled, skipped**.
 | `acknowledged` | Edge-only (in practice) | no | defensive `Acknowledge` arm — never fires (`MapState` doesn't return it) | `ReplyAck` (Core's intake ACK, before the acquire) | yes (`order.ack`) | HMI: **"ACKNOWLEDGED"** — its own step, NOT "IN TRANSIT" |
 | `in_transit` | shared | no | `MarkInTransit`, `Release`, `MarkFaultedRecovered` | `ReplyWaybill` (waybill + ETA) + `ApplyCoreStatus` | yes (waybill + `order.update`) | "IN TRANSIT" + ETA pill |
 | `staged` | shared | no | `MarkStaged` | `ReplyStaged` (`order.staged` envelope) | yes (`order.staged`) | Release button + expiry countdown |
-| `delivered` | shared | no | `MarkDelivered` | `HandleDelivered` (`order.delivered` w/ bin snapshot) | yes (`order.delivered`) | Confirm button; HMI "DELIVERED" |
+| `delivered` | shared | no | `MarkDelivered` | `HandleDelivered` (`order.delivered` w/ the bin id) | yes (`order.delivered`) | Confirm button; HMI "DELIVERED" |
 | `confirmed` | shared | **yes** | `ConfirmReceipt`, `CompleteCompound` | operator confirm (`ConfirmDelivery`), or `ApplyCoreStatus` force (Core-side confirm) | yes (receipt Edge→Core) | disappears (done) |
 | `faulted` | shared | no | `MarkFaulted` (RDS FAILED, grace period) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | amber left-edge border on the orders list |
 | `failed` | shared | **yes** | `Fail` | `ReplyError` (`order.error`) | yes (`order.error`) | stays visible (retry/ack) |
@@ -346,7 +346,7 @@ Notes on the Edge machine:
   force-confirm). `staged` / `delivered` / `failed` / `cancelled` / `skipped`
   are **no-ops here** — they are owned by dedicated envelopes (`order.staged`,
   `order.delivered`, `order.error`, `order.skipped`, `order.cancelled`) that
-  carry the extra fields (bin snapshot, expiry, reason) this generic mapping
+  carry the extra fields (the bin id, reason) this generic mapping
   does not have. `sourcing` is not mapped (neither `ApplyCoreStatus` nor
   `ApplyCoreStatusSnapshot` writes it): no Core at or above `protocol.FloorCore`
   sends it.
@@ -642,7 +642,7 @@ reconcile.
   update with the reason; an order that never waited is not told `queued`.
 - Dedicated envelopes for the statuses the generic mapping does NOT own:
   `order.waybill` (waybill id + ETA → `in_transit`), `order.staged` (→
-  `staged`), `order.delivered` (→ `delivered`, with bin snapshot),
+  `staged`), `order.delivered` (→ `delivered`, with the bin id),
   `order.error` (→ `failed`), `order.skipped` (→ `skipped`, also advances a
   linked changeover node task), `order.cancelled` (→ `cancelled`).
 - `OrderStatusSnapshot` — at startup reconciliation, Edge asks Core for the

@@ -108,7 +108,7 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 //   - staged/delivered/confirmed/failed/cancelled/skipped → NO-OP here. Those
 //     statuses are owned by DEDICATED envelopes (order.staged, order.delivered,
 //     order.error, order.skipped, order.cancelled) that carry extra fields
-//     (bin snapshots, expiry, reason) this generic mapping does not have. Forcing
+//     (the bin id, reason) this generic mapping does not have. Forcing
 //     the fleet arm above still unblocks them: once the edge force-adopts
 //     in_transit, the dedicated order.staged envelope's in_transit→staged
 //     transition is legal again.

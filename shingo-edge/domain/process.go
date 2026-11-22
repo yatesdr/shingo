@@ -246,7 +246,7 @@ type RuntimeState struct {
 	// generation. Persists across Edge restarts via the column on
 	// process_node_runtime_states.
 	//
-	// FOUR WRITERS: the OrderDelivered envelope, Core's answers to the LOAD,
+	// THREE WRITERS: Core's answers to the LOAD,
 	// CLEAR and count asks, Core's landing (transit.bin_landed, which a
 	// changeover cancel's reseat asks Core to re-announce), and Core's
 	// BinEpochRefresh push. The bins table carries a carrier's epoch for
