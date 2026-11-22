@@ -155,3 +155,40 @@ func TestEdgesPage_MarksAReleaseBelowTheFloor(t *testing.T) {
 		t.Errorf("health's below-floor sentences = %q, want %q", got, want)
 	}
 }
+
+// TestEdgesPage_WhatAStaleStationsRowOffers: the actions of the row of a stale
+// station and of an active one. Both rows offer Rename alone.
+func TestEdgesPage_WhatAStaleStationsRowOffers(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+	for _, uid := range []string{"stn-live", "stn-gone"} {
+		testutil.MustNoErr(t, enrollAndRegister(db, uid, "host-"+uid, sql.NullInt64{Int64: 1, Valid: true}), "seed "+uid)
+	}
+	_, err := db.Exec(`UPDATE edge_registry SET status = $1 WHERE station_uid = $2`, "stale", "stn-gone")
+	testutil.MustNoErr(t, err, "one goes stale")
+
+	body := renderEdgesPage(t, h)
+	button := regexp.MustCompile(`<button[^>]*>([^<]*)</button>`)
+	for uid, want := range map[string]string{"stn-live": "Rename", "stn-gone": "Rename"} {
+		row := regexp.MustCompile(`(?s)<tr data-uid="` + uid + `".*?</tr>`).FindString(body)
+		var got []string
+		for _, m := range button.FindAllStringSubmatch(row, -1) {
+			got = append(got, strings.TrimSpace(m[1]))
+		}
+		if strings.Join(got, ", ") != want {
+			t.Errorf("%s offers %q, want %q", uid, got, want)
+		}
+	}
+}
+
+// TestEdgesRemoveDoor: what the router answers a removal of a station that
+// comes with no session. There is no such door.
+func TestEdgesRemoveDoor(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlersForRendering(t)
+	rec := httptest.NewRecorder()
+	realRouterFor(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/edges/remove?uid=stn-gone", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("POST /api/edges/remove = %d, want 404 (no door)", rec.Code)
+	}
+}
