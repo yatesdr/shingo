@@ -196,6 +196,7 @@ func TestCatidMonitor_RunsOnTheEnginesClock(t *testing.T) {
 		{"the strip: a good read is not unreadable", readableOnTheStrip},
 		{"evaluateAutoArm: the 60 s window elapses in engine time", windowInEngineTime},
 		{"forceHolds: the change is after started_at", changedAfterTheStart},
+		{"forceHolds: a change confirmed before the start never forces", changedBeforeTheStart},
 		{"noteCountedTick and countedSince: a tick before the confirm is not since it", countedSinceTheConfirm},
 		{"partItems: the strip sums the parts since the confirm", partsSinceTheConfirm},
 		{"openPostCutoverVerify: the window closes in engine time", verifyWindowInEngineTime},
@@ -262,6 +263,36 @@ func changedAfterTheStart(t *testing.T, r *clockRig) {
 		t.Errorf("the force does not hold: confirmed %s, started %s, stable %v, counted %s %s at %s",
 			f.confirmedAt.UTC().Format(time.TimeOnly), co.StartedAt.UTC().Format(time.TimeOnly), f.stable, f.tick.kind,
 			f.tick.catid, f.tick.at.UTC().Format(time.TimeOnly))
+	}
+}
+
+// changedBeforeTheStart: a program the monitor confirmed before the changeover
+// opened never forces it, whatever window passes and whatever is counted after.
+// The monitor stamps confirmedAt and the store stamps started_at: were the two
+// read from different clocks, the monitor's running ahead, this change would
+// read as after the start and the force would hold (forceHolds).
+func changedBeforeTheStart(t *testing.T, r *clockRig) {
+	r.confirm(1002)
+	r.step(5 * time.Second)
+	co := changeoverRow(t, r.eng.db, r.open())
+	r.eng.noteCountedTick(r.pid, plc.TickIdentity{StyleID: r.b, CATID: "1002", Kind: plc.TickTarget})
+	for range 4 {
+		r.step(30 * time.Second)
+	}
+	f := r.facts()
+	if !f.stable || f.baseline || !countedSince(f, plc.TickTarget) {
+		t.Fatalf("fixture: all but the start must hold (stable %v, baseline %v, counted %s %s at %s)",
+			f.stable, f.baseline, f.tick.kind, f.tick.catid, f.tick.at.UTC().Format(time.TimeOnly))
+	}
+	if forceHolds(f, co.StartedAt) {
+		t.Errorf("the force holds on 1002 confirmed %s, before the changeover started %s",
+			f.confirmedAt.UTC().Format(time.TimeOnly), co.StartedAt.UTC().Format(time.TimeOnly))
+	}
+	if !r.logged("would have cut over", time.Second) {
+		t.Fatal("fixture: the monitor never decided on the open changeover")
+	}
+	if r.logged("counted on the target since the change", 50*time.Millisecond) {
+		t.Error("the monitor decided a forced cutover on a program confirmed before the start")
 	}
 }
 
