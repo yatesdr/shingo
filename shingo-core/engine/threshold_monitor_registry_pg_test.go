@@ -19,6 +19,8 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/demands"
+	"shingocore/store/loaders"
+	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 )
 
@@ -737,5 +739,113 @@ func TestThresholdMonitor_AFlaggedCarrierAtTheLoaderDoesNotHoldOffTheRefill(t *t
 	}
 	if hit.CurrentUOP != 0 {
 		t.Errorf("fired at CurrentUOP %d, want 0: the flagged carrier's parts are not reorder stock", hit.CurrentUOP)
+	}
+}
+
+// TestCountHandlers_ReturnWhileTheScanLockIsHeld: the inbound reader runs both
+// count handlers, and neither waits for the scan lock, though the refill the
+// count makes due acquires under it. The refill is real: the monitor, the
+// loader's decision, the order and its acquire. The order is born while the
+// lock is still held, and acquired once it is let go.
+//
+// RED at 6bd55616: both handlers sat in AcquireOne until the lock was free, and
+// every message of every station behind them.
+func TestCountHandlers_ReturnWhileTheScanLockIsHeld(t *testing.T) {
+	t.Parallel()
+	const station = "edge.count-lock"
+	for _, c := range []struct {
+		name  string
+		stock int // in bins, above the threshold of 100 with the pile
+		pile  int
+		count func(svc *messaging.CoreDataService, env *protocol.Envelope, part, seat string, binID, epoch int64)
+	}{
+		{"bin uop delta", 101, 0, func(svc *messaging.CoreDataService, env *protocol.Envelope, part, _ string, binID, epoch int64) {
+			net, now := int64(-5), time.Now().UTC()
+			svc.HandleBinUOPDelta(env, &protocol.BinUOPDelta{BinID: binID, PayloadCode: part, Delta: -5,
+				Reason: protocol.ReasonConsumeTick, SequenceID: 1, Epoch: epoch, Net: &net, WindowStart: now, WindowEnd: now})
+		}},
+		{"lineside bucket level", 40, 80, func(svc *messaging.CoreDataService, env *protocol.Envelope, part, seat string, _, _ int64) {
+			svc.HandleLinesideBucketLevel(env, &protocol.LinesideBucketLevel{CoreNodeName: seat, PayloadCode: part,
+				State: protocol.LinesideBucketActive, Qty: 50, SequenceID: 1, WindowEnd: time.Now().UTC()})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			sd := testdb.SetupStandardData(t, db)
+			registerActiveEdge(t, db, station)
+			const part = "COUNT-LOCK-PART"
+			testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: part, UOPCapacity: 10}), "payload")
+			market := &nodes.Node{Name: "COUNT-LOCK-MARKET", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(market), "market")
+			window := &nodes.Node{Name: "COUNT-LOCK-W", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(window), "window")
+			bin := testdb.CreateBinAtNode(t, db, part, sd.LineNode.ID, "COUNT-LOCK-BIN")
+			_, err := db.Exec(`UPDATE bins SET uop_remaining=$1 WHERE id=$2`, c.stock, bin.ID)
+			testutil.MustNoErr(t, err, "stock")
+			if c.pile > 0 {
+				_, err := db.Exec(`INSERT INTO lineside_buckets (station_uid, core_node_name, payload_code, state, qty)
+					VALUES ($1, $2, $3, $4, $5)`, station, sd.LineNode.Name, part, string(protocol.LinesideBucketActive), c.pile)
+				testutil.MustNoErr(t, err, "pile")
+			}
+			var epoch int64
+			testutil.MustNoErr(t, db.QueryRow(`SELECT delta_epoch FROM bins WHERE id=$1`, bin.ID).Scan(&epoch), "epoch")
+			ls := service.NewLoaderService(db, nil)
+			loader, err := ls.CreateLoader(service.LoaderCreate{Name: "COUNT-LOCK-LOADER", Role: loaders.RoleProduce,
+				InboundSource: market.Name, PulledDirectly: true})
+			testutil.MustNoErr(t, err, "loader")
+			testutil.MustNoErr(t, ls.SetHome(loader, window.ID, "", "", 0), "window row")
+			testutil.MustNoErr(t, ls.SetPayload(loader, part, 100), "threshold")
+
+			eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+			svc := messaging.NewCoreDataService(db, messaging.NewCoreHandler(db, nil, "core", "", nil), service.EpochAnnounce{})
+			svc.SetThresholdMonitor(eng.thresholdMonitor)
+			env := &protocol.Envelope{Type: protocol.TypeData,
+				Src: protocol.Address{Role: protocol.RoleEdge, Station: station}}
+
+			held, letGo := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			release := func() { once.Do(func() { close(letGo) }) }
+			t.Cleanup(release)
+			go eng.fulfillment.Door(func() { close(held); <-letGo })
+			<-held
+
+			returned := make(chan struct{})
+			go func() {
+				c.count(svc, env, part, sd.LineNode.Name, bin.ID, epoch)
+				close(returned)
+			}()
+			refill := func() (n, acquired int) {
+				testutil.MustNoErr(t, db.QueryRow(`SELECT count(*), count(*) FILTER (WHERE status <> 'pending')
+					FROM orders WHERE delivery_node = $1`, window.Name).Scan(&n, &acquired), "the refill")
+				return n, acquired
+			}
+			waitFor := func(d time.Duration, ok func() bool) bool {
+				for deadline := time.Now().Add(d); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+					if ok() {
+						return true
+					}
+				}
+				return false
+			}
+			born := waitFor(10*time.Second, func() bool { n, _ := refill(); return n == 1 })
+			if !born {
+				t.Fatal("fixture: the count made no refill, so this test holds the lock against nothing")
+			}
+			select {
+			case <-returned:
+			case <-time.After(2 * time.Second):
+				t.Errorf("the %s handler had not returned 2 s after its refill was born: "+
+					"the inbound reader is waiting for scanMu", c.name)
+			}
+			if n, acquired := refill(); acquired != 0 {
+				t.Errorf("%d of %d refill orders were acquired while the scan lock was held", acquired, n)
+			}
+			release()
+			<-returned
+			if !waitFor(10*time.Second, func() bool { _, acquired := refill(); return acquired == 1 }) {
+				t.Error("the refill was never acquired after the scan lock was let go")
+			}
+		})
 	}
 }

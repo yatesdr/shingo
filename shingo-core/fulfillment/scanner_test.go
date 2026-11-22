@@ -696,6 +696,67 @@ func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
 	}
 }
 
+// TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost: Trigger asks for a
+// pass, and one always starts after it, on a started scanner, with nobody
+// calling RunOnce for it. RED at 6bd55616: a trigger only set a flag, which a
+// pass read once, before its last scan, and which an idle scanner never read.
+func TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost(t *testing.T) {
+	t.Parallel()
+	t.Run("idle", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeStore()
+		var scans atomic.Int32
+		f.onListQueuedOrders = func() { scans.Add(1) }
+		s := newTestScanner(t, f)
+		s.StartPeriodicSweep(time.Hour)
+		t.Cleanup(s.Stop)
+
+		s.Trigger()
+		for deadline := time.Now().Add(2 * time.Second); scans.Load() == 0 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		if scans.Load() == 0 {
+			t.Fatal("a trigger on an idle scanner ran no scan in 2 s: it waits for the 60 s sweep")
+		}
+	})
+	t.Run("during the last scan", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeStore()
+		var scans atomic.Int32
+		first, second, goOn, last := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+		f.onListQueuedOrders = func() {
+			switch scans.Add(1) {
+			case 1:
+				close(first)
+				<-goOn
+			case 2:
+				close(second)
+				<-last
+			}
+		}
+		s := newTestScanner(t, f)
+		s.StartPeriodicSweep(time.Hour)
+		t.Cleanup(s.Stop)
+		go s.RunOnce()
+		<-first
+		s.Trigger() // asks for the second scan, the last one asked for so far
+		close(goOn)
+		select {
+		case <-second:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a trigger during a scan ran no second scan in 5 s")
+		}
+		s.Trigger() // after the last scan began
+		close(last)
+		for deadline := time.Now().Add(2 * time.Second); scans.Load() < 3 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		if n := scans.Load(); n < 3 {
+			t.Fatalf("a trigger after the last scan began was lost: %d scans, and none started after it in 2 s", n)
+		}
+	})
+}
+
 func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
