@@ -608,9 +608,15 @@ func edgeCellsOf(catalog []protocol.CellCatalogEntry) []store.EdgeCell {
 // the difference is that the request is now the only outcome.
 //
 // THE EDGE'S CLOCK OFFSET rides the same UPDATE: the envelope's ts (the Edge's
-// clock when it built the heartbeat) minus Core's clock on receipt. The
-// broker's delay is in it, reading as the Edge being behind by that much; the
-// Edge's /status shows the mirror reading from the ack. A heartbeat with no ts
+// clock when it built the heartbeat) minus Core's clock when this handler runs.
+// So every delay between the two is in it, reading as the Edge being behind by
+// that much: the Edge's outbox, the broker, and the wait to be read behind the
+// messages ahead on the one reader. A door or ask ahead waits for the scan
+// lock: the pass running and at most one more, and the doors and acquires
+// ahead of it (TestHeartbeatOffset_CarriesAtMostTwoPassesOfTheScanLock). A pass
+// is not itself bounded: a fleet create runs under that lock. The Edge's
+// /status shows the mirror reading from the ack, which Core stamps when it
+// answers, so that one carries no wait to be read. A heartbeat with no ts
 // leaves the last reading.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
 	// The station is the envelope's, as it is for every Edge-sent count

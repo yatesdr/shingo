@@ -26,6 +26,12 @@ Deploy: no migration
 - A station that applies each containment change as Core sends it is no longer flagged "containment not converging" when several come close together
 - Several claim or style saves a minute on an Edge no longer flag that process's claims "not converging" while Core is taking each one
 - A station stuck on the last update pushed to it is now flagged "not converging": until now that one was never flagged, so a flag may appear where none did
+- Core no longer piles up order-matching passes after a burst of plant events, so orders, asks and counts from the Edges are read without waiting behind them.
+- A part count no longer holds up the Edges' other messages while Core decides a loader's refill; the refill follows a moment later.
+- The Edges page no longer reads an Edge's clock as seconds behind because Core was working through a burst of order-matching passes.
+- Core Health and the log say when the order-matching worker has stopped, and, separately, when one pass is running long and for how long.
+- The freeze alarm for Core's scan lock now calls it "the scan lock" (it said "the scan pass").
+- Stopping Core lets the order in hand finish, waits at most 12 seconds, and starts nothing after it.
 
 ## v0.19.0 — 2026-11-22
 
