@@ -68,7 +68,6 @@ type (
 	UngatedDigTally struct{}
 	ETACache        struct{}
 	LaneGateMap     struct{}
-	ScanTrigger     struct{}
 	TableTurns      struct{}
 
 	BurialShadow struct{}
@@ -136,7 +135,6 @@ func (ReplyWatch) Rank() int      { return 152 }
 func (UngatedDigTally) Rank() int { return 153 }
 func (ETACache) Rank() int        { return 154 }
 func (LaneGateMap) Rank() int     { return 155 }
-func (ScanTrigger) Rank() int     { return 156 }
 func (TableTurns) Rank() int      { return 157 }
 
 func (BurialShadow) Rank() int { return 160 }
@@ -203,7 +201,6 @@ func (ReplyWatch) Name() string      { return "dispatch.ReplySender.watchMu" }
 func (UngatedDigTally) Name() string { return "dispatch.ungatedDigTally.mu" }
 func (ETACache) Name() string        { return "eta.Cache.mu" }
 func (LaneGateMap) Name() string     { return "dispatch.laneGateSerializer.mu" }
-func (ScanTrigger) Name() string     { return "fulfillment.triggerMu" }
 func (TableTurns) Name() string      { return "dispatch.Dispatcher.turnMu" }
 
 func (BurialShadow) Name() string { return "service.burialShadow.mu" }

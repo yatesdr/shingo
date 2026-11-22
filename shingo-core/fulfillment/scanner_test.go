@@ -675,15 +675,18 @@ func TestScannerCapacityGatePassesOrderID(t *testing.T) {
 
 // ── RunOnce coalescing + periodic sweep ─────────────────────────────
 
-func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
+// TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker: RunOnce is one scan,
+// whatever triggers during it; the triggers wait in the one slot, and the
+// worker makes one more pass of them.
+func TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
-	var calls int
+	var scans atomic.Int32
 	f.onListQueuedOrders = func() {
-		calls++
-		if calls == 1 {
+		if scans.Add(1) == 1 {
+			s.Trigger()
 			s.Trigger()
 		}
 	}
@@ -691,8 +694,15 @@ func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce fulfilled unexpectedly: got %d, want 0", got)
 	}
-	if calls != 2 {
-		t.Errorf("RunOnce should coalesce into exactly 2 scans, got %d", calls)
+	if n := scans.Load(); n != 1 {
+		t.Fatalf("RunOnce made %d scans, want 1: a trigger during it is the next pass", n)
+	}
+	s.StartPeriodicSweep(time.Hour)
+	t.Cleanup(s.Stop)
+	testutil.Eventually(t, 2*time.Second, func() bool { return scans.Load() >= 2 })
+	time.Sleep(20 * time.Millisecond) // negative assertion: no pass after that one
+	if n := scans.Load(); n != 2 {
+		t.Errorf("two triggers during a scan made %d scans in all, want 2", n)
 	}
 }
 
@@ -819,29 +829,27 @@ func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
 	}
 }
 
-// triggeringFinder waits like waitFinder, and on its first call triggers the
-// scanner the way an event in mid-pass does (engine.triggerFulfillment), so the
-// pass reruns.
+// triggeringFinder waits like waitFinder, counts what it is asked, and on its
+// first call triggers the scanner the way an event in mid-pass does
+// (engine.triggerFulfillment).
 type triggeringFinder struct {
 	fakeFinder
-	s *Scanner
+	s     *Scanner
+	asked atomic.Int32
 }
 
 func (f *triggeringFinder) FindSource(order *orders.Order, intent dispatch.Intent) dispatch.SourceResult {
-	if len(f.calls) == 0 {
+	if f.asked.Add(1) == 1 {
 		f.s.Trigger()
 	}
 	return f.fakeFinder.FindSource(order, intent)
 }
 
-// TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun: a pass that was
-// triggered while it scanned scans once more (RunOnce's rerun). An order it has
-// just asked and parked under a cause was asked again there, and paid its whole
-// acquisition again, for a state that had not moved for it (the order-22 shape:
-// 43 re-parks in 3 s under one cause). Every trigger also starts a fresh pass of
-// its own (engine.triggerFulfillment), so nothing waits on the rerun to see it
-// again.
-func TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun(t *testing.T) {
+// TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne: an order a
+// pass asked and parked is not asked again in that pass, whatever triggered
+// during it (the order-22 shape: 43 re-parks in 3 s under one cause), and the
+// pass that trigger asked for asks it once more, against what moved.
+func TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 7, "dest-07")
@@ -850,15 +858,15 @@ func TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun(t *testing.T) {
 	s.finder = finder
 
 	s.RunOnce()
-	asked := 0
-	for _, c := range finder.calls {
-		if c.orderID == order.ID {
-			asked++
-		}
+	if n := finder.asked.Load(); n != 1 {
+		t.Fatalf("order %d was asked %d times in one pass, want 1", order.ID, n)
 	}
-	if asked != 1 {
-		t.Fatalf("order %d was asked %d times in one pass, want 1: the rerun re-asked an order this pass had "+
-			"just parked", order.ID, asked)
+	s.StartPeriodicSweep(time.Hour)
+	t.Cleanup(s.Stop)
+	testutil.Eventually(t, 2*time.Second, func() bool { return finder.asked.Load() >= 2 })
+	time.Sleep(20 * time.Millisecond) // negative assertion: once, in that pass
+	if n := finder.asked.Load(); n != 2 {
+		t.Errorf("order %d was asked %d times over the pass and the one it triggered, want 2", order.ID, n)
 	}
 }
 

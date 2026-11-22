@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"log"
 	"shingocore/store/reservations"
-	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -23,8 +24,8 @@ import (
 )
 
 // Scanner monitors queued orders and fulfills them when matching
-// inventory becomes available. Runs event-driven with a periodic
-// safety sweep.
+// inventory becomes available. One worker runs the passes, one at a time,
+// when triggered: by events, and by a periodic safety timer.
 //
 // Construct via NewScanner. The zero value is not usable.
 //
@@ -50,21 +51,20 @@ type Scanner struct {
 	debugLog func(string, ...any)
 
 	scanMu lockcheck.Mutex[lockorder.Scan] // serializes scan() calls
-	// askedThisPass is the orders this RunOnce has asked and not dispatched,
-	// guarded by scanMu; nil outside a RunOnce (AcquireOne asks once anyway).
-	askedThisPass map[int64]bool
-	// pushRefusedThisPass is the (group, type) resolves this RunOnce found no slot in,
-	// shared by every window's push it asks (plan.PushRefusals); nil outside a RunOnce.
+	// pushRefusedThisPass is the (group, type) resolves this pass found no slot in,
+	// shared by every window's push it asks (plan.PushRefusals); nil outside a pass.
 	pushRefusedThisPass plan.PushRefusals
-	// overflowRefusedThisPass is the (group, type)s whose overflow this RunOnce has asked
+	// overflowRefusedThisPass is the (group, type)s whose overflow this pass has asked
 	// for an order parked on their room and been refused, or that name none
-	// (overflowsWhileParked), guarded by scanMu; nil outside a RunOnce. Every
+	// (overflowsWhileParked), guarded by scanMu; nil outside a pass. Every
 	// other order parked on the same group shares the answer.
 	overflowRefusedThisPass map[overflowAsk]bool
 
-	triggerMu lockcheck.Mutex[lockorder.ScanTrigger]
-	pending   bool // coalesce triggers during a scan
-	stopChan  chan struct{}
+	// wake is the one slot a trigger fills and the worker (runPasses) empties.
+	wake     chan struct{}
+	stopChan chan struct{}
+	stopOnce sync.Once
+	started  atomic.Bool
 }
 
 // NewScanner constructs a Scanner wired to the provided dependencies.
@@ -94,53 +94,53 @@ func NewScanner(
 		failFn:     failFn,
 		logFn:      logFn,
 		debugLog:   debugLog,
+		wake:       make(chan struct{}, 1),
 		stopChan:   make(chan struct{}),
 	}
 }
 
-// Trigger requests a scan. If a scan is already running, the request
-// is coalesced — the scanner will re-run after the current scan finishes.
+// Trigger asks the worker for a pass that starts after this call. It fills the
+// one slot and returns: it takes no lock and never waits, so it may be called
+// under any lock. A trigger that finds the slot full is answered by the pass
+// already waiting in it, which has not started, so N triggers during a pass
+// make one more pass (TestScanWorker_NTriggersDuringAPassMakeOneMorePass) and
+// none is lost (TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost).
 func (s *Scanner) Trigger() {
-	s.triggerMu.Lock()
-	s.pending = true
-	s.triggerMu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 
-// RunOnce executes a single scan pass. Only one scan runs at a time.
+// RunOnce executes a single scan pass on the caller's goroutine: the boot scan
+// and tests. Only one scan runs at a time.
 func (s *Scanner) RunOnce() int {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
-
-	s.triggerMu.Lock()
-	s.pending = false
-	s.triggerMu.Unlock()
-
-	// AN ORDER IS ASKED ONCE PER PASS. A pass triggered while it scanned scans
-	// again (below), and an order it has just asked and parked was asked again
-	// there and paid its whole acquisition again for a state that had not moved
-	// for it: the order-22 shape, a pair re-parked 43 times in 3 s under one
-	// cause. Every trigger also starts a fresh pass of its own
-	// (engine.triggerFulfillment), so nothing waits on this rerun to see it.
-	s.askedThisPass = map[int64]bool{}
-	s.overflowRefusedThisPass = map[overflowAsk]bool{}
-	s.pushRefusedThisPass = plan.PushRefusals{}
-	defer func() { s.askedThisPass, s.overflowRefusedThisPass, s.pushRefusedThisPass = nil, nil, nil }()
-
-	fulfilled := s.scan()
-
-	// If events arrived during the scan, run again
-	s.triggerMu.Lock()
-	again := s.pending
-	s.pending = false
-	s.triggerMu.Unlock()
-	if again {
-		fulfilled += s.scan()
-	}
-	return fulfilled
+	return s.passLocked()
 }
 
-// StartPeriodicSweep runs the scanner every interval as a safety net.
+// passLocked is one pass, the scan lock held: one scan, with that pass's
+// memory. AN ORDER IS ASKED ONCE PER PASS, because a pass scans once and the
+// waiting set lists an order once; what moved during it is the next pass's
+// (the order-22 shape, a pair re-parked 43 times in 3 s under one cause, was a
+// pass asking again. TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne).
+func (s *Scanner) passLocked() int {
+	s.overflowRefusedThisPass = map[overflowAsk]bool{}
+	s.pushRefusedThisPass = plan.PushRefusals{}
+	defer func() { s.overflowRefusedThisPass, s.pushRefusedThisPass = nil, nil }()
+	return s.scan()
+}
+
+// StartPeriodicSweep starts the pass worker and the timer that triggers it
+// every interval, as a safety net. The timer runs no pass itself. Nothing
+// recovers a panic in a pass: it kills the process
+// (TestScanWorker_APanicInAPassKillsTheProcess).
 func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
+	if s.stopping() || !s.started.CompareAndSwap(false, true) {
+		return
+	}
+	go s.runPasses()
 	go func() {
 		ticker := clock.Default().NewTicker(interval)
 		defer ticker.Stop()
@@ -149,15 +149,48 @@ func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
 			case <-s.stopChan:
 				return
 			case <-ticker.C():
-				s.RunOnce()
+				s.Trigger()
 			}
 		}
 	}()
 }
 
-// Stop halts the periodic sweep.
+// runPasses is the one goroutine that runs triggered passes, one after another,
+// until Stop.
+func (s *Scanner) runPasses() {
+	for {
+		select {
+		case <-s.stopChan:
+			return
+		case <-s.wake:
+			s.workerPass()
+		}
+	}
+}
+
+// workerPass is one triggered pass. A Stop while it waited for the scan lock
+// leaves it unrun.
+func (s *Scanner) workerPass() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if s.stopping() {
+		return
+	}
+	s.passLocked()
+}
+
+// Stop ends the worker and its timer: no pass starts after it.
 func (s *Scanner) Stop() {
-	close(s.stopChan)
+	s.stopOnce.Do(func() { close(s.stopChan) })
+}
+
+func (s *Scanner) stopping() bool {
+	select {
+	case <-s.stopChan:
+		return true
+	default:
+		return false
+	}
 }
 
 // yieldLostHand is the scanner's answer when its hand lost the status CAS: another
@@ -267,9 +300,6 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Re-check. The scan set is the acquiring set (pending or queued, no ask
 	// open), so re-verify the order is still acquiring: not cancelled, failed,
 	// dispatched or asked for by another caller between listing and processing.
-	if s.askedThisPass[order.ID] {
-		return false // asked and parked earlier in this pass (RunOnce)
-	}
 	current, err := s.db.GetOrder(order.ID)
 	if err != nil || !current.Acquiring() {
 		return false
@@ -277,9 +307,6 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations.
 	if s.fulfill(current, nil) {
 		return true
-	}
-	if s.askedThisPass != nil {
-		s.askedThisPass[current.ID] = true
 	}
 	s.park(current)
 	return false

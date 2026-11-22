@@ -2302,3 +2302,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none (a grep of the tree after the rename found no mention left)
 - verified at: the commit that adds this row
+
+### STALE — `TestScanner_RunOnce_TriggerDuringScan_RerunsOnce`
+- test: `TestScanner_RunOnce_TriggerDuringScan_RerunsOnce` · pkg `shingocore/fulfillment` · run `-run '^TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker$'` · `shingo-core/fulfillment/scanner_test.go:678` @ `6bd55616` · tags `none`
+- code: STALE (the rerun inside RunOnce went: one worker runs the triggered passes off a one-slot wake)
+- assertion map: a trigger during a scan makes RunOnce scan twice → `TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker`: RunOnce scans once, and two triggers during it make one more pass, by the worker
+- mutation: `shingo-core/fulfillment/scanner.go` as it was at `6bd55616` (the rerun) · rewritten red at tip: `go test -count=1 -run '^TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker$' ./fulfillment/` → `scanner_test.go:698: RunOnce made 2 scans, want 1: a trigger during it is the next pass`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun`
+- test: `TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun` · pkg `shingocore/fulfillment` · run `-run '^TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne$'` · `shingo-core/fulfillment/scanner_test.go:783` @ `6bd55616` · tags `none`
+- code: STALE (no rerun is left to re-ask in, and the asked-once set that only guarded it went with it)
+- assertion map: one ask over a pass and its rerun → `TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne`: one ask in the pass, and one more by the pass its trigger asked for
+- mutation: `shingo-core/fulfillment/scanner.go` as it was at `6bd55616` (the rerun) · rewritten red at tip: `go test -count=1 -run '^TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne$' ./fulfillment/` → `eventually.go:17: condition not met within 2s` (the triggered pass never came)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/fulfillment/scanner.go` (`passLocked`)
+- verified at: the commit that adds this row
