@@ -248,9 +248,81 @@ func writeFrames(b *strings.Builder, pcs []uintptr) {
 	}
 }
 
-// goid is the calling goroutine's id, read from its stack header
-// ("goroutine 18 [running]:"). Test and sim builds only.
+// goid is the calling goroutine's id, the number its stack trace prints
+// ("goroutine 18 [running]:"). The runtime never gives it to another goroutine,
+// so a hold a goroutine leaves in the book when it exits binds no later one
+// (TestGuard_AHoldLeftByAnExitedGoroutineBindsNoLaterOne). It is read from the
+// goroutine's g, at the word calibrate found, or else from runtime.Stack. Pin:
+// TestGoid_IsTheRuntimesGoroutineID. Test and sim builds only.
 func goid() uint64 {
+	if goidInG {
+		return gWord(goidOff)
+	}
+	return stackGoid()
+}
+
+// goidOff is the offset of the goroutine id in the runtime's g, and goidInG
+// says calibrate found it.
+var goidOff, goidInG = calibrate()
+
+// gSpan is how many bytes of a g calibrate reads. In go1.25's runtime.g on a
+// 64-bit machine the id is at byte 152 (after the stack bounds, the scheduler's
+// saved registers and the status word) and the g runs past byte 400, so every
+// word read should be inside the g.
+const gSpan = 256
+
+// calibrate finds the word of the runtime's g that holds the goroutine id, so
+// goid can read it there instead of printing a stack header. runtime.Stack
+// walks the caller's whole stack under the runtime's global print lock, and
+// every guarded Lock, Unlock and check asks for the id, so parallel tests
+// queue on that lock. Each probe goroutine takes its id from runtime.Stack and
+// reads every word of its own g; the id's word is the one where every probe
+// holds exactly its own id. None, or more than one, leaves goid on
+// runtime.Stack. The offset is found at run time, never written down, so a Go
+// release that moves the field moves it here too.
+func calibrate() (off uintptr, ok bool) {
+	if !canReadG {
+		return 0, false
+	}
+	const probes = 8
+	type probe struct {
+		id    uint64
+		words [gSpan / 8]uint64
+	}
+	ps := make([]probe, probes)
+	var wg sync.WaitGroup
+	for i := range ps {
+		wg.Add(1)
+		go func(p *probe) {
+			defer wg.Done()
+			p.id = stackGoid()
+			for w := range p.words {
+				p.words[w] = gWord(uintptr(w) * 8)
+			}
+		}(&ps[i])
+	}
+	wg.Wait()
+	found := 0
+	for w := range gSpan / 8 {
+		every := true
+		for _, p := range ps {
+			if p.id == 0 || p.words[w] != p.id {
+				every = false
+				break
+			}
+		}
+		if every {
+			off, found = uintptr(w)*8, found+1
+		}
+	}
+	if found != 1 {
+		return 0, false
+	}
+	return off, true
+}
+
+// stackGoid reads the calling goroutine's id from its stack header.
+func stackGoid() uint64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
 	f := bytes.Fields(buf[:n])

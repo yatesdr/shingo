@@ -229,6 +229,24 @@ func TestGoid_IsTheRuntimesGoroutineID(t *testing.T) {
 	}
 }
 
+// TestGoid_ReadsTheGWhereItCan: on a build with the assembly (amd64 and arm64,
+// gc), calibrate must have found the id's word, or goid falls back to
+// runtime.Stack and TestGoid_IsTheRuntimesGoroutineID passes on the slow path
+// without a word. A miss here means this Go moved the id: look at runtime.g
+// and gSpan.
+func TestGoid_ReadsTheGWhereItCan(t *testing.T) {
+	t.Parallel()
+	if !canReadG {
+		t.Skipf("no assembly for %s/%s (%s): goid reads runtime.Stack", runtime.GOOS, runtime.GOARCH, runtime.Compiler)
+	}
+	if !goidInG {
+		t.Fatalf("calibrate found no single word in the first %d bytes of runtime.g holding the goroutine id on %s/%s %s; "+
+			"goid reads runtime.Stack, which every guarded lock then waits on. Find the id in this Go's runtime.g and widen gSpan, or fix calibrate",
+			gSpan, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	}
+	t.Logf("goroutine id at byte %d of runtime.g (%s %s/%s)", goidOff, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+}
+
 // stackID is the calling goroutine's id as runtime.Stack prints it in the
 // header of its own trace ("goroutine 18 [running]:"), parsed here
 // independently of goid.
