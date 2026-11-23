@@ -3,7 +3,12 @@
 package lockcheck
 
 import (
+	"bytes"
+	"fmt"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -131,6 +136,118 @@ func TestGuard_ANestingClassHoldsInstancesTogetherButNotOneTwice(t *testing.T) {
 	if rep := catch(t, func() { a.Lock() }); !strings.Contains(rep, "re-entry") {
 		t.Fatalf("a second take of one instance passed:\n%s", rep)
 	}
+}
+
+// A hold a goroutine leaves in the book when it exits (a lock it took and
+// another goroutine releases later, or never) stays there under its id. The
+// runtime reuses an exited goroutine's g for later goroutines, so an id taken
+// from the g would hand that hold to whichever goroutine runs on it next. On
+// one P the runtime hands out the g freed last first, and each later goroutine
+// here starts after the one before it exited, so they run on the holder's g.
+// Serial: it sets GOMAXPROCS, which every goroutine in the process runs under.
+func TestGuard_AHoldLeftByAnExitedGoroutineBindsNoLaterOne(t *testing.T) {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	var a Mutex[high]
+	var b Mutex[low]
+	took := make(chan struct{})
+	go func() { a.Lock(); close(took) }()
+	<-took
+	for i := range 256 {
+		done := make(chan string)
+		go func() { done <- Catch(func() { through(b.Lock, b.Unlock) }) }()
+		if rep := <-done; rep != "" {
+			t.Fatalf("goroutine %d started after the holder exited inherited its hold:\n%s", i, rep)
+		}
+	}
+	a.Unlock()
+	if rep := Catch(func() { through(a.Lock, a.Unlock) }); rep != "" {
+		t.Fatalf("the exited goroutine's hold outlived its release:\n%s", rep)
+	}
+}
+
+// TestGoid_IsTheRuntimesGoroutineID pins what every caller of goid relies on
+// (guard.go: the book of held locks, fail, Catch). It names the calling
+// goroutine; one goroutine gets the same id for its whole life; no two
+// goroutines alive at once share one; and it is the id runtime.Stack prints,
+// which the runtime never gives a later goroutine, so a hold a goroutine leaves
+// in the book when it exits binds no other. Hundreds of goroutines are alive at
+// once: a read that mixed them up, or that two of them share, fails here. Run
+// it with -race as well.
+func TestGoid_IsTheRuntimesGoroutineID(t *testing.T) {
+	t.Parallel()
+	const n = 512
+	type seen struct {
+		want uint64
+		err  error
+		got  [4]uint64
+	}
+	all := make([]seen, n)
+	var started, done sync.WaitGroup
+	release := make(chan struct{})
+	started.Add(n)
+	done.Add(n)
+	for i := range all {
+		go func(s *seen) {
+			defer done.Done()
+			s.got[0] = goid()
+			started.Done()
+			// None of the n exits before every one has started, so all n are
+			// alive at once from here on.
+			<-release
+			s.got[1] = goid()
+			runtime.Gosched()
+			s.got[2] = goid()
+			s.want, s.err = stackID()
+			s.got[3] = goid()
+		}(&all[i])
+	}
+	started.Wait()
+	close(release)
+	done.Wait()
+
+	owner := map[uint64]int{}
+	for i, s := range all {
+		if s.err != nil {
+			t.Fatalf("goroutine %d: %v", i, s.err)
+		}
+		for k, g := range s.got {
+			if g != s.want {
+				t.Errorf("goroutine %d: read %d of goid was %d, runtime.Stack says %d", i, k, g, s.want)
+			}
+		}
+		if j, dup := owner[s.got[0]]; dup {
+			t.Errorf("goroutines %d and %d, alive at once, both read id %d", j, i, s.got[0])
+		}
+		owner[s.got[0]] = i
+	}
+	want, err := stackID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := goid(); g != want {
+		t.Errorf("the test's own goroutine read %d, runtime.Stack says %d", g, want)
+	}
+}
+
+// stackID is the calling goroutine's id as runtime.Stack prints it in the
+// header of its own trace ("goroutine 18 [running]:"), parsed here
+// independently of goid.
+func stackID() (uint64, error) {
+	buf := make([]byte, 128)
+	buf = buf[:runtime.Stack(buf, false)]
+	rest, ok := bytes.CutPrefix(buf, []byte("goroutine "))
+	if !ok {
+		return 0, fmt.Errorf("runtime.Stack header %q does not start with \"goroutine \"", buf)
+	}
+	num, _, ok := bytes.Cut(rest, []byte(" "))
+	if !ok {
+		return 0, fmt.Errorf("runtime.Stack header %q has no space after the id", buf)
+	}
+	id, err := strconv.ParseUint(string(num), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("runtime.Stack header %q: %w", buf, err)
+	}
+	return id, nil
 }
 
 // held counts critical sections entered, so a take-and-release the guard is
