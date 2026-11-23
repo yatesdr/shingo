@@ -117,7 +117,7 @@ func compareBands(b *strings.Builder, a, z []recordRun, v recordView, withWaits 
 	type tally struct{ waits, ticksA, ticksB, zeroB, lessB, moreB, sameB int }
 	kinds := map[string]*tally{}
 	var changed, noisyA, noisyB, verdicts, missing, waitShape int
-	fmt.Fprintf(b, "## A (%d runs) against B (%d runs)\n\n", len(a), len(z))
+	fmt.Fprintf(b, "## A (%d runs) against B (%d runs): %s\n\n", len(a), len(z), v.name)
 	for _, n := range names {
 		sa, ca := band(a, n)
 		sb, cb := band(z, n)
@@ -139,12 +139,24 @@ func compareBands(b *strings.Builder, a, z []recordRun, v recordView, withWaits 
 				continue
 			}
 			changed++
+			// Against the A view it is nearest to: the lines one has more
+			// of than the other (a multiset difference).
 			var ref *recordCell
+			var onlyA, onlyB []string
 			for _, r := range sa {
-				ref = r
-				break
+				oa, ob := lineDiff(r.file+v.ext, c.file+v.ext)
+				if ref == nil || len(oa)+len(ob) < len(onlyA)+len(onlyB) {
+					ref, onlyA, onlyB = r, oa, ob
+				}
 			}
 			fmt.Fprintf(b, "B NOT IN A %s\n  %s\n", n, firstDiff(ref.file+v.ext, c.file+v.ext))
+			fmt.Fprintf(b, "  nearest A view: %d lines only in A, %d only in B\n", len(onlyA), len(onlyB))
+			for _, l := range onlyA[:min(len(onlyA), 4)] {
+				fmt.Fprintf(b, "    A only: %s\n", clip(l))
+			}
+			for _, l := range onlyB[:min(len(onlyB), 4)] {
+				fmt.Fprintf(b, "    B only: %s\n", clip(l))
+			}
 		}
 		failA, failB := 0, 0
 		for _, c := range ca {
@@ -376,7 +388,7 @@ func writeRunDiffs(b *strings.Builder, runs []recordRun, v recordView) {
 	if len(runs) < 2 {
 		return
 	}
-	fmt.Fprintf(b, "## Same cell, run to run (%d runs)\n\n", len(runs))
+	fmt.Fprintf(b, "## Same cell, run to run (%d runs): %s\n\n", len(runs), v.name)
 	all := map[string]bool{}
 	for _, run := range runs {
 		for n := range run.cells {
@@ -613,4 +625,33 @@ type recordView struct {
 var recordViewKinds = []recordView{
 	{"transcripts (delivered order)", ".transcript", func(c recordCounts) string { return c.Transcript }},
 	{"orders views (by order)", ".orders", func(c recordCounts) string { return c.Orders }},
+}
+
+// lineDiff is the multiset difference of two files' lines: the lines a has
+// more of than z, and those z has more of than a. Section headers ("order:",
+// "no order:") are left out.
+func lineDiff(a, z string) (onlyA, onlyZ []string) {
+	ab, _ := os.ReadFile(a)
+	zb, _ := os.ReadFile(z)
+	n := map[string]int{}
+	for _, l := range strings.Split(string(ab), "\n") {
+		n[l]++
+	}
+	for _, l := range strings.Split(string(zb), "\n") {
+		n[l]--
+	}
+	for l, k := range n {
+		if l == "" || strings.HasSuffix(l, ":") {
+			continue
+		}
+		for ; k > 0; k-- {
+			onlyA = append(onlyA, l)
+		}
+		for ; k < 0; k++ {
+			onlyZ = append(onlyZ, l)
+		}
+	}
+	sort.Strings(onlyA)
+	sort.Strings(onlyZ)
+	return onlyA, onlyZ
 }
