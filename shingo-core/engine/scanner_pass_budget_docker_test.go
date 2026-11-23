@@ -62,6 +62,7 @@ func quiesce(t *testing.T, c *store.QueryCounter) {
 }
 
 func TestBudget_ScannerPass(t *testing.T) {
+	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -218,6 +219,7 @@ func c2cBudgetOutcomes(t *testing.T, db *store.DB, prefix string) {
 }
 
 func TestBudget_C2cQueuedGroupDrops(t *testing.T) {
+	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	sd := testdb.SetupStandardData(t, db)
 	grp, _, _ := c2cBudgetGroup(t, db, "BUD7", 2, 3)
@@ -274,6 +276,7 @@ func TestBudget_C2cQueuedGroupDrops(t *testing.T) {
 }
 
 func TestBudget_C2cGroupGateEvent(t *testing.T) {
+	t.Parallel()
 	const waiters = 4
 	db, cfg := testdb.OpenWithConfig(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -494,8 +497,10 @@ func c2cMeasureEvent(t *testing.T, f c2cGateEvent, what string, waiters int, emi
 }
 
 func TestBudget_C2cGateEventLikeForLike(t *testing.T) {
+	t.Parallel()
 	const waiters = 4
 	t.Run("releases-nobody", func(t *testing.T) {
+		t.Parallel()
 		f := c2cGateEventFixture(t, "LFLN", waiters)
 		testutil.MustNoErr(t, f.db.MoveBinClearingStaging(f.mouthBin, f.away.ID, false), "the mouth bin leaves")
 		quiesce(t, f.counter)
@@ -515,6 +520,7 @@ func TestBudget_C2cGateEventLikeForLike(t *testing.T) {
 		}
 	})
 	t.Run("releases-one", func(t *testing.T) {
+		t.Parallel()
 		f := c2cGateEventFixture(t, "LFLO", waiters)
 		first := f.occupants[0]
 		_, err := f.db.TerminalizeOrder(first.ID, protocol.StatusConfirmed, "lane 0's robot finished")
