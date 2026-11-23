@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -58,17 +63,7 @@ func TestProcessSetupPagePins(t *testing.T) {
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the process-setup page pins")
 	}
-	cmd := exec.Command(nodePath, filepath.Join("testdata", "process-setup-harness", "pins.js"))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("run the process-setup pins: %v\n%s", err, stderr.String())
-	}
-	var got map[string]string
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("decode the pins' output: %v\n%s", err, stderr.String())
-	}
+	got := runProcessSetupPinGroups(t, nodePath, filepath.Join("testdata", "process-setup-harness", "pins.js"))
 	if len(got) == 0 {
 		t.Fatal("the pins produced no golden; the harness has drifted")
 	}
@@ -124,6 +119,163 @@ func TestProcessSetupPagePins(t *testing.T) {
 		t.Errorf("%s: a golden no pin writes; delete it, or restore the pin that wrote it", filepath.Join(dir, e.Name()))
 	}
 	t.Logf("process-setup pins: %s", strings.Join(names, ", "))
+}
+
+// processSetupPinGroup is one group of pins.js (`node pins.js --groups`): the
+// goldens one pin writes. Reads, when set, is a pattern over golden names:
+// the goldens of the other groups the group reads on stdin (page-bugs.txt's
+// F22 block reads the refusal goldens).
+type processSetupPinGroup struct {
+	Name  string `json:"name"`
+	Reads string `json:"reads"`
+}
+
+// runProcessSetupPinGroups runs every group of pins.js in a node process of
+// its own and returns the goldens they print, merged. ONE PROCESS RAN THEM ALL
+// IN SERIES until 2026-11-23, on one core (31 s alone, 47-50 s in this
+// package); the groups share nothing but the boot preview, which each runs for
+// itself, and the refusal goldens, which are handed to their reader here.
+//
+// At most GOMAXPROCS groups run at once. A reading group starts with the rest,
+// outside that bound (it blocks on its stdin, not a core, once its own pins are
+// done), and is handed what the other groups printed once they have all
+// finished, so a reader can never wait on a group that waits for a slot. A
+// golden printed by two groups, a group that prints none, and a group that
+// fails are each an error naming the group.
+func runProcessSetupPinGroups(t *testing.T, nodePath, script string) map[string]string {
+	t.Helper()
+	var stderr bytes.Buffer
+	list := exec.Command(nodePath, script, "--groups")
+	list.Stderr = &stderr
+	raw, err := list.Output()
+	if err != nil {
+		t.Fatalf("list the process-setup pin groups: %v\n%s", err, stderr.String())
+	}
+	var groups []processSetupPinGroup
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		t.Fatalf("decode the pin groups: %v\n%s", err, raw)
+	}
+	if len(groups) == 0 {
+		t.Fatal("pins.js lists no group; the harness has drifted")
+	}
+
+	type result struct {
+		out    map[string]string
+		err    error
+		stderr string
+	}
+	reads := make([]*regexp.Regexp, len(groups))
+	for i, g := range groups {
+		if g.Reads == "" {
+			continue
+		}
+		re, err := regexp.Compile(g.Reads)
+		if err != nil {
+			t.Fatalf("pin group %s reads %q: %v", g.Name, g.Reads, err)
+		}
+		reads[i] = re
+	}
+	results := make([]result, len(groups))
+	// run runs group i. feed, when given, writes the group's stdin and closes
+	// it; its error counts only when the group itself succeeded (a group that
+	// died first closes the pipe under the feed, which is not the news).
+	run := func(i int, feed func(io.Writer) error) {
+		cmd := exec.Command(nodePath, script, "--group", groups[i].Name)
+		var e bytes.Buffer
+		cmd.Stderr = &e
+		var fed chan error
+		if feed != nil {
+			w, err := cmd.StdinPipe()
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			fed = make(chan error, 1)
+			go func() {
+				err := feed(w)
+				if cerr := w.Close(); err == nil {
+					err = cerr
+				}
+				fed <- err
+			}()
+		}
+		raw, err := cmd.Output()
+		if fed != nil {
+			if ferr := <-fed; err == nil && ferr != nil {
+				err = fmt.Errorf("hand it the goldens it reads: %w", ferr)
+			}
+		}
+		r := result{err: err, stderr: e.String()}
+		if err == nil {
+			r.err = json.Unmarshal(raw, &r.out)
+		}
+		results[i] = r
+	}
+
+	slots := make(chan struct{}, runtime.GOMAXPROCS(0))
+	var writers, readers sync.WaitGroup
+	for i := range groups {
+		if reads[i] != nil {
+			continue
+		}
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			run(i, nil)
+		}()
+	}
+	for i := range groups {
+		if reads[i] == nil {
+			continue
+		}
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			run(i, func(w io.Writer) error {
+				writers.Wait()
+				given := map[string]string{}
+				for j := range results {
+					// A reader's slot is still being written: skip it before reading it.
+					if reads[j] != nil {
+						continue
+					}
+					for name, text := range results[j].out {
+						if reads[i].MatchString(name) {
+							given[name] = text
+						}
+					}
+				}
+				return json.NewEncoder(w).Encode(given)
+			})
+		}()
+	}
+	writers.Wait()
+	readers.Wait()
+
+	got := map[string]string{}
+	from := map[string]string{}
+	for i, r := range results {
+		g := groups[i].Name
+		if r.err != nil {
+			t.Errorf("pin group %s: %v\n%s", g, r.err, r.stderr)
+			continue
+		}
+		if len(r.out) == 0 {
+			t.Errorf("pin group %s printed no golden; the harness has drifted", g)
+		}
+		for name, text := range r.out {
+			if other, ok := from[name]; ok {
+				t.Errorf("%s is printed by pin groups %s and %s; a golden has one writer", name, other, g)
+			}
+			got[name], from[name] = text, g
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+	return got
 }
 
 // firstDiffLine finds the first line two texts disagree on, 1-based, with

@@ -537,15 +537,19 @@ resume('ruling 5: + New style from Recipe One, its CATID refused, then pressed a
 });
 // ── F22: no refused write leaves its button silent ──────────────────────────
 //
-// Read off the refusal goldens this run wrote (p0-page.js): every block of a
-// refused write shows new text, a notice or a status. The one exception is a
-// stale 409 on Save style, which re-previews and redraws the bar.
-function silentRefusals() {
+// Read off the refusal goldens (p0-page.js), as goldensRead hands them over:
+// every block of a refused write shows new text, a notice or a status. The one
+// exception is a stale 409 on Save style, which re-previews and redraws the
+// bar. Given no refusal golden it throws: a check with nothing to read is not
+// an "ok".
+function silentRefusals(goldens) {
     const out = [];
-    for (const name of Object.keys(T.out).filter(n => /^refusals-/.test(n)).sort()) {
+    const names = Object.keys(goldens).filter(n => /^refusals-/.test(n)).sort();
+    if (!names.length) throw new Error('F22: no refusal golden to read; the refusal groups did not run or were not handed over');
+    for (const name of names) {
         let head = '', said = true, act = '';
         const flush = () => { if (head && !said && !/stale:true/.test(head)) out.push(name + ' ' + act + ': ' + head.replace(/^### /, '')); };
-        for (const l of T.out[name].split('\n')) {
+        for (const l of goldens[name].split('\n')) {
             if (/^## /.test(l)) { flush(); head = ''; act = l.slice(3); continue; }
             if (/^### /.test(l)) { flush(); head = l; said = false; continue; }
             if (/new text: (?!none)|notice: |status "/.test(l)) said = true;
@@ -745,7 +749,7 @@ async function run(t) {
         }
         for (const c of page.calls) T.SEEN.push({ site: c.site, stack: c.stack, golden: 'page-bugs.txt' });
     }
-    const silent = silentRefusals();
+    const silent = silentRefusals(await T.goldensRead());
     L.push('', '## F22: every refused write says something (the refusal goldens; a stale 409 re-previews)');
     L.push(!silent.length ? 'ok   no refusal block leaves the page silent'
         : 'BUG  no refusal block leaves the page silent: ' + silent.join(' | '));

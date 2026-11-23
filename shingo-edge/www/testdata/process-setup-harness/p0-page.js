@@ -36,7 +36,7 @@
 const fs = require('fs');
 const path = require('path');
 
-let T = null;               // pins.js's helpers: see run()
+let T = null;               // pins.js's helpers: see groups()
 const MSG = 'the Edge refused it';
 const PAGE = path.join(__dirname, '..', '..', 'static', 'js', 'pages', 'processes-desktop.js');
 
@@ -641,55 +641,58 @@ function specOf(title, d, more) {
     return Object.assign({ title: title }, d, { page: d.page && d.page() }, more || {});
 }
 
-async function pinRequests() {
-    await requests('requests-catid-strip.txt', [
-        ['Settings\' Health: Start changeover to Style B (one tap, no sheet)', D.chStart],
-        ['Pin to Style B (the suggestion), then the sheet\'s Pin', D.chPin],
-        ['the chooser\'s Pin, on its first option (Style A), then the sheet\'s Pin', D.chPinPick],
-        ['Count Slot2, then the sheet\'s Count', D.chRepoint],
-        ['Charge: its preview, then the sheet\'s Charge', D.chCharge],
-        ['Write off, then the sheet\'s Write off', D.chWriteOff],
-    ], ['Press A\'s Settings tab, its Health section drawn from /api/processes/1/catid-health: one item of each',
-        'kind that carries a verb (S4: the items open inside the process). Each act on a fresh tab.']);
-    await requests('requests-style-menu.txt', [
-        ['Style B ⋯ › Rename: Style B2', D.styleRename],
-        ['Style A ⋯ › Expected CATID: CAT-A2', D.styleCatid],
-        ['Style A ⋯ › Clone, the name as it opens', D.styleClone],
-        ['Style B ⋯ › Mark as running (no changeover open)', D.styleRunning],
-        ['Style B ⋯ › Mark as running with a changeover to Style B open (the sheet reads the gate first)', D.styleRunningOpen],
-        ['Style B ⋯ › Delete', D.styleDelete],
-    ]);
-    await requests('requests-station-counters.txt', [
-        ['Settings › + Add station counter: Station 2 on S2.Count', D.scNew],
-        ['Settings › Station 1 › Edit: Station 1b', D.scEdit],
-        ['Settings › Position settings › Counted at › + Add a position: POS_A1 (at Station 1, the only counter), then Save settings', D.scCountedAt],
-        ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count), then Save settings', D.scCountedAtNew],
-        ['Settings › Position settings › Counted at › + Add a position: POS_A1 and POS_A2 in one pick, then Save settings', D.scCountedAtTwo],
-        ['With two counters: POS_A1 and POS_A2 in one pick, Station 2 chosen on POS_A1’s row, then Save settings', D.scCountedAtTwoOfTwo],
-        ['Settings › Station 1 › Remove', D.scDelete],
-    ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']);
-    await requests('requests-positions.txt', [
-        ['Settings on Press A, two screens (Screen A, Unloader A) and POS_B1-POS_B4 on none: the screen lines', D.scrLines, scrLines],
-        ['…Put them on Unloader A, the second screen: the lines', D.posLooseOntoSecond, scrLines],
-        ['…Put them on Unloader A, then Save (Unloader A\'s write takes POS_B1-POS_B4)', D.posLooseOntoSecondSave],
-        ['Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)', D.posAdd],
-        ['Settings › Positions and routing › the Positions box: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
-        ['Settings › Positions and routing on a one-screen Press A: POS_A11 off and Put them on Screen A, Save (the move is not asked about)', D.posMoveAndUntick],
-        ['Settings › Positions and routing › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
-    ]);
-    await requests('requests-settings-misc.txt', [
-        ['Settings › Sync from Core', D.sync],
-        ['Settings › Delete process: the name typed, then Delete Press A', D.deleteProcess],
-        ['the list › Add group: Welders 2', D.addGroup],
-    ]);
-    await requests('requests-presets.txt', [
-        ['Recipes › Recipe One ⋯ › Rename: Recipe Uno', D.presetRename],
-        ['Recipes › Recipe One ⋯ › Archive', D.presetArchive],
-        ['Recipes › Apply to parts…: tick Style B (its preview), each "which part?" answered with its first part', D.applyPreview,
-            page => '-- apply OK ' + JSON.stringify(T.text(okButton(page).innerHTML)) + (okButton(page).disabled ? ' disabled' : ' enabled')],
-        ['…then Save to 1 part', D.applySave],
-    ]);
-    await pinReads();
+// THE REQUEST GOLDENS, a group each (pins.js groups()), in the order a whole
+// run takes them: [golden, acts, head].
+function requestPins() {
+    return [
+        ['requests-catid-strip.txt', [
+            ['Settings\' Health: Start changeover to Style B (one tap, no sheet)', D.chStart],
+            ['Pin to Style B (the suggestion), then the sheet\'s Pin', D.chPin],
+            ['the chooser\'s Pin, on its first option (Style A), then the sheet\'s Pin', D.chPinPick],
+            ['Count Slot2, then the sheet\'s Count', D.chRepoint],
+            ['Charge: its preview, then the sheet\'s Charge', D.chCharge],
+            ['Write off, then the sheet\'s Write off', D.chWriteOff],
+        ], ['Press A\'s Settings tab, its Health section drawn from /api/processes/1/catid-health: one item of each',
+            'kind that carries a verb (S4: the items open inside the process). Each act on a fresh tab.']],
+        ['requests-style-menu.txt', [
+            ['Style B ⋯ › Rename: Style B2', D.styleRename],
+            ['Style A ⋯ › Expected CATID: CAT-A2', D.styleCatid],
+            ['Style A ⋯ › Clone, the name as it opens', D.styleClone],
+            ['Style B ⋯ › Mark as running (no changeover open)', D.styleRunning],
+            ['Style B ⋯ › Mark as running with a changeover to Style B open (the sheet reads the gate first)', D.styleRunningOpen],
+            ['Style B ⋯ › Delete', D.styleDelete],
+        ]],
+        ['requests-station-counters.txt', [
+            ['Settings › + Add station counter: Station 2 on S2.Count', D.scNew],
+            ['Settings › Station 1 › Edit: Station 1b', D.scEdit],
+            ['Settings › Position settings › Counted at › + Add a position: POS_A1 (at Station 1, the only counter), then Save settings', D.scCountedAt],
+            ['Settings › Position settings › Counted at › + Add a position: POS_A2, New station counter… (Station 3 on S3.Count), then Save settings', D.scCountedAtNew],
+            ['Settings › Position settings › Counted at › + Add a position: POS_A1 and POS_A2 in one pick, then Save settings', D.scCountedAtTwo],
+            ['With two counters: POS_A1 and POS_A2 in one pick, Station 2 chosen on POS_A1’s row, then Save settings', D.scCountedAtTwoOfTwo],
+            ['Settings › Station 1 › Remove', D.scDelete],
+        ], ['Settings with one station counter on Press A (Station 1, id 51), every position countable.']],
+        ['requests-positions.txt', [
+            ['Settings on Press A, two screens (Screen A, Unloader A) and POS_B1-POS_B4 on none: the screen lines', D.scrLines, scrLines],
+            ['…Put them on Unloader A, the second screen: the lines', D.posLooseOntoSecond, scrLines],
+            ['…Put them on Unloader A, then Save (Unloader A\'s write takes POS_B1-POS_B4)', D.posLooseOntoSecondSave],
+            ['Settings › Positions and routing › the Positions box: NEW_1, Save (it goes on Screen A, the first)', D.posAdd],
+            ['Settings › Positions and routing › the Positions box: POS_A11 off, Save, and Save again (the impact is read first)', D.posUntick],
+            ['Settings › Positions and routing on a one-screen Press A: POS_A11 off and Put them on Screen A, Save (the move is not asked about)', D.posMoveAndUntick],
+            ['Settings › Positions and routing › Loader windows › Make a screen on Press A (LDR_1)', D.bindLoader],
+        ]],
+        ['requests-settings-misc.txt', [
+            ['Settings › Sync from Core', D.sync],
+            ['Settings › Delete process: the name typed, then Delete Press A', D.deleteProcess],
+            ['the list › Add group: Welders 2', D.addGroup],
+        ]],
+        ['requests-presets.txt', [
+            ['Recipes › Recipe One ⋯ › Rename: Recipe Uno', D.presetRename],
+            ['Recipes › Recipe One ⋯ › Archive', D.presetArchive],
+            ['Recipes › Apply to parts…: tick Style B (its preview), each "which part?" answered with its first part', D.applyPreview,
+                page => '-- apply OK ' + JSON.stringify(T.text(okButton(page).innerHTML)) + (okButton(page).disabled ? ' disabled' : ' enabled')],
+            ['…then Save to 1 part', D.applySave],
+        ]],
+    ];
 }
 
 // The reads the tab clicks, the rail's re-read, the part popover and the
@@ -766,79 +769,84 @@ async function pinReads() {
 //     second counter (:4825), the mint a second mint.
 //   - "Creating…" stays on Add process's status line on a dead Edge (:6781).
 //   - Apply retries a plain 409 as if it were stale (desktop-bodies.js:431).
-async function pinRefusals() {
+//
+// THE REFUSAL GOLDENS, a group each (pins.js groups()), in the order a whole
+// run takes them: [golden, its specs], the specs built when the group runs.
+function refusalPins() {
     const U = T.DRIVE;
-    await refusals('refusals-flow.txt', [
-        specOf('flow edit: the debounced preview (POS_A5 source, POS_A1 key route)', U.flowEdit, { previews: true }),
-        specOf('Save style', U.flowSave),
-    ]);
-    await refusals('refusals-style-create.txt', [specOf('+ New style with no recipe (Style C, CAT-C)', U.styleCreate, { again: true })]);
-    await refusals('refusals-flow-mint.txt', [specOf('+ New style from Recipe One, a part per slot and a CATID', U.mint, { again: true })]);
-    await refusals('refusals-add-process.txt', [specOf('Add process (its five writes: the process, its screen, its positions, its routing set, its part set)', U.addProcess, { again: true })]);
-    await refusals('refusals-settings-save.txt', [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]);
-    await refusals('refusals-screen-sheet.txt', [
-        specOf('Edit Screen A (the note)', U.screenEdit, { again: true }),
-        specOf('+ Add a screen on Press A with no screen (Screen C, taking its positions)', U.screenAdd, { again: true }),
-        specOf('the Positions box on Settings (POS_A11 off, NEW_3 on), Save', U.screenPositions),
-    ]);
-    await refusals('refusals-part-set.txt', [
-        specOf('Part popover: + PART-12 (on a fresh page)', U.partPopAdd),
-        specOf('Part popover: × PART-11 (on a fresh page)', U.partPopDrop),
-        specOf('Settings › Parts: + PART-13', U.partSettingsAdd),
-        specOf('Settings › Parts: × PART-11', U.partSettingsDrop),
-    ]);
-    await refusals('refusals-routing-set.txt', [
-        specOf('Routing set: add SRC_2 (POST)', U.routingAddNew),
-        specOf('Routing set: add DST_9 (PATCH adopts)', U.routingAdopt),
-        specOf('Routing set: × STG_3 (DELETE)', U.routingDrop),
-        specOf('Routing set: click STG_1 (DELETE)', U.routingToggleOff),
-        specOf('Routing set: Turn all 1 on (Staging)', U.routingAllOn),
-    ]);
-    await refusals('refusals-recipe-create.txt', [
-        specOf('Save as recipe… on Style A', U.recipeFromStyle, { again: true }),
-        specOf('Save recipe… on a new draft (cells)', U.recipeCells, { again: true }),
-        specOf('Save recipe… with groups', U.recipeGrouped, { again: true }),
-    ]);
-    await refusals('refusals-catid-strip.txt', [
-        specOf('Start changeover to Style B', D.chStart),
-        specOf('Pin to Style B', D.chPin, { again: true }),
-        specOf('the chooser\'s Pin (Style A)', D.chPinPick, { again: true }),
-        specOf('Count Slot2', D.chRepoint, { again: true }),
-        specOf('Charge: the sheet its preview opens', D.chChargeAsk),
-        specOf('Charge: the sheet\'s Charge', D.chCharge, { again: true, refuse: /mode=charge/ }),
-        specOf('Write off', D.chWriteOff, { again: true }),
-    ]);
-    await refusals('refusals-style-menu.txt', [
-        specOf('Rename Style B', D.styleRename, { again: true }),
-        specOf('Expected CATID on Style A', D.styleCatid, { again: true }),
-        specOf('Clone Style A', D.styleClone, { again: true }),
-        specOf('Mark Style B as running', D.styleRunning, { again: true }),
-        specOf('Delete Style B', D.styleDelete, { again: true }),
-    ]);
-    await refusals('refusals-station-counters.txt', [
-        specOf('+ Add station counter', D.scNew, { again: true }),
-        specOf('Edit Station 1', D.scEdit, { again: true }),
-        specOf('Counted at › + Add: POS_A1, Save settings', D.scCountedAt),
-        specOf('Counted at › + Add: POS_A2, New station counter…, Save settings', D.scCountedAtNew),
-        specOf('Counted at › + Add: POS_A1 and POS_A2 in one pick, Save settings (one write)', D.scCountedAtTwo),
-        specOf('Remove Station 1', D.scDelete, { again: true }),
-    ]);
-    await refusals('refusals-positions.txt', [
-        specOf('the Positions box: NEW_1, Save', D.posAdd),
-        specOf('the Positions box: POS_A11 off, Save, its list write refused', D.posUntick, { refuse: /^PUT / }),
-        specOf('Make a screen for LDR_1', D.bindLoader),
-    ]);
-    await refusals('refusals-settings-misc.txt', [
-        specOf('Sync from Core', D.sync),
-        specOf('Delete process', D.deleteProcess, { again: true }),
-        specOf('Add group', D.addGroup, { again: true }),
-    ]);
-    await refusals('refusals-presets.txt', [
-        specOf('Rename Recipe One', D.presetRename, { again: true }),
-        specOf('Archive Recipe One', D.presetArchive, { again: true }),
-        specOf('Apply: the tick\'s preview (and each pick\'s)', D.applyPreview),
-        specOf('Apply: Save to 1 part', D.applySave, { again: true }),
-    ]);
+    return [
+        ['refusals-flow.txt', () => [
+            specOf('flow edit: the debounced preview (POS_A5 source, POS_A1 key route)', U.flowEdit, { previews: true }),
+            specOf('Save style', U.flowSave),
+        ]],
+        ['refusals-style-create.txt', () => [specOf('+ New style with no recipe (Style C, CAT-C)', U.styleCreate, { again: true })]],
+        ['refusals-flow-mint.txt', () => [specOf('+ New style from Recipe One, a part per slot and a CATID', U.mint, { again: true })]],
+        ['refusals-add-process.txt', () => [specOf('Add process (its five writes: the process, its screen, its positions, its routing set, its part set)', U.addProcess, { again: true })]],
+        ['refusals-settings-save.txt', () => [specOf('Save settings (U0\'s act: five writes)', U.settingsSave)]],
+        ['refusals-screen-sheet.txt', () => [
+            specOf('Edit Screen A (the note)', U.screenEdit, { again: true }),
+            specOf('+ Add a screen on Press A with no screen (Screen C, taking its positions)', U.screenAdd, { again: true }),
+            specOf('the Positions box on Settings (POS_A11 off, NEW_3 on), Save', U.screenPositions),
+        ]],
+        ['refusals-part-set.txt', () => [
+            specOf('Part popover: + PART-12 (on a fresh page)', U.partPopAdd),
+            specOf('Part popover: × PART-11 (on a fresh page)', U.partPopDrop),
+            specOf('Settings › Parts: + PART-13', U.partSettingsAdd),
+            specOf('Settings › Parts: × PART-11', U.partSettingsDrop),
+        ]],
+        ['refusals-routing-set.txt', () => [
+            specOf('Routing set: add SRC_2 (POST)', U.routingAddNew),
+            specOf('Routing set: add DST_9 (PATCH adopts)', U.routingAdopt),
+            specOf('Routing set: × STG_3 (DELETE)', U.routingDrop),
+            specOf('Routing set: click STG_1 (DELETE)', U.routingToggleOff),
+            specOf('Routing set: Turn all 1 on (Staging)', U.routingAllOn),
+        ]],
+        ['refusals-recipe-create.txt', () => [
+            specOf('Save as recipe… on Style A', U.recipeFromStyle, { again: true }),
+            specOf('Save recipe… on a new draft (cells)', U.recipeCells, { again: true }),
+            specOf('Save recipe… with groups', U.recipeGrouped, { again: true }),
+        ]],
+        ['refusals-catid-strip.txt', () => [
+            specOf('Start changeover to Style B', D.chStart),
+            specOf('Pin to Style B', D.chPin, { again: true }),
+            specOf('the chooser\'s Pin (Style A)', D.chPinPick, { again: true }),
+            specOf('Count Slot2', D.chRepoint, { again: true }),
+            specOf('Charge: the sheet its preview opens', D.chChargeAsk),
+            specOf('Charge: the sheet\'s Charge', D.chCharge, { again: true, refuse: /mode=charge/ }),
+            specOf('Write off', D.chWriteOff, { again: true }),
+        ]],
+        ['refusals-style-menu.txt', () => [
+            specOf('Rename Style B', D.styleRename, { again: true }),
+            specOf('Expected CATID on Style A', D.styleCatid, { again: true }),
+            specOf('Clone Style A', D.styleClone, { again: true }),
+            specOf('Mark Style B as running', D.styleRunning, { again: true }),
+            specOf('Delete Style B', D.styleDelete, { again: true }),
+        ]],
+        ['refusals-station-counters.txt', () => [
+            specOf('+ Add station counter', D.scNew, { again: true }),
+            specOf('Edit Station 1', D.scEdit, { again: true }),
+            specOf('Counted at › + Add: POS_A1, Save settings', D.scCountedAt),
+            specOf('Counted at › + Add: POS_A2, New station counter…, Save settings', D.scCountedAtNew),
+            specOf('Counted at › + Add: POS_A1 and POS_A2 in one pick, Save settings (one write)', D.scCountedAtTwo),
+            specOf('Remove Station 1', D.scDelete, { again: true }),
+        ]],
+        ['refusals-positions.txt', () => [
+            specOf('the Positions box: NEW_1, Save', D.posAdd),
+            specOf('the Positions box: POS_A11 off, Save, its list write refused', D.posUntick, { refuse: /^PUT / }),
+            specOf('Make a screen for LDR_1', D.bindLoader),
+        ]],
+        ['refusals-settings-misc.txt', () => [
+            specOf('Sync from Core', D.sync),
+            specOf('Delete process', D.deleteProcess, { again: true }),
+            specOf('Add group', D.addGroup, { again: true }),
+        ]],
+        ['refusals-presets.txt', () => [
+            specOf('Rename Recipe One', D.presetRename, { again: true }),
+            specOf('Archive Recipe One', D.presetArchive, { again: true }),
+            specOf('Apply: the tick\'s preview (and each pick\'s)', D.applyPreview),
+            specOf('Apply: Save to 1 part', D.applySave, { again: true }),
+        ]],
+    ];
 }
 
 // ── the sheet stack ──────────────────────────────────────────────────────
@@ -1317,13 +1325,19 @@ function sitesTable(seen) {
         via.length + ' sheetSubmit( call sites\n';
 }
 
-async function run(t) {
+// groups is these pins as pins.js's groups(), in the order a whole run takes
+// them: the request goldens, the reads, the refusal goldens, the sheet stack,
+// the door bugs. A group's name is its golden's, less .txt.
+function groups(t) {
     T = t;
-    await pinRequests();
-    await pinRefusals();
-    T.lastPage = await T.openPage();
-    await pinSheetStack();
-    await pinDoorBugs();
+    const name = golden => golden.replace(/\.txt$/, '');
+    return [
+        ...requestPins().map(([golden, acts, head]) => ({ name: name(golden), run: () => requests(golden, acts, head) })),
+        { name: 'requests-reads', run: pinReads },
+        ...refusalPins().map(([golden, specs]) => ({ name: name(golden), run: () => refusals(golden, specs()) })),
+        { name: 'sheet-stack', run: async () => { T.lastPage = await T.openPage(); await pinSheetStack(); } },
+        { name: 'door-bugs', run: pinDoorBugs },
+    ];
 }
 
-module.exports = { run, sitesTable, noticeLines };
+module.exports = { groups, sitesTable, noticeLines };

@@ -4,9 +4,11 @@
 //
 // Run by www/processes_desktop_setup_pins_test.go, which compares what this
 // prints against www/testdata/process-setup-page/*. It prints ONE JSON object,
-// golden file name -> text, and nothing else on stdout. `node pins.js --sites`
-// prints instead the table of every fetch( site in the page and the goldens
-// that reach it (no golden: its line numbers move with every edit).
+// golden file name -> text, and nothing else on stdout: every golden, or with
+// `--group <name>` one group's (see groups() below; `--groups` lists them).
+// `node pins.js --sites` prints instead the table of every fetch( site in the
+// page and the goldens that reach it (no golden: its line numbers move with
+// every edit).
 //
 // WHAT THIS PINS IS WHAT THE PAGE DOES ON TOP OF THE MODEL: which options a
 // picker offers, what the positions table says in each cell, which settings
@@ -69,7 +71,16 @@ function findingsFor(body) {
 // carries no last_seen_at; the Setup pins (cold-start.js) take it away where
 // they mean a screen never opened.
 for (const st of FX.page.stations) if (!st.last_seen_at) st.last_seen_at = '2026-11-11T14:05:00';
-const out = {};
+// Golden file name -> text. A golden has ONE WRITER: a second write throws,
+// because a group (see groups()) prints the goldens it wrote, and a golden two
+// pins wrote would be one pin's text in a whole run and the other's alone.
+const out = new Proxy({}, {
+    set(o, k, v) {
+        if (Object.prototype.hasOwnProperty.call(o, k)) throw new Error(String(k) + ' is written twice; a golden has one writer');
+        o[k] = v;
+        return true;
+    },
+});
 
 // ── the fixture's server ─────────────────────────────────────────────────────
 const EMPTY_COMPOSER = { styles: null, routing: [], cell: { positions: [], groups: {} } };
@@ -922,31 +933,100 @@ function freeModeUsed(page) { return (page.S.model.cells.POS_A11 || {}).mode; }
 
 const P0 = require('./p0-page.js');
 
+// ── the groups ───────────────────────────────────────────────────────────────
+//
+// A RUN IS GROUPS, each the goldens one pin writes, in this order. No group
+// reads what another wrote but two things, each handed over by name:
+//   - the boot preview (actOpenProcess), whose body every request and refusal
+//     golden names instead of repeating: a group run alone runs
+//     actOpenProcess first, and prints only the goldens it wrote itself;
+//   - the refusal goldens, which page-bugs.txt's F22 block reads (`reads`, a
+//     pattern over golden names): run whole, it reads this run's; run alone,
+//     the ones given it on stdin, as one JSON object of name -> text.
+// `node pins.js --groups` prints the groups, [{name, reads?}], and
+// `node pins.js --group <name>` runs one: processes_desktop_setup_pins_test.go
+// runs every group in a node process of its own, at once, and hands each
+// reader what the other groups printed. With neither flag every group runs
+// here, in this order (and `--sites` needs that: its table is over every
+// golden).
+let stdinGoldens = null;
+// goldensRead is the goldens a reading group may read: this run's when the run
+// is whole, else those on stdin, read once.
+function goldensRead() {
+    if (!GROUP) return Promise.resolve(Object.assign({}, out));
+    if (!stdinGoldens) {
+        stdinGoldens = new Promise((resolve, reject) => {
+            let s = '';
+            process.stdin.setEncoding('utf8');
+            process.stdin.on('data', d => { s += d; });
+            process.stdin.on('end', () => { try { resolve(JSON.parse(s || '{}')); } catch (e) { reject(e); } });
+            process.stdin.on('error', reject);
+        });
+    }
+    return stdinGoldens;
+}
+const S4_PAGE_BUGS = require('./s4-page-bugs.js');
+const COLD_START = require('./cold-start.js');
+const S4_TABLE = require('./s4-table.js');
+const WORK_LISTS = require('./work-lists.js');
+function groups() {
+    const setCurrent = n => { CURRENT = n; };
+    return [
+        { name: 'requests-open-process', run: actOpenProcess },
+        { name: 'picker-options', run: pinPickers },
+        { name: 'positions-table', run: pinTable },
+        { name: 'advanced', run: pinAdvanced },
+        { name: 'requests-flow', run: actFlow },
+        { name: 'requests-style-create', run: actStyleCreate },
+        { name: 'requests-flow-mint', run: actMint },
+        { name: 'requests-add-process', run: actAddProcess },
+        { name: 'requests-settings-save', run: actSettings },
+        { name: 'requests-screen-sheet', run: actScreenSheet },
+        { name: 'requests-part-set', run: actPartSet },
+        { name: 'requests-routing-set', run: actRouting },
+        { name: 'requests-recipe-create', run: actRecipe },
+        ...P0.groups({
+            H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, stSave, pickRow, pickerRow, pickRecipe, typeSetting, decode, text,
+            bootPreview: () => bootPreview, setCurrent, SEEN,
+        }),
+        {
+            name: 'page-bugs', reads: '^refusals-',
+            run: () => S4_PAGE_BUGS.run({ FX, out, DRIVE, openPage, npk, setPick, stSave, holdRows, typeSetting, text, setCurrent, SEEN, goldensRead }),
+        },
+        {
+            name: 'cold-start',
+            run: () => COLD_START.run({
+                H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, pickerRow, typeSetting, decode, text,
+                setCurrent, SEEN,
+            }),
+        },
+        { name: 'table-bugs', run: () => S4_TABLE.run({ out, openPage, pickRow, pickChip }) },
+        { name: 'work-lists', run: () => WORK_LISTS.run({ out, openPage, decode, text }) },
+    ];
+}
+const argAfter = flag => { const i = process.argv.indexOf(flag); return i < 0 ? null : (process.argv[i + 1] || ''); };
+const GROUP = argAfter('--group');
+
 (async () => {
-    await actOpenProcess();
-    await pinPickers();
-    await pinTable();
-    await pinAdvanced();
-    await actFlow();
-    await actStyleCreate();
-    await actMint();
-    await actAddProcess();
-    await actSettings();
-    await actScreenSheet();
-    await actPartSet();
-    await actRouting();
-    await actRecipe();
-    await P0.run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, stSave, pickRow, pickerRow, pickRecipe, typeSetting, decode, text,
-        bootPreview: () => bootPreview, setCurrent: n => { CURRENT = n; }, SEEN,
-    });
-    await require('./s4-page-bugs.js').run({ FX, out, DRIVE, openPage, npk, setPick, stSave, holdRows, typeSetting, text, setCurrent: n => { CURRENT = n; }, SEEN });
-    await require('./cold-start.js').run({
-        H, FX, out, DRIVE, openPage, actLines, fmtCalls, npk, setPick, sheetOK, pickRow, pickerRow, typeSetting, decode, text,
-        setCurrent: n => { CURRENT = n; }, SEEN,
-    });
-    await require('./s4-table.js').run({ out, openPage, pickRow, pickChip });
-    await require('./work-lists.js').run({ out, openPage, decode, text });
+    const all = groups();
+    if (process.argv.includes('--groups')) {
+        process.stdout.write(JSON.stringify(all.map(g => (g.reads ? { name: g.name, reads: g.reads } : { name: g.name }))));
+        return;
+    }
+    if (GROUP !== null) {
+        if (process.argv.includes('--sites')) throw new Error('--sites is over every golden; it takes no --group');
+        const g = all.find(x => x.name === GROUP);
+        if (!g) throw new Error('no group ' + JSON.stringify(GROUP) + '; --groups lists them');
+        if (g.run !== actOpenProcess) await actOpenProcess();
+        const before = new Set(Object.keys(out));
+        await g.run();
+        const mine = {};
+        for (const k of Object.keys(out)) if (!before.has(k)) mine[k] = out[k];
+        if (!Object.keys(mine).length) throw new Error('group ' + GROUP + ' wrote no golden');
+        process.stdout.write(JSON.stringify(mine));
+        return;
+    }
+    for (const g of all) await g.run();
     if (process.argv.includes('--sites')) {
         process.stdout.write(P0.sitesTable(SEEN));
         return;
