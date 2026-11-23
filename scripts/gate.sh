@@ -171,6 +171,10 @@ for _m in $MODULES; do
   esac
 done
 [ -n "${MODULES// /}" ] || { echo "gate.sh: empty module list" >&2; usage; }
+case "${GATE_DOCKER_P:-}" in
+  "") ;;
+  0|*[!0-9]*) echo "gate.sh: GATE_DOCKER_P must be a positive integer, got '$GATE_DOCKER_P'" >&2; usage ;;
+esac
 # The scope the sentence names: empty when every module ran.
 gate_scope=""
 [ "$(echo $MODULES)" = "$ALL_MODULES" ] || gate_scope="$(echo $MODULES)"
@@ -1265,7 +1269,13 @@ docker_packages() {
   done | sed 's#/[^/]*$##' | sort -u | wc -l | tr -d ' '
 }
 
+#
+# GATE_DOCKER_P, when set, is the -p instead (checked at startup: a positive
+# integer or a usage error). It exists for the -p series a timing study runs,
+# and the gate sentence names it, so a run at a hand-set -p is never read as a
+# default one. scripts/check-docker-order.sh pins it.
 docker_p() {
+  if [ -n "${GATE_DOCKER_P:-}" ]; then echo "$GATE_DOCKER_P"; return; fi
   local cores
   cores="$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
   case "$cores" in *[!0-9]*|"") cores=4 ;; esac
@@ -1689,7 +1699,8 @@ gate_sentence() {
              # `full` says what put them in scope; `gate.sh docker` runs them
              # by name and needs no qualifier.
              if [ -n "$gate_unscoped" ]; then s="$s (unscoped)"
-             elif [ -n "$scope_against" ]; then s="$s (scoped against $scope_against)"; fi ;;
+             elif [ -n "$scope_against" ]; then s="$s (scoped against $scope_against)"; fi
+             [ -n "${GATE_DOCKER_P:-}" ] && s="$s at -p $GATE_DOCKER_P (GATE_DOCKER_P)" ;;
     skipped) : ;;
   esac
   [ -n "$s" ] || { echo "Gate sentence: (nothing ran)"; return; }
@@ -1741,6 +1752,7 @@ case "${1:-all}" in
     # The order each docker module's packages would be handed to go test
     # (docker_order), one line per module; reads only the steps log.
     for m in $(docker_modules); do echo "$m: $(docker_order "$m")"; done
+    echo "docker -p: $(docker_p)${GATE_DOCKER_P:+ (GATE_DOCKER_P)}"
     exit 0 ;;
   docker) if timed step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)

@@ -82,5 +82,18 @@ want "the last 5 clean runs" "$TMP/window.log" shingocore/store
 
 GATE_DOCKER_ORDER_LOG="$TMP/failed.log" want "the pinned snapshot" "$TMP/one.log" shingocore/www
 
-[ "$fail" -eq 0 ] && echo "ok   docker-order (longest first from the steps log; no package lost)"
+# 6. GATE_DOCKER_P sets the docker step's -p (the -p series, 2.4); unset, the
+#    derived value stands; a value that is not a positive integer is a usage
+#    error (exit 2), never a silent fallback to the derived value.
+p_line() { GATE_STEPS_LOG= bash "$ROOT/scripts/gate.sh" order 2>/dev/null | sed -n 's/^docker -p: //p'; }
+got="$(GATE_DOCKER_P=3 p_line)"
+[ "$got" = "3 (GATE_DOCKER_P)" ] || { echo "FAIL docker-order: GATE_DOCKER_P=3 gave -p '$got', want '3 (GATE_DOCKER_P)'" >&2; fail=1; }
+got="$(GATE_DOCKER_P= p_line)"
+case "$got" in [1-9]|[1-9][0-9]) ;; *) echo "FAIL docker-order: unset GATE_DOCKER_P gave -p '$got', want the derived number" >&2; fail=1 ;; esac
+for bad in 0 x 2x -1; do
+  GATE_DOCKER_P="$bad" GATE_STEPS_LOG= bash "$ROOT/scripts/gate.sh" order >/dev/null 2>&1
+  [ $? -eq 2 ] || { echo "FAIL docker-order: GATE_DOCKER_P=$bad was not refused (want exit 2)" >&2; fail=1; }
+done
+
+[ "$fail" -eq 0 ] && echo "ok   docker-order (longest first from the steps log; no package lost; GATE_DOCKER_P)"
 exit "$fail"
