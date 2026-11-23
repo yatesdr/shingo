@@ -167,7 +167,17 @@ func missingRevisionHint(rev string) string {
 
 // revisionExists reports whether git can resolve rev at all.
 func revisionExists(repoRoot, rev string) bool {
+	_, ok := resolveCommit(repoRoot, rev)
+	return ok
+}
+
+// resolveCommit is the commit id rev names, and whether git could resolve it.
+func resolveCommit(repoRoot, rev string) (string, bool) {
 	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
 	cmd.Dir = repoRoot
-	return cmd.Run() == nil
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
 }

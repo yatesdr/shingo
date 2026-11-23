@@ -20,6 +20,11 @@ import (
 // carries the chain that release replayed.
 type Release struct {
 	Rev string // the git revision the binary was built from
+	// Source says how this process came by the binary: "cached" (a verified
+	// entry of the ReleaseCache) or "rebuilt (<why>)".
+	Source string
+	// Sum is the binary's sha256, hex; empty when no ReleaseCache is in use.
+	Sum string
 	bin string
 }
 
@@ -83,11 +88,18 @@ type releaseBuild struct {
 // written into that tree, go build there. repoRoot is any directory inside the
 // work tree. The caller owns workDir and removes it.
 //
+// With a ReleaseCache in use (UseReleaseCache), a verified entry for the
+// build's key is copied into workDir instead, and a fresh build is stored as
+// one (release_cache.go).
+//
 // The build runs with GOWORK=off (the archive's go.work names modules it does
 // not carry), CGO_ENABLED=0 (Core is pure Go, and the Windows host has no C
-// compiler), GOFLAGS cleared (a caller's -tags must not reach a release's
-// tree) and -trimpath, so the Go build cache is shared between builds of the
-// same source in different directories.
+// compiler), GOFLAGS empty in the environment (a caller's GOFLAGS=-tags=...
+// must not reach a release's tree; an empty variable does not clear a GOFLAGS
+// set with `go env -w`, so the cache key records the value the build sees),
+// -buildvcs=false (a workDir inside a checkout would otherwise stamp that
+// checkout's revision into the binary) and -trimpath, so the Go build cache
+// is shared between builds of the same source in different directories.
 func BuildRelease(ctx context.Context, repoRoot, rev, workDir string) (*Release, error) {
 	key := workDir + "\x00" + rev
 	releaseMu.Lock()
@@ -102,31 +114,66 @@ func BuildRelease(ctx context.Context, repoRoot, rev, workDir string) (*Release,
 }
 
 func buildRelease(ctx context.Context, repoRoot, rev, workDir string) (*Release, error) {
-	if !revisionExists(repoRoot, rev) {
+	commit, ok := resolveCommit(repoRoot, rev)
+	if !ok {
 		return nil, errors.New(missingRevisionHint(rev))
 	}
+	bin := filepath.Join(workDir, "boot-"+safeName(rev)+exeSuffix())
+	build := func() error { return buildBoot(ctx, repoRoot, rev, commit, workDir, bin) }
+	cache := currentReleaseCache()
+	if cache.Dir == "" {
+		if err := build(); err != nil {
+			return nil, err
+		}
+		return &Release{Rev: rev, Source: "rebuilt (no cache in use)", bin: bin}, nil
+	}
+	key, err := releaseKeyFor(ctx, repoRoot, commit)
+	if err != nil {
+		// A key that cannot be had is a miss, never a hit: build as without
+		// a cache, and store nothing.
+		if err := build(); err != nil {
+			return nil, err
+		}
+		return &Release{Rev: rev, Source: "rebuilt (cache off: " + err.Error() + ")", bin: bin}, nil
+	}
+	source, sum, err := cache.obtain(entryName(rev, key), key.text(), bin, build)
+	if err != nil {
+		return nil, fmt.Errorf("%s's boot path: %w", rev, err)
+	}
+	return &Release{Rev: rev, Source: source, Sum: sum, bin: bin}, nil
+}
+
+// buildEnv is what the go build of a release's boot path runs with on top of
+// the caller's environment (see BuildRelease). releaseKeyFor reads `go env`
+// under the same.
+var buildEnv = []string{"GOWORK=off", "CGO_ENABLED=0", "GOFLAGS="}
+
+// buildBoot archives commit's release modules into workDir, writes bootMain
+// into that tree and builds it to bin. rev names the release in errors and in
+// the tree's directory name; the archive is of commit, the id the cache key
+// names, so a tag moved between the key and the archive cannot mix the two.
+func buildBoot(ctx context.Context, repoRoot, rev, commit, workDir, bin string) error {
 	tree := filepath.Join(workDir, "src-"+safeName(rev))
 	if err := os.RemoveAll(tree); err != nil {
-		return nil, fmt.Errorf("clear %s: %w", tree, err)
+		return fmt.Errorf("clear %s: %w", tree, err)
 	}
-	if err := archiveInto(ctx, repoRoot, rev, tree); err != nil {
-		return nil, err
+	if err := archiveInto(ctx, repoRoot, commit, tree); err != nil {
+		return err
 	}
 	mainDir := filepath.Join(tree, "shingo-core", filepath.FromSlash(bootCmd))
 	if err := os.MkdirAll(mainDir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if err := os.WriteFile(filepath.Join(mainDir, "main.go"), []byte(bootMain), 0o644); err != nil {
-		return nil, err
+		return err
 	}
-	bin := filepath.Join(workDir, "boot-"+safeName(rev)+exeSuffix())
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", bin, "./"+bootCmd)
+	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-buildvcs=false", "-o", bin, "./"+bootCmd)
 	cmd.Dir = filepath.Join(tree, "shingo-core")
-	cmd.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0", "GOFLAGS=")
+	cmd.Env = append(os.Environ(), buildEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("go build %s's boot path: %w\n%s", rev, err, out)
+		return fmt.Errorf("go build %s's boot path: %w\n%s", rev, err, out)
 	}
-	return &Release{Rev: rev, bin: bin}, nil
+	return nil
 }
 
 // archiveInto writes rev's copy of the release modules under dir, read from

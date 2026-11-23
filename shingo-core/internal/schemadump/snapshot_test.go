@@ -27,24 +27,46 @@ func moduleRoot(t *testing.T) string {
 }
 
 // One Postgres for the whole test binary, not one per test. Container startup
-// was a fixed cost each test paid alone; the convergence test's three vintages
-// and the staleness test can share an instance because every database they
+// was a fixed cost each test paid alone; the convergence test's vintages and
+// the package's other tests can share an instance because every database they
 // build is created empty and named uniquely — nothing crosses between them.
 var sharedInst *schemadump.Instance
 
 // startErr is why sharedInst is nil: the tests that need Postgres skip on it.
 var startErr error
 
-// releaseWork holds the release builds (schemadump.BuildRelease) this binary makes,
-// once each, for every test that boots a release; removed when the binary exits.
+// releaseWork holds the release binaries (schemadump.BuildRelease) this binary
+// boots, built or copied from the release cache once each, for every test
+// that boots a release; removed when the binary exits.
 var releaseWork string
 
+// releaseCacheForTests keeps the release builds across runs in the user's
+// cache directory (schemadump.ReleaseCache). Its key is content, not a
+// worktree, so every worktree on the host shares it. The gate's cert tier and
+// GitHub never read an entry: they build every release, and a fresh build
+// that differs from the entry under its key fails.
+func releaseCacheForTests() schemadump.ReleaseCache {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "schemadump: no user cache directory (%v): every release is built\n", err)
+		return schemadump.ReleaseCache{}
+	}
+	c := schemadump.ReleaseCache{Dir: filepath.Join(dir, "shingo", "schemadump-boot")}
+	switch {
+	case os.Getenv("GATE_TIER") == "cert":
+		c.Rebuild = "GATE_TIER=cert: certification never reuses"
+	case os.Getenv("GITHUB_ACTIONS") == "true":
+		c.Rebuild = "GITHUB_ACTIONS=true: GitHub always builds"
+	}
+	return c
+}
+
 // TestMain starts the one Postgres. When it cannot, the binary still runs: the
-// package's untagged tests (baseline_test.go) need no database, and in the
-// gate's docker step this binary is the only place they run, so exiting here
-// would drop them along with the snapshot tests. The line printed carries the
-// SHINGO-DOCKER-DOWN prefix scripts/gate.sh greps for, and under
-// SHINGO_TEST_REQUIRE_DOCKER a failed start is a failure, as it is in testdb.
+// package's untagged tests (baseline_test.go, release_cache_test.go) need no
+// database, and in the gate's docker step this binary is the only place they
+// run, so exiting here would drop them along with the snapshot tests. The line
+// printed carries the SHINGO-DOCKER-DOWN prefix scripts/gate.sh greps for, and
+// under SHINGO_TEST_REQUIRE_DOCKER a failed start is a failure, as in testdb.
 func TestMain(m *testing.M) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -64,6 +86,7 @@ func TestMain(m *testing.M) {
 		_ = inst.Close(context.Background())
 		os.Exit(1)
 	}
+	schemadump.UseReleaseCache(releaseCacheForTests())
 	code := m.Run()
 	cancel()
 	_ = inst.Close(context.Background())
@@ -210,13 +233,15 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 	}
 }
 
-// bootRelease builds rev (once per test binary) and boots it on dbName.
+// bootRelease builds rev (once per test binary) and boots it on dbName. The
+// log line says whether the binary was cached or rebuilt, and why.
 func bootRelease(ctx context.Context, t *testing.T, inst *schemadump.Instance, root, rev, dbName, why string) {
 	t.Helper()
 	rel, err := schemadump.BuildRelease(ctx, root, rev, releaseWork)
 	if err != nil {
 		t.Fatalf("build %s: %v\n(%s)", rev, err, why)
 	}
+	t.Logf("%s's boot binary: %s, sha256 %s", rev, rel.Source, rel.Sum)
 	if _, err := inst.BootRelease(ctx, rel, dbName); err != nil {
 		t.Fatalf("boot by %s: %v\n(%s)", rev, err, why)
 	}
