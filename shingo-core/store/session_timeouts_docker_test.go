@@ -71,8 +71,11 @@ func TestSessionTimeouts_AreHonouredByPostgres(t *testing.T) {
 // and asserting the elapsed time is under a fraction of statement_timeout is
 // what proves it fired at ITS bound rather than the other one's.
 func TestSessionTimeouts_LockWaitAbortsAsLockTimeout(t *testing.T) {
-	// No t.Parallel: this one asserts on wall-clock elapsed time and the
-	// blocker holds a table lock for the duration.
+	// Parallel. The table lock is on this test's own clone (testdb.Open), which
+	// no other test opens, and the lock_timeout that ends the wait is the
+	// server's; the elapsed bounds below (1 s and 15 s around 3 s) leave twelve
+	// seconds for a loaded machine.
+	t.Parallel()
 	db := testdb.Open(t)
 	ctx := context.Background()
 
