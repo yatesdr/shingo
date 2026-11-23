@@ -194,8 +194,9 @@ func Open(path string) (*DB, error) {
 // actually migrated fails loudly instead of behaving subtly wrong.
 //
 // For test fixtures copied from a pre-migrated template — the engine package's
-// test pool — where the migration chain's ~120 statements per open were the
-// package's dominant cost. Production opens must use Open.
+// test pool — where the migration chain per open was the package's dominant
+// cost (441 statements from an empty file, 313 over an already-migrated one;
+// counted 2026-11-23). Production opens must use Open.
 func OpenMigrated(path string) (*DB, error) {
 	sqlDB, err := sql.Open("sqlite", dsnFor(path))
 	if err != nil {

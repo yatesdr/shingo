@@ -108,11 +108,15 @@ func (c *QueryCounter) Drain() []string {
 // Open: a test that counts against a differently-configured store is
 // measuring something other than production.
 //
-// Test fixtures only. Production opens must use Open.
+// Test fixtures, and the sim build's statement counter: the sim build's
+// openDatabase (cmd/shingoedge/sim_statements.go, //go:build sim) opens the
+// sim's own database through it, so it must migrate. Production opens must use
+// Open.
 //
 // WHY IT IS EXPORTED, IN package store, IN A FILE WITH NO BUILD TAG. It cannot
-// be an export_test.go symbol: four packages' tests call it (engine, messaging,
-// service and store itself), and export_test.go reaches one package. It cannot
+// be an export_test.go symbol: tests in other packages call it (cmd/shingoedge,
+// engine, messaging, plc, service and uop on 2026-11-23, besides store itself
+// and internal/testdb), and export_test.go reaches one package. It cannot
 // move to a store/storetest subpackage either, because it has to open the store
 // EXACTLY as Open does or it is measuring something else — and that means
 // dsnFor, (*DB).migrate, (*DB).verifySchema and the DB.path field, all four of
