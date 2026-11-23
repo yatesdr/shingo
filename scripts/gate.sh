@@ -1598,6 +1598,9 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 . "$ROOT/scripts/gate-lock.sh"
 # golangci_run: golangci-lint with a bounded retry on its lock handoff (step_lint).
 . "$ROOT/scripts/golangci-run.sh"
+# gate_timing_check / gate_timing_status: the timing flag a `gatetime run`
+# holds (shared/scripts/gatetime), which every heavy mode below honours.
+. "$ROOT/scripts/gate-timing.sh"
 # FAN_PIDS are the steps `all` and `full` run at once (fan): an interrupted
 # gate takes them down too, rather than leaving them running against a tree
 # nobody is gating.
@@ -1616,8 +1619,11 @@ case "${1:-all}" in
   # reads the steps log and go list only. cachescope: reads stdin. skips: reads
   # nothing but this file.
   fmt|scope|order|cachescope|skips) ;;
-  lock-status) gate_lock_status; exit 0 ;;
+  lock-status) gate_lock_status; gate_timing_status; exit 0 ;;
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
+    # The timing flag first, GATE_NO_LOCK=1 or not: a gate beside a timed run
+    # is load in the timing (scripts/gate-timing.sh).
+    gate_timing_check || { echo "gate: FAILED (a timed run holds the timing flag)"; exit 1; }
     gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; } ;;
 esac
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: dev
-# inputs: scripts/gate.sh scripts/gate-lock.sh scripts/check-gate-lock.sh
+# inputs: scripts/gate.sh scripts/gate-lock.sh scripts/gate-timing.sh scripts/check-gate-lock.sh shared/scripts/gatetime/*
 # check-gate-lock.sh — pins scripts/gate-lock.sh, the one-gate-per-machine
 # lock, and its wiring into scripts/gate.sh.
 #
@@ -15,6 +15,11 @@
 #   4. a run nested inside the holder's (GATE_LOCK_HELD) does not wait on it,
 #      through gate.sh too; an outsider times out and gate.sh says why
 #   5. `gate.sh fmt` and `gate.sh lock-status` never take the lock
+#   6. while a timed run holds the timing flag (scripts/gate-timing.sh) a heavy
+#      mode refuses and names the holder, GATE_NO_LOCK=1 included; the timed
+#      run's own gate (its token) runs; fmt, scope, order, cachescope and
+#      lock-status never refuse; a stale heartbeat does not refuse; and the
+#      real writer, `gatetime run`, holds the flag gate.sh reads
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ROOT
@@ -143,8 +148,59 @@ touch "$TMP/stop"
 wait "$HOLDER_PID"
 bash scripts/gate.sh lock-status 2>&1 | grep -q 'gate lock: free' || fail "lock-status not free after release"
 
+# ── 6. the timing flag: heavy modes refuse, the timed run's own passes ──────
+# A private flag (GATE_TIMING_DIR) planted the way gatetime writes it
+# (shared/scripts/gatetime, flag.go), then the real writer: `gatetime run`
+# holding the flag that gate.sh reads, so the two sides of the format agree.
+export GATE_TIMING_DIR="$TMP/gate.timing"
+unset GATE_TIMING_TOKEN GATETIME_RUN_DIR
+plant_flag() { # TOKEN HEARTBEAT-AGE-SECONDS
+  mkdir -p "$GATE_TIMING_DIR"
+  printf 'holder=pin@host\npid=1\ncwd=/x\nout=/y\ncmd=gatetime run -- the pin\nstarted=now\ntoken=%s\n' "$1" \
+    >"$GATE_TIMING_DIR/owner"
+  touch -d "@$(( $(date +%s) - $2 ))" "$GATE_TIMING_DIR/heartbeat"
+}
+plant_flag pin-token 0
+for nolock in "" 1; do
+  out="$(GATE_NO_LOCK=$nolock GATE_MODULES=protocol bash scripts/gate.sh simvet 2>&1)"; rc=$?
+  { [ "$rc" -ne 0 ] && echo "$out" | grep -q 'REFUSED' && echo "$out" | grep -q 'cmd=gatetime run -- the pin'; } \
+    || fail "gate.sh simvet${nolock:+ with GATE_NO_LOCK=1} started beside a timed run (exit $rc): $out"
+  echo "$out" | grep -q '^ok   sim compile' && fail "gate.sh simvet ran its step under the timing flag: $out"
+done
+out="$(GATE_TIMING_TOKEN=pin-token GATE_MODULES=protocol bash scripts/gate.sh simvet 2>&1)"
+echo "$out" | grep -q '^ok   sim compile' || fail "the timed run's own gate (its token) was refused: $out"
+for mode in "fmt" "scope -" "order" "cachescope -" "lock-status"; do
+  # shellcheck disable=SC2086 # mode is a mode and its argument
+  out="$(echo protocol/x.go | bash scripts/gate.sh $mode 2>&1)"
+  echo "$out" | grep -q 'REFUSED' && fail "gate.sh $mode refused under the timing flag: $out"
+done
+bash scripts/gate.sh lock-status 2>&1 | grep -q 'timing flag: held' || fail "lock-status did not show the timing flag"
+plant_flag pin-token 300
+out="$(GATE_MODULES=protocol bash scripts/gate.sh simvet 2>&1)"
+{ echo "$out" | grep -q '^ok   sim compile' && echo "$out" | grep -q 'its run is gone'; } \
+  || fail "a flag with a 300 s old heartbeat still refused the gate: $out"
+rm -rf "$GATE_TIMING_DIR"
+# The real writer, built once (go caches the build). bash by its full path: a
+# native program looking up "bash" on Windows may find the WSL launcher.
+BASH_BIN="$(cygpath -w "$BASH" 2>/dev/null || echo "$BASH")"
+GT="$TMP/gatetime$(go env GOEXE 2>/dev/null | tr -d '\r')"
+if ( cd "$ROOT/shared" && go build -o "$GT" ./scripts/gatetime ) >"$TMP/gtbuild.log" 2>&1; then
+  out="$("$GT" run -out "$TMP/run1" -every 200ms -repo "$ROOT" -- "$BASH_BIN" -c \
+    'GATE_TIMING_TOKEN= GATE_MODULES=protocol bash scripts/gate.sh simvet' 2>&1)"
+  grep -q 'REFUSED' "$TMP/run1/cmd.log" 2>/dev/null \
+    || fail "a gate without the token ran inside gatetime run: $out $(cat "$TMP/run1/cmd.log" 2>/dev/null)"
+  out="$("$GT" run -out "$TMP/run2" -every 200ms -repo "$ROOT" -- "$BASH_BIN" -c \
+    'GATE_MODULES=protocol bash scripts/gate.sh simvet' 2>&1)"
+  grep -q '^ok   sim compile' "$TMP/run2/cmd.log" 2>/dev/null \
+    || fail "gatetime run's own gate was refused: $out $(cat "$TMP/run2/cmd.log" 2>/dev/null)"
+  [ -e "$GATE_TIMING_DIR" ] && fail "gatetime run left its timing flag behind"
+else
+  fail "could not build shared/scripts/gatetime: $(cat "$TMP/gtbuild.log")"
+fi
+unset GATE_TIMING_DIR
+
 if [ "$fails" -eq 0 ]; then
-  echo "ok   gate-lock (acquire, wait, SIGKILL takeover, nested, fmt exempt)"
+  echo "ok   gate-lock (acquire, wait, SIGKILL takeover, nested, fmt exempt, timing flag)"
   exit 0
 fi
 exit 1
