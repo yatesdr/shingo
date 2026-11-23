@@ -104,7 +104,11 @@ func (otherMachine) ac() (int, error) {
 
 func (otherMachine) stayAwake() {}
 
-func (otherMachine) standby(from, to time.Time) ([]standbyEvent, error) { return nil, nil }
+// standby says it cannot read a standby log here, so a stamp reads "unread",
+// never "0": no log read is not the absence of a standby.
+func (otherMachine) standby(from, to time.Time) ([]standbyEvent, error) {
+	return nil, errors.New("no Modern Standby log off Windows")
+}
 
 func (otherMachine) limits() []string {
 	return []string{"unsupported(no job object or standby log off Windows)"}
