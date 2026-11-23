@@ -68,4 +68,38 @@ if [ -n "$bad" ]; then
   printf '%s\n' "$bad"
   exit 1
 fi
-echo "ok   docker scope ($n rows)"
+
+# THE TREE, NOT THE COMMITS (G11). `scope BASE` must read what the dev tier's
+# diff reads (write_diff): commits since the merge base, staged and unstaged
+# edits, and untracked files. It used to read `git diff BASE...HEAD`, so a tree
+# level with its base and an uncommitted Go edit printed "docker NOT needed".
+# Each row runs the real gate.sh against a throwaway repo through GIT_DIR and
+# GIT_WORK_TREE: a committed base, then one uncommitted change, scoped against
+# HEAD. Every row must say NEEDED; the last says NEEDED because there is no
+# merge base to diff against (an unknown base fails safe).
+lvl="$(mktemp -d "${TMPDIR:-${TEMP:-/tmp}}/docker-scope.XXXXXX")" || { echo "FAIL docker scope: mktemp"; exit 1; }
+trap 'rm -rf "$lvl"' EXIT
+lvl_git() { git -C "$lvl" -c user.name=gate -c user.email=gate@example.invalid "$@" >/dev/null 2>&1; }
+lvl_scope() { GIT_DIR="$lvl/.git" GIT_WORK_TREE="$lvl" bash "$ROOT/scripts/gate.sh" scope "$1" >/dev/null 2>&1; }
+lvl_reset() {
+  rm -rf "$lvl/.git" "$lvl/m"
+  mkdir -p "$lvl/m"
+  printf 'package m\n' >"$lvl/m/a.go"
+  lvl_git init -q && lvl_git add -A && lvl_git commit -qm base
+}
+tree_bad=""
+lvl_reset; printf '// edit\n' >>"$lvl/m/a.go"
+lvl_scope HEAD || tree_bad="$tree_bad unstaged-go-edit"
+lvl_reset; printf '// edit\n' >>"$lvl/m/a.go"; lvl_git add m/a.go
+lvl_scope HEAD || tree_bad="$tree_bad staged-go-edit"
+lvl_reset; printf 'package m\n' >"$lvl/m/b.go"
+lvl_scope HEAD || tree_bad="$tree_bad untracked-go-file"
+lvl_reset; rm "$lvl/m/a.go"
+lvl_scope HEAD || tree_bad="$tree_bad deleted-go-file"
+lvl_reset
+lvl_scope no-such-base || tree_bad="$tree_bad unknown-base"
+if [ -n "$tree_bad" ]; then
+  for r in $tree_bad; do echo "FAIL docker scope: level tree, $r — want NEEDED, got NOT NEEDED"; done
+  exit 1
+fi
+echo "ok   docker scope ($n rows, 5 level-tree rows)"

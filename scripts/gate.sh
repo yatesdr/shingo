@@ -402,15 +402,30 @@ untagged_only_modules() {
 # does not trust the cache. A stale origin/main widens the diff, which fails
 # the same safe way.
 DIFF_FILE="$ROOT/.gate/diff.files"
+
+# tree_diff <base> — the paths this tree changes against <base>, one a line,
+# sorted: `git diff --name-only <merge-base HEAD base>` (commits since the
+# base, staged and unstaged edits, deletions) plus untracked files. Returns 1,
+# printing nothing, when there is no merge base. The ONE reading of "what this
+# tree changes": write_diff and step_scope both take it, so the dev tier's pins
+# and the push tier's docker scope cannot see different trees (G11: scope read
+# `git diff BASE...HEAD`, the commits alone, and a level tree with an
+# uncommitted Go edit skipped docker; scripts/check-docker-scope.sh pins it).
+tree_diff() {
+  local mb
+  mb="$(git merge-base HEAD "$1" 2>/dev/null)" && [ -n "$mb" ] || return 1
+  { git diff --name-only "$mb" 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null
+  } | sed '/^$/d' | LC_ALL=C sort -u
+}
+
 # ALWAYS origin/main, whatever `full BASE` scopes the docker suites against: the
 # wider diff is the safe one (more pins run).
 write_diff() {
-  local base
+  local files
   mkdir -p "$ROOT/.gate"
-  if base="$(git merge-base HEAD origin/main 2>/dev/null)" && [ -n "$base" ]; then
-    { git diff --name-only "$base" 2>/dev/null
-      git ls-files --others --exclude-standard 2>/dev/null
-    } | sed '/^$/d' | LC_ALL=C sort -u >"$DIFF_FILE"
+  if files="$(tree_diff origin/main)"; then
+    printf '%s\n' "$files" | sed '/^$/d' >"$DIFF_FILE"
   else
     echo '*' >"$DIFF_FILE"
   fi
@@ -994,8 +1009,11 @@ step_scope() {
     # rule can be exercised directly:
     #   printf 'a.css\nb/templates/c.html\n' | bash scripts/gate.sh scope -
     files="$(cat)"
-  else
-    files="$(git diff --name-only "$base"...HEAD 2>/dev/null)"
+  elif ! files="$(tree_diff "$base")"; then
+    # No merge base (an unknown base, a shallow clone): nothing says the tree
+    # is level, so docker runs. This read as an empty diff and skipped it.
+    echo "scope: cannot diff against $scope_against (no merge base) — docker NEEDED"
+    return 0
   fi
   if [ -z "$files" ]; then
     echo "scope: no diff against $scope_against — docker NOT needed"
