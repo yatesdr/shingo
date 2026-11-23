@@ -204,3 +204,32 @@ func TestCompare_NotGates(t *testing.T) {
 		t.Errorf("a different command:\n%s", out)
 	}
 }
+
+// TestCompare_RefusesMixedForeignLines: arms judged by different foreign-load
+// lines (gatetime run -foreign-cores) are not like with like; a run from before
+// the line was recorded reads as the default, 1.00.
+func TestCompare_RefusesMixedForeignLines(t *testing.T) {
+	withLine := func(d, line string) string {
+		p := filepath.Join(d, "result.tsv")
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(strings.TrimRight(string(b), "\n")+"\tforeign_line="+line+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	a1 := withLine(fakeRun(t, "push", 300, 2000, "clean", nil), "2.50")
+	a2 := withLine(fakeRun(t, "push", 305, 2050, "clean", nil), "2.50")
+	b1 := withLine(fakeRun(t, "push", 290, 1950, "clean", nil), "2.50")
+	b2 := fakeRun(t, "push", 290, 1950, "clean", nil) // no field: the default line
+	out, ok := compareDirs(t, a1, b1, b2, a2)
+	if ok || !strings.Contains(out, "REFUSED: foreign-load lines differ") || !strings.Contains(out, "B2: 1.00") {
+		t.Errorf("mixed lines not refused, or refused without naming them:\n%s", out)
+	}
+	b2 = withLine(fakeRun(t, "push", 290, 1950, "clean", nil), "2.50")
+	if out, ok := compareDirs(t, a1, b1, b2, a2); !ok {
+		t.Errorf("one line in all four runs refused:\n%s", out)
+	}
+}

@@ -247,3 +247,24 @@ func TestRun_PlantedEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// TestJudge_ForeignLineIsTheRunsOwn: the void line is the run's -foreign-cores
+// (default 1.0, the designed rule). Raised to 2.5 for a host whose quiet floor
+// is 1.4-1.5 cores, two foreign cores for 45 s are clean and three are not; the
+// result line names the line it judged by.
+func TestJudge_ForeignLineIsTheRunsOwn(t *testing.T) {
+	t0 := time.Now()
+	two := append(repeat(5, [3]float64{4, 4, 0}), append(repeat(15, [3]float64{6, 4, 0}), repeat(5, [3]float64{4, 4, 0})...)...)
+	three := append(repeat(5, [3]float64{4, 4, 0}), append(repeat(15, [3]float64{7, 4, 0}), repeat(5, [3]float64{4, 4, 0})...)...)
+	defer func(old float64) { foreignLine = old }(foreignLine)
+	if foreignLine != 1.0 {
+		t.Fatalf("default foreign line %.2f, want 1.0 (the designed rule)", foreignLine)
+	}
+	foreignLine = 2.5
+	if j := judge(samplesEvery(t0, 3*time.Second, two), nil, 15*time.Second, nil, nil); j.verdict() != "clean" {
+		t.Errorf("2 foreign cores under a 2.5 line: %q, want clean", j.verdict())
+	}
+	if j := judge(samplesEvery(t0, 3*time.Second, three), nil, 15*time.Second, nil, nil); !hasReason(j, "foreign-load(3.00 cores over 30 s, line 2.50)") {
+		t.Errorf("3 foreign cores under a 2.5 line: %q, want foreign-load(3.00 ..., line 2.50)", j.verdict())
+	}
+}

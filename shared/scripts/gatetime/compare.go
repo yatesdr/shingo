@@ -6,6 +6,7 @@ package main
 //     the gate's own total line says the gate failed or was off AC, in
 //     standby, or under foreign load (the stamps gate.sh writes);
 //   - the runs did not choose the same work (selection, below);
+//   - the runs were judged by different foreign-load lines (run -foreign-cores);
 //   - an arm's two runs differ by more than 10% in CPU-seconds (the larger
 //     over the smaller): that arm did not repeat itself, so its range says
 //     nothing.
@@ -329,6 +330,18 @@ func comparePair(w io.Writer, an, bn string, runs []*timedRun) bool {
 		if why := r.quotable(); why != "" {
 			refuse("%s (%s) is not quotable: %s", names[i], r.dir, why)
 		}
+	}
+	// One void line for all four: a run judged by a raised -foreign-cores line is
+	// not like a run judged by the designed one. Absent (a run from before the
+	// field) is the default.
+	lines := make([]string, 4)
+	for i, r := range runs {
+		if lines[i] = r.res["foreign_line"]; lines[i] == "" {
+			lines[i] = fmt.Sprintf("%.2f", foreignCores)
+		}
+	}
+	if lines[1] != lines[0] || lines[2] != lines[0] || lines[3] != lines[0] {
+		refuse("foreign-load lines differ: %s: %s, %s: %s, %s: %s, %s: %s", names[0], lines[0], names[1], lines[1], names[2], lines[2], names[3], lines[3])
 	}
 	mode := selectionMode(runs)
 	if mode == "" {

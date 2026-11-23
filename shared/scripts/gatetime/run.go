@@ -28,7 +28,8 @@ package main
 //   - sampler-gap: two passes further apart on the wall clock than 4 x -every
 //     (at least 15 s): the machine slept or froze;
 //   - foreign-load: host CPU less the job's less the utility VM's above one
-//     core averaged over any 30 s window (the whole span when shorter). The
+//     core (or the run's -foreign-cores line, judge.go's foreignLine)
+//     averaged over any 30 s window (the whole span when shorter). The
 //     load is MEASURED, not named: whatever ran outside the job counts;
 //   - vm-busy-before: the utility VM above one core between the two passes
 //     before the command started;
@@ -77,9 +78,15 @@ func runMain(args []string) int {
 	out := fs.String("out", "", "directory for the run's record")
 	every := fs.Duration("every", 3*time.Second, "time between sampler passes")
 	repo := fs.String("repo", ".", "the checkout whose timing flag the run holds and whose .gate/steps.log it copies from")
+	line := fs.Float64("foreign-cores", foreignCores, "foreign cores over any 30 s that void the run (default: the designed rule; raise it only to a measured quiet floor plus one core)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if *line <= 0 {
+		fmt.Fprintln(os.Stderr, "gatetime run: -foreign-cores must be positive")
+		return 2
+	}
+	foreignLine = *line
 	cmdArgs := fs.Args()
 	if *out == "" || len(cmdArgs) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gatetime run -out DIR [-every 3s] [-repo DIR] -- cmd args...")
@@ -220,6 +227,7 @@ func (r *runner) writeResult(out string, tc timedCmd, flagNote, cmdLine string) 
 		"host_cpu_s":    fmt.Sprintf("%.2f", r.span(func(s sample) time.Duration { return s.host })),
 		"vm_cpu_s":      fmt.Sprintf("%.2f", r.span(func(s sample) time.Duration { return s.vm })),
 		"foreign_max30": fmt.Sprintf("%.2f", j.foreignMax30),
+		"foreign_line":  fmt.Sprintf("%.2f", foreignLine),
 		"samples":       fmt.Sprint(len(r.samples)),
 		"standby":       fmt.Sprint(j.standby),
 		"exit":          fmt.Sprint(tc.code),
@@ -431,7 +439,7 @@ func copyTail(src string, from int64, dst string) error {
 // order for a reader's eye; values never hold a tab or a newline.
 type resultLine map[string]string
 
-var resultOrder = []string{"start", "end", "wall_s", "job_cpu_s", "host_cpu_s", "vm_cpu_s", "foreign_max30",
+var resultOrder = []string{"start", "end", "wall_s", "job_cpu_s", "host_cpu_s", "vm_cpu_s", "foreign_max30", "foreign_line",
 	"samples", "standby", "exit", "verdict", "flag", "plant", "cmd", "ac", "gap_max_s"}
 
 func (l resultLine) String() string {

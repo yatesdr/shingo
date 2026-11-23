@@ -23,13 +23,24 @@ type sample struct {
 // The rules' constants.
 const (
 	// foreignWindow and foreignCores: foreign load voids a run when it
-	// averages more than one core over any 30 s.
+	// averages more than one core over any 30 s (the designed rule; a run may
+	// raise its line with -foreign-cores, foreignLine).
 	foreignWindow = 30 * time.Second
 	foreignCores  = 1.0
 	// vmBeforeCores: the utility VM busier than this before the command
 	// starts is load nobody in this run made (see run.go's hole).
 	vmBeforeCores = 1.0
 )
+
+// foreignLine is the void line this run judges by: foreignCores unless
+// `gatetime run -foreign-cores` set another. It exists because a host's quiet
+// floor can sit above one core with nothing of ours running (the gate laptop on
+// 2026-11-23: 1.38-1.46 cores over 30 s in three idle minutes, from its endpoint
+// agents and the session driving the run), which would void every run. A raised
+// line is the measured floor plus one core, still below any second workload
+// (a gate or a go test is several cores); the result line names it, and
+// gatetime compare refuses arms judged by different lines.
+var foreignLine = foreignCores
 
 // judgement is what the rules say about a run's samples so far.
 type judgement struct {
@@ -94,8 +105,8 @@ func judge(ss []sample, evs []standbyEvent, maxGap time.Duration, plants, limits
 		add(fmt.Sprintf("sampler-gap(%.0fs)", j.gapMax.Seconds()))
 	}
 	j.foreignMax30 = foreignMax(ss)
-	if j.foreignMax30 > foreignCores {
-		add(fmt.Sprintf("foreign-load(%.2f cores over 30 s)", j.foreignMax30))
+	if j.foreignMax30 > foreignLine {
+		add(fmt.Sprintf("foreign-load(%.2f cores over 30 s, line %.2f)", j.foreignMax30, foreignLine))
 	}
 	if c, ok := vmBefore(ss); ok && c > vmBeforeCores {
 		add(fmt.Sprintf("vm-busy-before(%.2f cores)", c))
