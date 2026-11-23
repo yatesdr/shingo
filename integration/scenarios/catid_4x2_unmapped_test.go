@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"shingo/integration/harness"
+
 	edgeengine "shingoedge/engine"
 )
 
@@ -42,6 +44,10 @@ func TestCatid4x2_S5_UnmappedPart(t *testing.T) {
 
 	mustNil(t, c.edge.Engine.CompleteProcessProductionCutover(c.processID), "CUTOVER")
 	co := c.changeovers()[0]
+	// Record only: which path completed the cutover ("manual" is the CUTOVER
+	// above; "auto-catid" would be the monitor's, beating it).
+	harness.RecorderFor(t).Note("triggered_by", co.TriggeredBy)
+	t.Logf("S5: the changeover completed by %q", co.TriggeredBy)
 	run := c.counted()
 	var suggestion map[string]any
 	c.waitFor("the strip's suggestion for 1003", 2*time.Minute+20*time.Second, func() bool {

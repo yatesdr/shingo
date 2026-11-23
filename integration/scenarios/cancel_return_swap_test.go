@@ -46,6 +46,9 @@ type deckFleet struct {
 	mu     sync.Mutex
 	robots map[string]fleet.RobotStatus
 	pinned map[string]string // vendor order id -> the Vehicle Core's request named
+	// onPoll, when set, is told of each of Core's robot polls (the scenario
+	// recorder's RobotPoll); set before the engine starts.
+	onPoll func()
 }
 
 var _ fleet.RobotLister = (*deckFleet)(nil)
@@ -69,6 +72,9 @@ func (f *deckFleet) set(id string, busy, loaded bool) {
 }
 
 func (f *deckFleet) GetRobotsStatus() ([]fleet.RobotStatus, error) {
+	if f.onPoll != nil {
+		f.onPoll()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]fleet.RobotStatus, 0, len(f.robots))

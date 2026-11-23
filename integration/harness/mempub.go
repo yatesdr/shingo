@@ -26,6 +26,10 @@ type memPublisher struct {
 	// rewrite, when set, is what the target ingestor is handed in place of
 	// each payload (Bus.RewriteCoreToEdge). Default nil = the payload as sent.
 	rewrite func(payload []byte) []byte
+
+	// tap, when set, is handed each payload as sent, before rewrite, as it is
+	// delivered (the scenario recorder, NewBus). Default nil = nothing taps.
+	tap func(payload []byte)
 }
 
 func newMemPublisher(target *protocol.Ingestor) *memPublisher {
@@ -41,6 +45,9 @@ func (p *memPublisher) Publish(topic string, payload []byte) error {
 		err := p.failNext
 		p.failNext = nil
 		return err
+	}
+	if p.tap != nil {
+		p.tap(payload)
 	}
 	if p.rewrite != nil {
 		payload = p.rewrite(payload)

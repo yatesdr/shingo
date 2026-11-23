@@ -37,6 +37,11 @@ type BinsPush struct {
 	// stop ends the ticker, once (Stop, and the test's cleanup).
 	stop     func()
 	stopOnce sync.Once
+	// rec is the cell's scenario recorder (RecordEnv), nil when it is off;
+	// last is the digest of the snapshot the push before applied, which says
+	// whether a push changed the Edge's copy.
+	rec  *Recorder
+	last string
 }
 
 // Stop ends the push's ticker now: a scenario that restarts its Edge stops the
@@ -49,15 +54,16 @@ func (p *BinsPush) AnswerAsks(kinds []string) {
 	p.mu.Lock()
 	p.asks = kinds
 	p.mu.Unlock()
-	p.Push()
+	p.push("answer-asks")
 }
 
 // StartBinsPush pushes coreDB's bins to edge now and every interval until the
 // test ends.
 func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine, interval time.Duration) *BinsPush {
 	t.Helper()
-	p := &BinsPush{t: t, core: coremessaging.NewCoreDataService(coreDB, nil, service.EpochAnnounce{}), edge: edge}
-	p.Push()
+	p := &BinsPush{t: t, core: coremessaging.NewCoreDataService(coreDB, nil, service.EpochAnnounce{}), edge: edge,
+		rec: RecorderFor(t)}
+	p.push("start")
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -69,7 +75,7 @@ func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine, 
 			case <-stop:
 				return
 			case <-tick.C:
-				p.Push()
+				p.push("ticker")
 			}
 		}
 	}()
@@ -80,9 +86,29 @@ func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine, 
 
 // Push builds and applies one snapshot for the Edge's current watch list. A
 // failed build logs and leaves the copy as it was.
-func (p *BinsPush) Push() {
+func (p *BinsPush) Push() { p.push("direct") }
+
+// push is Push for caller: the recorder counts pushes by who asked for them
+// (the ticker, a pump, a scenario's explicit Bus.PushBins, ...).
+func (p *BinsPush) push(caller string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.rec != nil {
+		start := time.Now()
+		var digest string
+		p.apply(&digest)
+		p.rec.push(caller, digest != "" && digest != p.last, time.Since(start))
+		if digest != "" {
+			p.last = digest
+		}
+		return
+	}
+	p.apply(nil)
+}
+
+// apply is one push's body; the caller holds p.mu. digest, when not nil, gets
+// the digest of the snapshot it applied ("" when the push failed).
+func (p *BinsPush) apply(digest *string) {
 	names := p.edge.StationService().WatchedBinNodes()
 	if names == nil {
 		names = []string{}
@@ -105,6 +131,9 @@ func (p *BinsPush) Push() {
 	if err := p.edge.ApplyNodeBinsSnapshot(snap); err != nil {
 		p.t.Logf("bins push: apply: %v", err)
 		return
+	}
+	if digest != nil {
+		*digest = snap.Digest
 	}
 	feeds := p.edge.FeedDigests()
 	p.edge.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: feeds, BinWatch: &listDigest, Asks: p.asks})

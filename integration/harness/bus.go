@@ -43,6 +43,9 @@ type Bus struct {
 
 	// bins, when set, pushes Core's bins to the Edge after every pump.
 	bins *BinsPush
+
+	// rec is the cell's scenario recorder (RecordEnv), nil when it is off.
+	rec *Recorder
 }
 
 // EdgeSide collects the Edge-process objects the Bus needs to route
@@ -115,6 +118,11 @@ func NewBus(t *testing.T, edge EdgeSide, core CoreSide) *Bus {
 	// corePub does the reverse.
 	b.edgePub = newMemPublisher(core.CoreIngestor)
 	b.corePub = newMemPublisher(edge.EdgeIngestor)
+	if b.rec = RecorderFor(t); b.rec != nil {
+		n := b.rec.attachBus()
+		b.edgePub.tap = func(p []byte) { b.rec.msg(n, "E>C", p) }
+		b.corePub.tap = func(p []byte) { b.rec.msg(n, "C>E", p) }
+	}
 	return b
 }
 
@@ -127,7 +135,7 @@ func NewBus(t *testing.T, edge EdgeSide, core CoreSide) *Bus {
 func (b *Bus) PumpEdgeOutbox() int {
 	b.t.Helper()
 	n := pump(b.edgeOut, b.edgePub, "edge→core")
-	b.pushBins()
+	b.pushBins("pump-edge")
 	return n
 }
 
@@ -137,11 +145,13 @@ func (b *Bus) SetBinsPush(p *BinsPush) { b.bins = p }
 
 // PushBins pushes Core's bins to the Edge now: for a scenario that changed
 // Core's bins directly (a fixture write), as Core's push would follow it.
-func (b *Bus) PushBins() { b.pushBins() }
+func (b *Bus) PushBins() { b.pushBins("explicit") }
 
-func (b *Bus) pushBins() {
+// pushBins pushes through b's BinsPush, if it has one; caller names who asked,
+// for the recorder's count by caller.
+func (b *Bus) pushBins(caller string) {
 	if b.bins != nil {
-		b.bins.Push()
+		b.bins.push(caller)
 	}
 }
 
@@ -153,7 +163,13 @@ func (b *Bus) pushBins() {
 func (b *Bus) PumpAll() int {
 	b.t.Helper()
 	n := pumpAll(b.edgeOut, b.edgePub, b.coreOut, b.corePub, 100)
-	b.pushBins()
+	if b.rec != nil {
+		b.rec.Inc("pump_all")
+		if n == 0 {
+			b.rec.Inc("pump_all_idle")
+		}
+	}
+	b.pushBins("pump-all")
 	return n
 }
 

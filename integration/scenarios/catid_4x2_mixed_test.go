@@ -5,7 +5,11 @@
 
 package scenarios
 
-import "testing"
+import (
+	"testing"
+
+	"shingo/integration/harness"
+)
 
 // TestCatid4x2_S6_MixedCell: a changeover RUN -> ALT runs through both
 // counting paths (a common and a mirror position on each), and then the
@@ -22,6 +26,14 @@ func TestCatid4x2_S6_MixedCell(t *testing.T) {
 	c.carryAll("the changeover's legs", after, nil)
 	c.cycle(w6Depth + 1) // the run-out, then the program change
 	mustNil(t, c.edge.Engine.CompleteProcessProductionCutover(c.processID), "CUTOVER")
+	// Record only: which path completed the cutover ("manual" is the CUTOVER
+	// above; "auto-catid" would be the monitor's, beating it). The read is the
+	// recorder's, so a run without it reads nothing more.
+	if rec := harness.RecorderFor(t); rec.On() {
+		by := c.changeovers()[0].TriggeredBy
+		rec.Note("triggered_by", by)
+		t.Logf("S6: the changeover completed by %q", by)
+	}
 	run := c.counted()
 	c.cycle(w6Depth + 5)
 	c.ledger("S6 the changeover", true)

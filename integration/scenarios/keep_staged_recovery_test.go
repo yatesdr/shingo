@@ -166,7 +166,11 @@ func startKsrCoreOnDeck(t *testing.T, fl *deckFleet) kscCore {
 	cfg := coreconfig.Defaults()
 	cfg.Messaging.StationID = "core"
 	eng := coreengine.New(coreengine.Config{AppConfig: cfg, DB: db, Fleet: fl, LogFunc: t.Logf})
+	if rec := harness.RecorderFor(t); rec.On() {
+		fl.onPoll = rec.RobotPoll
+	}
 	eng.Start()
+	harness.RecorderFor(t).CoreStarted()
 	t.Cleanup(eng.Stop)
 	dbg, err := debuglog.New(64, nil)
 	mustNil(t, err, "debuglog")
@@ -563,6 +567,7 @@ func (c *ksrCell) breached() int {
 // misses is not lost; the next tick pumps it, and the waits on an outcome go
 // through eventually.
 func (c *ksrCell) settle() {
+	harness.RecorderFor(c.t).Inc("settle")
 	for i := 0; i < 40; i++ {
 		if c.bus.PumpAll() == 0 {
 			time.Sleep(10 * time.Millisecond)
@@ -601,19 +606,23 @@ const ksrPasses = 60
 // The poll is short so a met condition is seen at once.
 func (c *ksrCell) eventually(what string, ok func() bool) {
 	c.t.Helper()
+	w := harness.RecorderFor(c.t).Wait("eventually", what)
 	start := time.Now()
 	pass := 0
 	for {
 		pass++
 		c.tick()
 		if ok() {
+			w.Done(pass, true)
 			return
 		}
+		w.Missed()
 		if pass >= ksrPasses && time.Since(start) >= 15*time.Second {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	w.Done(pass, false)
 	c.dump("timed out: " + what)
 	c.t.Fatalf("timed out waiting for: %s (%d passes, %s)", what, pass, time.Since(start).Round(time.Millisecond))
 }
@@ -833,15 +842,18 @@ func (c *ksrCell) fleetStep() int {
 // Core's scanner passes, the fleet carries what it has, until nothing moves.
 func (c *ksrCell) quiet() {
 	c.t.Helper()
-	still := 0
-	for i := 0; i < 80 && still < 2; i++ {
+	w := harness.RecorderFor(c.t).Wait("quiet", "")
+	still, i := 0, 0
+	for ; i < 80 && still < 2; i++ {
 		c.tick()
 		if c.fleetStep() == 0 {
 			still++
 		} else {
 			still = 0
+			w.Missed()
 		}
 	}
+	w.Done(i, still >= 2)
 }
 
 // ── what stands where ───────────────────────────────────────────────────────
@@ -928,14 +940,18 @@ func (c *ksrCell) levelKeeper() {
 	}
 	// The produce request's Core reads have taken several seconds on a loaded
 	// docker host; give the pass room.
+	w := harness.RecorderFor(c.t).Wait("levelKeeper", "the level keeper's legs")
 	for i := 0; i < 600; i++ {
 		for _, o := range c.newRows(before) {
 			if o.OrderType == protocol.OrderTypeComplex {
+				w.Done(i+1, true)
 				return
 			}
 		}
+		w.Missed()
 		time.Sleep(30 * time.Millisecond)
 	}
+	w.Done(600, false)
 	c.dump("the level keeper asked for nothing")
 	if active, err := c.edge.DB.ListActiveOrdersByProcessNode(c.nodeID); err == nil {
 		for _, o := range active {

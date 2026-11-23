@@ -584,7 +584,9 @@ func newW6Cell(t *testing.T, o w6Opts) *w6Cell {
 	}
 	c.restart("boot")
 
+	rec := harness.RecorderFor(t)
 	c.shipper, err = edgemessaging.NewTickShipper(db, func(data []byte) error {
+		rec.Sent("E>C-ticks", data)
 		c.coreIn.HandleRaw(data)
 		return nil
 	}, w6Edge)
@@ -870,12 +872,18 @@ func (c *w6Cell) awaitConfirm(what string, v, seen int64) {
 // waitFor polls ok, settling the bus, until it holds or the budget is spent.
 func (c *w6Cell) waitFor(what string, budget time.Duration, ok func() bool) {
 	c.t.Helper()
+	w := harness.RecorderFor(c.t).Wait("waitFor", what)
+	pass := 0
 	for deadline := time.Now().Add(budget); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		pass++
 		c.settle()
 		if ok() {
+			w.Done(pass, true)
 			return
 		}
+		w.Missed()
 	}
+	w.Done(pass, false)
 	c.dump("timed out: " + what)
 	c.t.Fatalf("timed out waiting for: %s", what)
 }

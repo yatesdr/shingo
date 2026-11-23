@@ -67,6 +67,7 @@ func startKeepStagedCore(t *testing.T) kscCore {
 		AppConfig: cfg, DB: db, Fleet: sim, LogFunc: t.Logf,
 	})
 	eng.Start()
+	harness.RecorderFor(t).CoreStarted()
 	t.Cleanup(eng.Stop)
 	dbg, err := debuglog.New(64, nil)
 	mustNil(t, err, "debuglog")
