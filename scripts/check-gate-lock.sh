@@ -32,6 +32,13 @@ TMP="$(mktemp -d 2>/dev/null || mktemp -d -t gatelock)"
 trap 'rm -f "$TMP/stop"; touch "$TMP/stop"; sleep 0.5; rm -rf "$TMP"' EXIT
 unset GATE_LOCK_HELD GATE_NO_LOCK GATE_LOCK_TIMEOUT
 export GATE_LOCK_DIR="$TMP/gate.lock"
+# The nested gates read a PRIVATE timing flag directory that does not exist
+# (free), never the clone's: this pin runs inside timed gates, whose outer run
+# holds the clone's flag, and every nested gate here was then refused ("gate:
+# REFUSED — a timed run holds the timing flag"; cases 1 and 7 went red). Case 6
+# plants its own flag in another private directory.
+export GATE_TIMING_DIR="$TMP/gate.timing-free"
+unset GATE_TIMING_TOKEN
 # The nested gates these cases run are not a schedule: keep them out of the
 # real tree's .gate/steps.log.
 export GATE_STEPS_LOG=
@@ -200,13 +207,14 @@ if ( cd "$ROOT/shared" && go build -o "$GT" ./scripts/gatetime ) >"$TMP/gtbuild.
 else
   fail "could not build shared/scripts/gatetime: $(cat "$TMP/gtbuild.log")"
 fi
-unset GATE_TIMING_DIR
+export GATE_TIMING_DIR="$TMP/gate.timing-free"
 
 # ── 7. the steps log's selection line and total stamps, and their reader ────
 # A heavy run writes one `selection` line and stamps its total line; under
 # `gatetime run` the stamps carry the run's load judgement, and `gatetime
-# compare` reads the selection lines of four such runs.
-unset GATE_TIMING_DIR GATE_TIMING_TOKEN GATETIME_RUN_DIR
+# compare` reads the selection lines of four such runs. The nested gates read
+# the private free flag set at the top, never the clone's.
+unset GATE_TIMING_TOKEN GATETIME_RUN_DIR
 out="$(GATE_STEPS_LOG="$TMP/steps7.log" GATE_MODULES=protocol bash scripts/gate.sh simvet 2>&1)"
 grep -qE '^[^ ]+ simvet selection - [^ ]+ tier=step docker=out modules=protocol p=- guards=- reused=0$' "$TMP/steps7.log" \
   || fail "no selection line, or not the one simvet chose: $(cat "$TMP/steps7.log" 2>/dev/null) $out"
@@ -224,7 +232,7 @@ if [ -x "$GT" ]; then
   out="$("$GT" compare "$TMP/cmp1" "$TMP/cmp2" "$TMP/cmp3" "$TMP/cmp4" 2>&1)"
   { echo "$out" | grep -q '^selection: by the selection line' && ! echo "$out" | grep -q 'selection differs'; } \
     || fail "gatetime compare did not compare four equal selection lines: $out"
-  unset GATE_TIMING_DIR
+  export GATE_TIMING_DIR="$TMP/gate.timing-free"
 fi
 
 if [ "$fails" -eq 0 ]; then
