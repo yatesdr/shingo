@@ -218,6 +218,61 @@ func expiryCases() []ruleCase {
 	}
 }
 
+func serialCases() []ruleCase {
+	scope := lines("# the scope file", "package app/eng", "package app/store",
+		"unaudited app/eng TestOld", "unaudited app/eng TestOldNowParallel", "unaudited app/eng TestGone",
+		"unaudited app/web TestElsewhere", "bogus line")
+	mark := "// " + "serial: "
+	eng := "package eng\n\nimport \"testing\"\n\n" + lines(
+		"func TestNew(t *testing.T) {}", // 5: serial, unmarked, unlisted
+		"",
+		"// TestDoc says why in its doc comment's last line.",
+		mark+"it sets the process clock",
+		"func TestMarked(t *testing.T) {}",
+		"",
+		mark,
+		"func TestNoReason(t *testing.T) {}", // 12
+		"",
+		mark+"stale",
+		"func TestMarkedButParallel(t *testing.T) { t.Parallel() }", // 15
+		"",
+		mark+"a blank line breaks it",
+		"",
+		"func TestGap(t *testing.T) {}", // 19
+		"",
+		"func TestPar(tt *testing.T) {",
+		"\ttt.Parallel()",
+		"}",
+		"",
+		"func TestOnlySubtestsParallel(t *testing.T) {", // 25
+		"\tt.Run(\"a\", func(t *testing.T) { t.Parallel() })",
+		"}",
+		"",
+		"func TestOld(t *testing.T) {}",
+		"",
+		"func TestOldNowParallel(t *testing.T) { t.Parallel() }",
+		"",
+		"func TestMain(m *testing.M) {}",
+		"func helper(t *testing.T)       {}",
+		"func TestBench(b *testing.B)    {}",
+		"type x struct{}",
+		"func (x) TestMethod(t *testing.T) {}")
+	return []ruleCase{
+		{"serial-tests", "unmarked, unreasoned, contradicted, gapped and stale lines fire; marked, parallel and listed pass",
+			fixed(treeOf(serialScopeFile, scope,
+				"app/eng/a_test.go", eng,
+				"app/eng/sub/b_test.go", "package sub\n\nimport \"testing\"\n\nfunc TestNotInScope(t *testing.T) {}\n",
+				"app/web/c_test.go", "package web\n\nimport \"testing\"\n\nfunc TestElsewhere(t *testing.T) {}\n",
+				"app/store/d_test.go", "package store\n\nimport \"testing\"\n\nfunc TestStoreSerial(t *testing.T) {}\n",
+				"app/store/e.go", "package store\n\nimport \"testing\"\n\nfunc TestNotATestFile(t *testing.T) {}\n")),
+			[]string{"app/eng/a_test.go:12", "app/eng/a_test.go:15", "app/eng/a_test.go:19", "app/eng/a_test.go:25",
+				"app/eng/a_test.go:5", "app/store/d_test.go:5",
+				serialScopeFile + ":5", serialScopeFile + ":6", serialScopeFile + ":7", serialScopeFile + ":8"}},
+		{"serial-tests", "no scope file is a finding, not a pass", fixed(treeOf("app/eng/a_test.go", eng)),
+			[]string{serialScopeFile}},
+	}
+}
+
 // jsTree writes path, content pairs under a temp root, as node reads them from
 // disk. Without node it skips: the rule's own missing-node failure is pinned
 // by TestJSParse_MissingNodeFails.
@@ -306,7 +361,7 @@ func jsCases() []ruleCase {
 func allCases() []ruleCase {
 	var cs []ruleCase
 	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, jsCases, plantCases,
-		swapCases, syntheticCases, textFileCases} {
+		serialCases, swapCases, syntheticCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
 	return cs

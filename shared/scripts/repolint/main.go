@@ -18,6 +18,7 @@
 //	js-parse                every .js file parses as an ES module or as CommonJS
 //	js-undeclared           a www/static page script reads only names something declares
 //	plant-addresses         no private IPv4 address in a tracked text file
+//	serial-tests            in the packages it covers, a top-level test calls t.Parallel() or says why not
 //	swap-mode-literals      no raw swap-mode string outside its constants and the surfaces that name modes
 //	synthetic-part-numbers  no customer-shaped part number or plant PLC struct name
 //	text-files              no text-attributed file indexed -text
@@ -123,6 +124,7 @@ var rules = []rule{
 	{"js-imports", "Export the name from the module the import names, or drop the import. A module that imports a name nobody exports takes its whole page down before a line runs.", jsImports},
 	{"js-undeclared", "Declare it, pass it, or import it. A page global goes on window or in the template's inline script; a browser global the rule does not know goes in KNOWN in jsundeclared.js.", jsUndeclared},
 	{"plant-addresses", "Use TEST-NET (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24); 192.168.1.0/24 is reserved for doc examples. To derive a fixture from a capture, see shared/scripts/anonymiserobotsstatus.", plantAddresses},
+	{"serial-tests", "Call t.Parallel(), or put `// serial: <what it shares>` on the line above its func. serial-tests.txt says which packages are read.", serialTests},
 	{"swap-mode-literals", "Go: use the typed constant from protocol/swap_mode.go. JavaScript: key the gate on the order graph or a property the server declares (releases_as_pair).", swapModeLiterals},
 	{"synthetic-part-numbers", "Use a synthetic code (SYN-A-P007, SYN-PART07A.06) or struct (MES_Press_A1).", syntheticPartNumbers},
 	{"text-files", "Fix the file content (often an editor round-trip), then re-add it.", textFiles},

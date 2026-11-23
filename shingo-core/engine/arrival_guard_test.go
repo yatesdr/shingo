@@ -69,6 +69,7 @@ func TestRefuseArrival(t *testing.T) {
 // ruling waits on. A refusal that is not counted is a refusal nobody can weigh,
 // and weighing it is the whole reason the disposition was deferred rather than
 // guessed.
+// serial: it resets and counts arrivalRefusalTally, the process-wide tally any engine's arrival guard writes
 func TestArrivalRefusalTally_CountsPerSite(t *testing.T) {
 	resetArrivalRefusalTally()
 	t.Cleanup(resetArrivalRefusalTally)

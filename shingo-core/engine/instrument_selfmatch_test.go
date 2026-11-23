@@ -30,6 +30,7 @@ import (
 // Adding an instrument? Add a row. The markers are exported constants precisely so
 // the emitter, the summariser and this test cannot hold three different opinions
 // about what the string is.
+// serial: it resets, writes and reads arrivalRefusalTally, the process-wide tally any engine's arrival guard writes
 func TestShouldBeZeroTalliesDoNotMatchThemselves(t *testing.T) {
 	lines, svc := captureTallyLines(t)
 

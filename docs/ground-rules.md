@@ -61,6 +61,10 @@ These are the rules the codebase's comments cite.
   The sweeps are listed in [sweeps-and-monitors.md](sweeps-and-monitors.md).
 - **A check must know whether it had the input to check.** A killed run, a skipped test and a pattern that matched
   nothing must not read as a pass. Guard (for the repo-wide text rules): `TestEveryRuleHasACaseThatFires`.
+- **A top-level test that does not call `t.Parallel()` says why,** with `// serial: <what it shares>` on the line
+  directly above its func. Guard: repolint `serial-tests`, over the packages `shared/scripts/repolint/serial-tests.txt`
+  names. The serial tests there that predate the rule are listed in that file as unaudited, and the list only
+  shrinks.
 - **The schema has one home: the generated baseline, and a migration above it.** A new database is born on
   `shingo-core/store/schema/baseline.sql`, generated (`make schema-baseline`) and never edited; every change is a
   numbered migration above the retired chain (v184) with its down entry (`shingocore migrate down N`), after which

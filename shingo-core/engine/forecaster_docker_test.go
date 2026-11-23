@@ -193,6 +193,7 @@ func TestForecast_AProduceCellIsProjectedFromItsProduceRate(t *testing.T) {
 // sim clock: a projection is a wall time. RED at 3d8dce49: under a process
 // clock ten hours ahead the projection landed ten hours out. Not parallel: it
 // sets the process clock, which no other test may see.
+// serial: it sets the process clock (clock.SetDefault), which every engine's loops read
 func TestForecast_TheProjectionIsWallTime(t *testing.T) {
 	prev := clock.Default()
 	clock.SetDefault(clock.NewManual(time.Now().Add(10 * time.Hour)))

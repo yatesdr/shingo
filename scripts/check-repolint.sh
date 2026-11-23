@@ -5,8 +5,9 @@
 # One `git ls-files` listing, one read of each tracked file and one node process
 # each for js-imports, js-parse and js-undeclared, in place of a bash guard per
 # rule: comment references (file:line), conflict markers, js-imports, js-parse,
-# js-undeclared, plant addresses, swap-mode literals, synthetic part numbers,
-# text files, and EXPIRY-by-symbol pins. Whole tree, every run. Each rule prints
+# js-undeclared, plant addresses, serial tests (in the packages it covers),
+# swap-mode literals, synthetic part numbers, text files, and EXPIRY-by-symbol
+# pins. Whole tree, every run. Each rule prints
 # its own `ok   <rule> (...)` line, or `FAIL <rule>  file:line  why` per
 # finding. The rules, their reasons and the cases each must fire on live in
 # shared/scripts/repolint.
