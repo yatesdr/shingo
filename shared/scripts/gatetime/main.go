@@ -15,7 +15,12 @@
 //	gatetime exec BINARY ARGS...   go test -exec's program: runs one test
 //	                               binary in a job object of its own and, when
 //	                               $GATETIME_MANIFESTS is set, writes one JSON
-//	                               manifest of what that run read (exec.go)
+//	                               manifest of what that run read (exec.go).
+//	                               With $GATETIME_REUSE set it is package
+//	                               reuse's instead (record, reuse or audit)
+//	gatetime canary -root DIR      reuse's canary: run its known binary
+//	                               through `exec` and check the record
+//	gatetime seccomp-shim ...      the Linux tracer's shim (not for hands)
 //
 // The Windows calls (job objects, the process table, power, the standby log)
 // are behind //go:build windows; on any other OS the same commands build and
@@ -26,15 +31,19 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"shingo/shared/scripts/gatetime/reuse"
 )
 
 // commands are the subcommands, by name. Each returns the process exit code.
 var commands = map[string]func(args []string) int{
-	"exec":    execMain,
-	"run":     runMain,
-	"compare": compareMain,
-	"stamp":   stampMain,
-	"report":  reportMain,
+	"exec":            execMain,
+	"run":             runMain,
+	"compare":         compareMain,
+	"stamp":           stampMain,
+	"report":          reportMain,
+	"canary":          reuse.CanaryMain,
+	reuse.ShimCommand: reuse.ShimMain,
 }
 
 func usage() int {
@@ -43,6 +52,7 @@ func usage() int {
 	fmt.Fprintln(os.Stderr, "       gatetime stamp -since UNIX")
 	fmt.Fprintln(os.Stderr, "       gatetime report MANIFEST_DIR...")
 	fmt.Fprintln(os.Stderr, "       gatetime exec BINARY ARGS...")
+	fmt.Fprintln(os.Stderr, "       gatetime canary -root DIR [-identity FILE]")
 	return 2
 }
 
