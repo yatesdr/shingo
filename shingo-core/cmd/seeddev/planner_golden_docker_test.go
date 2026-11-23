@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"shingo/protocol"
@@ -39,8 +40,9 @@ import (
 // callers unchanged. "Unchanged" is only checkable if what each decider answers
 // is written down first, for every door and every shape that reaches it. This
 // is that record. Each case is one need put to one decider (or one door, where
-// the decider is private to it) on a freshly seeded plant, and its answer is
-// stored as JSON under testdata/planner-golden. A refactor that keeps the
+// the decider is private to it) on a seeded plant (a fresh one of its own, or,
+// for a decider case with no setup, THE READ-ONLY PLANT below), and its answer
+// is stored as JSON under testdata/planner-golden. A refactor that keeps the
 // callers unchanged keeps every file byte-identical.
 //
 // ── WHY IT LIVES IN THE SEEDER ────────────────────────────────────────────
@@ -54,14 +56,21 @@ import (
 // The other sections ride their own carriers, so a case on [demo]'s payloads
 // answers from [demo]'s storage; sourceable/every-bin lists every bin of all.
 //
-// ── WHY THE ENGINE IS STARTED AND STOPPED ─────────────────────────────────
+// ── WHICH CASES START AN ENGINE ───────────────────────────────────────────
 //
-// The dispatcher and the scanner are built in Engine.Start, and Start also
-// launches the level keeper, the threshold monitor, the sourceability monitor
-// and the sweeps, any of which can write orders on their own. So each case
-// starts the engine, stops it at once, and waits until no background write
-// lands; from then on every decision is made by a synchronous call from this
-// test. A case asserts the plant is still quiet before it runs.
+// A door case does. The dispatcher and the scanner are built in Engine.Start,
+// and Start also launches the level keeper, the threshold monitor, the
+// sourceability monitor and the sweeps, any of which can write orders on their
+// own. So a door case starts the engine, stops it at once, and waits until no
+// background write lands; from then on every decision is made by a synchronous
+// call from this test. A case asserts the plant is still quiet before it runs.
+//
+// A BinPicker or GroupResolver case (a decider case, below) does not: it calls
+// the picker or the resolver itself, over its counting store, and builds no
+// engine. MEASURED 2026-11-23: those 37 goldens, and their BUDGET lines, were
+// byte-identical with Start and Stop taken out, so no answer they record comes
+// from the boot. The sourceable case still starts one; that measurement did
+// not cover it.
 //
 // ── WHAT IS RECORDED, AND WHAT IS NOT ─────────────────────────────────────
 //
@@ -77,8 +86,9 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/planner-g
 
 const goldenDir = "testdata/planner-golden"
 
-// goldenPlant is one case's world: the demo plant seeded into a fresh database,
-// and an engine whose background loops have been stopped.
+// goldenPlant is one case's world: a seeded demo plant, and for a door case (and
+// the sourceable case) an engine whose background loops have been stopped; eng
+// and backend are nil for a decider case.
 type goldenPlant struct {
 	t  *testing.T
 	db *store.DB
@@ -99,9 +109,41 @@ type goldenPlant struct {
 	watching bool
 }
 
+// newGoldenPlant is a door case's world (and the sourceable case's): the demo
+// plant seeded into a fresh database, and an engine started and stopped on it.
 func newGoldenPlant(t *testing.T) *goldenPlant {
 	t.Helper()
 	db, dbcfg := testdb.OpenWithConfig(t)
+	seedGoldenWorld(t, db)
+
+	backend := testdb.NewTrackingBackend()
+	cfg := config.Defaults()
+	cfg.Messaging.StationID = "test-core"
+	cfg.Messaging.DispatchTopic = "shingo.dispatch"
+	cdb, counter, err := store.OpenCounting(dbcfg)
+	testutil.MustNoErr(t, err, "open the counting store")
+	t.Cleanup(func() { cdb.Close() })
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: cdb, Fleet: backend, LogFunc: func(string, ...any) {}})
+	eng.Start()
+	eng.Stop()
+	g := &goldenPlant{t: t, db: db, cdb: cdb, counter: counter, eng: eng, backend: backend}
+	// Stop has waited for every loop Start launched (TestEngineStop_WaitsForItsGoroutines),
+	// the boot scan among them, so one scan leaves nothing in flight to wait for.
+	eng.RunFulfillmentScan()
+	if n := g.count(`SELECT COUNT(*) FROM orders`); n != 0 {
+		t.Fatalf("fixture: %d order(s) exist after the engine was started and stopped — a background "+
+			"loop wrote before it was stopped, so the cases below would not be deterministic", n)
+	}
+	counter.Reset()
+	g.watchPlanner()
+	return g
+}
+
+// seedGoldenWorld seeds the demo plant into db: plants/master.yaml through the
+// production seeder, the claims mirror, and the bins' FIFO ages made
+// deterministic.
+func seedGoldenWorld(t *testing.T, db *store.DB) {
+	t.Helper()
 	plant, err := plantspec.Load("../../../plants/master.yaml")
 	testutil.MustNoErr(t, err, "load plants/master.yaml")
 	testutil.MustNoErr(t, plant.Validate(), "validate plants/master.yaml")
@@ -129,27 +171,110 @@ func newGoldenPlant(t *testing.T) *goldenPlant {
 		       + bins.id * INTERVAL '1 millisecond'
 		FROM newest WHERE bins.loaded_at IS NOT NULL`)
 	testutil.MustNoErr(t, err, "normalise FIFO age")
+}
 
-	backend := testdb.NewTrackingBackend()
-	cfg := config.Defaults()
-	cfg.Messaging.StationID = "test-core"
-	cfg.Messaging.DispatchTopic = "shingo.dispatch"
+// newDeciderPlant is the world of a decider case with a setup: the demo plant
+// seeded into a fresh database of its own, because the setup writes, and no
+// engine (WHICH CASES START AN ENGINE, above).
+func newDeciderPlant(t *testing.T) *goldenPlant {
+	t.Helper()
+	db, dbcfg := testdb.OpenWithConfig(t)
+	seedGoldenWorld(t, db)
+	return deciderPlantOn(t, db, dbcfg)
+}
+
+// deciderPlantOn is one decider case on a seeded plant: a counting store of its
+// own, because the zero-write books are kept per counting store
+// (planner_zero_write_docker_test.go), and its book.
+func deciderPlantOn(t *testing.T, db *store.DB, dbcfg *config.DatabaseConfig) *goldenPlant {
+	t.Helper()
 	cdb, counter, err := store.OpenCounting(dbcfg)
 	testutil.MustNoErr(t, err, "open the counting store")
 	t.Cleanup(func() { cdb.Close() })
-	eng := engine.New(engine.Config{AppConfig: cfg, DB: cdb, Fleet: backend, LogFunc: func(string, ...any) {}})
-	eng.Start()
-	eng.Stop()
-	g := &goldenPlant{t: t, db: db, cdb: cdb, counter: counter, eng: eng, backend: backend}
-	// Stop has waited for every loop Start launched (TestEngineStop_WaitsForItsGoroutines),
-	// the boot scan among them, so one scan leaves nothing in flight to wait for.
-	eng.RunFulfillmentScan()
+	g := &goldenPlant{t: t, db: db, cdb: cdb, counter: counter}
 	if n := g.count(`SELECT COUNT(*) FROM orders`); n != 0 {
-		t.Fatalf("fixture: %d order(s) exist after the engine was started and stopped — a background "+
-			"loop wrote before it was stopped, so the cases below would not be deterministic", n)
+		t.Fatalf("fixture: %d order(s) exist on the seeded plant before the case ran, so the case "+
+			"would not answer from the plant the golden names", n)
 	}
-	counter.Reset()
 	g.watchPlanner()
+	return g
+}
+
+// ── THE READ-ONLY PLANT ──────────────────────────────────────────────────────
+//
+// A decider case with no setup reads the plant and writes nothing, so those
+// cases share one plant instead of seeding one each. The first test function
+// to ask seeds it, before that function starts its cases, and
+// testdb.OpenSharedWithConfig keeps it until the last function holding it ends;
+// the two functions are parallel, so in a run of both it is seeded once per
+// test binary. After the seed the database is made read-only for every session
+// opened on it from then on, and each case opens its own after that, so a case
+// cannot write it (sharedGoldenWorld hands the plant out only after a new
+// session's write was refused). readsOnly then asserts at each case's end that
+// it did not try: every statement on its counting store a read, and the plant's
+// fingerprint still the one taken after the seed
+// (planner_zero_write_docker_test.go).
+
+const goldenWorldKey = "seeddev-planner-golden-read-only-plant"
+
+// goldenWorld is the read-only plant: the config every case opens its own pools
+// with, and its fingerprint after the seed.
+type goldenWorld struct {
+	cfg   *config.DatabaseConfig
+	print map[string]string
+}
+
+var (
+	goldenWorldMu sync.Mutex
+	// goldenWorlds is keyed by the shared handle: a re-open after the last
+	// holder dropped the database hands back a new one
+	// (testdb.TestOpenShared_RefcountDropsLastOut), which is seeded anew.
+	goldenWorlds = map[*store.DB]*goldenWorld{}
+)
+
+// sharedGoldenWorld returns the read-only plant, seeding it if this is its first
+// holder. A test function calls it before it starts its cases.
+func sharedGoldenWorld(t *testing.T) *goldenWorld {
+	t.Helper()
+	goldenWorldMu.Lock()
+	defer goldenWorldMu.Unlock()
+	db, cfg := testdb.OpenSharedWithConfig(t, goldenWorldKey)
+	if w := goldenWorlds[db]; w != nil {
+		return w
+	}
+	seedGoldenWorld(t, db)
+	// The end-of-test sweep testdb runs on a plant of a case's own (openClone),
+	// run once here: no case changes this plant, which readsOnly asserts.
+	testdb.AssertNoPointerWedge(t, db)
+	testdb.AssertArmorMatchesStatus(t, db)
+	testdb.AssertQueuedCarriesACause(t, db)
+	_, err := db.DB.Exec(fmt.Sprintf(`ALTER DATABASE %s SET default_transaction_read_only = on`, cfg.Postgres.Database))
+	testutil.MustNoErr(t, err, "make the shared plant read-only")
+	// The setting is the claim "a case cannot write"; a session opened as the
+	// cases open theirs is asked to write, and must be refused.
+	probe, err := store.OpenWithoutMigrate(cfg)
+	testutil.MustNoErr(t, err, "open a probe of the read-only plant")
+	_, err = probe.DB.Exec(`UPDATE bins SET locked = locked WHERE false`)
+	probe.Close()
+	if err == nil || !strings.Contains(err.Error(), "SQLSTATE 25006") {
+		t.Fatalf("fixture: a new session on the shared plant was not refused a write (%v), so the cases "+
+			"sharing it could write it; is default_transaction_read_only still set on the database?", err)
+	}
+	w := &goldenWorld{cfg: cfg, print: worldPrint(t, db)}
+	goldenWorlds[db] = w
+	return w
+}
+
+// plant is one decider case with no setup on the read-only plant: a plain pool
+// and a counting store of its own, both opened after the plant went read-only,
+// and readsOnly against the seed's fingerprint.
+func (w *goldenWorld) plant(t *testing.T) *goldenPlant {
+	t.Helper()
+	db, err := store.OpenWithoutMigrate(w.cfg)
+	testutil.MustNoErr(t, err, "open the read-only plant")
+	t.Cleanup(func() { db.Close() })
+	g := deciderPlantOn(t, db, w.cfg)
+	g.readsOnly(w.print)
 	return g
 }
 
@@ -630,6 +755,7 @@ func golden(t *testing.T, name string, need, decision any) {
 func TestPlannerGolden_BinPicker(t *testing.T) {
 	t.Parallel()
 	requirePlannerSeen(t)
+	world := sharedGoldenWorld(t)
 	type need struct {
 		Source   string `json:"source,omitempty"`
 		Payload  string `json:"payload,omitempty"`
@@ -762,12 +888,13 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			g := newGoldenPlant(t)
+			var g *goldenPlant
 			asker := reservations.Anyone
 			if c.setup != nil {
+				g = newDeciderPlant(t)
 				asker = c.setup(g)
 			} else {
-				g.readsOnly(worldPrint(t, g.db))
+				g = world.plant(t)
 			}
 			intent := dispatch.IntentFull
 			if c.need.Intent == "empty" {
@@ -788,6 +915,7 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 func TestPlannerGolden_GroupResolver(t *testing.T) {
 	t.Parallel()
 	requirePlannerSeen(t)
+	world := sharedGoldenWorld(t)
 	type need struct {
 		Group   string `json:"group"`
 		Mode    string `json:"mode"`
@@ -827,11 +955,12 @@ func TestPlannerGolden_GroupResolver(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			g := newGoldenPlant(t)
+			var g *goldenPlant
 			if c.setup != nil {
+				g = newDeciderPlant(t)
 				c.setup(g)
 			} else {
-				g.readsOnly(worldPrint(t, g.db))
+				g = world.plant(t)
 			}
 			mode := binresolver.ResolveModeStore
 			if c.need.Mode == "retrieve" {

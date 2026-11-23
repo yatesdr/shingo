@@ -18,8 +18,8 @@ import (
 // planner_zero_write_docker_test.go — THE PLANNER WRITES NOTHING, measured.
 //
 // B1's third proof of purity, beside the type (plan.Reader, reads only) and the
-// lint (planner-purity depguard). Every planner golden case runs its engine,
-// its picker and its resolver against a statement-counting store
+// lint (planner-purity depguard). Every planner golden case runs its picker,
+// its resolver or (a door case) its engine against a statement-counting store
 // (store.OpenCounting), and every statement issued INSIDE a planner call is
 // classified. A write, a row lock, an advisory lock or a transaction bracket
 // inside one fails the case. A door around the planner writes plenty (it
