@@ -18,18 +18,29 @@ import (
 	"shingoedge/plc/simwarlink"
 )
 
-// TestCatid4x2_S4_JumpWithNoChangeover: S4's two halves (s4Jump), untapped at
-// production's window, tapped at w6ShortWindow.
+// TestCatid4x2_S4_JumpWithNoChangeover: S4's two halves (s4Jump) at
+// w6ShortWindow. Untapped is the twin of the production-window leaf below:
+// the same call with the window swapped.
 func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 	t.Parallel()
 	t.Run("untapped", func(t *testing.T) {
 		t.Parallel()
-		s4Jump(t, "untapped", w6ProductionWindow)
+		s4Jump(t, "untapped", w6ShortWindow)
 	})
 	t.Run("tapped", func(t *testing.T) {
 		t.Parallel()
 		s4Jump(t, "tapped", w6ShortWindow)
 	})
+}
+
+// TestCatid4x2_S4_JumpWithNoChangeover_Untapped_ProductionWindow is S4's
+// untapped half at production's window: nothing moves while the 60 s the old
+// automatic switch acted after runs out at a plant's length. A top-level
+// test, so that a package run should admit it with the first wave of tests,
+// as it does S5, and not behind the package's subtests.
+func TestCatid4x2_S4_JumpWithNoChangeover_Untapped_ProductionWindow(t *testing.T) {
+	t.Parallel()
+	s4Jump(t, "untapped", w6ProductionWindow)
 }
 
 // s4Jump is S4's body for half ("untapped" or "tapped"), on a cell whose
