@@ -17,8 +17,10 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/plc"
 	"shingoedge/store/counters"
+	"shingoedge/store/processes"
 )
 
 // aheadOfTheWall is how far the sim stack's clock had run ahead of the wall
@@ -393,6 +395,436 @@ func noWallClock(t *testing.T) {
 			if wallClock.MatchString(line) {
 				t.Errorf("%s:%d: %s", f, i+1, strings.TrimSpace(line))
 			}
+		}
+	}
+}
+
+// ── The production windows, one read at a time ──────────────────────────────
+//
+// The orders of events the integration module's production-window leaves
+// waited the wall clock out for (S2's two gates, S4 untapped, S5), at
+// production's values: the declaration's 60 s window (autoArmStableWindow),
+// the minute a refused cutover waits (cutoverRetryInterval) and the
+// post-cutover verify's two minutes (postCutoverVerifyWindow), on the engine's
+// manual clock, the monitor's own loop and the real door. The durations are
+// written out, not read from the constants: a change to one of those values
+// is a change these tests see. Not parallel: they install the process clock.
+
+// newWindowRig is a clockRig on the phase-3 swap process: P3-NODE's part
+// differs between the styles, so a changeover started through the door has a
+// leg there and its gate is red until the leg lands. The process counts on
+// plc/MES_Cell.Prod_Counter_01, A (the running style) pinned 1001 and B 1002,
+// both seen, in auto, with the handlers wired, the pokes carried to the
+// monitor's loop and the door the real one; the PLC is on 1001, read once.
+func newWindowRig(t *testing.T) *clockRig {
+	t.Helper()
+	r := &clockRig{t: t, clk: clock.NewManual(time.Now().Add(aheadOfTheWall))}
+	prev := clock.Default()
+	clock.SetDefault(r.clk)
+	t.Cleanup(func() { clock.SetDefault(prev) })
+	db := testEngineDB(t)
+	r.pid, _, r.a, r.b = seedPhase3SwapScenario(t, db)
+	testutil.MustNoErr(t, db.SetProcessCounter(r.pid, "plc", "MES_Cell.Prod_Counter_01", true, "", false), "counter")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(r.a, "1001"), "pin A")
+	testutil.MustNoErr(t, db.SetStyleExpectedCATID(r.b, "1002"), "pin B")
+	testutil.MustNoErr(t, db.SetChangeoverAutoArm(r.pid, "auto"), "auto")
+	for _, v := range []string{"1001", "1002"} {
+		testutil.MustNoErr(t, db.RecordPLCCATIDObservation(r.pid, "plc", v), "observed "+v)
+	}
+	r.eng = testEngine(t, db)
+	r.eng.plcMgr = plc.NewManager(nil, config.WarLinkConfig{}, 0, 0, nil, &recordingWarlink{})
+	r.eng.cutoverPokes = make(chan int64, 64)
+	r.eng.logFn = func(format string, args ...any) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.logs = append(r.logs, fmt.Sprintf(format, args...))
+	}
+	r.eng.wireEventHandlers()
+	r.set(1001)
+	r.cm = &catidMonitor{eng: r.eng, states: map[int64]*catidState{}}
+	r.cm.completeCutover = r.eng.completeCutoverLocked
+	r.cm.prime()
+	r.eng.catidMon = r.cm
+	r.eng.tickMonitor.Store(r.cm)
+	r.loop(r.cm.run)
+	r.firstRead()
+	return r
+}
+
+// tickAt moves the process clock by d, a whole number of poll intervals so the
+// monitor's ticker fires once, and returns when the monitor has read the PLC
+// and its loop is idle again: the tick's decision fired, every poke taken.
+func (r *clockRig) tickAt(d time.Duration) {
+	r.t.Helper()
+	before := r.snap()
+	r.clk.Advance(d)
+	if !r.waitRead(before, 2*time.Second) {
+		r.t.Fatalf("the monitor did not read the PLC after %v", d)
+	}
+	r.idle()
+}
+
+// idle returns once the monitor's loop has taken every poke sent to it. A
+// poke for no process goes in behind them; the loop takes a poke only between
+// ticks, after a tick's fire has returned.
+func (r *clockRig) idle() {
+	r.t.Helper()
+	r.eng.cutoverPokes <- 0
+	for end := time.Now().Add(2 * time.Second); len(r.eng.cutoverPokes) > 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(end) {
+			r.t.Fatal("the monitor's loop did not take its pokes")
+		}
+	}
+}
+
+// to steps the process clock to from+at, at most 10 s a read.
+func (r *clockRig) to(from time.Time, at time.Duration) {
+	r.t.Helper()
+	for left := from.Add(at).Sub(r.clk.Now()); left > 0; left = from.Add(at).Sub(r.clk.Now()) {
+		r.tickAt(min(left, 10*time.Second))
+	}
+	if now := r.clk.Now(); !now.Equal(from.Add(at)) {
+		r.t.Fatalf("the clock is %v past the change, want %v", now.Sub(from), at)
+	}
+}
+
+// said is how many logged lines contain sub.
+func (r *clockRig) said(sub string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, l := range r.logs {
+		if strings.Contains(l, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// lines is every logged line, for a failure message.
+func (r *clockRig) lines() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.logs...)
+}
+
+// changedTo puts v on the PLC, steps the monitor until it has confirmed it,
+// and returns the confirm's time: the declaration's window opens on it.
+func (r *clockRig) changedTo(v int64) time.Time {
+	r.t.Helper()
+	r.confirm(v)
+	r.idle()
+	at := r.clk.Now()
+	if f := r.facts(); !f.confirmedAt.Equal(at) || f.baseline {
+		r.t.Fatalf("fixture: %d confirmed at %v (baseline %v), want a change confirmed now", v, f.confirmedAt, f.baseline)
+	}
+	return at
+}
+
+// stroke is one counted stroke on the point's style A, as the poll makes it,
+// whose attribution must be kind; it returns once the monitor took its poke.
+func (r *clockRig) stroke(kind plc.TickKind) {
+	r.t.Helper()
+	if id := countedStroke(r.eng, r.pid, r.a); id.Kind != kind {
+		r.t.Fatalf("fixture: the stroke is %+v, want %s", id, kind)
+	}
+	r.idle()
+}
+
+// decisions is how many door decisions the monitor logged, a cut over or a
+// refusal: each "changeover N: predicate held on CATID ...".
+func (r *clockRig) decisions() int { return r.said(": predicate held on CATID") }
+
+// TestCatidMonitor_GreenGateCompletesAtTheProductionWindow (S2, the gate
+// green): a changeover A → B is open with nothing left to land, the PLC
+// changes to B's part and a stroke on it is counted before the window closes,
+// as the cell's next strokes are. The monitor completes the changeover on the
+// read that closes the 60 s window, and not on the read before: auto-catid,
+// one decision, the counted part's force meeting a green gate.
+func TestCatidMonitor_GreenGateCompletesAtTheProductionWindow(t *testing.T) {
+	r := newWindowRig(t)
+	coID := r.open()
+	if ok, _, err := r.eng.canCompleteChangeover(coID); err != nil || !ok {
+		t.Fatalf("fixture: the gate is %v (%v), want green", ok, err)
+	}
+	changed := r.changedTo(1002)
+	r.stroke(plc.TickTarget)
+	r.to(changed, 59500*time.Millisecond)
+	if co := changeoverRow(t, r.eng.db, coID); co.State.IsTerminal() || r.decisions() != 0 {
+		t.Fatalf("59.5 s after the change: changeover %s by %q, %d decisions; want it open and none: the window is 60 s",
+			co.State, co.TriggeredBy, r.decisions())
+	}
+	r.tickAt(500 * time.Millisecond)
+	co := changeoverRow(t, r.eng.db, coID)
+	if co.State != domain.ChangeoverCompleted || co.TriggeredBy != triggeredAutoCATID || runningStyle(t, r.eng.db, r.pid) != r.b {
+		t.Fatalf("60 s after the change: changeover %s by %q, the process on %d; want completed by auto-catid onto B (%d)",
+			co.State, co.TriggeredBy, runningStyle(t, r.eng.db, r.pid), r.b)
+	}
+	if r.decisions() != 1 || r.said("counted on the target since the change, gate green, mode=auto — cut over") != 1 {
+		t.Errorf("decision lines %q, want one: the counted part's force on a green gate", r.lines())
+	}
+}
+
+// TestCatidMonitor_RedGateForcedAtTheProductionWindow (S2, the gate red): a
+// changeover A → B whose leg at P3-NODE has not landed, the PLC changed to
+// B's part and nobody presses CUTOVER. Counted before the window closes (the
+// order the cell's strokes come in), the part forces the changeover on the
+// read that closes the window, past the leg. Counted only after it, the
+// window's decision is refused, decided again a minute after the refusal and
+// not a read sooner (the window plus the minute: 120 s from the change), and
+// the first counted incoming part forces it on the monitor's next read, never
+// on the poll's stroke. Either way auto-catid-forced, the leg left running.
+func TestCatidMonitor_RedGateForcedAtTheProductionWindow(t *testing.T) {
+	start := func(t *testing.T) (*clockRig, int64, *processes.NodeTask) {
+		t.Helper()
+		r := newWindowRig(t)
+		co, task := startChangeover(t, r.eng, r.eng.db, r.pid, r.b)
+		if ok, _, err := r.eng.canCompleteChangeover(co.ID); err != nil || ok {
+			t.Fatalf("fixture: the gate is %v (%v), want red: the leg at P3-NODE is still moving", ok, err)
+		}
+		return r, co.ID, task
+	}
+	open := func(t *testing.T, r *clockRig, coID int64, at string, decided int) {
+		t.Helper()
+		if co := changeoverRow(t, r.eng.db, coID); co.State.IsTerminal() || r.decisions() != decided {
+			t.Fatalf("%s: changeover %s by %q, %d decisions; want it open after %d (lines %q)", at, co.State, co.TriggeredBy,
+				r.decisions(), decided, r.lines())
+		}
+	}
+	forced := func(t *testing.T, r *clockRig, coID int64, task *processes.NodeTask, at string) {
+		t.Helper()
+		co := changeoverRow(t, r.eng.db, coID)
+		if co.State != domain.ChangeoverCompleted || co.TriggeredBy != triggeredAutoCATID+triggeredForced ||
+			!strings.Contains(co.Notes, "forced past: ") || runningStyle(t, r.eng.db, r.pid) != r.b {
+			t.Fatalf("%s: changeover %s by %q (notes %q); want completed by auto-catid-forced past the leg onto B", at,
+				co.State, co.TriggeredBy, co.Notes)
+		}
+		assertLegsUntouched(t, r.eng.db, task)
+		if r.said("counted on the target since the change, forced past task at node Phase3 Swap Node") != 1 {
+			t.Errorf("%s: decision lines %q, want one forced cut over", at, r.lines())
+		}
+	}
+
+	t.Run("counted before the window", func(t *testing.T) {
+		r, coID, task := start(t)
+		changed := r.changedTo(1002)
+		r.stroke(plc.TickTarget)
+		r.to(changed, 59500*time.Millisecond)
+		open(t, r, coID, "59.5 s after the change", 0)
+		r.tickAt(500 * time.Millisecond)
+		forced(t, r, coID, task, "60 s after the change")
+		if r.decisions() != 1 {
+			t.Errorf("decision lines %q, want the one at the window", r.lines())
+		}
+	})
+
+	t.Run("counted after the refusal", func(t *testing.T) {
+		r, coID, task := start(t)
+		changed := r.changedTo(1002)
+		r.to(changed, 59500*time.Millisecond)
+		open(t, r, coID, "59.5 s after the change", 0)
+		r.tickAt(500 * time.Millisecond)
+		open(t, r, coID, "60 s after the change", 1)
+		if r.said("waiting on cannot cutover: task at node Phase3 Swap Node") != 1 || r.said("counted on the target") != 0 {
+			t.Fatalf("60 s after the change: decision lines %q, want one refusal on the leg, not forced", r.lines())
+		}
+		r.to(changed, 119500*time.Millisecond)
+		open(t, r, coID, "a minute less a read after the refusal", 1)
+		r.tickAt(500 * time.Millisecond)
+		open(t, r, coID, "a minute after the refusal", 2)
+		if r.said("— not cut over") != 2 {
+			t.Fatalf("120 s after the change: decision lines %q, want the refusal decided again", r.lines())
+		}
+		r.to(changed, 125*time.Second)
+		open(t, r, coID, "5 s after the retry", 2)
+		r.stroke(plc.TickTarget)
+		open(t, r, coID, "the first counted incoming part, before the monitor reads again", 2)
+		r.tickAt(500 * time.Millisecond)
+		forced(t, r, coID, task, "the read after the counted part")
+		if r.decisions() != 3 {
+			t.Errorf("decision lines %q, want the window's, the retry's and the force", r.lines())
+		}
+	})
+}
+
+// TestCatidMonitor_NoChangeoverMovesNothingPastTheProductionWindow (S4
+// untapped): the PLC jumps to B's part with no changeover open, and a stroke
+// on it is counted, off-plan. On the read that closes the 60 s window, and not
+// on the read before, the monitor says once that nothing moves; decided again
+// on two pokes, past the minute a refusal would wait, the process still runs
+// A, no changeover row is written and no order made, the line is not said
+// again, and the strip's wrong-part item offers the changeover to B. Its red
+// is the parts counted on the part, counter_snapshots rows the poll writes
+// and this rig does not; S4's integration halves and
+// TestPinStrip_TheLedgersItemsAreInfoTheWrongPartStaysRed hold it.
+func TestCatidMonitor_NoChangeoverMovesNothingPastTheProductionWindow(t *testing.T) {
+	r := newWindowRig(t)
+	const line = "CATID 1002 counted, which only Style-P3-TO runs, with no changeover open — nothing moves"
+	nothingMoved := func(at string) {
+		t.Helper()
+		if got := runningStyle(t, r.eng.db, r.pid); got != r.a {
+			t.Fatalf("%s: the process runs %d, want A (%d): nothing switches without a changeover", at, got, r.a)
+		}
+		rows, err := r.eng.db.ListRecentProcessChangeovers(r.pid, 0)
+		testutil.MustNoErr(t, err, "changeover rows")
+		orders, err := r.eng.db.ListActiveOrders()
+		testutil.MustNoErr(t, err, "orders")
+		if len(rows) != 0 || len(orders) != 0 {
+			t.Fatalf("%s: changeover rows %+v and %d orders, want none: the part change moves nothing", at, rows, len(orders))
+		}
+	}
+	changed := r.changedTo(1002)
+	r.stroke(plc.TickOffPlan)
+	r.to(changed, 59500*time.Millisecond)
+	if n := r.said(line); n != 0 {
+		t.Fatalf("59.5 s after the jump: %q said %d times, want not yet: the window is 60 s", line, n)
+	}
+	r.tickAt(500 * time.Millisecond)
+	if n := r.said(line); n != 1 {
+		t.Fatalf("60 s after the jump: %q said %d times, want once (lines %q)", line, n, r.lines())
+	}
+	nothingMoved("60 s after the jump")
+	for _, at := range []time.Duration{90 * time.Second, 150 * time.Second} {
+		r.to(changed, at)
+		r.eng.pokeCutover(r.pid)
+		r.idle()
+		r.stroke(plc.TickOffPlan)
+	}
+	r.to(changed, 180*time.Second)
+	nothingMoved("180 s after the jump, decided again on two pokes")
+	if n := r.said(line); n != 1 {
+		t.Errorf("180 s after the jump: %q said %d times, want once however often it is decided", line, n)
+	}
+	it := healthKinds(t, r.eng, r.pid)[catidKindWrongPart]
+	if it.Action == nil || it.Action.Kind != catidActionStartChangeover || it.Action.ToStyleID != r.b {
+		t.Errorf("the wrong-part item %+v (action %+v), want it offering the changeover to B", it, it.Action)
+	}
+}
+
+// TestCatidMonitor_UnmappedPartAtTheProductionVerifyWindow (S5): during a
+// changeover A → B the PLC changes to 1003, which no style pins. Its strokes'
+// draw is held whole on the node-0 row and no cart is drawn; a person's
+// CUTOVER completes the changeover inside the declaration's window. The
+// post-cutover verify closes on the read two minutes after the CUTOVER, not on
+// the read before: it records the PLC's 1003 on the row and flags it, and the
+// strip offers to pin 1003 to B on that changeover. Pinned, the hold's Charge
+// draws the held count from every position's B cart, through the sink, with
+// no second production record; a later 1004 is held whole and written off,
+// nothing drawn.
+func TestCatidMonitor_UnmappedPartAtTheProductionVerifyWindow(t *testing.T) {
+	r := newWindowRig(t)
+	db := r.eng.db
+	p3 := mustNodeIDByName(t, r.eng, "P3-NODE")
+	common := cartNode(t, r.eng, r.pid, r.a, "C-COMMON", "COMMON-1", "COMMON-1", 9961)
+	commonB, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: r.b, CoreNodeName: "C-COMMON", Role: "consume",
+		SwapMode: "simple", PayloadCode: "COMMON-1", UOPCapacity: 100, InboundSource: "SRC"})
+	testutil.MustNoErr(t, err, "B's claim at C-COMMON")
+	coID := r.open()
+	testutil.MustNoErr(t, db.SetChangeoverStartCATID(coID, "1001"), "the start's CATID, as the start records it")
+	unmapped := func() (CatidHealthItem, bool) {
+		it, ok := healthKinds(t, r.eng, r.pid)[catidKindUnmapped]
+		return it, ok && it.Data["catid"] == "1003"
+	}
+
+	r.changedTo(1003)
+	for i := 0; i < 4; i++ {
+		r.stroke(plc.TickHeld)
+	}
+	hs := openHolds(t, r.eng, r.pid)
+	if len(hs) != 1 || hs[0].ProcessNodeID != 0 || hs[0].CATID != "1003" || hs[0].Qty != 4 {
+		t.Fatalf("1003's strokes: holds %+v, want one open node-0 row of 4", hs)
+	}
+	if got := runtimeOf(t, r.eng, common).RemainingUOPCached; got != 40 {
+		t.Fatalf("1003's strokes drew the C-COMMON cart: %d, want 40", got)
+	}
+
+	r.tickAt(10 * time.Second)
+	testutil.MustNoErr(t, r.eng.CompleteProcessProductionCutover(r.pid), "CUTOVER")
+	r.idle()
+	cut := r.clk.Now()
+	if co := changeoverRow(t, db, coID); co.State != domain.ChangeoverCompleted || co.TriggeredBy != triggeredManual {
+		t.Fatalf("the CUTOVER: changeover %s by %q, want completed by %s ahead of the monitor", co.State, co.TriggeredBy, triggeredManual)
+	}
+	// The landings the changeover's legs make: B's carts at both positions.
+	toP3, err := db.GetStyleNodeClaimByNode(r.b, "P3-NODE")
+	testutil.MustNoErr(t, err, "B's claim at P3-NODE")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(p3, &toP3.ID, binPtr(9962), 40), "the PART-NEW cart")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(p3, "PART-NEW", true, "landing"), "landed PART-NEW")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(common, &commonB, binPtr(9961), 40), "the common cart under B")
+
+	r.to(cut, 119500*time.Millisecond)
+	if co := changeoverRow(t, db, coID); co.EndCATID != "" || co.VerifyLiveCATID != "" {
+		t.Fatalf("119.5 s after the CUTOVER: end %q, flag %q; want the watch still open: it is two minutes", co.EndCATID, co.VerifyLiveCATID)
+	}
+	if it, ok := unmapped(); !ok || it.Data["suggestion"] != nil {
+		t.Fatalf("119.5 s after the CUTOVER: the 1003 item %+v (%v), want it with no suggestion yet", it, ok)
+	}
+	r.tickAt(500 * time.Millisecond)
+	if co := changeoverRow(t, db, coID); co.EndCATID != "1003" || co.VerifyLiveCATID != "1003" {
+		t.Fatalf("120 s after the CUTOVER: end %q, flag %q; want 1003 recorded and flagged", co.EndCATID, co.VerifyLiveCATID)
+	}
+	it, ok := unmapped()
+	sug, _ := it.Data["suggestion"].(map[string]any)
+	if !ok || sug == nil || sug["style_id"] != r.b || sug["changeover_id"] != coID {
+		t.Fatalf("120 s after the CUTOVER: the 1003 item %+v, want it suggesting B on changeover %d", it, coID)
+	}
+
+	testutil.MustNoErr(t, r.eng.AddStyleCATID(r.pid, r.b, "1003", "engineer", fmt.Sprintf("changeover #%d ended on 1003", coID)), "pin 1003 to B")
+	if it, ok := unmapped(); ok {
+		t.Fatalf("pinned, 1003 still maps to no style: %+v", it)
+	}
+	pv, err := r.eng.PreviewCatidHold(hs[0].ID)
+	testutil.MustNoErr(t, err, "the Charge's preview")
+	bins := map[int64]int64{}
+	for _, row := range pv.Rows {
+		if !row.WrongPart {
+			bins[row.BinID] = row.Qty
+		}
+	}
+	if pv.Refusal != "" || pv.StyleID != r.b || len(pv.Rows) != 2 || bins[9961] != 4 || bins[9962] != 4 {
+		t.Fatalf("the preview %+v (rows %+v), want B drawing 4 from each position's cart", pv, pv.Rows)
+	}
+	sink := r.eng.inventoryDelta.(*fakeDeltaSink)
+	sink.mu.Lock()
+	mark := len(sink.binCalls)
+	sink.mu.Unlock()
+	deltas := 0
+	r.eng.Events.SubscribeTypes(func(Event) { deltas++ }, EventCounterDelta)
+	testutil.MustNoErr(t, r.eng.ChargeCatidHold(hs[0].ID, "engineer"), "Charge")
+	for node, name := range map[int64]string{p3: "P3-NODE", common: "C-COMMON"} {
+		if got := runtimeOf(t, r.eng, node).RemainingUOPCached; got != 36 {
+			t.Errorf("after the Charge %s's B cart reads %d, want 36", name, got)
+		}
+	}
+	sink.mu.Lock()
+	drawn := map[int64]fakeBinCall{}
+	for _, c := range sink.binCalls[mark:] {
+		drawn[c.BinID] = c
+	}
+	sink.mu.Unlock()
+	if len(drawn) != 2 || drawn[9961].Delta != -4 || drawn[9961].PayloadCode != "COMMON-1" ||
+		drawn[9962].Delta != -4 || drawn[9962].PayloadCode != "PART-NEW" || deltas != 0 {
+		t.Errorf("the Charge sent %+v and %d counter deltas; want -4 on each B cart, stamped its part, and no second record",
+			drawn, deltas)
+	}
+
+	r.changedTo(1004)
+	for i := 0; i < 3; i++ {
+		r.stroke(plc.TickHeld)
+	}
+	later := openHolds(t, r.eng, r.pid)
+	if len(later) != 1 || later[0].ProcessNodeID != 0 || later[0].CATID != "1004" || later[0].Qty != 3 {
+		t.Fatalf("1004's strokes: holds %+v, want one open node-0 row of 3", later)
+	}
+	testutil.MustNoErr(t, r.eng.WriteOffCatidHold(later[0].ID, "engineer"), "Write off")
+	h, err := db.GetCatidHold(later[0].ID)
+	testutil.MustNoErr(t, err, "the written-off hold")
+	if left := openHolds(t, r.eng, r.pid); len(left) != 0 || h.Resolution != holdWrittenOff || h.Qty != 3 {
+		t.Errorf("after the Write off: open %+v, the hold %+v; want none open and 3 written off", left, h)
+	}
+	for node, name := range map[int64]string{p3: "P3-NODE", common: "C-COMMON"} {
+		if got := runtimeOf(t, r.eng, node).RemainingUOPCached; got != 36 {
+			t.Errorf("after the Write off %s's B cart reads %d, want 36: nothing drawn", name, got)
 		}
 	}
 }
