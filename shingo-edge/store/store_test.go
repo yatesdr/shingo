@@ -38,6 +38,18 @@ var (
 
 func coverageDB(t *testing.T) *DB {
 	t.Helper()
+	db, err := OpenMigrated(coveragePath(t))
+	if err != nil {
+		t.Fatalf("open cov db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// coveragePath writes a fresh copy of coverageDB's template into t.TempDir()
+// and returns its path, unopened.
+func coveragePath(t *testing.T) string {
+	t.Helper()
 	coverageTplOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "shingo-edge-store-tpl-*")
 		if err != nil {
@@ -68,12 +80,7 @@ func coverageDB(t *testing.T) *DB {
 	if err := os.WriteFile(dst, src, 0o600); err != nil {
 		t.Fatalf("copy coverage template: %v", err)
 	}
-	db, err := OpenMigrated(dst)
-	if err != nil {
-		t.Fatalf("open cov db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return dst
 }
 
 // seedProcessStyle inserts a process + style and returns their ids, where a
