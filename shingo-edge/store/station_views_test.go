@@ -152,6 +152,7 @@ func TestComputeSwapReady_SupplyStatusIrrelevant(t *testing.T) {
 		"staged", "in_transit", "acknowledged", "pending", "queued", "faulted",
 	} {
 		t.Run(supplyStatus, func(t *testing.T) {
+			t.Parallel()
 			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 			testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 			testutil.MustNoErr(t, db.UpdateOrderStatus(aID, supplyStatus), "mark A "+supplyStatus)
@@ -174,6 +175,7 @@ func TestComputeSwapReady_PressIndexSurvivesSupplyStatus(t *testing.T) {
 	t.Parallel()
 	for _, otherStatus := range []string{"pending", "queued", "acknowledged", "faulted", "in_transit"} {
 		t.Run(otherStatus, func(t *testing.T) {
+			t.Parallel()
 			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 			claim.SwapMode = protocol.SwapModeTwoRobotPressIndex
 			testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
@@ -260,6 +262,7 @@ func TestComputeSwapReady_OneStagedOneTerminal(t *testing.T) {
 	t.Parallel()
 	for _, terminalStatus := range []string{"confirmed", "failed", "cancelled"} {
 		t.Run(terminalStatus, func(t *testing.T) {
+			t.Parallel()
 			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 			testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "staged"), "mark A staged")
 			if err := db.UpdateOrderStatus(bID, terminalStatus); err != nil {
