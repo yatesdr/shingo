@@ -76,10 +76,7 @@
 #                                         (exit 0 = needed, 1 = not needed)
 #   bash scripts/gate.sh order            print the order each docker module's
 #                                         packages would run in (docker_order)
-#   bash scripts/gate.sh skips TIER       print what the docker step skips per
-#                                         module in TIER, and that tier's
-#                                         sentence (only push skips anything)
-#   bash scripts/gate.sh race             -race -tags docker over ./engine/... and
+#   bash scripts/gate.sh race            -race -tags docker over ./engine/... and
 #                                         ./www/... (borrows WSL's cgo on Windows;
 #                                         needs docker for its Postgres)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
@@ -153,7 +150,7 @@ fi
 
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
 usage() {
-  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|order|skips|docker|full|lock-status|identity] [BASE]" >&2
+  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|order|docker|full|lock-status|identity] [BASE]" >&2
   echo "       bash scripts/gate.sh full --unscoped                 docker whatever the diff (certification)" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
   exit 2
@@ -1385,46 +1382,6 @@ docker_order() {
     <(printf '%s\n' "$all") <(printf '%s\n%s\n' "$timed" "$all") | tr '\n' ' ' | sed 's/ $//'
 }
 
-# ── The push tier's skip ─────────────────────────────────────────────
-#
-# PUSH_SKIP_TESTS are the integration module's production-window leaves, by
-# top-level test name: CATID cells that wait out the Edge monitor's production
-# windows in real time (S2's halves and S4 untapped its 60 s stability window,
-# S5 its 2 min post-cutover verify window). In the push tier, and only there,
-# the docker step hands the integration module's `go test` a -skip of exactly
-# these names (docker_skip), and the sentence names them (push_skip_note).
-# Every other tier, `gate.sh docker`, a run with no tier and every GitHub
-# workflow skip nothing, so cert and CI run all four. Each but S5 has a twin,
-# the same body at w6ShortWindow, which push runs; S5's twin needs a Config
-# seam for the Edge's post-cutover verify window, which is product code.
-# The repolint rule production-window holds this list to the tree (each name a
-# top-level test that calls t.Parallel first, each but S5 with its twin, every
-# *_ProductionWindow test listed, no workflow naming or skipping them);
-# scripts/check-push-skip.sh holds this file to it (push skips exactly the
-# list, nothing else skips, the push sentence names each).
-PUSH_SKIP_TESTS="TestCatid4x2_S2_LateCutover_GreenGate_ProductionWindow
-TestCatid4x2_S2_LateCutover_RedGate_ProductionWindow
-TestCatid4x2_S4_JumpWithNoChangeover_Untapped_ProductionWindow
-TestCatid4x2_S5_UnmappedPart"
-
-# docker_skip <tier> <module> — the -skip pattern the docker step hands go
-# test for <module> in <tier>: PUSH_SKIP_TESTS anchored whole, for the
-# integration module in push; nothing otherwise, a tier this file does not
-# know included.
-docker_skip() {
-  [ "$1" = push ] && [ "$2" = integration ] || return 0
-  # shellcheck disable=SC2086 # the list is words
-  printf '^(%s)$' "$(echo $PUSH_SKIP_TESTS | tr ' ' '|')"
-}
-
-# push_skip_note <tier> — the sentence's account of docker_skip in <tier>:
-# the names skipped, or nothing when nothing is.
-push_skip_note() {
-  [ -n "$(docker_skip "$1" integration)" ] || return 0
-  # shellcheck disable=SC2086 # the list is words
-  printf ' Skipped in push, by name (cert and CI run them): integration %s.' "$(echo $PUSH_SKIP_TESTS | sed 's/ /, /g')"
-}
-
 step_docker() {
   local m failed=0 mods logdir p pids=""
   mods="$(docker_modules)"
@@ -1476,18 +1433,15 @@ step_docker() {
   # it. Each module keeps its own -p, its own log and its own exit code, and
   # the excerpts are printed afterwards in module order, so a red run reads as
   # it always did.
-  local order skip skipargs
+  local order
   for m in $mods; do
     order="$(docker_order "$m")"
-    skip="$(docker_skip "${GATE_TIER:-}" "$m")"
-    skipargs=()
-    [ -n "$skip" ] && skipargs=(-skip "$skip")
-    echo "  docker: $m ($( [ "$order" = "./..." ] && echo "./..." || echo "longest first, from the steps log"))${skip:+; -skip $skip}"
+    echo "  docker: $m ($( [ "$order" = "./..." ] && echo "./..." || echo "longest first, from the steps log"))"
     # The -p this module runs at, for the steps log's selection line (gate-timing.sh).
     [ -n "${GATE_SEL_DIR:-}" ] && echo "$m:$p" >>"$GATE_SEL_DIR/docker.p"
     rm -f "$logdir/docker-$m.rc"
     # shellcheck disable=SC2086 # order is a package list
-    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${skipargs[@]}" "${GATE_EXEC_ARGS[@]}" $order >"$logdir/docker-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${GATE_EXEC_ARGS[@]}" $order >"$logdir/docker-$m.log" 2>&1
       echo $? >"$logdir/docker-$m.rc" ) &
     pids="$pids $!"
   done
@@ -1655,10 +1609,9 @@ trap 'exit 143' TERM
 
 case "${1:-all}" in
   # fmt: the pre-push hook runs it and must never wait. scope: reads git only. order:
-  # reads the steps log and go list only. cachescope: reads stdin. skips: reads
-  # nothing but this file. identity: prints what gate_identity would record for
-  # a run (scripts/gate-timing.sh).
-  fmt|scope|order|cachescope|skips) ;;
+  # reads the steps log and go list only. cachescope: reads stdin. identity:
+  # prints what gate_identity would record for a run (scripts/gate-timing.sh).
+  fmt|scope|order|cachescope) ;;
   identity) gate_identity; exit 0 ;;
   lock-status) gate_lock_status; gate_timing_status; exit 0 ;;
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
@@ -1848,7 +1801,6 @@ gate_sentence() {
     push) label="Gate (push)" ;;
   esac
   local out="$label: $s."
-  [ "$gate_docker" = ran ] && out="$out$(push_skip_note "${GATE_TIER:-}")"
   [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope against $scope_against (nothing in this diff can reach one)."
   [ "${GATE_TIER:-}" = push ] && out="$out race: CI (the docker-race shards and the sim job)."
   [ "${GATE_TIER:-}" = dev ] && out="$out Not run here: the docker suites (compiled by lint), the sim-only tests (compiled), race — \`full\` and CI run them."
@@ -1889,16 +1841,6 @@ case "${1:-all}" in
     # (docker_order), one line per module; reads only the steps log.
     for m in $(docker_modules); do echo "$m: $(docker_order "$m")"; done
     echo "docker -p: $(docker_p)${GATE_DOCKER_P:+ (GATE_DOCKER_P)}"
-    exit 0 ;;
-  skips)
-    # What the docker step would skip in tier $2 (push, cert, dev, step, or
-    # none), one line per module (docker_skip), then the sentence a run of
-    # that tier prints with the docker suites run (gate_sentence, so
-    # push_skip_note): the read scripts/check-push-skip.sh pins. Runs nothing.
-    GATE_TIER="${2:-}"
-    for m in $ALL_MODULES; do echo "$m: $(docker_skip "$GATE_TIER" "$m")"; done
-    gate_docker=ran
-    gate_sentence
     exit 0 ;;
   docker) if timed step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)

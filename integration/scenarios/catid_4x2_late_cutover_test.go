@@ -16,8 +16,10 @@ import (
 )
 
 // TestCatid4x2_S2_LateCutover: S2's two halves (s2LateCutover) at
-// w6ShortWindow, the twins of the two production-window leaves below: the
-// same call with the window swapped.
+// w6ShortWindow. The order of events at production's 60 s window, and the
+// minute a refused cutover waits, are the Edge's unit tests on its manual
+// clock (TestCatidMonitor_GreenGateCompletesAtTheProductionWindow and
+// TestCatidMonitor_RedGateForcedAtTheProductionWindow in shingoedge/engine).
 func TestCatid4x2_S2_LateCutover(t *testing.T) {
 	t.Parallel()
 	t.Run(s2GreenGate.name, func(t *testing.T) {
@@ -28,26 +30,6 @@ func TestCatid4x2_S2_LateCutover(t *testing.T) {
 		t.Parallel()
 		s2LateCutover(t, s2RedGate, w6ShortWindow)
 	})
-}
-
-// TestCatid4x2_S2_LateCutover_GreenGate_ProductionWindow is S2's green gate
-// at production's window. There the 60 s window equals the monitor's retry of
-// a refused cutover (cutoverRetryInterval in shingoedge/engine, a minute), an
-// order of events its 10 s twin is not in and should not be read as proving.
-// A top-level test, so that a package run should admit it with the first wave
-// of tests, as it does S5, and not behind the package's subtests. The push
-// gate skips it by name (PUSH_SKIP_TESTS in scripts/gate.sh), and runs its
-// twin; cert and GitHub run both.
-func TestCatid4x2_S2_LateCutover_GreenGate_ProductionWindow(t *testing.T) {
-	t.Parallel()
-	s2LateCutover(t, s2GreenGate, w6ProductionWindow)
-}
-
-// TestCatid4x2_S2_LateCutover_RedGate_ProductionWindow is S2's red gate at
-// production's window, as the green gate's leaf above.
-func TestCatid4x2_S2_LateCutover_RedGate_ProductionWindow(t *testing.T) {
-	t.Parallel()
-	s2LateCutover(t, s2RedGate, w6ProductionWindow)
 }
 
 // s2Gate is one half of S2: the positions whose changeover legs are held back

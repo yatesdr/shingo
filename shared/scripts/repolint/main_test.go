@@ -361,7 +361,7 @@ func jsCases() []ruleCase {
 func allCases() []ruleCase {
 	var cs []ruleCase
 	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, jsCases, plantCases,
-		prodWindowCases, serialCases, sliceCases, swapCases, syntheticCases, textFileCases} {
+		serialCases, sliceCases, swapCases, syntheticCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
 	return cs

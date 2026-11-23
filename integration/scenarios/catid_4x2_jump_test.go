@@ -19,8 +19,10 @@ import (
 )
 
 // TestCatid4x2_S4_JumpWithNoChangeover: S4's two halves (s4Jump) at
-// w6ShortWindow. Untapped is the twin of the production-window leaf below:
-// the same call with the window swapped.
+// w6ShortWindow. That nothing moves past production's 60 s window, and past
+// the minute a refusal would wait, is the Edge's unit test on its manual
+// clock (TestCatidMonitor_NoChangeoverMovesNothingPastTheProductionWindow in
+// shingoedge/engine).
 func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 	t.Parallel()
 	t.Run("untapped", func(t *testing.T) {
@@ -31,18 +33,6 @@ func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 		t.Parallel()
 		s4Jump(t, "tapped", w6ShortWindow)
 	})
-}
-
-// TestCatid4x2_S4_JumpWithNoChangeover_Untapped_ProductionWindow is S4's
-// untapped half at production's window: nothing moves while the 60 s the old
-// automatic switch acted after runs out at a plant's length. A top-level
-// test, so that a package run should admit it with the first wave of tests,
-// as it does S5, and not behind the package's subtests. The push gate skips it
-// by name (PUSH_SKIP_TESTS in scripts/gate.sh), and runs its twin; cert and
-// GitHub run both.
-func TestCatid4x2_S4_JumpWithNoChangeover_Untapped_ProductionWindow(t *testing.T) {
-	t.Parallel()
-	s4Jump(t, "untapped", w6ProductionWindow)
 }
 
 // s4Jump is S4's body for half ("untapped" or "tapped"), on a cell whose

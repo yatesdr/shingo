@@ -34,7 +34,7 @@ import (
 //   - <cell>.counts.json: the bins pushes by caller (and how many of each
 //     changed the Edge's copy), every wait a scenario records (passes until
 //     its condition held, wall, and whether the satisfying pass followed one of
-//     Core's robot polls), counters, and notes (S5's and S6's TriggeredBy).
+//     Core's robot polls), counters, and notes (S6's TriggeredBy).
 //
 // Unset, RecorderFor returns nil, every method on a nil *Recorder and a nil
 // *Wait returns at once, and the Bus and BinsPush take no stamp and build no
@@ -178,7 +178,7 @@ func (r *Recorder) Add(key string, n int64) {
 }
 
 // Note records value under key, in order: a fact the cell does not assert
-// on, kept for a reader (S5's and S6's TriggeredBy).
+// on, kept for a reader (S6's TriggeredBy).
 func (r *Recorder) Note(key, value string) {
 	if r == nil {
 		return

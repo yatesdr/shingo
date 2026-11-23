@@ -493,15 +493,6 @@ type w6Opts struct {
 	window time.Duration
 }
 
-// w6ProductionWindow is w6Opts.window for a leaf at production's window:
-// zero, which the Edge reads as its 60 s (Config.CatidStableWindow; the 60 s
-// is pinned by TestCatidWindow_SixtySecondsOnEveryTracker). A
-// *_ProductionWindow leaf passes it to its body, and its twin, which the push
-// gate runs in its place, makes the same call with w6ShortWindow (the
-// repolint rule production-window holds the pair; PUSH_SKIP_TESTS in
-// scripts/gate.sh names what push skips).
-const w6ProductionWindow time.Duration = 0
-
 // w6Boot is what the cell gives each Edge it starts.
 type w6Boot struct {
 	passWatch bool          // w6Opts.passWatch
@@ -1008,6 +999,15 @@ func (c *w6Cell) count(tn *w6Tenure) int64 {
 	return int64(b.UOPRemaining)
 }
 
+// drawnNow is each position's standing cart's draw.
+func (c *w6Cell) drawnNow() [5]int64 {
+	var d [5]int64
+	for i := range w6Pos {
+		d[i] = w6Full - c.count(c.cart(i))
+	}
+	return d
+}
+
 // flush sends the Edge's draws to Core and lets Core apply them.
 func (c *w6Cell) flush() {
 	c.sink.Flush()
@@ -1450,14 +1450,13 @@ next:
 	return false
 }
 
-// w6ShortWindow is the stability window of the leaves that do not wait out the
-// production one, the short-window twins among them. The leaves that wait the
-// production 60 s out are the three *_ProductionWindow tests (S2 green, S2 red,
-// S4 untapped) and S5, which also waits its post-cutover verify window; S1, S3,
-// S6 and S8 are built at the production window (w6ProductionWindow) but never
-// wait for a window decision. PUSH_SKIP_TESTS in scripts/gate.sh names the four
-// that wait; the repolint's production-window rule keeps the list and the twins
-// in step.
+// w6ShortWindow is the stability window of the leaves that wait for a window
+// decision (S2, S4, S7, S9 and the common-position pins). S1, S3, S6 and S8
+// are built at production's window (w6Opts{}) and never wait for one. The
+// orders of events at production's windows (the 60 s declaration, the minute
+// a refused cutover waits, the two-minute post-cutover verify) are the Edge's
+// unit tests on its manual clock, in shingoedge/engine's
+// catid_engine_clock_test.go, so no leaf here waits one out.
 const w6ShortWindow = 10 * time.Second
 
 // declared is how long the cell waits for a decision the monitor takes when
