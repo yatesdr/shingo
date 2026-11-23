@@ -85,12 +85,12 @@ func TestRecordCompare(t *testing.T) {
 	var b strings.Builder
 	ra, rb := read(as), read(bs)
 	for i, v := range recordViewKinds {
-		compareBands(&b, ra, rb, v, i == 0)
+		compareBands(t, &b, ra, rb, v, i == 0)
 	}
 	fmt.Print(b.String())
 }
 
-func compareBands(b *strings.Builder, a, z []recordRun, v recordView, withWaits bool) {
+func compareBands(t *testing.T, b *strings.Builder, a, z []recordRun, v recordView, withWaits bool) {
 	band := func(runs []recordRun, cell string) (shas map[string]*recordCell, cells []*recordCell) {
 		shas = map[string]*recordCell{}
 		for _, r := range runs {
@@ -144,7 +144,7 @@ func compareBands(b *strings.Builder, a, z []recordRun, v recordView, withWaits 
 			var ref *recordCell
 			var onlyA, onlyB []string
 			for _, r := range sa {
-				oa, ob := lineDiff(r.file+v.ext, c.file+v.ext)
+				oa, ob := lineDiff(t, r.file+v.ext, c.file+v.ext)
 				if ref == nil || len(oa)+len(ob) < len(onlyA)+len(onlyB) {
 					ref, onlyA, onlyB = r, oa, ob
 				}
@@ -630,9 +630,16 @@ var recordViewKinds = []recordView{
 // lineDiff is the multiset difference of two files' lines: the lines a has
 // more of than z, and those z has more of than a. Section headers ("order:",
 // "no order:") are left out.
-func lineDiff(a, z string) (onlyA, onlyZ []string) {
-	ab, _ := os.ReadFile(a)
-	zb, _ := os.ReadFile(z)
+func lineDiff(t *testing.T, a, z string) (onlyA, onlyZ []string) {
+	t.Helper()
+	ab, err := os.ReadFile(a)
+	if err != nil {
+		t.Fatalf("read %s: %v", a, err)
+	}
+	zb, err := os.ReadFile(z)
+	if err != nil {
+		t.Fatalf("read %s: %v", z, err)
+	}
 	n := map[string]int{}
 	for _, l := range strings.Split(string(ab), "\n") {
 		n[l]++

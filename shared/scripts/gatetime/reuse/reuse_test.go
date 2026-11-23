@@ -71,7 +71,10 @@ func TestStore_RoundTripAndEveryTornFormIsRefused(t *testing.T) {
 	if err != nil || string(got.Output) != "PASS\n" || got.Paths[0].Path != "/x" {
 		t.Fatalf("round trip: %v %+v", err, got)
 	}
-	b, _ := os.ReadFile(f)
+	b, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, bad := range map[string][]byte{
 		"truncated":     b[:len(b)/2],
 		"output flip":   []byte(strings.Replace(string(b), `"output":"UEFTUwo="`, `"output":"UEFTVwo="`, 1)),
@@ -132,27 +135,30 @@ func TestStateOf_ByContentNeverByTime(t *testing.T) {
 	if err := os.Chtimes(p, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := stateOf(p, OpOpen); s != s1 {
+	if s, err := stateOf(p, OpOpen); err != nil || s != s1 {
 		t.Fatal("a time change moved the state")
 	}
 	if err := os.WriteFile(p, []byte("bbbb"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.Chtimes(p, old, old) // touch -r: same size, time put back
-	if s, _ := stateOf(p, OpOpen); s == s1 {
+	if s, err := stateOf(p, OpOpen); err != nil || s == s1 {
 		t.Fatal("a same-size edit with its time put back kept the state")
 	}
-	if s, _ := stateOf(filepath.Join(dir, "none"), OpStat); s != "missing" {
+	if s, err := stateOf(filepath.Join(dir, "none"), OpStat); err != nil || s != "missing" {
 		t.Fatalf("missing = %q", s)
 	}
-	l1, _ := stateOf(dir, OpOpen)
-	if s, _ := stateOf(dir, OpStat); s != "dir" {
+	l1, err := stateOf(dir, OpOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := stateOf(dir, OpStat); err != nil || s != "dir" {
 		t.Fatalf("a statted dir = %q, want dir", s)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "g"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if l2, _ := stateOf(dir, OpOpen); l2 == l1 {
+	if l2, err := stateOf(dir, OpOpen); err != nil || l2 == l1 {
 		t.Fatal("a new entry did not move a listed directory's state")
 	}
 }

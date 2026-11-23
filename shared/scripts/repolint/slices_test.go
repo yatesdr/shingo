@@ -165,7 +165,10 @@ func TestSplitTestPattern_AsTestingSplitsIt(t *testing.T) {
 			t.Errorf("%q: subtestElement %v, want %v", c.pat, !c.deep, c.deep)
 		}
 	}
-	p, _ := splitTestPattern("^TestA$|^TestB$/^x$")
+	p, err := splitTestPattern("^TestA$|^TestB$/^x$")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !p.matchesTop("TestA") || !p.matchesTop("TestB") || p.matchesTop("TestAB") {
 		t.Errorf("^TestA$|^TestB$/^x$ must match TestA and TestB at the top level and not TestAB")
 	}
