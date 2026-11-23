@@ -237,12 +237,35 @@ step_fmt() {
 # the only thing in this gate that sees a missing require or a missing go.sum
 # entry — shingo-edge was also short a go.sum line for klauspost/compress, via
 # minio-go, which only the workspace build was covering.
+#
+# THE FIVE BUILDS RUN AT ONCE (2026-11-23). One after another they were a sum,
+# 47-50 s in the dev gate, the longest one (shingo-core) 18.6 s of it (the
+# gate-time baseline of 2026-11-22). They share only Go's build cache, which
+# the unit step's per-module `go test` runs already share at once. Each build
+# writes its own log and verdict under .gate/; the logs print in $MODULES
+# order whatever order the builds finish in, each followed by its FAIL line,
+# as the serial loop printed them. A module with no verdict file (its build
+# was killed) reads as a failure.
 step_modbuild() {
-  local m failed=0 t0
+  local m failed=0 pids="" rc secs
   for m in $MODULES; do
-    t0="$EPOCHREALTIME"
-    ( cd "$ROOT/$m" && GOWORK=off go build ./... ) || { echo "  FAIL $m — does not build standalone (GOWORK=off)"; failed=1; }
-    steps_log "modbuild:$m" "$(_secs "$t0")"
+    rm -f "$ROOT/.gate/modbuild-$m.log" "$ROOT/.gate/modbuild-$m.rc"
+    (
+      t0="$EPOCHREALTIME"
+      ( cd "$ROOT/$m" && GOWORK=off go build ./... ) >"$ROOT/.gate/modbuild-$m.log" 2>&1
+      echo "$? $(_secs "$t0")" >"$ROOT/.gate/modbuild-$m.rc"
+    ) &
+    pids="$pids $!"
+  done
+  # By pid, so this waits for these five builds and nothing else.
+  # shellcheck disable=SC2086 # pids
+  wait $pids
+  for m in $MODULES; do
+    cat "$ROOT/.gate/modbuild-$m.log" 2>/dev/null
+    rc=1 secs=0
+    [ -e "$ROOT/.gate/modbuild-$m.rc" ] && read -r rc secs <"$ROOT/.gate/modbuild-$m.rc"
+    [ "$rc" = 0 ] || { echo "  FAIL $m — does not build standalone (GOWORK=off)"; failed=1; }
+    steps_log "modbuild:$m" "$secs"
   done
   [ "$failed" -eq 0 ] && echo "ok   modbuild" || echo "FAIL modbuild"
   return $failed
