@@ -99,6 +99,8 @@
 #                                         as a whole-repo one
 #
 #   bash scripts/gate.sh lock-status      who holds the machine gate lock, or "free"
+#   bash scripts/gate.sh identity         print the external identity a run records
+#                                         beside its test manifests (gate-timing.sh)
 #
 # THE GATE LOCK. Every step except fmt, scope, order and lock-status takes a
 # lock shared by all worktrees of this clone, and a second gate waits for it,
@@ -151,7 +153,7 @@ fi
 
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
 usage() {
-  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|order|skips|docker|full|lock-status] [BASE]" >&2
+  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|order|skips|docker|full|lock-status|identity] [BASE]" >&2
   echo "       bash scripts/gate.sh full --unscoped                 docker whatever the diff (certification)" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
   exit 2
@@ -722,7 +724,10 @@ step_test() {
     echo "ok   tests (every module's untagged tests run inside the docker step)"
     return 0
   fi
-  logdir="$ROOT/.gate"
+  # GATE_TEST_LOG_DIR: a private directory for a nested gate's unit logs
+  # (scripts/check-gate-exec.sh), so they cannot overwrite the logs of the gate
+  # running it.
+  logdir="${GATE_TEST_LOG_DIR:-$ROOT/.gate}"
   mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
   # THE BARE GATE READS GO'S TEST CACHE; every other tier runs -count=1. The
   # cache is content-keyed — the test binary and every file and env var the
@@ -733,7 +738,10 @@ step_test() {
   # cache's blind spot. A flake cached green re-rolls at `full`.
   local count="-count=1" how=""
   if [ "${GATE_TIER:-}" = dev ]; then
-    if diff_go_only; then count=""; else how="-count=1: the diff has non-Go files"; fi
+    # Under the record-only -exec wrapper (scripts/gate-timing.sh) Go's test
+    # cache is off whatever the diff, so the dev tier runs -count=1 too.
+    if [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ]; then how="-count=1: the record-only -exec wrapper turns Go's test cache off"
+    elif diff_go_only; then count=""; else how="-count=1: the diff has non-Go files"; fi
   fi
   # One background job per module; collect failures when the last lands. The
   # log stays per-module ($logdir/test-$m.log) so the excerpt printed on a
@@ -744,7 +752,7 @@ step_test() {
     # -tags lockcheck: every lock goes through protocol/lockcheck's guard, which fails a
     # re-entry or a backwards take loudly (LOCKS.md). The docker and race steps carry it too.
     # shellcheck disable=SC2086 # count is one flag or none
-    ( cd "$ROOT/$m" && go test -tags lockcheck $count ./... >"$logdir/test-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -tags lockcheck $count "${GATE_EXEC_ARGS[@]}" ./... >"$logdir/test-$m.log" 2>&1
       echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
@@ -903,6 +911,11 @@ wsl_go_check() {
 sim_cmd() {
   local r="$1" plan="$2" mode="${3:-race}" m pkgs re s="rc=0;" flags="CGO_ENABLED=1 go test -race"
   [ "$mode" = plain ] && flags="go test"
+  # plain runs natively, so under the record-only -exec wrapper when it is on
+  # (scripts/gate-timing.sh); the -race runs cross into WSL and stay unwrapped.
+  if [ "$mode" = plain ] && [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ]; then
+    flags="$flags$(printf ' %q' "${GATE_EXEC_ARGS[@]}")"
+  fi
   while IFS=$'\t' read -r m pkgs re; do
     [ -n "$m" ] || continue
     s="$s ( cd '$r/$m' && $flags -count=1 -timeout=15m -tags sim -run '$re' $pkgs ) || rc=1;"
@@ -1190,7 +1203,10 @@ SHARED_PG_MARK="$ROOT/.gate/docker-pg.$$"
 # pg_up starts one such server as container $1 and prints its address once it
 # answers. NAMED, so gate_on_exit can take it down by name: the race step's
 # server is started inside `full`'s side job, a subshell whose variables the
-# parent never sees, and $$ is the gate's pid in both.
+# parent never sees, and $$ is the gate's pid in both. PG_IMAGE is a floating
+# tag: the gate run's identity (gate_identity, scripts/gate-timing.sh) records
+# the image id it named, and pg_up's docker run line, at each run.
+PG_IMAGE="postgres:16-alpine"
 pg_up() {
   local name=$1 port deadline
   docker run -d --name "$name" \
@@ -1198,7 +1214,7 @@ pg_up() {
       -e PGDATA=/var/lib/postgresql/data/pgdata \
       --tmpfs /var/lib/postgresql/data:rw,size=4g \
       -p 127.0.0.1::5432 \
-      postgres:16-alpine \
+      "$PG_IMAGE" \
       -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
       -c max_connections=500 -c shared_buffers=256MB >/dev/null 2>&1 || return 1
 
@@ -1455,7 +1471,7 @@ step_docker() {
     [ -n "${GATE_SEL_DIR:-}" ] && echo "$m:$p" >>"$GATE_SEL_DIR/docker.p"
     rm -f "$logdir/docker-$m.rc"
     # shellcheck disable=SC2086 # order is a package list
-    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${skipargs[@]}" $order >"$logdir/docker-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${skipargs[@]}" "${GATE_EXEC_ARGS[@]}" $order >"$logdir/docker-$m.log" 2>&1
       echo $? >"$logdir/docker-$m.rc" ) &
     pids="$pids $!"
   done
@@ -1622,8 +1638,10 @@ trap 'exit 143' TERM
 case "${1:-all}" in
   # fmt: the pre-push hook runs it and must never wait. scope: reads git only. order:
   # reads the steps log and go list only. cachescope: reads stdin. skips: reads
-  # nothing but this file.
+  # nothing but this file. identity: prints what gate_identity would record for
+  # a run (scripts/gate-timing.sh).
   fmt|scope|order|cachescope|skips) ;;
+  identity) gate_identity; exit 0 ;;
   lock-status) gate_lock_status; gate_timing_status; exit 0 ;;
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
     # The timing flag first, GATE_NO_LOCK=1 or not: a gate beside a timed run
@@ -1688,9 +1706,12 @@ git diff --quiet HEAD 2>/dev/null || GATE_SHA="$GATE_SHA+"
 # gate-lock pin runs nested gates whose times are not a schedule).
 STEPS_LOG="${GATE_STEPS_LOG-$ROOT/.gate/steps.log}"
 GATE_T0="$EPOCHREALTIME"
-# The timing tool, built once for the run (scripts/gate-timing.sh).
+# The timing tool, built once for the run, and the record-only -exec wrapper
+# for the modes whose Go tests run natively (scripts/gate-timing.sh).
 case "${1:-all}" in
-  vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all) gatetime_prepare ;;
+  vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
+    gatetime_prepare "${1:-all}"
+    gatetime_exec_prepare "${1:-all}" || exit 1 ;;
 esac
 
 # _secs <from> — seconds since an $EPOCHREALTIME reading, to 0.1s.
@@ -1810,6 +1831,7 @@ gate_sentence() {
   [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope against $scope_against (nothing in this diff can reach one)."
   [ "${GATE_TIER:-}" = push ] && out="$out race: CI (the docker-race shards and the sim job)."
   [ "${GATE_TIER:-}" = dev ] && out="$out Not run here: the docker suites (compiled by lint), the sim-only tests (compiled), race — \`full\` and CI run them."
+  out="$out$(gate_exec_sentence)"
   echo "$out"
 }
 

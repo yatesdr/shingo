@@ -302,6 +302,21 @@ func (r *timedRun) quotable() string {
 	return ""
 }
 
+// execStamp is the gate's exec stamp (whether its Go tests ran under the
+// record-only wrapper) from its last total line, or "" for a gate that wrote
+// none. It is the treatment an A/B of the wrapper compares, so it is shown,
+// never required equal.
+func (r *timedRun) execStamp() string {
+	for i := len(r.totals) - 1; i >= 0; i-- {
+		for _, kv := range strings.Fields(r.totals[i])[1:] {
+			if strings.HasPrefix(kv, "exec=") {
+				return ", " + kv
+			}
+		}
+	}
+	return ""
+}
+
 func comparePair(w io.Writer, an, bn string, runs []*timedRun) bool {
 	ok := true
 	refuse := func(format string, a ...any) {
@@ -310,7 +325,7 @@ func comparePair(w io.Writer, an, bn string, runs []*timedRun) bool {
 	}
 	names := []string{an + "1", bn + "1", bn + "2", an + "2"}
 	for i, r := range runs {
-		fmt.Fprintf(w, "%s %s: wall %.2f s, cpu %.2f s, %s\n", names[i], r.dir, r.wall, r.cpu, r.res["verdict"])
+		fmt.Fprintf(w, "%s %s: wall %.2f s, cpu %.2f s, %s%s\n", names[i], r.dir, r.wall, r.cpu, r.res["verdict"], r.execStamp())
 		if why := r.quotable(); why != "" {
 			refuse("%s (%s) is not quotable: %s", names[i], r.dir, why)
 		}

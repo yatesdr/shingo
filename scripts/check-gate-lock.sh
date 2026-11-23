@@ -210,14 +210,14 @@ unset GATE_TIMING_DIR GATE_TIMING_TOKEN GATETIME_RUN_DIR
 out="$(GATE_STEPS_LOG="$TMP/steps7.log" GATE_MODULES=protocol bash scripts/gate.sh simvet 2>&1)"
 grep -qE '^[^ ]+ simvet selection - [^ ]+ tier=step docker=out modules=protocol p=- guards=- reused=0$' "$TMP/steps7.log" \
   || fail "no selection line, or not the one simvet chose: $(cat "$TMP/steps7.log" 2>/dev/null) $out"
-grep -qE '^[^ ]+ simvet total [0-9.]+ [^ ]+ ac=(on|off|unknown) samples=1 standby=([0-9]+|unread) load=unmeasured$' "$TMP/steps7.log" \
+grep -qE '^[^ ]+ simvet total [0-9.]+ [^ ]+ exec=- ac=(on|off|unknown) samples=1 standby=([0-9]+|unread) load=unmeasured$' "$TMP/steps7.log" \
   || fail "the total line carries no load stamps outside gatetime run: $(cat "$TMP/steps7.log" 2>/dev/null)"
 if [ -x "$GT" ]; then
   export GATE_TIMING_DIR="$TMP/gate.timing7"
   for n in 1 2 3 4; do
     "$GT" run -out "$TMP/cmp$n" -every 200ms -repo "$ROOT" -- "$BASH_BIN" -c \
       "GATE_STEPS_LOG='$TMP/steps7-$n.log' GATE_MODULES=protocol bash scripts/gate.sh simvet" >/dev/null 2>&1
-    grep -qE ' simvet total [0-9.]+ [^ ]+ ac=[a-z]+ samples=[0-9]+ standby=[0-9a-z]+ load=(clean|void) foreign30=[0-9.]+' "$TMP/steps7-$n.log" \
+    grep -qE ' simvet total [0-9.]+ [^ ]+ exec=- ac=[a-z]+ samples=[0-9]+ standby=[0-9a-z]+ load=(clean|void) foreign30=[0-9.]+' "$TMP/steps7-$n.log" \
       || fail "under gatetime run the total line does not carry the run's load: $(cat "$TMP/steps7-$n.log" 2>/dev/null)"
     cp "$TMP/steps7-$n.log" "$TMP/cmp$n/steps.tsv" 2>/dev/null   # the gate logged to a private file, not .gate/steps.log
   done

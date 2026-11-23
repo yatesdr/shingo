@@ -124,7 +124,7 @@ func TestCompare_NewTreeAgainstTheBase(t *testing.T) {
 	a2 := fakeRun(t, "push", 305, 2050, "clean", nil)
 	clean := newTree("exec=on ac=on samples=90 standby=0 load=clean foreign30=0.20")
 	out, ok := compareDirs(t, a1, fakeRun(t, "push", 280, 1900, "clean", clean), fakeRun(t, "push", 282, 1920, "clean", clean), a2)
-	if !ok || !strings.Contains(out, "selection: by the gate sentence") {
+	if !ok || !strings.Contains(out, "selection: by the gate sentence") || !strings.Contains(out, "clean, exec=on\n") {
 		t.Errorf("new B against the base A:\n%s", out)
 	}
 	for _, bad := range []string{"load=void", "ac=off", "standby=2"} {
