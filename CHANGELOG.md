@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.20.0 — 2026-11-23
+
 Deploy: Edge v60, and no new Core migration (Core's migration 190 is edited in place, as 185's was: a database already at it runs nothing). Core first, then every Edge of the plant. The two run mixed with v0.19.0 either way, with one exception: a v0.19.0 Core can still send the retired Bound message to an Edge whose schema it could not read, and this Edge takes it as a count. An Edge must have started once on v0.19.0: the installer asks before it stops the service and refuses one that has not. Nothing below the floor (Core v0.19.0, Edge v0.19.0) is refused on the wire; /edges marks it. Rollback: the previous binary on either side. The Edge has no down step: v0.19.0 runs on the upgraded database, and the installer's copy holds what the upgrade dropped.
 
 - The sim plant's sizing check (simcalc) fails a kanban that takes back more carts than it draws, or that names no source and stands fewer than a transit's worth, and counts what its keeper pulls from elsewhere
