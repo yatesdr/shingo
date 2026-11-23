@@ -106,7 +106,7 @@ type releaseKey struct {
 	GitAttributes string
 	// GitConfig is the sha256 of the config the archive's conversions read
 	// where the attributes leave a choice: core.autocrlf, core.eol,
-	// core.attributesFile and the filter drivers.
+	// core.attributesfile (git config keys ignore case) and the filter drivers.
 	GitConfig string
 	// GoEnv is `go env` of the variables that shape a binary, read in
 	// repoRoot under buildEnv, as the build sees them (goEnvKeys).
