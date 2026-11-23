@@ -894,6 +894,9 @@ func p43(h *harness) (string, string) {
 	s.identity = ident()
 	c := s.goTest("./a")
 	_ = os.WriteFile(gate, src, 0o755)
+	// The copy is shared with later probes (44's canary runs in it): let the
+	// restored file age past the change-time slack, as realThree does.
+	settle()
 	return seq("probe/a", a, b, c)
 }
 
