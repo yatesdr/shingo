@@ -94,7 +94,7 @@ const (
 	templateDBName = "template_test"
 
 	// envRequireDocker, when set (any value), turns "docker is down, skip the
-	// integration tests" into a FAILURE. The gate and the Sunday smoke set it:
+	// integration tests" into a FAILURE. The gate's docker and race steps set it:
 	// their whole point is to run the docker suites, and a run where 327 files
 	// skipped together exits 0 — "green" and "docker was down and nothing ran"
 	// are indistinguishable from the exit code alone (the 2026-08-15 audit's

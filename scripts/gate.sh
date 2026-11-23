@@ -704,19 +704,20 @@ harness_verdict() {
 step_test() {
   local m failed=0 logdir mods
   mods="${1:-$MODULES}"
-  # NODE IS A PRECONDITION, NOT A NICETY. Five suites of the edge's JS run
-  # under plain node through Go wrappers — composer-model.test.js (1,220
-  # lines), composer-fields.characterization.test.js (the 528-assertion floor
-  # the retired claim editor's suite left), apply-loop.test.js,
-  # operator-flow.test.js, scene-geom.test.js — and every wrapper does
-  # `t.Skipf("node not on PATH")`. That is right for a machine that genuinely
-  # has no node; it is wrong for a gate, which then reports ok on ~2,100 lines
-  # of JS it never executed. CI's ubuntu-latest ships node, so this fires only
-  # on a dev box, which is exactly where the silence was.
+  # NODE IS A PRECONDITION, NOT A NICETY. The JS is tested under plain node
+  # through Go wrappers, and each wrapper skips when node is missing
+  # (`t.Skipf("node not on PATH ...")`): 96 test files at 2026-11-23 (shared 10,
+  # Core engine 1 and www 23, Edge cmd/shingoedge 2 and www 60, among them
+  # TestProcessSetupPagePins, the dev tier's longest test). This said "five
+  # suites"; it was a hand list, and it had rotted by the costliest member.
+  # Skipping is right for a machine that genuinely has no node; it is wrong for
+  # a gate, which would then report ok on JS it never executed. CI's
+  # ubuntu-latest ships node, so this fires only on a dev box, which is exactly
+  # where the silence was. Count them: grep -rl 'node not on PATH' --include=*_test.go
   if ! command -v node >/dev/null 2>&1; then
     echo "FAIL tests — node not on PATH"
-    echo "  Five JS suites skip silently without it (composer-model,"
-    echo "  composer-fields, apply-loop, operator-flow, scene-geom)."
+    echo "  The JS tests skip silently without it (shared, Core engine and www,"
+    echo "  Edge cmd/shingoedge and www)."
     echo "  Install Node LTS (nodejs.org) — CI's ubuntu-latest already has it."
     return 1
   fi
@@ -729,13 +730,19 @@ step_test() {
   # running it.
   logdir="${GATE_TEST_LOG_DIR:-$ROOT/.gate}"
   mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
-  # THE BARE GATE READS GO'S TEST CACHE; every other tier runs -count=1. The
-  # cache is content-keyed — the test binary and every file and env var the
-  # test's own process touched — so a package whose inputs did not change is
-  # not run again: Go's cache is the affected-packages tool. FAIL-SAFE: any
-  # path in the diff that is not Go under a module (diff_go_only) reruns
-  # everything, because a subprocess's reads (node over the edge's JS) are the
-  # cache's blind spot. A flake cached green re-rolls at `full`.
+  # THE BARE GATE MAY READ GO'S TEST CACHE; every other tier runs -count=1. This
+  # said the cache is "content-keyed — the test binary and every file and env
+  # var the test's own process touched". It is not (go1.25.x
+  # cmd/go/internal/test/test.go): an opened file is keyed on size, mode and
+  # mtime, not content, and one under 2 s old makes the run uncacheable; opens
+  # and stats outside the package's module root are dropped; a child process's
+  # reads and anything read before m.Run are not seen; GODEBUG is in every key.
+  # And under -exec, which the record-only wrapper passes (scripts/gate-timing.sh),
+  # Go asks for no testlog and caches nothing, so with the wrapper on the dev tier
+  # always runs -count=1 (it engaged 1 of 57 recorded runs before: docket D21).
+  # With the wrapper off (GATE_EXEC=off): FAIL-SAFE, any path in the diff that is
+  # not Go under a module (diff_go_only) reruns everything. A flake cached green
+  # re-rolls at `full`.
   local count="-count=1" how=""
   if [ "${GATE_TIER:-}" = dev ]; then
     # Under the record-only -exec wrapper (scripts/gate-timing.sh) Go's test
@@ -1195,7 +1202,10 @@ step_scope() {
 # tmpfs for the same reason — via a SUBDIRECTORY of the mount, because the
 # entrypoint creates that subdirectory with the 0700 postgres-owned permissions
 # initdb insists on, while the mount point itself lands world-writable and
-# initdb refuses it. max_connections is raised because every package's pool
+# initdb refuses it. BUT NOT FROM GIT BASH: MSYS rewrites the --tmpfs path
+# into a Windows path, so on the laptop PGDATA is not on tmpfs (docket R16; the
+# fix is held on wip/test-gate-time/pgtmp by the orc's R16 ruling, untested with
+# cert's two servers). max_connections is raised because every package's pool
 # lands on this one server now.
 sharedPG="shingo-gate-docker-$$"
 SHARED_PG_MARK="$ROOT/.gate/docker-pg.$$"
@@ -1268,8 +1278,11 @@ stop_race_pg() {
 # It used to be a hardcoded `-p 1`, to stop packages fighting over containers.
 # One shared server removes that reason, but the obvious follow-up — turn the
 # packages loose — is WRONG, and measured wrong rather than argued wrong. On
-# the 20-core host the gate ran on then (not today's 24-thread laptop, which
-# has not re-run this table), shingo-core's docker suite from a fresh container:
+# the 20-core host the gate ran on then, shingo-core's docker suite from a
+# fresh container (today's 24-thread laptop re-ran part of it on 2026-11-22:
+# the docker step at -p 4 216-237 s against 259.7 s at -p 2, no wall
+# difference by the timing rule; work/loc-census-2026-11-20 raw/base/2.7, and
+# GATE_DOCKER_P exists for the next series):
 #
 #   -p 1                183s
 #   -p 2                151s
@@ -1483,12 +1496,11 @@ step_docker() {
       || { failed=1
            echo "  --- $m ---"
            excerpt_failures "$logdir/docker-$m.log"; }
-    # The per-package ok-count the Sunday smoke asserts on. `ok  pkg  1.2s`
-    # only prints when that package's binary ran and passed; a package whose
-    # tests all skipped still prints ok, so the smoke's assertion is on the
-    # sentinel being ABSENT and the count being non-zero IN THE PACKAGES THAT
-    # CARRY DOCKER TESTS — testdb's RanItsTests is the canary that cannot skip
-    # green.
+    # `ok  pkg  1.2s` only prints when that package's binary ran and passed, and
+    # a package whose tests all skipped still prints ok, so the exit code cannot
+    # tell a skipped run from a green one: the check below is on the sentinel
+    # being ABSENT. (This comment named a "Sunday smoke" that asserts on the
+    # ok-count; no such workflow or script exists: docket L8.)
     if grep -q '^SHINGO-DOCKER-DOWN' "$logdir/docker-$m.log"; then
       echo "  FAIL docker ($m): the run reported docker down —" \
            "the exit code was 0 and the tests skipped. Not a green gate." >&2
@@ -1769,8 +1781,9 @@ note_step() { gate_steps="${gate_steps:+$gate_steps, }$1"; }
 #
 # fan <label> <cmd...> runs one step as a background job whose output goes to
 # .gate/fan-<label>.out and whose exit code to .gate/fan-<label>.rc; fan_join
-# waits for those jobs by pid (a bare wait would also wait for the gate lock's
-# heartbeat); fan_print prints a step's held output, so the log reads in the
+# waits for those jobs by pid (so it waits for these steps and nothing else the
+# gate started; the lock's heartbeat is no job of it: check-gate-lock.sh case
+# 1b); fan_print prints a step's held output, so the log reads in the
 # order the steps always printed whatever order they finished in; fan_ok is the
 # step's verdict. A missing rc reads as a failure, so fan_reset clears last
 # run's first.

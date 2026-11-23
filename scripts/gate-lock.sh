@@ -3,11 +3,14 @@
 # gate-lock.sh — one gate per machine at a time. Sourced by scripts/gate.sh
 # (and by scripts/check-gate-lock.sh, which pins it); not run on its own.
 #
-# WHY. Several lanes running `gate.sh` at once on a 16 GB laptop exhaust its
-# memory: each gate is a handful of Go compiles, five concurrent `go test`
-# modules, golangci-lint and a Postgres container. Run one after another they
-# all finish; run together they swap, time out and fail for reasons outside the
-# diff. So the heavy steps queue on a lock and the queue says who is in front.
+# WHY. It began (2026-10-06) because several lanes running `gate.sh` at once on
+# a 16 GB laptop exhausted its memory. The laptop now has 63.5 GB, so memory is
+# no longer the reason (owner, 2026-11-21): the lock guards the runs whose verdict
+# or timing must be clean (`full`, `full --unscoped`, `race`, proofs, sims, rigs,
+# gate timings), because load-sensitive docker tests and timing studies fail or
+# mislead under a concurrent gate. A parallel lane may skip it (GATE_NO_LOCK=1)
+# for the dev tier and for docker tests of only its own packages, and says so.
+# The heavy steps queue on the lock and the queue says who is in front.
 #
 # WHERE. A directory in the clone's git COMMON dir —
 # `$(git rev-parse --git-common-dir)/gate.lock` — so every worktree of a clone
@@ -42,7 +45,8 @@
 #   GATE_LOCK_POLL       how often a waiter retries      (2)
 #   GATE_LOCK_REPORT     how often a waiter says who it waits for (60)
 #   GATE_LOCK_TIMEOUT    give up after this long; 0 = wait forever (0)
-#   GATE_NO_LOCK=1       EMERGENCY ONLY: skip the lock, loudly
+#   GATE_NO_LOCK=1       skip the lock, loudly (lanes: dev tier and own-package
+#                        docker runs only; never a run that must be clean)
 
 gate_lock_dir() {
   if [ -n "${GATE_LOCK_DIR:-}" ]; then
@@ -140,8 +144,8 @@ gate_lock_acquire() {
     {
       echo "################################################################"
       echo "# GATE_NO_LOCK=1 — RUNNING WITHOUT THE MACHINE GATE LOCK."
-      echo "# Emergency use only: a concurrent gate on this machine can"
-      echo "# exhaust its memory and fail both runs. Say so in your report."
+      echo "# For a lane's dev tier or own-package docker run only; a run whose"
+      echo "# verdict or timing must be clean keeps the lock. Say so in your report."
       echo "################################################################"
     } >&2
     return 0

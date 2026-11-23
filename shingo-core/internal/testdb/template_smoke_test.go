@@ -137,7 +137,7 @@ func TestTemplateDB_TerminateBackendRate(t *testing.T) {
 	}
 }
 
-// TestTemplateDB_RanItsTests is the Sunday-smoke instrument's other half
+// TestTemplateDB_RanItsTests is the docker-down sentinel's other half
 // (fix-batch 2a): a test that can only pass by RUNNING, in the package the
 // gate's docker step always visits.
 //

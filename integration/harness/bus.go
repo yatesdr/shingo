@@ -18,13 +18,11 @@ import (
 // callers construct those however they want (production constructors,
 // test fixtures, etc.) and hand them to NewBus.
 //
-// Why caller-constructs: Edge's testEngineDB and Core's testdb.Open live
-// in their respective `_test.go` files and `internal/` packages, neither
-// reachable from this module. Rather than refactor those exposures, the
-// Bus accepts whatever the caller stands up. Future scenario tests can
-// use whichever setup pattern matches their needs (production
-// constructors with empty config, or a future shingo-{edge,core}/
-// testharness package, etc.).
+// Why caller-constructs: the Bus stays independent of how a scenario stands
+// its sides up. Most scenarios use the two exported harness packages,
+// shingoedge/testharness and shingocore/testharness (this comment once called
+// them "a future testharness package"; both exist and the scenarios import
+// them); a scenario may also use production constructors with empty config.
 type Bus struct {
 	t *testing.T
 

@@ -699,7 +699,8 @@ func doRequest(t *testing.T, router *chi.Mux, method, path string, body any, coo
 }
 
 // testHashes memoizes bcrypt hashes by plaintext. bcrypt at DefaultCost costs
-// ~87ms, and this serial package was spending ~6.5s of its ~8s wall re-deriving
+// ~87ms, and this package (serial then; most of its tops are parallel since
+// 2026-11-23) was spending ~6.5s of its ~8s wall re-deriving
 // the same handful of hashes across ~75 call sites. Same password → same hash,
 // one salt; the login round-trips still exercise CheckPassword on the verify
 // side, which is the side production runs per request.

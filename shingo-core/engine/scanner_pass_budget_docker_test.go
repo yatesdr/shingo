@@ -24,9 +24,10 @@ import (
 // in STATEMENTS, at a plant-shaped config. EVIDENCE, NOT A PIN.
 //
 // The numbers are logged under a BUDGET: prefix and recorded, with the phase
-// they were taken at, in the Stage A BUDGETS.md. Nothing here asserts a count:
-// a cost is measured once and written down, and a pin exists only for a
-// statement a change ADDS. The unification phases change what a pass does
+// they were taken at, in the Stage A BUDGETS.md. Most of the file asserts no
+// count: a cost is measured once and written down, and a pin exists only for a
+// statement a change ADDS. The exception is TestBudget_C2cGateEventLikeForLike,
+// which fails when the group's slot state is read more than once in one event. The unification phases change what a pass does
 // (one-step acquire, then a new ladder), so this harness is the before-and-after
 // instrument for that and nothing more.
 //
@@ -38,7 +39,9 @@ import (
 // re-asks and can still dispatch an order that lost a race inside the first; the
 // third is the steady state, where what is left is waiting.
 //
-// RUN ON DEMAND: go test -tags docker -run TestBudget_ScannerPass -v ./engine/
+// These tests run in every docker step and every CI docker job (nothing skips
+// them; this line said "RUN ON DEMAND"). To read the BUDGET: lines by hand:
+// go test -tags docker -run TestBudget_ScannerPass -v ./engine/
 
 // quiesce waits until the counting store has been silent for a settle window, so
 // a measurement starts after the engine's boot work and ends after any async
@@ -171,7 +174,8 @@ func TestBudget_ScannerPass(t *testing.T) {
 //      group per gate event (DESIGN-C2c §8: ActiveGateCandidates scans N+2 today,
 //      1 under C2c).
 //
-// RUN ON DEMAND: go test -tags docker -run TestBudget_C2c -v ./engine/
+// They run in every docker step (see the file header). By hand:
+// go test -tags docker -run TestBudget_C2c -v ./engine/
 
 // c2cBudgetGroup is a group marked by its spot (testdb.MarkGroup: <group>-WAIT)
 // with `lanes` lanes of `depth` slots each, [0] the mouth.

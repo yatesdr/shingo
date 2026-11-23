@@ -36,7 +36,6 @@ type Message struct {
 	SentAt    *time.Time `json:"sent_at"`
 }
 
-// Enqueue inserts a new outbound message and returns its row id.
 // EnqueueIn inserts an outbound message through ex — the transaction the
 // effect it reports runs in — without waking the drainer: the row is not
 // visible until the caller commits, and the caller calls NotifyEnqueued then.
@@ -53,6 +52,8 @@ func EnqueueIn(ex interface {
 // NotifyEnqueued wakes the drainer after a committed EnqueueIn.
 func NotifyEnqueued() { notifyEnqueued() }
 
+// Enqueue inserts a new outbound message, wakes the drainer, and returns its
+// row id.
 func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 	res, err := db.Exec(`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', ?, ?)`, payload, msgType)
 	if err != nil {
@@ -148,10 +149,14 @@ func EnqueueSnapshot(db *sql.DB, payloads [][]byte, msgType string) error {
 }
 
 // enqueueNotifier is the drainer's doorbell, set once at wiring time. It lives
-// here rather than on DB because this is the only INSERT into outbox.
+// here, beside the three outbox INSERTs (EnqueueIn, Enqueue, EnqueueSnapshot),
+// rather than on DB. Enqueue and EnqueueSnapshot ring it; EnqueueIn does not:
+// its row is invisible until the caller commits, and the caller rings through
+// NotifyEnqueued then. (This said "the only INSERT into outbox"; there are three.)
 var enqueueNotifier atomic.Pointer[func()]
 
-// SetEnqueueNotifier registers fn to run after each successful enqueue. Passing
+// SetEnqueueNotifier registers fn to run after each successful Enqueue or
+// EnqueueSnapshot, and on each NotifyEnqueued. Passing
 // nil clears it. Wired in cmd/shingoedge to the drainer's Notify.
 func SetEnqueueNotifier(fn func()) {
 	if fn == nil {
@@ -169,9 +174,9 @@ func notifyEnqueued() {
 
 // ListUnsentByType returns every un-sent outbox message matching one of
 // the given msg_type values. Caller decodes the payload — store stays
-// schema-agnostic. Used by InventoryDeltaReporter at startup to
-// recover the in-memory pending set after a crash where deltas had
-// been enqueued but not yet sent.
+// schema-agnostic. No production code calls it: its callers are tests, through
+// store.ListUnsentOutboxByType (store/outbox.go says why it is kept). This
+// named an InventoryDeltaReporter that does not exist.
 func ListUnsentByType(db *sql.DB, msgTypes []string) ([]Message, error) {
 	if len(msgTypes) == 0 {
 		return nil, nil

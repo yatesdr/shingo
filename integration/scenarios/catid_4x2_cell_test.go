@@ -1450,8 +1450,14 @@ next:
 	return false
 }
 
-// w6ShortWindow is the stability window of the leaves that do not hold the
-// production one. S2's halves and S4 untapped hold the 60 s end to end.
+// w6ShortWindow is the stability window of the leaves that do not wait out the
+// production one, the short-window twins among them. The leaves that wait the
+// production 60 s out are the three *_ProductionWindow tests (S2 green, S2 red,
+// S4 untapped) and S5, which also waits its post-cutover verify window; S1, S3,
+// S6 and S8 are built at the production window (w6ProductionWindow) but never
+// wait for a window decision. PUSH_SKIP_TESTS in scripts/gate.sh names the four
+// that wait; the repolint's production-window rule keeps the list and the twins
+// in step.
 const w6ShortWindow = 10 * time.Second
 
 // declared is how long the cell waits for a decision the monitor takes when

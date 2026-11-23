@@ -133,18 +133,22 @@ jobs:
   # plain docker step 391s of it, the third-longest job in the run. Nothing in
   # the race run depends on the plain one, nor either on the build steps.
   #
-  # integration/scenarios is one package, so the slices are by test name. EVERY
-  # scenario test is t.Parallel, so the package is bound by its total test time
+  # integration/scenarios is one package, so the slices are by test name. All
+  # but one of its 78 top-level tests (go test -list, 2026-11-23) are t.Parallel
+  # (this said "EVERY"), so the package is bound by its total test time
   # over -parallel (GOMAXPROCS, 4 on the runner): the race run's 2,522 summed
   # test-seconds took 707s. The slices are cut by those summed seconds, about a
   # third each (ci-speed run 44858100662): a = catid 4x2 S1-S5 + the produce
   # partials pins + the changeover pins; b = catid 4x2 S6-S9 + the press
   # matrix; c = every other test, by -skip of a's and b's patterns together, so
-  # each test runs in exactly one slice (SLICE_A and SLICE_B, above). The test
-  # set is unchanged since: 66 top-level tests, 10 / 6 / 50 by slice at
-  # d2686a1d, and the race run's summed seconds split 32% / 36% / 32% (the
-  # plain run's 40% / 42% / 18%; slice b is floored by S8's 183-186s subtests
-  # either way). A first cut of two (S1-S5 against the rest) put 25% of the
+  # each test runs in exactly one slice (SLICE_A and SLICE_B, above; the
+  # repolint's integration-slices rule pins it). The cut was made at d2686a1d,
+  # 66 top-level tests then, 10 / 6 / 50 by slice, with the race run's summed
+  # seconds split 32% / 36% / 32% (the plain run's 40% / 42% / 18%). The set has
+  # grown since (78 tops; the three production-window S2 and S4 tests the push
+  # gate skips joined slice a), and
+  # S8's leaves, which floored slice b at 183-186 s then, are about 9 s each
+  # alone since T2. A first cut of two (S1-S5 against the rest) put 25% of the
   # time on one side and ran its other slice for 801s.
   # MEASURED with the three (run 44862808560, census off): docker slices 176-
   # 256s, race slices 330-450s, the workflow 455s against 1,241s as one job,

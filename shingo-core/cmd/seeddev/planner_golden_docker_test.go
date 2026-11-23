@@ -127,8 +127,11 @@ func newGoldenPlant(t *testing.T) *goldenPlant {
 	eng.Start()
 	eng.Stop()
 	g := &goldenPlant{t: t, db: db, cdb: cdb, counter: counter, eng: eng, backend: backend}
-	// Stop has waited for every loop Start launched (TestEngineStop_WaitsForItsGoroutines),
-	// the boot scan among them, so one scan leaves nothing in flight to wait for.
+	// Stop has waited for the loops Start spawns through e.loops
+	// (TestEngineStop_WaitsForItsGoroutines), the boot scan among them. Not for every
+	// goroutine: the ETA cache's refresh (eta.Cache.Start) and the sourceability
+	// monitor's ticker (SourceabilityMonitor.Run) are not among them (docket B4), so
+	// what makes the cases deterministic is the zero-orders check below, not Stop.
 	eng.RunFulfillmentScan()
 	if n := g.count(`SELECT COUNT(*) FROM orders`); n != 0 {
 		t.Fatalf("fixture: %d order(s) exist after the engine was started and stopped — a background "+

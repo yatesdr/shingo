@@ -26,8 +26,8 @@ func TestRequireDockerSentinelShape(t *testing.T) {
 	got := dockerDownSentinel(errors.New("docker daemon not running"))
 	const want = "SHINGO-DOCKER-DOWN: skipping integration tests: docker daemon not running"
 	if got != want {
-		t.Fatalf("sentinel line = %q, want %q — scripts/gate.sh greps for the prefix and the "+
-			"Sunday smoke asserts on the count; a drifted shape is an instrument that reports "+
+		t.Fatalf("sentinel line = %q, want %q — scripts/gate.sh greps for the prefix "+
+			"(step_docker); a drifted shape is an instrument that reports "+
 			"green while blind", got, want)
 	}
 }
