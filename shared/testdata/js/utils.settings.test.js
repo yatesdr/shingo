@@ -150,6 +150,35 @@ function mk(tag, cls, data, children) {
     return n;
 }
 
+// THE PAGE'S TIMERS ARE THE HARNESS'S. Each context gets these in place of the
+// real setTimeout and clearTimeout, so the harness knows what the page left
+// pending. A success, info or warning toast lives 10 s (notice.js,
+// LIFETIME_MS), and the drop timers of the four this file raises kept node up
+// for ten seconds after the last assertion (measured 2026-11-23: the PASS line
+// at 37 ms, the exit at 10,022 ms), doing nothing a test reads. runPageTimers
+// runs whatever is still pending, soonest first, the moment the assertions are
+// done: the same callbacks node would have run, without the wait, and before
+// the verdict, so one that throws still fails the run.
+const pageTimers = new Map(); // handle -> { fn, args, due, seq }
+let pageTimerSeq = 0;
+function pageSetTimeout(fn, ms, ...args) {
+    const h = setTimeout(() => { pageTimers.delete(h); fn(...args); }, ms);
+    pageTimers.set(h, { fn, args, due: Date.now() + (Number(ms) || 0), seq: pageTimerSeq++ });
+    return h;
+}
+function pageClearTimeout(h) {
+    pageTimers.delete(h);
+    clearTimeout(h);
+}
+function runPageTimers() {
+    for (let n = 0; pageTimers.size > 0; n++) {
+        if (n === 1000) throw new Error('the page keeps setting timers: ' + pageTimers.size + ' pending after 1000 run');
+        const [h, t] = Array.from(pageTimers).sort((a, b) => a[1].due - b[1].due || a[1].seq - b[1].seq)[0];
+        pageClearTimeout(h);
+        t.fn(...t.args);
+    }
+}
+
 function loadUtils(fetchImpl) {
     // notice.js's toast and http.js's send are settings.js's own.
     const src = sharedSource(['dom.js', 'notice.js', 'http.js', 'settings.js']);
@@ -169,7 +198,7 @@ function loadUtils(fetchImpl) {
             querySelectorAll: () => [],
         },
         window: { addEventListener: () => {} },
-        console, setTimeout, clearTimeout, Promise,
+        console, setTimeout: pageSetTimeout, clearTimeout: pageClearTimeout, Promise,
         fetch: fetchImpl || (() => Promise.reject(new Error('no fetch in this test'))),
         EventSource: function () {},
         location: { reload: () => {} },
@@ -609,6 +638,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
         assert(notice && !notice.hidden && /Station UID/.test(notice.textContent), 'the notice at render shows the server list');
     }
 
+    runPageTimers();
     if (failed > 0) {
         console.error('FAILED: ' + failed + ' of ' + (passed + failed));
         process.exit(1);
