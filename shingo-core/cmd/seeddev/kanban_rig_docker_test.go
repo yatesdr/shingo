@@ -98,11 +98,12 @@ func newKanbanRig(t *testing.T) *kanbanRig {
 	return r
 }
 
-// newKanbanRigOf seeds a rig's plant, on the windows its unloader has.
+// newKanbanRigOf is a rig on its plant, cloned from the plant's template
+// (openSeededPlant) with its claims mirror its own, on the windows its unloader
+// has.
 func newKanbanRigOf(t *testing.T, plant *plantspec.Plant, windows []string) *kanbanRig {
 	t.Helper()
-	db, dbcfg := testdb.OpenWithConfig(t)
-	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the rig")
+	db, dbcfg := openSeededPlant(t, plant)
 	seedClaimsMirror(t, db, rigClaimedPlant(plant))
 
 	cdb, counter, err := store.OpenCounting(dbcfg)

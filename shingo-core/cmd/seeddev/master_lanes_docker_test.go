@@ -50,8 +50,8 @@ func masterPlant(t *testing.T) *plantspec.Plant {
 	return p
 }
 
-// newMasterRig seeds the master into a fresh database with a stopped engine on
-// the simulator: the kanban family's rig, on the whole plant.
+// newMasterRig is the master in a database of its own (newKanbanRigOf) with a
+// stopped engine on the simulator: the kanban family's rig, on the whole plant.
 func newMasterRig(t *testing.T) (*kanbanRig, *plantspec.Plant) {
 	t.Helper()
 	p := masterPlant(t)

@@ -23,10 +23,17 @@ import (
 // master_template_docker_test.go — the master plant as a seeded template.
 //
 // seedCore on plants/master.yaml is 3.3-5.2 s a test alone (docket T4), and
-// most of this package's docker tests want exactly its rows. seedOfPlant names
-// that seeding as a testdb.Seed, so it can be written once a process into a
-// template and cloned per test. Before any test stands on a clone, the clone is
-// pinned here as the plant a fresh seeding writes, at two ages of the template.
+// most of this package's docker tests want exactly its rows: the planner
+// goldens, the kanban rig and its pins, the lanes family and the order-carts
+// fixture. seedOfPlant names that seeding as a testdb.Seed; it is written once
+// a process into a template, before the leaves start
+// (TestMasterTemplate_IsBuiltBeforeTheLeaves), and each of those tests takes a
+// clone of it (openSeededPlant). The clone is pinned as the plant a fresh
+// seeding writes, at two ages of the template.
+//
+// The tests whose subject is the seeder itself (TestSeedCore_*,
+// TestSeedDemo_KanbanIsSeededAtItsPools, TestSeedKanbanPress_CoreHoldsTheKanbans,
+// TestPinSeedCore_*) still call seedCore: the seeder is proven by a seeding.
 
 // seedOfPlant is seedCore of plant as a seeded template. The key is the plant's
 // own content: Plant has no unexported field and is decoded with KnownFields
@@ -40,6 +47,28 @@ func seedOfPlant(t *testing.T, plant *plantspec.Plant) testdb.Seed {
 		Key:   fmt.Sprintf("seeddev seedCore %x", sha256.Sum256(content)),
 		Write: func(db *store.DB) error { return seedCore(db, plant, map[string]int64{}) },
 	}
+}
+
+// openSeededPlant is a database of t's own holding plant as seedCore writes it,
+// cloned from the plant's template (seedOfPlant). The master's is built before
+// the leaves start; another plant's is built by its first asker. A clone is a
+// fresh seeding in all but its times, which are the template's
+// (TestMasterTemplate_ACloneIsAFreshSeedAtTwoAges).
+func openSeededPlant(t *testing.T, plant *plantspec.Plant) (*store.DB, *config.DatabaseConfig) {
+	t.Helper()
+	return testdb.OpenSeeded(t, seedOfPlant(t, plant))
+}
+
+// TestMasterTemplate_IsBuiltBeforeTheLeaves builds the master plant's template
+// while no other test of this package runs. go test runs every top-level test
+// that does not call t.Parallel before it lets any that does go on, wherever it
+// is declared (testdb seeded.go, BUILT BEFORE THE LEAVES), so no leaf waits on
+// the seeding or holds a slot through it. With a -run that leaves this test
+// out, the first test to ask builds it instead.
+//
+// serial: it builds the template the parallel tests clone, and must end before any of them goes on
+func TestMasterTemplate_IsBuiltBeforeTheLeaves(t *testing.T) {
+	buildMasterTemplate(t)
 }
 
 // masterBuild is the master plant's template as this process built it, with the

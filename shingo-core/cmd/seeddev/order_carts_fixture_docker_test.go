@@ -42,11 +42,10 @@ type ocPlant struct {
 
 func newOCPlant(t *testing.T) *ocPlant {
 	t.Helper()
-	db := testdb.Open(t)
 	plant, err := plantspec.Load("../../../plants/master.yaml")
 	testutil.MustNoErr(t, err, "load plants/master.yaml")
 	testutil.MustNoErr(t, plant.Validate(), "validate plants/master.yaml")
-	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the master")
+	db, _ := openSeededPlant(t, plant)
 	seedClaimsMirror(t, db, plant)
 
 	sim := simulator.New()

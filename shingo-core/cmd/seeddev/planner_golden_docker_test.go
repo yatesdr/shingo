@@ -40,8 +40,9 @@ import (
 // callers unchanged. "Unchanged" is only checkable if what each decider answers
 // is written down first, for every door and every shape that reaches it. This
 // is that record. Each case is one need put to one decider (or one door, where
-// the decider is private to it) on a seeded plant (a fresh one of its own, or,
-// for a decider case with no setup, THE READ-ONLY PLANT below), and its answer
+// the decider is private to it) on a seeded plant (one of its own, cloned from
+// the master's template, or, for a decider case with no setup, THE READ-ONLY
+// PLANT below), and its answer
 // is stored as JSON under testdata/planner-golden. A refactor that keeps the
 // callers unchanged keeps every file byte-identical.
 //
@@ -110,11 +111,11 @@ type goldenPlant struct {
 }
 
 // newGoldenPlant is a door case's world (and the sourceable case's): the demo
-// plant seeded into a fresh database, and an engine started and stopped on it.
+// plant in a database of its own (openGoldenWorld), and an engine started and
+// stopped on it.
 func newGoldenPlant(t *testing.T) *goldenPlant {
 	t.Helper()
-	db, dbcfg := testdb.OpenWithConfig(t)
-	seedGoldenWorld(t, db)
+	db, dbcfg := openGoldenWorld(t)
 
 	backend := testdb.NewTrackingBackend()
 	cfg := config.Defaults()
@@ -142,15 +143,21 @@ func newGoldenPlant(t *testing.T) *goldenPlant {
 	return g
 }
 
-// seedGoldenWorld seeds the demo plant into db: plants/master.yaml through the
-// production seeder, the claims mirror, and the bins' FIFO ages made
-// deterministic.
-func seedGoldenWorld(t *testing.T, db *store.DB) {
+// openGoldenWorld is the demo plant in a database of t's own: plants/master.yaml
+// as the production seeder writes it, cloned from its template
+// (openSeededPlant), and finished as every golden world is.
+func openGoldenWorld(t *testing.T) (*store.DB, *config.DatabaseConfig) {
 	t.Helper()
-	plant, err := plantspec.Load("../../../plants/master.yaml")
-	testutil.MustNoErr(t, err, "load plants/master.yaml")
-	testutil.MustNoErr(t, plant.Validate(), "validate plants/master.yaml")
-	testutil.MustNoErr(t, seedCore(db, plant, map[string]int64{}), "seed the demo plant")
+	plant := masterPlant(t)
+	db, dbcfg := openSeededPlant(t, plant)
+	finishGoldenWorld(t, db, plant)
+	return db, dbcfg
+}
+
+// finishGoldenWorld makes a seeded master a golden world: the claims mirror, and
+// the bins' FIFO ages made deterministic.
+func finishGoldenWorld(t *testing.T, db *store.DB, plant *plantspec.Plant) {
+	t.Helper()
 	seedClaimsMirror(t, db, plant)
 
 	// ── FIFO AGE, MADE DETERMINISTIC ──────────────────────────────────────
@@ -167,7 +174,7 @@ func seedGoldenWorld(t *testing.T, db *store.DB) {
 	// to the minute relative to the newest, and breaks every remaining tie by
 	// seed order, one millisecond apart. The finders' own tie-break (b.id,
 	// added in B1) agrees with that spacing, so neither decides for the other.
-	_, err = db.DB.Exec(`
+	_, err := db.DB.Exec(`
 		WITH newest AS (SELECT MAX(loaded_at) AS t FROM bins)
 		UPDATE bins SET loaded_at = TIMESTAMPTZ '2026-01-01 12:00:00+00'
 		       + ROUND(EXTRACT(EPOCH FROM (bins.loaded_at - newest.t)) / 60) * INTERVAL '1 minute'
@@ -177,12 +184,11 @@ func seedGoldenWorld(t *testing.T, db *store.DB) {
 }
 
 // newDeciderPlant is the world of a decider case with a setup: the demo plant
-// seeded into a fresh database of its own, because the setup writes, and no
+// in a database of its own (openGoldenWorld), because the setup writes, and no
 // engine (WHICH CASES START AN ENGINE, above).
 func newDeciderPlant(t *testing.T) *goldenPlant {
 	t.Helper()
-	db, dbcfg := testdb.OpenWithConfig(t)
-	seedGoldenWorld(t, db)
+	db, dbcfg := openGoldenWorld(t)
 	return deciderPlantOn(t, db, dbcfg)
 }
 
@@ -206,11 +212,12 @@ func deciderPlantOn(t *testing.T, db *store.DB, dbcfg *config.DatabaseConfig) *g
 // ── THE READ-ONLY PLANT ──────────────────────────────────────────────────────
 //
 // A decider case with no setup reads the plant and writes nothing, so those
-// cases share one plant instead of seeding one each. The first test function
-// to ask seeds it, before that function starts its cases, and
-// testdb.OpenSharedWithConfig keeps it until the last function holding it ends;
-// the two functions are parallel, so in a run of both it is seeded once per
-// test binary. After the seed the database is made read-only for every session
+// cases share one plant instead of taking one each. The first test function
+// to ask makes it, before that function starts its cases: a clone of the
+// master's template (testdb.OpenSharedSeeded, which keeps it until the last
+// function holding it ends), finished as every golden world is. The two
+// functions are parallel, so in a run of both it is made once per test binary.
+// After it is made the database is made read-only for every session
 // opened on it from then on, and each case opens its own after that, so a case
 // cannot write it (sharedGoldenWorld hands the plant out only after a new
 // session's write was refused). readsOnly then asserts at each case's end that
@@ -231,21 +238,22 @@ var (
 	goldenWorldMu sync.Mutex
 	// goldenWorlds is keyed by the shared handle: a re-open after the last
 	// holder dropped the database hands back a new one
-	// (testdb.TestOpenShared_RefcountDropsLastOut), which is seeded anew.
+	// (testdb.TestOpenShared_RefcountDropsLastOut), which is made anew.
 	goldenWorlds = map[*store.DB]*goldenWorld{}
 )
 
-// sharedGoldenWorld returns the read-only plant, seeding it if this is its first
+// sharedGoldenWorld returns the read-only plant, making it if this is its first
 // holder. A test function calls it before it starts its cases.
 func sharedGoldenWorld(t *testing.T) *goldenWorld {
 	t.Helper()
 	goldenWorldMu.Lock()
 	defer goldenWorldMu.Unlock()
-	db, cfg := testdb.OpenSharedWithConfig(t, goldenWorldKey)
+	plant := masterPlant(t)
+	db, cfg := testdb.OpenSharedSeeded(t, goldenWorldKey, seedOfPlant(t, plant))
 	if w := goldenWorlds[db]; w != nil {
 		return w
 	}
-	seedGoldenWorld(t, db)
+	finishGoldenWorld(t, db, plant)
 	// The end-of-test sweep testdb runs on a plant of a case's own (openClone),
 	// run once here: no case changes this plant, which readsOnly asserts.
 	testdb.AssertNoPointerWedge(t, db)
