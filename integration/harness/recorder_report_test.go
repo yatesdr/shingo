@@ -1,8 +1,6 @@
 package harness
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -43,10 +41,197 @@ func TestRecordReport(t *testing.T) {
 		runs = append(runs, run)
 	}
 	var b strings.Builder
-	writeEqualCells(&b, runs)
-	writeRunDiffs(&b, runs)
+	for _, v := range recordViewKinds {
+		writeEqualCells(&b, runs, v)
+		writeRunDiffs(&b, runs, v)
+	}
 	writeCounts(&b, runs)
 	fmt.Print(b.String())
+}
+
+// TestRecordCompare compares two bands of runs, A (before a change) and B
+// (after), cell by cell, and prints with -v:
+//
+//   - each cell with a B transcript that no A run of it had (or the reverse),
+//     with the first line it differs from A's at: a change the transcript sees;
+//   - each cell whose A runs or B runs disagree among themselves (noise, named
+//     so it is not read as the change);
+//   - the waits, matched by their order in the cell and their label: ticks
+//     summed per kind in A and in B, and how many waits B met with no tick (0
+//     passes: the condition held at entry);
+//   - verdicts that differ (a cell failed in one band and not the other).
+//
+// Skipped unless SHINGO_SCENARIO_RECORD_COMPARE is "a1,a2,...|b1,b2,...".
+func TestRecordCompare(t *testing.T) {
+	spec := os.Getenv("SHINGO_SCENARIO_RECORD_COMPARE")
+	if spec == "" {
+		t.Skip("SHINGO_SCENARIO_RECORD_COMPARE names no bands")
+	}
+	as, bs, ok := strings.Cut(spec, "|")
+	if !ok {
+		t.Fatal(`SHINGO_SCENARIO_RECORD_COMPARE is "a1,a2,...|b1,b2,..."`)
+	}
+	read := func(list string) []recordRun {
+		var runs []recordRun
+		for _, d := range strings.Split(list, ",") {
+			run, err := readRecordRun(strings.TrimSpace(d))
+			if err != nil {
+				t.Fatal(err)
+			}
+			runs = append(runs, run)
+		}
+		return runs
+	}
+	var b strings.Builder
+	ra, rb := read(as), read(bs)
+	for i, v := range recordViewKinds {
+		compareBands(&b, ra, rb, v, i == 0)
+	}
+	fmt.Print(b.String())
+}
+
+func compareBands(b *strings.Builder, a, z []recordRun, v recordView, withWaits bool) {
+	band := func(runs []recordRun, cell string) (shas map[string]*recordCell, cells []*recordCell) {
+		shas = map[string]*recordCell{}
+		for _, r := range runs {
+			if c, ok := r.cells[cell]; ok {
+				if _, seen := shas[v.sha(c.counts)]; !seen {
+					shas[v.sha(c.counts)] = c
+				}
+				cells = append(cells, c)
+			}
+		}
+		return shas, cells
+	}
+	all := map[string]bool{}
+	for _, r := range append(append([]recordRun{}, a...), z...) {
+		for n := range r.cells {
+			all[n] = true
+		}
+	}
+	names := make([]string, 0, len(all))
+	for n := range all {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	type tally struct{ waits, ticksA, ticksB, zeroB, lessB, moreB, sameB int }
+	kinds := map[string]*tally{}
+	var changed, noisyA, noisyB, verdicts, missing, waitShape int
+	fmt.Fprintf(b, "## A (%d runs) against B (%d runs)\n\n", len(a), len(z))
+	for _, n := range names {
+		sa, ca := band(a, n)
+		sb, cb := band(z, n)
+		if len(ca) == 0 || len(cb) == 0 {
+			missing++
+			fmt.Fprintf(b, "ONLY IN ONE BAND %s (A %d runs, B %d)\n", n, len(ca), len(cb))
+			continue
+		}
+		if len(sa) > 1 {
+			noisyA++
+			fmt.Fprintf(b, "NOISE A %s: %d transcripts over %d runs\n", n, len(sa), len(ca))
+		}
+		if len(sb) > 1 {
+			noisyB++
+			fmt.Fprintf(b, "NOISE B %s: %d transcripts over %d runs\n", n, len(sb), len(cb))
+		}
+		for sha, c := range sb {
+			if _, ok := sa[sha]; ok {
+				continue
+			}
+			changed++
+			var ref *recordCell
+			for _, r := range sa {
+				ref = r
+				break
+			}
+			fmt.Fprintf(b, "B NOT IN A %s\n  %s\n", n, firstDiff(ref.file+v.ext, c.file+v.ext))
+		}
+		failA, failB := 0, 0
+		for _, c := range ca {
+			if c.counts.Failed {
+				failA++
+			}
+		}
+		for _, c := range cb {
+			if c.counts.Failed {
+				failB++
+			}
+		}
+		if (failA > 0) != (failB > 0) {
+			verdicts++
+			fmt.Fprintf(b, "VERDICT %s: failed in %d of %d A runs, %d of %d B runs\n", n, failA, len(ca), failB, len(cb))
+		}
+		if !withWaits {
+			continue
+		}
+		// Waits: the first run of each band gives the shape; every run's
+		// passes are summed per kind.
+		shape := func(c *recordCell) []string {
+			var s []string
+			for _, w := range c.counts.Waits {
+				s = append(s, w.What)
+			}
+			return s
+		}
+		if strings.Join(shape(ca[0]), "\x00") != strings.Join(shape(cb[0]), "\x00") {
+			waitShape++
+			fmt.Fprintf(b, "WAITS DIFFER %s: %d waits in A, %d in B\n", n, len(ca[0].counts.Waits), len(cb[0].counts.Waits))
+			continue
+		}
+		for i, wb := range cb[0].counts.Waits {
+			k := wb.Kind
+			if tl := kinds[k]; tl == nil {
+				kinds[k] = &tally{}
+			}
+			tl := kinds[k]
+			tl.waits++
+			pa, pb := 0, 0
+			for _, c := range ca {
+				if i < len(c.counts.Waits) {
+					pa += c.counts.Waits[i].Passes
+				}
+			}
+			for _, c := range cb {
+				if i < len(c.counts.Waits) {
+					pb += c.counts.Waits[i].Passes
+					if c.counts.Waits[i].Passes == 0 {
+						tl.zeroB++
+					}
+				}
+			}
+			tl.ticksA += pa
+			tl.ticksB += pb
+			// Per wait, the band means against each other.
+			ma, mb := float64(pa)/float64(len(ca)), float64(pb)/float64(len(cb))
+			switch {
+			case mb < ma:
+				tl.lessB++
+			case mb > ma:
+				tl.moreB++
+			default:
+				tl.sameB++
+			}
+		}
+	}
+	fmt.Fprintf(b, "\n%d cells: %d with a B transcript A never had; %d noisy in A, %d noisy in B; %d verdicts differ; "+
+		"%d in one band only; %d with a different wait sequence\n\n", len(names), changed, noisyA, noisyB, verdicts,
+		missing, waitShape)
+	if !withWaits {
+		return
+	}
+	fmt.Fprintf(b, "| wait kind (B) | waits | ticks A (all runs) | ticks B | B waits met with no tick | waits B fewer / same / more ticks (band means) |\n")
+	fmt.Fprintf(b, "|---|---|---|---|---|---|\n")
+	ks := make([]string, 0, len(kinds))
+	for k := range kinds {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	for _, k := range ks {
+		tl := kinds[k]
+		fmt.Fprintf(b, "| %s | %d | %d | %d | %d | %d / %d / %d |\n", k, tl.waits, tl.ticksA, tl.ticksB, tl.zeroB,
+			tl.lessB, tl.sameB, tl.moreB)
+	}
+	fmt.Fprintln(b)
 }
 
 // TestRecordRenormalise rebuilds each cell's transcript, and the digest and
@@ -78,20 +263,13 @@ func renormalise(base string) error {
 	if err != nil {
 		return err
 	}
-	n := newNormaliser()
-	var lines []string
+	var raw []string
 	for _, l := range strings.Split(strings.TrimSuffix(string(body), "\n"), "\n") {
-		if l == "" {
-			continue
+		if l != "" {
+			raw = append(raw, l)
 		}
-		bus, rest, _ := strings.Cut(l, " ")
-		dir, payload, _ := strings.Cut(rest, " ")
-		lines = append(lines, fmt.Sprintf("%s %s %s", bus, dir, n.envelope([]byte(payload))))
 	}
-	transcript := strings.Join(lines, "\n")
-	if len(lines) > 0 {
-		transcript += "\n"
-	}
+	v := buildViews(raw)
 	cb, err := os.ReadFile(base + ".counts.json")
 	if err != nil {
 		return err
@@ -100,13 +278,15 @@ func renormalise(base string) error {
 	if err := json.Unmarshal(cb, &c); err != nil {
 		return err
 	}
-	sum := sha256.Sum256([]byte(transcript))
-	c.Transcript, c.Messages = hex.EncodeToString(sum[:]), len(lines)
+	c.Transcript, c.Orders, c.Messages, c.Timers = sha(v.transcript), sha(v.orders), v.messages, v.timers
 	out, err := json.MarshalIndent(c, "", " ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(base+".transcript", []byte(transcript), 0o644); err != nil {
+	if err := os.WriteFile(base+".transcript", []byte(v.transcript), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(base+".orders", []byte(v.orders), 0o644); err != nil {
 		return err
 	}
 	return os.WriteFile(base+".counts.json", append(out, '\n'), 0o644)
@@ -163,12 +343,12 @@ func sortedCells(run recordRun) []string {
 // writeEqualCells: per run, the groups of two or more cells with one
 // transcript. A cell with an empty transcript (it never pumped a message) is
 // grouped too, and says so.
-func writeEqualCells(b *strings.Builder, runs []recordRun) {
-	fmt.Fprintf(b, "## Cells with equal transcripts\n\n")
+func writeEqualCells(b *strings.Builder, runs []recordRun, v recordView) {
+	fmt.Fprintf(b, "## Cells with equal %s\n\n", v.name)
 	for _, run := range runs {
 		groups := map[string][]string{}
 		for _, n := range sortedCells(run) {
-			sha := run.cells[n].counts.Transcript
+			sha := v.sha(run.cells[n].counts)
 			groups[sha] = append(groups[sha], n)
 		}
 		var shas []string
@@ -192,7 +372,7 @@ func writeEqualCells(b *strings.Builder, runs []recordRun) {
 
 // writeRunDiffs: each cell recorded in two or more runs, and whether its
 // transcripts agree.
-func writeRunDiffs(b *strings.Builder, runs []recordRun) {
+func writeRunDiffs(b *strings.Builder, runs []recordRun, v recordView) {
 	if len(runs) < 2 {
 		return
 	}
@@ -214,7 +394,7 @@ func writeRunDiffs(b *strings.Builder, runs []recordRun) {
 		var in []int
 		for i, run := range runs {
 			if c, ok := run.cells[n]; ok {
-				shas[c.counts.Transcript] = append(shas[c.counts.Transcript], i)
+				shas[v.sha(c.counts)] = append(shas[v.sha(c.counts)], i)
 				in = append(in, i)
 			}
 		}
@@ -233,7 +413,7 @@ func writeRunDiffs(b *strings.Builder, runs []recordRun) {
 		sort.Ints(firsts)
 		fmt.Fprintf(b, "DIFFERS %s: %d transcripts over %d runs\n", n, len(shas), len(in))
 		a, z := runs[firsts[0]].cells[n], runs[firsts[1]].cells[n]
-		fmt.Fprintf(b, "  %s\n", firstDiff(a.file+".transcript", z.file+".transcript"))
+		fmt.Fprintf(b, "  %s\n", firstDiff(a.file+v.ext, z.file+v.ext))
 	}
 	fmt.Fprintf(b, "\n%d cells identical in every run, %d differ\n\n", same, differ)
 }
@@ -422,4 +602,15 @@ func pct(n, total int64) float64 {
 		return 0
 	}
 	return 100 * float64(n) / float64(total)
+}
+
+// recordView is one of the two views a cell is written in (buildViews).
+type recordView struct {
+	name, ext string
+	sha       func(recordCounts) string
+}
+
+var recordViewKinds = []recordView{
+	{"transcripts (delivered order)", ".transcript", func(c recordCounts) string { return c.Transcript }},
+	{"orders views (by order)", ".orders", func(c recordCounts) string { return c.Orders }},
 }

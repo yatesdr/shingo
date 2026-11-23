@@ -64,9 +64,7 @@ type Recorder struct {
 	mu      sync.Mutex
 	flushed bool
 	buses   int
-	lines   []string
-	raw     []string
-	norm    *normaliser
+	raw     []string // "<bus> <route> <payload as sent>", the views are built from at flush
 	pushes  map[string]*pushCount
 	waits   []*Wait
 	counts  map[string]int64
@@ -98,7 +96,6 @@ func RecorderFor(t testing.TB) *Recorder {
 	r := &Recorder{
 		name:   name,
 		dir:    dir,
-		norm:   newNormaliser(),
 		pushes: map[string]*pushCount{},
 		counts: map[string]int64{},
 		notes:  map[string][]string{},
@@ -137,7 +134,6 @@ func (r *Recorder) msg(bus int, dir string, payload []byte) {
 	if r.flushed {
 		return
 	}
-	r.lines = append(r.lines, fmt.Sprintf("%d %s %s", bus, dir, r.norm.envelope(payload)))
 	r.raw = append(r.raw, fmt.Sprintf("%d %s %s", bus, dir, payload))
 }
 
@@ -287,11 +283,16 @@ func (r *Recorder) pollIn(from, to time.Time) (bool, string) {
 
 // recordCounts is <cell>.counts.json.
 type recordCounts struct {
-	Cell       string                `json:"cell"`
-	Failed     bool                  `json:"failed"`
-	Buses      int                   `json:"buses"`
-	Messages   int                   `json:"messages"`
-	Transcript string                `json:"transcript_sha256"`
+	Cell     string `json:"cell"`
+	Failed   bool   `json:"failed"`
+	Buses    int    `json:"buses"`
+	Messages int    `json:"messages"`
+	// Transcript and Orders are the sha256 of the two views (buildViews).
+	Transcript string `json:"transcript_sha256"`
+	Orders     string `json:"orders_sha256"`
+	// Timers is what the views leave out: the messages a wall-clock timer
+	// sent, by subject (timerSubjects).
+	Timers     map[string]int        `json:"timer_messages"`
 	Pushes     map[string]*pushCount `json:"pushes"`
 	Counts     map[string]int64      `json:"counts"`
 	Notes      map[string][]string   `json:"notes"`
@@ -320,15 +321,11 @@ func (r *Recorder) flush() error {
 			w.AfterPoll, w.PollSource = r.pollIn(w.last, w.end)
 		}
 	}
-	transcript := strings.Join(r.lines, "\n")
-	if len(r.lines) > 0 {
-		transcript += "\n"
-	}
-	sum := sha256.Sum256([]byte(transcript))
+	v := buildViews(r.raw)
 	c := recordCounts{
-		Cell: r.name, Failed: r.failed, Buses: r.buses, Messages: len(r.lines),
-		Transcript: hex.EncodeToString(sum[:]), Pushes: r.pushes, Counts: r.counts, Notes: r.notes,
-		RobotPolls: len(r.polls), Waits: r.waits,
+		Cell: r.name, Failed: r.failed, Buses: r.buses, Messages: v.messages,
+		Transcript: sha(v.transcript), Orders: sha(v.orders), Timers: v.timers,
+		Pushes: r.pushes, Counts: r.counts, Notes: r.notes, RobotPolls: len(r.polls), Waits: r.waits,
 	}
 	counts, err := json.MarshalIndent(c, "", " ")
 	if err != nil {
@@ -344,19 +341,151 @@ func (r *Recorder) flush() error {
 		}
 		base = filepath.Join(r.dir, fmt.Sprintf("%s.r%d", cellFile(r.name), n))
 	}
-	raw := strings.Join(r.raw, "\n")
-	if len(r.raw) > 0 {
-		raw += "\n"
-	}
-	for ext, body := range map[string][]byte{
-		".transcript": []byte(transcript), ".raw": []byte(raw), ".counts.json": append(counts, '\n'),
+	for ext, body := range map[string]string{
+		".transcript": v.transcript, ".orders": v.orders, ".raw": joinLines(r.raw), ".counts.json": string(counts) + "\n",
 	} {
-		if err := os.WriteFile(base+ext, body, 0o644); err != nil {
+		if err := os.WriteFile(base+ext, []byte(body), 0o644); err != nil {
 			return err
 		}
 	}
-	r.lines, r.raw = nil, nil
+	r.raw = nil
 	return nil
+}
+
+func sha(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func joinLines(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// ── The two views ───────────────────────────────────────────────────────────
+//
+// A cell's messages are written two ways, both normalised (normaliser):
+//
+//   - <cell>.transcript: every message in the order the Bus delivered it.
+//   - <cell>.orders: the same messages by order. Each order's messages, in
+//     the order they were delivered, make one block; the blocks are sorted;
+//     the messages that name no order follow, sorted too (the CATID delta
+//     sink sends one message per bin in map order). Every
+//     uuid, vendor id, digest and row id is masked to its kind ("<U>", "<V>",
+//     "<H>", "<order_id>"), so a block says what happened to an order, not
+//     which order it was.
+//
+// Why two. Two orders in flight at once reach the outbox in whichever order
+// their goroutines write them (the keeper's refill, decided on the bins
+// ticker's goroutine, against the test's own pumps: KSR, 2026-11-23), so the
+// delivered order interleaves them differently from run to run while every
+// order's own sequence, and every message, is the same. The transcript sees
+// that interleaving; the orders view does not. A cell whose orders view
+// differs made a different order, or one of its orders went another way.
+//
+// Both leave out timerSubjects: their count is how long the cell lived.
+
+// timerSubjects are the data subjects an engine sends on a wall-clock timer,
+// whatever the cell does: the Edge's lineside report, every 60 s of wall time
+// (shingo-edge/engine/lineside_reporter.go, linesideReportInterval; "a report
+// that does not arrive changes no decision"). A slow run carries more of them.
+var timerSubjects = map[string]bool{protocol.SubjectLinesideLevelReport: true}
+
+type recordViews struct {
+	transcript, orders string
+	messages           int
+	timers             map[string]int
+}
+
+// buildViews builds both views from the raw lines ("<bus> <route> <payload>").
+func buildViews(raw []string) recordViews {
+	v := recordViews{timers: map[string]int{}}
+	n := newNormaliser()
+	var lines, rest []string
+	blocks := map[string][]string{}
+	var keys []string // first seen first
+	for _, l := range raw {
+		bus, after, _ := strings.Cut(l, " ")
+		route, payload, _ := strings.Cut(after, " ")
+		if subject := dataSubject([]byte(payload)); timerSubjects[subject] {
+			v.timers[subject]++
+			continue
+		}
+		line := fmt.Sprintf("%s %s %s", bus, route, n.envelope([]byte(payload)))
+		lines = append(lines, line)
+		masked := maskLabels(line)
+		key := orderLabel(line)
+		if key == "" {
+			rest = append(rest, masked)
+			continue
+		}
+		if _, seen := blocks[key]; !seen {
+			keys = append(keys, key)
+		}
+		blocks[key] = append(blocks[key], masked)
+	}
+	v.messages = len(lines)
+	v.transcript = joinLines(lines)
+	texts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		texts = append(texts, "order:\n"+joinLines(blocks[k]))
+	}
+	sort.Strings(texts)
+	v.orders = strings.Join(texts, "")
+	if len(rest) > 0 {
+		sort.Strings(rest)
+		v.orders += "no order:\n" + joinLines(rest)
+	}
+	return v
+}
+
+// dataSubject is a data envelope's subject, "" for any other envelope.
+func dataSubject(payload []byte) string {
+	var env struct {
+		Type string `json:"type"`
+		P    struct {
+			Subject string `json:"subject"`
+		} `json:"p"`
+	}
+	if json.Unmarshal(payload, &env) != nil || env.Type != protocol.TypeData {
+		return ""
+	}
+	return env.P.Subject
+}
+
+// orderLabel is the normalised order uuid a normalised line names (its
+// payload's order_uuid, or a data body's), "" when it names none.
+func orderLabel(line string) string {
+	_, after, _ := strings.Cut(line, " ")
+	_, body, _ := strings.Cut(after, " ")
+	var env struct {
+		P struct {
+			OrderUUID string `json:"order_uuid"`
+			Data      struct {
+				OrderUUID string `json:"order_uuid"`
+			} `json:"data"`
+		} `json:"p"`
+	}
+	if json.Unmarshal([]byte(body), &env) != nil {
+		return ""
+	}
+	if env.P.OrderUUID != "" {
+		return env.P.OrderUUID
+	}
+	return env.P.Data.OrderUUID
+}
+
+var (
+	labelOrdinal = regexp.MustCompile(`<([UVH])[0-9]+>`)
+	keyOrdinal   = regexp.MustCompile(`<([A-Za-z_]+)#[0-9]+>`)
+)
+
+// maskLabels takes the ordinals off a normalised line's names: "<U7>" is
+// "<U>", "<order_id#3>" is "<order_id>".
+func maskLabels(line string) string {
+	return keyOrdinal.ReplaceAllString(labelOrdinal.ReplaceAllString(line, "<$1>"), "<$1>")
 }
 
 // ── The normaliser ──────────────────────────────────────────────────────────
@@ -382,12 +511,19 @@ func (r *Recorder) flush() error {
 //   - Vendor order ids. Core names a fleet order sg-<order id>-<8 random hex>
 //     (dispatch.VendorIDPrefix): each becomes "<V1>", ... by first appearance,
 //     whole or quoted in prose.
-//   - Row ids. Every number under a key that names an id ("id", or ending in
-//     "_id" or "_ids") becomes "<key#n>", numbered by first appearance under
-//     that key in the cell: a sequence's next value depends on what else drew
-//     from it (a rolled-back insert, a goroutine's write), not on the cell.
+//   - Row ids and sequence stamps. Every number under a key that names an id
+//     ("id", or ending in "_id" or "_ids") or a sequence ("_seq": Core's
+//     bin_placement_seq in placed_seq, a delta stream's as_of_seq) becomes
+//     "<key#n>", numbered by first appearance under that key in the cell: a
+//     sequence's next value depends on what else drew from it (another
+//     order's placement, a rolled-back insert, how a sink batched), not on
+//     the cell.
 //   - Digests. A hex string of 32 or more characters (a sha256 over content
 //     that carries stamps or ids) becomes "<H1>", ... by first appearance.
+//   - Robot names. A robot_id becomes "<robot_id#n>" by first appearance: the
+//     scenarios name their robots in the order they first drive an order
+//     (ksrCell.robotFor counts them), so two orders dispatched in the other
+//     order swap names without a robot doing anything different.
 //
 // Nothing else is taken out: a count, a status, a node name or a reason that
 // differs between two runs is a difference in what the cell did. (A row id
@@ -474,6 +610,9 @@ func (n *normaliser) value(key string, v any) any {
 		}
 		return x
 	case string:
+		if key == "robot_id" {
+			return n.ordinal(key, x)
+		}
 		return n.str(x)
 	default:
 		return v
@@ -482,7 +621,7 @@ func (n *normaliser) value(key string, v any) any {
 
 func isIDKey(key string) bool {
 	k := strings.ToLower(key)
-	return k == "id" || strings.HasSuffix(k, "_id") || strings.HasSuffix(k, "_ids")
+	return k == "id" || strings.HasSuffix(k, "_id") || strings.HasSuffix(k, "_ids") || strings.HasSuffix(k, "_seq")
 }
 
 func (n *normaliser) ordinal(key, v string) string {

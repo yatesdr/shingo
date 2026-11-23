@@ -83,6 +83,37 @@ func TestNormaliser_ProseQuotesKeepTheirNames(t *testing.T) {
 	}
 }
 
+// TestViews_InterleavingMovesTheTranscriptNotTheOrders: two orders whose
+// messages interleave differently in two runs give two transcripts and one
+// orders view, a timer's message is in neither, and an order that goes
+// another way changes both.
+func TestViews_InterleavingMovesTheTranscriptNotTheOrders(t *testing.T) {
+	req := func(u, node string) string {
+		return `1 E>C {"type":"order.request","id":"` + u + `-env","p":{"order_uuid":"` + u + `","delivery_node":"` + node + `"}}`
+	}
+	ack := func(u string) string {
+		return `1 C>E {"type":"order.ack","p":{"order_uuid":"` + u + `"}}`
+	}
+	report := `1 E>C {"type":"data","p":{"subject":"inventory.lineside_level_report","data":{}}}`
+	a1, a2 := "0b3c1f9e-6a55-4d1b-9a8e-0f1e2d3c4b5a", "1c4d2a0f-7b66-4e2c-8b9f-1a2b3c4d5e6f"
+	z1, z2 := "9e8d7c6b-5a49-4382-a716-0f9e8d7c6b5a", "8d7c6b5a-4938-4271-b605-f9e8d7c6b5a4"
+	a := buildViews([]string{req(a1, "LINE"), ack(a1), req(a2, "SPOT"), ack(a2)})
+	z := buildViews([]string{req(z1, "LINE"), req(z2, "SPOT"), report, ack(z2), ack(z1)})
+	if a.transcript == z.transcript {
+		t.Fatal("two interleavings gave one transcript")
+	}
+	if a.orders != z.orders {
+		t.Errorf("two interleavings of the same orders gave two orders views:\n%s\n--\n%s", a.orders, z.orders)
+	}
+	if z.messages != 4 || z.timers["inventory.lineside_level_report"] != 1 || strings.Contains(z.transcript, "lineside") {
+		t.Errorf("the timer's report: messages %d, timers %v", z.messages, z.timers)
+	}
+	other := buildViews([]string{req(z1, "LINE"), req(z2, "DEST"), ack(z2), ack(z1)})
+	if other.orders == a.orders {
+		t.Error("an order to another node gave the same orders view")
+	}
+}
+
 // TestRecorder_OffIsNil: every method of an off recorder (nil) and of its
 // waits returns at once, so the scenarios call them unguarded.
 func TestRecorder_OffIsNil(t *testing.T) {
