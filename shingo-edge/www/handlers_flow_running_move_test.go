@@ -36,6 +36,7 @@ import (
 // whoever is typing.
 
 func TestSaveFlow_RunningPositionMoveRefusesByName(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	seeded := testdb.SeedPlant(t, db, scenefixtures.A(), "Press A1")
 

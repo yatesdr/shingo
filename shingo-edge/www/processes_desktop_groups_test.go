@@ -59,6 +59,7 @@ func desktopPage(t *testing.T, mode, read string) map[string]any {
 }
 
 func TestDesktopRecipeGroups_TheDeployNoteWalks(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	cookie := f.engineer(t)
 	// Where the plant starts: the recipe sends both spots' old bins to

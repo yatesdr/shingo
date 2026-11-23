@@ -55,6 +55,7 @@ var deferredComposerAssets = []string{
 }
 
 func TestStaticAssets_EveryTagThePagesNameIsServedAndCompressed(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	seeded := testdb.SeedPlant(t, db, scenefixtures.A(), "Press A1")
 	stationID, ok := seeded.Stations["screen-a4"]
@@ -222,6 +223,7 @@ func assertAssetsServed(t *testing.T, base, label, path string, extra ...string)
 // (Safari), so the icon was refetched in full on every page view; an ETag that
 // changes with the file is all freshness needs.
 func TestStaticAssets_FaviconUnderTheETagHandler(t *testing.T) {
+	t.Parallel()
 	_, router := realFlowRouter(t, testdb.Open(t))
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)

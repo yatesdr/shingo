@@ -19,6 +19,7 @@ import (
 // exactly like a node that never had one.
 //
 // No t.Parallel in this file — stdlib log.SetOutput is global.
+// serial: swaps the process-wide stdlib log output (log.SetOutput)
 func TestClearNodeOrders_NamesTheNodeAndBothPointers(t *testing.T) {
 	h, r := newTestHandlers(t)
 	r.Post("/api/nodes/{id}/clear-orders", h.apiClearNodeOrders)
@@ -94,6 +95,7 @@ func TestClearNodeOrders_NamesTheNodeAndBothPointers(t *testing.T) {
 // An empty slot must read as "none", not as a zero — the whole value of the
 // line is telling apart a slot that held nothing from a slot that held
 // something.
+// serial: swaps the process-wide stdlib log output (log.SetOutput)
 func TestClearNodeOrders_EmptySlotsReadAsNone(t *testing.T) {
 	h, r := newTestHandlers(t)
 	r.Post("/api/nodes/{id}/clear-orders", h.apiClearNodeOrders)

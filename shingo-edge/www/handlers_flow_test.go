@@ -59,6 +59,7 @@ func flowItoa(n int) string {
 // FlowPreview, byte for byte — the parity pin in engine compares that struct's
 // JSON, so the handler must add and remove nothing.
 func TestFlowPreview_WritesTheEngineResultVerbatim(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	stub := h.orchestration.(*stubEngine)
 	stub.flowPreview = &engine.FlowPreview{
@@ -92,6 +93,7 @@ func TestFlowPreview_WritesTheEngineResultVerbatim(t *testing.T) {
 // hand-built 400 exactly as the engine built it, and without one the key is
 // absent, as on a 200 (omitempty).
 func TestFlowPreview_StepsReachTheEngineAndTheNoOrdersBody(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	stub := h.orchestration.(*stubEngine)
 	stub.flowPreview = &engine.FlowPreview{OrderCount: ptr(1), Findings: []domain.NodeFinding{}, Unresolved: []string{},
@@ -137,6 +139,7 @@ func TestFlowPreview_StepsReachTheEngineAndTheNoOrdersBody(t *testing.T) {
 // TestFlowPreview_StatusMapping: no orders is 400 with the reason and the
 // preview's findings/unresolved; the seam's gates are 409; anything else 400.
 func TestFlowPreview_StatusMapping(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	stub := h.orchestration.(*stubEngine)
 
@@ -174,6 +177,7 @@ func TestFlowPreview_StatusMapping(t *testing.T) {
 // session's person stamped as called_by, and EXACTLY ONE per-process publish —
 // none on any refusal.
 func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	db := dbOf(h)
 	stub := h.orchestration.(*stubEngine)
@@ -242,12 +246,13 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 // behind login (TestRouter_FlowSaveIsBehindLogin) — only the desktop saves a
 // flow — so the author is the session's person, stamped admin.
 func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	db := dbOf(h)
 	stub := h.orchestration.(*stubEngine)
 	stub.flowSaveResult = &engine.FlowSaveResult{Fingerprint: "def", Written: 1}
-	// Its own process, because flowStation's code is unique per process and
-	// TestFlowSave_StatusMappingAndOnePublish already took process 1's.
+	// A station on process 1 made here, in this test's own database
+	// (newTestHandlers): no other test's station is in it.
 	stationID, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: 1, Code: "flow-source", Name: "Press 400", Sequence: 2, Enabled: true,
 	})
@@ -294,6 +299,7 @@ func TestFlowSave_TheHandlerChoosesTheSourceFromTheCaller(t *testing.T) {
 // by hand without the row forgetting it was ever applied, and what makes drift
 // computable at all.
 func TestFlowSave_CarriesPresetProvenanceWhenTheBodyHasIt(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	db := dbOf(h)
 	stub := h.orchestration.(*stubEngine)
@@ -352,6 +358,7 @@ func TestFlowSave_CarriesPresetProvenanceWhenTheBodyHasIt(t *testing.T) {
 // process's: a body naming another process's screen is refused before the
 // engine runs, and the style is left as it was.
 func TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	pid, err := db.CreateProcess("NOSCREEN-PROC", "no operator screen", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
@@ -421,6 +428,7 @@ func TestFlowSave_AProcessWithNoScreenSavesItsFirstStyle(t *testing.T) {
 // first step) never runs; a matching one starts; an absent one is today's
 // behaviour — the existing start tests are untouched and still pass.
 func TestChangeoverStart_FlowFingerprintIsCheckedFirst(t *testing.T) {
+	t.Parallel()
 	h, router := newOperatorStationsRouter(t)
 	stub := h.orchestration.(*stubEngine)
 	stub.flowFingerprint = "current"

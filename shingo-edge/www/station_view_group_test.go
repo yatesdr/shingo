@@ -36,6 +36,7 @@ func waitForWaiters(t *testing.T, g *stationViewGroup, stationID int64, want int
 // DB read serialises on one connection, so N clients each building the same
 // board is what wound Springfield's bin loader from 3.1s to 116s.
 func TestStationViewGroup_CoalescesConcurrentBuilds(t *testing.T) {
+	t.Parallel()
 	g := newStationViewGroup()
 	var builds atomic.Int32
 	started := make(chan struct{})
@@ -94,6 +95,7 @@ func TestStationViewGroup_CoalescesConcurrentBuilds(t *testing.T) {
 // One caller giving up must not kill a build the others are still waiting on.
 // That is why the build runs on a context detached from any single request.
 func TestStationViewGroup_CallerCancelDoesNotKillSharedBuild(t *testing.T) {
+	t.Parallel()
 	g := newStationViewGroup()
 	var builds atomic.Int32
 	started := make(chan struct{})
@@ -153,6 +155,7 @@ func TestStationViewGroup_CallerCancelDoesNotKillSharedBuild(t *testing.T) {
 // When the last waiter goes away the build must be cancelled — it is holding
 // the single DB connection, and nobody is left to receive the result.
 func TestStationViewGroup_AbandonedBuildIsCancelled(t *testing.T) {
+	t.Parallel()
 	g := newStationViewGroup()
 	started := make(chan struct{})
 	observed := make(chan error, 1)

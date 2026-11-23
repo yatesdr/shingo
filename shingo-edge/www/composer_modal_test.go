@@ -27,6 +27,7 @@ import (
 // test's temp dir — never beside the script, where two runs of this package
 // would race on it.
 func TestComposerModalJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping JS unit tests")

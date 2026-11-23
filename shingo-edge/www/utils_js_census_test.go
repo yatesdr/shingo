@@ -13,6 +13,7 @@ import (
 // is deleted; a page or template that names it again fails here, not at its
 // first load on a plant floor.
 func TestNoEdgeFileImportsUtilsJS(t *testing.T) {
+	t.Parallel()
 	var bad []string
 	for _, tree := range []struct {
 		fsys fs.FS

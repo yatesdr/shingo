@@ -26,6 +26,7 @@ func runStationCardJS(t *testing.T, only string) {
 // counts one the boxes are the bindings; a second counter pre-ticks nothing;
 // the bindings the save sends), the tags, the status, the title and the rows.
 func TestStationCard_PreTicksOnlyCountableUnboundPositionsWhenItIsTheOnlyStation(t *testing.T) {
+	t.Parallel()
 	runStationCardJS(t, "")
 }
 
@@ -34,6 +35,7 @@ func TestStationCard_PreTicksOnlyCountableUnboundPositionsWhenItIsTheOnlyStation
 // one-line status (amber only when stopped), the checklist only when opened,
 // + Add after the last row.
 func TestStationCard_ListsEachCounterWithItsStatus(t *testing.T) {
+	t.Parallel()
 	runStationCardJS(t, "the station list")
 }
 
@@ -42,6 +44,7 @@ func TestStationCard_ListsEachCounterWithItsStatus(t *testing.T) {
 // slot first, in-use slots on their own lines with the re-point, unused and
 // unread slots folded.
 func TestCountingRows_TheTitleAndTheMESSlots(t *testing.T) {
+	t.Parallel()
 	runStationCardJS(t, "the title")
 	runStationCardJS(t, "the counting rows")
 }

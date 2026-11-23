@@ -41,6 +41,7 @@ func TestStationView_CarriesNoStationClock(t *testing.T) {
 // a GET quoting it gets 304 and no body while the view is unchanged — a Touch
 // that moves the station's clock included. A change to what the view carries
 // gets the new body and a new ETag.
+// serial: asserts the /view ETag holds, and any test's process-node write moves it (NodeGeneration)
 func TestStationView_AnswersAConditionalGet(t *testing.T) {
 	// Not parallel: the view's cell_version reads processes.NodeGeneration, a
 	// process-wide counter every process-node write bumps, so another test's

@@ -141,6 +141,7 @@ func TestSpecChangeCoalescer_UnwiredHandlersAreInert(t *testing.T) {
 // The window is what turns the burst into one drain. This Handlers is built
 // here, so the window is set on it rather than on a package var the running
 // loop reads from another goroutine.
+// serial: real time: counts publishes 240 ms after a burst into a 60 ms window
 func TestSpecChangeCoalescer_ASequentialBurstIsOnePublish(t *testing.T) {
 	var mu sync.Mutex
 	var calls []int64

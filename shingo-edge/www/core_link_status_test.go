@@ -144,6 +144,7 @@ func TestCoreLink_OffsetFollowsTheEdgeClock(t *testing.T) {
 // TestDiagnostics_CoreLinkNotes: each feed reads "No data from Core yet",
 // "current", or "as of HH:MM" in the plant zone once its confirmation is older
 // than FeedAsOfAfter. Nothing is hidden for being old.
+// serial: stores the package's plantZone (usePlantLocation); a parallel NewRouter stores UTC over it
 func TestDiagnostics_CoreLinkNotes(t *testing.T) {
 	chicago, err := time.LoadLocation("America/Chicago")
 	if err != nil {

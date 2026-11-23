@@ -21,12 +21,16 @@ func runTagSuggestJS(t *testing.T, only string) {
 }
 
 // TestTagSuggestJS runs every option check.
-func TestTagSuggestJS(t *testing.T) { runTagSuggestJS(t, "") }
+func TestTagSuggestJS(t *testing.T) {
+	t.Parallel()
+	runTagSuggestJS(t, "")
+}
 
 // TestTagSuggest_StationKindOffersTheConventionalMember: the station combo
 // offers each station struct's conventional count member, by name only (no
 // live read), operator-load stations first.
 func TestTagSuggest_StationKindOffersTheConventionalMember(t *testing.T) {
+	t.Parallel()
 	runTagSuggestJS(t, "station: offers")
 }
 
@@ -34,5 +38,6 @@ func TestTagSuggest_StationKindOffersTheConventionalMember(t *testing.T) {
 // tag shaped like a gun, tip, timer, cycle, index, FIFO, management or marker
 // count.
 func TestTagSuggest_NeverOffersAGunTimerOrIndex(t *testing.T) {
+	t.Parallel()
 	runTagSuggestJS(t, "station: never")
 }

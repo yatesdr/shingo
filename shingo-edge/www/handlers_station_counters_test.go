@@ -27,6 +27,7 @@ func stationDo(t *testing.T, method, path, body string) (int, string) {
 }
 
 func TestStationCounterRoutes(t *testing.T) {
+	t.Parallel()
 	code, body := stationDo(t, http.MethodGet, "/api/processes/1/station-counters", "")
 	var list []map[string]any
 	if code != http.StatusOK || json.Unmarshal([]byte(body), &list) != nil || len(list) != 1 || list[0]["tag_name"] != "STATION_01" {
@@ -67,6 +68,7 @@ func TestStationCounterRoutes(t *testing.T) {
 // station counters' read carries each card's strokes since its last click and
 // whether that is a stop.
 func TestCountingRoutes_CarryTheSlotsAndTheStopLabelled(t *testing.T) {
+	t.Parallel()
 	code, body := stationDo(t, http.MethodGet, "/api/processes/1/counting-slots", "")
 	var eol struct {
 		Slots []map[string]any `json:"slots"`
@@ -101,6 +103,7 @@ func TestCountingRoutes_CarryTheSlotsAndTheStopLabelled(t *testing.T) {
 // update's "" removes it and one left out keeps it), and the create's answer
 // and the list carry tag_name_2.
 func TestStationCounterRoutes_CarryTheSecondTag(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	r.Get("/api/processes/{id}/station-counters", h.apiListStationCounters)
 	r.Post("/api/processes/{id}/station-counters", h.apiCreateStationCounter)

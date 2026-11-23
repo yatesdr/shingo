@@ -18,6 +18,7 @@ import (
 // router's every route is walked against it in door_walk_test.go
 // (cmd/shingoedge).
 
+// serial: real time: each nudge must land within 150 ms through a 10 ms window
 func TestNudgeAfterWrite_OnlyASuccessfulWriteNudges(t *testing.T) {
 	hub := NewEventHub()
 	hub.nudgeWindow = 10 * time.Millisecond

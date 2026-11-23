@@ -1029,6 +1029,7 @@ func TestPinEdgeConfig_GroupIDSurvivesSave(t *testing.T) {
 // mutex across copy → write → swap, the one adoptPlantTimezone also takes. A
 // save started while another holder has it does not write until released.
 func TestPinEdgeConfig_SaveWaitsForSaveMutex(t *testing.T) {
+	t.Parallel()
 	rig := newPinRig(t, true)
 	rig.cfg.LockSave()
 	done := make(chan int, 1)

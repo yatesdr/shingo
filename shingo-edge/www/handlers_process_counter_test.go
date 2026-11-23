@@ -24,6 +24,7 @@ func counterRepoint(t *testing.T, h *Handlers, r *chi.Mux, path, body string) in
 // TestCounterRoute_RepointsKeepingThePLCAndTheFlags: the edit carries the
 // process's PLC, enabled flag and identity settings, with the new tag.
 func TestCounterRoute_RepointsKeepingThePLCAndTheFlags(t *testing.T) {
+	t.Parallel()
 	h, r := newTestHandlers(t)
 	r.Post("/api/processes/{id}/counter", h.apiRepointProcessCounter)
 	testDB := dbOf(h)

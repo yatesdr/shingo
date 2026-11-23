@@ -60,6 +60,7 @@ var updateStaticServingGolden = flag.Bool("update-static-serving-golden", false,
 //
 // and read the diff.
 func TestStaticServingPins(t *testing.T) {
+	t.Parallel()
 	_, router := realFlowRouter(t, testdb.Open(t))
 	got := staticServingPins(t, router, edgeStaticSource, []string{
 		"/static/operator-station/operator.js",

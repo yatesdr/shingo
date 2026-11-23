@@ -32,6 +32,7 @@ func waitForType(c *sseClient, typ string, timeout time.Duration) bool {
 // they evicted was everything else, including order-update. counter-read is
 // no longer broadcast at all; the flood here is the debug feed, to a client
 // that asked for it.
+// serial: real time: the hub must drain the flood within 50 ms, before the durable frame
 func TestSSE_LossyFloodDoesNotEvictStateChanges(t *testing.T) {
 	h := NewEventHub()
 	h.Start()
@@ -69,6 +70,7 @@ func TestSSE_LossyFloodDoesNotEvictStateChanges(t *testing.T) {
 // healthy tab. The client asked for debug (?debug=1), so the frames reach its
 // lossy queue and overflow it rather than being filtered out before.
 func TestSSE_LossyDropsDoNotEvictClient(t *testing.T) {
+	t.Parallel()
 	h := NewEventHub()
 	h.Start()
 	defer h.Stop()
@@ -142,6 +144,7 @@ func TestSSE_RobotPosFamilyIsOneStationExactly(t *testing.T) {
 // feed. A panel behind on positions is not stuck; the next position supersedes
 // the one it lost, so a flood must not end its stream.
 func TestSSE_RobotPosDropsDoNotEvictClient(t *testing.T) {
+	t.Parallel()
 	h := NewEventHub()
 	h.Start()
 	defer h.Stop()
@@ -172,6 +175,7 @@ func TestSSE_RobotPosDropsDoNotEvictClient(t *testing.T) {
 // by plcName and plc-health-alert is an alarm; neither may be shed as
 // diagnostics just because the PLC feed is chatty.
 func TestSSE_PLCStatusStaysDurable(t *testing.T) {
+	t.Parallel()
 	for _, typ := range []string{"plc-status", "plc-health-alert", "counter-update", "order-update"} {
 		if lossySSETopics[typ] {
 			t.Errorf("%s is classified lossy — it carries state the operator or "+

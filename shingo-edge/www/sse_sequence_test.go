@@ -113,6 +113,7 @@ func registered(h *EventHub, c *sseClient) bool {
 // number for it, rising; the connected frame and every heartbeat carry the
 // number of the last frame queued for this client, so a client that saw fewer
 // knows it lost one.
+// serial: real time: the hub must fan the pre-connect frame out within 20 ms
 func TestSSE_FramesAndHeartbeatCarryTheHubSequence(t *testing.T) {
 	hub := NewEventHub()
 	hub.keepalive = 40 * time.Millisecond
@@ -160,6 +161,7 @@ func TestSSE_FramesAndHeartbeatCarryTheHubSequence(t *testing.T) {
 // TestSSE_HeartbeatSeqCountsOnlyTheClientsTopics: a frame the client did not
 // ask for is not one it lost, so it does not move the client's number.
 func TestSSE_HeartbeatSeqCountsOnlyTheClientsTopics(t *testing.T) {
+	t.Parallel()
 	hub := NewEventHub()
 	hub.keepalive = 40 * time.Millisecond
 	hub.Start()
@@ -194,6 +196,7 @@ func TestSSE_HeartbeatSeqCountsOnlyTheClientsTopics(t *testing.T) {
 // stream's own frames, nothing else. A client that names none receives every
 // durable topic, as before.
 func TestSSE_HonoursTopics(t *testing.T) {
+	t.Parallel()
 	hub := NewEventHub()
 	hub.Start()
 	defer hub.Stop()
@@ -232,6 +235,7 @@ func TestSSE_HonoursTopics(t *testing.T) {
 // named no topics (every durable topic, as the shared bus's stream is), not one
 // that named other topics, and not a panel of another operator station.
 func TestSSE_RobotPosReachesOnlyItsOwnStationsClient(t *testing.T) {
+	t.Parallel()
 	hub := NewEventHub()
 	hub.Start()
 	defer hub.Stop()
@@ -293,6 +297,7 @@ func TestSSE_RobotPosReachesOnlyItsOwnStationsClient(t *testing.T) {
 // full queue was a silent loss for up to ten frames. It is an eviction now, at
 // once: the stream ends, the client reconnects and refetches.
 func TestSSE_EvictsAClientOnItsFirstDurableDrop(t *testing.T) {
+	t.Parallel()
 	h := NewEventHub()
 	h.Start()
 	defer h.Stop()
@@ -315,6 +320,7 @@ func TestSSE_EvictsAClientOnItsFirstDurableDrop(t *testing.T) {
 // hub's own buffer could not take was dropped for every client with a log line.
 // Nobody can tell whether it was theirs, so everyone reconnects and refetches.
 func TestSSE_HubOverflowEvictsEveryClient(t *testing.T) {
+	t.Parallel()
 	h := NewEventHub()
 	a := &sseClient{events: make(chan SSEEvent, 512), lossy: make(chan SSEEvent, 1)}
 	b := &sseClient{events: make(chan SSEEvent, 512), lossy: make(chan SSEEvent, 1)}
@@ -340,6 +346,7 @@ func TestSSE_HubOverflowEvictsEveryClient(t *testing.T) {
 // TestSSE_HubOverflowOfDiagnosticsEvictsNobody: a lossy topic's overflow is the
 // best-effort it always was.
 func TestSSE_HubOverflowOfDiagnosticsEvictsNobody(t *testing.T) {
+	t.Parallel()
 	h := NewEventHub()
 	c := &sseClient{events: make(chan SSEEvent, 1), lossy: make(chan SSEEvent, 1), debug: true}
 	h.register(c)
@@ -358,6 +365,7 @@ func TestSSE_HubOverflowOfDiagnosticsEvictsNobody(t *testing.T) {
 // TestSSE_StreamTouchesItsStation: the Processes page's "screen online" is the
 // stream's, on connect and on every heartbeat, now that no view poll runs.
 func TestSSE_StreamTouchesItsStation(t *testing.T) {
+	t.Parallel()
 	hub := NewEventHub()
 	hub.keepalive = 30 * time.Millisecond
 	var mu sync.Mutex
@@ -410,6 +418,7 @@ func TestSSE_StreamTouchesItsStation(t *testing.T) {
 
 // TestSSE_NudgeIsCoalesced: a burst of writes is one nudge on the stream, the
 // type every station takes.
+// serial: real time: counts nudges 200 ms after a burst into a 50 ms window
 func TestSSE_NudgeIsCoalesced(t *testing.T) {
 	hub := NewEventHub()
 	hub.nudgeWindow = 50 * time.Millisecond

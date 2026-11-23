@@ -35,6 +35,7 @@ func windowsRouter(t *testing.T, opts ...RouterOption) *Handlers {
 // (cmd/shingoedge) runs both short through WithCoalescingWindows; this is what
 // keeps the shipped value from moving with it.
 func TestNewRouter_CoalescesAQuarterSecond(t *testing.T) {
+	t.Parallel()
 	h := windowsRouter(t)
 	if got := h.eventHub.nudgeWindow; got != 250*time.Millisecond {
 		t.Errorf("the router's nudge window is %v, want 250ms", got)
@@ -50,6 +51,7 @@ func TestNewRouter_CoalescesAQuarterSecond(t *testing.T) {
 // TestNewRouter_WithCoalescingWindowsSetsEach: each window lands on its own
 // loop, not the other's.
 func TestNewRouter_WithCoalescingWindowsSetsEach(t *testing.T) {
+	t.Parallel()
 	h := windowsRouter(t, WithCoalescingWindows(7*time.Millisecond, 11*time.Millisecond))
 	if got := h.eventHub.nudgeWindow; got != 7*time.Millisecond {
 		t.Errorf("nudge window = %v, want the option's 7ms", got)

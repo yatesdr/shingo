@@ -68,6 +68,7 @@ func waitEvent(ch <-chan string, want string, timeout time.Duration) bool {
 	}
 }
 
+// serial: real time: each frame must reach its client within 2 s; beside the parallel tests one did not
 func TestSSE_DebugLogReachesEveryClient_FeedsPin(t *testing.T) {
 	hub := NewEventHub()
 	hub.Start()

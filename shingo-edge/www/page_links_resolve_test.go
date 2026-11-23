@@ -113,6 +113,7 @@ func TestPageLinkRe_ReadsEveryNavigationForm(t *testing.T) {
 }
 
 func TestPageLinks_EveryLinkTheFrontEndNamesHasARoute(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	_, router := realFlowRouter(t, db)
 

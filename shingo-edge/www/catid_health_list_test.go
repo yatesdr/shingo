@@ -11,6 +11,7 @@ import (
 
 // TestCatidHealthListJS runs the health strip's renderer test under node.
 func TestCatidHealthListJS(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("node not on PATH; skipping the catid-health renderer test")

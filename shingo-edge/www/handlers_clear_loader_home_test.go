@@ -108,6 +108,8 @@ func clearRefusedBy(status int, sentence string) clearAnswer {
 //     it in place of its buttons), nothing recorded;
 //   - a node Core cannot clear: 400 with Core's sentence (Core is the one
 //     validator), nothing recorded.
+//
+// serial: asserts the /view ETag holds, and any test's process-node write moves it (NodeGeneration)
 func TestClearLoaderHome_TheDoorPerCoresArm(t *testing.T) {
 	// Not parallel: the view's cell_version reads processes.NodeGeneration, a
 	// process-wide counter every process-node write bumps, so another test's

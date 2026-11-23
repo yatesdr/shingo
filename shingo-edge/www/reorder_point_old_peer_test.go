@@ -23,6 +23,7 @@ import (
 //   - Core never had it: the claim Edge sends Core names the reorder point
 //     and no stamp, so a Core of either age reads the same message.
 func TestReorderPoint_APeerEitherSideOfTheDeployStillTalks(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	cookie := f.engineer(t)
 

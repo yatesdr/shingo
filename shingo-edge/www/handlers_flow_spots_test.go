@@ -257,6 +257,7 @@ func withPrefill(extra map[string]string) map[string]string {
 // owner's rule, on Press 6's shape: every refusal is a 422 in the job's
 // words, naming the next act; every acceptance keeps the deck where it was.
 func TestFlowMint_ASpotMovesOnlyWhereTheRecipesPairIt(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	refused := map[string]struct {
 		args mintArgs
@@ -335,6 +336,7 @@ func TestFlowMint_ASpotMovesOnlyWhereTheRecipesPairIt(t *testing.T) {
 // The pre-fill is the screen's own suggestion, so it is always legal: the
 // body it makes mints, and the style it writes keeps the decks.
 func TestFlowMint_ThePrefillAloneMints(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	bodies := mintBodies(t, f.station, map[string]mintArgs{"prefill": {f.twoSpot, press6Pair, press6Prefil}})
 	resp := doRequest(t, f.router, "POST", "/api/processes/"+itoa(f.processID)+"/flow/mint", bodies["prefill"], nil)
@@ -378,6 +380,7 @@ const press6GroupedJSON = `{"cells":[
 // recipe groups runs every grouped recipe as its cells and takes none off
 // the floor (SYNTH-round2 row 1, which is why groups sit beside the cells).
 func TestFlowMint_ARecipeCarryingGroupsMintsItsCells(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	id, err := f.db.CreateFlowPreset(processes.FlowPresetInput{ProcessID: f.processID, Name: "Two spot grouped",
 		FlowJSON: press6GroupedJSON, CreatedBy: "test"})
@@ -407,6 +410,7 @@ func TestFlowMint_ARecipeCarryingGroupsMintsItsCells(t *testing.T) {
 // had nowhere to say it. A group that says Robot 2 mints Robot 2 on every
 // claim it makes; a group that says nothing mints the default, Robot 1.
 func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	flow := strings.Replace(press6GroupedJSON, `"advanced":{"reorder_point":1,"auto_reorder":true}`,
 		`"advanced":{"reorder_point":1,"auto_reorder":true,"refill_by":"index_robot"}`, 1)
@@ -454,6 +458,7 @@ func TestFlowMint_ARecipeGroupSaysWhichRobotFetchesTheEmpty(t *testing.T) {
 // claim validator refuses a carry-over on a claim that marks nothing, so the
 // station's Go was refused for a recipe the desktop had saved.
 func TestFlowMint_ARecipeGroupCarriesNoCarryOver(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	flow := strings.Replace(press6GroupedJSON, `"advanced":{"reorder_point":1,"auto_reorder":true}`,
 		`"advanced":{"reorder_point":1,"auto_reorder":true,"changeover_carryover_disposition":"keep_lineside"}`, 1)
@@ -478,6 +483,7 @@ func TestFlowMint_ARecipeGroupCarriesNoCarryOver(t *testing.T) {
 // An archived version is not an enabled recipe: its pairings are no longer
 // known, so a spot that only it paired is refused.
 func TestFlowMint_AnArchivedRecipeGrantsNothing(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	bodies := mintBodies(t, f.station, map[string]mintArgs{
 		"to the one-off's spot": {f.twoSpot, press6Pair, withPrefill(map[string]string{"PLN_006": "PLN_009"})},
@@ -519,6 +525,7 @@ func spotsOf(t *testing.T, card map[string]any) map[string]cardSpot {
 // cell has, the card lights it exactly when the server takes the move. The
 // card's job words and the pre-fill come from the same read.
 func TestComposerCard_TargetsAreWhatTheServerAccepts(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	every := []string{"STG_TOOL_1", "STG_TOOL_2", "ULN_002", "ULN_005", "SMN_BUF_100"}
 	for n := range f.nodes {
@@ -601,6 +608,7 @@ func TestComposerCard_TargetsAreWhatTheServerAccepts(t *testing.T) {
 // last-used style whose press sits on another recipe's deck suggests nothing,
 // rather than a layout the server would refuse.
 func TestComposerCard_APrefillOutsideTheTargetsIsDropped(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	// The newest style built from One spot runs its press on PLN_008, the
 	// right-hand deck: a layout only a free-for-all Spots screen could make.
@@ -615,6 +623,7 @@ func TestComposerCard_APrefillOutsideTheTargetsIsDropped(t *testing.T) {
 // of a running A/B line read "back" on the cell picture (each names the
 // other), and the card still gives each a spot's job. Kind is never read.
 func TestComposerCard_ASequentialPairIsTwoSpotsWhateverTheirKind(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	pid, err := db.CreateProcess("Line 9", "", "", "", false)
 	must(t, err, "process")
@@ -679,6 +688,7 @@ func TestComposerCard_ASequentialPairIsTwoSpotsWhateverTheirKind(t *testing.T) {
 // v2, its card is clean and it mints: the deploy note's step at Springfield,
 // where "Two spot press index" still sends cell 2 to ULN_003.
 func TestFlowMint_AStaleRecipeIsRefusedUntilReSaved(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	unloader := *mustNode(t, f, "ULN_002").OperatorStationID
 	uln3, err := f.db.CreateProcessNode(processes.NodeInput{ProcessID: f.processID, OperatorStationID: &unloader,
@@ -795,6 +805,7 @@ func groupedSpotsOf(t *testing.T, card map[string]any) map[string]groupedSpot {
 // card lights it exactly when the server takes the move — a spot's move with
 // the carry the card gives for it, as the Spots step sends it.
 func TestComposerCard_AGroupedCardOffersOnlyItsGroups(t *testing.T) {
+	t.Parallel()
 	f := newPressGrouped(t)
 	card := f.card(t, f.grouped)
 	got := groupedSpotsOf(t, card)
@@ -850,6 +861,7 @@ func TestComposerCard_AGroupedCardOffersOnlyItsGroups(t *testing.T) {
 // without its deck and taken with the carry; the decks never cross. "One spot
 // press index", still ungrouped on the same process, lends and moves as v0.
 func TestFlowMint_AGroupedRecipeMovesOnlyWithinItsGroups(t *testing.T) {
+	t.Parallel()
 	f := newPressGrouped(t)
 	refused := map[string]struct {
 		args mintArgs
@@ -919,6 +931,7 @@ func TestFlowMint_AGroupedRecipeMovesOnlyWithinItsGroups(t *testing.T) {
 // set up, and Right Hand on PLN_012, which it does. Right Hand's half ships;
 // v0 kept both, lent by that same style.
 func TestComposerCard_AGroupedPrefillKeepsTheSlotsThatStand(t *testing.T) {
+	t.Parallel()
 	f := newPressGrouped(t)
 	f.style(t, "SYN-ODD", f.grouped, "2026-10-23 09:00:00",
 		claim("PLN_013", "PLN_005", "SYN-P6-F", "ULN_002"), claim("PLN_012", "PLN_008", "SYN-P6-G", "ULN_005"))
@@ -954,6 +967,7 @@ func (f press6) mintedClaims(t *testing.T, body map[string]any) map[string]proce
 // mint's curtain stamp (D10, which ORs the node's own curtain in). Left Hand
 // says nothing and mints as today, with the curtain its node already has.
 func TestFlowMint_AGroupsAdvancedIsLaidOnItsCells(t *testing.T) {
+	t.Parallel()
 	f := newPressGrouped(t)
 	_, err := f.db.Exec(`UPDATE style_node_claims SET curtain_required = 1 WHERE style_id = ? AND core_node_name = 'PLN_010'`, f.running)
 	must(t, err, "PLN_010's curtain")
@@ -983,6 +997,7 @@ func TestFlowMint_AGroupsAdvancedIsLaidOnItsCells(t *testing.T) {
 // onto any of its group's spots. Tapped second, SYN-P6-A still lands on the
 // slot of PLN_010, where the running style has it.
 func TestFlowMint_APartGoesWhereItLastRanAfterTheMoves(t *testing.T) {
+	t.Parallel()
 	f := newPressGrouped(t)
 	bodies := mintBodies(t, f.station, map[string]mintArgs{
 		// Two spot v1, ungrouped, moved onto the running style's spots.

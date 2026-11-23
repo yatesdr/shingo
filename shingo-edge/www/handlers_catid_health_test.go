@@ -24,6 +24,7 @@ func catidHealthGet(t *testing.T, path string) (int, []byte) {
 // TestCatidHealthRoute_ItemsAndAnEmptyArray: a process's items under "items",
 // and a process with none answers [] rather than null.
 func TestCatidHealthRoute_ItemsAndAnEmptyArray(t *testing.T) {
+	t.Parallel()
 	code, body := catidHealthGet(t, "/api/processes/1/catid-health")
 	var got struct {
 		Items []map[string]any `json:"items"`
@@ -43,6 +44,7 @@ func TestCatidHealthRoute_ItemsAndAnEmptyArray(t *testing.T) {
 
 // TestCatidHealthRoute_SummaryPerProcess: the homepage's line per process.
 func TestCatidHealthRoute_SummaryPerProcess(t *testing.T) {
+	t.Parallel()
 	code, body := catidHealthGet(t, "/api/catid-health")
 	var rows []map[string]any
 	if code != http.StatusOK || json.Unmarshal(body, &rows) != nil || len(rows) != 1 {
@@ -69,6 +71,7 @@ func catidHoldDo(t *testing.T, method, path string) (int, []byte) {
 // released hold is a conflict, a bad id or mode a bad request. The preview
 // charges nothing: a released hold's preview answers its refusal.
 func TestCatidHoldRoutes(t *testing.T) {
+	t.Parallel()
 	code, body := catidHoldDo(t, http.MethodPost, "/api/catid-holds/1/charge?mode=preview")
 	var p map[string]any
 	if code != http.StatusOK || json.Unmarshal(body, &p) != nil || p["style_name"] != "S1" || p["refusal"] != nil {

@@ -85,6 +85,7 @@ var press6TwoSpotCells = []domain.FlowCell{
 // with Right Hand's Advanced, the station reads them without it (no reader
 // there), and a second edit of the groups alone is v3.
 func TestFlowPresets_AGroupsAdvancedRoundTrips(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	cookie := f.engineer(t)
 
@@ -132,6 +133,7 @@ func TestFlowPresets_AGroupsAdvancedRoundTrips(t *testing.T) {
 // one Advanced field it keeps is Robot 2 — a group that says nothing else
 // still says nothing, and the reorder policy beside it stays the desktop's.
 func TestFlowPresets_TheStationReadsAGroupsRobotAndNothingElse(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	cookie := f.engineer(t)
 	groups := press6Groups()
@@ -156,6 +158,7 @@ func TestFlowPresets_TheStationReadsAGroupsRobotAndNothingElse(t *testing.T) {
 // TestFlowPresets_AGroupThatBreaksTheOwnersRuleIsRefusedByName: the save's
 // refusal reaches the engineer in the server's words, and nothing is written.
 func TestFlowPresets_AGroupThatBreaksTheOwnersRuleIsRefusedByName(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	cookie := f.engineer(t)
 	groups := press6Groups()
@@ -185,6 +188,7 @@ func TestFlowPresets_AGroupThatBreaksTheOwnersRuleIsRefusedByName(t *testing.T) 
 // node (spots v0's "refuse and flag"): the card carries the sentence, and the
 // mint refuses the recipe by it before anything is placed.
 func TestFlowMint_AGroupNamingALostNodeIsRefusedUntilReSaved(t *testing.T) {
+	t.Parallel()
 	f := newPress6(t)
 	cookie := f.engineer(t)
 	groups := press6Groups()

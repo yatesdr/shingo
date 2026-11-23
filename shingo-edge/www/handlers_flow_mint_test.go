@@ -93,6 +93,7 @@ func gatedOffPlant(t *testing.T) (*store.DB, testdb.SeededPlant) {
 // only styles, so a mint from it is a station setting up a cell nobody
 // opened to the floor.
 func TestFlowMint_SetupGatesTheStationsMint(t *testing.T) {
+	t.Parallel()
 	db, seeded := gatedOffPlant(t)
 	_, router := realFlowRouter(t, db)
 	presetID, codes := recipeAndNewPair(t, db, seeded)

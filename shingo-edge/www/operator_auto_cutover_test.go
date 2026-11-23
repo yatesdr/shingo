@@ -16,6 +16,7 @@ import (
 // the SSE arm sends it (the Go struct, marshalled here), so a field renamed on
 // either side fails.
 func TestCATIDAutoCutoverEvent_FieldsAreRead(t *testing.T) {
+	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not on PATH; skipping the auto-cutover notice test")

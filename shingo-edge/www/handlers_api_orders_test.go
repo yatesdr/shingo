@@ -75,6 +75,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // submit and abort were public. Both directions are asserted so a later "tidy
 // the routes" pass cannot move one without noticing the other.
 func TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot(t *testing.T) {
+	t.Parallel()
 	h, r, _ := realFlowRouterEngine(t, testdb.Open(t))
 
 	for _, path := range []string{

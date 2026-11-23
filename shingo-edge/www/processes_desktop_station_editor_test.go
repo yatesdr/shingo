@@ -14,6 +14,7 @@ import (
 // the process's MES struct (stationTagFree), so its first suggestion was
 // always a refusal.
 func TestStationEditor_SuggestsTheStationKindNotTheCounterKind(t *testing.T) {
+	t.Parallel()
 	src, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
 	if err != nil {
 		t.Fatalf("read processes-desktop.js: %v", err)

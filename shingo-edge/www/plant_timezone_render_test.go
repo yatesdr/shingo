@@ -31,6 +31,7 @@ func usePlantLocation(t *testing.T, loc *time.Location) {
 // convertTimestamps rewrite it — the flicker defect this work closed, and the
 // drift-with-core defect underneath it (the two binaries used to render the
 // same event on different clocks).
+// serial: stores the package's plantZone (usePlantLocation); a parallel NewRouter stores UTC over it
 func TestRenderedPageIsPlantLocal(t *testing.T) {
 	chicago, err := time.LoadLocation("America/Chicago")
 	if err != nil {
@@ -70,6 +71,7 @@ func TestRenderedPageIsPlantLocal(t *testing.T) {
 // window.PLANT_TZ synchronously from the server-resolved zone, so the JS
 // formatters and the server agree on one clock with no fetch-flash. An empty
 // or stale value here is the "two clocks on one screen" defect.
+// serial: stores the package's plantZone (usePlantLocation); a parallel NewRouter stores UTC over it
 func TestHeaderCarriesPlantTZ(t *testing.T) {
 	chicago, err := time.LoadLocation("America/Chicago")
 	if err != nil {

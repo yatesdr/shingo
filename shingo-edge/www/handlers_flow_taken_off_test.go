@@ -116,6 +116,7 @@ func partFinding(t *testing.T, preview map[string]any) string {
 }
 
 func TestFlowPreview_APartTakenOffIsNotLost(t *testing.T) {
+	t.Parallel()
 	f := newTakenOffFixture(t)
 	_, router := realFlowRouter(t, f.db)
 
@@ -135,6 +136,7 @@ func TestFlowPreview_APartTakenOffIsNotLost(t *testing.T) {
 }
 
 func TestFlowSave_APartTakenOffLeavesTheStyle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		takenOff bool

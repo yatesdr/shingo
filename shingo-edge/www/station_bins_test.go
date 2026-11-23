@@ -303,6 +303,7 @@ func asksSent(t *testing.T, eng *engine.Engine) int {
 // calls, which saw only the kinds it bridges and none while the ack named no
 // kind.
 func TestStationView_NoCoreReadPerBuild(t *testing.T) {
+	t.Parallel()
 	rig := newBinsRig(t)
 	for _, ack := range []*protocol.EdgeHeartbeatAck{{Asks: protocol.AskKinds()},
 		{Feeds: map[string]string{}, Asks: protocol.AskKinds()}} {
@@ -329,6 +330,7 @@ func TestStationView_NoCoreReadPerBuild(t *testing.T) {
 // in the plant's order, and no other tile does; the unloader's board carries
 // its outbound group's empties.
 func TestStationView_BinsStampedFromTheCopy(t *testing.T) {
+	t.Parallel()
 	rig := newBinsRig(t)
 	rig.holdStubBins(t)
 
@@ -374,6 +376,7 @@ func TestStationView_BinsStampedFromTheCopy(t *testing.T) {
 // without the key, as an older Core sends it, keeps the clear: the key is
 // absent on the tile and the home names its spot.
 func TestStationView_ClearPartialsOffFromTheWire(t *testing.T) {
+	t.Parallel()
 	rig := newBinsRig(t)
 	rig.holdStubBins(t)
 	h1 := tileByNode(t, rig.view(t, "LDR"), "SMN_H1")
@@ -435,6 +438,7 @@ func containmentRig(t *testing.T) *binsRig {
 // never sends a copy, there is no containment read either (it went with
 // GetContainment); that Core's flags are not drawn. A read is counted as the
 // asks a stamp writes, of any kind (asksSent), with Core answering every kind.
+// serial: containmentRig writes binsRigRows, which every bins rig's Core stub reads
 func TestContainmentStamp_ReadsTheHeldCopyOnly(t *testing.T) {
 	rig := containmentRig(t)
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Asks: protocol.AskKinds()})
@@ -530,6 +534,7 @@ func TestSSE_NodeBinsEventIsSentAsBins(t *testing.T) {
 //   - Core rolled back under the running Edge: the next ack lacks the field,
 //     and the copy held is drawn still (CHANGED: the build read HTTP).
 func TestStationView_BinsFromTheCopyOnly(t *testing.T) {
+	t.Parallel()
 	rig := newBinsRig(t)
 	var published []*protocol.Envelope
 	rig.eng.SetSendFunc(func(env *protocol.Envelope) error {
@@ -637,6 +642,7 @@ func TestBinsAsOf(t *testing.T) {
 // station's sign can say so; with the copy held the key is absent. CHANGED:
 // against a Core with no feeds, which never sends a copy, it is not known
 // either, where the HTTP containment read answered the flags.
+// serial: containmentRig writes binsRigRows, which every bins rig's Core stub reads
 func TestStationView_SaysWhenContainmentIsNotKnown(t *testing.T) {
 	rig := containmentRig(t)
 	if got := jsonOf(t, rig.view(t, "QA")["containment"]); got != `{"known":false}` {
@@ -697,6 +703,7 @@ func TestSSE_RefusalAndSourcingEventsAreSent(t *testing.T) {
 // assignment, each cart's tote numbers on its bin, and the empties' wants per
 // type and per wanted height; with no copy held, none of it.
 func TestStationView_AssignmentsAndHeightsFromTheCopy(t *testing.T) {
+	t.Parallel()
 	rig := newBinsRig(t)
 	rig.eng.SetSendFunc(func(*protocol.Envelope) error { return nil })
 	n := func(v int) *int { return &v }
