@@ -694,7 +694,7 @@ func Open(t testing.TB) *store.DB {
 func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	t.Helper()
 	ensureServer(t, true)
-	return openClone(t)
+	return openClone(t, templateName())
 }
 
 // ensureServer brings this process's Postgres up (its own container, or the
@@ -740,9 +740,10 @@ func ensureServer(t testing.TB, template bool) {
 	}
 }
 
-// openClone clones the template into a database of its own for t, opened
-// without migrating, with the drop and the end-of-test sweep registered.
-func openClone(t testing.TB) (*store.DB, *config.DatabaseConfig) {
+// openClone clones template (the migrated one, or a seeded one: seeded.go)
+// into a database of its own for t, opened without migrating, with the drop
+// and the end-of-test sweep registered.
+func openClone(t testing.TB, template string) (*store.DB, *config.DatabaseConfig) {
 	t.Helper()
 
 	// ONE NAME PER OPEN, BY CONSTRUCTION: test_<test name>_p<pid>_<n>
@@ -787,7 +788,7 @@ func openClone(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		<-createSlot
 		t.Fatalf("open admin connection: %v", err)
 	}
-	_, createErr := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName()))
+	_, createErr := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, template))
 	<-createSlot
 	if createErr != nil {
 		t.Fatalf("create test database %s from template: %v%s", dbName, createErr, ownContainerHint())
@@ -1051,6 +1052,15 @@ func OpenShared(t testing.TB, key string) *store.DB {
 // database, for the same migration-test niche as OpenWithConfig.
 func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.DatabaseConfig) {
 	t.Helper()
+	return openShared(t, key, templateName(), nil)
+}
+
+// openShared is OpenSharedWithConfig's body, cloning template (the migrated
+// one, or a seeded one: OpenSharedSeeded). build, when it is set, runs after
+// the server and the migrated template are up and before sharedMu is taken,
+// so a seeded template's build holds up no other key's open.
+func openShared(t testing.TB, key, template string, build func()) (*store.DB, *config.DatabaseConfig) {
+	t.Helper()
 
 	// Docker-panic guard, same shape as OpenWithConfig's.
 	defer func() {
@@ -1095,6 +1105,9 @@ func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.Database
 	if templateErr != nil {
 		t.Fatalf("setup template database: %v", templateErr)
 	}
+	if build != nil {
+		build()
+	}
 
 	// Re-check under the lock after the once-gates: a sibling test may have
 	// cloned this key while we were waiting on the template.
@@ -1118,7 +1131,7 @@ func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.Database
 		sharedMu.Unlock()
 		t.Fatalf("open admin connection: %v", err)
 	}
-	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName())); err != nil {
+	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, template)); err != nil {
 		sharedMu.Unlock()
 		t.Fatalf("create shared database %s: %v%s", dbName, err, ownContainerHint())
 	}

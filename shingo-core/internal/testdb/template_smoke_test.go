@@ -4,6 +4,8 @@ package testdb
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,4 +206,83 @@ func testutilMustNoErr(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestOpenSeeded_SeedsOncePerKeyAndEachCloneIsItsOwn: a key's Write runs once
+// whether BuildSeeded or the first OpenSeeded builds it, its rows are in every
+// clone, one clone's write is in no other, a second key writes its own template
+// from the migrated one, and OpenSharedSeeded hands every holder of its key one
+// database holding the seed's rows. SeededAge knows which templates are built.
+func TestOpenSeeded_SeedsOncePerKeyAndEachCloneIsItsOwn(t *testing.T) {
+	var mu sync.Mutex
+	runs := map[string]int{}
+	seed := func(key string) Seed {
+		return Seed{Key: "selftest-seeded-" + key, Write: func(db *store.DB) error {
+			mu.Lock()
+			runs[key]++
+			mu.Unlock()
+			if _, err := db.Exec(`CREATE TABLE seeded_probe (v text)`); err != nil {
+				return err
+			}
+			_, err := db.Exec(`INSERT INTO seeded_probe VALUES ($1)`, key)
+			return err
+		}}
+	}
+	holds := func(db *store.DB, want string) {
+		t.Helper()
+		var got string
+		testutilMustNoErr(t, db.QueryRow(`SELECT string_agg(v, ',' ORDER BY v) FROM seeded_probe`).Scan(&got))
+		if got != want {
+			t.Errorf("the clone holds %q, want %q", got, want)
+		}
+	}
+
+	a, b := seed("a"), seed("b")
+	if _, ok := SeededAge(a); ok {
+		t.Fatal("SeededAge says a template nobody built is built")
+	}
+	BuildSeeded(t, a)
+	if age, ok := SeededAge(a); !ok || age < 0 {
+		t.Fatalf("SeededAge after BuildSeeded = %v, %v; want built", age, ok)
+	}
+	first, _ := OpenSeeded(t, a)
+	if _, err := first.Exec(`INSERT INTO seeded_probe VALUES ('z')`); err != nil {
+		t.Fatalf("write to the first clone: %v", err)
+	}
+	second, _ := OpenSeeded(t, a)
+	other, _ := OpenSeeded(t, b) // built here, by its first asker
+	shared1, _ := OpenSharedSeeded(t, "selftest-seeded-shared", a)
+	shared2, _ := OpenSharedSeeded(t, "selftest-seeded-shared", a)
+
+	holds(first, "a,z")
+	holds(second, "a")
+	holds(other, "b")
+	holds(shared1, "a")
+	if shared1 != shared2 {
+		t.Error("OpenSharedSeeded handed one key two databases")
+	}
+	if runs["a"] != 1 || runs["b"] != 1 {
+		t.Errorf("seeds ran %v, want once a key", runs)
+	}
+}
+
+// TestSeeded_ASerialSiblingEndsBeforeAParallelOneGoesOn pins the one fact a
+// serial build test stands on (seeded.go, BUILT BEFORE THE LEAVES): a subtest
+// that calls t.Parallel goes on only after its parent's function has returned,
+// so a serial sibling declared after it has already ended. Top-level tests are
+// the subtests of one root test (testing.runTests, go1.25.6), so a serial
+// top-level test ends before any parallel one goes on, likewise.
+func TestSeeded_ASerialSiblingEndsBeforeAParallelOneGoesOn(t *testing.T) {
+	t.Parallel()
+	var serialEnded atomic.Bool
+	t.Run("parallel, declared first", func(t *testing.T) {
+		t.Parallel()
+		if !serialEnded.Load() {
+			t.Error("a parallel subtest went on before its serial sibling ended, so a package's " +
+				"serial BuildSeeded test no longer builds before its parallel tests start")
+		}
+	})
+	t.Run("serial, declared second", func(t *testing.T) {
+		serialEnded.Store(true)
+	})
 }
