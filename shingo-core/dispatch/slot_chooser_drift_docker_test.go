@@ -274,15 +274,12 @@ var driftChoosers = []driftChooser{
 
 // loaderDriftHome makes the candidate a member of a dedicated loader: its home,
 // or, with asBuffer, its only buffer behind a home a bin stands on. The
-// candidate is a STOR-typed node standing alone, as a loader member does.
+// candidate is a STOR-typed node standing alone, as a loader member does (the
+// type is the test's, made before the rows).
 func loaderDriftHome(asBuffer bool) func(t *testing.T, db *store.DB, fx *driftFixture) {
 	return func(t *testing.T, db *store.DB, fx *driftFixture) {
-		storType := &nodes.NodeType{Code: protocol.NodeClassSTOR, Name: "Storage Slot"}
-		if nt, err := db.GetNodeTypeByCode(protocol.NodeClassSTOR); err == nil && nt != nil {
-			storType = nt
-		} else {
-			testutil.MustNoErr(t, db.CreateNodeType(storType), "create STOR type")
-		}
+		storType, err := db.GetNodeTypeByCode(protocol.NodeClassSTOR)
+		testutil.MustNoErr(t, err, "get STOR type")
 		fx.candidate = &nodes.Node{Name: fx.prefix + "-M", Enabled: true, NodeTypeID: &storType.ID}
 		testutil.MustNoErr(t, db.CreateNode(fx.candidate), "loader member")
 		loaderID, err := db.CreateLoader(store.Loader{Name: fx.prefix + "-LD", Role: "consume",
@@ -389,6 +386,15 @@ func TestSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
+	// THE STOR TYPE IS MADE HERE, ONCE, BEFORE THE ROWS. The loader and stage-2
+	// rows give their candidate that type and the template does not ship it. The
+	// rows run in parallel on this one database, and node_types.code is unique, so
+	// a get-or-create in each row would race on it.
+	if nt, err := db.GetNodeTypeByCode(protocol.NodeClassSTOR); err != nil || nt == nil {
+		testutil.MustNoErr(t, db.CreateNodeType(&nodes.NodeType{Code: protocol.NodeClassSTOR, Name: "Storage Slot"}),
+			"create STOR type")
+	}
+
 	n := 0
 	for _, ch := range driftChoosers {
 		for _, hold := range driftHolds {
@@ -397,7 +403,12 @@ func TestSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 			}
 			n++
 			prefix := fmt.Sprintf("DR%d", n)
+			// The rows run at once. Each builds its own prefix's nodes, payload,
+			// loaders and orders, and a chooser should read only by node, group or
+			// loader. Evidence, not a pin: 30 parallel runs offered row for row
+			// what 20 serial runs did (test-gate-fast, 2026-11-23).
 			t.Run(ch.name+"/"+hold.name, func(t *testing.T) {
+				t.Parallel()
 				fx := setupDriftFixture(t, db, prefix, ch)
 				if hold.apply != nil {
 					hold.apply(t, db, fx)
