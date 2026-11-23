@@ -869,16 +869,21 @@ func p43(h *harness) (string, string) {
 	}
 	gate := filepath.Join(root, "scripts", "gate.sh")
 	src, _ := os.ReadFile(gate)
-	if !strings.Contains(string(src), "write_identity") {
-		return "NOT-BUILT", "scripts/gate.sh writes no identity file (write_identity): the gate wiring is not there yet"
+	if !regexp.MustCompile(`(?m)^\s*identity\)`).Match(src) {
+		return "NOT-BUILT", "scripts/gate.sh has no identity mode (the gate wiring is not there yet)"
 	}
+	// `gate.sh identity` prints what the gate records as a run's identity.
+	n := 0
 	ident := func() string {
-		out := filepath.Join(h.work, "stores", "43-identity")
-		cmd := exec.Command("bash", "scripts/gate.sh", "identity", out)
+		n++
+		out := filepath.Join(h.work, "stores", fmt.Sprintf("43-identity-%d", n))
+		cmd := exec.Command("bash", "scripts/gate.sh", "identity")
 		cmd.Dir = root
-		if b, err := cmd.CombinedOutput(); err != nil {
-			return "error: " + err.Error() + ": " + string(b)
+		b, err := cmd.Output()
+		if err != nil {
+			return "error: " + err.Error()
 		}
+		writeFile(h.t, out, string(b))
 		return out
 	}
 	s := h.newSynth("p43", base(map[string]string{"a/a_test.go": trivial()}))
