@@ -495,7 +495,11 @@ type w6Opts struct {
 
 // w6ProductionWindow is w6Opts.window for a leaf at production's window:
 // zero, which the Edge reads as its 60 s (Config.CatidStableWindow; the 60 s
-// is pinned by TestCatidWindow_SixtySecondsOnEveryTracker).
+// is pinned by TestCatidWindow_SixtySecondsOnEveryTracker). A
+// *_ProductionWindow leaf passes it to its body, and its twin, which the push
+// gate runs in its place, makes the same call with w6ShortWindow (the
+// repolint rule production-window holds the pair; PUSH_SKIP_TESTS in
+// scripts/gate.sh names what push skips).
 const w6ProductionWindow time.Duration = 0
 
 // w6Boot is what the cell gives each Edge it starts.

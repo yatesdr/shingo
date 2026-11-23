@@ -35,7 +35,9 @@ func TestCatid4x2_S2_LateCutover(t *testing.T) {
 // a refused cutover (cutoverRetryInterval in shingoedge/engine, a minute), an
 // order of events its 10 s twin is not in and should not be read as proving.
 // A top-level test, so that a package run should admit it with the first wave
-// of tests, as it does S5, and not behind the package's subtests.
+// of tests, as it does S5, and not behind the package's subtests. The push
+// gate skips it by name (PUSH_SKIP_TESTS in scripts/gate.sh), and runs its
+// twin; cert and GitHub run both.
 func TestCatid4x2_S2_LateCutover_GreenGate_ProductionWindow(t *testing.T) {
 	t.Parallel()
 	s2LateCutover(t, s2GreenGate, w6ProductionWindow)

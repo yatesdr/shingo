@@ -37,7 +37,9 @@ func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 // untapped half at production's window: nothing moves while the 60 s the old
 // automatic switch acted after runs out at a plant's length. A top-level
 // test, so that a package run should admit it with the first wave of tests,
-// as it does S5, and not behind the package's subtests.
+// as it does S5, and not behind the package's subtests. The push gate skips it
+// by name (PUSH_SKIP_TESTS in scripts/gate.sh), and runs its twin; cert and
+// GitHub run both.
 func TestCatid4x2_S4_JumpWithNoChangeover_Untapped_ProductionWindow(t *testing.T) {
 	t.Parallel()
 	s4Jump(t, "untapped", w6ProductionWindow)
