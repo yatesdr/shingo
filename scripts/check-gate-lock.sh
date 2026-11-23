@@ -20,6 +20,9 @@
 #      run's own gate (its token) runs; fmt, scope, order, cachescope and
 #      lock-status never refuse; a stale heartbeat does not refuse; and the
 #      real writer, `gatetime run`, holds the flag gate.sh reads
+#   7. a heavy run writes its selection line and stamps its total line, with
+#      the timed run's load under `gatetime run`, and `gatetime compare`
+#      reads four such runs by their selection lines
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ROOT
@@ -199,8 +202,33 @@ else
 fi
 unset GATE_TIMING_DIR
 
+# ── 7. the steps log's selection line and total stamps, and their reader ────
+# A heavy run writes one `selection` line and stamps its total line; under
+# `gatetime run` the stamps carry the run's load judgement, and `gatetime
+# compare` reads the selection lines of four such runs.
+unset GATE_TIMING_DIR GATE_TIMING_TOKEN GATETIME_RUN_DIR
+out="$(GATE_STEPS_LOG="$TMP/steps7.log" GATE_MODULES=protocol bash scripts/gate.sh simvet 2>&1)"
+grep -qE '^[^ ]+ simvet selection - [^ ]+ tier=step docker=out modules=protocol p=- guards=- reused=0$' "$TMP/steps7.log" \
+  || fail "no selection line, or not the one simvet chose: $(cat "$TMP/steps7.log" 2>/dev/null) $out"
+grep -qE '^[^ ]+ simvet total [0-9.]+ [^ ]+ ac=(on|off|unknown) samples=1 standby=([0-9]+|unread) load=unmeasured$' "$TMP/steps7.log" \
+  || fail "the total line carries no load stamps outside gatetime run: $(cat "$TMP/steps7.log" 2>/dev/null)"
+if [ -x "$GT" ]; then
+  export GATE_TIMING_DIR="$TMP/gate.timing7"
+  for n in 1 2 3 4; do
+    "$GT" run -out "$TMP/cmp$n" -every 200ms -repo "$ROOT" -- "$BASH_BIN" -c \
+      "GATE_STEPS_LOG='$TMP/steps7-$n.log' GATE_MODULES=protocol bash scripts/gate.sh simvet" >/dev/null 2>&1
+    grep -qE ' simvet total [0-9.]+ [^ ]+ ac=[a-z]+ samples=[0-9]+ standby=[0-9a-z]+ load=(clean|void) foreign30=[0-9.]+' "$TMP/steps7-$n.log" \
+      || fail "under gatetime run the total line does not carry the run's load: $(cat "$TMP/steps7-$n.log" 2>/dev/null)"
+    cp "$TMP/steps7-$n.log" "$TMP/cmp$n/steps.tsv" 2>/dev/null   # the gate logged to a private file, not .gate/steps.log
+  done
+  out="$("$GT" compare "$TMP/cmp1" "$TMP/cmp2" "$TMP/cmp3" "$TMP/cmp4" 2>&1)"
+  { echo "$out" | grep -q '^selection: by the selection line' && ! echo "$out" | grep -q 'selection differs'; } \
+    || fail "gatetime compare did not compare four equal selection lines: $out"
+  unset GATE_TIMING_DIR
+fi
+
 if [ "$fails" -eq 0 ]; then
-  echo "ok   gate-lock (acquire, wait, SIGKILL takeover, nested, fmt exempt, timing flag)"
+  echo "ok   gate-lock (acquire, wait, SIGKILL takeover, nested, fmt exempt, timing flag, selection and stamps)"
   exit 0
 fi
 exit 1

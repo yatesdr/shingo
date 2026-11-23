@@ -583,6 +583,9 @@ step_scripts() {
   [ -n "$skipped_inputs" ] && s="$s; skipped: $skipped_inputs — inputs unchanged"
   [ -n "$skipped_push" ] && s="$s; push-only: $skipped_push"
   echo "$s" >"$ROOT/.gate/scripts.summary"
+  # The guards that ran, for the steps log's selection line (gate-timing.sh).
+  # shellcheck disable=SC2086 # names is a list of guard names
+  [ -n "${GATE_SEL_DIR:-}" ] && printf '%s\n' $names >"$GATE_SEL_DIR/scripts.ran"
   if [ "$total" -eq 0 ]; then
     echo "ok   scripts (none found)"
     return 0
@@ -1448,6 +1451,8 @@ step_docker() {
     skipargs=()
     [ -n "$skip" ] && skipargs=(-skip "$skip")
     echo "  docker: $m ($( [ "$order" = "./..." ] && echo "./..." || echo "longest first, from the steps log"))${skip:+; -skip $skip}"
+    # The -p this module runs at, for the steps log's selection line (gate-timing.sh).
+    [ -n "${GATE_SEL_DIR:-}" ] && echo "$m:$p" >>"$GATE_SEL_DIR/docker.p"
     rm -f "$logdir/docker-$m.rc"
     # shellcheck disable=SC2086 # order is a package list
     ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${skipargs[@]}" $order >"$logdir/docker-$m.log" 2>&1
@@ -1658,8 +1663,11 @@ gate_unscoped=""  # 1 = `full --unscoped`
 # test's own `ok pkg Ns` lines in the logs that step wrote — the format
 # shingo-core/scripts/shardplan's rePkgTime parses. lint and modbuild add a
 # `step:module` line each. `run` is the gate's start (UTC) and groups one
-# invocation's lines; a sha ending `+` had uncommitted changes. A log for
-# measuring the schedule, read by people, never by a test. In-gate package
+# invocation's lines; a sha ending `+` had uncommitted changes. A heavy run
+# also writes one `selection` line, and its `total` line carries load stamps
+# after the five fields (scripts/gate-timing.sh). Its readers: docker_order
+# (the docker step's package order, fields 1-5), `gatetime compare` (the
+# selection lines and stamps of timed runs), and people. In-gate package
 # times overlap one another, so they attribute nothing on their own: a
 # package's cost is measured solo, and a step's wall judges the schedule.
 GATE_MODE="${1:-all}"
@@ -1680,16 +1688,21 @@ git diff --quiet HEAD 2>/dev/null || GATE_SHA="$GATE_SHA+"
 # gate-lock pin runs nested gates whose times are not a schedule).
 STEPS_LOG="${GATE_STEPS_LOG-$ROOT/.gate/steps.log}"
 GATE_T0="$EPOCHREALTIME"
+# The timing tool, built once for the run (scripts/gate-timing.sh).
+case "${1:-all}" in
+  vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all) gatetime_prepare ;;
+esac
 
 # _secs <from> — seconds since an $EPOCHREALTIME reading, to 0.1s.
 _secs() {
   awk -v a="$1" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }'
 }
 
-# steps_log <step> <seconds> — one line, appended.
+# steps_log <step> <seconds> [words] — one line, appended; words (key=value)
+# follow the five fields on the selection and total lines.
 steps_log() {
   [ -n "$STEPS_LOG" ] || return 0
-  printf '%s %s %s %s %s\n' "$GATE_SHA" "$GATE_MODE" "$1" "$2" "$GATE_RUN" >>"$STEPS_LOG"
+  printf '%s %s %s %s %s%s\n' "$GATE_SHA" "$GATE_MODE" "$1" "$2" "$GATE_RUN" "${3:+ $3}" >>"$STEPS_LOG"
 }
 
 # The logs each test-running step writes, under .gate/.
@@ -1943,10 +1956,14 @@ case "${1:-all}" in
 esac
 
 # The run's wall, marked when it failed: a red run is not a measurement. fmt
-# is the pre-push hook's step and is left out.
+# is the pre-push hook's step and is left out. The selection line first, then
+# the total with its load stamps (scripts/gate-timing.sh); the wall is read
+# before the stamps are taken.
 if [ "$GATE_MODE" != fmt ]; then
-  if [ "$rc" -eq 0 ]; then steps_log total "$(_secs "$GATE_T0")"
-  else steps_log total-FAILED "$(_secs "$GATE_T0")"; fi
+  steps_log selection - "$(gate_selection_fields)"
+  if [ "$rc" -eq 0 ]; then steps_log total "$(_secs "$GATE_T0")" "$(gate_total_stamps)"
+  else steps_log total-FAILED "$(_secs "$GATE_T0")" "$(gate_total_stamps)"; fi
+  gatetime_done
 fi
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi
 # Printed on PASS only: there is no sentence to paste for a gate that failed, and

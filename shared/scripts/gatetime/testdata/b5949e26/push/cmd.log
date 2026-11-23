@@ -1,0 +1,47 @@
+ok   gofmt
+     (step_fmt: 0.6s)
+scope: docker NEEDED — 1 of 2 changed files can reach a Postgres-backed test:
+    shingo-core/dispatch/plan/move.go
+     (step_scope: 2.7s)
+ok   modbuild
+     (step_modbuild: 47.4s)
+0 issues.
+0 issues.
+0 issues.
+0 issues.
+0 issues.
+ok   lint
+     (step_lint: 43.8s)
+ok   changelog (since v0.19.0: 21 source files; Deploy names no migration)
+ok   dead identifiers (every code-shaped comment citation resolves)
+ok   doc citations (tests, -run patterns, identifiers, paths, links and stamps in every in-scope doc resolve)
+ok   Go filenames (no accidental GOOS/GOARCH build constraints)
+ok   comment-references (file:line citations resolve)
+ok   conflict-markers (4265 tracked files, no marker line)
+ok   expiry (0 EXPIRY-by-symbol pins, each symbol still declared)
+ok   js-parse (238 files)
+ok   js-imports (114 modules)
+ok   js-undeclared (92 page scripts)
+ok   plant-addresses (no private IPv4 in tracked files)
+ok   swap-mode-literals (no raw swap-mode string outside protocol/swap_mode.go, tests and the JS surfaces that name modes)
+ok   synthetic-part-numbers (no NNNNN-XXXXX.NN in any of its three shapes and no plant MES struct in tracked files)
+ok   text-files (4265 tracked files, no text-attributed file indexed -text)
+ok   tagged vet (8 tag-module pairs)
+ok   test citations (every test a comment names exists)
+ok   test-error-discard ratchet (1349, frozen)
+ok   test ledger (every test gone since the base has a row)
+ok   scripts (9 of 17; skipped: cache-scope, docker-order, docker-scope, gate-lock, gate-toolchain, golangci-run, install-sync-checkout, makefile-targets — inputs unchanged)
+     (step_scripts: 91.2s)
+ok   sim compile (go vet -tags sim)
+     (step_simvet: 22.4s)
+ok   tests
+     (step_test: 122.0s)
+  docker: shared postgres at 127.0.0.1:57690 (template template_gate_1191478, -p 4)
+  docker: shingo-core (longest first, from the steps log)
+  docker: integration (longest first, from the steps log)
+ok   docker
+     (step_docker: 273.5s)
+ok   sim (no -race: CI's sim job races them; 109 sim-only tests in 6 packages)
+     (step_sim: 93.1s)
+gate: clean
+Gate (push): fmt, modbuild, lint, scripts (9 of 17; skipped: cache-scope, docker-order, docker-scope, gate-lock, gate-toolchain, golangci-run, install-sync-checkout, makefile-targets — inputs unchanged), sim compile, unit, sim (no -race) AND the docker suites (scoped against origin/main @ b5949e26). race: CI (the docker-race shards and the sim job).

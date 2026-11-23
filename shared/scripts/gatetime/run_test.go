@@ -241,7 +241,7 @@ func TestRun_PlantedEndToEnd(t *testing.T) {
 	if _, err := os.Stat(flag); !os.IsNotExist(err) {
 		t.Errorf("timing flag left behind after the run: %v", err)
 	}
-	for _, f := range []string{"samples.tsv", "cmd.log"} {
+	for _, f := range []string{"samples.tsv", "cmd.log", "steps.tsv", "live.tsv"} {
 		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
 			t.Errorf("run wrote no %s: %v", f, err)
 		}

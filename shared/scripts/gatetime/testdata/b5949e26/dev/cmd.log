@@ -1,0 +1,35 @@
+ok   gofmt
+     (step_fmt: 0.6s)
+ok   modbuild
+     (step_modbuild: 47.4s)
+0 issues.
+0 issues.
+0 issues.
+0 issues.
+0 issues.
+ok   lint
+     (step_lint: 47.0s)
+ok   changelog (since v0.19.0: 21 source files; Deploy names no migration)
+ok   dead identifiers (every code-shaped comment citation resolves)
+ok   doc citations (tests, -run patterns, identifiers, paths, links and stamps in every in-scope doc resolve)
+ok   Go filenames (no accidental GOOS/GOARCH build constraints)
+ok   comment-references (file:line citations resolve)
+ok   conflict-markers (4265 tracked files, no marker line)
+ok   expiry (0 EXPIRY-by-symbol pins, each symbol still declared)
+ok   js-parse (238 files)
+ok   js-imports (114 modules)
+ok   js-undeclared (92 page scripts)
+ok   plant-addresses (no private IPv4 in tracked files)
+ok   swap-mode-literals (no raw swap-mode string outside protocol/swap_mode.go, tests and the JS surfaces that name modes)
+ok   synthetic-part-numbers (no NNNNN-XXXXX.NN in any of its three shapes and no plant MES struct in tracked files)
+ok   text-files (4265 tracked files, no text-attributed file indexed -text)
+ok   test citations (every test a comment names exists)
+ok   test ledger (every test gone since the base has a row)
+ok   scripts (7 of 17; skipped: cache-scope, docker-order, docker-scope, gate-lock, gate-toolchain, golangci-run, install-sync-checkout, makefile-targets — inputs unchanged; push-only: tagged-vet, test-error-discard-ratchet)
+     (step_scripts: 29.3s)
+ok   sim compile (go vet -tags sim)
+     (step_simvet: 30.5s)
+ok   tests (-count=1: the diff has non-Go files)
+     (step_test: 89.1s)
+gate: clean
+Gate (dev): fmt, modbuild, lint, scripts (7 of 17; skipped: cache-scope, docker-order, docker-scope, gate-lock, gate-toolchain, golangci-run, install-sync-checkout, makefile-targets — inputs unchanged; push-only: tagged-vet, test-error-discard-ratchet), sim compile, unit (-count=1: the diff has non-Go files). Not run here: the docker suites (compiled by lint), the sim-only tests (compiled), race — `full` and CI run them.

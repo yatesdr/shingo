@@ -11,6 +11,11 @@ package main
 //
 //	samples.tsv  one row per pass (columns in its header)
 //	cmd.log      the command's stdout and stderr
+//	steps.tsv    the lines the run added to <repo>/.gate/steps.log (the gate's
+//	             own record: selection, package and total lines), so a reader
+//	             of DIR has them whichever tree the gate came from
+//	live.tsv     the judgement so far, rewritten every pass (gatetime stamp
+//	             reads it for the gate's total line)
 //	result.tsv   ONE line, tab-separated key=value fields: start, end, wall_s,
 //	             job_cpu_s, host_cpu_s, vm_cpu_s, foreign_max30, samples,
 //	             standby, exit, verdict, flag, plant, cmd
@@ -71,7 +76,7 @@ func runMain(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	out := fs.String("out", "", "directory for the run's record")
 	every := fs.Duration("every", 3*time.Second, "time between sampler passes")
-	repo := fs.String("repo", ".", "the checkout whose timing flag the run holds")
+	repo := fs.String("repo", ".", "the checkout whose timing flag the run holds and whose .gate/steps.log it copies from")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -125,6 +130,8 @@ func (r *runner) run(repo string, cmdArgs []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	stepsLog := filepath.Join(repoAbs, ".gate", "steps.log")
+	stepsFrom := fileSize(stepsLog)
 
 	r.pass()
 	time.Sleep(r.every)
@@ -143,6 +150,9 @@ func (r *runner) run(repo string, cmdArgs []string) (int, error) {
 	r.pass()
 
 	if err := errors.Join(w.Flush(), logF.Close(), r.rows.Flush(), samplesF.Close()); err != nil {
+		return 0, err
+	}
+	if err := copyTail(stepsLog, stepsFrom, filepath.Join(out, "steps.tsv")); err != nil {
 		return 0, err
 	}
 	return tc.code, r.writeResult(out, tc, flagNote, cmdLine)
@@ -286,6 +296,7 @@ func (r *runner) pass() {
 		r.flag.beat()
 	}
 	r.writeRow(s)
+	r.writeLive()
 }
 
 // topForeign names the three processes outside the job and the VM that used
@@ -336,6 +347,24 @@ func (r *runner) writeRow(s sample) {
 // maxGap is the sampler-gap threshold.
 func (r *runner) maxGap() time.Duration { return max(15*time.Second, 4*r.every) }
 
+// writeLive rewrites live.tsv with the judgement of the samples so far. The
+// standby log is not read per pass (wevtutil is a process); gatetime stamp
+// reads it itself.
+func (r *runner) writeLive() {
+	j := judge(r.samples, nil, r.maxGap(), r.plants, r.m.limits())
+	line := resultLine{
+		"samples": fmt.Sprint(len(r.samples)), "ac": j.acState,
+		"gap_max_s":     fmt.Sprintf("%.1f", j.gapMax.Seconds()),
+		"foreign_max30": fmt.Sprintf("%.2f", j.foreignMax30),
+		"verdict":       j.verdict(),
+		"plant":         strings.Join(r.plants, ","),
+	}
+	tmp := filepath.Join(r.out, ".live.tsv.tmp")
+	if os.WriteFile(tmp, []byte(line.String()+"\n"), 0o644) == nil {
+		_ = os.Rename(tmp, filepath.Join(r.out, "live.tsv"))
+	}
+}
+
 // final is the judgement over every sample and the standby log for the run's
 // whole window.
 func (r *runner) final() judgement {
@@ -365,6 +394,37 @@ func exitCode(err error) int {
 		return 126
 	}
 	return 0
+}
+
+func fileSize(p string) int64 {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+// copyTail copies what was appended to src after offset from into dst; an
+// absent src gives an empty dst (the command was not a gate, or it logs
+// nothing).
+func copyTail(src string, from int64, dst string) error {
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err == nil {
+		if fileSize(src) < from {
+			from = 0 // the log was replaced during the run
+		}
+		if _, err = in.Seek(from, io.SeekStart); err == nil {
+			_, err = io.Copy(out, in)
+		}
+		err = errors.Join(err, in.Close())
+	} else if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	}
+	return errors.Join(err, out.Close())
 }
 
 // resultLine is one line of tab-separated key=value fields, keys in a fixed

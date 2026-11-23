@@ -1,0 +1,53 @@
+ok   gofmt
+     (step_fmt: 0.6s)
+scope: --unscoped — the docker suites run whatever the diff
+ok   modbuild
+     (step_modbuild: 60.4s)
+0 issues.
+0 issues.
+0 issues.
+0 issues.
+0 issues.
+ok   lint
+     (step_lint: 57.5s)
+ok   cache-scope (which modules a non-Go path reruns in the dev tier)
+ok   changelog (since v0.19.0: 20 source files; Deploy names no migration)
+ok   dead identifiers (every code-shaped comment citation resolves)
+ok   doc citations (tests, -run patterns, identifiers, paths, links and stamps in every in-scope doc resolve)
+ok   docker-order (longest first from the steps log; no package lost)
+ok   docker scope (31 rows)
+ok   gate-lock (acquire, wait, SIGKILL takeover, nested, fmt exempt)
+ok   gate-toolchain (go 1.25.0: 19 CI pins, every go.mod, gate.sh's WSL steps)
+ok   Go filenames (no accidental GOOS/GOARCH build constraints)
+ok   golangci-run (retry bounded, reported; step_lint and the ratchet use it)
+check-install-sync-checkout: ok (11 runs, 11 cases)
+ok   makefile targets (no -tags=docker ./... recipe without -p; scanner proved live)
+ok   comment-references (file:line citations resolve)
+ok   conflict-markers (4265 tracked files, no marker line)
+ok   expiry (0 EXPIRY-by-symbol pins, each symbol still declared)
+ok   js-parse (238 files)
+ok   js-imports (114 modules)
+ok   js-undeclared (92 page scripts)
+ok   plant-addresses (no private IPv4 in tracked files)
+ok   swap-mode-literals (no raw swap-mode string outside protocol/swap_mode.go, tests and the JS surfaces that name modes)
+ok   synthetic-part-numbers (no NNNNN-XXXXX.NN in any of its three shapes and no plant MES struct in tracked files)
+ok   text-files (4265 tracked files, no text-attributed file indexed -text)
+ok   tagged vet (8 tag-module pairs)
+ok   test citations (every test a comment names exists)
+ok   test-error-discard ratchet (1349, frozen)
+ok   test ledger (every test gone since the base has a row)
+ok   scripts (17 of 17)
+     (step_scripts: 206.9s)
+ok   tests
+     (step_test: 161.7s)
+  docker: shared postgres at 127.0.0.1:63036 (template template_gate_1209855, -p 4)
+  docker: shingo-core (longest first, from the steps log)
+  docker: integration (longest first, from the steps log)
+ok   docker
+     (step_docker: 407.6s)
+ok   race (-tags docker, ./engine/... ./www/..., via WSL, go1.25.0)
+     (step_race: 179.5s)
+ok   sim (-race, via WSL, go1.25.0; 109 sim-only tests in 6 packages)
+     (step_sim: 85.1s)
+gate: clean
+Gate: fmt, modbuild, lint, scripts, unit, race, sim AND the docker suites (unscoped).
