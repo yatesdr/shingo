@@ -18,6 +18,7 @@ package shingo-core/dispatch
 package shingo-core/engine
 package shingo-core/store
 package shingo-edge/store
+package shingo-edge/www
 
 unaudited shared TestBodyTextTokensClearAA
 unaudited shared TestCSSBareClassSelectorsSeparatesBareFromScoped
@@ -210,3 +211,14 @@ unaudited shingo-edge/store TestStrandedRebuild_LeavesANormalMigrationAlone
 unaudited shingo-edge/store TestStyleDeleteImpact_CountsTheWholeCascade
 unaudited shingo-edge/store TestTheSyncCachesNoFactTheEdgeDoesNotRead
 unaudited shingo-edge/store TestV47MovesTheRefillSettingAndDropsTheSwitch
+unaudited shingo-edge/www TestBigLineShots
+unaudited shingo-edge/www TestComposerShots
+unaudited shingo-edge/www TestConfigShots
+unaudited shingo-edge/www TestFixtureShots
+unaudited shingo-edge/www TestRealCellShots
+unaudited shingo-edge/www TestSettingsShots
+unaudited shingo-edge/www TestSimCountingSlot_RouteMovesTheCountAndTheLineSaysSo
+unaudited shingo-edge/www TestSimOverrun_RouteSetsListsAndClears
+unaudited shingo-edge/www TestSimPauseLoading_RoutePausesAndResumesTheLine
+unaudited shingo-edge/www TestSimProgramChange_RouteChangesAndReadsLine
+unaudited shingo-edge/www TestStationToastShots
