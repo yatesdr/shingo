@@ -32,6 +32,7 @@ type Decision struct {
 	From         *Origin `json:"from,omitempty"`
 	Audit        string  `json:"audit,omitempty"`
 	Processes    int     `json:"processes"`
+	SilentForks  int     `json:"silent_forks,omitempty"`
 	ChildHow     string  `json:"child_how,omitempty"`
 	Traced       bool    `json:"traced"`
 	WholeTree    bool    `json:"whole_tree"`
@@ -45,7 +46,7 @@ type Decision struct {
 func (inv *invocation) record(r RunResult) {
 	d := &inv.dec
 	d.Decision, d.Exit, d.KeyID = "run", r.Code, inv.key.ID()
-	d.Processes, d.ChildHow, d.Traced = r.Processes, r.ChildHow, r.Traced
+	d.Processes, d.SilentForks, d.ChildHow, d.Traced = r.Processes, r.SilentForks, r.ChildHow, r.Traced
 	if r.Signaled {
 		d.Signal = r.Signal.String()
 	}
@@ -110,7 +111,7 @@ func (inv *invocation) entry(r RunResult) (*Entry, string) {
 		return nil, why
 	}
 	e := &Entry{Version: entryVersion, Key: inv.key, KeyID: inv.key.ID(), Paths: recs, Getenv: tl.env,
-		Processes: r.Processes, ChildHow: r.ChildHow, Traced: r.Traced, Root: inv.root, TestMain: testMain,
+		Processes: r.Processes, SilentForks: r.SilentForks, ChildHow: r.ChildHow, Traced: r.Traced, Root: inv.root, TestMain: testMain,
 		Origin: Origin{Tier: inv.cfg.tier, Run: inv.cfg.run, SHA: inv.cfg.sha, Package: inv.pkg,
 			Start: inv.start.UTC().Format(time.RFC3339Nano), WallS: r.Wall.Seconds()},
 		Output: append([]byte{}, inv.out.Bytes()...)}

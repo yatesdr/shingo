@@ -34,6 +34,9 @@ type RunResult struct {
 	// why nothing did.
 	Processes int
 	ChildHow  string
+	// SilentForks is how many more processes the tracer saw that neither ran a
+	// program nor made a path syscall (not in Processes: they read nothing).
+	SilentForks int
 	// Traced is true when every path syscall of the binary and its children was
 	// seen (the Linux tracer): Parent and Children are then complete.
 	Traced   bool

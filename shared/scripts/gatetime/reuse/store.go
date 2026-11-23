@@ -43,10 +43,11 @@ type Entry struct {
 	Getenv []string `json:"getenv"`
 	// Processes is how many processes the binary started (-1: unknown), and
 	// ChildHow what counted them.
-	Processes int    `json:"processes"`
-	ChildHow  string `json:"child_how"`
-	TestMain  bool   `json:"testmain"`
-	Traced    bool   `json:"traced"`
+	Processes   int    `json:"processes"`
+	SilentForks int    `json:"silent_forks,omitempty"`
+	ChildHow    string `json:"child_how"`
+	TestMain    bool   `json:"testmain"`
+	Traced      bool   `json:"traced"`
 	// WholeTree is set when the run's own reads are not the whole of its
 	// inputs; Tree is then the tree's hash at the run's end.
 	WholeTree    bool   `json:"whole_tree"`

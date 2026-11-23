@@ -133,9 +133,9 @@ func checkCanary(e *Entry, pkg, root, value string) (why, how string) {
 	if !contains(e.Getenv, "SHINGO_REUSE_CANARY") || !contains(e.Key.Env, "SHINGO_REUSE_CANARY="+value) {
 		bad = append(bad, "the env read of SHINGO_REUSE_CANARY is not in the record")
 	}
-	// At least one: on Linux, go1.25's os package also forks a short probe
-	// process (syscall's clone-pidfd check) the first time a binary starts a
-	// child or calls os.FindProcess, and the tracer counts it, as it must.
+	// One or more: the canary starts one child, which runs a program (the test
+	// binary again). On Linux the tracer also sees go1.25's clone-pidfd probe
+	// fork and counts it apart, as a silent fork (trace_linux_amd64.go, result).
 	if e.Processes < 1 || (e.ChildHow != "ptrace" && e.ChildHow != "job") {
 		bad = append(bad, fmt.Sprintf("children: %d by %q, want 1 or more by ptrace or job", e.Processes, e.ChildHow))
 	}

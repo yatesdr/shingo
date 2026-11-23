@@ -242,6 +242,7 @@ type tracer struct {
 	live      map[int]bool // tids traced and not yet reaped (their pids cannot be reused)
 	known     map[int]bool // tids seen stopped at least once
 	procs     map[int]bool // processes the binary started (not root)
+	active    map[int]bool // of those, the ones that exec'd a program or made a path syscall
 	execs     int          // exec events of the root: 1 is the shim becoming the binary
 	started   bool
 	parent    pathSet
@@ -283,7 +284,7 @@ func traceLoop(self string, spec RunSpec) (RunResult, bool) {
 		return RunResult{ChildHow: "fork: " + err.Error()}, false
 	}
 	t := &tracer{root: pid, tgid: map[int]int{pid: pid}, live: map[int]bool{pid: true}, known: map[int]bool{},
-		procs: map[int]bool{}, parent: pathSet{}, children: pathSet{}}
+		procs: map[int]bool{}, active: map[int]bool{}, parent: pathSet{}, children: pathSet{}}
 	stopFwd := forwardSignals(func(s os.Signal) {
 		if sig, ok := s.(syscall.Signal); ok {
 			_ = syscall.Kill(pid, sig)
@@ -363,13 +364,15 @@ func (t *tracer) stop(tid int, ws syscall.WaitStatus) {
 			t.classify(int(msg))
 		}
 	case syscall.PTRACE_EVENT_EXEC:
-		if t.tgidOf(tid) == t.root {
+		g := t.tgidOf(tid)
+		switch {
+		case g != t.root:
+			t.active[g] = true // a child ran a program
+		case t.execs+1 == 2:
+			t.execs, t.started = 2, true // the shim became the binary
+		default:
 			t.execs++
-			if t.execs == 2 {
-				t.started = true // the shim became the binary
-			} else {
-				t.procs[-t.execs] = true // the binary replaced itself: count it as a child
-			}
+			t.procs[-t.execs], t.active[-t.execs] = true, true // the binary replaced itself: a child
 		}
 	case 0:
 		_ = syscall.PtraceCont(tid, int(syscall.SIGTRAP)) // a real SIGTRAP
@@ -433,6 +436,9 @@ func (t *tracer) killLeft() {
 
 // seccomp records the path(s) of one traced syscall.
 func (t *tracer) seccomp(tid int) {
+	if g := t.tgidOf(tid); g != t.root {
+		t.active[g] = true // a child that makes a path syscall may read: it counts
+	}
 	data, err := syscall.PtraceGetEventMsg(tid)
 	if err != nil {
 		t.markBlind(fmt.Sprintf("no event data for a traced syscall: %v", err))
@@ -566,7 +572,19 @@ func indexByte(b []byte, c byte) int {
 }
 
 func (t *tracer) result(wall time.Duration) RunResult {
-	r := RunResult{Wall: wall, Processes: len(t.procs), ChildHow: "ptrace", Traced: true,
+	// A process that neither ran a program nor made one path syscall cannot have
+	// read a path: every path syscall of every traced task stops here, and a
+	// fork that did not exec runs the parent's own code. go1.25's os package
+	// forks exactly such a process (syscall's clone-pidfd check, which exits at
+	// once) the first time a binary calls os.StartProcess or os.FindProcess, so
+	// it is counted, as SilentForks, but does not key the binary on the tree.
+	silent := 0
+	for g := range t.procs {
+		if !t.active[g] {
+			silent++
+		}
+	}
+	r := RunResult{Wall: wall, Processes: len(t.procs) - silent, SilentForks: silent, ChildHow: "ptrace", Traced: true,
 		Parent: t.parent, Children: t.children, Unobservable: t.blind}
 	if t.leaked && r.Unobservable == "" {
 		r.Unobservable = "children were still running when the binary exited (killed)"
