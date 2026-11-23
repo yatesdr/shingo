@@ -25,12 +25,16 @@ trap 'rm -rf "$TMP"' EXIT
 
 fail=0
 # first LOG: which of store and www gate.sh order puts first for shingo-core.
+# It runs inside $(...), a subshell, so a lost package is marked by a file, not
+# by fail=1: set in the subshell, fail=1 was lost, and the row printed FAIL while
+# the guard still said ok. grep without -q reads all of its input, so under
+# pipefail printf never takes a SIGPIPE that would read as "missing".
 first() {
   local line
   line="$(GATE_STEPS_LOG="$1" GATE_DOCKER_ORDER_LOG="${GATE_DOCKER_ORDER_LOG:-}" bash "$ROOT/scripts/gate.sh" order | sed -n 's/^shingo-core: //p')"
-  if ! printf '%s\n' $line | grep -qx 'shingocore/engine'; then
+  if ! printf '%s\n' $line | grep -x 'shingocore/engine' >/dev/null; then
     echo "FAIL docker-order: a package is missing from the order: $line" >&2
-    fail=1
+    : >"$TMP/lost"
   fi
   printf '%s\n' $line | grep -xE 'shingocore/(store|www)' | head -1
 }
@@ -109,5 +113,6 @@ for bad in 0 x 2x -1; do
   [ $? -eq 2 ] || { echo "FAIL docker-order: GATE_DOCKER_P=$bad was not refused (want exit 2)" >&2; fail=1; }
 done
 
+[ -e "$TMP/lost" ] && fail=1
 [ "$fail" -eq 0 ] && echo "ok   docker-order (longest first from the steps log; no package lost; GATE_DOCKER_P)"
 exit "$fail"
