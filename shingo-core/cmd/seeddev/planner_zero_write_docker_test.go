@@ -152,6 +152,78 @@ func (zw *zeroWrite) assertClean(t *testing.T) {
 		zw.name, zw.statements, strings.Join(parts, " "), testutil.StatementBreakdown(zw.counter.Statements()))
 }
 
+// readsOnly asserts, at the end of the case, that a case with no fixture of its
+// own wrote nothing at all, inside a planner call or out of one: every statement
+// on its counting store is a read (isPlannerSafe), and the plant's contents are
+// still want (worldPrint). It is what lets such a case read a plant other cases
+// read too; a case that needs to write is given a setup, and a setup gets the
+// case a plant of its own.
+func (g *goldenPlant) readsOnly(want map[string]string) {
+	g.t.Cleanup(func() {
+		for _, s := range g.counter.Statements() {
+			if !isPlannerSafe(s) {
+				g.t.Errorf("READ-ONLY CASE WROTE: a case with no setup issued a statement that is not a read. "+
+					"Give the case a setup if it needs a fixture (it then gets a plant of its own); otherwise "+
+					"the decider wrote, which the zero-write books forbid.\n  %s", oneLine(s))
+			}
+		}
+		got := worldPrint(g.t, g.db)
+		for _, obj := range unionKeys(want, got) {
+			if want[obj] != got[obj] {
+				g.t.Errorf("READ-ONLY CASE WROTE: %s changed under a case with no setup (%q, now %q). "+
+					"Give the case a setup if it needs a fixture; otherwise find the write: the counting "+
+					"store did not issue it, so it went through another handle.", obj, want[obj], got[obj])
+			}
+		}
+	})
+}
+
+// worldPrint is a database's contents as one value per object: each table of
+// the public schema as its row count and an md5 of its rows in text order, and
+// each sequence as its last value, so a write that was rolled back still shows
+// in the sequence it drew from. One statement per kind; query_to_xml runs the
+// per-table read the catalog names.
+func worldPrint(t *testing.T, db *store.DB) map[string]string {
+	t.Helper()
+	rows, err := db.DB.Query(`
+		SELECT 'table ' || c.relname,
+		       (xpath('/row/f/text()', query_to_xml(format(
+		           'SELECT count(*) || '' rows, md5 '' || md5(COALESCE(string_agg(t::text, E''\n'' ORDER BY t::text), '''')) AS f FROM public.%I t',
+		           c.relname), false, true, '')))[1]::text
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public' AND c.relkind = 'r'
+		UNION ALL
+		SELECT 'sequence ' || sequencename, COALESCE(last_value::text, 'never drawn')
+		FROM pg_sequences WHERE schemaname = 'public'`)
+	testutil.MustNoErr(t, err, "fingerprint the plant")
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var obj, fp string
+		testutil.MustNoErr(t, rows.Scan(&obj, &fp), "scan the fingerprint")
+		out[obj] = fp
+	}
+	testutil.MustNoErr(t, rows.Err(), "fingerprint rows")
+	if len(out) == 0 {
+		t.Fatal("fingerprint the plant: the catalog named no table, so an unchanged print would prove nothing")
+	}
+	return out
+}
+
+func unionKeys(a, b map[string]string) []string {
+	keys := make([]string, 0, len(a))
+	for k := range a {
+		keys = append(keys, k)
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func topLevel(name string) string {
 	top, _, _ := strings.Cut(name, "/")
 	return top

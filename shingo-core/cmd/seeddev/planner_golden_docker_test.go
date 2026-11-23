@@ -766,6 +766,8 @@ func TestPlannerGolden_BinPicker(t *testing.T) {
 			asker := reservations.Anyone
 			if c.setup != nil {
 				asker = c.setup(g)
+			} else {
+				g.readsOnly(worldPrint(t, g.db))
 			}
 			intent := dispatch.IntentFull
 			if c.need.Intent == "empty" {
@@ -828,6 +830,8 @@ func TestPlannerGolden_GroupResolver(t *testing.T) {
 			g := newGoldenPlant(t)
 			if c.setup != nil {
 				c.setup(g)
+			} else {
+				g.readsOnly(worldPrint(t, g.db))
 			}
 			mode := binresolver.ResolveModeStore
 			if c.need.Mode == "retrieve" {
