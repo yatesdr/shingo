@@ -260,7 +260,7 @@ func TestUOP_OwnersExample_StoresPartsReadsUOP(t *testing.T) {
 	c.drive(c.coreOf(rel), "RUNNING")
 	c.liftAt(c.coreOf(rel), uopAssy, true)
 	c.drive(c.coreOf(rel), "FINISHED")
-	c.eventually("the release done at both ends", func() bool {
+	c.driveUntil("the release done at both ends", func() bool {
 		if c.edgeRow(rel.ID).Status == protocol.StatusDelivered {
 			mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(rel.ID, 1), "confirm the release")
 		}
@@ -556,7 +556,7 @@ func (u *uopCell) deliver(label string, node int64) int64 {
 		u.t.Fatalf("%s made no delivery: %+v", label, res)
 	}
 	d := *res.Order
-	u.eventually(label+": delivered and confirmed", func() bool {
+	u.driveUntil(label+": delivered and confirmed", func() bool {
 		u.fleetStep()
 		if u.edgeRow(d.ID).Status == protocol.StatusDelivered {
 			mustNil(u.t, u.edge.Engine.OrderManager().ConfirmDelivery(d.ID, 1), label+": confirm")

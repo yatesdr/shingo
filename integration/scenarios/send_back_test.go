@@ -84,7 +84,7 @@ func TestScenario_SendBack_TheCartGoesAndTopsAndBottomsComeThenTheSwapIndexesThe
 		t.Errorf("SEND BACK's orders are on %v and %v, want the outside's node %d",
 			*res.Move.ProcessNodeID, *res.Pull.ProcessNodeID, outsideID)
 	}
-	c.eventually("SEND BACK: the cart off and tops & bottoms on the outside", func() bool {
+	c.driveUntil("SEND BACK: the cart off and tops & bottoms on the outside", func() bool {
 		c.fleetStep()
 		m, p := c.edgeRow(res.Move.ID), c.edgeRow(res.Pull.ID)
 		return protocol.IsTerminal(m.Status) && protocol.IsTerminal(p.Status)

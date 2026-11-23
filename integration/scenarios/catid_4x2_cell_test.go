@@ -869,11 +869,18 @@ func (c *w6Cell) awaitConfirm(what string, v, seen int64) {
 	time.Sleep(600 * time.Millisecond)
 }
 
-// waitFor polls ok, settling the bus, until it holds or the budget is spent.
+// waitFor polls ok, a read that changes nothing, settling the bus, until it
+// holds or the budget is spent. It checks first: a condition already true costs
+// no settle. Its pass count is settles.
 func (c *w6Cell) waitFor(what string, budget time.Duration, ok func() bool) {
 	c.t.Helper()
 	w := harness.RecorderFor(c.t).Wait("waitFor", what)
 	pass := 0
+	if ok() {
+		w.Done(pass, true)
+		return
+	}
+	w.Missed()
 	for deadline := time.Now().Add(budget); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		pass++
 		c.settle()
@@ -1303,7 +1310,7 @@ func (c *w6Cell) wantRecordRunOut(label string, l w6Ledger, run int64) {
 func (c *w6Cell) carryAll(label string, after int64, hold map[int]bool) {
 	c.t.Helper()
 	disp := edgeengine.ReleaseDisposition{CalledBy: "w6-operator"}
-	c.eventually(label+": every order landed and confirmed", func() bool {
+	c.driveUntil(label+": every order landed and confirmed", func() bool {
 		c.fleetStep()
 		done := true
 		for _, o := range c.newRows(after) {

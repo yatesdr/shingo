@@ -432,7 +432,7 @@ func (p *pmCell) held(label string, legs []domain.Order, code protocol.QueueCode
 // operator confirms a delivered one, and each ends confirmed at Core.
 func (p *pmCell) finish(label string, os ...domain.Order) {
 	p.t.Helper()
-	p.eventually(label+": done at both ends", func() bool {
+	p.driveUntil(label+": done at both ends", func() bool {
 		p.fleetStep()
 		done := true
 		for _, o := range os {

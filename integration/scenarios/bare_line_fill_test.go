@@ -79,7 +79,7 @@ func TestScenario_BareLine_EveryButtonFillsIt(t *testing.T) {
 						len(toLine), len(toDeck), wantDeck)
 				}
 				made := append(toLine, toDeck...)
-				c.eventually(d.name+": every delivery landed and confirmed", func() bool {
+				c.driveUntil(d.name+": every delivery landed and confirmed", func() bool {
 					c.fleetStep()
 					done := true
 					for _, o := range made {

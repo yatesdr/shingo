@@ -65,7 +65,7 @@ func TestScenario_PressBarePairedPosition_EveryButtonPrimesItThenSwaps(t *testin
 				prime = c.primeThenQueuedSwap(d.name, before)
 			})
 
-			c.eventually(d.name+": the prime confirmed", func() bool {
+			c.driveUntil(d.name+": the prime confirmed", func() bool {
 				if c.edgeRow(prime.ID).Status == protocol.StatusDelivered {
 					mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(prime.ID, 1), "confirm")
 				}

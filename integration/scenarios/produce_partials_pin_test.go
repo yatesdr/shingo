@@ -223,7 +223,7 @@ func ppRun(t *testing.T, r ppRow) string {
 		c.drive(c.coreOf(rel), "RUNNING")
 		c.liftAt(c.coreOf(rel), ksrLine, true)
 		c.drive(c.coreOf(rel), "FINISHED")
-		c.eventually("the release done at both ends", func() bool {
+		c.driveUntil("the release done at both ends", func() bool {
 			if c.edgeRow(rel.ID).Status == protocol.StatusDelivered {
 				mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(rel.ID, 1), "confirm")
 			}
@@ -398,7 +398,7 @@ func TestProducePartialsPin_MaterialPageCountOnAConsumeLine(t *testing.T) {
 	c.drive(c.coreOf(rel), "RUNNING")
 	c.liftAt(c.coreOf(rel), ksrLine, true)
 	c.drive(c.coreOf(rel), "FINISHED")
-	c.eventually("the release done at both ends", func() bool {
+	c.driveUntil("the release done at both ends", func() bool {
 		if c.edgeRow(rel.ID).Status == protocol.StatusDelivered {
 			mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(rel.ID, 1), "confirm")
 		}

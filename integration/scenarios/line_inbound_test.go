@@ -114,7 +114,7 @@ func TestScenario_LineInbound_FromASiblingStation(t *testing.T) {
 			// Delivered, not confirmed: the line holds a bin, and the button makes
 			// the swap. A plain two-robot swap stages its supply on the spot: clear
 			// the spare the cell keeps there.
-			c.eventually("the sibling's delivery landed", func() bool {
+			c.driveUntil("the sibling's delivery landed", func() bool {
 				c.fleetStep()
 				return c.edgeRow(f.ID).Status == protocol.StatusDelivered
 			})

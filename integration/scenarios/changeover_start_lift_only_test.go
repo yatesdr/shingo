@@ -85,7 +85,7 @@ func (c *ksrCell) emptyByRelease(label string, nodeID int64, coreNode string) {
 		c.notReached(label + ": the release has no pickup block at " + coreNode)
 	}
 	c.drive(c.coreOf(rel), "FINISHED")
-	c.eventually(label+": the release done at both ends", func() bool {
+	c.driveUntil(label+": the release done at both ends", func() bool {
 		if c.edgeRow(rel.ID).Status == protocol.StatusDelivered {
 			mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(rel.ID, 1), "confirm the release")
 		}
@@ -142,7 +142,7 @@ func (c *ksrCell) runChangeover(label string, after int64, positions ...string) 
 func (c *ksrCell) runChangeoverTo(label string, after, to int64, bt *corebins.BinType, positions ...string) {
 	c.t.Helper()
 	disp := edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}
-	c.eventually(label+": the changeover's legs done and its gate open", func() bool {
+	c.driveUntil(label+": the changeover's legs done and its gate open", func() bool {
 		c.fleetStep()
 		done := true
 		for _, o := range c.newRows(after) {

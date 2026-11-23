@@ -586,19 +586,25 @@ func (c *ksrCell) tick() {
 	c.settle()
 }
 
-// ksrPasses is eventually's budget in the cell's own passes: five times the
-// most any of the package's waits has needed (11, a changeover).
+// ksrPasses is the waits' budget in the cell's own passes (ticks): five times
+// the most any of the package's waits has needed (11, a changeover).
 const ksrPasses = 60
 
-// eventually ticks until ok holds. It gives up only when BOTH of its budgets
-// are spent, because the cell waits on two kinds of thing:
+// eventually waits until ok, a read of the world that changes nothing, holds:
+// it settles the bus and checks before its first tick, so a condition the
+// messages already in flight make true costs no scan and no second settle, then
+// ticks until ok holds. The settle comes first because the conditions read
+// Core's row for an order the Edge has just made (coreOf fails on a row Core
+// does not have yet): checked before any pump, 20 cells failed on that read
+// (2026-11-23). It gives up only when BOTH of its budgets are spent, because
+// the cell waits on two kinds of thing:
 //
-//   - What the cell moves itself. Each pass pumps the bus, runs the scan and
-//     steps the fleet, so a changeover takes the same passes however slow the
-//     host: 11 alone and 11 beside a fanned-out `gate.sh full`, in each of the
-//     package's 834 waits traced. Only the pass got slower, ~0.1 s alone to
-//     1.7 s, and a 15 s deadline alone failed them: it measured the host.
-//     So: at least ksrPasses passes.
+//   - What the cell moves itself. Each pass pumps the bus and runs the scan
+//     (and, in driveUntil, whatever ok drives), so a changeover takes the same
+//     passes however slow the host: 11 alone and 11 beside a fanned-out
+//     `gate.sh full`, in each of the package's 834 waits traced. Only the pass
+//     got slower, ~0.1 s alone to 1.7 s, and a 15 s deadline alone failed
+//     them: it measured the host. So: at least ksrPasses passes.
 //   - What runs on a real timer: Core's 2 s robot poll ("Core's robot poll
 //     reads the dig robot's deck loaded"). There a fast host needs MORE
 //     passes, and a count alone would fail a fast machine. So: at least 15 s.
@@ -606,9 +612,34 @@ const ksrPasses = 60
 // The poll is short so a met condition is seen at once.
 func (c *ksrCell) eventually(what string, ok func() bool) {
 	c.t.Helper()
-	w := harness.RecorderFor(c.t).Wait("eventually", what)
+	c.wait("eventually", what, false, ok)
+}
+
+// driveUntil is eventually for an ok that moves the world itself (it steps
+// the fleet, drives an order or confirms a delivery): it ticks BEFORE each
+// check, so the drive always follows a pump and a scan. Checking first would
+// move the first drive ahead of them and change the order the cell's orders
+// move in (attack-jade-condor-6267 F2 §4b).
+func (c *ksrCell) driveUntil(what string, ok func() bool) {
+	c.t.Helper()
+	c.wait("driveUntil", what, true, ok)
+}
+
+// wait is eventually and driveUntil: tickFirst is driveUntil's order. Its pass
+// count is ticks, so a check that held after the first settle is 0 passes.
+func (c *ksrCell) wait(kind, what string, tickFirst bool, ok func() bool) {
+	c.t.Helper()
+	w := harness.RecorderFor(c.t).Wait(kind, what)
 	start := time.Now()
 	pass := 0
+	if !tickFirst {
+		c.settle()
+		if ok() {
+			w.Done(pass, true)
+			return
+		}
+		w.Missed()
+	}
 	for {
 		pass++
 		c.tick()
@@ -1002,7 +1033,7 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 			fast = false
 		}
 	}
-	c.eventually(label+": the swap's legs with the fleet", func() bool {
+	c.driveUntil(label+": the swap's legs with the fleet", func() bool {
 		c.fleetStep()
 		for _, l := range legs {
 			if c.coreOf(l).VendorOrderID == "" {
@@ -1039,7 +1070,7 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 	for _, l := range legs {
 		c.drive(c.coreOf(l), "RUNNING", "FINISHED")
 	}
-	c.eventually(label+": the legs delivered and confirmed", func() bool {
+	c.driveUntil(label+": the legs delivered and confirmed", func() bool {
 		done := true
 		for _, l := range legs {
 			if c.edgeRow(l.ID).Status == protocol.StatusDelivered {
@@ -1069,7 +1100,7 @@ func (c *ksrCell) seqCycle(label string, removal domain.Order) {
 	c.seqAtTheLine(label, removal)
 	backfill := c.seqRelease(label, removal)
 	c.drive(c.coreOf(removal), "RUNNING", "FINISHED")
-	c.eventually(label+": the removal and the backfill delivered and confirmed", func() bool {
+	c.driveUntil(label+": the removal and the backfill delivered and confirmed", func() bool {
 		c.fleetStep()
 		if co := c.coreOf(backfill); co.VendorOrderID != "" {
 			switch c.vendorState(co.VendorOrderID) {
@@ -1117,7 +1148,7 @@ func (c *ksrCell) fill(label string, trigger func()) {
 		c.t.Fatalf("%s: %d deliveries to the line, want 1", label, len(to))
 	}
 	d := to[0]
-	c.eventually(label+": the delivery landed and confirmed", func() bool {
+	c.driveUntil(label+": the delivery landed and confirmed", func() bool {
 		c.fleetStep()
 		if c.edgeRow(d.ID).Status == protocol.StatusDelivered {
 			mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(d.ID, 1), "confirm")
@@ -1388,7 +1419,7 @@ var ksrMoments = []ksrMoment{
 		c.spareLeaves(co)
 		c.landOnSpot(c.bFlying(co))
 		legs := c.swapLegs(co)
-		c.eventually("the changeover's legs with the fleet", func() bool {
+		c.driveUntil("the changeover's legs with the fleet", func() bool {
 			c.fleetStep()
 			for _, l := range legs {
 				if c.coreOf(l).VendorOrderID == "" {
@@ -1447,7 +1478,7 @@ func ksrParkedMoment(c *ksrCell, co ksrCO) {
 		c.notReached(fmt.Sprintf("the single-robot changeover made %d swap legs, want 1", len(swaps)))
 	}
 	leg := swaps[0]
-	c.eventually("the changeover's leg with the fleet", func() bool {
+	c.driveUntil("the changeover's leg with the fleet", func() bool {
 		c.fleetStep()
 		return c.coreOf(leg).VendorOrderID != ""
 	})
@@ -1723,9 +1754,19 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				started := time.Now()
 				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()
 				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC})
+				// The cell's rows are logged when the leaf fails, and only then: a
+				// passing leaf's log is dropped (go test without -v), so a dump on
+				// the green path is reads nobody sees. reached names the last
+				// checkpoint the leaf passed.
+				reached := "the changeover start"
+				t.Cleanup(func() {
+					if t.Failed() {
+						c.dump("the leaf failed after: " + reached)
+					}
+				})
 				co := c.startChangeover()
 				m.at(c, co)
-				c.dump("at the cancel: " + m.what)
+				reached = "at the cancel: " + m.what
 				mustNil(t, c.edge.Engine.CancelProcessChangeover(c.processID), "cancel")
 				if m.buriedB {
 					c.caseEStore()
@@ -1736,7 +1777,7 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 
 				// Nobody touches anything.
 				c.quiet()
-				c.dump("the cell left alone after the cancel")
+				reached = "the cell left alone after the cancel"
 
 				// 1. The operator asks for A: a normal swap, to the end; on a line
 				// the cancel left empty, the delivery that fills it.
@@ -1766,7 +1807,7 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 					t.Errorf("the spare %s that stood on the spot is not at %s after the fast swap", spare.Label, wantAt)
 				}
 				c.quiet()
-				c.dump("the end")
+				reached = "the end"
 				// 3. The end state.
 				c.assertRecovered()
 				if m.buriedB {
@@ -1902,7 +1943,7 @@ func (c *ksrCell) caseEStore() {
 	// 2. The carrying leg stores the blocker: Core gives it somewhere to go and
 	// the fleet carries it there.
 	var leg *coreorders.Order
-	c.eventually("the carrying leg stores the blocker", func() bool {
+	c.driveUntil("the carrying leg stores the blocker", func() bool {
 		c.fleetStep()
 		leg = c.mustOrder(d.child.ID)
 		return protocol.IsTerminal(leg.Status) || leg.Status == protocol.StatusDelivered

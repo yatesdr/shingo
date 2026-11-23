@@ -234,16 +234,30 @@ func (c *sppCell) settle() {
 	}
 }
 
+// eventually waits until ok, a read that changes nothing, holds, settling the
+// bus between checks. It checks first: a condition already true costs no
+// settle.
 func (c *sppCell) eventually(what string, ok func() bool) {
 	c.t.Helper()
+	w := harness.RecorderFor(c.t).Wait("eventually", what)
+	pass := 0
+	if ok() {
+		w.Done(pass, true)
+		return
+	}
+	w.Missed()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
+		pass++
 		c.settle()
 		if ok() {
+			w.Done(pass, true)
 			return
 		}
+		w.Missed()
 		time.Sleep(50 * time.Millisecond)
 	}
+	w.Done(pass, false)
 	c.t.Fatalf("timed out waiting: %s", what)
 }
 

@@ -104,7 +104,7 @@ func (c *ksrCell) seqRelease(label string, removal domain.Order) domain.Order {
 func (c *ksrCell) seqLand(label string, removal, backfill domain.Order) {
 	c.t.Helper()
 	c.drive(c.coreOf(removal), "RUNNING", "FINISHED")
-	c.eventually(label+": the backfill delivered", func() bool {
+	c.driveUntil(label+": the backfill delivered", func() bool {
 		if co := c.coreOf(backfill); co.VendorOrderID != "" {
 			switch c.vendorState(co.VendorOrderID) {
 			case "CREATED", "RUNNING":
