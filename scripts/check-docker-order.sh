@@ -15,6 +15,9 @@
 #   3. a failed run's lines are not counted
 #   4. only the last 5 clean runs count
 #   5. GATE_DOCKER_ORDER_LOG ranks from the snapshot it names, not the live log
+#   6. a `selection` line, and key=value stamps after a total line's five
+#      fields (scripts/gate-timing.sh writes both), change nothing
+#   7. GATE_DOCKER_P sets the -p; a bad value is a usage error
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t dockerorder)"
@@ -82,7 +85,18 @@ want "the last 5 clean runs" "$TMP/window.log" shingocore/store
 
 GATE_DOCKER_ORDER_LOG="$TMP/failed.log" want "the pinned snapshot" "$TMP/one.log" shingocore/www
 
-# 6. GATE_DOCKER_P sets the docker step's -p (the -p series, 2.4); unset, the
+cat >"$TMP/stamped.log" <<'LOG'
+a1 full selection - 2026-11-01T00:00:00Z tier=push docker=in modules=all p=shingo-core:4 guards=check-x reused=0
+a1 full docker:shingocore/store 100.0 2026-11-01T00:00:00Z
+a1 full docker:shingocore/www 50.0 2026-11-01T00:00:00Z
+a1 full total 300.0 2026-11-01T00:00:00Z exec=on ac=on samples=1 standby=0 load=unmeasured
+a2 full selection - 2026-11-02T00:00:00Z tier=push docker=in modules=all p=shingo-core:4 guards=check-x reused=0
+a2 full docker:shingocore/www 900.0 2026-11-02T00:00:00Z
+a2 full total-FAILED 300.0 2026-11-02T00:00:00Z exec=on ac=on samples=1 standby=0 load=unmeasured
+LOG
+want "stamped total lines and selection lines" "$TMP/stamped.log" shingocore/store
+
+# 7. GATE_DOCKER_P sets the docker step's -p (the -p series, 2.4); unset, the
 #    derived value stands; a value that is not a positive integer is a usage
 #    error (exit 2), never a silent fallback to the derived value.
 p_line() { GATE_STEPS_LOG= bash "$ROOT/scripts/gate.sh" order 2>/dev/null | sed -n 's/^docker -p: //p'; }
