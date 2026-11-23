@@ -15,83 +15,98 @@ import (
 	"shingoedge/store/processes"
 )
 
-// TestCatid4x2_S2_LateCutover: a changeover RUN -> ALT starts, the mirror
-// carts land as the station stops loading, the line runs out and the program
-// changes to ALT's part, and nobody presses CUTOVER. With every leg done the
-// declaration completes the changeover once the part has stood the 60 s
-// window; with a position's legs held back (the gate red: its new cart has
-// not landed) the first counted ALT part forces it, and the held legs land
-// after as ordinary orders. Either way the counts after the change are ALT's on both sides of
-// the cutover, the mirror carts are right, and every order lands confirmed.
-// With the legs held, the held-back position's MIRROR-L cart stays bound past
-// the force and no ALT stroke draws it: its count stands from the program
-// change while the seat holds every ALT stroke there, and the MIRROR-R cart
-// takes them all when it lands.
+// TestCatid4x2_S2_LateCutover: S2's two halves (s2LateCutover), each at
+// production's window.
 func TestCatid4x2_S2_LateCutover(t *testing.T) {
 	t.Parallel()
-	for _, v := range []struct {
-		name string
-		hold map[int]bool
-		by   string
-	}{
-		{"green gate", nil, "auto-catid"},
-		{"red gate", map[int]bool{4: true}, "auto-catid-forced"},
-	} {
-		t.Run(v.name, func(t *testing.T) {
-			t.Parallel()
-			c := newW6Cell(t, w6Opts{})
-			c.cycle(14)
-			after := c.startChangeover(c.alt)
-			c.cycle(3) // the legs travel; the cell still runs RUN
-			c.change(catALT)
-			c.carryAll("the changeover's legs", after, v.hold)
-			c.cycle(w6Depth + 1) // the run-out, then the program change
-			changed := time.Now()
-			run := c.counted()
-			var atChange int64 // the held-back position's MIRROR-L cart at the program change
-			if v.hold != nil {
-				c.flush()
-				atChange = c.count(c.cart(4))
-			}
-			if c.open() == nil {
-				t.Fatalf("the changeover completed before its window: %s", describeChangeovers(c.changeovers()))
-			}
-			c.cycle(w6Depth + 4) // ALT refills the line and its first parts are counted
-			c.waitFor("the changeover completed by the monitor", declareWindow+10*time.Second, func() bool {
-				return c.open() == nil
-			})
-			took := time.Since(changed)
-			co := c.changeovers()[0]
-			if co.TriggeredBy != v.by || co.ToStyleID != c.alt || c.active() != c.alt {
-				c.dump(v.name)
-				t.Fatalf("%s: changeover #%d %s by %q to %d, the cell on %d; want completed by %q on ALT", v.name, co.ID,
-					co.State, co.TriggeredBy, co.ToStyleID, c.active(), v.by)
-			}
-			t.Logf("%s: completed by %s %s after the program change", v.name, co.TriggeredBy, took.Round(time.Second))
-			c.cycle(5) // past the cutover
-			if v.hold != nil {
-				held := c.loggedBeside("S2 "+v.name+" mid-run", 4, atChange, c.counted()-run)
-				// The force left the held legs waiting; released now, they land
-				// as ordinary orders.
-				c.carryAll("the held legs", after, nil)
-				c.cycle(3)
-				c.landedFresh("S2 "+v.name, 4, atChange, held)
-			}
-			for _, i := range []int{3, 4} {
-				if tn := c.cart(i); tn == nil || !strings.HasPrefix(tn.label, "MIRROR-R") {
-					c.dump(v.name)
-					t.Fatalf("%s holds %+v after the changeover, want a MIRROR-R cart", w6Pos[i], tn)
-				}
-			}
-			l := c.ledger("S2 "+v.name, true)
-			c.wantRecord("S2 "+v.name, l, run, c.counted()-run)
-			if l.holdsOpen != 0 {
-				t.Fatalf("%s: %d held, want none", v.name, l.holdsOpen)
-			}
-			c.confirmedAll("S2 " + v.name)
-			c.line("S2 "+v.name, l)
-		})
+	t.Run(s2GreenGate.name, func(t *testing.T) {
+		t.Parallel()
+		s2LateCutover(t, s2GreenGate, w6ProductionWindow)
+	})
+	t.Run(s2RedGate.name, func(t *testing.T) {
+		t.Parallel()
+		s2LateCutover(t, s2RedGate, w6ProductionWindow)
+	})
+}
+
+// s2Gate is one half of S2: the positions whose changeover legs are held back
+// (none: the gate green) and the triggered_by the completion must carry.
+type s2Gate struct {
+	name string
+	hold map[int]bool
+	by   string
+}
+
+var (
+	s2GreenGate = s2Gate{"green gate", nil, "auto-catid"}
+	s2RedGate   = s2Gate{"red gate", map[int]bool{4: true}, "auto-catid-forced"}
+)
+
+// s2LateCutover is S2's body, on a cell whose monitor holds the stability
+// window window (w6Opts.window): a changeover RUN -> ALT starts, the mirror
+// carts land as the station stops loading, the line runs out and the program
+// changes to ALT's part, and nobody presses CUTOVER. With every leg done the
+// declaration completes the changeover once the part has stood the window;
+// with a position's legs held back (the gate red: its new cart has not
+// landed) the first counted ALT part forces it, and the held legs land after
+// as ordinary orders. Either way the counts after the change are ALT's on
+// both sides of the cutover, the mirror carts are right, and every order
+// lands confirmed. With the legs held, the held-back position's MIRROR-L cart
+// stays bound past the force and no ALT stroke draws it: its count stands
+// from the program change while the seat holds every ALT stroke there, and
+// the MIRROR-R cart takes them all when it lands.
+func s2LateCutover(t *testing.T, v s2Gate, window time.Duration) {
+	c := newW6Cell(t, w6Opts{window: window})
+	c.cycle(14)
+	after := c.startChangeover(c.alt)
+	c.cycle(3) // the legs travel; the cell still runs RUN
+	c.change(catALT)
+	c.carryAll("the changeover's legs", after, v.hold)
+	c.cycle(w6Depth + 1) // the run-out, then the program change
+	changed := time.Now()
+	run := c.counted()
+	var atChange int64 // the held-back position's MIRROR-L cart at the program change
+	if v.hold != nil {
+		c.flush()
+		atChange = c.count(c.cart(4))
 	}
+	if c.open() == nil {
+		t.Fatalf("the changeover completed before its window: %s", describeChangeovers(c.changeovers()))
+	}
+	c.cycle(w6Depth + 4) // ALT refills the line and its first parts are counted
+	c.waitFor("the changeover completed by the monitor", c.declared(), func() bool {
+		return c.open() == nil
+	})
+	took := time.Since(changed)
+	co := c.changeovers()[0]
+	if co.TriggeredBy != v.by || co.ToStyleID != c.alt || c.active() != c.alt {
+		c.dump(v.name)
+		t.Fatalf("%s: changeover #%d %s by %q to %d, the cell on %d; want completed by %q on ALT", v.name, co.ID,
+			co.State, co.TriggeredBy, co.ToStyleID, c.active(), v.by)
+	}
+	t.Logf("%s: completed by %s %s after the program change", v.name, co.TriggeredBy, took.Round(time.Second))
+	c.cycle(5) // past the cutover
+	if v.hold != nil {
+		held := c.loggedBeside("S2 "+v.name+" mid-run", 4, atChange, c.counted()-run)
+		// The force left the held legs waiting; released now, they land
+		// as ordinary orders.
+		c.carryAll("the held legs", after, nil)
+		c.cycle(3)
+		c.landedFresh("S2 "+v.name, 4, atChange, held)
+	}
+	for _, i := range []int{3, 4} {
+		if tn := c.cart(i); tn == nil || !strings.HasPrefix(tn.label, "MIRROR-R") {
+			c.dump(v.name)
+			t.Fatalf("%s holds %+v after the changeover, want a MIRROR-R cart", w6Pos[i], tn)
+		}
+	}
+	l := c.ledger("S2 "+v.name, true)
+	c.wantRecord("S2 "+v.name, l, run, c.counted()-run)
+	if l.holdsOpen != 0 {
+		t.Fatalf("%s: %d held, want none", v.name, l.holdsOpen)
+	}
+	c.confirmedAll("S2 " + v.name)
+	c.line("S2 "+v.name, l)
 }
 
 // loggedBeside fails unless the cart of RUN's part standing at position i

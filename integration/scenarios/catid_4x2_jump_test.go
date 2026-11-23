@@ -11,50 +11,56 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
 	"shingoedge/plc/simwarlink"
 )
 
-// TestCatid4x2_S4_JumpWithNoChangeover: RUN is active and both styles pinned
-// when the PLC is forced onto ALT's part with no changeover open. The ALT
-// counts are off-plan: the common positions' carts, which are ALT's parts
-// too, are charged; the mirror positions' shares are held, their carts being
-// RUN's part. Nothing moves: past the window the old automatic switch acted
-// after, the process runs RUN, no changeover row exists and no order was made,
-// and the wrong-part item, red, offers the changeover to ALT. Untapped, the
-// mirror holds grow with every stroke, the common positions charge, the record
-// is ALT's by CATID and nothing is ordered. Tapped, the item's action starts
-// the changeover; its legs land, the monitor completes it, and the completion
-// lands the held shares on the MIRROR-R carts: no hold is left, every ledger
-// is exact.
+// TestCatid4x2_S4_JumpWithNoChangeover: S4's two halves (s4Jump), untapped at
+// production's window, tapped at w6ShortWindow.
 func TestCatid4x2_S4_JumpWithNoChangeover(t *testing.T) {
 	t.Parallel()
-	for _, half := range []string{"untapped", "tapped"} {
-		t.Run(half, func(t *testing.T) {
-			t.Parallel()
-			var o w6Opts // untapped holds the production window: no changeover open, nothing moves
-			if half == "tapped" {
-				o.window = w6ShortWindow
-			}
-			c := newW6Cell(t, o)
-			c.cycle(14)
-			run := c.counted()
-			before := c.lastID()
-			c.force(catALT)
-			c.cycle(6) // ALT's first counts: the parts that were in the line
-			offPlan := c.counted() - run
-			c.wantMirrorShares("S4 the jump", offPlan)
-			c.ledger("S4 the jump", true)
-			item := c.asksAndMovesNothing("S4 "+half, before)
-			if half == "untapped" {
-				c.untapped("S4", run, before)
-				return
-			}
-			c.tapped("S4", item, run, false)
-		})
+	t.Run("untapped", func(t *testing.T) {
+		t.Parallel()
+		s4Jump(t, "untapped", w6ProductionWindow)
+	})
+	t.Run("tapped", func(t *testing.T) {
+		t.Parallel()
+		s4Jump(t, "tapped", w6ShortWindow)
+	})
+}
+
+// s4Jump is S4's body for half ("untapped" or "tapped"), on a cell whose
+// monitor holds the stability window window (w6Opts.window): RUN is active
+// and both styles pinned when the PLC is forced onto ALT's part with no
+// changeover open. The ALT counts are off-plan: the common positions' carts,
+// which are ALT's parts too, are charged; the mirror positions' shares are
+// held, their carts being RUN's part. Nothing moves: past the window the old
+// automatic switch acted after, the process runs RUN, no changeover row exists
+// and no order was made, and the wrong-part item, red, offers the changeover
+// to ALT. Untapped, the mirror holds grow with every stroke, the common
+// positions charge, the record is ALT's by CATID and nothing is ordered.
+// Tapped, the item's action starts the changeover; its legs land, the monitor
+// completes it, and the completion lands the held shares on the MIRROR-R
+// carts: no hold is left, every ledger is exact.
+func s4Jump(t *testing.T, half string, window time.Duration) {
+	c := newW6Cell(t, w6Opts{window: window})
+	c.cycle(14)
+	run := c.counted()
+	before := c.lastID()
+	c.force(catALT)
+	c.cycle(6) // ALT's first counts: the parts that were in the line
+	offPlan := c.counted() - run
+	c.wantMirrorShares("S4 the jump", offPlan)
+	c.ledger("S4 the jump", true)
+	item := c.asksAndMovesNothing("S4 "+half, before)
+	if half == "untapped" {
+		c.untapped("S4", run, before)
+		return
 	}
+	c.tapped("S4", item, run, false)
 }
 
 // wantMirrorShares fails unless the holds ledger keeps one open off-plan

@@ -493,6 +493,11 @@ type w6Opts struct {
 	window time.Duration
 }
 
+// w6ProductionWindow is w6Opts.window for a leaf at production's window:
+// zero, which the Edge reads as its 60 s (Config.CatidStableWindow; the 60 s
+// is pinned by TestCatidWindow_SixtySecondsOnEveryTracker).
+const w6ProductionWindow time.Duration = 0
+
 // w6Boot is what the cell gives each Edge it starts.
 type w6Boot struct {
 	passWatch bool          // w6Opts.passWatch
