@@ -45,12 +45,25 @@ type standbyEvent struct {
 	at time.Time
 }
 
-// isVM is whether a process is the WSL 2 / Docker Desktop utility VM, whose
-// CPU is the Postgres the run's own docker tests start. Its CPU is subtracted
-// from the host's before foreign load is judged: that is the one process
-// matched by name, and the hole it leaves is said in run.go.
+// isVM is whether a process is the WSL 2 / Docker Desktop utility VM, or one of
+// Docker Desktop's host-side processes that carry the VM's traffic: the CPU of
+// the Postgres the run's own docker tests start, and of every statement they
+// send it. Its CPU is subtracted from the host's before foreign load is judged.
+// These are the processes matched by name, and the hole they leave is said in
+// run.go. The relays are here because a docker test's connections reach the
+// container through wslrelay.exe and com.docker.backend.exe on the Windows host:
+// on 2026-11-23 a quiet laptop's docker package runs read 4-6 foreign cores, the
+// largest share wslrelay.exe, while the same laptop's non-docker runs read 1.4-2.2.
+// "System" is the host kernel: with the relays counted, a Core engine run still
+// read 2.83 foreign cores, 1 of them System (0.5 at idle) while the VM ran 302
+// CPU-s of Postgres: the kernel's work for the VM. The hole: another workload's
+// kernel time is invisible too; its user-mode CPU still counts as foreign, and
+// compare's 10% CPU-second rule judges what is left.
 func isVM(name string) bool {
-	return strings.HasPrefix(strings.ToLower(name), "vmmem")
+	n := strings.ToLower(name)
+	return strings.HasPrefix(n, "vmmem") || n == "wslrelay.exe" ||
+		strings.HasPrefix(n, "com.docker.") || strings.HasPrefix(n, "vpnkit") ||
+		n == "system"
 }
 
 // planted is a machine with readings put in by GATETIME_PLANT, TEST ONLY: a

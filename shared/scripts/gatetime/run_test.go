@@ -268,3 +268,20 @@ func TestJudge_ForeignLineIsTheRunsOwn(t *testing.T) {
 		t.Errorf("3 foreign cores under a 2.5 line: %q, want foreign-load(3.00 ..., line 2.50)", j.verdict())
 	}
 }
+
+// TestIsVM_CountsDockerDesktopsHostSide: the utility VM and the host-side
+// processes that carry its traffic are counted with it (machine.go's isVM says
+// why: a quiet laptop's docker runs read 4-6 foreign cores without them); an
+// unrelated process, and a go or test binary of another gate, are not.
+func TestIsVM_CountsDockerDesktopsHostSide(t *testing.T) {
+	for _, n := range []string{"vmmemWSL", "vmmem", "wslrelay.exe", "com.docker.backend.exe", "com.docker.build.exe", "vpnkit.exe", "System"} {
+		if !isVM(n) {
+			t.Errorf("isVM(%q) = false, want true", n)
+		}
+	}
+	for _, n := range []string{"go.exe", "engine.test.exe", "node.exe", "FortiESNAC.exe", "svchost.exe", "docker.exe", "System Idle Process"} {
+		if isVM(n) {
+			t.Errorf("isVM(%q) = true, want false", n)
+		}
+	}
+}

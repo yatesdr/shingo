@@ -38,9 +38,12 @@ package main
 //
 // THE HOLE THE VM LEAVES. The utility VM (vmmemWSL) runs this run's Postgres
 // and also every other WSL 2 distro and Docker container on the machine, and
-// its CPU is subtracted whole. Another lane's container or WSL race run
-// during the command is therefore invisible to foreign-load; vm-busy-before
-// catches the one already running when the command starts. The vm_cpu_s field
+// its CPU is subtracted whole, with Docker Desktop's host-side relays and the
+// host kernel ("System"), which carry the VM's traffic (machine.go's isVM).
+// Another lane's container or WSL race run during the command is therefore
+// invisible to foreign-load, and so is another workload's kernel time (its
+// user-mode CPU still counts); vm-busy-before catches a VM already busy when
+// the command starts. The vm_cpu_s field
 // and the vm column of samples.tsv let a reader see the VM's share.
 
 import (
