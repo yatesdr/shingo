@@ -1708,9 +1708,10 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # gate_timing_check / gate_timing_status: the timing flag a `gatetime run`
 # holds (shared/scripts/gatetime), which every heavy mode below honours.
 . "$ROOT/scripts/gate-timing.sh"
-# reuse_setup / reuse_summary / reuse_audit: test-result reuse, ON in a WSL
-# mirror unless GATE_REUSE=off, never on the Windows side, elsewhere only with
-# GATE_REUSE=on (dev and push serve, cert audits; shared/scripts/gatetime/reuse).
+# reuse_setup / reuse_summary / reuse_audit / reuse_explain: test-result reuse,
+# ON in a WSL mirror unless GATE_REUSE=off, never on the Windows side, elsewhere
+# only with GATE_REUSE=on (dev and push serve, cert audits; a full miss says what
+# in the key moved; shared/scripts/gatetime/reuse).
 . "$ROOT/scripts/gate-reuse.sh"
 # mirror_prelock / mirror_route / mirror_on_exit: which side a heavy mode runs
 # on, and the mirror on WSL's ext4 that the Linux side runs it in.

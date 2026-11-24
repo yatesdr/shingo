@@ -82,10 +82,12 @@ func strippedEnv(name string) bool {
 // flag of its own has another GATE_TIMING_DIR; GATE_TESTSET_DIR is there only
 // with test sets on. No test needs one: of the five modules' Go, only
 // gatetime's flagDir reads one (GATE_TIMING_DIR), and every test that reaches
-// it sets it itself (flag_test.go, run_test.go); the scripts that read the
-// rest (the gate, its lock and timing flag, its pins) are started by no test;
-// and none of the names is in the bytes of a program a test starts (go and its
-// tools, git and its helpers, node, docker, sh, bash). Pinned by
+// it sets it itself (flag_test.go, run_test.go); the rest are read only by the
+// gate's own scripts (its lock, timing flag, mirror and test sets, and their
+// pins), and the one of those a test starts, probe 43's `gate.sh identity`
+// (outside the gate), reads none of them; and none of the names is in the
+// bytes of a program a test starts (go and its tools, git and its helpers,
+// node, docker, sh, bash). Pinned by
 // TestKeyEnv_ATerminalsAndAGatesPerRunVariablesAreNotInTheKey.
 //
 // WSLENV stays in the key: WSL's interop reads it whenever a test starts a
