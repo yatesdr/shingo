@@ -213,8 +213,10 @@ func TestScenario_PressMatrix(t *testing.T) {
 
 // TestScenario_PressMatrix_TheCellsThatDoNotExist pins the structural reasons
 // the matrix gives for the cells it skips: off a press there is no dependent
-// position (so no on-deck, no wrong carrier or marker on one, no prime), and
-// the flip changes no step of any swap but the press's.
+// position (so no on-deck, no wrong carrier or marker on one, no prime), the
+// flip changes no step of any swap but the press's, and on a press it shapes
+// nothing a cold request or a changeover into a vacant press makes
+// (pmPressFlipShapesNothing).
 func TestScenario_PressMatrix_TheCellsThatDoNotExist(t *testing.T) {
 	t.Parallel()
 	node := &processes.Node{Name: ksrLine}
@@ -244,7 +246,86 @@ func TestScenario_PressMatrix_TheCellsThatDoNotExist(t *testing.T) {
 			if mode != protocol.SwapModeTwoRobotPressIndex && !same {
 				t.Errorf("%s/%s: the flip changed the swap of a mode that is not a press", mode, role)
 			}
+			if mode == protocol.SwapModeTwoRobotPressIndex {
+				pmPressFlipShapesNothing(t, node, role, claim)
+			}
 		}
+	}
+}
+
+// pmPressFlipShapesNothing pins what the press's flip does not shape, on the
+// Edge's own pure planners and the cell's claims, no database:
+//
+//   - a cold press: the request's plan primes the vacant paired position and
+//     builds the swap, which a request with nothing counted drops
+//     (produceRequest); the plan less that swap is the same flipped or not;
+//   - a changeover into the vacant press (both positions' seats recording
+//     their carriers gone, B a carrier type of its own): every position is an
+//     Add, the same flipped or not. An Add is a plain delivery
+//     (planAddAction), with no swap for the flip to shape.
+func pmPressFlipShapesNothing(t *testing.T, node *processes.Node, role protocol.ClaimRole,
+	claim func(flipped bool) *processes.NodeClaim) {
+	t.Helper()
+	if role == protocol.ClaimRoleProduce {
+		cold := func(flipped bool) *edgeengine.ProducePlan {
+			plan, err := edgeengine.BuildProducePlan(node, &processes.RuntimeState{}, claim(flipped),
+				map[string]bool{ksrLine: true, ksrDeck: false}, edgeengine.Deck{})
+			mustNil(t, err, "the cold press's plan")
+			if plan.Dispatch == nil {
+				t.Fatalf("the cold press's plan (flipped %v) builds no swap for its request to drop", flipped)
+			}
+			plan.Dispatch = nil
+			return plan
+		}
+		plain, flipped := cold(false), cold(true)
+		if !slices.Equal(plain.Chain.Prime, []string{ksrDeck}) || len(plain.Chain.Clear) != 0 || plain.SimpleMove {
+			t.Errorf("the cold press plans %+v, want one prime to %s and the swap", *plain, ksrDeck)
+		}
+		if !reflect.DeepEqual(plain, flipped) {
+			t.Errorf("the flip changed the cold press's plan beyond the swap its request drops: flipped %+v, "+
+				"unflipped %+v", *flipped, *plain)
+		}
+	}
+
+	vacant := func(string) edgeengine.NodeState { return edgeengine.NodeState{Seat: edgeengine.SeatEmpty} }
+	into := func(flipped bool) []edgeengine.ChangeoverNodeDiff {
+		a, b := claim(flipped), claim(flipped)
+		b.PayloadCode, b.InboundSource = ksrPartB, ksrMktB
+		diffs := edgeengine.DiffStyleClaims([]processes.NodeClaim{*a}, []processes.NodeClaim{*b})
+		diffs = edgeengine.PlanPressPositions(diffs, map[string]string{ksrPartA: "KSR-TYPE-A", ksrPartB: "KSR-TYPE-B"},
+			vacant)
+		diffs = edgeengine.ApplyNodeState(diffs, vacant)
+		// The flip itself is the one field the two plans are let differ by.
+		for i := range diffs {
+			for _, c := range []**processes.NodeClaim{&diffs[i].FromClaim, &diffs[i].ToClaim} {
+				if *c != nil {
+					masked := **c
+					masked.RefillBy = refillFor(false)
+					*c = &masked
+				}
+			}
+		}
+		return diffs
+	}
+	show := func(diffs []edgeengine.ChangeoverNodeDiff) []string {
+		var out []string
+		for _, d := range diffs {
+			out = append(out, fmt.Sprintf("%s %s from %v to %v", d.CoreNodeName, d.Situation, d.FromClaim, d.ToClaim))
+		}
+		return out
+	}
+	plain, flipped := into(false), into(true)
+	at := map[string]edgeengine.ChangeoverSituation{}
+	for _, d := range plain {
+		at[d.CoreNodeName] = d.Situation
+	}
+	want := map[string]edgeengine.ChangeoverSituation{ksrLine: edgeengine.SituationAdd, ksrDeck: edgeengine.SituationAdd}
+	if len(plain) != len(want) || !reflect.DeepEqual(at, want) {
+		t.Errorf("%s: a changeover into the vacant press plans %v, want an Add at each position", role, show(plain))
+	}
+	if !reflect.DeepEqual(plain, flipped) {
+		t.Errorf("%s: the flip changed the plan of a changeover into the vacant press:\n flipped   %v\n unflipped %v",
+			role, show(flipped), show(plain))
 	}
 }
 
