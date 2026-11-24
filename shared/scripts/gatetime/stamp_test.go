@@ -28,4 +28,12 @@ func TestStamps(t *testing.T) {
 	if got != "ac=on samples=40 standby=2 load=clean foreign30=0.31 planted=standby" {
 		t.Errorf("under a run: %q", got)
 	}
+	// Any verdict but clean stamps load=void, which gatetime compare refuses.
+	live["verdict"] = "VOID: foreign-load(3.00 cores over 30 s, line 2.50)"
+	if err := os.WriteFile(filepath.Join(d, "live.tsv"), []byte(live.String()+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got = stamps(&fakeMachine{acState: 1}, nil, now.Add(-time.Minute), now, d); got != "ac=on samples=40 standby=0 load=void foreign30=0.31" {
+		t.Errorf("under a void run: %q", got)
+	}
 }

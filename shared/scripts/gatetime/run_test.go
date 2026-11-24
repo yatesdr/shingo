@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +156,32 @@ func TestPlant_BatteryAndStandby(t *testing.T) {
 		t.Errorf("no plant gave %v", names)
 	} else if a, err := m.ac(); a != 1 || err != nil {
 		t.Errorf("no plant changed the AC reading to %d (%v)", a, err)
+	}
+}
+
+// readingsMachine answers the sampler's CPU readings from fields.
+type readingsMachine struct {
+	fakeMachine
+	host, job time.Duration
+	table     map[uint32]procCPU
+}
+
+func (m *readingsMachine) hostBusy() (time.Duration, error)   { return m.host, nil }
+func (m *readingsMachine) jobCPU() (time.Duration, error)     { return m.job, nil }
+func (m *readingsMachine) procs() (map[uint32]procCPU, error) { return m.table, nil }
+
+// TestPass_CountsTheVMApartFromTheJob: one sampler pass takes the host's busy
+// time, the job's CPU, and the utility VM's as the sum of the processes isVM
+// names; foreign is what is left. The job here runs outside the VM, as every
+// job does on Windows.
+func TestPass_CountsTheVMApartFromTheJob(t *testing.T) {
+	m := &readingsMachine{fakeMachine: fakeMachine{acState: 1}, host: 10 * time.Second, job: 4 * time.Second,
+		table: map[uint32]procCPU{7: {"vmmemWSL", 3 * time.Second}, 4: {"System", time.Second}, 9: {"MsMpEng.exe", 2 * time.Second}}}
+	r := &runner{m: m, every: time.Second, out: t.TempDir(), phase: "before", rows: bufio.NewWriter(io.Discard)}
+	r.pass()
+	s := r.samples[0]
+	if s.host != 10*time.Second || s.job != 4*time.Second || s.vm != 4*time.Second || s.foreign() != 2*time.Second || s.ac != 1 {
+		t.Errorf("pass read host %v job %v vm %v foreign %v ac %d, want 10s 4s 4s 2s 1", s.host, s.job, s.vm, s.foreign(), s.ac)
 	}
 }
 
