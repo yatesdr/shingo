@@ -840,6 +840,87 @@ func TestCancelReturn_EligibilityThroughTheWatch(t *testing.T) {
 	}
 }
 
+// A dig cancelled while its first leg carries the blocker keeps that leg, and
+// neither the stranded sweep nor the carried-bin watch decides anything about
+// the bin it carries, with the robot's deck reading loaded and no claim naming
+// the bin's part (so a return, were one tried, would have nowhere declared to
+// go and be held): no carried_bin_return_held or _ordered row, no return
+// order, the blocker still the leg's at _TRANSIT. The integration cell
+// TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs runs the same
+// cancel end to end with a claim naming the blocker's part.
+func TestCancelReturn_AKeptDigLegsBinIsLeftToItsLeg(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+	d := eng.Dispatcher()
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "CR16"})
+	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{OrderUUID: "cr16-dig",
+		OrderType: dispatch.OrderTypeRetrieve, PayloadCode: sc.Payload.Code, SourceNode: sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name, Quantity: 1})
+	parent := testdb.RequireOrderStatus(t, db, "cr16-dig", dispatch.StatusReshuffling)
+	legs, err := db.ListChildOrders(parent.ID)
+	testutil.MustNoErr(t, err, "the dig's legs")
+	if len(legs) < 2 || legs[0].VendorOrderID == "" {
+		t.Fatalf("fixture: the dig planned %d leg(s), its first dispatched %v; want the blocker's leg out and the "+
+			"target's behind it", len(legs), len(legs) > 0 && legs[0].VendorOrderID != "")
+	}
+	leg, blocker := legs[0], sc.Blockers[0]
+	pick := ""
+	for _, c := range leg.Carts {
+		if c.BinID == blocker.ID && c.PickStep != nil {
+			pick = domain.StepNode(leg, *c.PickStep)
+		}
+	}
+	if pick == "" {
+		t.Fatalf("fixture: leg %d names no pickup of the blocker %d", leg.ID, blocker.ID)
+	}
+
+	// The leg's robot lifts the blocker: its pickup on record, the bin at
+	// _TRANSIT, the deck loaded at rest.
+	const robot = "AMR-CR16"
+	_, err = db.DB.Exec(`UPDATE orders SET robot_id=$1 WHERE id=$2`, robot, leg.ID)
+	testutil.MustNoErr(t, err, "the leg's robot")
+	_, err = db.DB.Exec(`INSERT INTO mission_events (order_id, old_state, new_state, blocks_json, detail, created_at)
+		VALUES ($1, '', $2, $3, 'test pickup', $4)`, leg.ID, BlockLegState,
+		fmt.Sprintf(`[{"blockId":"b1","location":%q,"binTask":"JackLoad"}]`, pick), clock.Now().UTC())
+	testutil.MustNoErr(t, err, "the leg's pickup")
+	transit, err := db.GetNodeByDotName("_TRANSIT")
+	testutil.MustNoErr(t, err, "resolve _TRANSIT")
+	testutil.MustNoErr(t, db.MoveBinToTransit(blocker.ID, transit.ID), "the blocker lifted")
+	d.HandleTransitForLaneGate(leg.ID, sc.Slots[0].ID)
+	cacheRobot(eng, loadedDispatchable(robot))
+
+	d.HandleOrderCancel(testEnvelope(), &protocol.OrderCancel{OrderUUID: "cr16-dig", Reason: "changeover start"})
+	cacheRobot(eng, loadedDispatchable(robot))
+	eng.sweepStrandedBins()
+	eng.sweepCarriedBins()
+
+	for _, action := range []string{actionReturnHeld, actionReturnOrdered} {
+		if n := countBinActions(t, db, blocker.ID, action); n != 0 {
+			_, _, detail := lastBinAction(t, db, blocker.ID)
+			t.Errorf("the watch decided on the kept leg's blocker: %d %s row(s), last %q", n, action, detail)
+		}
+	}
+	if n := len(onDeckOrders(t, db, blocker.ID)); n != 0 {
+		t.Errorf("%d return order(s) for the kept leg's blocker, want none", n)
+	}
+	kept, err := db.GetOrder(leg.ID)
+	testutil.MustNoErr(t, err, "reload the leg")
+	if protocol.IsTerminal(kept.Status) {
+		t.Errorf("the lifted leg %d is %s (%s) after its parent's cancel, want it storing its blocker",
+			kept.ID, kept.Status, kept.ErrorDetail)
+	}
+	b, err := db.GetBin(blocker.ID)
+	testutil.MustNoErr(t, err, "reload the blocker")
+	if b.NodeName != "_TRANSIT" || b.ClaimedBy == nil || *b.ClaimedBy != leg.ID {
+		claimed := int64(0)
+		if b.ClaimedBy != nil {
+			claimed = *b.ClaimedBy
+		}
+		t.Errorf("the blocker is at %q claimed by order %d, want at _TRANSIT, the leg's (%d)", b.NodeName, claimed, leg.ID)
+	}
+}
+
 // Two hosts, two bins, one payload, a source with exactly two free slots: the
 // sim-rig shape of evidence S2 (2026-10-02), where the poll host and the
 // reconciliation host each took one bin of a cancelled swap in the same instant,
