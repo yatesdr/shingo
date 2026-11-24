@@ -348,3 +348,46 @@ func textFiles(t *tree) result {
 	}
 	return result{fs, fmt.Sprintf("%d tracked files, no text-attributed file indexed -text", len(t.files))}
 }
+
+// --- path-case -------------------------------------------------------------
+//
+// No two tracked paths differ only by case (R51, brief A2 step 5).
+//
+// WHY. The gate runs on two filesystems and core.ignorecase differs between
+// them, and stays so: true in the Windows worktree, whose filesystem folds case,
+// false in the Linux side's mirror and on CI. A pair that differs only by case
+// is two files there and one on Windows, so the two sides would gate different
+// trees, and a Windows checkout of the pair is broken either way. A directory
+// is a path too: Web/a.js beside web/b.js is two directories on Linux and one
+// on Windows, and so is a file NOTES beside a directory notes/.
+//
+// The second of each pair in index order is named. Paths are folded with
+// strings.ToLower, exact for ASCII; a pair that Windows folds and Go's Unicode
+// lower-casing does not is not looked for (no tracked path was non-ASCII at
+// 2026-11-24).
+func pathCase(t *tree) result {
+	var fs []Finding
+	first := map[string]string{} // folded path -> the first path that folds to it
+	seen := map[string]bool{}
+	add := func(p string) {
+		if seen[p] {
+			return
+		}
+		seen[p] = true
+		k := strings.ToLower(p)
+		if q, ok := first[k]; ok {
+			fs = append(fs, Finding{File: p, Why: "differs only by case from " + q})
+			return
+		}
+		first[k] = p
+	}
+	for _, f := range t.files {
+		for i := 0; i < len(f.path); i++ {
+			if f.path[i] == '/' {
+				add(f.path[:i]) // each directory above the file
+			}
+		}
+		add(f.path)
+	}
+	return result{fs, fmt.Sprintf("%d tracked files and their directories, no two differ only by case", len(t.files))}
+}

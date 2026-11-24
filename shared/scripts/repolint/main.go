@@ -19,6 +19,7 @@
 //	js-imports              a served module imports only names its modules export, from files that exist
 //	js-parse                every .js file parses as an ES module or as CommonJS
 //	js-undeclared           a www/static page script reads only names something declares
+//	path-case               no two tracked paths (files or their directories) differ only by case
 //	plant-addresses         no private IPv4 address in a tracked text file
 //	raw-syscall-reads       test code reads files through package os, never a raw syscall
 //	serial-tests            in the packages it covers, a top-level test calls t.Parallel() or says why not
@@ -129,6 +130,7 @@ var rules = []rule{
 	{"js-parse", "A module that does not parse takes its whole import graph down with it.", jsParse},
 	{"js-imports", "Export the name from the module the import names, or drop the import. A module that imports a name nobody exports takes its whole page down before a line runs.", jsImports},
 	{"js-undeclared", "Declare it, pass it, or import it. A page global goes on window or in the template's inline script; a browser global the rule does not know goes in KNOWN in jsundeclared.js.", jsUndeclared},
+	{"path-case", "Rename one of the pair: Windows holds them as one path and the Linux side and CI as two, so the two sides would gate different trees.", pathCase},
 	{"plant-addresses", "Use TEST-NET (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24); 192.168.1.0/24 is reserved for doc examples. To derive a fixture from a capture, see shared/scripts/anonymiserobotsstatus.", plantAddresses},
 	{"raw-syscall-reads", "Read through package os (os.Open, os.ReadFile, os.Stat, os.ReadDir): the test log records it and reuse keys the run on the file's content. unseenreads.go says what counts as test code.", rawSyscallReads},
 	{"serial-tests", "Call t.Parallel(), or put `// serial: <what it shares>` on the line above its func. serial-tests.txt says which packages are read.", serialTests},
