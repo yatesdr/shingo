@@ -119,10 +119,14 @@ func TestMain_AMissWithNoEntryNamesWhatInItsKeyMoved(t *testing.T) {
 	pass := func(spec RunSpec) RunResult {
 		for _, a := range spec.Args {
 			if p, ok := strings.CutPrefix(a, "-"+testlogFlag); ok {
-				_ = os.WriteFile(p, []byte("# test log\n"), 0o644)
+				if err := os.WriteFile(p, []byte("# test log\n"), 0o644); err != nil {
+					t.Error(err)
+				}
 			}
 		}
-		_, _ = spec.Out.Write([]byte("PASS\n"))
+		if _, err := spec.Out.Write([]byte("PASS\n")); err != nil {
+			t.Error(err)
+		}
 		return RunResult{Processes: 0, ChildHow: "the pin's"}
 	}
 	run := func(bin, timeout string) map[string]any {
@@ -152,7 +156,9 @@ func TestMain_AMissWithNoEntryNamesWhatInItsKeyMoved(t *testing.T) {
 		{"another session", "10m0s", "env differed in REUSE_PIN_SESSION", func() { t.Setenv("REUSE_PIN_SESSION", "b") }},
 		{"another identity", "10m0s", "identity differed", func() { file("identity", "identity 2\n") }},
 		{"a variable gone and one new", "10m0s", "env differed in REUSE_PIN_GONE, REUSE_PIN_NEW", func() {
-			_ = os.Unsetenv("REUSE_PIN_GONE") // t.Setenv above restores it
+			if err := os.Unsetenv("REUSE_PIN_GONE"); err != nil { // t.Setenv above restores it
+				t.Fatal(err)
+			}
 			t.Setenv("REUSE_PIN_NEW", "1")
 		}},
 		{"another binary", "10m0s", "binary differed", func() { file("unit.test", "unit binary, rebuilt\n") }},
