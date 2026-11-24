@@ -67,11 +67,25 @@ func TestAskWait_TheDefault(t *testing.T) {
 	}
 }
 
-// setAskClock makes c the clock e's taps wait on, from its next ask.
+// setAskClock makes c the clock e's taps wait on, from its next ask. Under a
+// bridged Core (bridgeCore) c goes under the innermost bridge, which still
+// answers before the wait.
 func setAskClock(e *Engine, c clock.Clock) {
 	e.asks.mu.Lock()
-	e.asks.waitClock = c
-	e.asks.mu.Unlock()
+	defer e.asks.mu.Unlock()
+	b, ok := e.asks.waitClock.(*askBridge)
+	if !ok {
+		e.asks.waitClock = c
+		return
+	}
+	for {
+		next, ok := b.waits().(*askBridge)
+		if !ok {
+			break
+		}
+		b = next
+	}
+	b.setInner(c)
 }
 
 // waitRunOut is an ask clock on which every wait has already run out: an ask

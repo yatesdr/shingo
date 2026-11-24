@@ -7,10 +7,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/internal/askbridge"
 )
 
@@ -36,12 +39,28 @@ var bridgedKinds = askbridge.Paths
 // the last ack names the bridged kinds, and each such ask is answered by the
 // stub. An empty url is no Core: nothing is bridged and those kinds are
 // refused.
+//
+// THE ANSWER COMES IN THE ASKING GOROUTINE, NOT FROM A POLL. Engine.ask puts
+// the ask's row on the outbox and then takes its wait from the ask book's wait
+// clock (EnqueueOutbox, then waitOn.After, in ask.go). The bridge is that
+// clock (askBridge): its After carries the outbox's bridged asks to the stub,
+// then hands back the wait of the clock it wraps, so the answer is in before
+// the tap waits. Until 2026-11-23 each bridge was a goroutine that woke every
+// 2 ms for its test's life to look. A clock a test sets with setAskClock goes
+// under the bridge, not in its place.
 func bridgeCore(t *testing.T, eng *Engine, url string) {
 	t.Helper()
 	if url == "" {
 		return
 	}
-	url = strings.TrimRight(url, "/")
+	installAskBridge(t, eng, strings.TrimRight(url, "/"))
+}
+
+// installAskBridge is bridgeCore's work: the bridged kinds answered, and the
+// bridge wrapped round the ask book's wait clock. An empty url is a Core that
+// takes each bridged ask and answers none (coreNeverAnswers).
+func installAskBridge(t *testing.T, eng *Engine, url string) {
+	t.Helper()
 	eng.asks.mu.Lock()
 	if eng.asks.kinds == nil {
 		eng.asks.kinds = map[string]bool{}
@@ -49,26 +68,54 @@ func bridgeCore(t *testing.T, eng *Engine, url string) {
 	for k := range bridgedKinds {
 		eng.asks.kinds[k] = true
 	}
+	b := &askBridge{t: t, eng: eng, client: &http.Client{Timeout: 5 * time.Second}, url: url,
+		inner: eng.asks.waitClock}
+	eng.asks.waitClock = b
 	eng.asks.mu.Unlock()
+	// The test's end ends the bridge, as it stopped the poll: an ask after it
+	// waits on inner alone.
+	t.Cleanup(func() { b.done.Store(true) })
 	eng.SetPayloadBinTypes(eng.PayloadBinTypes())
-	client := &http.Client{Timeout: 5 * time.Second}
-	stop, done := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			case <-time.After(2 * time.Millisecond):
-			}
-			// Only while an ask is out: a poll that read the outbox on every
-			// tick would be counted by the tests that count statements.
-			if eng.PendingAsks() > 0 {
-				bridgeAsks(t, eng, client, url)
-			}
-		}
-	}()
-	t.Cleanup(func() { close(stop); <-done })
+}
+
+// askBridge is the ask book's wait clock while a stub Core is bridged (see
+// bridgeCore): After carries the bridged asks on the outbox to the stub, then
+// waits on inner, the clock the taps waited on before (nil: the wall clock).
+// A second bridge on one engine wraps the first, so the newest answers first.
+type askBridge struct {
+	t      *testing.T
+	eng    *Engine
+	client *http.Client
+	url    string
+	mu     sync.Mutex // guards inner: setAskClock writes it beside a tap's wait
+	inner  clock.Clock
+	done   atomic.Bool // the test has ended: answer nothing more
+}
+
+func (b *askBridge) waits() clock.Clock {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.inner == nil {
+		return clock.Real()
+	}
+	return b.inner
+}
+
+func (b *askBridge) setInner(c clock.Clock) {
+	b.mu.Lock()
+	b.inner = c
+	b.mu.Unlock()
+}
+
+func (b *askBridge) Now() time.Time                         { return b.waits().Now() }
+func (b *askBridge) NewTicker(d time.Duration) clock.Ticker { return b.waits().NewTicker(d) }
+
+// After answers the bridged asks on the outbox, then waits d on inner.
+func (b *askBridge) After(d time.Duration) <-chan time.Time {
+	if !b.done.Load() {
+		bridgeAsks(b.t, b.eng, b.client, b.url)
+	}
+	return b.waits().After(d)
 }
 
 // bridgeAsks carries every bridged ask on eng's outbox to the stub once.
@@ -95,6 +142,9 @@ func bridgeAsks(t *testing.T, eng *Engine, client *http.Client, url string) {
 		if err := eng.db.AckOutbox(m.ID); err != nil {
 			t.Errorf("take the %s ask off the outbox: %v", ask.Kind, err)
 			continue
+		}
+		if url == "" {
+			continue // no Core answers (coreNeverAnswers)
 		}
 		resp, err := client.Post(url+path, "application/json", bytes.NewReader(ask.Body))
 		if err != nil {
@@ -145,8 +195,12 @@ func bridgedAnswer(kind string, status int, raw []byte) *protocol.EdgeAnswer {
 }
 
 // coreNeverAnswers is a Core this Edge has heard from that answers no ask:
-// each bridged ask stays out.
+// each bridged ask is taken off the outbox and stays out. It was a bridge to
+// http://127.0.0.1:1 (testCoreURL, whose comment said it "refuses at once on
+// every OS"): on Windows a refused connect takes about 2 s, which the poll spent
+// beside the tap's wait and a bridge in the tap's goroutine would add to it, so
+// this bridge posts nothing.
 func coreNeverAnswers(t *testing.T, eng *Engine) {
 	t.Helper()
-	bridgeCore(t, eng, testCoreURL)
+	installAskBridge(t, eng, "")
 }

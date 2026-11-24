@@ -75,12 +75,6 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 	return processID, nodeID, styleID, claimID
 }
 
-// testCoreURL is a stub Core that is never there: a bridged ask to it
-// (bridgeCore) is out and never answered, as against a Core that does not
-// answer. A literal IP that refuses at once on every OS, not a name a
-// resolver walks.
-const testCoreURL = "http://127.0.0.1:1"
-
 // testEngine creates a minimal Engine with a real order manager backed by the
 // given SQLite DB. The engine is suitable for testing RequestProduceSwap and
 // wiring handlers. No PLC manager or network services are created.
