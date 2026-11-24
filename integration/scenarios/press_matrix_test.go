@@ -101,6 +101,11 @@ const (
 	pmFlipNoIndex = "the flip shapes only the press's index swap; a changeover into a vacant press plans " +
 		"each position an Add (a plain delivery), which the flip does not shape, and the outgoing mode " +
 		"has no flip"
+	pmFlipVacantPress = "a changeover into a vacant press plans each position an Add (a plain delivery), " +
+		"the same flipped or not: the outgoing press's flip shapes only its changeover swap, and into a " +
+		"vacant press there is none (pmPressFlipShapesNothing)"
+	pmFlipColdNoSwap = "the flip shapes only the press's index swap, and a cold press's request drops its " +
+		"swap: one tap makes the prime alone, the same flipped or not (pmPressFlipShapesNothing)"
 	pmNoCountGate = "consume has no count gate: the count check is the finalizing produce request's " +
 		"(produceRequest, \"no parts to finalize\")"
 	pmAtNothingConsume = "the at-nothing carrier is consume's (D4.3: a carrier of the part counted at " +
@@ -164,11 +169,17 @@ var pmCases = []pmCase{
 		if r.role == protocol.ClaimRoleConsume {
 			return pmNoCountGate
 		}
+		if r.flipped {
+			return pmFlipColdNoSwap
+		}
 		return ""
 	}},
 	{name: "changeover", run: pmChangeoverIntoVacant, na: func(r pmRow) string {
-		if r.flipped && !r.press() {
+		switch {
+		case r.flipped && !r.press():
 			return pmFlipNoIndex
+		case r.flipped:
+			return pmFlipVacantPress
 		}
 		return ""
 	}},
