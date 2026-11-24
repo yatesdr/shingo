@@ -5,6 +5,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -39,9 +40,27 @@ import (
 // re-asks and can still dispatch an order that lost a race inside the first; the
 // third is the steady state, where what is left is waiting.
 //
-// These tests run in every docker step and every CI docker job (nothing skips
-// them; this line said "RUN ON DEMAND"). To read the BUDGET: lines by hand:
-// go test -tags docker -run TestBudget_ScannerPass -v ./engine/
+// THE THREE THAT ASSERT NOTHING RUN ON DEMAND: TestBudget_ScannerPass,
+// TestBudget_C2cQueuedGroupDrops and TestBudget_C2cGroupGateEvent skip unless
+// BUDGET_COUNTS is set (skipUnlessBudgetCounts), as the Edge's choreography
+// budgets and TestReleaseCosts do. Their only checks are their fixtures' (each
+// MustNoErr, quiesce's Fatalf, `fixture: occupy lane`), so no gate run could
+// fail on a number they print. TestBudget_C2cGateEventLikeForLike asserts, and
+// runs in every docker step and every CI docker job. To read the BUDGET: lines:
+// BUDGET_COUNTS=1 go test -tags docker -count=1 -run TestBudget_ -v ./engine/
+
+// budgetCountsEnv runs the instruments that assert nothing (the file header).
+// The Edge's choreography budgets read the same name.
+const budgetCountsEnv = "BUDGET_COUNTS"
+
+// skipUnlessBudgetCounts skips an instrument that asserts nothing unless
+// BUDGET_COUNTS is set.
+func skipUnlessBudgetCounts(t *testing.T) {
+	t.Helper()
+	if os.Getenv(budgetCountsEnv) == "" {
+		t.Skip("measurement instrument that asserts nothing; run with " + budgetCountsEnv + "=1")
+	}
+}
 
 // quiesce waits until the counting store has been silent for a settle window, so
 // a measurement starts after the engine's boot work and ends after any async
@@ -65,6 +84,7 @@ func quiesce(t *testing.T, c *store.QueryCounter) {
 }
 
 func TestBudget_ScannerPass(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -174,8 +194,8 @@ func TestBudget_ScannerPass(t *testing.T) {
 //      group per gate event (DESIGN-C2c §8: ActiveGateCandidates scans N+2 today,
 //      1 under C2c).
 //
-// They run in every docker step (see the file header). By hand:
-// go test -tags docker -run TestBudget_C2c -v ./engine/
+// They run on demand (see the file header):
+// BUDGET_COUNTS=1 go test -tags docker -count=1 -run TestBudget_C2c -v ./engine/
 
 // c2cBudgetGroup is a group marked by its spot (testdb.MarkGroup: <group>-WAIT)
 // with `lanes` lanes of `depth` slots each, [0] the mouth.
@@ -223,6 +243,7 @@ func c2cBudgetOutcomes(t *testing.T, db *store.DB, prefix string) {
 }
 
 func TestBudget_C2cQueuedGroupDrops(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -280,6 +301,7 @@ func TestBudget_C2cQueuedGroupDrops(t *testing.T) {
 }
 
 func TestBudget_C2cGroupGateEvent(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	t.Parallel()
 	const waiters = 4
 	db, cfg := testdb.OpenWithConfig(t)

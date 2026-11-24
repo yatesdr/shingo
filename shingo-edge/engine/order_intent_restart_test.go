@@ -195,9 +195,12 @@ func TestTakeIntent_UnknownKindDropsWithoutBreakingDelivery(t *testing.T) {
 	}
 }
 
-// Cost record (not a budget assertion): microseconds per arming write, and per
-// fire-site read+take, on the engine test DB. Run with -v to read the numbers.
+// Cost record (not a budget assertion; it checks nothing): microseconds per
+// arming write, and per fire-site read+take, on the engine test DB. It skips
+// unless BUDGET_COUNTS is set (skipUnlessBudgetCounts, choreography_budget_test.go):
+// BUDGET_COUNTS=1 go test -count=1 -run TestArmIntentCost -v ./engine/
 func TestArmIntentCost(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	f := armPullback(t)
 	defer f.db.Close()
 	const n = 500

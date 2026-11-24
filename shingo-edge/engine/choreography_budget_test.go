@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -20,8 +21,10 @@ import (
 // changes how often the sourcing snapshot is replaced, and Stage E decides
 // whether the two-robot choreography moves to Core on the number (SYNTH F7:
 // "~45 statements per two-robot consume" was a reviewer's estimate, never
-// measured). Nothing here asserts a count. The numbers are logged under a
-// BUDGET: prefix and written into the Stage A BUDGETS.md.
+// measured). Nothing here asserts a count: each test's one check, where it has
+// one, is its fixture's (`fixture:`), and TestBudget_EdgeSourcingStateReplace
+// has none. The numbers are logged under a BUDGET: prefix and written into the
+// Stage A BUDGETS.md.
 //
 // THE ENGINE IS WIRED AS PRODUCTION WIRES IT for the part that costs statements:
 // the order manager emits onto the event bus and the event handlers are
@@ -29,7 +32,24 @@ import (
 // it. The order sender's outbox write is the Edge's wire; the Kafka send that
 // drains it is not a statement and is not here.
 //
-// RUN ON DEMAND: go test -run 'Budget_Edge' -v ./engine/
+// RUN ON DEMAND. Every test here skips unless BUDGET_COUNTS is set
+// (skipUnlessBudgetCounts), the pattern of TestReleaseCosts; TestArmIntentCost
+// and Core's scanner-pass budgets read the same name. (Until 2026-11-24 this
+// line said "RUN ON DEMAND" and nothing skipped them: they ran in every gate.)
+// BUDGET_COUNTS=1 go test -count=1 -run 'Budget_Edge' -v ./engine/
+
+// budgetCountsEnv runs the cost instruments of this package that assert
+// nothing.
+const budgetCountsEnv = "BUDGET_COUNTS"
+
+// skipUnlessBudgetCounts skips a cost instrument that asserts nothing unless
+// BUDGET_COUNTS is set.
+func skipUnlessBudgetCounts(t *testing.T) {
+	t.Helper()
+	if os.Getenv(budgetCountsEnv) == "" {
+		t.Skip("measurement instrument that asserts nothing; run with " + budgetCountsEnv + "=1")
+	}
+}
 
 // budgetEngine is testEngine on a counting store, with the order manager's
 // events going to the bus and the handlers wired, as engine.Start does.
@@ -51,6 +71,7 @@ func logBudget(t *testing.T, name string, c *store.QueryCounter) {
 // TestBudget_EdgeConsumeTwoRobot: one REQUEST on a two_robot consume cell (the
 // operator's button, and the level keeper's ask, which is the same function).
 func TestBudget_EdgeConsumeTwoRobot(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	eng, db, counter := budgetEngine(t)
 	nodeID := seedLineSwapClaim(t, db, "BUD", protocol.SwapModeTwoRobot)
 
@@ -65,6 +86,7 @@ func TestBudget_EdgeConsumeTwoRobot(t *testing.T) {
 
 // TestBudget_EdgeProduceTwoRobot: one produce swap on a two_robot produce cell.
 func TestBudget_EdgeProduceTwoRobot(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	eng, db, counter := budgetEngine(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
 
@@ -82,6 +104,7 @@ func TestBudget_EdgeProduceTwoRobot(t *testing.T) {
 // cell is two_robot in both styles, with a different part in each — the
 // SituationSwap shape, the one that mints the two-leg removal-and-supply pair.
 func TestBudget_EdgeChangeoverTwoRobot(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	eng, db, counter := budgetEngine(t)
 	processID, err := db.CreateProcess("BUDCO-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
@@ -130,6 +153,7 @@ func TestBudget_EdgeChangeoverTwoRobot(t *testing.T) {
 // rows on each 2-minute full pass (30 an hour); A2 sends each station only its
 // own processes, on registration and a 30-minute backstop (~2 an hour).
 func TestBudget_EdgeSourcingStateReplace(t *testing.T) {
+	skipUnlessBudgetCounts(t)
 	eng, _, counter := budgetEngine(t)
 	states := func(n int) []protocol.SourcingState {
 		out := make([]protocol.SourcingState, n)

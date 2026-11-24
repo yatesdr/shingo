@@ -2617,3 +2617,75 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none here; the guard's commit rewrote `TestScenario_PressMatrix_TheCellsThatDoNotExist`'s comment (what it pins)
 - verified at: the commit that adds this row
+
+### COST — `TestBudget_ScannerPass`
+- test: `TestBudget_ScannerPass` · pkg `shingocore/engine` · run `-run '^TestBudget_ScannerPass$'` · `shingo-core/engine/scanner_pass_budget_docker_test.go:67` @ `10f1b27f` · tags `docker`
+- code: COST (out of every gate, not deleted: it skips unless `BUDGET_COUNTS` is set, the pattern of `TestReleaseCosts`, and stays the unification stream's before/after instrument)
+- assertion map: none to move. Its checks are its fixture's: `MustNoErr` on setup (`:76-98`, `:150`, `:154`) and the Fatalf of `quiesce` (`:64`), the measurement's precondition. What it measures is logged (`BUDGET:` `:107`, `:140-142`, `:155`) and read by the Stage A `BUDGETS.md` (`library/unification/unification-stageA-2026-09-24/`), whose run column now sets the variable
+- mutation: none can fail it (it asserts nothing) · with `BUDGET_COUNTS=1` (`go test -tags docker,lockcheck -p 1 -count=1 -v -run '^TestBudget_(ScannerPass|C2cQueuedGroupDrops|C2cGroupGateEvent|C2cGateEventLikeForLike)$' ./engine/`) it runs and prints its 14 `BUDGET:` lines, as at `10f1b27f`, every synchronous count equal (the async tails of passes 1 and 2 read 362 and 106 against 360 and 108: the tail `quiesce` waits out moves run to run); without it, `--- SKIP` at `scanner_pass_budget_docker_test.go:87`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: the file header (it said these run in every docker step; it now names the three that skip and the one that asserts) and the C2c section's run line
+- verified at: the commit that adds this row
+
+### COST — `TestBudget_C2cQueuedGroupDrops`
+- test: `TestBudget_C2cQueuedGroupDrops` · pkg `shingocore/engine` · run `-run '^TestBudget_C2cQueuedGroupDrops$'` · `shingo-core/engine/scanner_pass_budget_docker_test.go:225` @ `10f1b27f` · tags `docker`
+- code: COST (as the row of `TestBudget_ScannerPass`)
+- assertion map: none to move: `MustNoErr` on setup (`:229-261`) and `quiesce` (`:64`); `BUDGET:` lines `:221`, `:271-274`, which no document quotes
+- mutation: none can fail it · with `BUDGET_COUNTS=1` its 16 `BUDGET:` lines, every count equal to those at `10f1b27f`; without it, `--- SKIP` at `:246`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as the row of `TestBudget_ScannerPass`
+- verified at: the commit that adds this row
+
+### COST — `TestBudget_C2cGroupGateEvent`
+- test: `TestBudget_C2cGroupGateEvent` · pkg `shingocore/engine` · run `-run '^TestBudget_C2cGroupGateEvent$'` · `shingo-core/engine/scanner_pass_budget_docker_test.go:282` @ `10f1b27f` · tags `docker`
+- code: COST (as the row of `TestBudget_ScannerPass`; its own file calls its two numbers "not a comparison" (`:365-368`), and the like-for-like pin that replaced it, `TestBudget_C2cGateEventLikeForLike`, still runs in every docker step)
+- assertion map: none to move: `MustNoErr` on setup, `fixture: occupy lane` (`:313`) and `quiesce`; `BUDGET:` lines `:221`, `:357-359`
+- mutation: none can fail it · with `BUDGET_COUNTS=1` its 10 `BUDGET:` lines, every count equal to those at `10f1b27f`; without it, `--- SKIP` at `:304`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as the row of `TestBudget_ScannerPass`
+- verified at: the commit that adds this row
+
+### COST — `TestBudget_EdgeConsumeTwoRobot`
+- test: `TestBudget_EdgeConsumeTwoRobot` · pkg `shingoedge/engine` · run `-run '^TestBudget_EdgeConsumeTwoRobot$'` · `shingo-edge/engine/choreography_budget_test.go:53` @ `10f1b27f` · tags `none`
+- code: COST (as the row of `TestBudget_ScannerPass`, the same variable)
+- assertion map: none to move. Its one check is its fixture's, `fixture: the REQUEST did not build a two-leg swap` (`:61`); that a two_robot consume request on an occupied line makes two legs is `TestRequestCensus` (`shingo-edge/engine/request_census_test.go:236`). `BUDGET:` line via `logBudget` (`:46-49`), read by `BUDGETS.md`
+- mutation: none can fail it · with `BUDGET_COUNTS=1` (`go test -count=1 -tags lockcheck -v -run '^(TestBudget_Edge.*|TestArmIntentCost)$' ./engine/`) its `BUDGET:` line, the text equal to that at `10f1b27f` (47 statements); without it, `--- SKIP` at `choreography_budget_test.go:74`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: the file header's "RUN ON DEMAND", false while nothing skipped them, now true; "Nothing here asserts a count" now says what the one check is
+- verified at: the commit that adds this row
+
+### COST — `TestBudget_EdgeProduceTwoRobot`
+- test: `TestBudget_EdgeProduceTwoRobot` · pkg `shingoedge/engine` · run `-run '^TestBudget_EdgeProduceTwoRobot$'` · `shingo-edge/engine/choreography_budget_test.go:67` @ `10f1b27f` · tags `none`
+- code: COST (as the row of `TestBudget_EdgeConsumeTwoRobot`)
+- assertion map: none to move: `fixture:` (`:75`); two legs on a two_robot produce line → `TestRequestCensus` (`request_census_test.go:250`)
+- mutation: none can fail it · with the variable its `BUDGET:` line, the text equal to that at `10f1b27f`; without it, `--- SKIP` at `:89`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as the row of `TestBudget_EdgeConsumeTwoRobot`
+- verified at: the commit that adds this row
+
+### COST — `TestBudget_EdgeChangeoverTwoRobot`
+- test: `TestBudget_EdgeChangeoverTwoRobot` · pkg `shingoedge/engine` · run `-run '^TestBudget_EdgeChangeoverTwoRobot$'` · `shingo-edge/engine/choreography_budget_test.go:84` @ `10f1b27f` · tags `none`
+- code: COST (as the row of `TestBudget_EdgeConsumeTwoRobot`)
+- assertion map: none to move: `MustNoErr` on setup and `fixture:` (`:118`); a changeover start's both-legs swap task is the precondition of the Edge changeover tests (`changeover_abandon_test.go:33`, `changeover_applier_runtime_test.go:60`)
+- mutation: none can fail it · with the variable its `BUDGET:` line, the text equal to that at `10f1b27f`; without it, `--- SKIP` at `:107`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as the row of `TestBudget_EdgeConsumeTwoRobot`
+- verified at: the commit that adds this row
+
+### COST — `TestBudget_EdgeSourcingStateReplace`
+- test: `TestBudget_EdgeSourcingStateReplace` · pkg `shingoedge/engine` · run `-run '^TestBudget_EdgeSourcingStateReplace$'` · `shingo-edge/engine/choreography_budget_test.go:132` @ `10f1b27f` · tags `none`
+- code: COST (as the row of `TestBudget_EdgeConsumeTwoRobot`)
+- assertion map: none to move: no check of any kind (`:132-155`); three `BUDGET:` lines (`:153`)
+- mutation: none can fail it · with the variable its three `BUDGET:` lines, the text equal to that at `10f1b27f`; without it, `--- SKIP` at `:156`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: as the row of `TestBudget_EdgeConsumeTwoRobot`
+- verified at: the commit that adds this row
+
+### COST — `TestArmIntentCost`
+- test: `TestArmIntentCost` · pkg `shingoedge/engine` · run `-run '^TestArmIntentCost$'` · `shingo-edge/engine/order_intent_restart_test.go:200` @ `10f1b27f` · tags `none`
+- code: COST (as the row of `TestBudget_EdgeConsumeTwoRobot`, the same variable)
+- assertion map: none to move: no check of any kind ("Cost record (not a budget assertion)", `:198`); one `COST` line (`:224`), whose only reader found is a 2026-09-26 fact census that listed it as "logs only, no assertion"
+- mutation: none can fail it · with the variable its `COST` line; without it, `--- SKIP` at `order_intent_restart_test.go:203`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: its comment ("Run with -v") names the variable
+- verified at: the commit that adds this row
