@@ -264,10 +264,12 @@ func TestScenario_ChangeoverStart_CancelsALiftOnlyOrderAtAChangingNode(t *testin
 	}
 }
 
-// A changeover started with a changing position already empty, one case per
-// swap type: the bin was released off the position from the Material page and
-// lifted before START. The position needs the new style's bin and has nothing
-// to take away, and the changeover runs to CUTOVER with a B bin on it.
+// A changeover started with a changing position already empty: the bin was
+// released off the position from the Material page and lifted before START.
+// The position needs the new style's bin and has nothing to take away, and the
+// changeover runs to CUTOVER with a B bin on it. One case per position shape;
+// single_robot plans the same Add as two_robot (ApplyNodeState's empty rule,
+// pinned per mode by TestApplyNodeState) and is not run here.
 func TestScenario_ChangeoverStart_WithAChangingPositionAlreadyEmpty(t *testing.T) {
 	t.Parallel()
 	for _, m := range []struct {
@@ -275,7 +277,6 @@ func TestScenario_ChangeoverStart_WithAChangingPositionAlreadyEmpty(t *testing.T
 		opts ksrOpts
 	}{
 		{"sequential, the standby position", ksrOpts{mode: protocol.SwapModeSequential, pair: true}},
-		{"single_robot", ksrOpts{mode: protocol.SwapModeSingleRobot}},
 		{"two_robot", ksrOpts{mode: protocol.SwapModeTwoRobot}},
 		{"two_robot_press_index", ksrOpts{mode: protocol.SwapModeTwoRobotPressIndex}},
 	} {
