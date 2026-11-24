@@ -387,6 +387,67 @@ func rawSyscallCases() []ruleCase {
 	}
 }
 
+func initReadCases() []ruleCase {
+	// probe 25 (p25): a package-level var reading a file before m.Run; on
+	// Windows it came out RUN,REUSE,REUSE where FAIL was wanted
+	// (probes-windows-1.log). Its var (line 8) fires.
+	tr := func(t *testing.T) *tree {
+		probe25 := probeSource(t, "p25")
+		return treeOf(
+			"shared/probe/a/a_test.go", probe25,
+			// probe 24: a TestMain read is the whole-tree key's, not this rule's.
+			"shared/probe/b/b_test.go", probeSource(t, "p24"),
+			// not built, or not in a module: not read.
+			"shared/probe/testdata/x_test.go", probe25,
+			"scripts/y_test.go", probe25,
+			// env reads (the Edge station-view golden's shape): keyed whole, allowed.
+			"shingo-edge/svc/golden_test.go", lines("package svc", "", "import (", "\t\"os\"", "\t\"testing\"", ")", "",
+				"var updateGolden = os.Getenv(\"UPDATE_GOLDEN\") != \"\" ||",
+				"\tfunc() bool {",
+				"\t\tfor _, a := range os.Args {",
+				"\t\t\tif a == \"-update\" {",
+				"\t\t\t\treturn true",
+				"\t\t\t}",
+				"\t\t}",
+				"\t\treturn false",
+				"\t}()",
+				"",
+				"var home, _ = os.LookupEnv(\"HOME\")",
+				"var env, path = os.Environ(), os.ExpandEnv(\"$PATH\")",
+				"",
+				"func TestG(t *testing.T) {}"),
+			// product code counts: its package vars run in every test binary that links it.
+			"shingo-core/cfg/cfg.go", lines("package cfg", "", "import (", "\t\"html/template\"", "\t\"io/ioutil\"",
+				"\txos \"os\"", "\t\"os/exec\"", "\t\"path/filepath\"", ")", "",
+				"var raw = func() []byte { b, _ := xos.ReadFile(\"cfg.yaml\"); return b }()", // 11: called on the spot
+				"var later = func() []byte { b, _ := xos.ReadFile(\"cfg.yaml\"); return b }", // stored for later
+				"var git = exec.Command(\"git\", \"rev-parse\", \"HEAD\")",                   // 13
+				"var files, _ = filepath.Glob(\"testdata/*.json\")",                          // 14
+				"var joined = filepath.Join(\"a\", \"b\")",                                   // reads nothing
+				"var page = template.Must(template.ParseFiles(\"page.html\"))",               // 16
+				"var old, _ = ioutil.ReadFile(\"x\")",                                        // 17
+				"var readFile = xos.ReadFile",                                                // a value, not a call
+				"var viaHelper = load()",                                                     // indirect: out of scope
+				"",
+				"func load() []byte { b, _ := xos.ReadFile(\"x\"); return b }",
+				"",
+				"func init() {",
+				"\tif _, err := xos.Stat(\"x\"); err != nil {",    // 24
+				"\t\tregister(func() { _, _ = xos.Open(\"y\") })", // runs when called, not at init
+				"\t}",
+				"\tfunc() { _ = xos.Remove(\"z\") }()", // 27
+				"}",
+				"",
+				"func register(func()) {}",
+				"",
+				"func Run() { local := xos.Getpid(); _ = local }"))
+	}
+	return []ruleCase{{"init-reads", "probe 25 and direct reads in init and var initializers fire; env reads, TestMain, helpers and stored literals do not",
+		tr, []string{"shared/probe/a/a_test.go:8", "shingo-core/cfg/cfg.go:11", "shingo-core/cfg/cfg.go:13",
+			"shingo-core/cfg/cfg.go:14", "shingo-core/cfg/cfg.go:16", "shingo-core/cfg/cfg.go:17",
+			"shingo-core/cfg/cfg.go:24", "shingo-core/cfg/cfg.go:27"}}}
+}
+
 // jsTree writes path, content pairs under a temp root, as node reads them from
 // disk. Without node it skips: the rule's own missing-node failure is pinned
 // by TestJSParse_MissingNodeFails.
@@ -474,7 +535,7 @@ func jsCases() []ruleCase {
 
 func allCases() []ruleCase {
 	var cs []ruleCase
-	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, jsCases, plantCases,
+	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, initReadCases, jsCases, plantCases,
 		rawSyscallCases, serialCases, sliceCases, swapCases, syntheticCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
