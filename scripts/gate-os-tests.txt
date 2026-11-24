@@ -1,0 +1,21 @@
+# gate-os-tests.txt — the tests whose verdict differs between the Windows side
+# and the Linux side BY DESIGN: the one list scripts/gate-testsets.sh excuses
+# when it compares the two sides' test sets for one tree (brief A 1.5). Any
+# other difference fails the comparison.
+#
+# One a line, space-separated:
+#   <package> <test> <side> <why, to the end of the line>
+#   package  the import path, as go test prints it
+#   test     the top-level test function; its subtests go with it
+#   side     linux | windows: where it runs and passes; on the other side it
+#            skips, or its file is not built there
+#
+# Each test named here must exist in the tree (scripts/check-gate-testsets.sh
+# fails the change that renames or deletes one, so its line goes in the same
+# edit). The first five were found by R31 (work/loc-census-2026-11-20/
+# REPORT-gate-fast.md, FAILED OR PARKED, "R31 gates from WSL's ext4").
+shingo/protocol/debuglog TestOpenUsesAppendMode linux skips on Windows: Windows caches the append handle's end of file apart from a truncate through another handle, so the copytruncate probe proves nothing there
+shingo/shared/scripts/gatetime TestProcs_ReadsThisProcessAndTheVM windows sys_windows_test.go (//go:build windows): the SYSTEM_PROCESS_INFORMATION offsets
+shingo/shared/scripts/gatetime TestStayAwake_HoldsSystemAndDisplay windows sys_windows_test.go (//go:build windows): the Windows power requirement a timed run holds
+shingo/shared/scripts/gatetime TestOtherMachine_SaysWhatItCannotRead linux sys_other_test.go (//go:build !windows): off Windows the stamps read unread; its Windows counterparts are the two above
+shingo/shared/scripts/gatetime/reuse TestFilterProgram_EveryJumpLandsOnAReturn linux trace_linux_amd64_test.go (//go:build linux && amd64): the seccomp shim's BPF program exists on Linux only
