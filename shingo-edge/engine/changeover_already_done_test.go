@@ -30,6 +30,15 @@ func TestApplyNodeState(t *testing.T) {
 	pairedTo := onePosConsume("N", "NEW")
 	pairedTo.PairedCoreNode = "N_B"
 	holdsNew := NodeState{Seat: SeatBin, Part: "NEW", PartKnown: true, Drain: NotDrained}
+	// The empty rule per swap mode: a changing position already empty is an Add
+	// in single_robot and two_robot alike.
+	inMode := func(m protocol.SwapMode) (from, to *processes.NodeClaim) {
+		from, to = onePosConsume("N", "OLD"), onePosConsume("N", "NEW")
+		from.SwapMode, to.SwapMode = m, m
+		return from, to
+	}
+	srFrom, srTo := inMode(protocol.SwapModeSingleRobot)
+	trFrom, trTo := inMode(protocol.SwapModeTwoRobot)
 
 	for _, tc := range []struct {
 		name      string
@@ -40,6 +49,8 @@ func TestApplyNodeState(t *testing.T) {
 		done      bool
 	}{
 		{"swap, no bin: just deliver", SituationSwap, from, to, NodeState{Seat: SeatEmpty}, SituationAdd, false},
+		{"single_robot swap, no bin: just deliver", SituationSwap, srFrom, srTo, NodeState{Seat: SeatEmpty}, SituationAdd, false},
+		{"two_robot swap, no bin: just deliver", SituationSwap, trFrom, trTo, NodeState{Seat: SeatEmpty}, SituationAdd, false},
 		{"swap, a bin of the old part", SituationSwap, from, to, NodeState{Seat: SeatBin, Part: "OLD", PartKnown: true}, SituationSwap, false},
 		{"swap, unknown seat", SituationSwap, from, to, NodeState{}, SituationSwap, false},
 		{"swap, holds the new part: done", SituationSwap, from, to, holdsNew, SituationUnchanged, true},
