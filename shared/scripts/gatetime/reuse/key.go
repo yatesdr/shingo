@@ -55,21 +55,13 @@ func (k Key) ID() string {
 //
 // The GATETIME_ and GATE_REUSE names are this wrapper's own switches.
 //
-// GATE_TIER is the gate's tier: removed so that dev, push and cert hand one
-// binary one environment (cert audits push's entries). One test reads it:
-// shingo-core/internal/schemadump's releaseCacheForTests (snapshot_test.go)
-// rebuilds every old release when it is cert. So under this wrapper (the
-// Linux side's dev, push and cert) that test never sees cert and takes its
-// release cache as push does; GitHub still rebuilds (GITHUB_ACTIONS). The
-// comment this replaces said no Go file read it: true at 20e38817, false since
-// 9eb45dd4. Left as it is and reported (brief A2, lane reuse): keying the tier
-// would part cert's keys from push's.
-//
 // perRunEnv is what the terminal and the gate set per session or per run
 // (R46, brief A2 step 4).
+//
+// GATE_TIER is not stripped: a test reads it (maskedEnv).
 func strippedEnv(name string) bool {
 	n := envName(name)
-	return n == "GATE_TIER" || n == "GATE_REUSE" || strings.HasPrefix(n, "GATE_REUSE_") || strings.HasPrefix(n, "GATETIME_") || perRunEnv[n]
+	return n == "GATE_REUSE" || strings.HasPrefix(n, "GATE_REUSE_") || strings.HasPrefix(n, "GATETIME_") || perRunEnv[n]
 }
 
 // perRunEnv are the variables two gates of one unchanged tree keyed apart on,
@@ -103,8 +95,9 @@ var perRunEnv = map[string]bool{
 	"GATE_TESTSET_DIR":  true,
 }
 
-// maskedEnv are variables the binary receives unchanged whose VALUES are run
-// scoped, so the key carries a fixed word for them instead. SHINGO_TEST_PG is a
+// maskedEnv are variables the binary receives unchanged whose VALUES the key
+// must not take in (run scoped, or the gate's tier), so the key carries a fixed
+// word for them instead; that one is there is keyed. SHINGO_TEST_PG is a
 // fresh port each gate run and the template name is per run; what the server
 // is (image, flags) is in the identity. TMPDIR, TMP and TEMP are set by the
 // wrapper to a directory made empty for this run. WSL_INTEROP is the interop
@@ -114,9 +107,24 @@ var perRunEnv = map[string]bool{
 // (2026-11-24, pinned by TestKeyEnv_MasksRunScopedValuesAndKeepsTheirNames).
 // That interop is there is keyed; which socket is not: a test that starts a
 // Windows program needs it.
+//
+// GATE_TIER is the gate's tier (the lead's ruling, brief A2, 2026-11-24). Its
+// one reader, shingo-core/internal/schemadump's releaseCacheForTests
+// (snapshot_test.go), rebuilds every old release when the tier is cert, so the
+// binary receives the real tier; one word for every tier keys dev, push and
+// cert alike, so cert's audit still finds push's entries. Only dev and push
+// serve, and what they serve may have been earned in another tier (cert's
+// audit stores its passes too). The reader is docker-tagged, so dev never runs
+// it, and it acts on cert alone, where it builds every release fresh and fails
+// when a cache entry differs: a cert pass holds for push's cached path. It was
+// stripped before, on "no Go file reads it" (true at 20e38817, false since
+// 9eb45dd4), which left a Linux-side cert reading the release cache that
+// certification must never read. Pinned by
+// TestKeyEnv_TheTierReachesTheBinaryAndNotTheKey.
 var maskedEnv = map[string]string{
 	"SHINGO_TEST_PG":          "<run-scoped address; the server is in the identity>",
 	"SHINGO_TEST_PG_TEMPLATE": "<run-scoped template name>",
+	"GATE_TIER":               "<the gate's tier: dev, push and cert key alike>",
 	"WSL_INTEROP":             "<this WSL session's interop socket>",
 	"TMPDIR":                  "<private temp dir>",
 	"TMP":                     "<private temp dir>",
