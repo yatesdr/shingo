@@ -195,7 +195,7 @@ func (x *exclusions) addPrefix(dir string) {
 }
 
 func (x *exclusions) has(p string) bool {
-	if x.exact[p] {
+	if x.exact[p] || (runtime.GOOS == "windows" && winNullDevice(p)) {
 		return true
 	}
 	for _, pre := range x.prefixes {
@@ -204,6 +204,23 @@ func (x *exclusions) has(p string) bool {
 		}
 	}
 	return false
+}
+
+// winNullDevice is whether Win32 opens p as the null device: a final element
+// NUL, in any case, in any directory. A child started with a nil Stdin or
+// Stdout makes package os open "NUL", which the test log parser resolves
+// against the cwd, so this is <cwd>\NUL far more often than the bare name.
+// Narrower than Win32 on purpose (pin:
+// TestExclusions_TheNullDeviceIsNoInputInAnyDirectory): NUL.txt (a file on
+// Windows 11), "NUL " and "NUL:" stay inputs, and a `\\?\` path skips Win32's
+// device names, so it can be a real file. A device left out is stated as one
+// and the run is refused, never stored; a file wrongly left out would be a
+// false green.
+func winNullDevice(p string) bool {
+	if strings.HasPrefix(p, `\\?\`) {
+		return false
+	}
+	return strings.EqualFold(p[strings.LastIndexAny(p, `\/:`)+1:], "NUL")
 }
 
 // pathSet gathers touched paths, keeping each one's strongest op.
