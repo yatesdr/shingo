@@ -339,7 +339,8 @@ mirror_tree() {
 # $MIRROR_W/store-checked, read and written with builtins.
 mirror_store_prune() {
   local stamp="$MIRROR_W/store-checked" last="" k v kb=0 after=0 max="${GATE_MIRROR_STORE_MB:-64}" keep=()
-  read -r last <"$stamp" 2>/dev/null
+  # (2> first: a missing stamp, a new store's, is no error to print.)
+  read -r last 2>/dev/null <"$stamp"
   if [[ "$last" =~ ^[0-9]+$ ]] && [ "$last" -le "$EPOCHSECONDS" ] && [ $((EPOCHSECONDS - last)) -lt 3600 ]; then
     return 0
   fi
@@ -695,7 +696,7 @@ mirror_orphans() {
     d="${rec%/.git/gate-mirror}"
     [ "$d" = "$keep" ] && continue
     src=""
-    read -r src <"$rec" 2>/dev/null
+    read -r src 2>/dev/null <"$rec"
     [ -n "$src" ] || continue
     l="$(_mirror_lpath "$src")"
     case "$l" in /*) ;; *) continue ;; esac

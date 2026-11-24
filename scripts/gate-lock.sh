@@ -157,12 +157,13 @@ _gate_lock_status_joined() {
   for f in "$d"/joined.*; do
     [ -f "$f" ] || continue
     pid="" wt="" steps="" started="" token="" src=""
-    while IFS='=' read -r k v; do
-      case "$k" in
-        pid) pid="$v" ;; worktree) wt="$v" ;; steps) steps="$v" ;;
-        started) started="$v" ;; token) token="$v" ;; mirror_of) src="$v" ;;
-      esac
-    done <"$f"
+    # (Its run may release it between the glob and here.)
+    { while IFS='=' read -r k v; do
+        case "$k" in
+          pid) pid="$v" ;; worktree) wt="$v" ;; steps) steps="$v" ;;
+          started) started="$v" ;; token) token="$v" ;; mirror_of) src="$v" ;;
+        esac
+      done <"$f"; } 2>/dev/null
     [ "$token" = "$tok" ] || continue
     age="$(_gate_lock_age "$d" "$f")"
     if [ -n "$src" ]; then
@@ -209,7 +210,7 @@ _gate_lock_join() {
   [ -z "$GATE_LOCK_JOINED" ] || return 0
   rec="$d/joined.$$.$RANDOM"
   TZ=UTC printf -v started '%(%Y-%m-%dT%H:%M:%SZ)T' -1
-  [ -n "${GATE_IN_MIRROR:-}" ] && read -r src <"${ROOT:-.}/.git/gate-mirror" 2>/dev/null
+  [ -n "${GATE_IN_MIRROR:-}" ] && read -r src 2>/dev/null <"${ROOT:-.}/.git/gate-mirror"
   {
     printf 'pid=%s\nhost=%s\nworktree=%s\nsteps=%s\nstarted=%s\ntoken=%s\n' \
       "$$" "${HOSTNAME:-}" "${ROOT:-$PWD}" "$2" "$started" "$GATE_LOCK_HELD"
