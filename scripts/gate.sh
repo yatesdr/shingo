@@ -1766,11 +1766,22 @@ fan_join() {
 fan_print() { [ -e "$ROOT/.gate/fan-$1.out" ] && cat "$ROOT/.gate/fan-$1.out"; return 0; }
 fan_ok() { [ "$(cat "$ROOT/.gate/fan-$1.rc" 2>/dev/null)" = 0 ]; }
 
-# cert_side — the cert tier's race then sim, one after the other beside the
-# docker step as `full` always ran them, each with its own verdict file.
+# cert_side — the cert tier's race and sim, beside the docker step and beside
+# each other, each with its own verdict file and its own held output, printed
+# race first. They ran one after the other until 2026-11-23 (178.3 + 83.0 =
+# 261.3 s in the baseline: cert's floor once the docker step fell, docket D22);
+# both run under WSL, race against its own Postgres (RACE_PG), sim against none.
+# A TERM to this side job takes both down, so an interrupted cert leaves no
+# WSL test running.
 cert_side() {
-  timed step_race; echo $? >"$ROOT/.gate/fan-race.rc"
-  timed step_sim;  echo $? >"$ROOT/.gate/fan-sim.rc"
+  local race sim
+  ( timed step_race >"$ROOT/.gate/side-race.out" 2>&1; echo $? >"$ROOT/.gate/fan-race.rc" ) &
+  race=$!
+  ( timed step_sim >"$ROOT/.gate/side-sim.out" 2>&1; echo $? >"$ROOT/.gate/fan-sim.rc" ) &
+  sim=$!
+  trap 'kill "$race" "$sim" 2>/dev/null' TERM INT
+  wait "$race" "$sim"
+  cat "$ROOT/.gate/side-race.out" "$ROOT/.gate/side-sim.out" 2>/dev/null
 }
 
 gate_sentence() {
