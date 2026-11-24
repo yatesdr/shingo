@@ -204,7 +204,7 @@ mirror_route() {
   if [ "${GATE_SIDE:-}" = windows ]; then
     gate_side_note="on the Windows side (GATE_SIDE=windows); tree ${MS_TREE:0:12}"
     # A gate a guard starts inside this one stays on this side too.
-    export GATE_SIDE
+    export GATE_SIDE GATE_TREE="$MS_TREE"
     return
   fi
   if [ "${GATE_LINUX_EXEC:-}" != local ] && ! command -v wsl.exe >/dev/null 2>&1; then
@@ -263,7 +263,7 @@ mirror_fallback() {
   echo "gate: on the Windows side — the Linux side is not set up ($1)" >&2
   gate_side_note="on the Windows side, as the Linux side is not set up ($1); tree ${MS_TREE:0:12}"
   # A gate a guard starts inside this one stays on this side, without asking.
-  export GATE_SIDE=windows
+  export GATE_SIDE=windows GATE_TREE="$MS_TREE"
 }
 
 # mirror_tree — the worktree's tree id, its objects in the private store:
@@ -377,13 +377,16 @@ mirror_write_spec() {
     printf 'MS_LOCKDIR=%q\nMS_TIMINGDIR=%q\nMS_BUNDLE=%q\n' \
       "$(_mirror_wpath "$(gate_lock_dir)")" "$(_mirror_wpath "$(gate_timing_dir)")" "$MS_BUNDLE"
     printf 'MS_ARGS=(%s)\n' "$( [ "$#" -gt 0 ] && printf '%q ' "$@")"
+    # The Linux side's test-set records land beside this side's (gate-testsets.sh).
+    [ "${GATE_TESTSET:-}" = on ] && [ -z "${GATE_TESTSET_DIR:-}" ] \
+      && printf 'export GATE_TESTSET_DIR=%q\n' "$(_mirror_wpath "$ROOT/.gate/testsets")"
     for v in $(compgen -e | grep -E '^(GATE|SHINGO)_' | LC_ALL=C sort); do
       case "$v" in
         GATE_SIDE|GATE_LINUX_EXEC|GATE_IN_MIRROR|GATE_MIRROR_TREE|GATE_MIRROR_SOURCE|GATE_LOCK_DIR|GATE_TIMING_DIR) continue ;;
       esac
       val="${!v}"
       case "$v" in
-        GATE_STEPS_LOG|GATE_DOCKER_ORDER_LOG|GATE_MANIFEST_DIR|GATE_TEST_LOG_DIR)
+        GATE_STEPS_LOG|GATE_DOCKER_ORDER_LOG|GATE_MANIFEST_DIR|GATE_TEST_LOG_DIR|GATE_TESTSET_DIR)
           [ -n "$val" ] && val="$(_mirror_wpath "$val")" ;;
       esac
       printf 'export %s=%q\n' "$v" "$val"
@@ -419,8 +422,10 @@ mirror_inner() {
   got="${got#* }"
   if [ -z "$want" ]; then
     gate_side_note="on the Linux side, started by hand in the mirror of ${src:-?} (synced by no caller this run); tree ${got:0:12}"
+    GATE_TREE="$got"
     return
   fi
+  GATE_TREE="$want"
   if [ "$got" != "$want" ]; then
     echo "gate: FAILED — the mirror's tree is ${got:-unreadable}, the worktree's is $want: the mirror is not the working tree; nothing ran"
     [ -n "$got" ] && git diff-tree -r --name-status "$want" "$got" 2>/dev/null | head -20 | sed 's/^/    /'
@@ -544,7 +549,7 @@ mirror_linux_run() {
   git update-ref refs/gate-mirror/synced "$MS_CONTENT" || return 0
   # 9. The gate.
   local v
-  for v in GATE_STEPS_LOG GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_TEST_LOG_DIR; do
+  for v in GATE_STEPS_LOG GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_TEST_LOG_DIR GATE_TESTSET_DIR; do
     [ -n "${!v:-}" ] && export "$v=$(_mirror_lpath "${!v}")"
   done
   export GATE_MIRROR_TREE="$MS_TREE" GATE_MIRROR_SOURCE="$MS_SOURCE"

@@ -804,7 +804,7 @@ step_test() {
     # -tags lockcheck: every lock goes through protocol/lockcheck's guard, which fails a
     # re-entry or a backwards take loudly (LOCKS.md). The docker and race steps carry it too.
     # shellcheck disable=SC2086 # count is one flag or none
-    ( cd "$ROOT/$m" && go test -tags lockcheck $count "${GATE_EXEC_ARGS[@]}" ./... >"$logdir/test-$m.log" 2>&1
+    ( cd "$ROOT/$m" && gotest_to "$logdir/test-$m.log" lockcheck -tags lockcheck $count "${GATE_EXEC_ARGS[@]}" ./...
       echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
@@ -974,6 +974,9 @@ native_go_check() {
 sim_cmd() {
   local r="$1" plan="$2" mode="${3:-race}" m pkgs re s="rc=0;" flags="CGO_ENABLED=1 go test -race"
   [ "$mode" = plain ] && flags="go test"
+  # GATE_TESTSET=on: the plain run's verdicts are recorded (step_sim pipes it
+  # through gatetime testset; scripts/gate-testsets.sh).
+  [ "$mode" = plain ] && [ -n "${TESTSET_DIR_RUN:-}" ] && flags="go test -json"
   # plain runs natively, so under the record-only -exec wrapper when it is on
   # (scripts/gate-timing.sh); the -race runs cross into WSL and stay unwrapped.
   if [ "$mode" = plain ] && [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ]; then
@@ -1004,7 +1007,12 @@ step_sim() {
   ntests="$(printf '%s\n' "$plan" | cut -f3 | tr -cd '|\n' | awk '{ n += length($0) + 1 } END { print n }')"
   npkgs="$(printf '%s\n' "$plan" | cut -f2 | wc -w | tr -d ' ')"
 
-  if [ "$mode" = plain ]; then
+  if [ "$mode" = plain ] && [ -n "${TESTSET_DIR_RUN:-}" ]; then
+    ( eval "$(sim_cmd "$ROOT" "$plan" plain)" 2>&1 \
+        | "$GATETIME_BIN" testset -tags sim -record "$TESTSET_DIR_RUN/sim.tsv" >"$logdir/sim.log"
+      exit "${PIPESTATUS[0]}" ); rrc=$?
+    how="no -race: CI's sim job races them"
+  elif [ "$mode" = plain ]; then
     ( eval "$(sim_cmd "$ROOT" "$plan" plain)" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="no -race: CI's sim job races them"
   elif [ -n "${WSL_DISTRO_NAME:-}" ]; then
@@ -1500,7 +1508,7 @@ step_docker() {
     [ -n "${GATE_SEL_DIR:-}" ] && echo "$m:$p" >>"$GATE_SEL_DIR/docker.p"
     rm -f "$logdir/docker-$m.rc"
     # shellcheck disable=SC2086 # order is a package list
-    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${GATE_EXEC_ARGS[@]}" $order >"$logdir/docker-$m.log" 2>&1
+    ( cd "$ROOT/$m" && gotest_to "$logdir/docker-$m.log" docker,lockcheck -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" "${GATE_EXEC_ARGS[@]}" $order
       echo $? >"$logdir/docker-$m.rc" ) &
     pids="$pids $!"
   done
@@ -1659,6 +1667,9 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # mirror_prelock / mirror_route / mirror_on_exit: which side a heavy mode runs
 # on, and the mirror on WSL's ext4 that the Linux side runs it in.
 . "$ROOT/scripts/gate-mirror.sh"
+# gotest_to / testset_setup / testset_finish: with GATE_TESTSET=on, the test
+# steps' verdicts recorded and held against the other side's for this tree.
+. "$ROOT/scripts/gate-testsets.sh"
 # FAN_PIDS are the steps `all` and `full` run at once (fan): an interrupted
 # gate takes them down too, rather than leaving them running against a tree
 # nobody is gating.
@@ -1756,7 +1767,9 @@ case "${1:-all}" in
     gatetime_prepare "${1:-all}"
     gatetime_exec_prepare "${1:-all}" || exit 1
     # Reuse rides on that wrapper and its identity; off unless GATE_REUSE=on.
-    reuse_setup ;;
+    reuse_setup
+    # Test-set records, off unless GATE_TESTSET=on (scripts/gate-testsets.sh).
+    testset_setup "${1:-all}" || exit 1 ;;
 esac
 
 # _secs <from> — seconds since an $EPOCHREALTIME reading, to 0.1s.
@@ -2020,6 +2033,10 @@ case "${1:-all}" in
     ;;
   *) usage ;;
 esac
+
+# GATE_TESTSET=on: this side's verdicts recorded for this tree, and held
+# against the other side's when they are there (scripts/gate-testsets.sh).
+testset_finish || rc=1
 
 # The run's wall, marked when it failed: a red run is not a measurement. fmt
 # is the pre-push hook's step and is left out. The selection line first, then

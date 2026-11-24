@@ -99,15 +99,16 @@ GATE_SEL_DIR=""
 GATETIME_OWN=""
 
 # gatetime_prepare <mode> — once per heavy run, before any step. Builds
-# gatetime when the steps log takes stamps or the mode's tests run under the
-# wrapper. A build that fails costs the stamps (they read `unread`), and a
-# mode whose tests need the wrapper fails in gatetime_exec_prepare; lint and
-# modbuild report the compile error.
+# gatetime when the steps log takes stamps, the mode's tests run under the
+# wrapper, or GATE_TESTSET=on records through it (gate-testsets.sh). A build
+# that fails costs the stamps (they read `unread`), and a mode whose tests need
+# the wrapper fails in gatetime_exec_prepare; lint and modbuild report the
+# compile error.
 gatetime_prepare() {
   GATE_SEL_DIR="$ROOT/.gate/selection.$$"
   mkdir -p "$GATE_SEL_DIR" && rm -f "$GATE_SEL_DIR/docker.p" "$GATE_SEL_DIR/scripts.ran"
   : >"$GATE_SEL_DIR/start"
-  [ -n "$STEPS_LOG" ] || gate_exec_wanted "${1:-}" || return 0
+  [ -n "$STEPS_LOG" ] || gate_exec_wanted "${1:-}" || [ "${GATE_TESTSET:-}" = on ] || return 0
   if [ -n "$GATETIME_BIN" ] && [ -x "$GATETIME_BIN" ]; then return 0; fi
   # binaries a killed gate left behind
   find "$ROOT/.gate" -maxdepth 1 -name 'gatetime-[0-9]*' -mmin +240 -exec rm -f {} + 2>/dev/null

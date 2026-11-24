@@ -1,19 +1,33 @@
 # shellcheck shell=bash
 #
 # gate-testsets.sh — the guard that the Windows side and the Linux side of the
-# gate run the same tests to the same verdicts for one tree, but for the tests
-# named, each with its reason, in scripts/gate-os-tests.txt (brief A 1.5; R31
-# fired on exactly this: one test that failed on WSL only, beside five
-# OS-conditional ones).
+# gate (scripts/gate-mirror.sh) run the same tests to the same verdicts for one
+# tree, but for the tests named, each with its reason, in
+# scripts/gate-os-tests.txt (brief A 1.5; R31 fired on exactly this: one test
+# that failed on WSL only, beside five OS-conditional ones).
 #
-# A set is what `gatetime testset` records (shared/scripts/gatetime/testset.go),
-# one verdict a line:
+# OPT IN, because it costs. GATE_TESTSET=on runs the gate's native Go test steps
+# (unit, docker, and push's sim without -race) through `go test -json` and
+# `gatetime testset` (shared/scripts/gatetime/testset.go), which writes the
+# same text log the steps always wrote and records each verdict:
 #     <tags> TAB <package> TAB <test> TAB <pass|fail|skip>
-# `bash scripts/gate-testsets.sh compare WIN LINUX` compares two of them.
+# The run's verdicts go to
+#     $GATE_TESTSET_DIR/<tree>.<mode>.<side>.tsv   (default .gate/testsets;
+#     the Linux side writes into the Windows worktree's, through /mnt/c)
+# and when the other side's file for the same tree and mode is there, the two
+# are compared: a difference this list does not name fails the gate. So
+#     GATE_TESTSET=on GATE_SIDE=windows bash scripts/gate.sh full --unscoped
+#     GATE_TESTSET=on bash scripts/gate.sh full --unscoped
+# compare cert's sets; `bash scripts/gate-testsets.sh compare WIN LINUX` compares
+# two files by hand. -json makes every test verbose, so a run with it on is not
+# a timing. Race, and cert's -race sim, run in WSL on both sides (Linux both
+# times), so they are not recorded: there is no second OS to compare.
 #
 # WHAT A NAMED TEST MAY DO. It passes on the side its line names and skips, or
 # is not built, on the other; its subtests go with it. Failing anywhere, or
 # differing the other way round, is a difference like any other.
+
+TESTSET_DIR_RUN=""   # this run's per-step records, while GATE_TESTSET=on
 
 # testsets_compare WINDOWS_SET LINUX_SET [LIST] — prints the comparison; 0 when
 # every difference is one LIST names (default scripts/gate-os-tests.txt).
@@ -61,6 +75,60 @@ testsets_compare() {
     return 1
   fi
   echo "ok   testsets (${total:-0} verdicts compared; they differ only in the ${nused:-0} tests named in $(basename "$list"))"
+}
+
+# testset_setup MODE — at a run's start: under GATE_TESTSET=on, a fresh record
+# directory for this run's test steps. Needs gatetime (gate-timing.sh builds it
+# when GATE_TESTSET=on).
+testset_setup() {
+  TESTSET_DIR_RUN=""
+  [ "${GATE_TESTSET:-}" = on ] || return 0
+  # This run records; a gate a guard starts inside it does not.
+  export -n GATE_TESTSET
+  case "$1" in test|docker|full|all) ;; *) return 0 ;; esac
+  if [ -z "${GATETIME_BIN:-}" ]; then
+    echo "gate: FAILED — GATE_TESTSET=on records through shared/scripts/gatetime, which did not build"
+    return 1
+  fi
+  TESTSET_DIR_RUN="$ROOT/.gate/testset.$$"
+  rm -rf "$TESTSET_DIR_RUN" && mkdir -p "$TESTSET_DIR_RUN"
+}
+
+# gotest_to LOG TAGS ARGS... — `go test ARGS` with its output in LOG, as every
+# test step ran it; under GATE_TESTSET=on through -json and `gatetime testset`,
+# which writes the same text to LOG and records each verdict (TAGS names the
+# -tags in the record). The exit code is go test's.
+gotest_to() {
+  local log="$1" tags="$2"
+  shift 2
+  if [ -z "$TESTSET_DIR_RUN" ]; then
+    go test "$@" >"$log" 2>&1
+    return
+  fi
+  go test -json "$@" 2>&1 \
+    | "$GATETIME_BIN" testset -tags "$tags" -record "$TESTSET_DIR_RUN/$(basename "$log" .log).tsv" >"$log"
+  return "${PIPESTATUS[0]}"
+}
+
+# testset_finish — at a run's end: this side's set into GATE_TESTSET_DIR, and
+# the comparison with the other side's when it is there. 1 on a difference.
+testset_finish() {
+  [ -n "$TESTSET_DIR_RUN" ] || return 0
+  local dir="${GATE_TESTSET_DIR:-$ROOT/.gate/testsets}" tree side other key f o
+  tree="${GATE_TREE:-}"
+  [ -n "$tree" ] || { tree="$(gate_tree_id "$ROOT/.gate/testset.index")" && tree="${tree#* }"; }
+  if _mirror_on_windows; then side=windows other=linux; else side=linux other=windows; fi
+  key="$GATE_MODE${gate_scope:+-${gate_scope// /,}}"
+  mkdir -p "$dir" || return 1
+  f="$dir/${tree:0:12}.$key.$side.tsv" o="$dir/${tree:0:12}.$key.$other.tsv"
+  cat "$TESTSET_DIR_RUN"/*.tsv 2>/dev/null | LC_ALL=C sort -u >"$f"
+  rm -rf "$TESTSET_DIR_RUN"
+  if [ ! -s "$o" ]; then
+    echo "testsets: recorded $(wc -l <"$f" | tr -d ' ') verdicts for tree ${tree:0:12} ($key) on the $side side; the $other side's are not recorded yet"
+    return 0
+  fi
+  if [ "$side" = windows ]; then testsets_compare "$f" "$o"; else testsets_compare "$o" "$f"; fi || return 1
+  note_step "test sets (the same on both sides but for the tests named in scripts/gate-os-tests.txt)"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
