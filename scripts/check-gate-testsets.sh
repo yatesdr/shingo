@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/gate-testsets.sh scripts/gate-os-tests.txt scripts/check-gate-testsets.sh
+# side: linux
 # check-gate-testsets.sh — pins testsets_compare (scripts/gate-testsets.sh), the
 # guard that the Windows side and the Linux side of the gate give one tree's
 # tests the same verdicts but for the tests scripts/gate-os-tests.txt names.

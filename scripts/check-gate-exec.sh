@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/gate.sh scripts/gate-timing.sh scripts/check-gate-exec.sh shared/scripts/gatetime/*
+# side: linux
 # check-gate-exec.sh — pins the record-only -exec wrapper's wiring into
 # scripts/gate.sh (scripts/gate-timing.sh) and the gate run's identity.
 #

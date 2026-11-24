@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/gate.sh scripts/check-docker-order.sh
+# side: linux
 # check-docker-order.sh — pins docker_order in scripts/gate.sh: which order a
 # docker module's packages are handed to `go test -p`, longest first, from the
 # steps log (`gate.sh order` prints it). The order is a speedup, never the list

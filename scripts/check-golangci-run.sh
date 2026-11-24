@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/golangci-run.sh scripts/check-golangci-run.sh scripts/gate.sh scripts/check-test-error-discard-ratchet.sh
+# side: linux
 # check-golangci-run.sh — pins scripts/golangci-run.sh (golangci_run, the
 # bounded retry on golangci-lint's lock handoff) against a fake binary, and its
 # wiring into the two scripts that run golangci-lint.

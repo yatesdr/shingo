@@ -548,10 +548,24 @@ module_uncached() {
   echo "the diff has non-Go files"
 }
 
-# guard_header <file> <key> — a guard's `# key: value` header line (first 30
-# lines), or empty.
+# guard_header <file> <key> [var] — a guard's `# key: value` header line (the
+# first in its first 30 lines), or empty; into var when one is named, else
+# printed. Builtins only, and no fork in the var form: step_scripts reads three
+# keys of every guard, and on the loaded Windows host each process costs
+# 0.1-0.7 s (this was sed | head | tr in a command substitution, per key).
 guard_header() {
-  sed -n "1,30s/^# $2:[[:space:]]*//p" "$1" | head -1 | tr -d '\r'
+  local _gh_l _gh_v="" _gh_lines=()
+  mapfile -t -n 30 _gh_lines 2>/dev/null <"$1"
+  for _gh_l in "${_gh_lines[@]}"; do
+    case "$_gh_l" in
+      "# $2:"*)
+        _gh_v="${_gh_l#"# $2:"}"
+        _gh_v="${_gh_v#"${_gh_v%%[![:space:]]*}"}"
+        _gh_v="${_gh_v//$'\r'/}"
+        break ;;
+    esac
+  done
+  if [ -n "${3:-}" ]; then printf -v "$3" '%s' "$_gh_v"; else printf '%s\n' "$_gh_v"; fi
 }
 
 # THE GREP-BASED GUARDS, WHICH RAN ONLY IN CI UNTIL 2026-08-19.
@@ -591,18 +605,36 @@ guard_header() {
 #   # tier: alone  runs only in `gate.sh scripts` (CI's guards job), never in a
 #                  tier: it times tests (check-test-cost.sh), and a tier's own
 #                  build and test steps beside it are the load it must not time
-# The step writes its account to .gate/scripts.summary for the sentence.
+#
+# AND BY WHERE THEY RUN (R49, brief A2 step 5):
+#   # side: linux  a pin of the gate's own tooling (the scripts it names in
+#                  `# inputs:`): the Linux side and GitHub (CI's guards job,
+#                  ubuntu) run it in every tier; the Windows side (a gate whose
+#                  steps run on Git Bash: GATE_SIDE=windows, or the fallback,
+#                  both of which export it) skips it, and the sentence names the
+#                  skip. These pins drive real gates in fixtures, and on the
+#                  loaded Windows host each process costs 0.1-0.7 s:
+#                  check-gate-mirror.sh alone took about 227 s there against 5-7
+#                  s on Linux, and a branch that edits the gate scripts took the
+#                  Windows guards step to 395-463 s (REPORT-brief-A.md).
+# The step writes its account to .gate/scripts.summary for the sentence, and
+# the side's skip alone to .gate/scripts.side (scripts_side_note).
 step_scripts() {
   local f n s failed=0 ran=0 total=0 logdir="$ROOT/.gate/scripts" pids="" names=""
-  local tier="${GATE_TIER:-step}" gtier inputs skipped_inputs="" skipped_push="" skipped_alone=""
+  local tier="${GATE_TIER:-step}" gtier inputs gside skipped_inputs="" skipped_push="" skipped_alone="" skipped_side=""
   mkdir -p "$logdir" || { echo "FAIL scripts — cannot create $logdir"; return 1; }
   for f in "$ROOT"/scripts/check-*.sh; do
     [ -e "$f" ] || continue
     total=$((total + 1))
     n="$(basename "$f" .sh)"
     s="${n#check-}"
-    gtier="$(guard_header "$f" tier | cut -d' ' -f1)"
-    inputs="$(guard_header "$f" inputs)"
+    guard_header "$f" tier gtier
+    gtier="${gtier%% *}"
+    guard_header "$f" inputs inputs
+    if [ "${GATE_SIDE:-}" = windows ]; then
+      guard_header "$f" side gside
+      if [ "$gside" = linux ]; then skipped_side="${skipped_side:+$skipped_side, }$s"; continue; fi
+    fi
     if [ "$gtier" = alone ] && [ "$tier" != step ]; then
       skipped_alone="${skipped_alone:+$skipped_alone, }$s"; continue
     fi
@@ -627,7 +659,9 @@ step_scripts() {
   [ -n "$skipped_inputs" ] && s="$s; skipped: $skipped_inputs — inputs unchanged"
   [ -n "$skipped_push" ] && s="$s; push-only: $skipped_push"
   [ -n "$skipped_alone" ] && s="$s; alone, in \`gate.sh scripts\`: $skipped_alone"
+  [ -n "$skipped_side" ] && s="$s; Linux side and GitHub only: $skipped_side"
   echo "$s" >"$ROOT/.gate/scripts.summary"
+  echo "${skipped_side:+Linux side and GitHub only: $skipped_side}" >"$ROOT/.gate/scripts.side"
   # The guards that ran, for the steps log's selection line (gate-timing.sh).
   # shellcheck disable=SC2086 # names is a list of guard names
   [ -n "${GATE_SEL_DIR:-}" ] && printf '%s\n' $names >"$GATE_SEL_DIR/scripts.ran"
@@ -645,6 +679,16 @@ step_scripts() {
   done
   [ "$failed" -eq 0 ] && echo "ok   scripts ($s)" || echo "FAIL scripts"
   return $failed
+}
+
+# scripts_side_note — " (Linux side and GitHub only: ...)", the gate-tooling
+# pins this side's step_scripts skipped (R49), for the sentence of a run whose
+# scripts entry carries no summary (`gate.sh scripts`, cert); or nothing.
+scripts_side_note() {
+  local l=""
+  read -r l 2>/dev/null <"$ROOT/.gate/scripts.side"
+  [ -n "$l" ] && printf ' (%s)' "$l"
+  return 0
 }
 
 
@@ -2040,7 +2084,7 @@ case "${1:-all}" in
   vet)   if timed step_vet;  then note_step vet;  else fail_step vet; fi ;;
   modbuild) if timed step_modbuild; then note_step modbuild; else fail_step modbuild; fi ;;
   lint)  if timed step_lint; then note_step lint; else fail_step lint; fi ;;
-  scripts) if timed step_scripts; then note_step scripts; else fail_step scripts; fi ;;
+  scripts) if timed step_scripts; then note_step "scripts$(scripts_side_note)"; else fail_step scripts; fi ;;
   test)  if timed step_test; then note_step unit; else fail_step unit; fi ;;
   race)  if timed step_race; then note_step race; else fail_step race; fi ;;
   sim)   if timed step_sim;  then note_step sim;  else fail_step sim; fi ;;
@@ -2119,7 +2163,7 @@ case "${1:-all}" in
     if fan_ok lint; then note_step lint; else fail_step lint; fi
     if fan_ok scripts; then
       if [ "$GATE_TIER" = push ]; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"
-      else note_step scripts; fi
+      else note_step "scripts$(scripts_side_note)"; fi
     else fail_step scripts; fi
     if [ "$GATE_TIER" = push ]; then
       if fan_ok simvet; then note_step "sim compile"; else fail_step simvet; fi

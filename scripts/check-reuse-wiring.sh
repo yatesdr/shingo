@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/gate-reuse.sh scripts/check-reuse-wiring.sh
+# side: linux
 # check-reuse-wiring.sh — the gate's reuse switch (scripts/gate-reuse.sh), driven
 # with a fake gatetime: what each tier exports on each side (on by default in a
 # WSL mirror, never on the Windows side, off elsewhere unless asked: R38), that

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/gate*.sh scripts/golangci-run.sh scripts/check-gate-mirror.sh
+# side: linux
 # check-gate-mirror.sh — pins scripts/gate-mirror.sh, the gate's Linux side:
 # a worktree's gate runs in a mirror that IS its working tree, under one lock.
 #

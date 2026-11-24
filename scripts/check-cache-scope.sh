@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: scripts/gate.sh scripts/check-cache-scope.sh
+# side: linux
 # check-cache-scope.sh — pins which modules the dev tier runs -count=1 for a
 # given diff (module_uncached in scripts/gate.sh, through `gate.sh cachescope
 # -`), and so which it lets Go's test cache serve. Each row is one diff of one

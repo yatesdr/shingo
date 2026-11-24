@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tier: dev
 # inputs: .github/workflows/*.yml */go.mod scripts/gate.sh scripts/check-gate-toolchain.sh scripts/gate-linux-setup.sh
+# side: linux
 # check-gate-toolchain.sh — one Go toolchain for CI and the gate's WSL steps.
 #
 # Two toolchains remain in a local gate: the native steps run the host's go,
