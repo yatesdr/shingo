@@ -726,9 +726,6 @@ func (c *w6Cell) anyStation() bool {
 // engine.
 func (c *w6Cell) restart(label string) {
 	c.t.Helper()
-	if c.push != nil {
-		c.push.Stop()
-	}
 	c.sink.Stop()
 	c.edge.Engine.Stop()
 	v := c.plc.state().Identity
@@ -772,7 +769,7 @@ func (c *w6Cell) wireBus() {
 		harness.EdgeSide{EdgeStore: c.edge.DB, EdgeIngestor: c.edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: in},
 	)
-	c.push = harness.StartBinsPush(t, coreDB, c.edge.Engine, 20*time.Millisecond)
+	c.push = harness.StartBinsPush(t, coreDB, c.edge.Engine)
 	c.bus.SetBinsPush(c.push)
 	c.push.AnswerAsks(c.askKinds)
 	c.registerEdge()

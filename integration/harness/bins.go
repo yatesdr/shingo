@@ -21,11 +21,21 @@ import (
 // takes the heartbeat ack that confirms it, so the Edge's decisions read a
 // table they may decide from (engine BinsActable).
 //
-// WHEN: on every Bus pump (Bus.SetBinsPush), after the messages are delivered,
-// as Core's push follows the change that moved a bin; and on a short ticker,
-// for what a scenario writes to Core directly. The Edge's decisions read the
-// table, never Core, so a scenario that changes Core and acts on the Edge at
-// once acts on the table as a plant Edge would, up to one tick behind.
+// WHEN: on change only. At the start (StartBinsPush); at the end of every Bus
+// pump (Bus.SetBinsPush: PumpAll and PumpEdgeOutbox), after the messages are
+// delivered, as Core's push follows the change that moved a bin; on a
+// scenario's explicit Bus.PushBins; and with AnswerAsks. Nothing pushes in
+// between. The Edge's decisions read the table, never Core, so they read the
+// last push, as a plant Edge does: a scenario that writes Core's bins directly
+// (a fixture write, a bin moved by hand) and needs the Edge to decide from that
+// write calls Bus.PushBins, or pumps, first.
+//
+// A 20 ms ticker pushed as well until 2026-11-24, and this comment said it
+// covered what a scenario writes to Core directly. It was 80% of all pushes
+// and changed no order the Edge made (R26): with it off over 5 runs of every
+// test that starts a push (228 cells a run, the T19 probe, 2026-11-23) no
+// verdict moved and no scenario that writes Core directly failed for want of
+// it.
 type BinsPush struct {
 	t    *testing.T
 	core *coremessaging.CoreDataService
@@ -34,19 +44,12 @@ type BinsPush struct {
 	// asks is the ask kinds the push's ack says Core answers (AnswerAsks):
 	// none until a scenario wires Core's asks (the scenarios' registerAsks).
 	asks []string
-	// stop ends the ticker, once (Stop, and the test's cleanup).
-	stop     func()
-	stopOnce sync.Once
 	// rec is the cell's scenario recorder (RecordEnv), nil when it is off;
 	// last is the digest of the snapshot the push before applied, which says
 	// whether a push changed the Edge's copy.
 	rec  *Recorder
 	last string
 }
-
-// Stop ends the push's ticker now: a scenario that restarts its Edge stops the
-// push to the Edge it stopped. The test's cleanup stops it otherwise.
-func (p *BinsPush) Stop() { p.stopOnce.Do(p.stop) }
 
 // AnswerAsks makes every later ack say Core answers kinds, as a Core whose
 // ask server answers them does, and acks once now.
@@ -57,30 +60,13 @@ func (p *BinsPush) AnswerAsks(kinds []string) {
 	p.push("answer-asks")
 }
 
-// StartBinsPush pushes coreDB's bins to edge now and every interval until the
-// test ends.
-func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine, interval time.Duration) *BinsPush {
+// StartBinsPush pushes coreDB's bins to edge now and returns the push, for a
+// Bus to push after each pump (Bus.SetBinsPush). It starts no goroutine.
+func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine) *BinsPush {
 	t.Helper()
 	p := &BinsPush{t: t, core: coremessaging.NewCoreDataService(coreDB, nil, service.EpochAnnounce{}), edge: edge,
 		rec: RecorderFor(t)}
 	p.push("start")
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		tick := time.NewTicker(interval)
-		defer tick.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-tick.C:
-				p.push("ticker")
-			}
-		}
-	}()
-	p.stop = func() { close(stop); <-done }
-	t.Cleanup(p.Stop)
 	return p
 }
 
@@ -89,7 +75,7 @@ func StartBinsPush(t *testing.T, coreDB *corestore.DB, edge *edgeengine.Engine, 
 func (p *BinsPush) Push() { p.push("direct") }
 
 // push is Push for caller: the recorder counts pushes by who asked for them
-// (the ticker, a pump, a scenario's explicit Bus.PushBins, ...).
+// (the start, a pump, a scenario's explicit Bus.PushBins, AnswerAsks).
 func (p *BinsPush) push(caller string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

@@ -115,7 +115,7 @@ func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	push := harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond)
+	push := harness.StartBinsPush(t, coreDB, edge.Engine)
 	bus.SetBinsPush(push)
 	push.AnswerAsks(askKinds)
 	settle := func() {

@@ -507,7 +507,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	push := harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond)
+	push := harness.StartBinsPush(t, coreDB, edge.Engine)
 	c.bus.SetBinsPush(push)
 	push.AnswerAsks(askKinds)
 	c.registerEdge()
@@ -1384,9 +1384,11 @@ var ksrMoments = []ksrMoment{
 		// and Core moves the bin to transit) and the cancel follows at once,
 		// before any message from Core reaches Edge, while Edge still holds
 		// every order bringing B as not yet with the fleet. Where no leg parks on
-		// the spot there is usually no such order at all: the keeper has not been
-		// told of the lift, unless the bins push has already landed it, and then
-		// its refill is still Edge's own (keepSpotsOnBinsChange).
+		// the spot there should be no such order at all: no pump has run since
+		// the lift, so no bins push has told the keeper of it (BinsPush pushes
+		// after a pump, not on a timer). Until 2026-11-24 a 20 ms ticker could
+		// land it first, and the keeper's refill was then still Edge's own
+		// (keepSpotsOnBinsChange).
 		ret := c.coreOf(co.returns[0])
 		if ret.VendorOrderID == "" {
 			c.notReached("A's spare's return never went to the fleet")

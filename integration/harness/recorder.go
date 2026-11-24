@@ -55,8 +55,9 @@ var (
 	recs  = map[string]*Recorder{}
 )
 
-// Recorder is one cell's record. Safe for concurrent use: the bins ticker,
-// Core's robot poll and the test goroutine all write to it.
+// Recorder is one cell's record. Safe for concurrent use: Core's robot poll and
+// the test goroutine write to it, and so may a callback a scenario taps (CATID's
+// tick shipper).
 type Recorder struct {
 	name string
 	dir  string
@@ -378,8 +379,10 @@ func joinLines(lines []string) string {
 //     which order it was.
 //
 // Why two. Two orders in flight at once reach the outbox in whichever order
-// their goroutines write them (the keeper's refill, decided on the bins
-// ticker's goroutine, against the test's own pumps: KSR, 2026-11-23), so the
+// their goroutines write them (KSR, 2026-11-23: the keeper's refill, then
+// decided on the bins ticker's goroutine, against the test's own pumps; the
+// ticker is gone since, and Core's own goroutines, the fulfillment scan a bin
+// move starts among them, still write beside the test's), so the
 // delivered order interleaves them differently from run to run while every
 // order's own sequence, and every message, is the same. The transcript sees
 // that interleaving; the orders view does not. A cell whose orders view
