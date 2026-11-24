@@ -2752,3 +2752,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: the test's loop comment names the guard and the removal
 - verified at: the commit that adds this row
+
+### FOLD — `TestKanbanPin_TheRaidOnAChange`
+- test: `TestKanbanPin_TheRaidOnAChange` · pkg `shingocore/cmd/seeddev` · run `-run '^TestKanbanPin_TheRaidOnAChange$'` · `shingo-core/cmd/seeddev/kanban_pins_v5_docker_test.go:288` @ `6bd55616` · tags `docker`
+- code: FOLD (into `TestKanbanPin_TheWalkAllBigsToSmall`, docket T8, owner yes 2026-11-24)
+- assertion map: the test and the walk's first step were the same call, `change("small to big")`, each on its own master plant. The walk now reads the supermarket's stock before that step and makes the raid's assertions after it; the map, old line to new line, is the body of `be34717f` (KP-SM's four slots stocked, found is the pool, the fleet settles, every position takes big, no stocked cart left the supermarket, no keeper ask outside the group, found 10 and 6, K holds 2/2/2/6). The added calls only read
+- mutation: the keeper asks per type's gap instead of the family's deficit · the walk gives the deleted test's failures, down to the two carts and the two asks (seen by the fold's author at `be34717f`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none (`scripts/check-test-citations.sh` ok)
+- verified at: `be34717f` (the fold's own commit; cherry-picked onto `test-gate-fast` as `32206ba4`)
+
+### FOLD — `TestKanbanPin_TheBudgetsAtEachState`
+- test: `TestKanbanPin_TheBudgetsAtEachState` · pkg `shingocore/cmd/seeddev` · run `-run '^TestKanbanPin_TheBudgetsAtEachState$'` · `shingo-core/cmd/seeddev/kanban_pins_v5_docker_test.go:357` @ `6bd55616` · tags `docker`
+- code: FOLD (into `TestKanbanRig_WalkCounts`, docket T8, owner yes 2026-11-24)
+- assertion map: the test asserted the tick, build and door budgets (at most 4, 10 and 8) in two of the four states `TestKanbanRig_WalkCounts` holds, reached by the same steps on a second master plant; it cleared the cart as lit where the walk clears as small, so the walk now asserts that small is what is lit. The map, old line to new line, is the body of `8319c666` (line numbers at that commit)
+- mutation: a tick two statements dearer fails the walk's budget check in all four states, as it failed the deleted test in its two; a walk that lights nothing fails the walk's lit check, where both tests passed before (seen by the fold's author at `8319c666`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none (`scripts/check-test-citations.sh` ok)
+- verified at: `8319c666` (the fold's own commit; cherry-picked onto `test-gate-fast` as `168396ef`)
