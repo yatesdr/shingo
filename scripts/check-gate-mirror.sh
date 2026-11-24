@@ -551,6 +551,9 @@ out="$(export GATE_SIDE=windows; gate scripts)"; rc=$?
   || fail "a Windows-side run did not skip the gate-tooling pin, or skipped the plain guard (exit $rc): $out"
 echo "$out" | grep -q '^Gate: scripts (Linux side and GitHub only: fixture-tooling-pin)\. Ran on the Windows side' \
   || fail "the Windows side's sentence does not name the gate-tooling pin it skipped: $(echo "$out" | grep -E '^(Gate|ok   scripts)')"
+# The step's summary, which the dev and push sentences carry whole.
+echo "$out" | grep -q '^ok   scripts (1 of 2; Linux side and GitHub only: fixture-tooling-pin)$' \
+  || fail "the Windows side's scripts summary does not name the gate-tooling pin it skipped: $(echo "$out" | grep '^ok   scripts')"
 out="$(gate scripts)"; rc=$?
 { [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   fixture-tooling-pin' && echo "$out" | grep -q '^ok   fixture-plain-guard'; } \
   || fail "the Linux side did not run the gate-tooling pin (exit $rc): $out"
