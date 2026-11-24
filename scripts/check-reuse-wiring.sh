@@ -79,6 +79,25 @@ side() { # OSTYPE [VAR=value...] — reuse_side as gate.sh's shell would answer 
 row "Git Bash is the Windows side" "windows windows windows" "$(side msys) $(side cygwin) $(side msys GATE_IN_MIRROR=1)"
 row "a gate in a mirror is the Linux side; any other host is neither" "mirror other" "$(side linux-gnu GATE_IN_MIRROR=1) $(side linux-gnu)"
 
+# settled AGE CALL — "waited" when, with a mirror's synced ref written AGE
+# seconds ago ("now": just now), CALL (reuse_settle, or reuse_setup in a
+# mirror's dev gate) held the gate 2 s or more from that write; "went on" when
+# under 2 s. Only lower bounds are timed where processes are slow (Windows).
+settled() {
+  local t0="$EPOCHREALTIME" s
+  mkdir -p "$TMP/.git/refs/gate-mirror"
+  if [ "$1" = now ]; then touch "$TMP/.git/refs/gate-mirror/synced"
+  else touch -d "@$(( $(date +%s) - $1 ))" "$TMP/.git/refs/gate-mirror/synced"; fi
+  s="$(env -u GATETIME_REUSE -u GATE_REUSE -u GITHUB_ACTIONS GATE_IN_MIRROR=1 GATE_TIER=dev ROOT="$TMP" \
+    GATETIME_BIN="$TMP/gatetime" GATETIME_IDENTITY="$TMP/identity" GATE_RUN=r GATE_SHA=s \
+    bash -c 'OSTYPE=linux-gnu; . "$1"; $2 >/dev/null; echo "$EPOCHREALTIME"' _ "$ROOT/scripts/gate-reuse.sh" "$2")"
+  rm -rf "$TMP/.git"
+  awk -v a="$t0" -v b="$s" 'BEGIN { print (b - a >= 2 ? "waited" : "went on") }'
+}
+row "a mirror's gate waits out the 2 s slack after a sync that just wrote" "waited" "$(settled now reuse_settle)"
+row "and goes on after one a minute old" "went on" "$(settled 60 reuse_settle)"
+row "a mirror's dev gate settles before its canary" "waited" "$(settled now reuse_setup)"
+
 row "no wrapper, no reuse" "|reuse: off (no gatetime binary or identity file this run)|unset" \
   "$(env -u GITHUB_ACTIONS -u GATE_IN_MIRROR GATE_TIER=dev ROOT="$TMP" GATE_REUSE=on bash -c 'OSTYPE=linux-gnu; . "$1"; GATETIME_BIN= reuse_setup; printf "%s|%s|%s" "$REUSE_MODE" "$REUSE_NOTE" "${GATETIME_REUSE-unset}"' _ "$ROOT/scripts/gate-reuse.sh")"
 

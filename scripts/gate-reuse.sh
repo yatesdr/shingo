@@ -46,6 +46,25 @@ reuse_side() {
   if [ -n "${GATE_IN_MIRROR:-}" ]; then echo mirror; else echo other; fi
 }
 
+# reuse_settle — in a mirror, waits out reuse's change-time slack (a run whose
+# inputs changed less than 2 s before it started is never stored: package
+# reuse's changedSince) after the sync's last write, its refs/gate-mirror/synced
+# update (scripts/gate-mirror.sh). A mirror's gate starts the instant its sync
+# has written the edited files, so without the wait the canary, whose key is the
+# whole tree, refused to store its run and reuse was off for the gate after
+# every edit (2026-11-24: "changed during the run: .../key.go", the gate started
+# in the second its sync ended). Waits 2.2 s at most; no such ref, no wait.
+reuse_settle() {
+  local ref="$ROOT/.git/refs/gate-mirror/synced" t left
+  [ -f "$ref" ] || return 0
+  t="$(stat -c %.3Y "$ref" 2>/dev/null)"
+  # A stat with no sub-second times: whole seconds, one more to be safe.
+  [[ "$t" =~ ^[0-9]+\.[0-9]+$ ]] || t="$(( $(stat -c %Y "$ref" 2>/dev/null || echo 0) + 1 ))"
+  left="$(awk -v t="$t" -v n="$EPOCHREALTIME" 'BEGIN { d = t + 2.2 - n; if (d > 0) printf "%.2f", d }')"
+  [ -n "$left" ] && sleep "$left"
+  return 0
+}
+
 # reuse_setup — decides this run's mode and exports the wrapper's switches.
 # Prints nothing; the sentence reads REUSE_MODE and REUSE_NOTE.
 reuse_setup() {
@@ -86,6 +105,7 @@ reuse_setup() {
     REUSE_MODE="" REUSE_NOTE="reuse: off (no gatetime binary or identity file this run)"
     return 0
   fi
+  [ "$side" = mirror ] && reuse_settle
   # The canary's own exit code decides, not the last command of a pipeline.
   local line rc
   line="$("$GATETIME_BIN" canary -root "$ROOT" -identity "$GATETIME_IDENTITY" 2>&1)"; rc=$?
