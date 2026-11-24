@@ -16,8 +16,9 @@
 #      HEAD, its branch, upstream, origin/main and tags are the worktree's;
 #      the sentence names the Linux side and the worktree's tree id; the gate
 #      ran nested under the caller's lock, with the Linux side's env sourced
-#   2. a no-change sync and a one-file change keep the other files' mtimes,
-#      and a deletion propagates
+#   2. a no-change sync and a one-file change keep the other files' mtimes
+#      and the mirror's own .gate (steps log, reuse store), and a deletion
+#      propagates
 #   3. a file changed in the mirror by hand is refused, named, kept; nothing ran
 #   4. a mirror whose tree is not the one named is red before any step
 #   5. an uncommitted failing assertion reaches the mirror and runs red (G11)
@@ -25,8 +26,8 @@
 #   7. a Linux side that is not set up falls back, the sentence naming why;
 #      GATE_SIDE=linux refuses instead
 #   8. fmt (the pre-push hook's), scope and lock-status never sync
-#   9. a gate started by hand in the mirror takes the caller's lock, and
-#      without a recorded lock refuses to start
+#   9. a gate started by hand in the mirror takes the caller's lock and its
+#      timing flag, and without a recorded lock refuses to start
 #  10. a second worktree with the same name does not share the mirror
 #  11. a mirror deleted behind the caller's back is made again
 #
@@ -137,6 +138,9 @@ git -C "$M" ls-files -s tools/run.sh 2>/dev/null | grep -q '^100755 ' || fail "t
 [ "$(cd "$M" 2>/dev/null && tree_of "$M")" = "$want" ] || fail "the mirror's tree is not the worktree's"
 
 # ── 2. mtimes and deletions: a no-change sync, then a change and a deletion ─
+# The mirror's own .gate (steps log, reuse store) is no part of the tree and
+# no sync may wipe it.
+mkdir -p "$M/.gate/reuse" && echo kept >"$M/.gate/reuse/keep"
 touch -d '@1000000000' "$M/docs/a.md" "$M/protocol/go.mod" 2>/dev/null
 before="$(mtime "$M/docs/a.md")"
 out="$(gate simvet)"; rc=$?
@@ -150,6 +154,7 @@ grep -q '// changed' "$M/protocol/p.go" 2>/dev/null || fail "a one-file change d
 [ "$(mtime "$M/protocol/go.mod")" = "$before" ] || fail "a one-file change rewrote an unchanged file"
 [ -e "$M/docs/a.md" ] && fail "a file deleted in the worktree stayed in the mirror"
 [ "$(git -C "$M" status --porcelain 2>/dev/null)" = "$(w status --porcelain)" ] || fail "after a deletion the status differs"
+[ -e "$M/.gate/reuse/keep" ] || fail "a sync wiped the mirror's .gate (its steps log and reuse store live there)"
 
 # ── 3. a file changed in the mirror by hand ──────────────────────────────
 printf '// by hand\n' >>"$M/protocol/p.go"
@@ -218,6 +223,15 @@ touch "$TMP/stop"; wait "$holder"
 out="$(cd "$M" && env -u GATE_LOCK_DIR -u GATE_TIMING_DIR bash scripts/gate.sh simvet 2>&1)"; rc=$?
 { [ "$rc" -eq 0 ] && echo "$out" | grep -q 'Ran on the Linux side, started by hand in the mirror of'; } \
   || fail "a gate started by hand in the mirror did not run, or did not say so (exit $rc): $out"
+# ... and the caller's timing flag: while a timed run holds it, a gate started
+# by hand in the mirror refuses (the mirror records the flag, gate.timingdir).
+mkdir -p "$GATE_TIMING_DIR"
+printf 'holder=pin@host\npid=1\ncmd=gatetime run -- the pin\ntoken=pin-token\n' >"$GATE_TIMING_DIR/owner"
+touch "$GATE_TIMING_DIR/heartbeat"
+out="$(cd "$M" && env -u GATE_LOCK_DIR -u GATE_TIMING_DIR bash scripts/gate.sh simvet 2>&1)"; rc=$?
+{ [ "$rc" -ne 0 ] && echo "$out" | grep -q 'REFUSED .*timed run' && echo "$out" | grep -q 'the pin'; } \
+  || fail "a gate started by hand in the mirror ran beside the caller's timed run (exit $rc): $out"
+rm -rf "$GATE_TIMING_DIR"
 lock_was="$(git -C "$M" config --get gate.lockdir)"
 git -C "$M" config --unset gate.lockdir
 out="$(cd "$M" && env -u GATE_LOCK_DIR bash scripts/gate.sh simvet 2>&1)"; rc=$?
