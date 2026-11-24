@@ -43,6 +43,9 @@
 #      within the hour of its last look it is not touched (R50)
 #  15. the Linux side removes a mirror whose worktree is gone, never the one
 #      being synced, never when that worktree's parent cannot be read (R50)
+#  16. a guard marked `# side: linux` (a gate-tooling pin) is skipped by a
+#      Windows-side run, which names it in the sentence; the Linux side and a
+#      gate off Windows with no mirror (GitHub) run it (R49)
 #
 # A process costs 0.1-0.4 s on the loaded Windows laptop, so this pin takes
 # minutes there and seconds on the Linux side, where the gate now runs it.
@@ -533,6 +536,31 @@ out="$(cd "$TMP/o3/fixwt3" && bash scripts/gate.sh simvet 2>&1)"; rc=$?
 { [ "$rc" -ne 0 ] && echo "$out" | grep -q 'belongs to .*gone-parent/fixwt3'; } \
   || fail "a worktree whose mirror records a gone worktree was not refused (exit $rc): $out"
 [ -d "$R/fixwt3/.git" ] || fail "the mirror being synced was removed because its recorded worktree is gone"
+
+# ── 16. the gate-tooling pins run on the Linux side and GitHub only (R49) ──
+# A guard whose header says `# side: linux` is skipped by a Windows-side run
+# (GATE_SIDE=windows here; the fallback is the same side), and the sentence
+# names it; the Linux side runs it, and so does a gate off Windows with no
+# mirror (GitHub's guards job). Two planted guards stand in for the real ones.
+printf '#!/usr/bin/env bash\n# tier: dev\n# side: linux\necho "ok   fixture-tooling-pin"\n' >"$W/scripts/check-fixture-tooling-pin.sh"
+printf '#!/usr/bin/env bash\n# tier: dev\necho "ok   fixture-plain-guard"\n' >"$W/scripts/check-fixture-plain-guard.sh"
+out="$(export GATE_SIDE=windows; gate scripts)"; rc=$?
+{ [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   fixture-plain-guard' && ! echo "$out" | grep -q '^ok   fixture-tooling-pin'; } \
+  || fail "a Windows-side run did not skip the gate-tooling pin, or skipped the plain guard (exit $rc): $out"
+echo "$out" | grep -q '^Gate: scripts (Linux side and GitHub only: fixture-tooling-pin)\. Ran on the Windows side' \
+  || fail "the Windows side's sentence does not name the gate-tooling pin it skipped: $(echo "$out" | grep -E '^(Gate|ok   scripts)')"
+out="$(gate scripts)"; rc=$?
+{ [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   fixture-tooling-pin' && echo "$out" | grep -q '^ok   fixture-plain-guard'; } \
+  || fail "the Linux side did not run the gate-tooling pin (exit $rc): $out"
+echo "$out" | grep -q 'Linux side and GitHub only' && fail "the Linux side's run named a skip: $(echo "$out" | grep -E '^(Gate|ok   scripts)')"
+case "${OSTYPE:-}" in
+  msys*|cygwin*) ;;   # a gate with no mirror there would cross to the real WSL
+  *)
+    out="$(cd "$W" && env -u GATE_LINUX_EXEC -u GATE_REUSE GITHUB_ACTIONS=true bash scripts/gate.sh scripts 2>&1)"; rc=$?
+    { [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   fixture-tooling-pin' && ! echo "$out" | grep -q 'Linux side and GitHub only'; } \
+      || fail "a gate off Windows with no mirror (GitHub's guards job) did not run the gate-tooling pin (exit $rc): $out" ;;
+esac
+rm -f "$W/scripts/check-fixture-tooling-pin.sh" "$W/scripts/check-fixture-plain-guard.sh"
 
 if [ "$fails" -eq 0 ]; then
   echo "ok   gate-mirror (the working tree arrives whole, mtimes kept, hand edits refused, tree checked, one lock, both sides)"
