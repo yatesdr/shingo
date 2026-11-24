@@ -38,10 +38,18 @@ const (
 type timingFlag struct{ dir, token string }
 
 // flagDir is where the flag lives for the checkout at repo, or "" when repo is
-// not in a git checkout.
+// not in a git checkout. A gate mirror on the Linux side
+// (scripts/gate-mirror.sh) records the Windows clone's flag as gate.timingdir
+// in its config, so a run timed inside the mirror holds the flag every gate on
+// both sides reads, never one of the mirror's own.
 func flagDir(repo string) string {
 	if d := os.Getenv(flagEnvDir); d != "" {
 		return d
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "--get", "gate.timingdir").Output(); err == nil {
+		if d := strings.TrimSpace(string(out)); d != "" {
+			return d
+		}
 	}
 	out, err := exec.Command("git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
