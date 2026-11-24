@@ -586,7 +586,9 @@ mirror_linux_run() {
       || { echo "gate: the mirror's working tree could not be written (delete $m and run again)"; return 0; }
   fi
   # 7. The index, as the worktree's (keeps the stat data of unchanged entries).
-  git read-tree -m "$MS_INDEX" || { echo "gate: the mirror's index could not be set"; return 0; }
+  # -i: the working tree is already right (step 6), so an entry whose file had
+  # unstaged edits must not stop the index moving (a plain -m refused it).
+  git read-tree -m -i "$MS_INDEX" || { echo "gate: the mirror's index could not be set"; return 0; }
   git update-index -q --refresh >/dev/null 2>&1
   # 8. The caller's ignore rules, lock and timing flag; what was synced.
   cp "$wt/.gate/mirror/exclude" .git/info/exclude 2>/dev/null || : >.git/info/exclude

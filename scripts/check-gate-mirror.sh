@@ -155,6 +155,12 @@ grep -q '// changed' "$M/protocol/p.go" 2>/dev/null || fail "a one-file change d
 [ -e "$M/docs/a.md" ] && fail "a file deleted in the worktree stayed in the mirror"
 [ "$(git -C "$M" status --porcelain 2>/dev/null)" = "$(w status --porcelain)" ] || fail "after a deletion the status differs"
 [ -e "$M/.gate/reuse/keep" ] || fail "a sync wiped the mirror's .gate (its steps log and reuse store live there)"
+# An unstaged edit, then staged: the mirror's index entry moves under a file
+# that already differed from it (found by the first real sync after a commit).
+w add protocol/p.go
+out="$(gate simvet)"; rc=$?
+[ "$rc" -eq 0 ] || fail "a sync after staging an unstaged edit went red (exit $rc): $out"
+[ "$(git -C "$M" status --porcelain 2>/dev/null)" = "$(w status --porcelain)" ] || fail "after staging an edit the status differs"
 
 # ── 3. a file changed in the mirror by hand ──────────────────────────────
 printf '// by hand\n' >>"$M/protocol/p.go"
