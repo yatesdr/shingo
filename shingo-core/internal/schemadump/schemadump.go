@@ -21,15 +21,22 @@
 package schemadump
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
@@ -58,22 +65,56 @@ const (
 	pgPass  = "test"
 )
 
-// Instance is a running throwaway Postgres.
+// Instance is a running throwaway Postgres: a container Start started, or the
+// server $SHINGO_TEST_PG names (Start).
 type Instance struct {
-	container testcontainers.Container
-	host      string
-	port      int
+	// target is the container pg_dump runs in (pgDump).
+	target dumpTarget
+	// own is the container Start started, which Close removes; nil on the
+	// server $SHINGO_TEST_PG names, which its owner removes.
+	own  testcontainers.Container
+	host string
+	port int
 }
 
-// Start boots a Postgres container. The caller must Close it.
+// dumpTarget is what pgDump needs of a container: testcontainers' own, or the
+// shared server's (serverContainer).
+type dumpTarget interface {
+	Exec(ctx context.Context, cmd []string, options ...tcexec.ProcessOption) (int, io.Reader, error)
+	CopyFileFromContainer(ctx context.Context, filePath string) (io.ReadCloser, error)
+}
+
+// Start boots a Postgres container, or, with $SHINGO_TEST_PG set, uses the
+// server it names. The caller must Close it.
 //
-// The container runs with the same durability-off tuning as the gate's shared
-// server (scripts/gate.sh start_shared_pg): fsync/synchronous_commit/
-// full_page_writes off, data on tmpfs. Nothing here outlives the process —
-// the whole point is a shape to diff — and with default settings the
-// migration path's thousands of DDL fsyncs are this package's dominant cost
-// under co-tenancy.
+// WITH $SHINGO_TEST_PG SET, NO CONTAINER OF ITS OWN (2026-11-24, brief A2
+// R45; pinned by TestStart_UsesTheServerSHINGO_TEST_PGNames). The variable
+// names the gate's shared server (scripts/gate.sh start_shared_pg) or CI's
+// (.github/actions/shared-postgres), and the rule is testdb's: that server, no
+// fallback. On the gate's Linux side, Docker Desktop exposes a container's port
+// inside WSL once, when the container starts, by listening on the number the
+// host side chose; while the docker step's own connections hold thousands of
+// ephemeral ports in TIME-WAIT, a held number makes that listen fail with
+// EADDRINUSE and every dial from WSL is refused for the container's life. This
+// package's container and its testcontainers reaper start mid-step, and one of
+// their two numbers was held in 4 of 12 Linux-side docker steps on the dev
+// laptop (2026-11-24). Binding 127.0.0.1 is no cure: testcontainers hands it
+// to the engine as HostPort "0", from the same sequential range. The shared
+// server's port is exposed as the docker step starts, before the step's own
+// connections begin. pg_dump runs in that server's container (startOn), so the
+// dump is still that server's version's. Forbids: a container started here while $SHINGO_TEST_PG is set.
+// Expiry: Docker Desktop retrying a number it could not bind in WSL, or the
+// gate's Linux side running without Docker Desktop.
+//
+// Its own container runs with the same durability-off tuning as the gate's
+// shared server: fsync/synchronous_commit/full_page_writes off, data on tmpfs.
+// Nothing here outlives the process — the whole point is a shape to diff — and
+// with default settings the migration path's thousands of DDL fsyncs are this
+// package's dominant cost under co-tenancy.
 func Start(ctx context.Context) (*Instance, error) {
+	if addr := os.Getenv("SHINGO_TEST_PG"); addr != "" {
+		return startOn(ctx, addr)
+	}
 	c, err := postgres.Run(ctx, pgImage,
 		postgres.WithDatabase("postgres"),
 		postgres.WithUsername(pgUser),
@@ -110,15 +151,114 @@ func Start(ctx context.Context) (*Instance, error) {
 		_ = c.Terminate(ctx)
 		return nil, fmt.Errorf("container port (err=%v val=%d)", err, port.Int())
 	}
-	return &Instance{container: c, host: host, port: port.Int()}, nil
+	return &Instance{target: c, own: c, host: host, port: port.Int()}, nil
 }
 
-// Close terminates the container.
+// startOn is Start on the server at addr (host:port, $SHINGO_TEST_PG): the
+// running container that publishes its port runs pg_dump, and nothing is
+// started. The container is found by the port as `docker port` reports it,
+// which is how the gate computed addr. A server no container publishes is an
+// error, not a container of this package's own: pg_dump must be the server's.
+func startOn(ctx context.Context, addr string) (*Instance, error) {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("SHINGO_TEST_PG=%q is not host:port: %w", addr, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 {
+		return nil, fmt.Errorf("SHINGO_TEST_PG=%q has an unusable port", addr)
+	}
+	cli, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
+	}
+	running, err := cli.ContainerList(ctx, container.ListOptions{})
+	if err != nil {
+		_ = cli.Close()
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	for _, c := range running {
+		for _, p := range c.Ports {
+			if int(p.PublicPort) != port || p.PrivatePort != 5432 {
+				continue
+			}
+			if c.Image != pgImage {
+				_ = cli.Close()
+				return nil, fmt.Errorf("SHINGO_TEST_PG=%s is %s, and the dump must be %s's pg_dump", addr, c.Image, pgImage)
+			}
+			return &Instance{target: &serverContainer{cli: cli, id: c.ID}, host: host, port: port}, nil
+		}
+	}
+	_ = cli.Close()
+	return nil, fmt.Errorf("SHINGO_TEST_PG=%s: no running container publishes port %d, and pg_dump runs in "+
+		"the server's container (unset it and schemadump starts its own)", addr, port)
+}
+
+// serverContainer is the container of the server $SHINGO_TEST_PG names, for
+// pg_dump, through the Docker client testcontainers uses.
+type serverContainer struct {
+	cli *testcontainers.DockerClient
+	id  string
+}
+
+// Exec runs cmd in the container and returns its exit code and its output,
+// stdout and stderr demultiplexed into one stream: what pgDump asks
+// testcontainers for (tcexec.Multiplexed); the options are not read. The
+// output is read to its end, which is the process's end, before the code is
+// asked for.
+func (s *serverContainer) Exec(ctx context.Context, cmd []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	created, err := s.cli.ContainerExecCreate(ctx, s.id, container.ExecOptions{Cmd: cmd, AttachStdout: true, AttachStderr: true})
+	if err != nil {
+		return 0, nil, fmt.Errorf("container exec create: %w", err)
+	}
+	attached, err := s.cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return 0, nil, fmt.Errorf("container exec attach: %w", err)
+	}
+	defer attached.Close()
+	var out bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &out, attached.Reader); err != nil {
+		return 0, nil, fmt.Errorf("container exec output: %w", err)
+	}
+	inspected, err := s.cli.ContainerExecInspect(ctx, created.ID)
+	if err != nil {
+		return 0, nil, fmt.Errorf("container exec inspect: %w", err)
+	}
+	return inspected.ExitCode, &out, nil
+}
+
+// CopyFileFromContainer reads one file out of the container: Docker sends a
+// tar stream holding the one entry.
+func (s *serverContainer) CopyFileFromContainer(ctx context.Context, filePath string) (io.ReadCloser, error) {
+	rc, _, err := s.cli.CopyFromContainer(ctx, s.id, filePath)
+	if err != nil {
+		return nil, err
+	}
+	tr := tar.NewReader(rc)
+	if _, err := tr.Next(); err != nil {
+		_ = rc.Close()
+		return nil, fmt.Errorf("read %s from its copy: %w", filePath, err)
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{tr, rc}, nil
+}
+
+// Close removes the container Start started. On the server $SHINGO_TEST_PG
+// names it only lets go of the Docker client: the gate and CI remove that
+// server, and the databases made on it go with it.
 func (i *Instance) Close(ctx context.Context) error {
-	if i == nil || i.container == nil {
+	if i == nil {
 		return nil
 	}
-	return i.container.Terminate(ctx)
+	if i.own != nil {
+		return i.own.Terminate(ctx)
+	}
+	if s, ok := i.target.(*serverContainer); ok {
+		return s.cli.Close()
+	}
+	return nil
 }
 
 func (i *Instance) admin() (*sql.DB, error) {
@@ -245,9 +385,11 @@ func (i *Instance) pgDump(ctx context.Context, dbName, flags string, env ...stri
 	// So success is proved by the sentinel, and the drain that reads it is also
 	// the synchronisation: the attached stream does not reach EOF until the exec's
 	// process exits, so io.Copy returning means pg_dump is done and the file is
-	// closed. Both facts come from the same read.
+	// closed. Both facts come from the same read. (On the server $SHINGO_TEST_PG
+	// names the exec is serverContainer's, which drains the stream before it asks
+	// for the code; the sentinel is checked the same way.)
 	const doneSentinel = "__SHINGO_DUMP_OK__"
-	code, reader, err := i.container.Exec(ctx, []string{
+	code, reader, err := i.target.Exec(ctx, []string{
 		"sh", "-c",
 		fmt.Sprintf("%s pg_dump %s --username=%s %s > %s && test -s %s && echo %s",
 			strings.Join(env, " "), flags, pgUser, dbName, file, file, doneSentinel),
@@ -266,7 +408,7 @@ func (i *Instance) pgDump(ctx context.Context, dbName, flags string, env ...stri
 			"trustworthy on its own): %s", dbName, code, strings.TrimSpace(out.String()))
 	}
 
-	rc, err := i.container.CopyFileFromContainer(ctx, file)
+	rc, err := i.target.CopyFileFromContainer(ctx, file)
 	if err != nil {
 		return "", fmt.Errorf("copy %s out of container: %w", file, err)
 	}

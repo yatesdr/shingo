@@ -61,7 +61,8 @@ func releaseCacheForTests() schemadump.ReleaseCache {
 	return c
 }
 
-// TestMain starts the one Postgres. When it cannot, the binary still runs: the
+// TestMain starts the one Postgres (or, with $SHINGO_TEST_PG set, takes the
+// server it names: schemadump.Start). When it cannot, the binary still runs: the
 // package's untagged tests (baseline_test.go, release_cache_test.go) need no
 // database, and in the gate's docker step this binary is the only place they
 // run, so exiting here would drop them along with the snapshot tests. The line
@@ -92,6 +93,23 @@ func TestMain(m *testing.M) {
 	_ = inst.Close(context.Background())
 	_ = os.RemoveAll(releaseWork)
 	os.Exit(code)
+}
+
+// TestStart_UsesTheServerSHINGO_TEST_PGNames pins Start's rule for the gate's
+// docker step and CI's docker jobs: with $SHINGO_TEST_PG set, the instance is
+// that server and Start started no container of its own (Start says why).
+// Without it Start starts its own, the path cmd/schemasnapshot and
+// cmd/schemabaseline take, and there is nothing here to check.
+func TestStart_UsesTheServerSHINGO_TEST_PGNames(t *testing.T) {
+	t.Parallel()
+	addr := os.Getenv("SHINGO_TEST_PG")
+	if addr == "" {
+		t.Skip("SHINGO_TEST_PG unset: Start starts a container of its own")
+	}
+	inst := start(context.Background(), t)
+	if got := inst.AddrForTest(); got != addr {
+		t.Fatalf("the instance is at %s: with SHINGO_TEST_PG=%s set, Start must use that server and start no container", got, addr)
+	}
 }
 
 // TestSchemaSnapshotIsCurrent builds the schema from scratch and compares it

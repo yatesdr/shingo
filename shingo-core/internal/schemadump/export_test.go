@@ -2,6 +2,7 @@ package schemadump
 
 import (
 	"context"
+	"net"
 	"strconv"
 
 	"shingocore/config"
@@ -26,6 +27,9 @@ func (i *Instance) DSNForTest(name string) string {
 }
 
 func itoaPort(p int) string { return strconv.Itoa(p) }
+
+// AddrForTest is the instance's host:port.
+func (i *Instance) AddrForTest() string { return net.JoinHostPort(i.host, itoaPort(i.port)) }
 
 // DBConfigForTest is the store config that reaches name on the instance.
 func (i *Instance) DBConfigForTest(name string) *config.DatabaseConfig { return i.dbConfig(name) }
