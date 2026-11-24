@@ -107,7 +107,12 @@ tree_of() {
   rm -f "$idx"; cp "$real" "$idx"
   GIT_INDEX_FILE="$idx" git -C "$1" add -A && GIT_INDEX_FILE="$idx" git -C "$1" write-tree
 }
-gate() { (cd "$W" && bash scripts/gate.sh "$@" 2>&1); }
+# The nested gates do not inherit the caller's reuse switches: this pins the
+# mirror, not reuse (scripts/check-reuse-wiring.sh does), and on GitHub
+# (GITHUB_ACTIONS=true) the sentence gained "Reuse: off on GitHub." before "Ran
+# on the Linux side", which the sentence checks below did not expect (red on
+# GitHub at 14efcd43, green everywhere else).
+gate() { (cd "$W" && env -u GITHUB_ACTIONS -u GATE_REUSE -u GATETIME_REUSE bash scripts/gate.sh "$@" 2>&1); }
 mtime() { stat -c %Y "$1" 2>/dev/null || date -r "$1" +%s; }
 synced() { git -C "$M" rev-parse -q --verify refs/gate-mirror/synced 2>/dev/null; }
 
