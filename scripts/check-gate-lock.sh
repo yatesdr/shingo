@@ -211,7 +211,8 @@ export GATE_TIMING_DIR="$TMP/gate.timing-free"
 
 # ── 7. the steps log's selection line and total stamps, and their reader ────
 # A heavy run writes one `selection` line and stamps its total line; under
-# `gatetime run` the stamps carry the run's load judgement, and `gatetime
+# `gatetime run` the stamps carry the run's load judgement (clean, void, or vm-only
+# for a run inside WSL with no Windows host reader beside $GT), and `gatetime
 # compare` reads the selection lines of four such runs. The nested gates read
 # the private free flag set at the top, never the clone's.
 unset GATE_TIMING_TOKEN GATETIME_RUN_DIR
@@ -225,7 +226,7 @@ if [ -x "$GT" ]; then
   for n in 1 2 3 4; do
     "$GT" run -out "$TMP/cmp$n" -every 200ms -repo "$ROOT" -- "$BASH_BIN" -c \
       "GATE_STEPS_LOG='$TMP/steps7-$n.log' GATE_MODULES=protocol bash scripts/gate.sh simvet" >/dev/null 2>&1
-    grep -qE ' simvet total [0-9.]+ [^ ]+ exec=- ac=[a-z]+ samples=[0-9]+ standby=[0-9a-z]+ load=(clean|void) foreign30=[0-9.]+' "$TMP/steps7-$n.log" \
+    grep -qE ' simvet total [0-9.]+ [^ ]+ exec=- ac=[a-z]+ samples=[0-9]+ standby=[0-9a-z]+ load=(clean|void|vm-only) foreign30=[0-9.]+' "$TMP/steps7-$n.log" \
       || fail "under gatetime run the total line does not carry the run's load: $(cat "$TMP/steps7-$n.log" 2>/dev/null)"
     cp "$TMP/steps7-$n.log" "$TMP/cmp$n/steps.tsv" 2>/dev/null   # the gate logged to a private file, not .gate/steps.log
   done
