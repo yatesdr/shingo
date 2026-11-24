@@ -476,6 +476,7 @@ rm -f "$W/.gate/mirror/store-checked"
 printf '// 14 a\n' >>"$W/protocol/p.go"
 out="$(gate simvet)"; rc=$?
 { [ "$rc" -eq 0 ] && sgit cat-file -e "$a" 2>/dev/null; } || fail "a store under the default 64 MB was pruned, or its sync went red (exit $rc): $out"
+echo "$out" | grep -q 'store-checked' && fail "a sync with no record of the store's last look (a new store's first) printed an error: $(echo "$out" | grep 'store-checked')"
 printf '// 14 b\n' >>"$W/protocol/p.go"
 out="$(export GATE_MIRROR_STORE_MB=1; gate simvet)"; rc=$?
 { [ "$rc" -eq 0 ] && sgit cat-file -e "$a" 2>/dev/null; } || fail "the store's size was read again within the hour of its last look (exit $rc): $out"
