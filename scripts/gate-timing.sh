@@ -115,7 +115,11 @@ gatetime_prepare() {
   local ext bin
   ext="$(go env GOEXE 2>/dev/null | tr -d '\r')"
   bin="gatetime-$$$ext"
-  if ( cd "$ROOT/shared" && go build -o "$ROOT/.gate/$bin" ./scripts/gatetime ) >"$GATE_SEL_DIR/build.log" 2>&1; then
+  # -buildvcs=false: the binary's sha256 is in the identity and in every reuse
+  # key, so it is built from its source alone; go's VCS stamp would move it
+  # with any edit anywhere in the tree and with every commit (pinned by
+  # scripts/check-gate-exec.sh).
+  if ( cd "$ROOT/shared" && go build -buildvcs=false -o "$ROOT/.gate/$bin" ./scripts/gatetime ) >"$GATE_SEL_DIR/build.log" 2>&1; then
     GATETIME_BIN="$(cd "$ROOT/.gate" && { pwd -W 2>/dev/null || pwd; })/$bin"
     GATETIME_OWN="$ROOT/.gate/$bin"
     export GATETIME_BIN
@@ -124,7 +128,7 @@ gatetime_prepare() {
     # gatetime finds as <itself>.exe (shared/scripts/gatetime/host.go); without
     # it they read the VM alone, and a run is clean inside the VM only.
     if [ -n "${WSL_DISTRO_NAME:-}" ] \
-        && ! ( cd "$ROOT/shared" && GOOS=windows go build -o "$ROOT/.gate/$bin.exe" ./scripts/gatetime ) >>"$GATE_SEL_DIR/build.log" 2>&1; then
+        && ! ( cd "$ROOT/shared" && GOOS=windows go build -buildvcs=false -o "$ROOT/.gate/$bin.exe" ./scripts/gatetime ) >>"$GATE_SEL_DIR/build.log" 2>&1; then
       echo "gate: WARNING — could not build gatetime's Windows host reader; the stamps read inside the VM only" >&2
     fi
   else

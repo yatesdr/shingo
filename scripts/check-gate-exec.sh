@@ -11,7 +11,8 @@
 #      edited, never the tree.
 #   2. `gate.sh test` (protocol) runs every test binary under the wrapper: one
 #      manifest per package go test ran, each carrying the sha256 of the
-#      identity file beside it; the total line stamps exec=on.
+#      identity file beside it; the total line stamps exec=on; the gate's
+#      gatetime is the build of its source alone (no VCS stamp).
 #   3. GATE_EXEC=off: no manifests, exec=off, and the gate sentence says so.
 #
 # Every nested gate runs with a private lock, timing flag, manifest directory,
@@ -24,6 +25,10 @@ TMP="$(mktemp -d 2>/dev/null || mktemp -d -t gateexec)"
 trap 'rm -rf "$TMP"' EXIT
 unset GATE_LOCK_HELD GATE_NO_LOCK GATE_TIMING_TOKEN GATETIME_RUN_DIR GATE_EXEC
 export GATE_LOCK_DIR="$TMP/gate.lock" GATE_TIMING_DIR="$TMP/gate.timing"
+# The nested gates run on the side this guard runs on (from Git Bash a gate
+# would otherwise go to the mirror), so the gatetime they build and the one
+# section 2 builds to compare with are one OS's.
+case "${OSTYPE:-}" in msys*|cygwin*) export GATE_SIDE=windows ;; esac
 
 fails=0
 fail() { echo "  FAIL gate-exec: $*"; fails=$((fails + 1)); }
@@ -65,6 +70,16 @@ got="$(find "$mdir" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
 want="$(sha256sum <"$mdir/identity" 2>/dev/null | cut -d' ' -f1)"
 n="$(grep -l "\"identity_sha256\": \"$want\"" "$mdir"/*.json 2>/dev/null | wc -l | tr -d ' ')"
 { [ -n "$want" ] && [ "$n" = "$got" ]; } || fail "$n of $got manifests carry the identity hash $want"
+# The wrapper's sha256 is in the identity and in every reuse key, so the gate
+# builds it from its source alone: with go's VCS stamp in it, any edit anywhere
+# in the tree (vcs.modified) or any new commit (vcs.revision) moved every key
+# (2026-11-24: a mirror's dev gate after a one-line test edit served 0 of 112).
+gt_sha="$(sed -n 's/^gatetime=//p' "$mdir/identity" 2>/dev/null)"
+gt_src="$TMP/gatetime-source-only$(go env GOEXE 2>/dev/null | tr -d '\r')"
+( cd "$ROOT/shared" && go build -buildvcs=false -o "$gt_src" ./scripts/gatetime ) >/dev/null 2>&1
+gt_want="$(sha256sum <"$gt_src" 2>/dev/null | cut -d' ' -f1)"
+{ [ -n "$gt_sha" ] && [ "$gt_sha" = "$gt_want" ]; } \
+  || fail "the gate's gatetime (identity: ${gt_sha:-none}) is not the build of its source alone (${gt_want:-no build}): a VCS stamp moves every reuse key with each edit"
 grep -qE ' test total [0-9.]+ [^ ]+ exec=on ' "$TMP/on/steps.log" || fail "the total line does not stamp exec=on: $(cat "$TMP/on/steps.log")"
 
 # ── 3. GATE_EXEC=off (the docker mode, which over protocol runs nothing) ────
