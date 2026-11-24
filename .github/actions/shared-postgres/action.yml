@@ -21,9 +21,10 @@ runs:
         set -uo pipefail
 
         # A COMPOSITE ACTION RATHER THAN THE SAME 20 LINES IN TWO JOBS.
-        # core.yml runs this from `docker` and from all six `docker-race`
-        # shards; the first time it needed fixing, it needed fixing in two
-        # places, which is exactly how the two copies drift.
+        # core.yml runs this from its three `docker` shards and its six
+        # `docker-race` shards (both through sharded-suite.yml); the first time
+        # it needed fixing, it needed fixing in two places, which is exactly
+        # how the two copies drift.
 
         # THE IMAGE IS PULLED EXPLICITLY, WITH RETRIES, AND THAT IS NOT
         # BELT-AND-BRACES. Sharding took this workflow from two containers a

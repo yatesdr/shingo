@@ -1,11 +1,10 @@
 name: Sharded suite
 
-# ONE SHARDED TEST SUITE, PARAMETERISED. Called by core.yml and edge.yml for
-# their -race suites (core.yml also called it for its plain suite, which is one
-# job again: see its docker job). Three copies of a plan/shard/record trio is
-# where this stops being duplication you tolerate and starts being three
-# places to fix the next bug in — the shared-postgres step had already been
-# fixed in two places once.
+# ONE SHARDED TEST SUITE, PARAMETERISED. Called by core.yml for its plain and
+# -race docker suites and by edge.yml for its -race suite. Three copies of a
+# plan/shard/record trio is where this stops being duplication you tolerate and
+# starts being three places to fix the next bug in — the shared-postgres step
+# had already been fixed in two places once.
 #
 # A REUSABLE WORKFLOW AND NOT A COMPOSITE ACTION, because a composite action
 # can only bundle STEPS. This needs to define jobs, and one of them needs a
@@ -26,9 +25,9 @@ on:
         description: >
           How many ways to split. There is no value in exceeding the number of
           packages that carry real weight: the floor is the single longest
-          package, so core (49 packages, long tail) takes 6, while edge (three
-          packages are 80% of the work) takes 3 and splits the longest one
-          (split-package).
+          package, so core's race suite (a long tail) takes 6 and its plain
+          suite 3 (core.yml says why), while edge (three packages are 80% of
+          the work) takes 3 and splits the longest one (split-package).
         required: true
         type: number
       test-flags:

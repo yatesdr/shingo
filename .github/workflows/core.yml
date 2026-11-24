@@ -168,7 +168,7 @@ jobs:
         working-directory: shingo-core
         run: go test -run NONE -count=1 ./...
 
-      # THE ROLLING BUILD CACHES the docker and docker-race jobs restore: this
+      # THE ROLLING BUILD CACHES the docker and docker-race shards restore: this
       # job compiles the docker test closure plain and under -race, nothing
       # run, and saves each (.github/actions/go-build-cache has the why). Here
       # because this job ends long before the docker chains do, so the compile
@@ -187,71 +187,69 @@ jobs:
           flavour: race
           warm: "true"
 
-  # BOTH DOCKER SUITES ARE SHARDED, VIA THE SAME REUSABLE WORKFLOW.
+  # BOTH DOCKER SUITES ARE SHARDED, VIA THE SAME REUSABLE WORKFLOW
+  # (sharded-suite.yml), each with its own timings cache.
   #
   # They were two steps in the build job, running back to back for no reason —
   # nothing in the race run depends on the plain one, it is the same suite with
   # a different flag. MEASURED as steps: 137s then 334s inside a 568s job. As
-  # separate sharded workflows they overlap, and each is bounded by its slowest
+  # separate jobs they overlap, and a sharded suite is bounded by its slowest
   # shard rather than by its own total.
   #
   # The plain suite is shardable at all only because the coverage profile is
-  # gone: six shards would each have produced a partial profile, and a merge
-  # step that silently under-reports coverage is worse than no number.
+  # gone: each shard would have produced a partial profile, and a merge step
+  # that silently under-reports coverage is worse than no number.
   #
-  # Six shards for core: 49 packages with a long tail, and the floor is the
-  # single longest package (shingocore/engine, ~20s).
-
-  # THE PLAIN SUITE IS ONE JOB, AND IT WAS SHARDED FOR EXACTLY ONE RUN.
+  # Race takes six shards: a long tail of packages, and the floor is the single
+  # longest package (shingocore/engine).
   #
-  # Sharding it looked free — its own chain went 174s to 103s. It was not.
-  # MEASURED across two runs, the workflow got SLOWER, 212s to 250s, because
-  # six extra shards plus their plan and record push the run to 17 concurrent
-  # jobs against a 20-slot limit, and the race shards they compete with went
-  # from 123-156s to 124-175s. The wall clock is set by the race chain, so
-  # speeding up the plain chain at its expense is a straight loss.
+  # THE PLAIN SUITE TAKES THREE, AND ONLY ITS THIRD TRIAL SHARDED WON.
   #
-  # The general rule this leaves: shard a suite when it is long enough that a
-  # shard still dominates its own job entry cost, and when the slots it takes
-  # are not wanted by a longer chain. Race qualifies at ~322s. This does not
-  # at ~174s, and neither does edge's ~30s plain run. Tried again at two shards
-  # on ci-speed (2026-11-21, runs 44862808698 and 44858100751): 628s against
-  # 629s, each shard recompiling most of the module under -p 1 and waiting
-  # 124-153s for a slot; ci-speed's c65e2a7b put it back as one job.
+  # Trial 1 (six shards, one run): its own chain went 174s to 103s, but the
+  # workflow got SLOWER, 212s to 250s, because six extra shards plus their plan
+  # and record pushed the run to 17 concurrent jobs against a 20-slot limit,
+  # and the race shards they competed with went from 123-156s to 124-175s.
+  # Trial 2 (two shards on ci-speed, 2026-11-21, runs 44862808698 against
+  # 44858100751): 628s against 629s, each shard recompiling most of the module
+  # under -p 1 (no build cache yet), packed unbalanced (411s against 271s) and
+  # waiting 124-153s for a slot; ci-speed's c65e2a7b put it back as one job.
+  # Trial 3 (three shards, 2026-11-24): the one job had become the pole of
+  # every branch push (365-640s, the race chain ending 278-463s after the
+  # push), and each shard now restores the plain build cache. MEASURED over
+  # three reruns of one tree a side, all seven workflows each time, each run
+  # restoring its own tree's cache: the push's median wall went 434s to 348s
+  # and its job-seconds 4847 to 4976 (+2.7%); cold, the shards compiled 217s
+  # in all against the one job's 163s. The plain chain ended 308s after the
+  # push against 433s. Its shards ran 132-205s but queued 24-113s for a slot:
+  # the push still peaks at the account's 20 running jobs. Edge's workflow is
+  # now the pole (319-364s), with Core's race chain (287-327s) and Guards
+  # (260-434s) close. Three was chosen as the fewest shards that should end the
+  # plain chain before them (two would carry 127-230s of tests each, the pole
+  # on a slow runner); a fourth should buy no wall for one more job entry and
+  # one more slot. Runs and numbers: brief A2, lane ci
+  # (work/loc-census-2026-11-20/gate-fast/lanes-A2/ci).
+  #
+  # The general rule this leaves: shard a suite when a shard still dominates
+  # its own job entry cost and when the slots it takes are not wanted by a
+  # longer chain. The plain suite did not qualify at ~174s and did once it was
+  # the pole. Edge's plain job (156s median on main, 2026-11-20, edge.yml)
+  # stays whole under its race chain.
 
   docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Full history: TestSchemaConvergesAcrossVintages and
-          # TestBaselineIsCurrent build Core releases from their tags. See the
-          # note in the build job.
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.25.0"
-          cache-dependency-path: |
-            shingo-core/go.sum
-            protocol/go.sum
-
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-core
+      shards: 3
+      # The plain suite's own flag. -tags=docker,lockcheck, -count=1 and -p 1
+      # come from sharded-suite.yml: the flags the one job ran with.
+      test-flags: "-timeout=10m"
+      # A SEPARATE TIMINGS CACHE from the race suite's, for the reason
+      # docker-race gives below: one cache would balance both against the
+      # wrong numbers.
+      cache-prefix: shard-timings-core-plain-
+      needs-postgres: true
       # The plain closure, saved by the build job of an earlier run.
-      - uses: ./.github/actions/go-build-cache
-        with:
-          module: shingo-core
-          flavour: plain
-
-      - name: Start shared Postgres
-        uses: ./.github/actions/shared-postgres
-        with:
-          template: template_ci_${{ github.run_id }}_docker
-
-      - name: Test (Docker integration)
-        working-directory: shingo-core
-        # -p 1: the runner has 2-4 cores and in-package parallelism already
-        # uses them. On a 20-core dev host the best setting measured nproc/4.
-        run: go test -tags=docker,lockcheck -timeout=10m -count=1 -p 1 ./...
+      build-cache: plain
 
   # THE SIM-ONLY TESTS, UNDER THE DETECTOR. The build job's `go build -tags
   # sim` compiles the sim files and runs none of their tests, so the sim-tagged
