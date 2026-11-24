@@ -147,6 +147,8 @@ func TestCompare_Refusals(t *testing.T) {
 		want string
 	}{
 		{"a void run", fakeRun(t, "push", 290, 1950, "VOID: not-on-AC(2 of 90 samples)", nil), "B1 (" /* named */},
+		// It begins with "clean"; only "clean" itself is quotable.
+		{"a run judged inside the VM only", fakeRun(t, "push", 290, 1950, vmOnlyVerdict, nil), "verdict clean inside the VM only"},
 		{"docker skipped", fakeRun(t, "push", 290, 1950, "clean", func(c, s string) (string, string) {
 			return strings.Replace(c, " AND the docker suites (scoped against origin/main @ b5949e26).",
 				". Docker suites SKIPPED by scope against origin/main @ b5949e26 (nothing in this diff can reach one).", 1), s

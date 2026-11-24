@@ -36,4 +36,12 @@ func TestStamps(t *testing.T) {
 	if got = stamps(&fakeMachine{acState: 1}, nil, now.Add(-time.Minute), now, d); got != "ac=on samples=40 standby=0 load=void foreign30=0.31" {
 		t.Errorf("under a void run: %q", got)
 	}
+	// A run judged inside WSL's VM only stamps load=vm-only: not clean either.
+	live["verdict"] = vmOnlyVerdict
+	if err := os.WriteFile(filepath.Join(d, "live.tsv"), []byte(live.String()+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got = stamps(&fakeMachine{acState: 1, evErr: errors.New("no log")}, nil, now.Add(-time.Minute), now, d); got != "ac=on samples=40 standby=unread load=vm-only foreign30=0.31" {
+		t.Errorf("under a run inside the VM only: %q", got)
+	}
 }

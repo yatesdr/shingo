@@ -49,13 +49,37 @@ type judgement struct {
 	gapMax       time.Duration
 	acState      string // on, off, unknown
 	standby      int
+	vmOnly       string // set: the host was not read, and why (insideVM)
 }
 
+// vmOnlyVerdict is the best a run judged inside the VM only can be. gatetime
+// compare quotes only "clean", and stamp gives it load=vm-only.
+const vmOnlyVerdict = "clean inside the VM only"
+
 func (j judgement) verdict() string {
-	if len(j.reasons) == 0 {
-		return "clean"
+	switch {
+	case len(j.reasons) > 0:
+		return "VOID: " + strings.Join(j.reasons, " ")
+	case j.vmOnly != "":
+		return vmOnlyVerdict
 	}
-	return "VOID: " + strings.Join(j.reasons, " ")
+	return "clean"
+}
+
+// insideVM is j for a run whose host was not read (why). The host readings
+// it could not take, AC-unknown and standby-unread, are what that scope
+// already says, so they are not reasons; every other reason still voids it,
+// a reading of off-AC included, and a run with none is vmOnlyVerdict.
+func (j judgement) insideVM(why string) judgement {
+	j.vmOnly = why
+	var keep []string
+	for _, r := range j.reasons {
+		if r != "AC-unknown" && !strings.HasPrefix(r, "standby-unread(") {
+			keep = append(keep, r)
+		}
+	}
+	j.reasons = keep
+	return j
 }
 
 // foreign is the cumulative CPU nobody in the run accounts for.

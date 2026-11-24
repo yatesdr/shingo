@@ -124,6 +124,7 @@ type fakeMachine struct {
 	acState int
 	evs     []standbyEvent
 	evErr   error
+	sc      scope
 }
 
 func (f *fakeMachine) enterJob() error                    { return nil }
@@ -138,6 +139,7 @@ func (f *fakeMachine) standby(from, to time.Time) ([]standbyEvent, error) {
 	return f.evs, f.evErr
 }
 func (f *fakeMachine) limits() []string { return nil }
+func (f *fakeMachine) scope() scope     { return f.sc }
 
 func TestPlant_BatteryAndStandby(t *testing.T) {
 	m, names := plantFrom(&fakeMachine{acState: 1}, "standby, battery")
@@ -182,6 +184,50 @@ func TestPass_CountsTheVMApartFromTheJob(t *testing.T) {
 	s := r.samples[0]
 	if s.host != 10*time.Second || s.job != 4*time.Second || s.vm != 4*time.Second || s.foreign() != 2*time.Second || s.ac != 1 {
 		t.Errorf("pass read host %v job %v vm %v foreign %v ac %d, want 10s 4s 4s 2s 1", s.host, s.job, s.vm, s.foreign(), s.ac)
+	}
+}
+
+// TestPass_AJobInsideTheVMIsCountedOnce: read from inside WSL, the VM's
+// reading already holds the job's CPU, so the pass takes the job out of the
+// VM's share rather than out of the host's twice: foreign is the host's busy
+// time less the whole VM, whatever the job's own reading says.
+func TestPass_AJobInsideTheVMIsCountedOnce(t *testing.T) {
+	for _, job := range []time.Duration{0, time.Second, 2500 * time.Millisecond} {
+		m := &readingsMachine{fakeMachine: fakeMachine{acState: 1, sc: scope{jobInVM: true}}, host: 10 * time.Second, job: job,
+			table: map[uint32]procCPU{7: {"vmmemWSL", 3 * time.Second}, 4: {"System", time.Second}, 9: {"MsMpEng.exe", 2 * time.Second}}}
+		r := &runner{m: m, every: time.Second, out: t.TempDir(), phase: "before", rows: bufio.NewWriter(io.Discard)}
+		r.pass()
+		s := r.samples[0]
+		if s.job != job || s.vm != 4*time.Second-job || s.foreign() != 6*time.Second {
+			t.Errorf("job %v inside the VM: job %v vm %v foreign %v, want %v %v 6s", job, s.job, s.vm, s.foreign(), job, 4*time.Second-job)
+		}
+	}
+}
+
+// TestJudge_InsideTheVMOnlyIsNeverClean: a run whose host was not read drops
+// the host readings it could not take (AC-unknown, standby-unread) and is at
+// best "clean inside the VM only"; any other reason, an off-AC reading
+// included, still voids it.
+func TestJudge_InsideTheVMOnlyIsNeverClean(t *testing.T) {
+	ss := samplesEvery(time.Now(), 3*time.Second, repeat(10, [3]float64{2, 2, 0}))
+	for i := range ss {
+		ss[i].ac = -1
+	}
+	j := judge(ss, nil, 15*time.Second, nil, nil)
+	j.reasons = append(j.reasons, "standby-unread(no Modern Standby log off Windows)")
+	if got := j.insideVM("no reader").verdict(); got != vmOnlyVerdict {
+		t.Errorf("quiet, AC and standby unread, inside the VM: %q, want %q", got, vmOnlyVerdict)
+	}
+	if got := j.verdict(); !strings.HasPrefix(got, "VOID: AC-unknown standby-unread(") {
+		t.Errorf("the same run judged as a whole host: %q, want VOID on AC-unknown and standby-unread", got)
+	}
+	ss[3].ac = 0
+	if got := judge(ss, nil, 15*time.Second, nil, nil).insideVM("no reader").verdict(); got != "VOID: not-on-AC(1 of 11 samples)" {
+		t.Errorf("an off-AC reading inside the VM: %q, want VOID: not-on-AC(1 of 11 samples)", got)
+	}
+	busy := samplesEvery(time.Now(), 3*time.Second, repeat(20, [3]float64{5, 2, 0}))
+	if got := judge(busy, nil, 15*time.Second, []string{"battery"}, nil).insideVM("no reader").verdict(); !strings.Contains(got, "foreign-load(3.00") || !strings.Contains(got, "planted(battery)") {
+		t.Errorf("foreign load and a plant inside the VM: %q, want both reasons", got)
 	}
 }
 

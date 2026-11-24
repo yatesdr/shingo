@@ -31,7 +31,11 @@ var (
 
 type winMachine struct{ j *job }
 
-func newMachine() machine { return &winMachine{} }
+// newMachine is this host itself: a Windows-started run never reads another.
+func newMachine() machine { return localMachine() }
+
+// localMachine is what `gatetime host` answers from (host.go).
+func localMachine() machine { return &winMachine{} }
 
 // enterJob creates a job and puts gatetime itself in it, so the command and
 // everything it starts are in it too, orphans included.
@@ -237,3 +241,6 @@ func (w *winMachine) standby(from, to time.Time) ([]standbyEvent, error) {
 
 // limits: nothing this OS cannot see.
 func (w *winMachine) limits() []string { return nil }
+
+// scope: every reading is this host's own, the job's processes outside the VM.
+func (w *winMachine) scope() scope { return scope{host: "this machine"} }

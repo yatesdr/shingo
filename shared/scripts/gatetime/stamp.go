@@ -8,8 +8,10 @@ package main
 //	samples=N          how many readings ac stands on
 //	standby=N          Kernel-Power 506/507 events since -since; "unread"
 //	                   when the log could not be read
-//	load=clean|void|unmeasured   the timed run's judgement so far (foreign
-//	                   load, gaps, AC); unmeasured outside `gatetime run`
+//	load=clean|void|vm-only|unmeasured   the timed run's judgement so far
+//	                   (foreign load, gaps, AC); vm-only when it is judged
+//	                   inside WSL's VM only (host.go); unmeasured outside
+//	                   `gatetime run`
 //	foreign30=X        the busiest 30 s of foreign load so far, in cores
 //	planted=a,b        only when GATETIME_PLANT is set (test only)
 //
@@ -69,6 +71,8 @@ func stamps(m machine, plants []string, from, to time.Time, runDir string) strin
 		out = append(out, "load=unmeasured")
 	case v == "clean":
 		out = append(out, "load=clean", "foreign30="+live["foreign_max30"])
+	case v == vmOnlyVerdict:
+		out = append(out, "load=vm-only", "foreign30="+live["foreign_max30"])
 	default:
 		out = append(out, "load=void", "foreign30="+live["foreign_max30"])
 	}

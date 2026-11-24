@@ -21,11 +21,15 @@
 //	gatetime canary -root DIR      reuse's canary: run its known binary
 //	                               through `exec` and check the record
 //	gatetime seccomp-shim ...      the Linux tracer's shim (not for hands)
+//	gatetime host                  the Windows host's readings for a gatetime
+//	                               inside WSL, one JSON request a line (host.go;
+//	                               not for hands)
 //
 // The Windows calls (job objects, the process table, power, the standby log)
 // are behind //go:build windows; on any other OS the same commands build and
 // run with what that OS can give (job_other.go and sys_other.go say what is
-// missing there).
+// missing there), and inside WSL `run` and `stamp` read the Windows host
+// through the Windows build's `host` (host.go).
 package main
 
 import (
@@ -43,6 +47,7 @@ var commands = map[string]func(args []string) int{
 	"stamp":           stampMain,
 	"report":          reportMain,
 	"canary":          reuse.CanaryMain,
+	"host":            hostMain,
 	reuse.ShimCommand: reuse.ShimMain,
 }
 

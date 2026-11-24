@@ -33,6 +33,25 @@ type machine interface {
 	standby(from, to time.Time) ([]standbyEvent, error)
 	// limits are the reasons this OS cannot give a clean verdict at all.
 	limits() []string
+	// scope is what the readings cover (host.go): where AC, standby and
+	// foreign load were read, whether the job runs inside the VM, and
+	// whether the run is judged inside the VM only.
+	scope() scope
+}
+
+// scope is what a machine's readings cover.
+type scope struct {
+	// host names where AC, standby and foreign load were read: the result
+	// line's host field.
+	host string
+	// jobInVM: the run's job runs inside the utility VM, so the VM's CPU
+	// reading already holds the job's (a run started inside WSL that reads
+	// the Windows host). pass() counts that CPU once, as the job's.
+	jobInVM bool
+	// vmOnly, when set, is why the host was not read: the run is judged
+	// inside the VM only, and its verdict is at best "clean inside the VM
+	// only" (judge.go), never "clean".
+	vmOnly string
 }
 
 type procCPU struct {
@@ -115,4 +134,15 @@ func (p *planted) standby(from, to time.Time) ([]standbyEvent, error) {
 // plantEnv is the test-only seam's variable.
 const plantEnv = "GATETIME_PLANT"
 
-func plantedMachine() (machine, []string) { return plantFrom(newMachine(), os.Getenv(plantEnv)) }
+// plantedMachine is the machine a command judges by, with GATETIME_PLANT
+// applied. A host read through a reader is planted by the reader itself (it
+// gets GATETIME_PLANT through WSLENV), so the planted readings come back over
+// the same path as real ones; planting here too would hide whether they do.
+func plantedMachine() (machine, []string) {
+	m, spec := newMachine(), os.Getenv(plantEnv)
+	if h, ok := m.(*hostMachine); ok {
+		_, names := plantFrom(h, spec)
+		return h, names
+	}
+	return plantFrom(m, spec)
+}

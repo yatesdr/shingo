@@ -17,10 +17,13 @@ package main
 //	live.tsv     the judgement so far, rewritten every pass (gatetime stamp
 //	             reads it for the gate's total line)
 //	result.tsv   ONE line, tab-separated key=value fields: start, end, wall_s,
-//	             job_cpu_s, host_cpu_s, vm_cpu_s, foreign_max30, samples,
-//	             standby, exit, verdict, flag, plant, cmd
+//	             job_cpu_s, host_cpu_s, vm_cpu_s, foreign_max30, foreign_line,
+//	             samples, standby, exit, verdict, host
+//	             (where AC, standby and load were read: machine.go's scope),
+//	             flag, plant, cmd
 //
-// The verdict is "clean" or "VOID: reasons". The exit code is the command's,
+// The verdict is "clean", "VOID: reasons", or (inside WSL with the host
+// unread, below) "clean inside the VM only". The exit code is the command's,
 // whatever the verdict: a reader reads both. A run is void when:
 //   - not-on-AC / AC-unknown: any sample not on mains power;
 //   - standby(...): a Kernel-Power 506 or 507 in the System log inside the
@@ -33,8 +36,9 @@ package main
 //     load is MEASURED, not named: whatever ran outside the job counts;
 //   - vm-busy-before: the utility VM above one core between the two passes
 //     before the command started;
-//   - sampler-error, no-samples, planted(...) (GATETIME_PLANT, test only), and
-//     on an OS without a job object, unsupported(...).
+//   - sampler-error, no-samples, planted(...) (GATETIME_PLANT, test only),
+//     host-clock-skew(...) (inside WSL, below), and off Windows outside WSL,
+//     unsupported(...).
 //
 // THE HOLE THE VM LEAVES. The utility VM (vmmemWSL) runs this run's Postgres
 // and also every other WSL 2 distro and Docker container on the machine, and
@@ -45,6 +49,24 @@ package main
 // user-mode CPU still counts); vm-busy-before catches a VM already busy when
 // the command starts. The vm_cpu_s field
 // and the vm column of samples.tsv let a reader see the VM's share.
+//
+// FROM INSIDE WSL (R39). A run started on the Linux side reads the Windows
+// host through the Windows build as `gatetime host` (host.go): the host's
+// busy CPU less the reader's own, its process table (so the VM is the same
+// isVM sum), its power line, its Kernel-Power 506/507 log for the run's
+// window, and the reader holds the system and display requirement there. The
+// job runs inside the VM, so its CPU (this process's tree, /proc) is taken out
+// of the VM's reading, not out of the host's twice. "clean" then covers what
+// it covers on Windows: AC throughout, no standby, no sampler gap, host load
+// outside the VM under the line, the VM quiet before the command, the same
+// hole (another WSL or container workload during the run is in the VM and
+// invisible), and the host's clock within 2 s of this one (else
+// host-clock-skew voids it). With no reader that answers, the run is judged
+// inside the VM only: foreign load is the VM's busy CPU less the job's (the
+// run's own Postgres counts as foreign there, so a docker run voids), the
+// host's standby is unread, and a run with no other reason is "clean inside
+// the VM only", which gatetime compare never quotes. The result line's host
+// field says which.
 
 import (
 	"bufio"
@@ -235,6 +257,7 @@ func (r *runner) writeResult(out string, tc timedCmd, flagNote, cmdLine string) 
 		"standby":       fmt.Sprint(j.standby),
 		"exit":          fmt.Sprint(tc.code),
 		"verdict":       j.verdict(),
+		"host":          r.m.scope().host,
 		"flag":          flagNote,
 		"plant":         strings.Join(r.plants, ","),
 		"cmd":           oneLine(cmdLine),
@@ -295,6 +318,9 @@ func (r *runner) pass() {
 		if isVM(p.name) {
 			s.vm += p.cpu
 		}
+	}
+	if r.m.scope().jobInVM {
+		s.vm -= s.job // the VM's reading holds the job's CPU: count it once, as the job's
 	}
 	s.ac, err = r.m.ac()
 	note(err)
@@ -362,7 +388,7 @@ func (r *runner) maxGap() time.Duration { return max(15*time.Second, 4*r.every) 
 // standby log is not read per pass (wevtutil is a process); gatetime stamp
 // reads it itself.
 func (r *runner) writeLive() {
-	j := judge(r.samples, nil, r.maxGap(), r.plants, r.m.limits())
+	j := r.judgeSoFar(nil, nil)
 	line := resultLine{
 		"samples": fmt.Sprint(len(r.samples)), "ac": j.acState,
 		"gap_max_s":     fmt.Sprintf("%.1f", j.gapMax.Seconds()),
@@ -381,9 +407,19 @@ func (r *runner) writeLive() {
 func (r *runner) final() judgement {
 	from, to := r.samples[0].at, r.samples[len(r.samples)-1].at
 	evs, err := r.m.standby(from, to)
+	return r.judgeSoFar(evs, err)
+}
+
+// judgeSoFar is every rule over the samples so far, the standby events read
+// for them (and why they could not be, standbyErr), within the machine's
+// scope: a run judged inside the VM only is at best vmOnlyVerdict.
+func (r *runner) judgeSoFar(evs []standbyEvent, standbyErr error) judgement {
 	j := judge(r.samples, evs, r.maxGap(), r.plants, r.m.limits())
-	if err != nil {
-		j.reasons = append(j.reasons, "standby-unread("+oneLine(err.Error())+")")
+	if standbyErr != nil {
+		j.reasons = append(j.reasons, "standby-unread("+oneLine(standbyErr.Error())+")")
+	}
+	if why := r.m.scope().vmOnly; why != "" {
+		j = j.insideVM(why)
 	}
 	return j
 }
@@ -443,7 +479,7 @@ func copyTail(src string, from int64, dst string) error {
 type resultLine map[string]string
 
 var resultOrder = []string{"start", "end", "wall_s", "job_cpu_s", "host_cpu_s", "vm_cpu_s", "foreign_max30", "foreign_line",
-	"samples", "standby", "exit", "verdict", "flag", "plant", "cmd", "ac", "gap_max_s"}
+	"samples", "standby", "exit", "verdict", "host", "flag", "plant", "cmd", "ac", "gap_max_s"}
 
 func (l resultLine) String() string {
 	var out []string
