@@ -26,28 +26,21 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
-	"unicode/utf8"
+
+	"shingo/shared/scripts/internal/testset"
 )
 
 // Modules are the five Go modules whose tests the ledger accounts for.
-var Modules = []string{"protocol", "shared", "shingo-core", "shingo-edge", "integration"}
+var Modules = testset.Modules
 
 // LedgerPath is the ledger's place under the repo root.
 const LedgerPath = "docs/testing/population-ledger.md"
@@ -72,162 +65,21 @@ type Vanished struct {
 // key is how a test is identified across base and tip.
 type key struct{ dir, name string }
 
-// git runs git in root and returns its stdout.
-func git(root string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return out, nil
-}
-
 // ResolveBase returns the commit to compare against: ref when given, else
-// the merge base of HEAD and origin/main.
-func ResolveBase(root, ref string) (string, error) {
-	if ref == "" {
-		out, err := git(root, "merge-base", "HEAD", "origin/main")
-		if err != nil {
-			return "", fmt.Errorf("no base: %v (set -base or TEST_LEDGER_BASE, or fetch origin/main)", err)
-		}
-		return strings.TrimSpace(string(out)), nil
-	}
-	out, err := git(root, "rev-parse", "--verify", ref+"^{commit}")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
+// the merge base of HEAD and origin/main (testset.ResolveBase, which the
+// test-cost guard reads too).
+func ResolveBase(root, ref string) (string, error) { return testset.ResolveBase(root, ref) }
 
-// isTestFile reports whether a slash path is a _test.go file go test reads.
-func isTestFile(p string) bool {
-	if !strings.HasSuffix(p, "_test.go") {
-		return false
-	}
-	for _, seg := range strings.Split(path.Dir(p), "/") {
-		if seg == "testdata" || seg == "vendor" || seg == "node_modules" || strings.HasPrefix(seg, ".") || strings.HasPrefix(seg, "_") {
-			return false
-		}
-	}
-	base := path.Base(p)
-	return !strings.HasPrefix(base, ".") && !strings.HasPrefix(base, "_")
-}
-
-// isTestName is go test's rule for a test function's name: Test, then nothing or a
-// rune that is not lower case (Testable is a helper). TestMain is the package's
-// test entry point, not a test: removing one needs no row.
-func isTestName(n string) bool {
-	if n == "TestMain" || !strings.HasPrefix(n, "Test") {
-		return false
-	}
-	rest := n[len("Test"):]
-	if rest == "" {
-		return true
-	}
-	r, _ := utf8.DecodeRuneInString(rest)
-	return !unicode.IsLower(r)
-}
-
-// testFuncs returns the top-level Test functions src declares, with their lines.
-func testFuncs(name string, src []byte) (map[string]int, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]int{}
-	for _, d := range f.Decls {
-		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && isTestName(fn.Name.Name) {
-			out[fn.Name.Name] = fset.Position(fn.Pos()).Line
-		}
-	}
-	return out, nil
-}
-
-// changedTestFiles lists the _test.go files of the modules that differ
-// between base and the working tree.
-func changedTestFiles(root, base string) ([]string, error) {
-	out, err := git(root, append([]string{"diff", "--name-only", "--no-renames", base, "--"}, Modules...)...)
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	for _, l := range strings.Split(string(out), "\n") {
-		if l = strings.TrimSpace(l); isTestFile(l) {
-			files = append(files, l)
-		}
-	}
-	return files, nil
-}
-
-// readAtBase returns the base's content of each file it has, by path.
-func readAtBase(root, base string, files []string) (map[string][]byte, error) {
-	cmd := exec.Command("git", "-C", root, "cat-file", "--batch")
-	var in bytes.Buffer
-	for _, f := range files {
-		fmt.Fprintf(&in, "%s:%s\n", base, f)
-	}
-	cmd.Stdin = &in
-	raw, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git cat-file: %v", err)
-	}
-	out := map[string][]byte{}
-	r := bufio.NewReader(bytes.NewReader(raw))
-	for _, f := range files {
-		header, err := r.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("git cat-file: %s: %v", f, err)
-		}
-		fields := strings.Fields(header)
-		if len(fields) == 2 && fields[1] == "missing" {
-			continue // added since the base
-		}
-		var size int
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("git cat-file: %s: bad header %q", f, header)
-		}
-		if _, err := fmt.Sscan(fields[2], &size); err != nil {
-			return nil, fmt.Errorf("git cat-file: %s: bad size in %q", f, header)
-		}
-		body := make([]byte, size+1) // the body and its trailing newline
-		if _, err := io.ReadFull(r, body); err != nil {
-			return nil, fmt.Errorf("git cat-file: %s: %v", f, err)
-		}
-		out[f] = body[:size]
-	}
-	return out, nil
-}
-
-// tipTests returns the Test functions every _test.go file in dir declares
-// in the working tree.
+// tipTests returns the names of the Test functions every _test.go file in dir
+// declares in the working tree.
 func tipTests(root, dir string) (map[string]bool, error) {
-	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]bool{}, nil
-	}
+	tests, err := testset.TipTests(root, dir)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]bool{}
-	for _, e := range entries {
-		p := path.Join(dir, e.Name())
-		if e.IsDir() || !isTestFile(p) {
-			continue
-		}
-		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
-		if err != nil {
-			return nil, err
-		}
-		fns, err := testFuncs(p, src)
-		if err != nil {
-			return nil, err
-		}
-		for n := range fns {
-			out[n] = true
-		}
+	for n := range tests {
+		out[n] = true
 	}
 	return out, nil
 }
@@ -282,11 +134,11 @@ func Rows(ledger []byte) map[[2]string]bool {
 // Check returns the tests the base declares, the tip does not, and the
 // ledger has no row for, sorted by package and name.
 func Check(root, base string, ledger []byte) ([]Vanished, error) {
-	files, err := changedTestFiles(root, base)
+	files, err := testset.ChangedTestFiles(root, base)
 	if err != nil {
 		return nil, err
 	}
-	srcs, err := readAtBase(root, base, files)
+	srcs, err := testset.ReadAtBase(root, base, files)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +155,7 @@ func Check(root, base string, ledger []byte) ([]Vanished, error) {
 		if !ok {
 			continue
 		}
-		fns, err := testFuncs(f, src)
+		fns, err := testset.TestFuncs(f, src)
 		if err != nil {
 			return nil, fmt.Errorf("%s at %s: %v", f, base, err)
 		}
