@@ -166,6 +166,19 @@ func textFileCases() []ruleCase {
 	return []ruleCase{{"text-files", "a text-attributed file indexed -text", fixed(tr), []string{"bad.go"}}}
 }
 
+func pathCaseCases() []ruleCase {
+	return []ruleCase{
+		{"path-case", "two files, two directories, a file and a directory", fixed(treeOf(
+			"docs/README.md", "", "docs/Readme.md", "", // the second in index order is named
+			"Web/a.js", "", "web/b.js", "", // two directories that are one on Windows
+			"NOTES", "", "notes/x.md", "", // a file and a directory
+			"ok/a.md", "", "ok/b.md", "")),
+			[]string{"docs/Readme.md", "notes", "web"}},
+		{"path-case", "names that differ by more than case", fixed(treeOf(
+			"a/b.go", "", "a/c.go", "", "A.md", "", "a.go", "")), []string{}},
+	}
+}
+
 func commentRefCases() []ruleCase {
 	n := func(k int) string { return strings.Repeat("x\n", k) }
 	tr := treeOf(
@@ -588,8 +601,8 @@ func jsCases() []ruleCase {
 
 func allCases() []ruleCase {
 	var cs []ruleCase
-	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, initReadCases, jsCases, plantCases,
-		rawSyscallCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, textFileCases} {
+	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, initReadCases, jsCases, pathCaseCases,
+		plantCases, rawSyscallCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
 	return cs
