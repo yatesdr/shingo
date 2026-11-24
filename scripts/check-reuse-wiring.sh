@@ -29,30 +29,36 @@ FAKE
 chmod +x "$TMP/gatetime"
 : >"$TMP/identity"
 
-# setup <tier> [VAR=value...] — prints "mode|note|GATETIME_REUSE" after reuse_setup.
+# setup <side> <tier> [VAR=value...] — prints "mode|note|GATETIME_REUSE" after
+# reuse_setup, as gate.sh would run it on <side>: windows (Git Bash's OSTYPE),
+# mirror (a gate in a WSL mirror: GATE_IN_MIRROR, set by gate.sh) or other (any
+# other host: CI, the houseserver). The side is named, never the host's own, so
+# every row reads the same on Windows, in a mirror and on GitHub.
 # The gate running this guard may itself have GATE_REUSE=on, and GitHub sets
 # GITHUB_ACTIONS=true: each row clears both and passes only what it means.
 setup() {
-  local tier="$1"; shift
-  env -u GATETIME_REUSE -u GATE_REUSE -u GITHUB_ACTIONS "$@" GATE_TIER="$tier" ROOT="$TMP" GATETIME_BIN="$TMP/gatetime" GATETIME_IDENTITY="$TMP/identity" \
-    GATE_RUN=r GATE_SHA=s bash -c '. "$1"; reuse_setup; printf "%s|%s|%s" "$REUSE_MODE" "$REUSE_NOTE" "${GATETIME_REUSE-unset}"' _ "$ROOT/scripts/gate-reuse.sh"
+  local side="$1" tier="$2" os=linux-gnu mirror=""; shift 2
+  [ "$side" = windows ] && os=msys
+  [ "$side" = mirror ] && mirror=1
+  env -u GATETIME_REUSE -u GATE_REUSE -u GITHUB_ACTIONS -u GATE_IN_MIRROR ${mirror:+GATE_IN_MIRROR=1} "$@" GATE_TIER="$tier" ROOT="$TMP" GATETIME_BIN="$TMP/gatetime" GATETIME_IDENTITY="$TMP/identity" \
+    GATE_RUN=r GATE_SHA=s bash -c 'OSTYPE="$2"; . "$1"; reuse_setup; printf "%s|%s|%s" "$REUSE_MODE" "$REUSE_NOTE" "${GATETIME_REUSE-unset}"' _ "$ROOT/scripts/gate-reuse.sh" "$os"
 }
 
-row "off by default" "||unset" "$(setup dev)"
-row "an outer gate's switch does not leak into a gate that is off" "||unset" "$(setup dev GATETIME_REUSE=reuse)"
-row "dev serves" "reuse||reuse" "$(setup dev GATE_REUSE=on)"
-row "push serves" "reuse||reuse" "$(setup push GATE_REUSE=on)"
-row "cert audits" "audit||audit" "$(setup cert GATE_REUSE=on)"
-row "a single step is off" "|reuse: off for a single step|unset" "$(setup step GATE_REUSE=on)"
-row "GitHub never serves" "|reuse: off on GitHub|unset" "$(setup push GATE_REUSE=on GITHUB_ACTIONS=true)"
+row "off by default" "||unset" "$(setup other dev)"
+row "an outer gate's switch does not leak into a gate that is off" "||unset" "$(setup other dev GATETIME_REUSE=reuse)"
+row "dev serves" "reuse||reuse" "$(setup other dev GATE_REUSE=on)"
+row "push serves" "reuse||reuse" "$(setup other push GATE_REUSE=on)"
+row "cert audits" "audit||audit" "$(setup other cert GATE_REUSE=on)"
+row "a single step is off" "|reuse: off for a single step|unset" "$(setup other step GATE_REUSE=on)"
+row "GitHub never serves" "|reuse: off on GitHub|unset" "$(setup other push GATE_REUSE=on GITHUB_ACTIONS=true)"
 row "a failed canary turns serving off" \
   "record|reuse: OFF this run, the canary differs: no open of testdata/in.txt by the binary|record" \
-  "$(setup dev GATE_REUSE=on FAKE_CANARY_RC=1)"
+  "$(setup other dev GATE_REUSE=on FAKE_CANARY_RC=1)"
 row "a failed canary leaves cert auditing" \
   "audit|reuse: OFF this run, the canary differs: no open of testdata/in.txt by the binary|audit" \
-  "$(setup cert GATE_REUSE=on FAKE_CANARY_RC=1)"
+  "$(setup other cert GATE_REUSE=on FAKE_CANARY_RC=1)"
 row "no wrapper, no reuse" "|reuse: off (no gatetime binary or identity file this run)|unset" \
-  "$(env -u GITHUB_ACTIONS GATE_TIER=dev ROOT="$TMP" GATE_REUSE=on bash -c '. "$1"; GATETIME_BIN= reuse_setup; printf "%s|%s|%s" "$REUSE_MODE" "$REUSE_NOTE" "${GATETIME_REUSE-unset}"' _ "$ROOT/scripts/gate-reuse.sh")"
+  "$(env -u GITHUB_ACTIONS -u GATE_IN_MIRROR GATE_TIER=dev ROOT="$TMP" GATE_REUSE=on bash -c 'OSTYPE=linux-gnu; . "$1"; GATETIME_BIN= reuse_setup; printf "%s|%s|%s" "$REUSE_MODE" "$REUSE_NOTE" "${GATETIME_REUSE-unset}"' _ "$ROOT/scripts/gate-reuse.sh")"
 
 # The sentence and the audit, over a decision log.
 cat >"$TMP/log" <<'LOG'
