@@ -528,14 +528,22 @@ mirror_linux_run() {
   fi
   echo syncing >"$st"
   cd "$m" || return 0
-  # 3. Hand edits since the last sync: refused, never overwritten.
-  if synced="$(git rev-parse -q --verify 'refs/gate-mirror/synced^{tree}')"; then
+  # 3. Hand edits since the last sync: refused, never overwritten. The tree
+  # the mirror holds is the last synced one, or the target of a sync that
+  # stopped after it wrote the working tree (refs/gate-mirror/syncing, set
+  # before step 6): that one is carried on from, not taken for a hand edit.
+  local base="" target=""
+  synced="$(git rev-parse -q --verify 'refs/gate-mirror/synced^{tree}')" || synced=""
+  target="$(git rev-parse -q --verify 'refs/gate-mirror/syncing^{tree}')" || target=""
+  if [ -n "$synced" ] || [ -n "$target" ]; then
     now=""
     gate_tree_id "$m/.git/gate-tree-index.$$" && now="$GATE_TREE_WORK"
     rm -f "$m/.git/gate-tree-index.$$"
-    if [ "$now" != "$synced" ]; then
-      echo "gate: REFUSED — the mirror $m was changed by hand since its last sync; nothing was overwritten and nothing ran:"
-      if [ -n "$now" ]; then git diff-tree -r --name-status "$synced" "$now" | head -40 | sed 's/^/    /'
+    if [ -n "$now" ] && [ "$now" = "$synced" ]; then base="$synced"
+    elif [ -n "$now" ] && [ "$now" = "$target" ]; then base="$target"
+    else
+      echo "gate: REFUSED — the mirror $m was changed by hand since its last sync (or a sync stopped part-way through writing it); nothing was overwritten and nothing ran:"
+      if [ -n "$now" ]; then git diff-tree -r --name-status "${synced:-$target}" "$now" | head -40 | sed 's/^/    /'
       else echo "    (its tree could not be read)"; fi
       echo "  Keep what you need from it, then delete the mirror ($m); the next gate makes it again."
       echo refused >"$st"
@@ -554,7 +562,7 @@ mirror_linux_run() {
   fi
   # 5. The refs: exactly the carried set, then HEAD and its upstream as there.
   { git for-each-ref --format='%(refname)' refs/heads refs/remotes refs/tags refs/gate-mirror \
-      | awk 'NR == FNR { keep[$1] = 1; next } !keep[$1] && $1 != "refs/gate-mirror/synced" { print "delete " $1 }' \
+      | awk 'NR == FNR { keep[$1] = 1; next } !keep[$1] && $1 != "refs/gate-mirror/synced" && $1 != "refs/gate-mirror/syncing" { print "delete " $1 }' \
           "$wt/.gate/mirror/refs" -
     awk '{ print "update " $1 " " $2 }' "$wt/.gate/mirror/refs"
   } | git update-ref --stdin || { echo "gate: the mirror's refs could not be set"; return 0; }
@@ -573,12 +581,15 @@ mirror_linux_run() {
     git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
     git config remote.origin.pushurl 'the-gate-mirror-never-pushes'
   fi
-  # 6. The working tree, from the synced tree to the new one through an index
-  # of the synced tree: unchanged files are not touched (their mtimes stay).
+  # 6. The working tree, from the tree the mirror holds (step 3) to the new one
+  # through an index of it: unchanged files are not touched (their mtimes stay).
+  # The target is recorded first, so a sync that stops after this step is
+  # carried on from by the next (step 3).
+  git update-ref refs/gate-mirror/syncing "$MS_CONTENT" || return 0
   wtix="$m/.git/gate-wt-index"
-  if [ -n "$synced" ] && [ -e "$wtix" ]; then
+  if [ -n "$base" ] && [ -e "$wtix" ]; then
     GIT_INDEX_FILE="$wtix" git update-index -q --refresh >/dev/null 2>&1
-    GIT_INDEX_FILE="$wtix" git read-tree -m -u "$synced" "$MS_TREE" \
+    GIT_INDEX_FILE="$wtix" git read-tree -m -u "$base" "$MS_TREE" \
       || { echo "gate: the mirror's working tree could not be moved to $MS_TREE"; return 0; }
   else
     rm -f "$wtix"
@@ -597,6 +608,7 @@ mirror_linux_run() {
   git config gate.lockdir "$(_mirror_lpath "$MS_LOCKDIR")"
   git config gate.timingdir "$(_mirror_lpath "$MS_TIMINGDIR")"
   git update-ref refs/gate-mirror/synced "$MS_CONTENT" || return 0
+  git update-ref -d refs/gate-mirror/syncing
   # 9. The gate.
   local v
   for v in GATE_STEPS_LOG GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_TEST_LOG_DIR GATE_TESTSET_DIR; do

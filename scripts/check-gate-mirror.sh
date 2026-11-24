@@ -161,6 +161,20 @@ w add protocol/p.go
 out="$(gate simvet)"; rc=$?
 [ "$rc" -eq 0 ] || fail "a sync after staging an unstaged edit went red (exit $rc): $out"
 [ "$(git -C "$M" status --porcelain 2>/dev/null)" = "$(w status --porcelain)" ] || fail "after staging an edit the status differs"
+# A sync that stopped after it moved the working tree (as one did when its
+# index step failed): the tree is the target, synced is the one before. Made
+# by hand here; the next sync must carry on from it, not call it a hand edit.
+prev="$(git -C "$M" rev-parse refs/gate-mirror/synced)"
+printf '// after the stop\n' >>"$W/protocol/p.go"
+out="$(gate simvet)"; rc=$?
+[ "$rc" -eq 0 ] || fail "the sync before the stopped one went red (exit $rc): $out"
+git -C "$M" update-ref refs/gate-mirror/syncing "$(git -C "$M" rev-parse refs/gate-mirror/synced)"
+git -C "$M" update-ref refs/gate-mirror/synced "$prev"
+printf '// next\n' >>"$W/protocol/p.go"
+out="$(gate simvet)"; rc=$?
+{ [ "$rc" -eq 0 ] && grep -q '// next' "$M/protocol/p.go"; } \
+  || fail "a sync after one that stopped part-way was refused or wrong (exit $rc): $out"
+[ "$(git -C "$M" status --porcelain 2>/dev/null)" = "$(w status --porcelain)" ] || fail "after a stopped sync the status differs"
 
 # ── 3. a file changed in the mirror by hand ──────────────────────────────
 printf '// by hand\n' >>"$M/protocol/p.go"
