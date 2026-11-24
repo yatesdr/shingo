@@ -71,6 +71,34 @@ func TestProducePartials_ManualEmptySendsTheOperatorsCount(t *testing.T) {
 	}
 }
 
+// TestProducePartials_TheMaterialPageSendsALineCountedAtNothing: the Material
+// page's RELEASE with no count typed carries the line's own count on the move
+// (commitMaterial reads the cache), and a produce line counted at nothing sends
+// 0, not no count. Core clears and claims a carrier released at 0, and gives
+// one released with no count a plain claim that keeps whatever its row held
+// (claimUnderReservationTx).
+func TestProducePartials_TheMaterialPageSendsALineCountedAtNothing(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 0), "the line counted at nothing")
+	bin := int64(77)
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, &bin), "the seat holds the line's carrier")
+	eng := testEngine(t, db)
+
+	release, err := eng.ReleaseNodeEmpty(nodeID)
+	if err != nil || release == nil {
+		t.Fatalf("the Material page's RELEASE: %v", err)
+	}
+	moves := sentMoves(t, db)["PRODUCE-NODE"]
+	if len(moves) != 1 || moves[0].OrderUUID != release.UUID {
+		t.Fatalf("%d moves from PRODUCE-NODE in the outbox, want the RELEASE's one", len(moves))
+	}
+	if moves[0].RemainingUOP == nil || *moves[0].RemainingUOP != 0 {
+		t.Errorf("the move carries remaining %v, want the line's 0", moves[0].RemainingUOP)
+	}
+}
+
 // TestProducePartials_ThePickNamesTheFetch: the operator's chosen held partial
 // rides the swap's fetch, the pickup at the node the refill comes from (the
 // claim's inbound source, or its keep-staged spot), and no other step, on every
