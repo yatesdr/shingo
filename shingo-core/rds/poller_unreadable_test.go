@@ -59,11 +59,23 @@ func TestPollerReportsAnOrderRDSCannotReportOn(t *testing.T) {
 
 	em := &unreadableEmitter{}
 	p := NewPoller(client, em, &mockResolver{}, time.Minute)
-	p.unreadableAfter = time.Nanosecond
+	p.unreadableAfter = time.Minute
 	p.Track("rds-lost")
 	p.Track("rds-fine")
 
-	p.poll()
+	p.poll() // the first failed read starts rds-lost's clock
+	// A minute has passed: the clock is backdated, not slept on. A nanosecond
+	// threshold over two back-to-back polls read 0 elapsed whenever both polls
+	// saw the same instant (Windows' clock is coarse): red in 18 and 29 of 200
+	// runs alone (2026-11-24).
+	p.mu.Lock()
+	u := p.unreadable["rds-lost"]
+	if u == nil {
+		p.mu.Unlock()
+		t.Fatal("the first failed read of rds-lost started no clock")
+	}
+	u.since = u.since.Add(-time.Minute)
+	p.mu.Unlock()
 	p.poll()
 	em.umu.Lock()
 	got := append([]string(nil), em.unreadable...)
