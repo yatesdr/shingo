@@ -151,7 +151,7 @@ gate_selection_fields() {
   if [ -n "$d" ] && [ "$ROOT/.gate/unit.summary" -nt "$d/start" ]; then
     reused="$(sed -n 's/^cached: \([0-9]*\) of .*/\1/p' "$ROOT/.gate/unit.summary" | head -1)"
   fi
-  # Under GATE_REUSE=on the binaries the wrapper served (scripts/gate-reuse.sh).
+  # Where reuse is on, the binaries the wrapper served (scripts/gate-reuse.sh).
   [ -n "${REUSE_MODE:-}" ] && reused="$(reuse_counts | cut -d' ' -f1)"
   printf 'tier=%s docker=%s modules=%s p=%s guards=%s reused=%s' \
     "$GATE_TIER" "$docker" "$modules" "$p" "${guards:--}" "${reused:-0}"

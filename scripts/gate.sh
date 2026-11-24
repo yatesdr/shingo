@@ -785,7 +785,7 @@ step_test() {
   # With the wrapper off (GATE_EXEC=off): FAIL-SAFE, any path in the diff that is
   # not Go under a module (diff_go_only) reruns everything. A flake cached green
   # re-rolls at `full`.
-  # Reuse that is safe from those holes is the wrapper's (GATE_REUSE=on,
+  # Reuse that is safe from those holes is the wrapper's (on in a WSL mirror,
   # scripts/gate-reuse.sh), not Go's cache.
   local count="-count=1" how=""
   if [ "${GATE_TIER:-}" = dev ]; then
@@ -1661,7 +1661,8 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # gate_timing_check / gate_timing_status: the timing flag a `gatetime run`
 # holds (shared/scripts/gatetime), which every heavy mode below honours.
 . "$ROOT/scripts/gate-timing.sh"
-# reuse_setup / reuse_summary / reuse_audit: test-result reuse, OFF unless
+# reuse_setup / reuse_summary / reuse_audit: test-result reuse, ON in a WSL
+# mirror unless GATE_REUSE=off, never on the Windows side, elsewhere only with
 # GATE_REUSE=on (dev and push serve, cert audits; shared/scripts/gatetime/reuse).
 . "$ROOT/scripts/gate-reuse.sh"
 # mirror_prelock / mirror_route / mirror_on_exit: which side a heavy mode runs
@@ -1766,7 +1767,7 @@ case "${1:-all}" in
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
     gatetime_prepare "${1:-all}"
     gatetime_exec_prepare "${1:-all}" || exit 1
-    # Reuse rides on that wrapper and its identity; off unless GATE_REUSE=on.
+    # Reuse rides on that wrapper and its identity (where it is on: gate-reuse.sh).
     reuse_setup
     # Test-set records, off unless GATE_TESTSET=on (scripts/gate-testsets.sh).
     testset_setup "${1:-all}" || exit 1 ;;
@@ -2001,7 +2002,7 @@ case "${1:-all}" in
       gate_docker=skipped
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
-    # Cert, GATE_REUSE=on: a binary push would have served whose fresh run did
+    # Cert, where reuse is on: a binary push would have served whose fresh run did
     # not pass fails the certification (scripts/gate-reuse.sh).
     reuse_audit || rc=1
     ;;

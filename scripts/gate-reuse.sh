@@ -2,10 +2,22 @@
 #
 # gate-reuse.sh — the gate's side of test-result reuse (package reuse in
 # shared/scripts/gatetime; work/loc-census-2026-11-20/design-round2 SYNTH
-# section 2, stage 2). Sourced by scripts/gate.sh. OFF unless GATE_REUSE=on.
+# section 2, stage 2). Sourced by scripts/gate.sh.
 #
-# With GATE_REUSE=on, every `go test` the gate runs through `gatetime exec`
-# gets GATETIME_REUSE:
+# WHERE IT IS ON (R38, 2026-11-24). On the Linux side, a gate in a WSL mirror
+# (scripts/gate-mirror.sh: synced by a Windows worktree's gate, or started
+# there by hand), reuse is ON unless GATE_REUSE=off: the probe set read 47 of
+# 47 twice on this laptop's WSL ext4 (work/loc-census-2026-11-20/gate-fast/
+# lanes-A/wsl). The Windows side NEVER reuses, GATE_REUSE=on included: nothing
+# there traces a raw-syscall or package-var read (probes 23 and 25) or a
+# child's read of an ignored file or one outside the repo (36, 45), so a stale
+# pass could be served. Any other host (CI, the houseserver) is off unless
+# GATE_REUSE=on. GitHub never reuses: that return comes before any default, no
+# workflow sets GATE_REUSE (pinned by TestNoWorkflowSwitchesReuseOn), and the
+# wrapper serves nothing under GITHUB_ACTIONS=true.
+#
+# Where it is on, every `go test` the gate runs through `gatetime exec` gets
+# GATETIME_REUSE:
 #   dev, push   reuse: a binary whose stored passing run matches on every
 #               input, by content, is served (one marker line, then its stored
 #               output); every other binary runs and, if it passes cleanly, is
@@ -14,9 +26,6 @@
 #               out what push would have served, runs it fresh, and a would-be
 #               hit whose fresh run did not pass fails the gate (reuse_audit).
 #   step        (one step by name: CI's `gate.sh scripts`, `gate.sh sim`) off.
-# GitHub never reuses: no workflow sets GATE_REUSE (pinned by
-# TestNoWorkflowSwitchesReuseOn) and the wrapper serves nothing under
-# GITHUB_ACTIONS=true.
 #
 # THE CANARY FIRST, EVERY GATE. `gatetime canary` runs one known package
 # through the wrapper and compares the record with what that package is known
@@ -29,6 +38,14 @@
 REUSE_MODE=""
 REUSE_NOTE=""
 
+# reuse_side — where this gate's tests run: windows (Git Bash: the Windows
+# side, by GATE_SIDE=windows or a fallback), mirror (the Linux side: a gate in a
+# WSL mirror, GATE_IN_MIRROR from gate.sh's top), or other.
+reuse_side() {
+  case "${OSTYPE:-}" in msys*|cygwin*) echo windows; return ;; esac
+  if [ -n "${GATE_IN_MIRROR:-}" ]; then echo mirror; else echo other; fi
+}
+
 # reuse_setup — decides this run's mode and exports the wrapper's switches.
 # Prints nothing; the sentence reads REUSE_MODE and REUSE_NOTE.
 reuse_setup() {
@@ -36,16 +53,35 @@ reuse_setup() {
   # Each gate decides for itself: a gate a guard runs inside this one must not
   # inherit this one's switches, store or log.
   unset GATETIME_REUSE GATETIME_STORE GATETIME_REUSE_LOG GATETIME_RUN GATETIME_SHA
-  [ "${GATE_REUSE:-}" = on ] || return 0
+  local side want
+  side="$(reuse_side)"
+  case "$side" in
+    windows)
+      case "${GATE_TIER:-}:${GATE_REUSE:-}" in
+        dev:*|push:*|cert:*|*:on) REUSE_NOTE="reuse: off on the Windows side (R38)" ;;
+      esac
+      return 0 ;;
+    mirror) want="${GATE_REUSE:-on}" ;;
+    *) want="${GATE_REUSE:-off}" ;;
+  esac
+  # GitHub before any default can take effect.
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    [ "$want" = on ] && REUSE_NOTE="reuse: off on GitHub"
+    return 0
+  fi
+  if [ "$want" != on ]; then
+    # Off where the default is on: the sentence says who turned it off.
+    [ "$side" = mirror ] && case "${GATE_TIER:-}" in dev|push|cert) REUSE_NOTE="reuse: off (GATE_REUSE=$want)" ;; esac
+    return 0
+  fi
   case "${GATE_TIER:-}" in
     dev|push) REUSE_MODE=reuse ;;
     cert) REUSE_MODE=audit ;;
-    *) REUSE_NOTE="reuse: off for a single step"; return 0 ;;
+    *)
+      # A single step never reuses; it says so only when reuse was asked for.
+      [ "${GATE_REUSE:-}" = on ] && REUSE_NOTE="reuse: off for a single step"
+      return 0 ;;
   esac
-  if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    REUSE_MODE="" REUSE_NOTE="reuse: off on GitHub"
-    return 0
-  fi
   if [ -z "${GATETIME_BIN:-}" ] || [ -z "${GATETIME_IDENTITY:-}" ]; then
     REUSE_MODE="" REUSE_NOTE="reuse: off (no gatetime binary or identity file this run)"
     return 0

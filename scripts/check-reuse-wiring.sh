@@ -2,9 +2,10 @@
 # tier: dev
 # inputs: scripts/gate-reuse.sh scripts/check-reuse-wiring.sh
 # check-reuse-wiring.sh — the gate's reuse switch (scripts/gate-reuse.sh), driven
-# with a fake gatetime: what each tier exports, that the canary's own exit code
-# turns reuse off, that GitHub never serves, the sentence's counts, and cert's
-# audit failing on a mismatch. The wrapper's own lookup is pinned by package
+# with a fake gatetime: what each tier exports on each side (on by default in a
+# WSL mirror, never on the Windows side, off elsewhere unless asked: R38), that
+# the canary's own exit code turns reuse off, that GitHub never serves, the
+# sentence's counts, and cert's audit failing on a mismatch. The wrapper's own lookup is pinned by package
 # reuse's tests and its probe set (shared/scripts/gatetime/reuse/probes).
 #
 # Exit 0 = every row holds, 1 = a row failed.
@@ -57,6 +58,27 @@ row "a failed canary turns serving off" \
 row "a failed canary leaves cert auditing" \
   "audit|reuse: OFF this run, the canary differs: no open of testdata/in.txt by the binary|audit" \
   "$(setup other cert GATE_REUSE=on FAKE_CANARY_RC=1)"
+# R38: on by default on the Linux side (a mirror's gate), never on the Windows
+# side, never on GitHub.
+row "a mirror's dev serves by default" "reuse||reuse" "$(setup mirror dev)"
+row "a mirror's push serves by default" "reuse||reuse" "$(setup mirror push)"
+row "a mirror's cert audits by default, serving nothing" "audit||audit" "$(setup mirror cert)"
+row "GATE_REUSE=off turns a mirror's reuse off, and says so" "|reuse: off (GATE_REUSE=off)|unset" "$(setup mirror dev GATE_REUSE=off)"
+row "an outer gate's switch does not leak into a mirror gate that is off" "|reuse: off (GATE_REUSE=off)|unset" \
+  "$(setup mirror push GATE_REUSE=off GATETIME_REUSE=reuse)"
+row "a mirror's single step is off, quietly" "||unset" "$(setup mirror step)"
+row "the Windows side never reuses, GATE_REUSE=on included" "|reuse: off on the Windows side (R38)|unset" \
+  "$(setup windows dev GATE_REUSE=on)"
+row "the Windows side's push says reuse is off" "|reuse: off on the Windows side (R38)|unset" "$(setup windows push)"
+row "the Windows side's cert does not audit" "|reuse: off on the Windows side (R38)|unset" "$(setup windows cert GATE_REUSE=on)"
+row "GitHub never reuses, even where the default is on" "|reuse: off on GitHub|unset" "$(setup mirror push GITHUB_ACTIONS=true)"
+side() { # OSTYPE [VAR=value...] — reuse_side as gate.sh's shell would answer it
+  local os="$1"; shift
+  env -u GATE_IN_MIRROR "$@" bash -c 'OSTYPE="$2"; . "$1"; reuse_side' _ "$ROOT/scripts/gate-reuse.sh" "$os"
+}
+row "Git Bash is the Windows side" "windows windows windows" "$(side msys) $(side cygwin) $(side msys GATE_IN_MIRROR=1)"
+row "a gate in a mirror is the Linux side; any other host is neither" "mirror other" "$(side linux-gnu GATE_IN_MIRROR=1) $(side linux-gnu)"
+
 row "no wrapper, no reuse" "|reuse: off (no gatetime binary or identity file this run)|unset" \
   "$(env -u GITHUB_ACTIONS -u GATE_IN_MIRROR GATE_TIER=dev ROOT="$TMP" GATE_REUSE=on bash -c 'OSTYPE=linux-gnu; . "$1"; GATETIME_BIN= reuse_setup; printf "%s|%s|%s" "$REUSE_MODE" "$REUSE_NOTE" "${GATETIME_REUSE-unset}"' _ "$ROOT/scripts/gate-reuse.sh")"
 
@@ -82,5 +104,5 @@ row "the audit names the binary" "  p/b" "$(printf '%s\n' "$out" | sed -n 2p)"
 GATETIME_REUSE_LOG="$TMP/log" bash -c '. "$1"; REUSE_MODE=reuse; reuse_audit' _ "$ROOT/scripts/gate-reuse.sh"
 row "push does not audit" "0" "$?"
 
-[ "$fail" -eq 0 ] && echo "ok   reuse wiring (off by default; dev and push serve, cert audits, steps and GitHub off; the canary's exit decides; counts; the audit fails a mismatch)"
+[ "$fail" -eq 0 ] && echo "ok   reuse wiring (on by default in a mirror, GATE_REUSE=off its opt-out; never on the Windows side or GitHub; elsewhere off unless asked; dev and push serve, cert audits, steps off; the canary's exit decides; counts; the audit fails a mismatch)"
 exit "$fail"
