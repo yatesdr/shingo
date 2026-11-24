@@ -325,7 +325,8 @@ func ppRows() []ppRow {
 		// the move by the Edge's
 		// TestProducePartials_TheMaterialPageSendsALineCountedAtNothing, and
 		// Core's clear at 0 (a carrier of 100 of its part, cleared) by
-		// shingo-core's TestPhase0_UOPBranch_PostState/zero_uop_clear_and_claim.
+		// shingo-core's TestPhase0_UOPBranch_PostState, its zero-UOP
+		// clear-and-claim case.
 		ppRow{door: "material", mode: tr, class: ppFull, today: ppNoIngest40,
 			after: "at=KSR-DEST uop=40 part=KSR-PA ledger=sync_uop_and_claim cms=40"},
 		ppRow{door: "material", mode: tr, class: ppPartial, today: ppNoIngest17,
