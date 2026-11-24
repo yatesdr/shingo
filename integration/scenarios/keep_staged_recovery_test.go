@@ -5,7 +5,8 @@
 // different part, carrier and market) starts and is cancelled at one moment of
 // the spot's handover: before A's spare leaves, after it leaves, while B's
 // refill flies, after B's spare lands, while B's refill digs it out of a lane,
-// with the changeover's own swap robots waiting at the cell, and, on a
+// with the changeover's own swap robots waiting at the cell (where it sends
+// any: not on a sequential cell), and, on a
 // single-robot cell, with the line's bin parked on outbound staging by the
 // changeover's leg. Then nobody touches anything: the fleet carries what it
 // was given, Core's scanner passes, messages flow. After that an operator
@@ -1349,6 +1350,12 @@ type ksrMoment struct {
 	claimC bool
 	// singleRobot: the moment exists only in the single-robot changeover leg.
 	singleRobot bool
+	// swapRobots: the moment exists only where the changeover sends a leg that
+	// works the line (swapLegs), which a one-position sequential cell's does
+	// not: its changeover leg is asked of the partner (produce_partials_pin_test's
+	// table says the same). There, f was d with an empty wait (REMOVAL-CANDIDATES
+	// B5, 2026-11-23).
+	swapRobots bool
 	// lineEmpty: the cancel leaves the line without a bin, so the operator's
 	// REQUEST is answered by a plain delivery to the line, not a swap: a full on
 	// a consume cell, an empty on a produce cell.
@@ -1415,10 +1422,13 @@ var ksrMoments = []ksrMoment{
 	{name: "e", what: "while B's fetch is a dig", buriedB: true, claimC: true, at: ksrDigMoment},
 	{name: "e-held", what: "while B's fetch is a dig, its blocker's part named by no claim", buriedB: true,
 		at: ksrDigMoment},
-	{name: "f", what: "with the changeover's swap robots at their waits", at: func(c *ksrCell, co ksrCO) {
+	{name: "f", what: "with the changeover's swap robots at their waits", swapRobots: true, at: func(c *ksrCell, co ksrCO) {
 		c.spareLeaves(co)
 		c.landOnSpot(c.bFlying(co))
 		legs := c.swapLegs(co)
+		if len(legs) == 0 {
+			c.notReached("the changeover sent no leg that works the line: no swap robot to wait")
+		}
 		c.driveUntil("the changeover's legs with the fleet", func() bool {
 			c.fleetStep()
 			for _, l := range legs {
@@ -1745,6 +1755,9 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 		for _, m := range ksrMoments {
 			if m.singleRobot && cl.mode != protocol.SwapModeSingleRobot {
 				continue
+			}
+			if m.swapRobots && cl.mode == protocol.SwapModeSequential {
+				continue // no changeover leg works a one-position sequential line: see swapRobots
 			}
 			if m.buriedB && !ksrDigOnTheSpotsRefill(cl.role, cl.mode) {
 				continue // the moment does not exist in this cell: see ksrDigOnTheSpotsRefill
