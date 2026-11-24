@@ -7,8 +7,8 @@
 # rule: comment references (file:line), conflict markers, js-imports, js-parse,
 # js-undeclared, plant addresses, raw-syscall reads in test code, serial tests
 # (in the packages it covers), swap-mode literals, synthetic part numbers, text
-# files, EXPIRY-by-symbol pins, and the integration module's GitHub slices.
-# Whole tree, every run.
+# files, EXPIRY-by-symbol pins, file reads at package init, and the integration
+# module's GitHub slices. Whole tree, every run.
 # Each rule prints
 # its own `ok   <rule> (...)` line, or `FAIL <rule>  file:line  why` per
 # finding. The rules, their reasons and the cases each must fire on live in

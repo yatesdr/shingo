@@ -267,3 +267,118 @@ func rawSyscallReads(t *tree) result {
 	return result{fs, fmt.Sprintf("%d test files and %d test-only helper files import a raw syscall package, %d module paths read; no read through one",
 		nTest, nHelper, len(to.modules))}
 }
+
+// --- init-reads ------------------------------------------------------------
+//
+// Nothing touches the file system or starts a process while a package
+// initialises: no direct call of package os (env reads aside), io/ioutil or
+// os/exec, nor of the readers path/filepath (Glob, Walk, WalkDir,
+// EvalSymlinks) and the template packages (ParseFiles, ParseGlob) offer, in
+// an init func or a package-level var's initializer, in any Go file of the
+// five modules.
+//
+// WHY. A package initialises before m.Run, and Go's test log starts at m.Run,
+// so on Windows the reuse wrapper never sees such a read and serves the pass
+// again after the file changes: probe 25 (a package-level var reading a file
+// with os.ReadFile). Every package's initialisation runs in its own test binary
+// and in every test binary that links it, so product files count as well as
+// test files. A TestMain that reads before m.Run is not this rule's: the
+// wrapper keys a package with a TestMain on the whole tree (probe 24).
+//
+// ENV READS ARE ALLOWED. os.Getenv, os.LookupEnv, os.Environ and os.ExpandEnv
+// read the environment, not the file system, and the wrapper keys the whole
+// environment block the binary receives (reuse.Key's Env, keyEnv), not only the
+// names the test log shows: probes 19 and 20 (an env var read in a package var,
+// os.Environ) are ok on Windows. A value it masks (the Postgres port, the
+// template name, the private temp dir) is run scoped by design, before m.Run
+// or after it alike.
+//
+// DIRECT CALLS ONLY (citrine's line). A call written in the init body or the
+// initializer, including inside a function literal called on the spot
+// (var x = func() T { ... }()), fires; a call inside a helper the initializer
+// calls does not, and neither does one in a function literal stored for later
+// (a handler registered in init runs when it is called). The census at
+// 10f1b27f found one helper read, on purpose: the reuse canary's package var,
+// which is there to show the Linux trace sees what Windows cannot.
+var initReadPkgs = map[string]func(fn string) bool{
+	"os":            func(fn string) bool { return !initEnvReads[fn] },
+	"io/ioutil":     func(string) bool { return true },
+	"os/exec":       func(string) bool { return true },
+	"path/filepath": func(fn string) bool { return fn == "Glob" || fn == "Walk" || fn == "WalkDir" || fn == "EvalSymlinks" },
+	"text/template": func(fn string) bool { return fn == "ParseFiles" || fn == "ParseGlob" },
+	"html/template": func(fn string) bool { return fn == "ParseFiles" || fn == "ParseGlob" },
+}
+
+var initEnvReads = map[string]bool{"Getenv": true, "LookupEnv": true, "Environ": true, "ExpandEnv": true}
+
+// initCalls returns the banned calls written directly in n: it does not enter
+// a function literal unless the literal is called right there.
+func initCalls(n ast.Node, imps map[string]string, each func(*ast.CallExpr, string, string)) {
+	ast.Inspect(n, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.CallExpr:
+			if lit, ok := x.Fun.(*ast.FuncLit); ok {
+				initCalls(lit.Body, imps, each)
+				for _, a := range x.Args {
+					initCalls(a, imps, each)
+				}
+				return false
+			}
+			if pkg, fn, ok := pkgCall(x, imps); ok && initReadPkgs[pkg] != nil && initReadPkgs[pkg](fn) {
+				each(x, pkg, fn)
+			}
+		}
+		return true
+	})
+}
+
+func initReads(t *tree) result {
+	var files []*file
+	for _, f := range moduleGo(t) {
+		for pkg := range initReadPkgs {
+			if bytes.Contains(f.data, []byte(strconv.Quote(pkg))) {
+				files = append(files, f)
+				break
+			}
+		}
+	}
+	var calls []Finding
+	inits, vars := 0, 0
+	bad := parseAll(files, func(f *file, af *ast.File) {
+		imps := importNames(af)
+		report := func(where string) func(*ast.CallExpr, string, string) {
+			return func(c *ast.CallExpr, pkg, fn string) {
+				calls = append(calls, Finding{File: f.path, Line: lineOf(f.data, af, c.Pos()),
+					Why: fmt.Sprintf("%s calls %s.%s before m.Run: no test log records it, so the reuse wrapper cannot see it on Windows", where, pkg, fn)})
+			}
+		}
+		for _, d := range af.Decls {
+			switch d := d.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name.Name == "init" && d.Body != nil {
+					inits++
+					initCalls(d.Body, imps, report("init"))
+				}
+			case *ast.GenDecl:
+				if d.Tok != token.VAR {
+					continue
+				}
+				for _, s := range d.Specs {
+					vs := s.(*ast.ValueSpec)
+					if len(vs.Values) == 0 {
+						continue
+					}
+					vars++
+					for _, v := range vs.Values {
+						initCalls(v, imps, report("var "+vs.Names[0].Name))
+					}
+				}
+			}
+		}
+	})
+	fs := append(bad, calls...)
+	return result{fs, fmt.Sprintf("%d files that import a reading package: %d init funcs, %d package-level var initializers, no read in one",
+		len(files), inits, vars)}
+}

@@ -14,6 +14,7 @@
 //	comment-references      a file:line citation in a Go comment names a line that exists
 //	conflict-markers        no merge-conflict marker line in a tracked text file
 //	expiry                  an EXPIRY: when <symbol> is gone pin names a declared symbol
+//	init-reads              no file read or process started while a package initialises
 //	integration-slices      every integration test runs in exactly one of GitHub's slices, plain and race
 //	js-imports              a served module imports only names its modules export, from files that exist
 //	js-parse                every .js file parses as an ES module or as CommonJS
@@ -122,6 +123,7 @@ var rules = []rule{
 	{"comment-references", "Cite a SYMBOL for anything you expect to survive; line numbers drift silently.", commentReferences},
 	{"conflict-markers", "Resolve the merge: a marker line that is not Go source builds and ships silently.", conflictMarkers},
 	{"expiry", "Retire the pin in the edit that deletes its symbol: rewrite or delete the scar, and say so.", expiry},
+	{"init-reads", "Read it inside the test, or on first use (sync.OnceValue), not while the package initialises: before m.Run only the Linux trace sees a read. An env read is allowed (the wrapper keys the whole environment); unseenreads.go says what fires.", initReads},
 	{"integration-slices", "Change SLICE_A / SLICE_B or the slice arms in .github/workflows/integration.yml so each integration test is named by exactly one slice; c is the -skip of the others.", integrationSlices},
 	{"js-parse", "A module that does not parse takes its whole import graph down with it.", jsParse},
 	{"js-imports", "Export the name from the module the import names, or drop the import. A module that imports a name nobody exports takes its whole page down before a line runs.", jsImports},
