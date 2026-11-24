@@ -82,27 +82,25 @@
 
 # ── Both halves ──────────────────────────────────────────────────────────
 
-# gate_tree_id INDEX_FILE — "<index tree> <tree>" of the checkout in the working
-# directory: the real index is copied to INDEX_FILE (so tracked-but-ignored
-# files and the executable bits come along, as they would with `git add -A`;
-# an empty index loses the exec bit on Windows, core.filemode=false), the copy
-# is written as the index tree, then `git add -A` and written again. Run the
-# same way on both sides. Fails when the index has unmerged paths. The copy is
-# INDEX_FILE.<pid>: guards run nested gates in one tree at once.
+# gate_tree_id TMP_INDEX [REAL_INDEX] — the tree id of the checkout in the
+# working directory, set as GATE_TREE_WORK, with the index's own tree as
+# GATE_TREE_INDEX. The real index (REAL_INDEX, else git's) is copied to
+# TMP_INDEX, so tracked files under an ignore rule and the executable bits come
+# along as they would with `git add -A` (an empty index loses the exec bit on
+# Windows, core.filemode=false); the copy is written as the index tree, then
+# `git add -A` and written again. Run the same way on both sides. Fails when the
+# index has unmerged paths. TMP_INDEX is the caller's to name and remove
+# (guards run nested gates in one tree at once).
+GATE_TREE_INDEX="" GATE_TREE_WORK=""
 gate_tree_id() {
-  local idx="$1.$$" real i t
-  real="$(git rev-parse --git-path index 2>/dev/null)" || return 1
-  rm -f "$idx"
-  if [ -e "$real" ]; then cp "$real" "$idx" || return 1; fi
-  if ! i="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)"; then
-    echo "the index has unmerged paths" >&2
-    rm -f "$idx"
-    return 1
-  fi
-  GIT_INDEX_FILE="$idx" git add -A || { rm -f "$idx"; return 1; }
-  t="$(GIT_INDEX_FILE="$idx" git write-tree)" || { rm -f "$idx"; return 1; }
-  rm -f "$idx"
-  printf '%s %s\n' "$i" "$t"
+  local idx="$1" real="${2:-}"
+  GATE_TREE_INDEX="" GATE_TREE_WORK=""
+  [ -n "$real" ] || real="$(git rev-parse --git-path index 2>/dev/null)" || return 1
+  if [ -e "$real" ]; then cp "$real" "$idx" || return 1; else rm -f "$idx"; fi
+  GATE_TREE_INDEX="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" \
+    || { echo "the index has unmerged paths" >&2; return 1; }
+  GIT_INDEX_FILE="$idx" git add -A || return 1
+  GATE_TREE_WORK="$(GIT_INDEX_FILE="$idx" git write-tree)" || return 1
 }
 
 # _mirror_lpath P — P as the Linux side reads it: a Windows path (C:/...) through
@@ -116,44 +114,55 @@ _mirror_lpath() {
 }
 
 # ── The caller's half (sourced by scripts/gate.sh) ─────────────────────────
+#
+# FEW PROCESSES. On a loaded Windows host every process, and every $(...) fork,
+# costs 0.1-0.7 s (measured 2026-11-24), so this half answers with builtins
+# where it can and asks git once for what one call can answer: a no-change sync
+# is about twelve processes on this side.
 
 MIRROR_RC=""        # set when this gate is decided here: gate.sh exits with it
 MIRROR_INNER_PID="" # the Linux side's job while it runs (mirror_on_exit)
 gate_side_note=""   # the sentence's clause: which side, why, which tree
 
-# Git Bash's bash says msys; no fork (a process costs 0.1-0.4 s on a loaded
-# Windows host, measured 2026-11-24).
+# Git Bash's bash says msys.
 _mirror_on_windows() {
   case "${OSTYPE:-}" in msys*|cygwin*) return 0 ;; esac
   return 1
 }
 
-# _mirror_wpath P — P as both git.exe and the Linux side's wslpath read it
-# (C:/...): a drive path rewritten in place, anything else through cygpath.
+# _mirror_wpath VAR P — sets VAR to P as both git.exe and the Linux side's
+# wslpath read it (C:/...): a drive path rewritten in place, anything else
+# through cygpath; P itself off Windows.
 _mirror_wpath() {
-  _mirror_on_windows || { printf '%s' "$1"; return; }
-  case "$1" in
-    /[A-Za-z]/*) printf '%s:%s' "${1:1:1}" "${1:2}"; return ;;
-    /[A-Za-z]) printf '%s:/' "${1:1:1}"; return ;;
+  local -n _mw_out="$1"
+  local _mw_p="$2" _mw_d
+  if ! _mirror_on_windows; then _mw_out="$_mw_p"; return; fi
+  case "$_mw_p" in
+    /[A-Za-z]/*|/[A-Za-z]) _mw_d="${_mw_p:1:1}"; _mw_out="${_mw_d^^}:${_mw_p:2}"; [ -n "${_mw_p:2}" ] || _mw_out="$_mw_out/" ;;
+    [A-Za-z]:*) _mw_d="${_mw_p:0:1}"; _mw_out="${_mw_d^^}${_mw_p:1}" ;;
+    *) if command -v cygpath >/dev/null 2>&1; then _mw_out="$(cygpath -m "$_mw_p")"; else _mw_out="$_mw_p"; fi ;;
   esac
-  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 
-# _mirror_git ARGS — git in the worktree, writing new objects into the private
-# store (whose alternates reach the clone's objects), never into the clone.
-_mirror_git() {
-  GIT_OBJECT_DIRECTORY="$MIRROR_OBJW" GIT_ALTERNATE_OBJECT_DIRECTORIES="$MIRROR_COMMONW/objects" git "$@"
+# _mirror_copy SRC DST — a small text file copied with builtins (DST empty when
+# SRC cannot be read).
+_mirror_copy() {
+  local lines=()
+  if [ -r "$1" ]; then mapfile -t lines <"$1"; fi
+  if [ "${#lines[@]}" -gt 0 ]; then printf '%s\n' "${lines[@]}" >"$2"; else : >"$2"; fi
 }
 
 # _mirror_linux ARGS — `bash scripts/gate-mirror.sh ARGS` on the Linux side,
 # in this worktree; in the background, so an interrupt reaches gate.sh's trap
 # (bash runs a trap only once a foreground command has finished).
 _mirror_linux() {
+  local w bs='\'
   if [ "${GATE_LINUX_EXEC:-}" = local ]; then
     ( cd "$ROOT" && exec bash scripts/gate-mirror.sh "$@" ) &
   else
+    _mirror_wpath w "$ROOT"
     MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' wsl.exe -d "${GATE_WSL_DISTRO:-Ubuntu}" \
-      --cd "$(cygpath -w "$ROOT")" -e bash scripts/gate-mirror.sh "$@" &
+      --cd "${w//\//$bs}" -e bash scripts/gate-mirror.sh "$@" &
   fi
   MIRROR_INNER_PID=$!
   wait "$MIRROR_INNER_PID"
@@ -166,8 +175,8 @@ _mirror_linux() {
 # mirror's gate too, rather than leaving it running without the lock.
 mirror_on_exit() {
   [ -n "$MIRROR_INNER_PID" ] || return 0
-  local pid
-  pid="$(cat "$MIRROR_W/inner.pid" 2>/dev/null)"
+  local pid=""
+  read -r pid <"$MIRROR_W/inner.pid" 2>/dev/null
   if [ -n "$pid" ]; then
     if [ "${GATE_LINUX_EXEC:-}" = local ]; then kill -TERM "$pid" 2>/dev/null
     else MSYS_NO_PATHCONV=1 wsl.exe -d "${GATE_WSL_DISTRO:-Ubuntu}" -e kill -TERM "$pid" >/dev/null 2>&1; fi
@@ -189,14 +198,16 @@ mirror_route() {
     ""|linux|windows) ;;
     *) echo "gate: FAILED — GATE_SIDE='$GATE_SIDE'; it takes windows or linux"; MIRROR_RC=2; return ;;
   esac
-  # A tree with no commit to mirror (an exported copy, a fresh init) runs here.
-  if ! git rev-parse -q --verify 'HEAD^{commit}' >/dev/null 2>&1; then
+  local r=0
+  mirror_tree || r=$?
+  if [ "$r" = 3 ]; then
+    # A tree with no commit to mirror (an exported copy, a fresh init) runs here.
     [ "${GATE_SIDE:-}" = linux ] && { echo "gate: FAILED — GATE_SIDE=linux, and $ROOT has no git commit to mirror"; MIRROR_RC=1; return; }
     gate_side_note="on the Windows side (no git commit here to mirror)"
     export GATE_SIDE=windows
     return
   fi
-  if ! mirror_tree; then
+  if [ "$r" != 0 ]; then
     echo "gate: FAILED — could not take the worktree's tree id (above); nothing ran"
     MIRROR_RC=1
     return
@@ -222,12 +233,14 @@ mirror_route() {
     if [ "$try" = 1 ]; then mirror_bundle incr; else mirror_bundle full; fi \
       || { echo "gate: FAILED — could not bundle the worktree's objects for the mirror"; MIRROR_RC=1; return; }
     mirror_write_spec "$@" || { echo "gate: FAILED — could not write $MIRROR_W/spec"; MIRROR_RC=1; return; }
-    rm -f "$MIRROR_W/status" "$MIRROR_W/inner.pid"
+    echo pending >"$MIRROR_W/status"
+    : >"$MIRROR_W/inner.pid"
     _mirror_linux linux-run .gate/mirror/spec; rc=$?
-    status="$(cat "$MIRROR_W/status" 2>/dev/null)"
+    status=""
+    read -r status <"$MIRROR_W/status" 2>/dev/null
     case "$status" in
       running)
-        cut -d' ' -f2 "$MIRROR_W/refs" >"$MIRROR_W/sent"
+        printf '%s\n' "${MS_REFSHAS[@]}" >"$MIRROR_W/sent"
         MIRROR_RC=$rc
         return ;;
       need-full)
@@ -241,7 +254,7 @@ mirror_route() {
       refused)
         MIRROR_RC=1
         return ;;
-      "")
+      pending|"")
         mirror_fallback "missing: the Linux side did not answer (exit $rc)"
         return ;;
       *)
@@ -267,130 +280,162 @@ mirror_fallback() {
 }
 
 # mirror_tree — the worktree's tree id, its objects in the private store:
-# MS_INDEX (the index's tree) and MS_TREE (the working tree's, gate_tree_id).
+# MS_INDEX (the index's tree), MS_TREE (the working tree's, gate_tree_id), and
+# from the same git call MS_HEAD and MS_BRANCH. 3 when HEAD is no commit.
 mirror_tree() {
-  local common ids
-  mkdir -p "$MIRROR_W" || return 1
-  # The sync's own files (the bundle among them) live here; were .gate/ not
-  # ignored, each snapshot would carry the last one's bundle into the tree.
+  local g=()
+  [ -d "$MIRROR_W" ] || mkdir -p "$MIRROR_W" || return 1
+  # The clone's common dir, this worktree's index, HEAD and the ref it names.
+  mapfile -t g < <(git rev-parse --path-format=absolute --git-common-dir --git-path index \
+                     HEAD --symbolic-full-name HEAD 2>/dev/null)
+  # Not a checkout, or no commit yet: nothing to mirror (3).
+  [[ "${g[2]:-}" =~ ^[0-9a-f]{40}$ ]] || return 3
+  _mirror_wpath MIRROR_COMMONW "${g[0]}"
+  MS_HEAD="${g[2]}" MS_BRANCH=""
+  case "${g[3]:-}" in refs/heads/*) MS_BRANCH="${g[3]#refs/heads/}" ;; esac
+  # The sync's own files (the bundle among them) live in .gate/mirror; were
+  # .gate/ not ignored, each snapshot would carry the last one's bundle.
   git check-ignore -q .gate/mirror/spec || { echo "  .gate/ is not ignored (.gitignore)" >&2; return 1; }
-  common="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)" || return 1
-  MIRROR_COMMON="$common"
-  MIRROR_COMMONW="$(_mirror_wpath "$common")"
   MIRROR_OBJ="$MIRROR_W/objects.git"
   if [ ! -d "$MIRROR_OBJ/objects" ]; then
     git init -q --bare "$MIRROR_OBJ" >/dev/null || return 1
   fi
-  MIRROR_OBJW="$(_mirror_wpath "$MIRROR_OBJ")/objects"
-  printf '%s/objects\n' "$MIRROR_COMMONW" >"$MIRROR_OBJ/objects/info/alternates"
-  MS_HEAD="$(git rev-parse -q --verify 'HEAD^{commit}')" || { echo "  this checkout has no commit" >&2; return 1; }
-  ids="$(GIT_OBJECT_DIRECTORY="$MIRROR_OBJW" GIT_ALTERNATE_OBJECT_DIRECTORIES="$MIRROR_COMMONW/objects" \
-           gate_tree_id "$MIRROR_W/tree.index")" || return 1
-  MS_INDEX="${ids% *}" MS_TREE="${ids#* }"
+  _mirror_wpath MIRROR_OBJW "$MIRROR_OBJ/objects"
+  echo "$MIRROR_COMMONW/objects" >"$MIRROR_OBJ/objects/info/alternates"
+  local -x GIT_OBJECT_DIRECTORY="$MIRROR_OBJW" GIT_ALTERNATE_OBJECT_DIRECTORIES="$MIRROR_COMMONW/objects"
+  gate_tree_id "$MIRROR_W/tree.index" "${g[1]}" || return 1
+  MS_INDEX="$GATE_TREE_INDEX" MS_TREE="$GATE_TREE_WORK"
 }
 
 # mirror_carry — after mirror_tree, what the Linux side needs beside it:
 # MS_CONTENT (a commit of MS_TREE whose parents are HEAD and a commit of
-# MS_INDEX, fixed dates: the same state gives the same sha), HEAD's branch and
-# upstream, the refs the mirror carries in $MIRROR_W/refs (`refname sha`, one
-# a line, also the private store's refs), and the caller's ignore rules.
+# MS_INDEX, fixed dates: the same state gives the same sha), the branch's
+# upstream, the refs the mirror carries ($MIRROR_W/refs, `refname sha` a line,
+# also the private store's refs; MS_REFNAMES, MS_REFSHAS) and the caller's
+# ignore rules.
 mirror_carry() {
-  local common="$MIRROR_COMMON" ic base full
+  local -x GIT_OBJECT_DIRECTORY="$MIRROR_OBJW" GIT_ALTERNATE_OBJECT_DIRECTORIES="$MIRROR_COMMONW/objects"
   local -x GIT_AUTHOR_NAME=gate-mirror GIT_AUTHOR_EMAIL=gate-mirror@localhost GIT_AUTHOR_DATE='@0 +0000'
   local -x GIT_COMMITTER_NAME=gate-mirror GIT_COMMITTER_EMAIL=gate-mirror@localhost GIT_COMMITTER_DATE='@0 +0000'
-  ic="$(_mirror_git commit-tree "$MS_INDEX" -p "$MS_HEAD" -m 'gate mirror: the index' </dev/null)" || return 1
-  MS_CONTENT="$(_mirror_git commit-tree "$MS_TREE" -p "$MS_HEAD" -p "$ic" -m 'gate mirror: the working tree' </dev/null)" || return 1
-  MS_BRANCH="$(git symbolic-ref -q --short HEAD)"
-  MS_UP_REMOTE="" MS_UP_MERGE="" MS_UP_REF=""
-  if [ -n "$MS_BRANCH" ]; then
-    MS_UP_REMOTE="$(git config --get "branch.$MS_BRANCH.remote")"
-    MS_UP_MERGE="$(git config --get "branch.$MS_BRANCH.merge")"
-    MS_UP_REF="$(git rev-parse -q --symbolic-full-name '@{upstream}' 2>/dev/null)"
-  fi
+  local ic k v ex="" name sha pats=() base="" full
+  local -A seen=()
+  ic="$(git commit-tree "$MS_INDEX" -p "$MS_HEAD" -m 'gate mirror: the index' </dev/null)" || return 1
+  MS_CONTENT="$(git commit-tree "$MS_TREE" -p "$MS_HEAD" -p "$ic" -m 'gate mirror: the working tree' </dev/null)" || return 1
+  # The branch's upstream, origin's URL and the global excludes file: one call.
+  MS_UP_REMOTE="" MS_UP_MERGE="" MS_ORIGIN_URL=""
+  while read -r k v; do
+    case "$k" in
+      "branch.$MS_BRANCH.remote") MS_UP_REMOTE="$v" ;;
+      "branch.$MS_BRANCH.merge") MS_UP_MERGE="$v" ;;
+      remote.origin.url) MS_ORIGIN_URL="$v" ;;
+      core.excludesfile) ex="$v" ;;
+    esac
+  done < <(git config --get-regexp '^(branch\..*\.(remote|merge)|remote\.origin\.url|core\.excludesfile)$' 2>/dev/null)
   # The remote's URL without any credentials in it; the mirror never pushes.
-  MS_ORIGIN_URL="$(git config --get remote.origin.url | sed -E 's#^([a-z+]+://)[^/@]*@#\1#')"
-  {
-    echo "refs/gate-mirror/content $MS_CONTENT"
-    [ -n "$MS_BRANCH" ] && echo "refs/heads/$MS_BRANCH $MS_HEAD"
-    case "$MS_UP_REF" in refs/heads/*) [ "$MS_UP_REF" = "refs/heads/$MS_BRANCH" ] || git for-each-ref --format='%(refname) %(objectname)' "$MS_UP_REF" ;; esac
-    git for-each-ref --format='%(if)%(symref)%(then)%(else)%(refname) %(objectname)%(end)' refs/remotes refs/tags
-    # `full BASE`: a base the mirror would not otherwise have by that name.
-    if [ "${MIRROR_MODE:-}" = full ] && [ -n "${MIRROR_BASE:-}" ] && [ "$MIRROR_BASE" != --unscoped ]; then
-      full="$(git rev-parse -q --symbolic-full-name "$MIRROR_BASE" 2>/dev/null)"
-      case "$full" in
-        refs/remotes/*|refs/tags/*) ;;
-        refs/*) git for-each-ref --format='%(refname) %(objectname)' "$full" ;;
-        *) base="$(git rev-parse -q --verify "$MIRROR_BASE^{commit}" 2>/dev/null)" && echo "refs/gate-mirror/base $base" ;;
-      esac
-    fi
-  } | sed '/^$/d' | awk '!seen[$1]++' >"$MIRROR_W/refs" || return 1
-  # The private store's refs are exactly these: what the bundle is cut from.
-  { git --git-dir="$MIRROR_OBJ" for-each-ref --format='%(refname)' \
-      | awk 'NR == FNR { keep[$1] = 1; next } !keep[$1] { print "delete " $1 }' "$MIRROR_W/refs" -
-    awk '{ print "update " $1 " " $2 }' "$MIRROR_W/refs"
-  } | git --git-dir="$MIRROR_OBJ" update-ref --stdin || return 1
+  [[ "$MS_ORIGIN_URL" =~ ^([a-z+]+://)[^/@]*@(.*)$ ]] && MS_ORIGIN_URL="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+  # The refs: every remote-tracking ref and tag, the branch, a local upstream,
+  # and the BASE of `full BASE` when the mirror would not have it by that name.
+  pats=(refs/remotes refs/tags)
+  [ "$MS_UP_REMOTE" = . ] && [ -n "$MS_UP_MERGE" ] && pats+=("$MS_UP_MERGE")
+  if [ "${MIRROR_MODE:-}" = full ] && [ -n "${MIRROR_BASE:-}" ] && [ "$MIRROR_BASE" != --unscoped ]; then
+    full="$(git rev-parse -q --symbolic-full-name "$MIRROR_BASE" 2>/dev/null)"
+    case "$full" in
+      refs/remotes/*|refs/tags/*) ;;
+      refs/*) pats+=("$full") ;;
+      *) base="$(git rev-parse -q --verify "$MIRROR_BASE^{commit}" 2>/dev/null)" ;;
+    esac
+  fi
+  MS_REFNAMES=(refs/gate-mirror/content) MS_REFSHAS=("$MS_CONTENT")
+  [ -n "$MS_BRANCH" ] && MS_REFNAMES+=("refs/heads/$MS_BRANCH") MS_REFSHAS+=("$MS_HEAD")
+  [ -n "$base" ] && MS_REFNAMES+=(refs/gate-mirror/base) MS_REFSHAS+=("$base")
+  for name in "${MS_REFNAMES[@]}"; do seen[$name]=1; done
+  while read -r name sha; do
+    [ -n "$name" ] && [ -z "${seen[$name]:-}" ] || continue
+    seen[$name]=1
+    MS_REFNAMES+=("$name") MS_REFSHAS+=("$sha")
+  done < <(git for-each-ref --format='%(if)%(symref)%(then)%(else)%(refname) %(objectname)%(end)' "${pats[@]}")
+  local i lines=() upd=()
+  for i in "${!MS_REFNAMES[@]}"; do
+    lines+=("${MS_REFNAMES[$i]} ${MS_REFSHAS[$i]}")
+    upd+=("update ${MS_REFNAMES[$i]} ${MS_REFSHAS[$i]}")
+  done
+  printf '%s\n' "${lines[@]}" >"$MIRROR_W/refs"
+  # The private store's refs: what the bundle is cut from. A stale one there is
+  # never bundled, since the bundle names its refs.
+  printf '%s\n' "${upd[@]}" >"$MIRROR_W/refs.update"
+  git --git-dir="$MIRROR_OBJ" update-ref --stdin <"$MIRROR_W/refs.update" || return 1
   # The caller's ignore rules, for the mirror to use as its own.
-  cat "$common/info/exclude" >"$MIRROR_W/exclude" 2>/dev/null || : >"$MIRROR_W/exclude"
-  local ex
-  ex="$(git config --path --get core.excludesFile 2>/dev/null)"
-  [ -n "$ex" ] || ex="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
-  cat "$ex" >"$MIRROR_W/global-excludes" 2>/dev/null || : >"$MIRROR_W/global-excludes"
+  _mirror_copy "$MIRROR_COMMONW/info/exclude" "$MIRROR_W/exclude"
+  case "$ex" in "~/"*) ex="$HOME/${ex#"~/"}" ;; "") ex="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore" ;; esac
+  _mirror_copy "$ex" "$MIRROR_W/global-excludes"
 }
 
 # mirror_bundle incr|full — $MIRROR_W/sync.bundle of the carried refs: incr
 # leaves out what the mirror was last sent ($MIRROR_W/sent), full sends all.
 # MS_BUNDLE is its path, or empty when there is nothing to send (incr with
 # nothing new, or with no record of what the mirror has: the Linux side then
-# answers need-full, or says first that it is not set up).
+# answers need-full, or says first that it is not set up). An incr that git
+# refuses (a sent object since collected) is sent full.
 mirror_bundle() {
-  local b="$MIRROR_W/sync.bundle" nots=""
-  rm -f "$b"
+  local b="$MIRROR_W/sync.bundle" args=("${MS_REFNAMES[@]}") sent=() err=()
   MS_BUNDLE=""
   if [ "$1" = incr ]; then
     [ -s "$MIRROR_W/sent" ] || return 0
-    nots="$(git --git-dir="$MIRROR_OBJ" cat-file --batch-check='%(objectname)' <"$MIRROR_W/sent" 2>/dev/null \
-            | grep -v ' missing$' | sed 's/^/^/')"
+    mapfile -t sent <"$MIRROR_W/sent"
+    args+=("${sent[@]/#/^}")
   fi
-  # shellcheck disable=SC2046,SC2086 # ref names and ^sha exclusions, one word each
-  if git --git-dir="$MIRROR_OBJ" bundle create -q "$b" $(cut -d' ' -f1 "$MIRROR_W/refs") $nots \
-      2>"$MIRROR_W/bundle.err"; then
+  if git --git-dir="$MIRROR_OBJ" bundle create -q "$b" "${args[@]}" 2>"$MIRROR_W/bundle.err"; then
     MS_BUNDLE=".gate/mirror/sync.bundle"
     return 0
   fi
-  rm -f "$b"
-  grep -q 'Refusing to create empty bundle' "$MIRROR_W/bundle.err" && return 0
-  sed 's/^/  /' "$MIRROR_W/bundle.err"
+  mapfile -t err <"$MIRROR_W/bundle.err"
+  [[ "${err[*]}" == *"Refusing to create empty bundle"* ]] && return 0
+  [ "$1" = incr ] && { mirror_bundle full; return; }
+  printf '  %s\n' "${err[@]}"
   return 1
 }
 
 # mirror_write_spec ARGS — what the Linux side needs, as a file it sources:
-# the snapshot, the bundle, the lock and timing flag paths, the gate's
-# arguments, and the caller's GATE_* and SHINGO_* settings (paths that name a
-# file on the caller's side in C:/ form, for wslpath there).
+# the snapshot, the bundle, the lock and timing flag paths (where gate_lock_dir
+# and gate_timing_dir put them: GATE_LOCK_DIR / GATE_TIMING_DIR, else the
+# clone's common dir), the gate's arguments, and the caller's exported GATE_*
+# and SHINGO_* settings (paths that name a file on this side in C:/ form, for
+# wslpath there).
 mirror_write_spec() {
-  local v val
+  # An empty array among the GATE_* names (GATE_EXEC_ARGS) reads as unset to
+  # ${ref@a} under set -u; the option is this function's alone.
+  local -
+  set +u
+  local v val src lock timing
+  _mirror_wpath src "$ROOT"
+  _mirror_wpath lock "${GATE_LOCK_DIR:-$MIRROR_COMMONW/gate.lock}"
+  _mirror_wpath timing "${GATE_TIMING_DIR:-$MIRROR_COMMONW/gate.timing}"
   {
-    printf 'MS_SOURCE=%q\nMS_NAME=%q\n' "$(_mirror_wpath "$ROOT")" "$(basename "$ROOT")"
+    printf 'MS_SOURCE=%q\nMS_NAME=%q\n' "$src" "${ROOT##*/}"
     printf 'MS_HEAD=%q\nMS_BRANCH=%q\nMS_TREE=%q\nMS_INDEX=%q\nMS_CONTENT=%q\n' \
       "$MS_HEAD" "$MS_BRANCH" "$MS_TREE" "$MS_INDEX" "$MS_CONTENT"
     printf 'MS_UP_REMOTE=%q\nMS_UP_MERGE=%q\nMS_ORIGIN_URL=%q\n' "$MS_UP_REMOTE" "$MS_UP_MERGE" "$MS_ORIGIN_URL"
-    printf 'MS_LOCKDIR=%q\nMS_TIMINGDIR=%q\nMS_BUNDLE=%q\n' \
-      "$(_mirror_wpath "$(gate_lock_dir)")" "$(_mirror_wpath "$(gate_timing_dir)")" "$MS_BUNDLE"
-    printf 'MS_ARGS=(%s)\n' "$( [ "$#" -gt 0 ] && printf '%q ' "$@")"
+    printf 'MS_LOCKDIR=%q\nMS_TIMINGDIR=%q\nMS_BUNDLE=%q\n' "$lock" "$timing" "$MS_BUNDLE"
+    printf 'MS_ARGS=('; [ "$#" -gt 0 ] && printf '%q ' "$@"; printf ')\n'
     # The Linux side's test-set records land beside this side's (gate-testsets.sh).
-    [ "${GATE_TESTSET:-}" = on ] && [ -z "${GATE_TESTSET_DIR:-}" ] \
-      && printf 'export GATE_TESTSET_DIR=%q\n' "$(_mirror_wpath "$ROOT/.gate/testsets")"
-    for v in $(compgen -e | grep -E '^(GATE|SHINGO)_' | LC_ALL=C sort); do
+    if [ "${GATE_TESTSET:-}" = on ] && [ -z "${GATE_TESTSET_DIR:-}" ]; then
+      _mirror_wpath val "$ROOT/.gate/testsets"
+      printf 'export GATE_TESTSET_DIR=%q\n' "$val"
+    fi
+    for v in ${!GATE_@} ${!SHINGO_@}; do
+      declare -n _mw_ref="$v"
+      [[ "${_mw_ref@a}" == *x* ]] || continue
       case "$v" in
         GATE_SIDE|GATE_LINUX_EXEC|GATE_IN_MIRROR|GATE_MIRROR_TREE|GATE_MIRROR_SOURCE|GATE_LOCK_DIR|GATE_TIMING_DIR) continue ;;
       esac
-      val="${!v}"
+      val="$_mw_ref"
       case "$v" in
         GATE_STEPS_LOG|GATE_DOCKER_ORDER_LOG|GATE_MANIFEST_DIR|GATE_TEST_LOG_DIR|GATE_TESTSET_DIR)
-          [ -n "$val" ] && val="$(_mirror_wpath "$val")" ;;
+          [ -n "$val" ] && _mirror_wpath val "$val" ;;
       esac
       printf 'export %s=%q\n' "$v" "$val"
     done
+    unset -n _mw_ref
   } >"$MIRROR_W/spec"
 }
 
@@ -417,9 +462,11 @@ mirror_inner() {
   local want="${GATE_MIRROR_TREE:-}" got src
   # A gate a guard starts inside this one is a hand-run, not this one.
   unset GATE_MIRROR_TREE
-  src="$(cat "$ROOT/.git/gate-mirror" 2>/dev/null)"
-  got="$(gate_tree_id "$ROOT/.git/gate-tree-index")" || got=""
-  got="${got#* }"
+  src=""
+  read -r src <"$ROOT/.git/gate-mirror" 2>/dev/null
+  got=""
+  gate_tree_id "$ROOT/.git/gate-tree-index.$$" && got="$GATE_TREE_WORK"
+  rm -f "$ROOT/.git/gate-tree-index.$$"
   if [ -z "$want" ]; then
     gate_side_note="on the Linux side, started by hand in the mirror of ${src:-?} (synced by no caller this run); tree ${got:0:12}"
     GATE_TREE="$got"
@@ -483,8 +530,9 @@ mirror_linux_run() {
   cd "$m" || return 0
   # 3. Hand edits since the last sync: refused, never overwritten.
   if synced="$(git rev-parse -q --verify 'refs/gate-mirror/synced^{tree}')"; then
-    now="$(gate_tree_id "$m/.git/gate-tree-index")" || now=""
-    now="${now#* }"
+    now=""
+    gate_tree_id "$m/.git/gate-tree-index.$$" && now="$GATE_TREE_WORK"
+    rm -f "$m/.git/gate-tree-index.$$"
     if [ "$now" != "$synced" ]; then
       echo "gate: REFUSED — the mirror $m was changed by hand since its last sync; nothing was overwritten and nothing ran:"
       if [ -n "$now" ]; then git diff-tree -r --name-status "$synced" "$now" | head -40 | sed 's/^/    /'

@@ -116,7 +116,7 @@ testset_finish() {
   [ -n "$TESTSET_DIR_RUN" ] || return 0
   local dir="${GATE_TESTSET_DIR:-$ROOT/.gate/testsets}" tree side other key f o
   tree="${GATE_TREE:-}"
-  [ -n "$tree" ] || { tree="$(gate_tree_id "$ROOT/.gate/testset.index")" && tree="${tree#* }"; }
+  [ -n "$tree" ] || { gate_tree_id "$ROOT/.gate/testset.index" && tree="$GATE_TREE_WORK"; }
   if _mirror_on_windows; then side=windows other=linux; else side=linux other=windows; fi
   key="$GATE_MODE${gate_scope:+-${gate_scope// /,}}"
   mkdir -p "$dir" || return 1
