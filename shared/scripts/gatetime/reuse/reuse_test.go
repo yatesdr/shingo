@@ -34,6 +34,14 @@ func TestKeyEnv_MasksRunScopedValuesAndKeepsTheirNames(t *testing.T) {
 	if c := keyEnv([]string{"A=2", "B=2"}); strings.Join(c, " ") == strings.Join(keyEnv([]string{"A=1", "B=2"}), " ") {
 		t.Fatal("an ordinary variable's value is not in the key")
 	}
+	// WSL gives every session (each wsl.exe, so each gate a Windows worktree
+	// runs in its WSL mirror) its own interop socket: two gates of one mirror,
+	// 2026-11-24, the only difference between their keys.
+	w1 := keyEnv([]string{"WSL_INTEROP=/run/WSL/861886_interop", "A=1"})
+	w2 := keyEnv([]string{"WSL_INTEROP=/run/WSL/823595_interop", "A=1"})
+	if strings.Join(w1, "\n") != strings.Join(w2, "\n") || !strings.HasPrefix(w1[1], "WSL_INTEROP=<") {
+		t.Fatalf("two WSL sessions key differently, or the name was dropped: %q %q", w1, w2)
+	}
 }
 
 func TestKeyArgvAndFiltered(t *testing.T) {

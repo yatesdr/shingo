@@ -62,11 +62,17 @@ func strippedEnv(name string) bool {
 // fresh port each gate run and the template name is per run; what the server
 // is (image, flags) is in the identity. TMPDIR, TMP and TEMP are set by the
 // wrapper to a directory made empty for this run. GATE_LOCK_HELD is the gate
-// lock's token: its presence is keyed, its value is not.
+// lock's token: its presence is keyed, its value is not. WSL_INTEROP is the
+// interop socket WSL makes for each session (/run/WSL/<pid>_interop): every
+// gate a Windows worktree runs in its WSL mirror is a new wsl.exe session, so
+// two gates of one unchanged mirror keyed apart on it alone and served 0 of
+// 112 (2026-11-24, pinned by TestKeyEnv_MasksRunScopedValuesAndKeepsTheirNames).
+// That interop is there is keyed; which socket is not.
 var maskedEnv = map[string]string{
 	"SHINGO_TEST_PG":          "<run-scoped address; the server is in the identity>",
 	"SHINGO_TEST_PG_TEMPLATE": "<run-scoped template name>",
 	"GATE_LOCK_HELD":          "<lock token>",
+	"WSL_INTEROP":             "<this WSL session's interop socket>",
 	"TMPDIR":                  "<private temp dir>",
 	"TMP":                     "<private temp dir>",
 	"TEMP":                    "<private temp dir>",
