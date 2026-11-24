@@ -2689,3 +2689,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: its comment ("Run with -v") names the variable
 - verified at: the commit that adds this row
+
+### DEAD — `TestComplexOrder_RemainingUOP_ProcessNodeOnly`
+- test: `TestComplexOrder_RemainingUOP_ProcessNodeOnly` · pkg `shingocore/dispatch` · run `-run '^TestComplexOrder_RemainingUOP_ProcessNodeOnly$'` · `shingo-core/dispatch/bin_lifecycle_test.go:337` @ `10f1b27f` · tags `docker`
+- code: DEAD (an unconditional `t.Skip` is its second statement, `:339`, since `3d81bbde` (2026-05-01): it has asserted nothing for seven months; owner's ruling on REMOVAL-CANDIDATES A7)
+- assertion map: nothing ran, so nothing moves. What its body meant to pin, that a complex order's `RemainingUOP` at intake touches only the bin at the process node, is parked intent: Phase 4b moved the count to release time, and Edge's `CreateComplexOrder` does not send it at submit. The release-time rule it became is pinned by `TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine` (same file) and the three `TestHandleOrderRelease_RemainingUOP*` tests beside it. Its skip text named its revival: "RemainingUOP-at-intake deferred until persisted on order row"; that is a product question, not a test
+- mutation: none (it ran nothing) · at `10f1b27f`: `go test -tags docker,lockcheck -p 1 -count=1 -v -run '^TestComplexOrder_RemainingUOP_ProcessNodeOnly$' ./dispatch/` → `bin_lifecycle_test.go:339: Phase 4b: RemainingUOP-at-intake deferred until persisted on order row`, `--- SKIP` (the 2.5 census: skip, 0.00 s)
+- coverage Δ: 0 (a skipped body covers nothing)
+- citations rewritten: none (no comment or doc names it)
+- verified at: the commit that adds this row
