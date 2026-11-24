@@ -119,6 +119,38 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
+// A save of several families' pools writes one row per family whose pool it changed, named by
+// the family's code and reading the pool it replaced, and none for a pool it left as it was.
+// The set, in any order.
+func TestSaveKanban_APoolRowPerFamilyItChanged(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	k := testdb.MarkedGroup(t, db, "SKF-K")
+	family := map[string]int64{}
+	for _, code := range []string{"SKF-DELTA", "SKF-ALPHA", "SKF-ECHO", "SKF-CHARLIE", "SKF-BRAVO"} {
+		id, err := db.EnsureCarrierFamily(code)
+		testutil.MustNoErr(t, err, "family "+code)
+		family[code] = id
+	}
+	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *k, EnsureRow: true,
+		Pools: map[int64]int{family["SKF-CHARLIE"]: 3, family["SKF-ECHO"]: 4}}, "stephen"), "first save")
+	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *k, Pools: map[int64]int{
+		family["SKF-ECHO"]: 4, family["SKF-CHARLIE"]: 5, family["SKF-DELTA"]: 2, family["SKF-ALPHA"]: 6, family["SKF-BRAVO"]: 0,
+	}}, "ann"), "second save")
+	want := []string{
+		"kanban:pool:SKF-ALPHA >6@ann",
+		"kanban:pool:SKF-BRAVO >0@ann",
+		"kanban:pool:SKF-CHARLIE 3>5@ann",
+		"kanban:pool:SKF-CHARLIE >3@stephen",
+		"kanban:pool:SKF-DELTA >2@ann",
+		"kanban:pool:SKF-ECHO >4@stephen",
+	}
+	sort.Strings(want)
+	if got := kanbanAudit(t, db, *k); !reflect.DeepEqual(got, want) {
+		t.Errorf("the two saves' pool rows:\n got %v\nwant %v", got, want)
+	}
+}
+
 // A plain group stays plain: its overflow is a property with the property's audit row. Its first
 // row ends the property, with an audit row: a kanban has no overflow.
 func TestSaveKanban_APlainGroupAndItsFirstRow(t *testing.T) {
