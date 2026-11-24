@@ -101,11 +101,18 @@
 #   bash scripts/gate.sh identity         print the external identity a run records
 #                                         beside its test manifests (gate-timing.sh)
 #
+#   GATE_SIDE=windows bash scripts/gate.sh ...   from Windows, run on the Windows
+#                                         side, as before the Linux side existed
+#   GATE_SIDE=linux bash scripts/gate.sh ...     the Linux side or FAILED; unset,
+#                                         the Linux side when it is set up, else
+#                                         the Windows side, saying why (below)
+#
 # THE GATE LOCK. Every step except fmt, scope, order and lock-status takes a
 # lock shared by all worktrees of this clone, and a second gate waits for it,
 # printing who holds it. fmt is exempt because the pre-push hook runs it and
 # must never wait. The lock frees itself if the holding gate dies (its
-# heartbeat stops). See scripts/gate-lock.sh.
+# heartbeat stops). See scripts/gate-lock.sh. A gate in a worktree's mirror on
+# the Linux side takes the same lock (scripts/gate-mirror.sh).
 #
 # WHAT KEEPS IT (owner, 2026-11-21): the runs whose verdict or timing must be
 # clean. `full`, `full --unscoped` and `race`; proofs, sims and rigs (they hold
@@ -123,31 +130,59 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-# RUN THIS FROM WINDOWS (Git Bash / PowerShell), NOT FROM WSL.
+# START IT FROM THE WINDOWS WORKTREE; IT RUNS ON THE LINUX SIDE (R37, 2026-11-24).
 #
-# WSL reaches a Windows path through a 9p/virtio-fs bridge, and Go's build
-# and test-compile phases are metadata-heavy — thousands of stat calls on
-# files that have not changed. Crossing that bridge costs 10-20x, MEASURED on
-# this host with a warm cache, which is the normal case:
+# Started from a Windows worktree (Git Bash, or PowerShell through it), every
+# mode but fmt, scope, order, cachescope, identity and lock-status runs in a
+# mirror of that worktree on WSL's own ext4 filesystem, and its output and exit
+# code come back to the caller; scripts/gate-mirror.sh says how the mirror is
+# held equal to the working tree and how one gate lock covers both sides.
+# GATE_SIDE=windows runs it on the Windows side as before, and a Linux side
+# that is not set up (scripts/gate-linux-setup.sh --check) falls back to the
+# Windows side, the sentence saying so. Off Windows nothing changes.
+#
+# WHY, MEASURED. The same tree's gate, same tool versions, Windows clone against
+# a WSL ext4 clone (R31 and the round 2 close-out, work/loc-census-2026-11-20/
+# REPORT-gate-fast.md): push 348.9 against 127.1 s, cert 353.5 against 177.4 s,
+# dev 109.5 against 40.5 s. This block used to say Windows-native was within
+# ~2x of Linux-native so the repo did not want moving to ext4; per command that
+# held, for the whole gate it did not, and the mirror is the ext4 copy while
+# the editing stays on Windows.
+#
+# WHAT STILL HOLDS: never gate a Windows path from inside WSL (/mnt/c). WSL
+# reaches it through a 9p/virtio-fs bridge, and Go's build and test-compile
+# phases are metadata-heavy; crossing it costs 10-20x, MEASURED on this host
+# with a warm cache:
 #
 #                        WSL -> /mnt/c   Windows -> C:   WSL -> ext4
 #   go build ./...          48.6s            2.4s           1.2s
 #   go vet ./...            24.1s            2.2s           0.9s
 #   test compile            28.2s            7.6s           3.3s
 #
-# Windows-native is within ~2x of Linux-native, so the repo does NOT want
-# moving to ext4 — the penalty is not where the files live, it is the
-# crossing. The only reason to be in WSL at all is `-race` (Windows has no
-# gcc): step_race and step_sim borrow its cgo for their runs and nothing else
-# crosses.
-#
-# Docker Desktop serves Windows directly, so the docker suites do not need
-# WSL either.
+# On the Windows side `-race` still borrows WSL's cgo (step_race, step_sim
+# cross for their runs); on the Linux side they run natively in the mirror.
 if [ -n "${WSL_DISTRO_NAME:-}" ] && case "$ROOT" in /mnt/*) true ;; *) false ;; esac; then
   echo "WARNING: running under WSL against a Windows path ($ROOT)." >&2
-  echo "         This is 10-20x slower than running the same gate from Git Bash." >&2
-  echo "         Nothing here needs WSL — Docker Desktop serves Windows directly." >&2
+  echo "         This is 10-20x slower than starting the same gate from Git Bash," >&2
+  echo "         which runs it in a mirror on WSL's own filesystem (scripts/gate-mirror.sh)." >&2
   echo >&2
+fi
+
+# A MIRROR (scripts/gate-mirror.sh) knows itself by .git/gate-mirror, which
+# names the Windows worktree it copies. A gate in it, synced by that worktree's
+# gate or started here by hand, takes the Windows clone's lock and timing flag,
+# whose paths the mirror records, never a private one (mirror_prelock refuses
+# a mirror that records none), and uses the Linux side's pinned tools.
+GATE_IN_MIRROR="" GATE_LINUX_ENV_MISSING=""
+if [ -f "$ROOT/.git/gate-mirror" ]; then
+  GATE_IN_MIRROR=1
+  [ -n "${GATE_LOCK_DIR:-}" ] || GATE_LOCK_DIR="$(git config --get gate.lockdir 2>/dev/null)"
+  [ -n "${GATE_TIMING_DIR:-}" ] || GATE_TIMING_DIR="$(git config --get gate.timingdir 2>/dev/null)"
+  [ -n "$GATE_LOCK_DIR" ] && export GATE_LOCK_DIR
+  [ -n "$GATE_TIMING_DIR" ] && export GATE_TIMING_DIR
+  _env="${GATE_LINUX_ENV:-$HOME/gate-tools/env.sh}"
+  # shellcheck source=/dev/null
+  if [ -r "$_env" ]; then . "$_env"; else GATE_LINUX_ENV_MISSING="$_env"; fi
 fi
 
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
@@ -155,6 +190,7 @@ usage() {
   echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|simvet|scope|order|docker|full|lock-status|identity] [BASE]" >&2
   echo "       bash scripts/gate.sh full --unscoped                 docker whatever the diff (certification)" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
+  echo "       GATE_SIDE=windows|linux bash scripts/gate.sh ...   from Windows: which side runs it" >&2
   exit 2
 }
 
@@ -899,12 +935,14 @@ sim_plan() {
 # where it is read from here. The steps that borrow WSL's cgo (race, sim) run it
 # too, through GOTOOLCHAIN: WSL's own go is newer (go1.26.8 on 2026-11-21), the
 # Windows steps run the host's go1.25.x, and a race verdict from a third
-# compiler is not CI's verdict (docket D7). Two toolchains remain in one local
-# verdict: the host's for every native step, and GATE_GO for race and sim in
-# WSL. Only the second is CI's; nothing pins the first. The toolchain is
-# fetched once into WSL's module cache; wsl_go_check fails the step, saying
-# why, if it cannot be.
-GATE_GO="go$(sed -n 's/^go[[:space:]]*//p' "$ROOT/shingo-core/go.mod" | tr -d '\r')"
+# compiler is not CI's verdict (docket D7). On the Windows side two toolchains
+# remain in one local verdict: the host's for every native step, and GATE_GO
+# for race and sim in WSL. Only the second is CI's; nothing pins the first. The
+# toolchain is fetched once into WSL's module cache; wsl_go_check fails the
+# step, saying why, if it cannot be. On the Linux side (a mirror's gate,
+# scripts/gate-mirror.sh) race and sim run natively under GOTOOLCHAIN=GATE_GO
+# too (native_go_check), and the other steps under ~/gate-tools/env.sh's go.
+GATE_GO="go$(sed -n 's/^go[[:space:]]*//p' "$ROOT/shingo-core/go.mod" 2>/dev/null | tr -d '\r')"
 
 # wsl_go_check <step> — passes when WSL's go under GOTOOLCHAIN=$GATE_GO is
 # $GATE_GO; otherwise prints what it is and fails.
@@ -913,6 +951,15 @@ wsl_go_check() {
   v="$(wsl.exe -d Ubuntu -- bash -lc "GOTOOLCHAIN=$GATE_GO go env GOVERSION" 2>&1 | tr -d '\r\0' | tail -1)"
   [ "$v" = "$GATE_GO" ] && return 0
   echo "FAIL $1 — WSL's go under GOTOOLCHAIN=$GATE_GO reports '$v', not $GATE_GO (CI's toolchain)"
+  return 1
+}
+
+# native_go_check <step> — wsl_go_check for a gate already inside WSL.
+native_go_check() {
+  local v
+  v="$(GOTOOLCHAIN="$GATE_GO" go env GOVERSION 2>&1 | tr -d '\r' | tail -1)"
+  [ "$v" = "$GATE_GO" ] && return 0
+  echo "FAIL $1 — go under GOTOOLCHAIN=$GATE_GO reports '$v', not $GATE_GO (CI's toolchain)"
   return 1
 }
 
@@ -961,8 +1008,11 @@ step_sim() {
     ( eval "$(sim_cmd "$ROOT" "$plan" plain)" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="no -race: CI's sim job races them"
   elif [ -n "${WSL_DISTRO_NAME:-}" ]; then
-    ( eval "$(sim_cmd "$ROOT" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
-    how="-race"
+    # Inside WSL (a mirror's gate, scripts/gate-mirror.sh): natively, under the
+    # toolchain the wsl.exe branch below runs, CI's.
+    native_go_check sim || return 1
+    ( export GOTOOLCHAIN="$GATE_GO"; eval "$(sim_cmd "$ROOT" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    how="-race, $GATE_GO"
   elif command -v go >/dev/null 2>&1 && [ "${CGO_ENABLED:-}" = "1" ] && command -v gcc >/dev/null 2>&1; then
     ( eval "$(sim_cmd "$ROOT" "$plan")" >"$logdir/sim.log" 2>&1 ); rrc=$?
     how="-race"
@@ -1544,8 +1594,11 @@ step_race() {
   local rcmd="cd \"$ROOT/shingo-core\" && $inner"
 
   if [ -n "${WSL_DISTRO_NAME:-}" ]; then
-    # Already inside WSL — run directly.
-    ( eval "$rcmd" >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
+    # Already inside WSL (a mirror's gate, scripts/gate-mirror.sh): run
+    # directly, under the toolchain the wsl.exe branch below runs, CI's.
+    native_go_check race || { stop_race_pg; return 1; }
+    racego=", $GATE_GO"
+    ( export GOTOOLCHAIN="$GATE_GO"; eval "$rcmd" >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
   elif command -v go >/dev/null 2>&1 && [ "${CGO_ENABLED:-}" = "1" ] && command -v gcc >/dev/null 2>&1; then
     # A host that genuinely has a C toolchain (a Linux or macOS dev box).
     ( eval "$rcmd" >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
@@ -1603,6 +1656,9 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # reuse_setup / reuse_summary / reuse_audit: test-result reuse, OFF unless
 # GATE_REUSE=on (dev and push serve, cert audits; shared/scripts/gatetime/reuse).
 . "$ROOT/scripts/gate-reuse.sh"
+# mirror_prelock / mirror_route / mirror_on_exit: which side a heavy mode runs
+# on, and the mirror on WSL's ext4 that the Linux side runs it in.
+. "$ROOT/scripts/gate-mirror.sh"
 # FAN_PIDS are the steps `all` and `full` run at once (fan): an interrupted
 # gate takes them down too, rather than leaving them running against a tree
 # nobody is gating.
@@ -1610,7 +1666,8 @@ FAN_PIDS=""
 gate_on_exit() {
   # shellcheck disable=SC2086 # pids
   [ -n "${FAN_PIDS:-}" ] && kill $FAN_PIDS 2>/dev/null
-  stop_shared_pg; stop_race_pg; gate_lock_release
+  # The mirror's gate before the lock: it runs under this run's lock.
+  stop_shared_pg; stop_race_pg; mirror_on_exit; gate_lock_release
 }
 trap gate_on_exit EXIT
 trap 'exit 130' INT
@@ -1624,10 +1681,16 @@ case "${1:-all}" in
   identity) gate_identity; exit 0 ;;
   lock-status) gate_lock_status; gate_timing_status; exit 0 ;;
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
+    mirror_prelock || exit 1
     # The timing flag first, GATE_NO_LOCK=1 or not: a gate beside a timed run
     # is load in the timing (scripts/gate-timing.sh).
     gate_timing_check || { echo "gate: FAILED (a timed run holds the timing flag)"; exit 1; }
-    gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; } ;;
+    gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; }
+    # Under the lock: from Windows, sync the mirror and run this gate there
+    # (its exit code is this one's); in a mirror, check its tree is the one
+    # the caller named before any step runs (scripts/gate-mirror.sh).
+    mirror_route "$@"
+    [ -n "$MIRROR_RC" ] && exit "$MIRROR_RC" ;;
 esac
 
 # ── THE GATE SENTENCE ─────────────────────────────────────────────────────
@@ -1817,6 +1880,9 @@ gate_sentence() {
   local r
   r="$(reuse_summary)"
   [ -n "$r" ] && out="$out ${r^}."
+  # Which side ran it, why, and the tree it gated (scripts/gate-mirror.sh): set
+  # only where there are two sides (from Windows, and in a mirror).
+  [ -n "$gate_side_note" ] && out="$out Ran $gate_side_note."
   echo "$out"
 }
 
