@@ -16,6 +16,8 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+## v0.20.1 — 2026-11-24
+
 Deploy: no migration. Edge only; Core is unchanged and needs no install.
 
 - On an Edge process's Settings, each operator screen is one row, the same on a line and on a loader or unloader: its name with Rename and Open the screen as buttons. On a line it is now above the positions pick (it was small grey Edit and Open text under the whole node list)
