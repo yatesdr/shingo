@@ -44,6 +44,51 @@ func TestKeyEnv_MasksRunScopedValuesAndKeepsTheirNames(t *testing.T) {
 	}
 }
 
+// TestKeyEnv_ATerminalsAndAGatesPerRunVariablesAreNotInTheKey pins R46 (brief
+// A2 step 4): one binary on one tree keys alike from any terminal and under
+// any kind of gate. The two environments are the shapes the Linux side's test
+// binaries got on one unchanged tree, 2026-11-24, whose stored keys differed in
+// these names alone (work/loc-census-2026-11-20/gate-fast/lanes-A2/reuse/raw,
+// keydiff-*.txt): a second Windows Terminal tab (WT_SESSION, WT_PROFILE_ID, and
+// a PATH with the same directories, some of them twice), a gate under
+// `gatetime run` with its own flag (GATE_TIMING_TOKEN, GATE_TIMING_DIR), a gate
+// with the lock against one with GATE_NO_LOCK=1 (GATE_LOCK_HELD, GATE_NO_LOCK),
+// and one with test sets on (GATE_TESTSET_DIR).
+func TestKeyEnv_ATerminalsAndAGatesPerRunVariablesAreNotInTheKey(t *testing.T) {
+	path := func(dirs ...string) string { return "PATH=" + strings.Join(dirs, string(os.PathListSeparator)) }
+	shared := []string{"HOME=/home/u", "WSLENV=WT_SESSION:WT_PROFILE_ID:", "SHINGO_X=1"}
+	a := append([]string{"WT_SESSION=9513a1a0", "WT_PROFILE_ID={61c54bbd}", "GATE_NO_LOCK=1",
+		path("/tools/go/bin", "/usr/bin", "/mnt/c/Users/u/bin", "/mnt/c/Git/usr/bin", "/mnt/c/windows")}, shared...)
+	b := append([]string{"WT_SESSION=707a3a10", "WT_PROFILE_ID={3ad42e7b}", "GATE_LOCK_HELD=host:1681:17955:2285",
+		"GATE_TIMING_TOKEN=38064:ee9d1467", "GATE_TIMING_DIR=/mnt/c/private/gate.timing",
+		"GATE_TESTSET_DIR=/mnt/c/wt/.gate/testsets",
+		path("/tools/go/bin", "/usr/bin", "/mnt/c/Users/u/bin", "/mnt/c/Git/usr/bin", "/mnt/c/Users/u/bin",
+			"/mnt/c/Git/usr/bin", "/usr/bin", "/mnt/c/windows")}, shared...)
+	ca, cb := childEnv(a, "/private"), childEnv(b, "/private")
+	if ka, kb := keyEnv(ca), keyEnv(cb); strings.Join(ka, "\n") != strings.Join(kb, "\n") {
+		t.Fatalf("two terminals and two kinds of gate key one tree apart:\n%q\n%q", ka, kb)
+	}
+	// Stripped, not masked: the binary cannot read them, nor can anything it
+	// starts, which is what makes "no test reads them" hold.
+	for _, kv := range append(ca, cb...) {
+		switch name, _, _ := strings.Cut(kv, "="); envName(name) {
+		case "WT_SESSION", "WT_PROFILE_ID", "GATE_NO_LOCK", "GATE_LOCK_HELD", "GATE_TIMING_TOKEN", "GATE_TIMING_DIR", "GATE_TESTSET_DIR":
+			t.Errorf("%s reaches the binary", kv)
+		}
+	}
+	// What must still key apart: a PATH that searches in another order (a
+	// lookup can find another program there), and WSLENV (WSL's interop reads it
+	// for every Windows program a test starts).
+	order := keyEnv(childEnv(append([]string{path("/usr/bin", "/tools/go/bin")}, shared...), "/private"))
+	if strings.Join(order, "\n") == strings.Join(keyEnv(childEnv(append([]string{path("/tools/go/bin", "/usr/bin")}, shared...), "/private")), "\n") {
+		t.Error("two PATHs that search in another order key alike")
+	}
+	other := keyEnv(childEnv([]string{"HOME=/home/u", "WSLENV=WT_SESSION:WT_PROFILE_ID:GOFLAGS", "SHINGO_X=1"}, "/private"))
+	if strings.Join(other, "\n") == strings.Join(keyEnv(childEnv(shared, "/private")), "\n") {
+		t.Error("two WSLENV lists key alike")
+	}
+}
+
 func TestKeyArgvAndFiltered(t *testing.T) {
 	argv := []string{"-test.testlogfile=/tmp/x", "-test.paniconexit0", "-test.timeout=10m0s", "--test.testlogfile=/y"}
 	if got := keyArgv(argv); strings.Join(got, " ") != "-test.paniconexit0 -test.timeout=10m0s" {
