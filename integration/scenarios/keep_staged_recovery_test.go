@@ -1350,6 +1350,9 @@ type ksrMoment struct {
 	claimC bool
 	// singleRobot: the moment exists only in the single-robot changeover leg.
 	singleRobot bool
+	// staging: the moment exists only in the two staging modes (ksrStaging),
+	// where the spot is the changeover legs' inbound staging.
+	staging bool
 	// swapRobots: the moment exists only where the changeover sends a leg that
 	// works the line (swapLegs), which a one-position sequential cell's does
 	// not: its changeover leg is asked of the partner (produce_partials_pin_test's
@@ -1376,44 +1379,39 @@ var ksrMoments = []ksrMoment{
 			c.notReached("A's spare is not on the spot")
 		}
 	}},
-	{name: "b", what: "after A's spare left, before B is dispatched to the spot", at: func(c *ksrCell, co ksrCO) {
-		// The spot freeing (a bin-moved event) kicks Core's fulfillment scanner
-		// on its own goroutine, which dispatches what waits for the spot. There
-		// is no pause between the two to cancel in. So the moment is taken as the
-		// station sees it: the robot lifts the spare (its pickup block completes
-		// and Core moves the bin to transit) and the cancel follows at once,
-		// before any message from Core reaches Edge, while Edge still holds
-		// every order bringing B as not yet with the fleet. Where no leg parks on
-		// the spot there should be no such order at all: no pump has run since
-		// the lift, so no bins push has told the keeper of it (BinsPush pushes
-		// after a pump, not on a timer). Until 2026-11-24 a 20 ms ticker could
-		// land it first, and the keeper's refill was then still Edge's own
-		// (keepSpotsOnBinsChange).
-		ret := c.coreOf(co.returns[0])
-		if ret.VendorOrderID == "" {
-			c.notReached("A's spare's return never went to the fleet")
-		}
-		c.drive(ret, "RUNNING")
-		if !c.liftAt(ret, ksrSpot, false) || c.spareOnSpot() != nil {
-			c.notReached("the return's robot lifted A's spare but Core still has it on the spot")
-		}
-		for _, r := range c.bringingB(co) {
-			if s := c.edgeRow(r.ID).Status; protocol.ChangeoverStartActionFor(s) != protocol.ChangeoverStartCancel {
-				c.notReached(fmt.Sprintf("order %d bringing B reads %s at Edge: already with the fleet", r.ID, s))
+	{name: "b", what: "after A's spare left, before B is dispatched to the spot", at: ksrSpareLifted,
+		leftAlone: func(c *ksrCell, co ksrCO) {
+			// The two staging modes: the spot is the changeover legs' inbound
+			// staging, so they wait for it and the cancel races Core's dispatch of
+			// them (cancelPath). Here the race is left to itself.
+			if ksrStaging(c.mode) {
+				c.cancelPath(co)
 			}
-			if o := c.coreOf(r); o.VendorOrderID != "" {
-				c.t.Logf("moment b: Core's scanner had already handed order %d bringing B to the fleet (%s, no robot yet)",
-					r.ID, c.vendorState(o.VendorOrderID))
+		}},
+	{name: "b-dispatched", what: "after A's spare left and Core dispatched the changeover's legs, before Edge hears of it",
+		staging: true, at: func(c *ksrCell, co ksrCO) {
+			ksrSpareLifted(c, co)
+			// The race's other side, on purpose: Core's scanner passes before the
+			// cancel, as the pass the lift started does when it wins, and hands the
+			// legs waiting for the spot to the fleet. Nothing is pumped, so Edge
+			// still holds every order bringing B as not yet with the fleet (checked
+			// below) and cancels them as it would in moment b.
+			c.core.eng.RunFulfillmentScan()
+			for _, l := range co.legs {
+				if c.coreOf(l).VendorOrderID == "" {
+					c.notReached(fmt.Sprintf("Core's scan after the lift left leg %d with no vendor order", l.ID))
+				}
 			}
-		}
-	}, leftAlone: func(c *ksrCell, co ksrCO) {
-		// The two staging modes: the spot is the changeover legs' inbound
-		// staging, so they wait for it and the cancel races Core's dispatch of
-		// them (cancelPath).
-		if c.mode == protocol.SwapModeTwoRobot || c.mode == protocol.SwapModeSingleRobot {
-			c.cancelPath(co)
-		}
-	}},
+			for _, r := range c.bringingB(co) {
+				if s := c.edgeRow(r.ID).Status; protocol.ChangeoverStartActionFor(s) != protocol.ChangeoverStartCancel {
+					c.notReached(fmt.Sprintf("order %d bringing B reads %s at Edge: Edge heard of the dispatch", r.ID, s))
+				}
+			}
+		}, leftAlone: func(c *ksrCell, co ksrCO) {
+			if p := c.cancelPath(co); p != ksrCancelledDispatched {
+				c.t.Errorf("the legs Core dispatched before the cancel took the path %q, want %q", p, ksrCancelledDispatched)
+			}
+		}},
 	{name: "c", what: "while B is in flight to the spot", at: func(c *ksrCell, co ksrCO) {
 		c.spareLeaves(co)
 		_, r := c.bFlying(co)
@@ -1473,6 +1471,44 @@ var ksrMoments = []ksrMoment{
 		afterCancel: func(c *ksrCell) { c.takeLineBinOff() }},
 }
 
+// ksrSpareLifted is moments b and b-dispatched up to their cancel. The spot
+// freeing (a bin-moved event) kicks Core's fulfillment scanner on its own
+// goroutine, which dispatches what waits for the spot. There is no pause
+// between the two to cancel in. So the moment is taken as the station sees it:
+// the robot lifts the spare (its pickup block completes and Core moves the bin
+// to transit) and the cancel follows at once, before any message from Core
+// reaches Edge, while Edge still holds every order bringing B as not yet with
+// the fleet. Where no leg parks on the spot there should be no such order at
+// all: no pump has run since the lift, so no bins push has told the keeper of
+// it (BinsPush pushes after a pump, not on a timer). Until 2026-11-24 a 20 ms
+// ticker could land it first, and the keeper's refill was then still Edge's
+// own (keepSpotsOnBinsChange).
+func ksrSpareLifted(c *ksrCell, co ksrCO) {
+	ret := c.coreOf(co.returns[0])
+	if ret.VendorOrderID == "" {
+		c.notReached("A's spare's return never went to the fleet")
+	}
+	c.drive(ret, "RUNNING")
+	if !c.liftAt(ret, ksrSpot, false) || c.spareOnSpot() != nil {
+		c.notReached("the return's robot lifted A's spare but Core still has it on the spot")
+	}
+	for _, r := range c.bringingB(co) {
+		if s := c.edgeRow(r.ID).Status; protocol.ChangeoverStartActionFor(s) != protocol.ChangeoverStartCancel {
+			c.notReached(fmt.Sprintf("order %d bringing B reads %s at Edge: already with the fleet", r.ID, s))
+		}
+		if o := c.coreOf(r); o.VendorOrderID != "" {
+			c.t.Logf("moment b: Core's scanner had already handed order %d bringing B to the fleet (%s, no robot yet)",
+				r.ID, c.vendorState(o.VendorOrderID))
+		}
+	}
+}
+
+// ksrStaging is the two staging modes, where the spot is the changeover legs'
+// inbound staging and a moment-b cancel races Core's dispatch of them.
+func ksrStaging(m protocol.SwapMode) bool {
+	return m == protocol.SwapModeTwoRobot || m == protocol.SwapModeSingleRobot
+}
+
 // The two paths a moment-b cancel takes at Core in the two staging modes. The
 // lift frees the spot, and the bin's update starts a fulfillment scan on a
 // goroutine of Core's own (triggerFulfillment, shingo-core/engine/wiring.go),
@@ -1480,11 +1516,16 @@ var ksrMoments = []ksrMoment{
 // reaches Core at the cell's next pump. Either may come first, and both are
 // legal: the legs are cancelled while still queued, or Core has made their
 // vendor order and the cancel stops it at the fleet (the recorded runs show the
-// Edge, told "dispatched" after its cancel, sending the cancel again). The cell
-// does not drive the race: a scan run before the cancel would force the second
-// path and lose the first, and nothing short of Core's code holds the started
-// scan back. Seen over 16 runs per cell (2026-11-23, the T19 probe's recorder
-// bands): the legs queued in 15 or 16, dispatched in 0 or 1, per cell.
+// Edge, told "dispatched" after its cancel, sending the cancel again).
+//
+// Moment b leaves the race to itself, and it nearly always goes the first way:
+// over 16 runs per cell (2026-11-23, the T19 probe's recorder bands) the legs
+// queued in 15 or 16, dispatched in 0 or 1, per cell; over 10 runs per cell on
+// 2026-11-24 (the -count=10 pin of the four staging b leaves) queued in all 40.
+// Nothing short of Core's code holds the started scan back, so the first path
+// cannot be forced. The second can, and moment b-dispatched forces it: a scan
+// run before the cancel hands the legs to the fleet first. So both paths run
+// in every run of the family, the second on purpose.
 const (
 	ksrCancelledQueued     = "cancelled while queued at Core"
 	ksrCancelledDispatched = "cancelled after Core dispatched it"
@@ -1496,8 +1537,8 @@ const (
 // (queued) or its vendor order stopped at the fleet (dispatched). The legs
 // should take one path together: Core holds a two-robot changeover's legs to go
 // to the fleet together (its queue reason: "the two legs go together"), and a
-// pair that went two ways fails here.
-func (c *ksrCell) cancelPath(co ksrCO) {
+// pair that went two ways fails here. It returns the path.
+func (c *ksrCell) cancelPath(co ksrCO) string {
 	c.t.Helper()
 	if len(co.legs) == 0 {
 		c.notReached("the changeover made no legs for the cancel to race")
@@ -1527,6 +1568,7 @@ func (c *ksrCell) cancelPath(co ksrCO) {
 	}
 	harness.RecorderFor(c.t).Note("cancel_path", path)
 	c.t.Logf("moment b: the changeover's %d leg(s) %s", len(co.legs), path)
+	return path
 }
 
 // takeLineBinOff is a person lifting the line's bin off by hand and setting it
@@ -1823,6 +1865,9 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 		for _, m := range ksrMoments {
 			if m.singleRobot && cl.mode != protocol.SwapModeSingleRobot {
 				continue
+			}
+			if m.staging && !ksrStaging(cl.mode) {
+				continue // no inbound staging on the spot, so no dispatch for the cancel to race
 			}
 			if m.swapRobots && cl.mode == protocol.SwapModeSequential {
 				continue // no changeover leg works a one-position sequential line: see swapRobots
