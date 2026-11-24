@@ -33,6 +33,10 @@
 #  12. the mirror keeps each run's logs, named by run, the newest 10; a red
 #      run's last line names the kept log of the step that failed, and the
 #      next run does not overwrite it (R48)
+#  13. a SIGKILLed caller's mirror gate holds the lock to its end: a second
+#      gate queues past the stale window, lock-status names the mirror's gate,
+#      the lock frees as a dead holder's once it ends, its verdict is kept;
+#      INT and TERM stop the mirror's gate and free the lock at once (R47)
 #
 # A process costs 0.1-0.4 s on the loaded Windows laptop, so this pin takes
 # minutes there and seconds on the Linux side, where the gate now runs it.
@@ -317,6 +321,126 @@ if command -v go >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     case "$runs" in *"$(dirname "$l")"*) ;; *) fail "a red run's kept logs were pruned before older runs: $l" ;; esac
   done
   [ -e "$(printf '%s\n' "$runs" | tail -1)/test-protocol.log" ] || fail "the green run kept no log: $(printf '%s\n' "$runs" | tail -1)"
+fi
+
+# ── 13. a SIGKILLed caller: its mirror's gate holds the lock to its end (R47) ─
+# A SIGKILL runs no EXIT trap: the caller's heartbeat stops with it and the
+# mirror's gate runs on. While it runs, a second gate from the clone must queue
+# (here: give up under GATE_LOCK_TIMEOUT, past the stale window) and lock-status
+# must name the mirror's gate; once it ends, the lock frees as a dead holder's
+# does (stale), and its verdict is in its kept logs. INT and TERM are as before:
+# the caller's trap TERMs the mirror's gate and releases the lock at once.
+# The mirror's gate is held open by a test that waits on a file
+# (GATE_FIXTURE_WAIT names its directory; the spec carries GATE_* exports).
+if command -v go >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  cat >"$W/protocol/wait_test.go" <<'EOF'
+package protocol
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// TestWaitForTheFixture holds the run open while GATE_FIXTURE_WAIT names a
+// directory: it marks itself started there, then waits for a release file, the
+// directory's removal, or a minute.
+func TestWaitForTheFixture(t *testing.T) {
+	dir := os.Getenv("GATE_FIXTURE_WAIT")
+	if dir == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "started"), nil, 0o644)
+	for end := time.Now().Add(time.Minute); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(dir, "release")); err == nil {
+			return
+		}
+		if _, err := os.Stat(dir); err != nil {
+			return
+		}
+	}
+}
+EOF
+  # alive PID — running, not a zombie (an orphan waits for init to reap it).
+  alive() {
+    local st=""
+    kill -0 "$1" 2>/dev/null || return 1
+    [ -r "/proc/$1/stat" ] || return 0
+    read -r st <"/proc/$1/stat" 2>/dev/null
+    st="${st##*) }"
+    [ "${st%% *}" != Z ]
+  }
+  # wait_until SECONDS CMD... — poll CMD every 0.2 s.
+  wait_until() {
+    local n=$(( $1 * 5 )) i=0
+    shift
+    until "$@"; do i=$((i + 1)); [ "$i" -ge "$n" ] && return 1; sleep 0.2; done
+  }
+  # start_caller DIR [ENV-OPTION...] — the caller's gate.sh in the background,
+  # its pid in CALLER (exec: the process IS gate.sh), its output in DIR.out;
+  # returns once the mirror's waiting test has started, INNER its gate's pid.
+  start_caller() {
+    local d="$1"
+    shift
+    mkdir -p "$d"
+    rm -f "$W/.gate/mirror/inner.pid"
+    ( cd "$W" && GATE_FIXTURE_WAIT="$d" exec env "$@" -u GITHUB_ACTIONS -u GATE_REUSE -u GATETIME_REUSE \
+        bash scripts/gate.sh test protocol ) >"$d.out" 2>&1 &
+    CALLER=$!
+    INNER=""
+    wait_until 60 test -e "$d/started" || { fail "case 13: the mirror's waiting test never started: $(tail -5 "$d.out")"; return 1; }
+    read -r INNER <"$W/.gate/mirror/inner.pid" 2>/dev/null
+    { [ -n "$INNER" ] && alive "$INNER"; } || { fail "case 13: no live mirror gate (inner.pid '${INNER:-}')"; return 1; }
+  }
+  # end_orphan DIR — releases the waiting test and waits for what ran it: the
+  # mirror's gate (INNER), and the module job that writes its rc (after a TERM
+  # it outlives the gate that started it).
+  end_orphan() {
+    rm -f "$M/.gate/test-protocol.rc"
+    touch "$1/release"
+    [ -z "${INNER:-}" ] || wait_until 30 eval '! alive "$INNER"' || fail "case 13: the mirror's gate did not end after its test was released"
+    wait_until 30 test -e "$M/.gate/test-protocol.rc" || fail "case 13: the released test's module job never wrote its rc"
+  }
+  dsig=""; env --default-signal=INT true 2>/dev/null && dsig=--default-signal=INT
+  # 13a. SIGKILL. The second gate's timeout is past the stale window (4 s)
+  # with margin: under the old rule it took the lock about 3-5 s after the kill.
+  if start_caller "$TMP/c13k"; then
+    kill -9 "$CALLER"; wait "$CALLER" 2>/dev/null
+    out="$(export GATE_SIDE=windows GATE_LOCK_TIMEOUT=7; gate simvet)"; rc=$?
+    { [ "$rc" -ne 0 ] && echo "$out" | grep -q 'gate lock not acquired'; } \
+      || fail "a second gate took the lock while a SIGKILLed caller's mirror gate still ran (exit $rc): $(printf '%s\n' "$out" | grep -E 'gate lock|^Gate' | head -5)"
+    alive "$INNER" || fail "case 13: the mirror's gate ended before the second gate gave up: the pin did not hold it open"
+    out="$(gate lock-status)"
+    { echo "$out" | grep -q "the mirror's gate" && echo "$out" | grep -qE "pid $INNER([^0-9]|\$)"; } \
+      || fail "lock-status does not name the mirror's gate (pid $INNER) while it holds the lock: $out"
+    end_orphan "$TMP/c13k"
+    out="$(export GATE_SIDE=windows; gate simvet)"; rc=$?
+    { [ "$rc" -eq 0 ] && echo "$out" | grep -q 'taking the lock from'; } \
+      || fail "after the orphaned mirror gate ended, its lock was not taken as stale (exit $rc): $(printf '%s\n' "$out" | grep -E 'gate lock|^Gate' | head -5)"
+    kept="$(find "$M/.gate/runs" -mindepth 1 -maxdepth 1 -type d -name "*-test-$INNER" 2>/dev/null | head -1)"
+    grep -q '^ok' "$kept/test-protocol.log" 2>/dev/null || fail "the orphaned mirror gate's verdict is not in its kept logs (${kept:-no run dir for pid $INNER})"
+  fi
+  # 13b, 13c. TERM and INT. INT is ignored by a job a non-interactive shell
+  # backgrounds, and by everything a guard step starts (gate.sh runs each
+  # guard as one), so the caller gets INT back by env --default-signal.
+  if [ -n "$dsig" ]; then sigs="TERM:143 INT:130"; else
+    sigs="TERM:143"; fail "case 13 needs env --default-signal (GNU coreutils 8.31+) to send INT to a background gate"
+  fi
+  for s in $sigs; do
+    if start_caller "$TMP/c13-${s%:*}" ${dsig:+"$dsig"}; then
+      kill "-${s%:*}" "$CALLER"; wait "$CALLER"; rc=$?
+      [ "$rc" -eq "${s#*:}" ] || fail "a caller sent $s exited $rc, not ${s#*:}"
+      wait_until 10 eval '! alive "$INNER"' || fail "a caller sent ${s%:*} left its mirror's gate running (pid $INNER)"
+      [ -e "$GATE_LOCK_DIR" ] && fail "a caller sent ${s%:*} left the lock behind: $(cat "$GATE_LOCK_DIR/owner" 2>/dev/null | tr '\n' ' ')"
+      out="$(export GATE_SIDE=windows GATE_LOCK_TIMEOUT=2; gate simvet)"; rc=$?
+      [ "$rc" -eq 0 ] || fail "after a caller sent ${s%:*}, the next gate did not get the lock at once (exit $rc): $(printf '%s\n' "$out" | grep -E 'gate lock' | head -3)"
+      INNER="" end_orphan "$TMP/c13-${s%:*}"
+    fi
+  done
+  rm -f "$W/protocol/wait_test.go"
+else
+  fail "case 13 needs go and node on PATH"
 fi
 
 if [ "$fails" -eq 0 ]; then
