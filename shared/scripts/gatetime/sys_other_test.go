@@ -57,7 +57,10 @@ func TestOtherMachine_JobCPUCountsLiveDescendants(t *testing.T) {
 	}
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
-	after, _ := m.jobCPU()
+	after, err := m.jobCPU()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if during-before < 100*time.Millisecond {
 		t.Errorf("a live child that burnt CPU added %v to jobCPU, want 100ms or more", during-before)
 	}
