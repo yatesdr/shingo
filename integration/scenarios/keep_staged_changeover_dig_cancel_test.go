@@ -26,50 +26,51 @@ import (
 func TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
-		for _, claimC := range []bool{true, false} {
-			name := string(mode) + "/blocker-part-claimed"
-			if !claimC {
-				name = string(mode) + "/blocker-part-unclaimed"
-			}
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-				c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: mode, buriedB: true, claimC: claimC})
-				co := c.startChangeover()
-				ksrDigMomentOf(c, co, false)
-				c.dump("at the cancel: the changeover's own fetch digging")
-				mustNil(t, c.edge.Engine.CancelProcessChangeover(c.processID), "cancel")
-				c.caseEStore()
-				c.quiet()
-				c.dump("after the cancel")
+		// One cell per mode, with a claim naming the blocker's part. The cells with
+		// no such claim (blocker-part-unclaimed) were removed 2026-11-24: their
+		// recorded orders views equal these cells' in every run, a cascade that
+		// cancels the carrying leg turns these cells red as it did those, and
+		// Core's TestCancelReturn_AKeptDigLegsBinIsLeftToItsLeg holds what only
+		// they covered: the sweeps decide nothing about a kept dig leg's bin when
+		// no claim names its part (docs/testing/population-ledger.md, DUP).
+		t.Run(string(mode)+"/blocker-part-claimed", func(t *testing.T) {
+			t.Parallel()
+			c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: mode, buriedB: true, claimC: true})
+			co := c.startChangeover()
+			ksrDigMomentOf(c, co, false)
+			c.dump("at the cancel: the changeover's own fetch digging")
+			mustNil(t, c.edge.Engine.CancelProcessChangeover(c.processID), "cancel")
+			c.caseEStore()
+			c.quiet()
+			c.dump("after the cancel")
 
-				db := c.core.eng.DB()
-				bins, err := db.ListBins()
-				mustNil(t, err, "bins")
-				for _, b := range bins {
-					at := c.nodeName(b.NodeID)
-					if at == "_TRANSIT" || strings.HasPrefix(at, corebins.CarrierNodePrefix) {
-						t.Errorf("bin %s is left at %s after the cancel: on a robot's forks", b.Label, at)
-					}
-					if b.ClaimedBy != nil {
-						t.Errorf("bin %s at %s is still claimed by order %d", b.Label, at, *b.ClaimedBy)
-					}
+			db := c.core.eng.DB()
+			bins, err := db.ListBins()
+			mustNil(t, err, "bins")
+			for _, b := range bins {
+				at := c.nodeName(b.NodeID)
+				if at == "_TRANSIT" || strings.HasPrefix(at, corebins.CarrierNodePrefix) {
+					t.Errorf("bin %s is left at %s after the cancel: on a robot's forks", b.Label, at)
 				}
-				if c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID) {
-					t.Errorf("B's lane is still held after the dig stood down")
+				if b.ClaimedBy != nil {
+					t.Errorf("bin %s at %s is still claimed by order %d", b.Label, at, *b.ClaimedBy)
 				}
-				for _, o := range c.rows() {
-					co, err := db.GetOrderByUUID(o.UUID)
-					if err != nil || !protocol.IsTerminal(co.Status) {
-						continue
-					}
-					res, err := db.ListReservationsByOrder(co.ID)
-					mustNil(t, err, "reservations")
-					for _, r := range res {
-						t.Errorf("%s order %d still holds a %v reservation on bin %d / node %q",
-							co.Status, co.ID, r.Kind, r.BinID, c.nodeName(&r.NodeID))
-					}
+			}
+			if c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID) {
+				t.Errorf("B's lane is still held after the dig stood down")
+			}
+			for _, o := range c.rows() {
+				co, err := db.GetOrderByUUID(o.UUID)
+				if err != nil || !protocol.IsTerminal(co.Status) {
+					continue
 				}
-			})
-		}
+				res, err := db.ListReservationsByOrder(co.ID)
+				mustNil(t, err, "reservations")
+				for _, r := range res {
+					t.Errorf("%s order %d still holds a %v reservation on bin %d / node %q",
+						co.Status, co.ID, r.Kind, r.BinID, c.nodeName(&r.NodeID))
+				}
+			}
+		})
 	}
 }
