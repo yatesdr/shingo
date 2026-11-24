@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,9 @@ import (
 func TestChildEnv_StripsTheSwitchesAndPointsTempAtThePrivateDir(t *testing.T) {
 	got := childEnv([]string{"GATE_TIER=push", "GATETIME_REUSE=reuse", "GATE_REUSE=on", "GATE_REUSE_LOG=x",
 		"TMPDIR=/tmp", "KEEP=1", "SHINGO_TEST_PG=127.0.0.1:5"}, "/private")
-	want := []string{"KEEP=1", "SHINGO_TEST_PG=127.0.0.1:5", "TMPDIR=/private"}
+	// GATE_TIER reaches the binary (masked in the key, not stripped: see
+	// TestKeyEnv_TheTierReachesTheBinaryAndNotTheKey).
+	want := []string{"GATE_TIER=push", "KEEP=1", "SHINGO_TEST_PG=127.0.0.1:5", "TMPDIR=/private"}
 	if runtime.GOOS == "windows" {
 		want = append(want, "TMP=/private", "TEMP=/private")
 	}
@@ -42,6 +45,30 @@ func TestKeyEnv_MasksRunScopedValuesAndKeepsTheirNames(t *testing.T) {
 	w2 := keyEnv([]string{"WSL_INTEROP=/run/WSL/823595_interop", "A=1"})
 	if strings.Join(w1, "\n") != strings.Join(w2, "\n") || !strings.HasPrefix(w1[1], "WSL_INTEROP=<") {
 		t.Fatalf("two WSL sessions key differently, or the name was dropped: %q %q", w1, w2)
+	}
+}
+
+// TestKeyEnv_TheTierReachesTheBinaryAndNotTheKey pins GATE_TIER masked, not
+// stripped (the lead's ruling, brief A2, 2026-11-24). Its one reader,
+// shingo-core/internal/schemadump's releaseCacheForTests, rebuilds every old
+// release when the tier is cert, so the binary receives the gate's real tier;
+// the key carries one fixed word for every tier, so dev, push and cert still
+// key alike and cert's audit still finds push's entries.
+func TestKeyEnv_TheTierReachesTheBinaryAndNotTheKey(t *testing.T) {
+	var keys []string
+	for _, tier := range []string{"dev", "push", "cert"} {
+		env := childEnv([]string{"GATE_TIER=" + tier, "A=1"}, "/private")
+		if !slices.Contains(env, "GATE_TIER="+tier) {
+			t.Errorf("%s: the binary's environment %q has no GATE_TIER=%s, so a test that reads the tier cannot see it", tier, env, tier)
+		}
+		k := keyEnv(env)
+		if i := slices.IndexFunc(k, func(kv string) bool { return strings.HasPrefix(kv, "GATE_TIER=") }); i < 0 || !strings.HasPrefix(k[i], "GATE_TIER=<") {
+			t.Errorf("%s: the key %q does not carry the tier as a fixed word", tier, k)
+		}
+		keys = append(keys, strings.Join(k, "\n"))
+	}
+	if keys[0] != keys[1] || keys[1] != keys[2] {
+		t.Errorf("dev, push and cert key apart, so cert's audit would find none of push's entries:\n%s", strings.Join(keys, "\n--\n"))
 	}
 }
 
