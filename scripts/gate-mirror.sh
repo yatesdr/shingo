@@ -63,8 +63,12 @@
 #
 # ONE GATE LOCK ACROSS BOTH SIDES. The caller takes the lock in the Windows
 # clone's git common dir as before; the mirror's gate is its nested run
-# (GATE_LOCK_HELD, GATE_LOCK_DIR through /mnt/c). The mirror records the lock
-# and timing flag paths in its config, so a gate started by hand inside it
+# (GATE_LOCK_HELD, GATE_LOCK_DIR through /mnt/c), and keeps the lock's heartbeat
+# too while it runs: a SIGKILLed caller (no EXIT trap) leaves the lock held by
+# the gate still running, never free beside it (R47: scripts/gate-lock.sh,
+# NESTED RUNS; check-gate-mirror.sh case 13). An interrupted caller (INT, TERM)
+# stops the mirror's gate and releases (mirror_on_exit). The mirror records the
+# lock and timing flag paths in its config, so a gate started by hand inside it
 # takes the same lock, never a private one (gate.sh reads them at its top).
 #
 # THE TOOLS. The Linux side's gate sources ~/gate-tools/env.sh (lane wsl's

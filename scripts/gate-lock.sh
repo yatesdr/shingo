@@ -38,6 +38,27 @@
 # is part of the holder's run and does not wait on itself. A token that does not
 # match (a stale export in some shell) is ignored and the run queues normally.
 #
+# A NESTED RUN KEEPS THE HEARTBEAT TOO, FOR AS LONG AS IT LIVES: a live gate
+# under the holder's token counts as the holder (R47, brief A2 step 3). The run
+# that needs it is the mirror's gate (scripts/gate-mirror.sh), nested in WSL
+# under the Windows caller's token: a SIGKILLed caller runs no EXIT trap, its
+# heartbeat stopped, the mirror's gate ran on, and GATE_LOCK_STALE later a
+# second gate took the lock beside it (scripts/check-gate-mirror.sh case 13, red
+# at 6004c6e1). Why this and not "the mirror's gate ends when its caller is
+# gone": liveness is already judged only by the heartbeat's age on one
+# filesystem, since pids mean nothing across the WSL/Windows boundary, so a
+# heartbeat kept by the side where the work runs is the same rule with a second
+# writer; no live gate is stopped on a guess (the other rule must read the
+# caller's death from a silence a stalled Windows host also gives, and act on it
+# by killing); nothing races the stale window; and an orphan's verdict stays in
+# its kept logs (.gate/runs). The cost: an orphan runs to its end holding the
+# lock (at most a Linux-side cert, about 2-3 min), and the lock goes stale
+# GATE_LOCK_STALE after it ends, as any dead holder's does. The nested run's
+# loop is the holder's (_gate_heartbeat_loop: detached, nobody's job, stopping
+# when its own gate's pid is gone or the lock's token is not the one it runs
+# under); it also keeps a record of the run beside owner (joined.*) that
+# lock-status prints, removed when the run releases (_gate_lock_join).
+#
 # Knobs (seconds unless noted), mostly for the pin's short windows:
 #   GATE_LOCK_DIR        lock directory (default: <git common dir>/gate.lock)
 #   GATE_LOCK_HEARTBEAT  heartbeat interval              (20)
@@ -75,9 +96,10 @@ _gate_lock_field() {
   sed -n "s/^$2=//p" "$1/owner" 2>/dev/null | head -1
 }
 
-# _gate_lock_age DIR — seconds since the holder's last heartbeat, judged
-# against a probe touched now in the same parent directory. Empty when the
-# lock vanished mid-measurement.
+# _gate_lock_age DIR [FILE] — seconds since the holder's last heartbeat (or
+# since FILE, a nested run's record, was touched), judged against a probe
+# touched now in the same parent directory. Empty when the lock vanished
+# mid-measurement.
 _gate_lock_age() {
   local d="$1" probe hb now
   probe="$(dirname "$d")/gate.lock.probe.$$"
@@ -85,10 +107,14 @@ _gate_lock_age() {
   now="$(_gate_mtime "$probe")"
   rm -f "$probe"
   [ -n "$now" ] || now="$(date +%s)"
-  # Missing heartbeat = the holder died between mkdir and its first touch;
-  # the directory's own mtime then stands in.
-  hb="$(_gate_mtime "$d/heartbeat")"
-  [ -n "$hb" ] || hb="$(_gate_mtime "$d")"
+  if [ -n "${2:-}" ]; then
+    hb="$(_gate_mtime "$2")"
+  else
+    # Missing heartbeat = the holder died between mkdir and its first touch;
+    # the directory's own mtime then stands in.
+    hb="$(_gate_mtime "$d/heartbeat")"
+    [ -n "$hb" ] || hb="$(_gate_mtime "$d")"
+  fi
   [ -n "$hb" ] || return 0
   local age=$((now - hb))
   [ "$age" -lt 0 ] && age=0
@@ -120,21 +146,81 @@ gate_lock_status() {
   else
     echo "    heartbeat ${age:-?}s ago"
   fi
+  _gate_lock_status_joined "$d"
 }
 
+# _gate_lock_status_joined DIR — a line for each gate nested in the holder's
+# run that keeps its heartbeat (_gate_lock_join), read with builtins.
+_gate_lock_status_joined() {
+  local d="$1" tok f k v pid wt steps started token src age
+  tok="$(_gate_lock_field "$d" token)"
+  for f in "$d"/joined.*; do
+    [ -f "$f" ] || continue
+    pid="" wt="" steps="" started="" token="" src=""
+    while IFS='=' read -r k v; do
+      case "$k" in
+        pid) pid="$v" ;; worktree) wt="$v" ;; steps) steps="$v" ;;
+        started) started="$v" ;; token) token="$v" ;; mirror_of) src="$v" ;;
+      esac
+    done <"$f"
+    [ "$token" = "$tok" ] || continue
+    age="$(_gate_lock_age "$d" "$f")"
+    if [ -n "$src" ]; then
+      printf "    the mirror's gate holds it too: pid %s in %s (the mirror of %s), %s since %s" "$pid" "$wt" "$src" "$steps" "$started"
+    else
+      printf '    a gate nested in its run holds it too: pid %s in %s, %s since %s' "$pid" "$wt" "$steps" "$started"
+    fi
+    if [ -n "$age" ] && [ "$age" -ge "${GATE_LOCK_STALE:-120}" ]; then
+      echo "; its heartbeat ${age}s ago — gone"
+    else
+      echo "; its heartbeat ${age:-?}s ago"
+    fi
+  done
+}
+
+# _gate_heartbeat_loop DIR TOKEN PID EVERY [RECORD] — keeps DIR's heartbeat (and
+# a nested run's RECORD) fresh while PID lives and DIR's owner carries TOKEN.
 _gate_heartbeat_loop() {
-  local d="$1" token="$2" holder="$3" every="$4"
+  local d="$1" token="$2" holder="$3" every="$4" rec="${5:-}"
   while kill -0 "$holder" 2>/dev/null; do
-    # Lock taken over as stale (holder suspended past the window): stop
-    # refreshing a lock that now belongs to someone else.
+    # Lock released, or taken over as stale (holder suspended past the
+    # window): stop refreshing a lock that is not this run's.
     [ "$(_gate_lock_field "$d" token)" = "$token" ] || exit 0
-    touch "$d/heartbeat" 2>/dev/null || exit 0
+    # -c: never makes a file again once a release has removed it. Two loops
+    # can beat one lock (a nested run's beside the holder's), and a file made
+    # while `rm -rf` empties the directory leaves it there with no owner.
+    touch -c "$d/heartbeat" ${rec:+"$rec"} 2>/dev/null
     sleep "$every"
   done
 }
 
 GATE_LOCK_MINE=""      # the token this process holds, if any
 GATE_LOCK_HB_PID=""
+GATE_LOCK_JOINED=""    # this run's record in the lock, when nested in the holder's
+GATE_LOCK_JOINED_HB="" # that record's heartbeat loop
+
+# _gate_lock_join DIR STEPS — this run is nested in the holder's (GATE_LOCK_HELD
+# is the owner's token): keep the lock's heartbeat too while this run lives, and
+# record it for lock-status (NESTED RUNS, above). Once per process; prints
+# nothing; builtins but for the loop's fork. A mirror's gate names the worktree
+# it mirrors (the mirror's .git/gate-mirror, scripts/gate-mirror.sh).
+_gate_lock_join() {
+  local d="$1" rec started src=""
+  [ -z "$GATE_LOCK_JOINED" ] || return 0
+  rec="$d/joined.$$.$RANDOM"
+  TZ=UTC printf -v started '%(%Y-%m-%dT%H:%M:%SZ)T' -1
+  [ -n "${GATE_IN_MIRROR:-}" ] && read -r src <"${ROOT:-.}/.git/gate-mirror" 2>/dev/null
+  {
+    printf 'pid=%s\nhost=%s\nworktree=%s\nsteps=%s\nstarted=%s\ntoken=%s\n' \
+      "$$" "${HOSTNAME:-}" "${ROOT:-$PWD}" "$2" "$started" "$GATE_LOCK_HELD"
+    [ -z "$src" ] || printf 'mirror_of=%s\n' "$src"
+  } >"$rec" 2>/dev/null || return 0
+  GATE_LOCK_JOINED="$rec"
+  # Started inside the command substitution, so the loop is no job of this
+  # shell (gate_lock_acquire says why); $$ there is still this shell's pid.
+  GATE_LOCK_JOINED_HB="$(_gate_heartbeat_loop "$d" "$GATE_LOCK_HELD" "$$" "${GATE_LOCK_HEARTBEAT:-20}" "$rec" \
+                          </dev/null >/dev/null 2>&1 & echo $!)"
+}
 
 # gate_lock_acquire STEPS — block until this run holds the lock (or is nested
 # inside a run that does). Returns 1 only on GATE_LOCK_TIMEOUT.
@@ -154,7 +240,9 @@ gate_lock_acquire() {
 
   if [ -n "${GATE_LOCK_HELD:-}" ] && [ -d "$d" ] \
       && [ "$(_gate_lock_field "$d" token)" = "$GATE_LOCK_HELD" ]; then
-    return 0   # nested inside the holder's own run
+    # Nested inside the holder's own run: it keeps the heartbeat too.
+    _gate_lock_join "$d" "$steps"
+    return 0
   fi
 
   local stale="${GATE_LOCK_STALE:-120}" poll="${GATE_LOCK_POLL:-2}"
@@ -229,8 +317,14 @@ gate_lock_acquire() {
 }
 
 # gate_lock_release — idempotent; safe from an EXIT trap. Removes the lock only
-# if it is still ours (a takeover after a suspend must not be undone).
+# if it is still ours (a takeover after a suspend must not be undone). A nested
+# run stops its heartbeat and removes its record, never the lock.
 gate_lock_release() {
+  if [ -n "$GATE_LOCK_JOINED" ]; then
+    [ -n "$GATE_LOCK_JOINED_HB" ] && kill "$GATE_LOCK_JOINED_HB" 2>/dev/null
+    rm -f "$GATE_LOCK_JOINED"
+    GATE_LOCK_JOINED="" GATE_LOCK_JOINED_HB=""
+  fi
   [ -n "$GATE_LOCK_MINE" ] || return 0
   local d
   d="$(gate_lock_dir)"

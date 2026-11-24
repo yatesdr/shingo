@@ -14,6 +14,8 @@
 #   3. a SIGKILLed holder's heartbeat stops and a waiter takes the stale lock
 #   4. a run nested inside the holder's (GATE_LOCK_HELD) does not wait on it,
 #      through gate.sh too; an outsider times out and gate.sh says why
+#   4b. a nested run keeps the heartbeat while it lives, the holder SIGKILLed,
+#      lock-status names it, and its release removes its record (R47)
 #   5. `gate.sh fmt` and `gate.sh lock-status` never take the lock
 #   6. while a timed run holds the timing flag (scripts/gate-timing.sh) a heavy
 #      mode refuses and names the holder, GATE_NO_LOCK=1 included; the timed
@@ -140,6 +142,32 @@ out="$(bash -c '. "$1"; trap gate_lock_release EXIT
 echo "$out" | grep -q NESTED-OK || fail "nested acquire waited on its own run: $out"
 echo "$out" | grep -q '^ok   vet' || fail "nested gate.sh vet did not run: $out"
 echo "$out" | grep -q 'gate lock' && fail "nested gate.sh waited on the lock: $out"
+
+# ── 4b. a nested run keeps the heartbeat while it lives (R47) ─────────────
+# The holder SIGKILLed (no trap), a run nested under its token keeps the
+# heartbeat moving and lock-status names it; its release removes its record.
+# (The run that needs it is the mirror's gate: check-gate-mirror.sh case 13
+# pins the queue and the stale takeover end to end.)
+start_holder "parent"
+tok="$(sed -n 's/^token=//p' "$GATE_LOCK_DIR/owner")"
+rm -f "$TMP/stop-nested"
+GATE_LOCK_HELD="$tok" bash -c '. "$1"; trap gate_lock_release EXIT
+  gate_lock_acquire nested-run || exit 1
+  while [ ! -e "$2/stop-nested" ]; do sleep 0.2; done' _ "$LIB" "$TMP" >"$TMP/nested.out" 2>&1 &
+NESTED_PID=$!
+wait_for 'ls "$GATE_LOCK_DIR"/joined.* >/dev/null 2>&1' 10 || fail "a nested run left no record in the lock"
+kill -9 "$HOLDER_PID" 2>/dev/null; wait "$HOLDER_PID" 2>/dev/null
+sleep 1.5   # > one heartbeat interval: the holder's own loop has seen it go
+m1="$(stat -c %Y "$GATE_LOCK_DIR/heartbeat" 2>/dev/null)"
+sleep 2
+m2="$(stat -c %Y "$GATE_LOCK_DIR/heartbeat" 2>/dev/null)"
+[ -n "$m1" ] && [ "$m1" != "$m2" ] || fail "the heartbeat stopped with the holder while a nested run lived ($m1 -> $m2)"
+out="$(bash scripts/gate.sh lock-status 2>&1)"
+echo "$out" | grep -qE "a gate nested in its run holds it too: pid $NESTED_PID in .*, nested-run since " \
+  || fail "lock-status did not name the nested run (pid $NESTED_PID): $out"
+touch "$TMP/stop-nested"; wait "$NESTED_PID"
+ls "$GATE_LOCK_DIR"/joined.* >/dev/null 2>&1 && fail "a nested run's release left its record in the lock"
+rm -rf "$GATE_LOCK_DIR"   # the holder is dead: its stale takeover is case 3's
 
 start_holder "busy"
 bash -c '. "$1"; GATE_LOCK_TIMEOUT=2 gate_lock_acquire outsider' _ "$LIB" >/dev/null 2>&1 \

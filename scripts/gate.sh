@@ -112,7 +112,8 @@
 # printing who holds it. fmt is exempt because the pre-push hook runs it and
 # must never wait. The lock frees itself if the holding gate dies (its
 # heartbeat stops). See scripts/gate-lock.sh. A gate in a worktree's mirror on
-# the Linux side takes the same lock (scripts/gate-mirror.sh).
+# the Linux side takes the same lock, and keeps its heartbeat while it runs, so
+# a caller killed under it leaves the lock held, not free (scripts/gate-mirror.sh).
 #
 # WHAT KEEPS IT (owner, 2026-11-21): the runs whose verdict or timing must be
 # clean. `full`, `full --unscoped` and `race`; proofs, sims and rigs (they hold
