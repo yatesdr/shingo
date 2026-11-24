@@ -119,6 +119,14 @@ gatetime_prepare() {
     GATETIME_BIN="$(cd "$ROOT/.gate" && { pwd -W 2>/dev/null || pwd; })/$bin"
     GATETIME_OWN="$ROOT/.gate/$bin"
     export GATETIME_BIN
+    # Inside WSL (the Linux side, scripts/gate-mirror.sh) the stamps read the
+    # Windows host through a Windows build of gatetime beside this one, which
+    # gatetime finds as <itself>.exe (shared/scripts/gatetime/host.go); without
+    # it they read the VM alone, and a run is clean inside the VM only.
+    if [ -n "${WSL_DISTRO_NAME:-}" ] \
+        && ! ( cd "$ROOT/shared" && GOOS=windows go build -o "$ROOT/.gate/$bin.exe" ./scripts/gatetime ) >>"$GATE_SEL_DIR/build.log" 2>&1; then
+      echo "gate: WARNING — could not build gatetime's Windows host reader; the stamps read inside the VM only" >&2
+    fi
   else
     echo "gate: WARNING — could not build shared/scripts/gatetime; the steps log's load stamps read unread:" >&2
     sed 's/^/    /' "$GATE_SEL_DIR/build.log" | head -10 >&2
@@ -127,7 +135,7 @@ gatetime_prepare() {
 
 # gatetime_done — after the total line: removes this run's own files.
 gatetime_done() {
-  [ -n "$GATETIME_OWN" ] && rm -f "$GATETIME_OWN"
+  [ -n "$GATETIME_OWN" ] && rm -f "$GATETIME_OWN" "$GATETIME_OWN.exe"
   [ -n "$GATE_SEL_DIR" ] && rm -f "$GATE_SEL_DIR/docker.p" "$GATE_SEL_DIR/scripts.ran" \
     "$GATE_SEL_DIR/start" "$GATE_SEL_DIR/build.log" && rmdir "$GATE_SEL_DIR" 2>/dev/null
   return 0
