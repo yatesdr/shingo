@@ -30,6 +30,9 @@
 #      timing flag, and without a recorded lock refuses to start
 #  10. a second worktree with the same name does not share the mirror
 #  11. a mirror deleted behind the caller's back is made again
+#  12. the mirror keeps each run's logs, named by run, the newest 10; a red
+#      run's last line names the kept log of the step that failed, and the
+#      next run does not overwrite it (R48)
 #
 # A process costs 0.1-0.4 s on the loaded Windows laptop, so this pin takes
 # minutes there and seconds on the Linux side, where the gate now runs it.
@@ -46,7 +49,7 @@ fail() { echo "  FAIL gate-mirror: $*"; fails=$((fails + 1)); }
 # Nothing of a gate this pin may be running inside reaches the fixture's.
 unset GATE_SIDE GATE_LOCK_HELD GATE_NO_LOCK GATE_IN_MIRROR GATE_MIRROR_TREE GATE_MIRROR_SOURCE \
       GATE_TIMING_TOKEN GATE_LINUX_SETUP GATETIME_BIN GATETIME_MANIFESTS GATETIME_IDENTITY \
-      GATE_MODULES GATE_TEST_LOG_DIR GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR
+      GATE_MODULES GATE_TEST_LOG_DIR GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_RUN_KEPT
 export GATE_LINUX_EXEC=local
 export GATE_MIRROR_ROOT="$TMP/mirrors"
 export GATE_LINUX_ENV="$TMP/env.sh"
@@ -274,6 +277,47 @@ out="$(cd "$TMP/other/fixwt" && bash scripts/gate.sh simvet 2>&1)"; rc=$?
 rm -rf "$M"
 out="$(gate simvet)"; rc=$?
 { [ "$rc" -eq 0 ] && [ "$(synced)" != "" ]; } || fail "a deleted mirror was not made again (exit $rc): $out"
+
+# ── 12. each run's logs, kept (R48) ───────────────────────────────────────
+# Two red runs, then a green one, over ten planted older runs: each red run's
+# log is kept under its own name and the next run leaves it as it was; the
+# last line names the failing step's kept log; the newest 10 runs stay.
+if command -v go >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  kept_runs() { find "$M/.gate/runs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort; }
+  # last_log OUT — the kept log a red run's last line names, as a path.
+  last_log() {
+    printf '%s\n' "$1" | tail -1 \
+      | sed -n 's/^gate: FAILED — unit: \(test-protocol\.log\)\. Logs of this run: \([^ ]*\).*/\2\/\1/p'
+  }
+  rm -rf "$M/.gate/runs"
+  for i in 01 02 03 04 05 06 07 08 09 10; do mkdir -p "$M/.gate/runs/20000101T0000${i}Z-dev-1"; done
+  sed -i 's/!= 42/!= 41/' "$W/protocol/p_test.go"
+  out1="$(gate test protocol)"; rc1=$?
+  log1="$(last_log "$out1")"
+  { [ "$rc1" -ne 0 ] && [ -n "$log1" ] && grep -q -- '--- FAIL: TestAnswer' "$log1" 2>/dev/null; } \
+    || fail "a red run's last line does not name its kept failing log (exit $rc1): $(printf '%s\n' "$out1" | tail -1) [log: ${log1:-none}]"
+  case "$log1" in "$M"/.gate/runs/*) ;; *) fail "the kept log is not under the mirror's .gate/runs: ${log1:-none}" ;; esac
+  sum1=""; [ -n "$log1" ] && sum1="$(cksum <"$log1" 2>/dev/null)"
+  sed -i 's/!= 41/!= 40/' "$W/protocol/p_test.go"
+  out2="$(gate test protocol)"; rc2=$?
+  log2="$(last_log "$out2")"
+  { [ "$rc2" -ne 0 ] && [ -n "$log2" ] && [ "$log2" != "$log1" ] && grep -q -- '--- FAIL: TestAnswer' "$log2" 2>/dev/null; } \
+    || fail "a second red run did not keep its own log beside the first (exit $rc2): $(printf '%s\n' "$out2" | tail -1)"
+  if [ -n "$sum1" ] && [ "$(cksum <"$log1" 2>/dev/null)" != "$sum1" ]; then
+    fail "the next run overwrote the first red run's kept log ($log1)"
+  fi
+  sed -i 's/!= 40/!= 42/' "$W/protocol/p_test.go"
+  out3="$(gate test protocol)"; rc3=$?
+  [ "$rc3" -eq 0 ] || fail "the green run after the red ones went red (exit $rc3): $(printf '%s\n' "$out3" | tail -3)"
+  runs="$(kept_runs)"
+  [ "$(printf '%s\n' "$runs" | grep -c .)" -eq 10 ] || fail "not the newest 10 runs kept: $(printf '%s\n' "$runs" | sed 's#.*/##' | tr '\n' ' ')"
+  printf '%s\n' "$runs" | grep -q '20000101T000001Z\|20000101T000002Z\|20000101T000003Z' \
+    && fail "the oldest planted runs were not pruned: $(printf '%s\n' "$runs" | sed 's#.*/##' | tr '\n' ' ')"
+  for l in "$log1" "$log2"; do
+    case "$runs" in *"$(dirname "$l")"*) ;; *) fail "a red run's kept logs were pruned before older runs: $l" ;; esac
+  done
+  [ -e "$(printf '%s\n' "$runs" | tail -1)/test-protocol.log" ] || fail "the green run kept no log: $(printf '%s\n' "$runs" | tail -1)"
+fi
 
 if [ "$fails" -eq 0 ]; then
   echo "ok   gate-mirror (the working tree arrives whole, mtimes kept, hand edits refused, tree checked, one lock, both sides)"
