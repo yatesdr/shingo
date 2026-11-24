@@ -65,6 +65,14 @@ These are the rules the codebase's comments cite.
   directly above its func. Guard: repolint `serial-tests`, over the packages `shared/scripts/repolint/serial-tests.txt`
   names. The serial tests there that predate the rule are listed in that file as unaudited, and the list only
   shrinks.
+- **A new or rewritten test over 10 s run alone says why,** with `// cost: <what needs the time, and what a cheaper
+  tier cannot assert>` in its doc comment (owner, 2026-11-24). Its cost is the larger of its wall and its leaves'
+  seconds summed, run by itself (`-run '^Name$'`, its own process). Guards: `scripts/check-test-cost.sh` times
+  each test new since the base that gives no reason, alone, and fails one over the line twice, the second time on a
+  quiet host (it runs in `gate.sh scripts` and CI's guards job, never beside a gate's own steps); the repolint's
+  `test-costs` reads where a reason stands. The tests over the line when the rule came in are listed with their
+  reasons in `shared/scripts/repolint/test-costs.txt`, and the list only shrinks: an existing test owes nothing until
+  it is rewritten, and then its reason moves to the test.
 - **The schema has one home: the generated baseline, and a migration above it.** A new database is born on
   `shingo-core/store/schema/baseline.sql`, generated (`make schema-baseline`) and never edited; every change is a
   numbered migration above the retired chain (v184) with its down entry (`shingocore migrate down N`), after which

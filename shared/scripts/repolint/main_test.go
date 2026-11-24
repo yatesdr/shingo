@@ -277,6 +277,55 @@ func serialCases() []ruleCase {
 	}
 }
 
+func costCases() []ruleCase {
+	mark := "// " + "cost:"
+	list := lines("# the list",
+		"over app/eng TestListed 12.5 it seeds a whole plant", // 2
+		"over app/eng TestListedAndMarked 30.0 it walks the plant",
+		"over app/eng TestGone 11.0 it was renamed",
+		"over app/eng TestListed 12.5 named again", // 5
+		"over app/eng TestNoReason 12.5",
+		"over app/eng TestBadSeconds abc a reason",
+		"over app/eng TestUnestablished 15.0 "+costUnestablished+": nothing in the test says", // 8
+		"bogus line")
+	eng := "package eng\n\nimport \"testing\"\n\n" + lines(
+		"// TestMarked's doc comment says why, on any of its lines.", // 5
+		mark+" it walks a plant",
+		"func TestMarked(t *testing.T) {}",
+		"",
+		mark, // 9: no reason
+		"func TestEmpty(t *testing.T) {}",
+		"",
+		mark+" a blank line breaks it", // 12
+		"",
+		"func TestGap(t *testing.T) {}",
+		"",
+		"// helper is not a test.",
+		mark+" on a helper", // 17
+		"func helper(t *testing.T) {}",
+		"",
+		"func TestBody(t *testing.T) {",
+		"\t"+mark+" inside a body", // 21
+		"}",
+		"",
+		mark+" its reason moved to the test", // 24
+		"func TestListedAndMarked(t *testing.T) {}",
+		"",
+		"func TestListed(t *testing.T)        {}",
+		"func TestUnestablished(t *testing.T) {}",
+		"func TestBadSeconds(t *testing.T)    {}")
+	return []ruleCase{
+		{"test-costs", "misplaced and empty markers and bad, stale or superseded list lines fire; marked and listed tests pass",
+			fixed(treeOf(costListFile, list, "app/eng/a_test.go", eng,
+				"app/eng/b.go", "package eng\n\n"+mark+" not a test file\nfunc TestNotInATestFile() {}\n")),
+			[]string{"app/eng/a_test.go:9", "app/eng/a_test.go:12", "app/eng/a_test.go:17", "app/eng/a_test.go:21",
+				costListFile + ":3", costListFile + ":4", costListFile + ":5", costListFile + ":6", costListFile + ":7",
+				costListFile + ":9"}},
+		{"test-costs", "no list is a finding, not a pass", fixed(treeOf("app/eng/a_test.go", eng)),
+			[]string{costListFile}},
+	}
+}
+
 // probeFile is the reuse probe set, read from this module: the rules' cases
 // run over the sources its probes write, so a case cannot drift from its probe.
 var probeFile = filepath.Join("..", "gatetime", "reuse", "probes", "probes_test.go")
@@ -540,7 +589,7 @@ func jsCases() []ruleCase {
 func allCases() []ruleCase {
 	var cs []ruleCase
 	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, initReadCases, jsCases, plantCases,
-		rawSyscallCases, serialCases, sliceCases, swapCases, syntheticCases, textFileCases} {
+		rawSyscallCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
 	return cs

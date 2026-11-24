@@ -1843,6 +1843,9 @@ func ksrDigOnTheSpotsRefill(role protocol.ClaimRole, mode protocol.SwapMode) boo
 // THE SUBTESTS RUN IN PARALLEL, and the test beside the package's others: each
 // cell builds its own Core, Edge, databases and reconciler clock (kickClock),
 // so no two share anything but the Postgres server.
+// cost: 58 leaves, a cell and a moment each, each its own Core, Edge and databases driven through a
+// changeover, its cancel and two A cycles, some of its waits on Core's 2 s robot poll (ksrCell.eventually).
+// The recovery is choreography across Core and Edge, which neither module's own tests can drive.
 func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 	t.Parallel()
 	type cell struct {

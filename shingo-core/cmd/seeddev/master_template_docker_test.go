@@ -106,6 +106,10 @@ func buildMasterTemplate(t *testing.T) (testdb.Seed, map[string][]string, time.D
 // is one plant, and a clone of its template is that plant, both when the clone
 // is taken as the template is built and when it is taken after other tests have
 // cloned it and written their clones.
+//
+// cost: run alone it builds the master plant's template itself (buildMasterTemplate; in the package run
+// TestMasterTemplate_IsBuiltBeforeTheLeaves pays that) and seeds the master plant twice more to compare
+// with; that a clone is the plant a seeding makes takes real seedings on Postgres.
 func TestMasterTemplate_ACloneIsAFreshSeedAtTwoAges(t *testing.T) {
 	t.Parallel()
 	plant := masterPlant(t)

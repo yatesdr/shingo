@@ -24,6 +24,7 @@
 //	serial-tests            in the packages it covers, a top-level test calls t.Parallel() or says why not
 //	swap-mode-literals      no raw swap-mode string outside its constants and the surfaces that name modes
 //	synthetic-part-numbers  no customer-shaped part number or plant PLC struct name
+//	test-costs              a test over 10 s alone says why in its doc comment; the list of older ones only shrinks
 //	text-files              no text-attributed file indexed -text
 //
 // TRACKED FILES ONLY. The listing is `git ls-files`; content is read from the
@@ -133,6 +134,7 @@ var rules = []rule{
 	{"serial-tests", "Call t.Parallel(), or put `// serial: <what it shares>` on the line above its func. serial-tests.txt says which packages are read.", serialTests},
 	{"swap-mode-literals", "Go: use the typed constant from protocol/swap_mode.go. JavaScript: key the gate on the order graph or a property the server declares (releases_as_pair).", swapModeLiterals},
 	{"synthetic-part-numbers", "Use a synthetic code (SYN-A-P007, SYN-PART07A.06) or struct (MES_Press_A1).", syntheticPartNumbers},
+	{"test-costs", "Write `// cost: <what needs the time, and what a cheaper tier cannot assert>` in the test's doc comment, where the gate reads it. test-costs.txt lists the tests that were over the line at the rule's start, and only shrinks.", testCosts},
 	{"text-files", "Fix the file content (often an editor round-trip), then re-add it.", textFiles},
 }
 

@@ -266,3 +266,43 @@ func Added(root, base string) ([]Test, error) {
 	})
 	return added, nil
 }
+
+// CostMarker starts the line of a top-level test's doc comment that says why
+// the test costs more than the 10 s line, run alone: what needs the time, and
+// what a cheaper tier cannot assert (docs/ground-rules.md). The repolint's
+// test-costs rule reads where it stands; testcost reads which tests carry one.
+const CostMarker = "// cost:"
+
+// CostLine is one CostMarker line of a test file.
+type CostLine struct {
+	Line   int
+	Test   string // the top-level test whose doc comment holds it, "" when none does
+	Reason string // what follows the marker
+}
+
+// CostLines returns every CostMarker line in src's comments, in order.
+func CostLines(name string, src []byte) ([]CostLine, error) {
+	if !bytes.Contains(src, []byte(CostMarker)) {
+		return nil, nil
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	docOf := map[*ast.CommentGroup]string{}
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Doc != nil && IsTestName(fn.Name.Name) {
+			docOf[fn.Doc] = fn.Name.Name
+		}
+	}
+	var out []CostLine
+	for _, g := range f.Comments {
+		for _, c := range g.List {
+			if rest, ok := strings.CutPrefix(c.Text, CostMarker); ok {
+				out = append(out, CostLine{Line: fset.Position(c.Pos()).Line, Test: docOf[g], Reason: strings.TrimSpace(rest)})
+			}
+		}
+	}
+	return out, nil
+}

@@ -97,3 +97,40 @@ func TestAdded_WhatTheTipDeclaresAndTheBaseDoesNot(t *testing.T) {
 		t.Errorf("Added against the tip = %v, %v; want the two uncommitted tests", got, err)
 	}
 }
+
+func TestCostLines_OnlyATopLevelTestsDocCommentCarriesAReason(t *testing.T) {
+	t.Parallel()
+	mark := "// " + "cost:"
+	src := "package eng\n\nimport \"testing\"\n\n" + strings.Join([]string{
+		"// TestA's doc comment.", // 5
+		mark + "  it walks a plant ",
+		"func TestA(t *testing.T) {}",
+		"",
+		mark, // 9
+		"func TestEmpty(t *testing.T) {}",
+		"",
+		mark + " a helper's", // 12
+		"func helper() {}",
+		"",
+		"func TestBody(t *testing.T) {",
+		"\t" + mark + " inside", // 16
+		"}",
+		"",
+		"type s struct{}",
+		"",
+		mark + " a method's", // 21
+		"func (s) TestMethod(t *testing.T) {}",
+	}, "\n") + "\n"
+	got, err := CostLines("a_test.go", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []CostLine{{6, "TestA", "it walks a plant"}, {9, "TestEmpty", ""}, {12, "", "a helper's"},
+		{16, "", "inside"}, {21, "", "a method's"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("CostLines = %+v, want %+v", got, want)
+	}
+	if got, err := CostLines("b_test.go", []byte("package eng\n")); err != nil || got != nil {
+		t.Errorf("a file with no marker: %v, %v", got, err)
+	}
+}

@@ -1,0 +1,62 @@
+# test-costs: the top-level tests that cost more than 10 s run alone when the rule
+# came in (2026-11-24), each with what needs its time as the test's own code and
+# comments say it. Read by the repolint's test-costs rule, testcosts.go, which says
+# what fires; the rule is docs/ground-rules.md's 10 s rule for a new test.
+#
+#   over <dir> <test> <seconds> <reason>
+#
+# <seconds> is the test's cost as shared/scripts/testcost reads it: the larger of
+# its binary's wall and its leaves' seconds summed, the test alone in its own
+# binary (`go run ./scripts/testcost -root .. -time FILE` from shared/, one run;
+# the near ones twice, the larger kept). Read 2026-11-24 on the gate laptop while
+# other work ran beside it, so an upper bound. The candidates were the gate-time
+# baseline's tests over 10 s alone (2026-11-23, tree b5949e26); those that read
+# 10 s or under on 2026-11-24 are not listed.
+#
+# A reason starting UNESTABLISHED is one the test's code and comments do not give.
+#
+# The lines only go: a test leaves when its reason is written at its func (a
+# `// cost:` line in its doc comment, which the rule then requires the line here
+# to go for) or when it is gone. A new test is never added here; it carries the
+# marker, and scripts/check-test-cost.sh times it.
+
+over integration/scenarios TestCatid4x2_S1_SteadyRun 18.8 2 halves, each newW6Cell (its own Core, Edge and databases, five carts filled), then 27 or 43 Edge poll-pass cycles, one half with a five-position swap
+over integration/scenarios TestCatid4x2_S2_LateCutover 41.7 2 halves, each newW6Cell (its own Core, Edge and databases), waiting for the CATID monitor's decision after the real-time w6ShortWindow (10 s)
+over integration/scenarios TestCatid4x2_S3_EarlyCutover 26.9 2 halves, each newW6Cell, with a 3 s time.Sleep mid-run (catid_4x2_early_cutover_test.go) and a 600 ms sleep in each monitor confirm (awaitConfirm)
+over integration/scenarios TestCatid4x2_S4_JumpWithNoChangeover 41.1 2 halves, each newW6Cell, waiting for the monitor's decision once the real-time w6ShortWindow (10 s) closes, the tapped half then for its completion
+over integration/scenarios TestCatid4x2_S6_MixedCell 16.5 one newW6Cell, 41 poll-pass cycles and a changeover carried, four monitor confirms each a 500 ms-tick read and a 600 ms sleep (awaitConfirm)
+over integration/scenarios TestCatid4x2_S7_Restart 29.4 one cell migrated through store.Open's chain and restarted twice, waiting twice for the monitor's decision on the real-time w6ShortWindow (10 s)
+over integration/scenarios TestCatid4x2_S8_CountedSlotStopsASiblingMoves 13.3 2 halves, each newW6Cell; click() sleeps 1.5 s for WarLink's scan and each monitor confirm ends in a 600 ms sleep, over 33 poll-pass cycles
+over integration/scenarios TestCatid4x2_S9_HandPlacedCart 41.8 2 halves, each newW6Cell at w6ShortWindow, waiting for the window to close on the jumped part (real time, 10 s), the tapped half then for the monitor's completion
+over integration/scenarios TestPinChangeover_ACommonPositionIsResuppliedWhileOpen 53.6 2 halves, each newW6Cell at w6ShortWindow: sweep swaps carried across Core and Edge, then the monitor's completion after the real-time 10 s window
+over integration/scenarios TestProducePartialsPin_LiftDoors 59.8 its rows (ppRows) in parallel, each a fresh ppCell on newKsrCell (its own Core, Edge and databases) driving one lifting door to its end across both modules
+over integration/scenarios TestScenario_ChangeoverStart_CancelsALiftOnlyOrderAtAChangingNode 10.4 3 moments in parallel, each newKsrCell (its own Core, Edge and databases): a standby removal with the fleet, START, its cancel at both ends, the changeover run to CUTOVER
+over integration/scenarios TestScenario_PressMatrix 198.3 the 54 of 160 matrix cells that exist, in parallel, each newPmCell on newKsrCell: its own Core, Edge and databases, a state forced and the outcome read at both ends
+over integration/scenarios TestUOP_OwnersExample_StoresPartsReadsUOP 10.5 one newKsrCell driven serially: 1,207 counter ticks, two swaps, two deliveries, a release and three catalog heartbeat round trips (no sleep or window found)
+over shared/scripts/release TestRelease_ComputesTheVersionWhenNoneIsGiven 10.7 2 cases in parallel, each cloning a bare origin and a working clone from the template repo and running the release's git subprocesses: commit, push, tag, push
+over shared/scripts/release TestRelease_RefusesAVersionBelowWhatTheChangesNeed 33.0 4 cases in parallel, each cloning a bare origin and a working clone from the template repo and running git subprocesses: commit, push, show-ref snapshots
+over shingo-core/cmd/seeddev TestKanbanPin_AStrangerGoesHomeWhateverTheFence 23.2 3 fences in parallel, each newKanbanRig on its own clone of the seeded master, an engine started and stopped; run alone, the first asker builds the master template
+over shingo-core/cmd/seeddev TestKanbanPin_TheWalkAllBigsToSmall 19.7 one master-clone rig (newKanbanRig), two START walks (change: up to 24 rounds, up to 12 fulfillment passes a step) and a hand re-type between them
+over shingo-core/cmd/seeddev TestKanbanPin_TheWalkSmall32Big 23.2 one master-clone rig (newKanbanRig), two START walks (change), each up to 24 rounds of tick, taps and swaps with up to 12 fulfillment passes a step
+over shingo-core/cmd/seeddev TestKanbanRig_R1_SteadyLoop 13.8 one master-clone rig, 4 loop cycles of leave, refill, fly, tick, light and tap, then counts(), whose still() sleeps twice the SourceabilityDebounceWindow (300 ms)
+over shingo-core/cmd/seeddev TestKanbanRig_WalkCounts 14.3 one master-clone rig through the walk's four states, four countDoor calls each sleeping in still() twice the SourceabilityDebounceWindow (300 ms), counted ticks and builds
+over shingo-core/cmd/seeddev TestLanesFamily_TwoDigsInOneGroupBothWalk 17.0 one master-clone rig (newMasterRig), two four-blocker digs in one group walked by walk(): up to 60 passes of fulfillment scan, block completions and receipts
+over shingo-core/cmd/seeddev TestPlannerGolden_BinPicker 10.4 24 cases, 9 each on its own clone of the seeded master plant (newDeciderPlant), 15 on one shared plant; run alone, the first asker builds the master template
+over shingo-core/cmd/seeddev TestPlannerGolden_Doors 133.2 21 door cases in parallel, each on its own seeded master clone with an engine started, stopped and scanned (newGoldenPlant), then the door and a fulfillment scan
+over shingo-core/dispatch TestLoaderPlacementPicks 13.7 37 cases in parallel (loaderPickCases), each its own Postgres clone, loader pick fixture and dispatcher, one placement pick asserted
+over shingo-core/engine TestBlockRecordPin_TheWireAndTheFinish 26.4 27 shapes in parallel, each its own Postgres clone and simulator engine (newPinSim), its blocks finished one at a time, each step settled and scanned
+over shingo-core/engine TestCarrierKeysPin_EveryPinShapeKeyed 26.8 27 shapes in parallel, each a blockRecordPins shape re-run keyed on its own Postgres clone and simulator engine, compared with the plain transcript
+over shingo-core/internal/schemadump TestSchemaConvergesAcrossVintages 23.1 7 vintages, each building released boot binaries from git (BuildRelease, unless a verified ReleaseCache entry serves) and booting, rebooting and dumping a Postgres database
+over shingo-core/www TestBinClearDoor_Arms 15.2 15 arms, each run twice in parallel (the HTTP door, then its ask), each on its own world: a Postgres clone, a started engine and the standard data (runDoorArms)
+over shingo-core/www TestBinCountDoor_Arms 15.6 17 arms, each run twice in parallel (the HTTP door, then its ask), each on its own world: a Postgres clone, a started engine and the standard data (runDoorArms)
+over shingo-core/www TestBinLoadDoor_Arms 28.8 31 arms, each run twice in parallel (the HTTP door, then its ask), each on its own world: a Postgres clone, a started engine and the standard data (runDoorArms, newDoorFix)
+over shingo-core/www TestBinQualityHoldDoor_Arms 10.6 10 arms, each run twice in parallel (the HTTP door, then its ask), each on its own world: a Postgres clone, a started engine and the standard data (runDoorArms)
+over shingo-edge/cmd/shingoedge TestDoorWalk_EveryWriteToAStationViewIsAnnounced 11.4 a serial walk of 111 routes and every inbound key, each door collecting frames for walkWindow (50 ms) and reading every station view twice, with a 1.5 s idle wait
+over shingo-edge/engine TestCount_ConservesPartsOverSequences 120.0 seqRuns (24) sequences of seqEvents (90) events, each its own migrated SQLite and engine, the engine read whole before and after every event (runSequence)
+over shingo-edge/engine TestKeepStagedChangeover_EveryShapePin 49.9 every shape (pinCases) in parallel, each observe seeding three fresh fixtures (Preview, Start and cutover, Start and cancel), each its own Edge database, engine and node-bins stub
+over shingo-edge/engine TestKeepStagedOneOwner_PreviewIsStart 14.8 36 shapes in parallel, each seeding two fresh fixtures (Preview, then Start), each its own Edge database, engine and node-bins stub
+over shingo-edge/engine TestReleaseMatrix 28.8 47 cells in parallel, each newRelHarness: its own Edge database copy, engine and fake-Core server, one door driven and the whole outcome compared
+over shingo-edge/engine TestReleasePins 25.5 41 cells in parallel, each newRelHarness (its own Edge database copy, engine and fake Core) driving a multi-event choreography, some restarting the engine
+over shingo-edge/engine TestRequestButtons_OneAnswerPerLineState 21.1 39 line-state and mode subtests in parallel, each building three worlds (one per door), each its own Edge database, engine and Core stub
+over shingo-edge/engine TestStrictPack_TheStampIsAStationsAlone 26.0 41 cells through runRelCells, each newRelHarness (its own Edge database copy, engine and fake-Core server) driving one release door
+over shingo-edge/www TestProcessSetupPagePins 11.3 node over the process-setup harness (pins.js) on processes-desktop.js, one node process per pin group, four at once (pinGroupSlots): it characterises the whole page

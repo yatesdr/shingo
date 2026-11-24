@@ -9,12 +9,14 @@
 #          the sim compile, the unit tests through Go's test cache. Seconds to a
 #          minute; run it on every change.
 #   push = bash scripts/gate.sh full        fmt, then at once: modbuild, lint, every
-#          guard but the script pins whose inputs are unchanged, the sim compile,
+#          guard but the script pins whose inputs are unchanged and the
+#          `alone` ones (`gate.sh scripts` runs those), the sim compile,
 #          the unit tests (-count=1), the docker suites (scoped by diff), the
 #          sim-only tests natively without -race. Before a push. race: CI.
 #   cert = bash scripts/gate.sh full --unscoped   push's steps at full strength:
-#          every guard, docker whatever the diff, race over core's engine and
-#          www, the sim-only tests under -race. Certifies a tip.
+#          every guard (but the `alone` ones, which `gate.sh scripts` runs),
+#          docker whatever the diff, race over core's engine and www, the
+#          sim-only tests under -race. Certifies a tip.
 #
 # WHERE EACH TAG SET COMPILES AND RUNS (every tag compiles somewhere before a
 # push and runs somewhere before origin):
@@ -549,10 +551,13 @@ guard_header() {
 #                  only when those paths change; the bare gate and `full` skip it
 #                  when none is in the diff (write_diff, diff_touches); `full --unscoped` and
 #                  `gate.sh scripts` (CI's guards job) always run it
+#   # tier: alone  runs only in `gate.sh scripts` (CI's guards job), never in a
+#                  tier: it times tests (check-test-cost.sh), and a tier's own
+#                  build and test steps beside it are the load it must not time
 # The step writes its account to .gate/scripts.summary for the sentence.
 step_scripts() {
   local f n s failed=0 ran=0 total=0 logdir="$ROOT/.gate/scripts" pids="" names=""
-  local tier="${GATE_TIER:-step}" gtier inputs skipped_inputs="" skipped_push=""
+  local tier="${GATE_TIER:-step}" gtier inputs skipped_inputs="" skipped_push="" skipped_alone=""
   mkdir -p "$logdir" || { echo "FAIL scripts — cannot create $logdir"; return 1; }
   for f in "$ROOT"/scripts/check-*.sh; do
     [ -e "$f" ] || continue
@@ -561,6 +566,9 @@ step_scripts() {
     s="${n#check-}"
     gtier="$(guard_header "$f" tier | cut -d' ' -f1)"
     inputs="$(guard_header "$f" inputs)"
+    if [ "$gtier" = alone ] && [ "$tier" != step ]; then
+      skipped_alone="${skipped_alone:+$skipped_alone, }$s"; continue
+    fi
     case "$tier" in
       dev|push)
         if [ "$tier" = dev ] && [ "$gtier" = push ]; then
@@ -581,6 +589,7 @@ step_scripts() {
   s="$ran of $total"
   [ -n "$skipped_inputs" ] && s="$s; skipped: $skipped_inputs — inputs unchanged"
   [ -n "$skipped_push" ] && s="$s; push-only: $skipped_push"
+  [ -n "$skipped_alone" ] && s="$s; alone, in \`gate.sh scripts\`: $skipped_alone"
   echo "$s" >"$ROOT/.gate/scripts.summary"
   # The guards that ran, for the steps log's selection line (gate-timing.sh).
   # shellcheck disable=SC2086 # names is a list of guard names
