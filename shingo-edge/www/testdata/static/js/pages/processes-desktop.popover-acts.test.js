@@ -1157,12 +1157,18 @@ async function mainAsync() {
             throw new Error('picker notes wrong: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(expect));
         }
         const lines = plain(scrLines.innerHTML);
-        for (const want of ['Screen Screen A holds 1 position', 'Screen Screen B holds 1 position', '1 position on no screen: PLN_04']) {
-            if (lines.indexOf(want) < 0) throw new Error('the screen lines do not say ' + JSON.stringify(want) + ': ' + lines);
+        if (lines.indexOf('1 position on no screen: PLN_04') < 0) throw new Error('the screen lines do not say what is on no screen: ' + lines);
+        // Two screens: each is its row (screenField) and holds its own
+        // position as a chip, and the positions on none are offered to either
+        // (round 4).
+        const rowOf = name => scrLines.innerHTML.split('<div class="pd-sfld pd-scrrow pd-screen">').find(r => r.indexOf('<b>' + name + '</b>') >= 0) || '';
+        for (const [name, pos] of [['Screen A', 'PLN_01'], ['Screen B', 'PLN_02']]) {
+            const r = rowOf(name);
+            if (r.indexOf('<small>1 position · ') < 0 || r.indexOf('<span class="picker-chip">' + pos + '</span>') < 0) {
+                throw new Error('the screen lines do not draw ' + name + ' holding ' + pos + ': ' + scrLines.innerHTML);
+            }
         }
-        // Two screens: each holds its positions as chips, and the positions on
-        // none are offered to either (round 4).
-        for (const want of ['<span class="setpick-chip">PLN_01</span>', '<span class="setpick-chip">PLN_02</span>',
+        for (const want of [
             'data-act="loose-onto" data-station="10">Put them on Screen A</button>',
             'data-act="loose-onto" data-station="11">Put them on Screen B</button>']) {
             if (scrLines.innerHTML.indexOf(want) < 0) throw new Error('the screen lines do not draw ' + want + ': ' + scrLines.innerHTML);
@@ -4662,7 +4668,8 @@ async function settingsPositionsPins(h) {
         if (JSON.stringify(ctx.writes[1].body.nodes) !== '["PLN_005","ULN_002","PLN_006BCD","PLN_009"]') throw new Error('the screen claimed ' + JSON.stringify(ctx.writes[1].body));
         if (ctx.sheet().open) throw new Error('the sheet stayed open');
         if (prov(ctx) !== 'No unsaved changes') throw new Error('the bar after "+ Add a screen" reads ' + JSON.stringify(prov(ctx)));
-        if (plain(ctx.linesHost.innerHTML).indexOf('Screen Press 6 holds all 4 positions') < 0) throw new Error('the line does not say the screen holds them: ' + plain(ctx.linesHost.innerHTML));
+        const rows = ctx.linesHost.innerHTML;
+        if (rows.indexOf('<b>Press 6</b>') < 0 || rows.indexOf('<small>4 positions · ') < 0) throw new Error('the row does not say the screen holds them: ' + plain(rows));
     });
 
     // A LOADER'S OR UNLOADER'S PAGE (owner, 2026-11-14): Core runs its board,
@@ -4679,6 +4686,49 @@ async function settingsPositionsPins(h) {
         if (/os-flow-picture/.test(html)) throw new Error('a flow picture is drawn');
         if (html.indexOf('id="sp-st"') >= 0 || findIn(ctx.spHost, '.setpick').length) throw new Error('a loader\'s Settings draws the set pick');
         if (html.indexOf('data-act="setup-show"') >= 0 || html.indexOf('data-act="setup-skip"') >= 0) throw new Error('a loader\'s process offers Setup');
+    });
+
+    // ONE SCREEN, ONE ROW (owner, 2026-11-24: "why does it look different
+    // from the bin loader or unloader one"). A line drew its screen as a
+    // sentence under the pick and a loader drew it as a row, each with Edit
+    // and Open as dim text nobody found. Both draw screenField now: the same
+    // markup for the same screen, its name with Rename and Open the screen as
+    // buttons beside it.
+    await pin('a screen is drawn the same on a line and on a loader: its name, Rename and Open the screen', async () => {
+        const head = html => {
+            const at = html.indexOf('data-act="screen-edit" data-station="18"');
+            if (at < 0) throw new Error('no Rename for screen 18: ' + plain(html).slice(0, 400));
+            const start = html.lastIndexOf('<div class="pd-sfld pd-scrrow pd-screen">', at);
+            const end = html.indexOf('</span></div>', at);
+            if (start < 0 || end < 0) throw new Error('screen 18 is not a screen row: ' + html.slice(Math.max(0, at - 300), at + 200));
+            return html.slice(start, end);
+        };
+        const line = page('#tab=settings');
+        await settle();
+        const onLine = head(line.linesHost.innerHTML);
+        const loader = page('#tab=settings', { process: { core_boards: true } });
+        await settle();
+        const onLoader = head(loader.root.innerHTML);
+        if (onLine !== onLoader) throw new Error('a line draws its screen as\n' + onLine + '\nand a loader as\n' + onLoader);
+        for (const want of ['<label>Operator screen<small>' + claimed[18].length + ' positions · ', '<b>Press 6 Operator Screen</b>',
+            '<button class="pd-btn" data-act="screen-edit" data-station="18">Rename</button>',
+            '<a class="pd-btn" href="/operator/station/18">Open the screen</a>']) {
+            if (onLine.indexOf(want) < 0) throw new Error('the screen row does not draw ' + want + ': ' + onLine);
+        }
+        if (/pd-dimlink/.test(onLine)) throw new Error('the screen\'s actions are dim text again: ' + onLine);
+    });
+
+    // THE SCREEN IS ABOVE THE PICK (owner, 2026-11-24: "where do you change
+    // the name ... I dont see it"). The pick lists every node in the plant,
+    // so a row drawn under it was off the page on any real line.
+    await pin('a line\'s screen is drawn above the pick', async () => {
+        const ctx = page('#tab=settings');
+        await settle();
+        const html = ctx.root.innerHTML;
+        const rows = html.indexOf('id="pd-scrlines"');
+        const pick = html.indexOf('id="sp-st"');
+        if (rows < 0 || pick < 0) throw new Error('Positions and routing draws no ' + (rows < 0 ? 'screen rows' : 'pick') + ': ' + plain(html).slice(0, 400));
+        if (rows > pick) throw new Error('the screen rows are under the pick again');
     });
 
     // ON A CORE LOADER'S PAGE, "ON NO SCREEN" IS TEXT (round 7). A position

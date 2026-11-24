@@ -131,7 +131,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
  * in Settings; a switch here would be the same decision in two places. */
 .pd-gate { color: var(--text-muted); font-size: 13px; }
 /* A LINK THAT DOES SOMETHING GETS A HOVER. .pd-dimlink carries P0's row
-   actions, D4's Edit and Open and D6's row menu, and it had no :hover at all —
+   actions and D6's row menu (D4's Edit and Open were here until 2026-11-24;
+   a screen's are buttons now, .pd-scrhead), and it had no :hover at all —
    so on a row whose other columns are literally .pd-dim, the only two controls
    rendered exactly like the read-only text beside them. Same ruling as .pd-back
    and the positions footer: if it acts, it looks like it acts. */
@@ -887,7 +888,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
    a field starts where the values do. */
 .pd-card .pd-sfld { grid-template-columns: 210px minmax(0, 1fr); }
 .pd-card .pd-note { margin-left: 224px; }
-.pd-card > .pd-sect + .pd-note, .pd-card .pd-scrlines + .pd-note { margin-left: 0; }
+.pd-card > .pd-sect + .pd-note { margin-left: 0; }
 /* Inside a card a value column holds its control, never wider than the card:
    the wide input (420 px elsewhere) and a combo take the column's width. */
 .pd-card .pd-sfld .v { min-width: 0; }
@@ -911,14 +912,24 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
 .pd-switch > .pd-chk { flex: none; }
 .pd-swmean { min-width: 0; color: var(--text-muted); font-size: 13px; }
 .pd-chk.on + .pd-swmean { color: var(--text); }
-/* Positions and routing: the screen under the pick. */
+/* Positions and routing: the screen, then the pick under it. */
 .pd-sphost { min-width: 0; padding: 8px 0 4px; }
-.pd-scrlines { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 6px; }
+.pd-scrlines { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 2px; }
 .pd-scrline { display: flex; align-items: center; gap: 12px; min-height: 32px; font-size: 13px; }
 .pd-scrline > span:first-child { flex: 1; min-width: 0; color: var(--text-muted); }
 .pd-scrline b { color: var(--text); }
-/* The positions a screen holds, a chip each, under its line. */
-.pd-scrchips { padding: 0 0 6px; }
+/* ONE SCREEN'S ROW, THE SAME ON A LINE AND ON A LOADER (screenField in
+   processes-desktop.js; owner, 2026-11-24). Its name with Rename and Open the
+   screen beside it as buttons, its positions a chip each under them. They were
+   .pd-dimlink text, "Edit" and "Open", and were not found. The label sits
+   level with the name, not centred on a value several rows tall. */
+.pd-sfld.pd-screen { align-items: start; padding: 4px 0 6px; }
+.pd-sfld.pd-screen > label { padding-top: 9px; }
+.pd-scrhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 36px; }
+.pd-scrhead > b { font-size: 14px; overflow-wrap: anywhere; }
+.pd-scrhead .pd-scracts { display: inline-flex; align-items: center; gap: 8px; }
+.pd-screen .picker-chips { padding: 4px 0 0; }
+.pd-card .pd-screen .pd-note { margin: 4px 0 0; }
 /* The part set under its heading, no field label beside it. */
 .pd-partsbox { padding: 2px 0 8px; }
 
@@ -978,7 +989,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; --setpic
 .pd-sucard > div:first-child, .pd-surow > div:first-child { flex: 1; min-width: 0; }
 .pd-sucard small { display: block; color: var(--text-muted); font-size: 13px; }
 .pd-surow { display: flex; align-items: center; gap: 16px; }
-.pd-sucard a.pd-btn { display: inline-flex; align-items: center; text-decoration: none; }
+.pd-sucard a.pd-btn, .pd-scrhead a.pd-btn { display: inline-flex; align-items: center; text-decoration: none; }
 .pd-supresses { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .pd-supress { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
 .pd-supress .pd-susn { width: 28px; height: 28px; flex: none; }

@@ -16,6 +16,10 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
+Deploy: no migration. Edge only; Core is unchanged and needs no install.
+
+- On an Edge process's Settings, each operator screen is one row, the same on a line and on a loader or unloader: its name with Rename and Open the screen as buttons. On a line it is now above the positions pick (it was small grey Edit and Open text under the whole node list)
+
 ## v0.20.0 — 2026-11-23
 
 Deploy: Edge v60, and no new Core migration (Core's migration 190 is edited in place, as 185's was: a database already at it runs nothing). Core first, then every Edge of the plant. The two run mixed with v0.19.0 either way, with one exception: a v0.19.0 Core can still send the retired Bound message to an Edge whose schema it could not read, and this Edge takes it as a count. An Edge must have started once on v0.19.0: the installer asks before it stops the service and refuses one that has not. Nothing below the floor (Core v0.19.0, Edge v0.19.0) is refused on the wire; /edges marks it. Rollback: the previous binary on either side. The Edge has no down step: v0.19.0 runs on the upgraded database, and the installer's copy holds what the upgrade dropped.
