@@ -190,6 +190,11 @@ func TestKeepStagedOneOwner_TheWrongSpareGoesBackAndTheLegNeverTakesIt(t *testin
 	}
 }
 
+// knownRedEnv runs this file's red pins: cases that fail today on purpose and
+// wait for their fix's own brief. Unset, they skip and say which finding they
+// pin.
+const knownRedEnv = "SHINGO_KNOWN_RED"
+
 // THE COPY CATCHING UP IS A DECISION POINT. The keeper decides from the bins
 // copy, and Core's push of a bin's move races the message that ends or lifts
 // the order that moved it. A kick that reads the copy first decides from the
@@ -221,6 +226,42 @@ func TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint(t *testing.T) {
 		refills, _ := liveSpot(t, fx, pinSpot)
 		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || !refills[0].RetrieveEmpty {
 			t.Fatalf("refills once the copy shows the spot bare = %+v, want one empty for PART-NEW", refills)
+		}
+	})
+
+	// The copy's change lands while another section holds the cell's lock:
+	// the wake's pass is turned away (TryLock), and the refill follows when the
+	// holder unlocks. Red by design until docket B6 is fixed: today the wake
+	// turned away is logged, and the next level sweep, up to a minute later,
+	// re-asks. It is not shown to be the cause of the KSR leaf d flake, which
+	// is UNKNOWN. Skipped unless knownRedEnv is set, so no gate runs it; with
+	// it set the case should fail at the refills-after-unlock check.
+	t.Run("the copy catches up while the cell is being decided", func(t *testing.T) {
+		if os.Getenv(knownRedEnv) == "" {
+			t.Skip("docket B6 red pin, red until the dropped wake is fixed; run with " + knownRedEnv + "=1")
+		}
+		t.Parallel()
+		c := pinCase{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobotPressIndex, read: readWrong}
+		fx := c.seed(t)
+		withCascade(fx)
+		startKSChangeover(t, fx)
+		_, returns := liveSpot(t, fx, pinSpot)
+		if len(returns) != 1 {
+			t.Fatalf("returns = %+v, want the outgoing spare sent back", returns)
+		}
+		land(t, fx, returns[0].ID)
+		mu := fx.eng.primeNodeLock(&processes.NodeClaim{CoreNodeName: "L1"})
+		mu.Lock()
+		restubSpot(t, fx, line, protocol.NodeBinInfo{})
+		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 0 {
+			mu.Unlock()
+			t.Fatalf("refills = %+v while the cell's lock is held, want none yet", refills)
+		}
+		mu.Unlock()
+		refills, _ := liveSpot(t, fx, pinSpot)
+		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || !refills[0].RetrieveEmpty {
+			t.Fatalf("refills once the holder unlocked = %+v, want one empty for PART-NEW: the pass the held "+
+				"lock turned away was never run again", refills)
 		}
 	})
 
