@@ -49,6 +49,7 @@ type judgement struct {
 	gapMax       time.Duration
 	acState      string // on, off, unknown
 	standby      int
+	standbyRead  bool   // false: the log could not be read, and standby is no count
 	vmOnly       string // set: the host was not read, and why (insideVM)
 }
 

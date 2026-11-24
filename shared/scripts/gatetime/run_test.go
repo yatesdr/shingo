@@ -231,6 +231,34 @@ func TestJudge_InsideTheVMOnlyIsNeverClean(t *testing.T) {
 	}
 }
 
+// TestResult_StandbyUnreadIsNotZero: the result line's standby field is the
+// count of 506/507 events only when the log was read; a log that could not be
+// read writes standby=unread, never a 0 nobody measured. The host field names
+// where the readings came from.
+func TestResult_StandbyUnreadIsNotZero(t *testing.T) {
+	for _, c := range []struct {
+		m    *fakeMachine
+		want string
+	}{
+		{&fakeMachine{acState: 1, evs: []standbyEvent{{"506", time.Now()}, {"507", time.Now()}}, sc: scope{host: "this machine"}}, "2"},
+		{&fakeMachine{acState: 1, evErr: errors.New("no log"), sc: scope{host: "unread: no reader", vmOnly: "no reader"}}, "unread"},
+	} {
+		out := t.TempDir()
+		r := &runner{m: c.m, every: time.Second, out: out, samples: samplesEvery(time.Now(), time.Second, repeat(3, [3]float64{1, 1, 0}))}
+		if err := r.writeResult(out, timedCmd{t0: time.Now(), t1: time.Now()}, "none", "true"); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(out, "result.tsv"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := parseResultLine(string(data))
+		if res["standby"] != c.want || res["host"] != c.m.sc.host {
+			t.Errorf("standby %q host %q, want %q and %q (verdict %q)", res["standby"], res["host"], c.want, c.m.sc.host, res["verdict"])
+		}
+	}
+}
+
 func TestResultLine_RoundTrip(t *testing.T) {
 	l := resultLine{"wall_s": "1.50", "verdict": "VOID: a b", "cmd": "bash -c x\ty", "extra": "1"}
 	back := parseResultLine(l.String())

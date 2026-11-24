@@ -18,7 +18,7 @@ package main
 //	             reads it for the gate's total line)
 //	result.tsv   ONE line, tab-separated key=value fields: start, end, wall_s,
 //	             job_cpu_s, host_cpu_s, vm_cpu_s, foreign_max30, foreign_line,
-//	             samples, standby, exit, verdict, host
+//	             samples, standby (a count, or unread), exit, verdict, host
 //	             (where AC, standby and load were read: machine.go's scope),
 //	             flag, plant, cmd
 //
@@ -245,6 +245,10 @@ func (r *runner) execute(cmdArgs []string, out string, w io.Writer) (timedCmd, e
 // writeResult judges the whole run and writes its one result line.
 func (r *runner) writeResult(out string, tc timedCmd, flagNote, cmdLine string) error {
 	j := r.final()
+	standby := fmt.Sprint(j.standby)
+	if !j.standbyRead {
+		standby = "unread" // no log read is not the absence of a standby
+	}
 	res := resultLine{
 		"start": tc.t0.UTC().Format(time.RFC3339Nano), "end": tc.t1.UTC().Format(time.RFC3339Nano),
 		"wall_s":        fmt.Sprintf("%.2f", tc.t1.Sub(tc.t0).Seconds()),
@@ -254,7 +258,7 @@ func (r *runner) writeResult(out string, tc timedCmd, flagNote, cmdLine string) 
 		"foreign_max30": fmt.Sprintf("%.2f", j.foreignMax30),
 		"foreign_line":  fmt.Sprintf("%.2f", foreignLine),
 		"samples":       fmt.Sprint(len(r.samples)),
-		"standby":       fmt.Sprint(j.standby),
+		"standby":       standby,
 		"exit":          fmt.Sprint(tc.code),
 		"verdict":       j.verdict(),
 		"host":          r.m.scope().host,
@@ -415,6 +419,7 @@ func (r *runner) final() judgement {
 // scope: a run judged inside the VM only is at best vmOnlyVerdict.
 func (r *runner) judgeSoFar(evs []standbyEvent, standbyErr error) judgement {
 	j := judge(r.samples, evs, r.maxGap(), r.plants, r.m.limits())
+	j.standbyRead = standbyErr == nil
 	if standbyErr != nil {
 		j.reasons = append(j.reasons, "standby-unread("+oneLine(standbyErr.Error())+")")
 	}
