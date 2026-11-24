@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # tier: dev
-# inputs: scripts/gate-reuse.sh scripts/check-reuse-wiring.sh
+# inputs: scripts/gate-reuse.sh scripts/check-reuse-wiring.sh scripts/gate.sh
 # side: linux
 # check-reuse-wiring.sh — the gate's reuse switch (scripts/gate-reuse.sh), driven
 # with a fake gatetime: what each tier exports on each side (on by default in a
 # WSL mirror, never on the Windows side, off elsewhere unless asked: R38), that
 # the canary's own exit code turns reuse off, that GitHub never serves, the
-# sentence's counts, and cert's audit failing on a mismatch. The wrapper's own lookup is pinned by package
-# reuse's tests and its probe set (shared/scripts/gatetime/reuse/probes).
+# sentence's counts, cert's audit failing on a mismatch, and the line a full
+# miss prints (reuse_explain; gate.sh, an input, calls it). The wrapper's own
+# lookup is pinned by package reuse's tests and its probe set
+# (shared/scripts/gatetime/reuse/probes).
 #
 # Exit 0 = every row holds, 1 = a row failed.
 set -uo pipefail
@@ -131,5 +133,52 @@ row "the audit names the binary" "  p/b" "$(printf '%s\n' "$out" | sed -n 2p)"
 GATETIME_REUSE_LOG="$TMP/log" bash -c '. "$1"; REUSE_MODE=reuse; reuse_audit' _ "$ROOT/scripts/gate-reuse.sh"
 row "push does not audit" "0" "$?"
 
-[ "$fail" -eq 0 ] && echo "ok   reuse wiring (on by default in a mirror, GATE_REUSE=off its opt-out; never on the Windows side or GitHub; elsewhere off unless asked; dev and push serve, cert audits, steps off; the canary's exit decides; counts; the audit fails a mismatch)"
+# A full miss explains itself (brief A2 step 4): a gate that served none of N > 0
+# binaries on the tree the store's last run had prints what in the key moved,
+# from the wrapper's key_diff of each binary that had no entry under its key
+# (the most common); any other gate prints nothing more. Either way its tree
+# becomes the store's last, which the next gate's setup reads.
+T1=948e3afd9a9b8e2fb8c1d8f2a2d4c6e8f0a1b2c3 T2=01e5a43cc8d9a1b2c3d4e5f60718293a4b5c6d7e
+miss='"decision":"run","exit":0,"miss":"no entry for this binary, argv, cwd, env, identity and wrapper"'
+explain() { # mode tree last-tree — reuse_explain over $TMP/log, its store $TMP/store
+  rm -rf "$TMP/store" && mkdir -p "$TMP/store"
+  # A missing function prints, so that a row wanting nothing cannot pass on it.
+  GATETIME_REUSE_LOG="$TMP/log" GATETIME_STORE="$TMP/store" GATE_TREE="$2" GATE_RUN=r2 \
+    bash -c '. "$1"; declare -F reuse_explain >/dev/null || { echo "gate-reuse.sh has no reuse_explain"; exit; }
+      REUSE_MODE="$2" REUSE_LAST_TREE="$3"; reuse_explain' _ "$ROOT/scripts/gate-reuse.sh" "$1" "$3"
+}
+printf '%s\n' "{\"package\":\"p/a\",$miss,\"key_diff\":\"env differed in PATH, WT_SESSION\"}" \
+  "{\"package\":\"p/b\",$miss,\"key_diff\":\"env differed in PATH, WT_SESSION\"}" "{\"package\":\"p/c\",$miss}" >"$TMP/log"
+row "a full miss on the last stored run's tree names what in the key moved" \
+  "reuse: 0 of 3 served on the tree of the last stored run (948e3afd9a9b): the key's env differed in PATH, WT_SESSION" \
+  "$(explain reuse "$T1" "$T1")"
+row "on another tree it says nothing more" "" "$(explain reuse "$T2" "$T1")"
+row "with no run stored before, nothing more" "" "$(explain reuse "$T1" "")"
+row "cert's audit serves nothing by design: nothing more" "" "$(explain audit "$T1" "$T1")"
+explain reuse "$T2" "$T1" >/dev/null
+row "the run's tree becomes the store's last" "$T2 r2" "$(cat "$TMP/store/last-run" 2>/dev/null)"
+printf '%s\n' "{\"package\":\"p/a\",$miss,\"key_diff\":\"env differed in X\"}" "{\"package\":\"p/b\",\"decision\":\"reuse\",\"exit\":0}" >"$TMP/log"
+row "a gate that served one says nothing more" "" "$(explain reuse "$T1" "$T1")"
+printf '%s\n' "{\"package\":\"p/a\",$miss,\"key_diff\":\"env differed in X\"}" "{\"package\":\"p/b\",$miss,\"key_diff\":\"binary differed\"}" \
+  "{\"package\":\"p/c\",$miss,\"key_diff\":\"env differed in X\"}" >"$TMP/log"
+row "binaries apart for different reasons: the most common, counted" \
+  "reuse: 0 of 3 served on the tree of the last stored run (948e3afd9a9b): the key's env differed in X (2 of the 3 binaries compared)" \
+  "$(explain reuse "$T1" "$T1")"
+printf '%s\n' '{"package":"p/a","decision":"run","exit":0,"miss":"content: a/x.txt (read open)","entries":1}' "{\"package\":\"p/b\",$miss}" >"$TMP/log"
+row "keys that matched: no part of the key, and the first miss" \
+  "reuse: 0 of 2 served on the tree of the last stored run (948e3afd9a9b): no part of the key differed (content: a/x.txt (read open))" \
+  "$(explain reuse "$T1" "$T1")"
+printf '%s\n' "{\"package\":\"p/a\",$miss}" >"$TMP/log"
+row "no earlier key to compare: said so" \
+  "reuse: 0 of 1 served on the tree of the last stored run (948e3afd9a9b): no binary had an earlier key in the store to compare" \
+  "$(explain reuse "$T1" "$T1")"
+mkdir -p "$TMP/.gate/reuse" && echo "$T1 r1" >"$TMP/.gate/reuse/last-run"
+row "setup reads the store's last tree" "$T1" \
+  "$(env -u GATETIME_REUSE -u GATE_REUSE -u GITHUB_ACTIONS GATE_IN_MIRROR=1 GATE_TIER=dev ROOT="$TMP" GATETIME_BIN="$TMP/gatetime" \
+      GATETIME_IDENTITY="$TMP/identity" GATE_RUN=r GATE_SHA=s bash -c 'OSTYPE=linux-gnu; . "$1"; reuse_setup; printf %s "$REUSE_LAST_TREE"' \
+      _ "$ROOT/scripts/gate-reuse.sh")"
+rm -rf "$TMP/.gate"
+row "gate.sh explains a full miss after its steps" "1" "$(grep -c '^reuse_explain$' "$ROOT/scripts/gate.sh")"
+
+[ "$fail" -eq 0 ] && echo "ok   reuse wiring (on by default in a mirror, GATE_REUSE=off its opt-out; never on the Windows side or GitHub; elsewhere off unless asked; dev and push serve, cert audits, steps off; the canary's exit decides; counts; the audit fails a mismatch; a full miss on the last stored tree names what in the key moved)"
 exit "$fail"

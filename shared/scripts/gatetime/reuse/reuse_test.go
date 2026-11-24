@@ -1,6 +1,7 @@
 package reuse
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -86,6 +87,88 @@ func TestKeyEnv_ATerminalsAndAGatesPerRunVariablesAreNotInTheKey(t *testing.T) {
 	other := keyEnv(childEnv([]string{"HOME=/home/u", "WSLENV=WT_SESSION:WT_PROFILE_ID:GOFLAGS", "SHINGO_X=1"}, "/private"))
 	if strings.Join(other, "\n") == strings.Join(keyEnv(childEnv(shared, "/private")), "\n") {
 		t.Error("two WSLENV lists key alike")
+	}
+}
+
+// TestMain_AMissWithNoEntryNamesWhatInItsKeyMoved pins brief A2 step 4's "a
+// full miss explains itself", the wrapper's half: a binary with no entry under
+// its key says, in its decision line, how that key differs from the nearest
+// key stored for its package (the gate's reuse_explain words the line from
+// these). The package's other binary, apart in binary and argv as a docker
+// binary is from a unit one, is not the one it is compared with.
+func TestMain_AMissWithNoEntryNamesWhatInItsKeyMoved(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	file := func(p, s string) string {
+		t.Helper()
+		p = filepath.Join(dir, p)
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	unit, docker, log := file("unit.test", "unit binary\n"), file("docker.test", "docker binary\n"), filepath.Join(dir, "log")
+	t.Setenv("GATETIME_REUSE", ModeReuse)
+	t.Setenv("GATETIME_STORE", filepath.Join(dir, "store"))
+	t.Setenv("GATETIME_REUSE_LOG", log)
+	t.Setenv("GATETIME_IDENTITY", file("identity", "identity 1\n"))
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("REUSE_PIN_SESSION", "a")
+	t.Setenv("REUSE_PIN_GONE", "x")
+	// A binary that reads nothing and passes, its test log whole.
+	pass := func(spec RunSpec) RunResult {
+		for _, a := range spec.Args {
+			if p, ok := strings.CutPrefix(a, "-"+testlogFlag); ok {
+				_ = os.WriteFile(p, []byte("# test log\n"), 0o644)
+			}
+		}
+		_, _ = spec.Out.Write([]byte("PASS\n"))
+		return RunResult{Processes: 0, ChildHow: "the pin's"}
+	}
+	run := func(bin, timeout string) map[string]any {
+		t.Helper()
+		if code := Main([]string{bin, "-test.timeout=" + timeout}, pass); code != 0 {
+			t.Fatalf("Main exited %d", code)
+		}
+		b, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+		var d map[string]any
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	if d := run(unit, "10m0s"); d["decision"] != "run" || d["stored"] != true || d["key_diff"] != nil {
+		t.Fatalf("first run: %v, want run, stored, and no key to compare", d)
+	}
+	run(docker, "20m0s")
+	for _, c := range []struct {
+		name, timeout, want string
+		change              func()
+	}{
+		{"another session", "10m0s", "env differed in REUSE_PIN_SESSION", func() { t.Setenv("REUSE_PIN_SESSION", "b") }},
+		{"another identity", "10m0s", "identity differed", func() { file("identity", "identity 2\n") }},
+		{"a variable gone and one new", "10m0s", "env differed in REUSE_PIN_GONE, REUSE_PIN_NEW", func() {
+			_ = os.Unsetenv("REUSE_PIN_GONE") // t.Setenv above restores it
+			t.Setenv("REUSE_PIN_NEW", "1")
+		}},
+		{"another binary", "10m0s", "binary differed", func() { file("unit.test", "unit binary, rebuilt\n") }},
+		{"an identity and a session", "10m0s", "identity differed, and its env in REUSE_PIN_SESSION", func() {
+			file("identity", "identity 3\n")
+			t.Setenv("REUSE_PIN_SESSION", "c")
+		}},
+		{"an argv and an identity", "11m0s", "argv and identity differed", func() { file("identity", "identity 4\n") }},
+	} {
+		c.change()
+		if d := run(unit, c.timeout); d["decision"] != "run" || d["key_diff"] != c.want {
+			t.Errorf("%s: decision %v, key_diff %v; want run with key_diff %q", c.name, d["decision"], d["key_diff"], c.want)
+		}
+		if d := run(unit, c.timeout); d["decision"] != "reuse" || d["key_diff"] != nil {
+			t.Errorf("%s, again: decision %v, key_diff %v; want reuse, nothing to explain", c.name, d["decision"], d["key_diff"])
+		}
 	}
 }
 
