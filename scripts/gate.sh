@@ -107,13 +107,14 @@
 #                                         the Linux side when it is set up, else
 #                                         the Windows side, saying why (below)
 #
-# THE GATE LOCK. Every step except fmt, scope, order and lock-status takes a
-# lock shared by all worktrees of this clone, and a second gate waits for it,
-# printing who holds it. fmt is exempt because the pre-push hook runs it and
-# must never wait. The lock frees itself if the holding gate dies (its
-# heartbeat stops). See scripts/gate-lock.sh. A gate in a worktree's mirror on
-# the Linux side takes the same lock, and keeps its heartbeat while it runs, so
-# a caller killed under it leaves the lock held, not free (scripts/gate-mirror.sh).
+# THE GATE LOCK. Every mode except fmt, scope, order, cachescope, identity and
+# lock-status takes a lock shared by all worktrees of this clone, and a second
+# gate waits for it, printing who holds it. fmt is exempt because the pre-push
+# hook runs it and must never wait. The lock frees itself if the holding gate
+# dies (its heartbeat stops). See scripts/gate-lock.sh. A gate in a worktree's
+# mirror on the Linux side takes the same lock, and keeps its heartbeat while
+# it runs, so a caller killed under it leaves the lock held, not free
+# (scripts/gate-mirror.sh).
 #
 # WHAT KEEPS IT (owner, 2026-11-21): the runs whose verdict or timing must be
 # clean. `full`, `full --unscoped` and `race`; proofs, sims and rigs (they hold
@@ -609,9 +610,10 @@ guard_header() {
 # AND BY WHERE THEY RUN (R49, brief A2 step 5):
 #   # side: linux  a pin of the gate's own tooling (the scripts it names in
 #                  `# inputs:`): the Linux side and GitHub (CI's guards job,
-#                  ubuntu) run it in every tier; the Windows side (a gate whose
-#                  steps run on Git Bash: GATE_SIDE=windows, or the fallback,
-#                  both of which export it) skips it, and the sentence names the
+#                  ubuntu) run it as any guard, by its tier and inputs; the
+#                  Windows side (a gate whose steps run on Git Bash:
+#                  GATE_SIDE=windows, or the fallback, both of which export it)
+#                  skips it in every tier and mode, and the sentence names the
 #                  skip. These pins drive real gates in fixtures, and on the
 #                  loaded Windows host each process costs 0.1-0.7 s:
 #                  check-gate-mirror.sh alone took about 227 s there against 5-7

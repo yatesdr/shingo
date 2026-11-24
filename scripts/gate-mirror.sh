@@ -62,8 +62,8 @@
 # ONE MIRROR PER WORKTREE: ~/gate-mirrors/<worktree dir name> (GATE_MIRROR_ROOT
 # names another root). It records its source path in .git/gate-mirror, and a
 # second worktree with the same name is refused rather than sharing it. A
-# mirror whose worktree is gone is removed by the next sync of any other
-# (mirror_orphans).
+# mirror whose worktree is gone is removed by the next sync from any other
+# worktree (mirror_orphans).
 #
 # ONE GATE LOCK ACROSS BOTH SIDES. The caller takes the lock in the Windows
 # clone's git common dir as before; the mirror's gate is its nested run
@@ -324,9 +324,10 @@ mirror_tree() {
 # hour old (R50, brief A2 step 5).
 #
 # WHY. The store holds only what syncs write (blobs of uncommitted files, trees,
-# each sync's two synthetic commits), and each sync's are unreachable once the
-# next moves the refs, so it grows with every synced change: about 250 KB at
-# 2026-11-24, so this should almost never prune. The tips the mirror was last
+# each sync's two synthetic commits), and a sync's commits, with what only they
+# reach, are unreachable once the next sync moves the refs, so it grows with
+# every synced change: about 250 KB in the lead's worktree at 2026-11-24 (brief
+# A2), so this should almost never prune. The tips the mirror was last
 # sent stay so the next incremental bundle still cuts: a refused sync has moved
 # the refs (mirror_carry) without them. mirror_bundle's full fallback stays for
 # any other loss. The hour is for a gate run beside this one (GATE_NO_LOCK=1)

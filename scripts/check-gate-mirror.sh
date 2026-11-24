@@ -48,8 +48,9 @@
 #      Windows-side run, which names it in the sentence; the Linux side and a
 #      gate off Windows with no mirror (GitHub) run it (R49)
 #
-# A process costs 0.1-0.4 s on the loaded Windows laptop, so this pin takes
-# minutes there and seconds on the Linux side, where the gate now runs it.
+# A process costs 0.1-0.7 s on the loaded Windows laptop (2026-11-24), so this
+# pin took about 227 s there and takes seconds on the Linux side; a Windows-side
+# gate skips it (`# side: linux`, R49) and the Linux side and GitHub run it.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
