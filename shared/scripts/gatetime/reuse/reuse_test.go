@@ -212,6 +212,50 @@ func TestParseTestlog(t *testing.T) {
 	}
 }
 
+// TestExclusions_TheNullDeviceIsNoInputInAnyDirectory pins the null device as
+// machine state, never an input. exec.Command opens os.DevNull through package
+// os for a nil Stdin or Stdout, so the test log of every binary that starts a
+// child names it: "/dev/null" on Linux, and on Windows "NUL", which the log
+// parser resolves against the cwd (<cwd>\NUL). Win32 resolves a final element
+// NUL in any directory to the device, so <cwd>\NUL is excluded exactly as
+// /dev/null is. Before this, 13 Windows probes refused reuse on it
+// (gate-fast/lanes/reuse/raw/probes-windows-1.log, "NUL: unhashable").
+func TestExclusions_TheNullDeviceIsNoInputInAnyDirectory(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	body := "# test log\nopen " + os.DevNull + "\nstat " + os.DevNull + "\nopen kept.txt\n"
+	if err := os.WriteFile(log, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set := pathSet{}
+	for p, op := range parseTestlog(log, dir).paths {
+		set.add(p, op, false)
+	}
+	recs := set.recs(newExclusions("", ""))
+	if len(recs) != 1 || recs[0].Path != filepath.Join(dir, "kept.txt") {
+		t.Fatalf("records %+v, want only %s: the null device (%s, resolved against %s) is not an input",
+			recs, filepath.Join(dir, "kept.txt"), os.DevNull, dir)
+	}
+	if runtime.GOOS != "windows" {
+		return
+	}
+	x := newExclusions("", "")
+	for _, p := range []string{`C:\a\NUL`, `C:\a\b\nul`, `D:\Nul`, filepath.Join(dir, "sub", "nUL")} {
+		if !x.has(p) {
+			t.Errorf("%s is the null device (Win32 resolves a final NUL in any directory) and is not excluded", p)
+		}
+	}
+	// Narrower than Win32 on purpose: a name left out is stated, found to be
+	// a device and refused (never stored), which is safe; a real file left
+	// out would be a false green. `\\?\` paths skip Win32's device names, and
+	// Windows 11 lets NUL.txt be a file.
+	for _, p := range []string{`C:\a\NUL.txt`, `C:\a\NULL`, `C:\a\xNUL`, `C:\NUL\a.txt`, `\\?\C:\a\NUL`} {
+		if x.has(p) {
+			t.Errorf("%s is excluded, but it can be a real file", p)
+		}
+	}
+}
+
 func TestHasTestMain(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, src string) {
