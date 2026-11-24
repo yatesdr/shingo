@@ -32,11 +32,20 @@
 # to read, list and start. If they differ, reuse is off for this run (record
 # only: nothing served, passing runs still stored) and the sentence says why.
 #
+# A FULL MISS EXPLAINS ITSELF (brief A2 step 4). A dev or push gate that served
+# none of N > 0 binaries on the tree the store's last run had prints one line
+# naming what in the key moved (reuse_explain), worded from the wrapper's
+# key_diff: for a binary with no entry under its key, how that key differs
+# from the nearest one stored for its package (package reuse, the recent
+# index). The tree is GATE_TREE (the mirror's, from scripts/gate-mirror.sh);
+# the store's last is kept in $GATETIME_STORE/last-run ("<tree> <run>").
+#
 # Needs GATETIME_BIN (the built wrapper) and GATETIME_IDENTITY (this run's
 # identity file), both from gate-timing.sh; GATE_TIER, GATE_RUN, GATE_SHA, ROOT.
 
 REUSE_MODE=""
 REUSE_NOTE=""
+REUSE_LAST_TREE=""   # the tree of the store's last run, read by reuse_setup
 
 # reuse_side — where this gate's tests run: windows (Git Bash: the Windows
 # side, by GATE_SIDE=windows or a fallback), mirror (the Linux side: a gate in a
@@ -119,6 +128,36 @@ reuse_setup() {
   export GATETIME_REUSE_LOG="$ROOT/.gate/reuse-$$.log"
   export GATETIME_RUN="$GATE_RUN" GATETIME_SHA="$GATE_SHA"
   rm -f "$GATETIME_REUSE_LOG"
+  REUSE_LAST_TREE=""
+  [ -r "$GATETIME_STORE/last-run" ] && read -r REUSE_LAST_TREE _ <"$GATETIME_STORE/last-run"
+  return 0
+}
+
+# reuse_explain — at the end of a gate whose binaries went through the wrapper:
+# when it served none of them in reuse mode, on the tree the store's last run
+# had, the one line (A FULL MISS EXPLAINS ITSELF, above); then this run's tree
+# becomes the store's last. On another tree the misses are its files'; cert's
+# audit and a record-only run serve nothing by design.
+reuse_explain() {
+  local log="${GATETIME_REUSE_LOG:-}" c served all tree="${GATE_TREE:-}" m n why
+  [ -n "$REUSE_MODE" ] && [ -n "$log" ] && [ -s "$log" ] || return 0
+  c="$(reuse_counts)"; served="${c% *}"; all="${c#* }"
+  if [ "$REUSE_MODE" = reuse ] && [ "$served" = 0 ] && [ -n "$tree" ] && [ "$tree" = "$REUSE_LAST_TREE" ]; then
+    m="$(grep -c '"key_diff":"' "$log")"
+    if [ "$m" -gt 0 ]; then
+      # The most common reason; ties go to the first in sort order.
+      read -r n why < <(sed -n 's/.*"key_diff":"\([^"]*\)".*/\1/p' "$log" | LC_ALL=C sort | uniq -c | LC_ALL=C sort -k1,1nr -s | head -1)
+      why="the key's $why"
+      [ "$n" -lt "$m" ] && why="$why ($n of the $m binaries compared)"
+    else
+      why="$(sed -n 's/.*"miss":"\([^"]*\)".*/\1/p' "$log" | grep -v '^no entry for this binary' | head -1)"
+      if [ -n "$why" ]; then why="no part of the key differed ($why)"
+      else why="no binary had an earlier key in the store to compare"; fi
+    fi
+    echo "reuse: 0 of $all served on the tree of the last stored run (${tree:0:12}): $why"
+  fi
+  [ -n "$tree" ] && printf '%s %s\n' "$tree" "${GATE_RUN:-}" >"${GATETIME_STORE:-$ROOT/.gate/reuse}/last-run" 2>/dev/null
+  return 0
 }
 
 # reuse_counts — "<served> <binaries>" from this run's decision log.

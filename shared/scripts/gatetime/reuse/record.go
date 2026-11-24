@@ -26,7 +26,11 @@ type Decision struct {
 	Stored  bool   `json:"stored"`
 	Refused string `json:"refused,omitempty"`
 	// Miss is why no stored entry was served (reuse and audit only).
-	Miss         string  `json:"miss,omitempty"`
+	Miss string `json:"miss,omitempty"`
+	// KeyDiff is, when the key had no entry, what in it moved from the nearest
+	// key stored for its package (lookupResult.KeyDiff). Its reader is the
+	// gate's reuse_explain, which words a full miss from it.
+	KeyDiff      string  `json:"key_diff,omitempty"`
 	Entries      int     `json:"entries"`
 	Unverifiable int     `json:"unverifiable"`
 	From         *Origin `json:"from,omitempty"`
@@ -52,6 +56,7 @@ func (inv *invocation) record(r RunResult) {
 	}
 	if inv.looked {
 		d.Miss, d.Entries, d.Unverifiable = inv.lookup.Miss, inv.lookup.Entries, inv.lookup.Unverifiable
+		d.KeyDiff = inv.lookup.KeyDiff
 		if inv.lookup.Hit != nil {
 			d.Miss = ""
 		}

@@ -101,7 +101,7 @@ func Main(args []string, run Runner) int {
 	inv := newInvocation(args, readConfig())
 	defer os.RemoveAll(inv.work)
 	if inv.cfg.mode != ModeRecord && inv.keyErr == "" {
-		inv.lookup, inv.looked = lookup(inv.cfg.store, inv.key, newNow()), true
+		inv.lookup, inv.looked = lookup(inv.cfg.store, inv.key, slotOf(inv.pkg, inv.cwd), newNow()), true
 		if inv.cfg.mode == ModeReuse && inv.lookup.Hit != nil {
 			return inv.replay()
 		}

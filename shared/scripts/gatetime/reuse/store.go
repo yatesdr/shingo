@@ -135,7 +135,106 @@ func writeEntry(store string, e *Entry) (string, error) {
 		return "", err
 	}
 	prune(dir)
+	noteRecent(store, slotOf(e.Origin.Package, e.Key.Cwd), e.Key)
 	return final, nil
+}
+
+// keepRecent is how many keys one package's recent index keeps.
+const keepRecent = 8
+
+// THE RECENT INDEX. Per package, the keys the store last wrote an entry under:
+// <store>/recent/<slot hash>/<key id>.json, one Key each, newest by mtime. A
+// binary with no entry under its own key is compared with them (lookup), so a
+// gate that served nothing can say what in its keys moved (brief A2 step 4).
+// It explains and decides nothing: no entry is ever found or served through
+// it. Two directories down, so a glob of the store's entries (store/*/*.json)
+// does not take it for one.
+
+// slotOf is the index slot of a binary: its package's import path, else its
+// directory.
+func slotOf(pkg, cwd string) string {
+	if pkg != "" {
+		return pkg
+	}
+	return cwd
+}
+
+func recentDir(store, slot string) string {
+	sum := sha256.Sum256([]byte(slot))
+	return filepath.Join(store, "recent", hex.EncodeToString(sum[:8]))
+}
+
+// noteRecent records k among slot's recent keys and keeps the newest
+// keepRecent. Errors are ignored: a key left out only explains less.
+func noteRecent(store, slot string, k Key) {
+	dir := recentDir(store, slot)
+	b, err := json.Marshal(k)
+	if err != nil || os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	f, err := os.CreateTemp(dir, ".key-*.tmp")
+	if err != nil {
+		return
+	}
+	_, werr := f.Write(b)
+	if errors.Join(werr, f.Close()) != nil || os.Rename(f.Name(), filepath.Join(dir, k.ID()+".json")) != nil {
+		_ = os.Remove(f.Name())
+		return
+	}
+	files := recentFiles(dir)
+	for _, p := range files[min(len(files), keepRecent):] {
+		_ = os.Remove(p)
+	}
+}
+
+// recentFiles is a slot directory's key files, newest first.
+func recentFiles(dir string) []string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	type file struct {
+		path string
+		mod  time.Time
+	}
+	var fs []file
+	for _, e := range ents {
+		n := e.Name()
+		if strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".json") {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.Mode().IsRegular() {
+			fs = append(fs, file{filepath.Join(dir, n), fi.ModTime()})
+		}
+	}
+	sort.Slice(fs, func(i, j int) bool {
+		if !fs[i].mod.Equal(fs[j].mod) {
+			return fs[i].mod.After(fs[j].mod)
+		}
+		return fs[i].path > fs[j].path
+	})
+	out := make([]string, len(fs))
+	for i, f := range fs {
+		out[i] = f.path
+	}
+	return out
+}
+
+// recentKeys is slot's recent keys, newest first; a file that does not read
+// back as a key is passed over.
+func recentKeys(store, slot string) []Key {
+	var keys []Key
+	for _, p := range recentFiles(recentDir(store, slot)) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var k Key
+		if json.Unmarshal(b, &k) == nil && filepath.Base(p) == k.ID()+".json" {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 // entryFiles is a key directory's entries, newest first. Dot names (a write

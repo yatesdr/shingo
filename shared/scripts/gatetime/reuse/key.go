@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -190,6 +191,92 @@ func keyEnv(env []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// keyParts is what in key a differs from key b: the parts other than env, in
+// the order the key lists them, and the env names whose value or presence
+// differs, sorted.
+func keyParts(a, b Key) (parts, env []string) {
+	for _, p := range []struct {
+		name string
+		same bool
+	}{
+		{"binary", a.Binary == b.Binary},
+		{"argv", slices.Equal(a.Argv, b.Argv)},
+		{"cwd", a.Cwd == b.Cwd},
+		{"identity", a.Identity == b.Identity},
+		{"wrapper", a.Wrapper == b.Wrapper},
+	} {
+		if !p.same {
+			parts = append(parts, p.name)
+		}
+	}
+	ea, eb := map[string]string{}, map[string]string{}
+	for _, kv := range a.Env {
+		n, v, _ := strings.Cut(kv, "=")
+		ea[n] = v
+	}
+	for _, kv := range b.Env {
+		n, v, _ := strings.Cut(kv, "=")
+		eb[n] = v
+	}
+	for n, v := range ea {
+		if w, ok := eb[n]; !ok || w != v {
+			env = append(env, n)
+		}
+	}
+	for n := range eb {
+		if _, ok := ea[n]; !ok {
+			env = append(env, n)
+		}
+	}
+	sort.Strings(env)
+	return parts, env
+}
+
+// keyDiff is what in key a moved from key b, in the words the gate prints after
+// "the key's" (scripts/gate-reuse.sh, reuse_explain): "env differed in PATH,
+// WT_SESSION", "binary differed", "argv and identity differed", "identity
+// differed, and its env in X"; "" for one key.
+func keyDiff(a, b Key) string {
+	parts, env := keyParts(a, b)
+	names := strings.Join(env, ", ")
+	switch {
+	case len(parts) == 0 && len(env) == 0:
+		return ""
+	case len(parts) == 0:
+		return "env differed in " + names
+	}
+	s := parts[len(parts)-1]
+	if len(parts) > 1 {
+		s = strings.Join(parts[:len(parts)-1], ", ") + " and " + s
+	}
+	s += " differed"
+	if len(env) > 0 {
+		s += ", and its env in " + names
+	}
+	return s
+}
+
+// nearestDiff is keyDiff of k against the one of keys (newest first) it is
+// least apart from, counting each part and each env name as one; the newer of
+// two as near. "" when keys holds none but k itself.
+func nearestDiff(k Key, keys []Key) string {
+	best, bestN := -1, 0
+	for i, o := range keys {
+		parts, env := keyParts(k, o)
+		n := len(parts) + len(env)
+		if n == 0 {
+			continue
+		}
+		if best < 0 || n < bestN {
+			best, bestN = i, n
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	return keyDiff(k, keys[best])
 }
 
 // testlogFlag is the flag go test never passes under -exec and the wrapper

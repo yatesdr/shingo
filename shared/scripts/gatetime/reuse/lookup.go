@@ -48,15 +48,22 @@ type lookupResult struct {
 	// Entries is how many entry files the key had; Unverifiable how many of
 	// them failed to load or verify (never served).
 	Entries, Unverifiable int
+	// KeyDiff is, for a key with no entry, how it differs from the nearest key
+	// stored for the same package (nearestDiff over the recent index); "" when
+	// the package has none.
+	KeyDiff string
 }
 
 // lookup finds the newest stored entry for k whose every touched path, and
-// whose tree when it is keyed on the tree, is the same now, by content.
-func lookup(store string, k Key, n *now) lookupResult {
+// whose tree when it is keyed on the tree, is the same now, by content. slot
+// is the binary's package (slotOf), whose recent keys explain a key with no
+// entry.
+func lookup(store string, k Key, slot string, n *now) lookupResult {
 	files := entryFiles(store, k.ID())
 	r := lookupResult{Entries: len(files)}
 	if len(files) == 0 {
 		r.Miss = "no entry for this binary, argv, cwd, env, identity and wrapper"
+		r.KeyDiff = nearestDiff(k, recentKeys(store, slot))
 		return r
 	}
 	for _, f := range files {

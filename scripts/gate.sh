@@ -2220,6 +2220,10 @@ esac
 # against the other side's when they are there (scripts/gate-testsets.sh).
 testset_finish || fail_step testsets
 
+# A reuse gate that served nothing on the tree the store's last run had says
+# what in the key moved; its tree becomes the store's last (gate-reuse.sh).
+reuse_explain
+
 # The run's wall, marked when it failed: a red run is not a measurement. fmt
 # is the pre-push hook's step and is left out. The selection line first, then
 # the total with its load stamps (scripts/gate-timing.sh); the wall is read
