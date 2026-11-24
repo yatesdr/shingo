@@ -164,25 +164,38 @@ func (s kanbanSave) becomeKanban() (*nodes.Kanban, error) {
 	return nodes.GetKanban(s.tx, s.id)
 }
 
-// applyPools writes each family's pool, and audits the ones that changed.
+// applyPools writes each family's pool, and audits the ones that changed, in the families'
+// code order: the name each row carries and the order the kanban's card lists its families in
+// (kanbanMinimumsSQL), not the map's, which differs from one save to the next. Pin:
+// TestSaveKanban_PoolRowsComeInFamilyCodeOrder.
 func (s kanbanSave) applyPools(pools map[int64]int) error {
-	for familyID, pool := range pools {
-		var code string
-		var before sql.NullInt64
+	type familyPool struct {
+		id     int64
+		code   string
+		before sql.NullInt64
+	}
+	read := make([]familyPool, 0, len(pools))
+	for familyID := range pools {
+		f := familyPool{id: familyID}
 		if err := s.tx.QueryRow(`SELECT f.code, kf.pool FROM carrier_families f
 			LEFT JOIN kanban_families kf ON kf.family_id = f.id AND kf.kanban_node_id = $1
-			WHERE f.id = $2`, s.id, familyID).Scan(&code, &before); err != nil {
+			WHERE f.id = $2`, s.id, familyID).Scan(&f.code, &f.before); err != nil {
 			return fmt.Errorf("read pool of family %d: %w", familyID, err)
 		}
+		read = append(read, f)
+	}
+	sort.Slice(read, func(i, j int) bool { return read[i].code < read[j].code })
+	for _, f := range read {
+		pool := pools[f.id]
 		if _, err := s.tx.Exec(`INSERT INTO kanban_families (kanban_node_id, family_id, pool) VALUES ($1,$2,$3)
-			ON CONFLICT (kanban_node_id, family_id) DO UPDATE SET pool = EXCLUDED.pool, updated_at = NOW()`, s.id, familyID, pool); err != nil {
-			return fmt.Errorf("write pool of family %d: %w", familyID, err)
+			ON CONFLICT (kanban_node_id, family_id) DO UPDATE SET pool = EXCLUDED.pool, updated_at = NOW()`, s.id, f.id, pool); err != nil {
+			return fmt.Errorf("write pool of family %d: %w", f.id, err)
 		}
 		was := ""
-		if before.Valid {
-			was = strconv.FormatInt(before.Int64, 10)
+		if f.before.Valid {
+			was = strconv.FormatInt(f.before.Int64, 10)
 		}
-		if err := s.audit("kanban:pool:"+code, was, strconv.Itoa(pool)); err != nil {
+		if err := s.audit("kanban:pool:"+f.code, was, strconv.Itoa(pool)); err != nil {
 			return err
 		}
 	}

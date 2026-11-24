@@ -151,6 +151,37 @@ func TestSaveKanban_APoolRowPerFamilyItChanged(t *testing.T) {
 	}
 }
 
+// One save's pool rows are written in the families' code order, whatever order the change's
+// map gives them: the code is the name each row carries, and the order the kanban's card lists
+// its families in (store.kanbanMinimumsSQL, ORDER BY f.code). The families are made out of
+// their codes' order, so their ids are not that order either: an id is a surrogate no plant
+// reads, and two plants holding the same families number them differently.
+func TestSaveKanban_PoolRowsComeInFamilyCodeOrder(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	k := testdb.MarkedGroup(t, db, "SKO-K")
+	family := map[string]int64{}
+	for _, code := range []string{"SKO-DELTA", "SKO-ALPHA", "SKO-ECHO", "SKO-CHARLIE", "SKO-BRAVO"} {
+		id, err := db.EnsureCarrierFamily(code)
+		testutil.MustNoErr(t, err, "family "+code)
+		family[code] = id
+	}
+	testutil.MustNoErr(t, db.SaveKanban(store.KanbanChange{NodeID: *k, EnsureRow: true, Pools: map[int64]int{
+		family["SKO-CHARLIE"]: 3, family["SKO-ALPHA"]: 1, family["SKO-ECHO"]: 5, family["SKO-BRAVO"]: 2, family["SKO-DELTA"]: 4,
+	}}, "stephen"), "the save")
+	rows, err := db.ListEntityAudit("node", *k)
+	testutil.MustNoErr(t, err, "audit")
+	got := []string{}
+	for i := len(rows) - 1; i >= 0; i-- { // newest first: read back to the order written
+		got = append(got, fmt.Sprintf("%s %s>%s", rows[i].Action, rows[i].OldValue, rows[i].NewValue))
+	}
+	want := []string{"kanban:pool:SKO-ALPHA >1", "kanban:pool:SKO-BRAVO >2", "kanban:pool:SKO-CHARLIE >3",
+		"kanban:pool:SKO-DELTA >4", "kanban:pool:SKO-ECHO >5"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the save's pool rows, in the order written:\n got %v\nwant %v: write them in the families' code order (kanbanSave.applyPools)", got, want)
+	}
+}
+
 // A plain group stays plain: its overflow is a property with the property's audit row. Its first
 // row ends the property, with an audit row: a kanban has no overflow.
 func TestSaveKanban_APlainGroupAndItsFirstRow(t *testing.T) {
