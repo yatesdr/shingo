@@ -1671,6 +1671,137 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # gotest_to / testset_setup / testset_finish: with GATE_TESTSET=on, the test
 # steps' verdicts recorded and held against the other side's for this tree.
 . "$ROOT/scripts/gate-testsets.sh"
+
+# ── Each run's logs, kept (R48, brief A2 step 1) ──────────────────────────
+#
+# The steps write their logs under fixed names in .gate/ (test-<module>.log,
+# docker-<module>.log, race.log, sim.log, fan-<step>.out, scripts/<guard>.out,
+# modbuild-<module>.log), so each run overwrote the last one's: the logs of two
+# of the three Linux-side schemadump failures in brief A's timing series were
+# lost that way. So a gate that runs steps copies every log it wrote (newer than
+# a mark made before its first step) into .gate/runs/<UTC start>-<tier>-<pid>/,
+# with its own lines of the steps log, and the newest GATE_KEPT_RUNS of those
+# directories stay. A red gate's last line names, for each step that failed,
+# the log it left in that directory (gate_failed_line).
+#
+# THE OUTERMOST GATE OF A TREE KEEPS, NOT ONE A GUARD STARTS IN THE SAME TREE
+# (scripts/check-gate-lock.sh and check-gate-exec.sh run nested gates in
+# $ROOT): that one sees GATE_RUN_KEPT=$ROOT and keeps nothing, so it neither
+# copies the outer run's logs while they are being written nor pushes the
+# outer runs out. A mirror's gate keeps in the mirror (its ROOT is the mirror);
+# the Windows caller that synced it ran no step and keeps nothing.
+GATE_KEPT_RUNS=10
+GATE_KEEP_MARK=""   # the mark this run's logs are newer than, while it runs
+GATE_KEPT_DIR=""    # where this run's logs were kept, once they are
+GATE_FAILED=""      # the steps that failed, in the order the gate judged them
+
+# gate_keep_start — called once this gate knows it runs its steps here.
+gate_keep_start() {
+  [ "${GATE_RUN_KEPT:-}" = "$ROOT" ] && return 0
+  GATE_KEEP_MARK="$ROOT/.gate/.keep.$$"
+  : >"$GATE_KEEP_MARK" 2>/dev/null || { GATE_KEEP_MARK=""; return 0; }
+  export GATE_RUN_KEPT="$ROOT"
+}
+
+# gate_keep_run — copies this run's logs into its directory and prunes the
+# older runs; idempotent (the EXIT trap calls it again, and it is the only call
+# for a run that was interrupted).
+gate_keep_run() {
+  [ -n "$GATE_KEEP_MARK" ] && [ -e "$GATE_KEEP_MARK" ] || return 0
+  local tier="${GATE_TIER:-step}" run="${GATE_RUN:-}" d f rel n=0 old
+  [ "$tier" = step ] && tier="${GATE_MODE:-step}"
+  run="${run//[:-]/}"
+  d="$ROOT/.gate/runs/${run:-undated}-$tier-$$"
+  if mkdir -p "$d" 2>/dev/null; then
+    for f in "$ROOT"/.gate/*.log "$ROOT"/.gate/*.err "$ROOT"/.gate/*.out "$ROOT"/.gate/scripts/*.out; do
+      [ -f "$f" ] && [ "$f" -nt "$GATE_KEEP_MARK" ] || continue
+      [ "$f" = "${STEPS_LOG:-}" ] && continue
+      rel="${f#"$ROOT"/.gate/}"
+      case "$rel" in */*) mkdir -p "$d/${rel%/*}" ;; esac
+      cp -p "$f" "$d/$rel" 2>/dev/null && n=$((n + 1))
+    done
+    if [ -n "${STEPS_LOG:-}" ] && [ -s "$STEPS_LOG" ] && [ -n "${GATE_RUN:-}" ]; then
+      awk -v r="$GATE_RUN" '$5 == r' "$STEPS_LOG" >"$d/steps.log" 2>/dev/null
+    fi
+  fi
+  rm -f "$GATE_KEEP_MARK"
+  GATE_KEEP_MARK=""
+  if [ "$n" -eq 0 ]; then rm -rf "$d"; return 0; fi
+  GATE_KEPT_DIR="$d"
+  # The newest GATE_KEPT_RUNS by name: each name starts with its run's UTC start.
+  old="$(find "$ROOT/.gate/runs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort \
+         | awk -v k="$GATE_KEPT_RUNS" '{ a[NR] = $0 } END { for (i = 1; i <= NR - k; i++) print a[i] }')"
+  [ -n "$old" ] && printf '%s\n' "$old" | while IFS= read -r f; do rm -rf "$f"; done
+  return 0
+}
+
+# fail_step STEP — the gate is red, and STEP is one reason why.
+fail_step() { rc=1; GATE_FAILED="${GATE_FAILED:+$GATE_FAILED }$1"; }
+
+# gate_failed_logs STEP — the logs STEP's failure left, one path a line: the
+# module's log for unit, docker and modbuild, the guard's for scripts.
+gate_failed_logs() {
+  local m f r secs logdir="${GATE_TEST_LOG_DIR:-$ROOT/.gate}"
+  case "$1" in
+    modbuild)
+      for m in $MODULES; do
+        r=1; [ -e "$ROOT/.gate/modbuild-$m.rc" ] && read -r r secs <"$ROOT/.gate/modbuild-$m.rc"
+        [ "$r" = 0 ] || echo "$ROOT/.gate/modbuild-$m.log"
+      done ;;
+    unit)
+      for m in $MODULES; do
+        if [ "$(cat "$logdir/test-$m.rc" 2>/dev/null)" != 0 ] \
+            || grep -qE '^(FAIL|--- FAIL)' "$logdir/test-$m.log" 2>/dev/null; then
+          echo "$logdir/test-$m.log"
+        fi
+      done ;;
+    docker)
+      for m in $MODULES; do
+        [ -e "$ROOT/.gate/docker-$m.log" ] || continue
+        if [ "$(cat "$ROOT/.gate/docker-$m.rc" 2>/dev/null)" != 0 ] \
+            || grep -q '^SHINGO-DOCKER-DOWN' "$ROOT/.gate/docker-$m.log" 2>/dev/null; then
+          echo "$ROOT/.gate/docker-$m.log"
+        fi
+      done ;;
+    scripts)
+      for f in "$ROOT"/.gate/scripts/*.rc; do
+        [ -e "$f" ] && [ "$(cat "$f" 2>/dev/null)" != 0 ] && echo "${f%.rc}.out"
+      done ;;
+    lint|simvet) echo "$ROOT/.gate/fan-$1.out" ;;
+    race) echo "$ROOT/.gate/race.log" ;;
+    sim) echo "$ROOT/.gate/sim.log" ;;
+    reuse-audit) [ -n "${GATETIME_REUSE_LOG:-}" ] && echo "$GATETIME_REUSE_LOG" ;;
+  esac
+}
+
+# gate_failed_line — the red gate's last line: each failed step with the logs
+# it left in this run's kept directory (a log an earlier run left, not this
+# one, is not named), then the directory. A step whose output is all above
+# (fmt, testsets) is named alone.
+gate_failed_line() {
+  local s f rel names parts="" line unc=""
+  for s in $GATE_FAILED; do
+    names=""
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in
+        "$ROOT"/.gate/*) rel="${f#"$ROOT"/.gate/}"
+                         [ -n "$GATE_KEPT_DIR" ] && [ -e "$GATE_KEPT_DIR/$rel" ] || continue ;;
+        *) [ -e "$f" ] || continue; rel="$f" ;;
+      esac
+      names="${names:+$names, }$rel"
+    done < <(gate_failed_logs "$s")
+    parts="${parts:+$parts; }$s${names:+: $names}"
+  done
+  line="gate: FAILED${parts:+ — $parts}"
+  if [ -n "$GATE_KEPT_DIR" ]; then
+    # From a mirror, the Windows path too: the person reading this is there.
+    [ -n "$GATE_IN_MIRROR" ] && [ -n "${WSL_DISTRO_NAME:-}" ] && command -v wslpath >/dev/null 2>&1 \
+      && unc="$(wslpath -w "$GATE_KEPT_DIR" 2>/dev/null)"
+    line="$line. Logs of this run: $GATE_KEPT_DIR${unc:+ ($unc)}"
+  fi
+  echo "$line"
+}
 # FAN_PIDS are the steps `all` and `full` run at once (fan): an interrupted
 # gate takes them down too, rather than leaving them running against a tree
 # nobody is gating.
@@ -1678,8 +1809,9 @@ FAN_PIDS=""
 gate_on_exit() {
   # shellcheck disable=SC2086 # pids
   [ -n "${FAN_PIDS:-}" ] && kill $FAN_PIDS 2>/dev/null
-  # The mirror's gate before the lock: it runs under this run's lock.
-  stop_shared_pg; stop_race_pg; mirror_on_exit; gate_lock_release
+  # The mirror's gate before the lock: it runs under this run's lock. An
+  # interrupted run's logs are kept like a finished one's (gate_keep_run).
+  stop_shared_pg; stop_race_pg; mirror_on_exit; gate_keep_run; gate_lock_release
 }
 trap gate_on_exit EXIT
 trap 'exit 130' INT
@@ -1702,7 +1834,9 @@ case "${1:-all}" in
     # (its exit code is this one's); in a mirror, check its tree is the one
     # the caller named before any step runs (scripts/gate-mirror.sh).
     mirror_route "$@"
-    [ -n "$MIRROR_RC" ] && exit "$MIRROR_RC" ;;
+    [ -n "$MIRROR_RC" ] && exit "$MIRROR_RC"
+    # The steps run here: this run's logs are kept (gate_keep_run).
+    gate_keep_start ;;
 esac
 
 # ── THE GATE SENTENCE ─────────────────────────────────────────────────────
@@ -1901,15 +2035,15 @@ gate_sentence() {
 }
 
 case "${1:-all}" in
-  fmt)   if step_fmt;  then note_step fmt;  else rc=1; fi ;;
-  vet)   if timed step_vet;  then note_step vet;  else rc=1; fi ;;
-  modbuild) if timed step_modbuild; then note_step modbuild; else rc=1; fi ;;
-  lint)  if timed step_lint; then note_step lint; else rc=1; fi ;;
-  scripts) if timed step_scripts; then note_step scripts; else rc=1; fi ;;
-  test)  if timed step_test; then note_step unit; else rc=1; fi ;;
-  race)  if timed step_race; then note_step race; else rc=1; fi ;;
-  sim)   if timed step_sim;  then note_step sim;  else rc=1; fi ;;
-  simvet) if timed step_simvet; then note_step "sim compile"; else rc=1; fi ;;
+  fmt)   if step_fmt;  then note_step fmt;  else fail_step fmt; fi ;;
+  vet)   if timed step_vet;  then note_step vet;  else fail_step vet; fi ;;
+  modbuild) if timed step_modbuild; then note_step modbuild; else fail_step modbuild; fi ;;
+  lint)  if timed step_lint; then note_step lint; else fail_step lint; fi ;;
+  scripts) if timed step_scripts; then note_step scripts; else fail_step scripts; fi ;;
+  test)  if timed step_test; then note_step unit; else fail_step unit; fi ;;
+  race)  if timed step_race; then note_step race; else fail_step race; fi ;;
+  sim)   if timed step_sim;  then note_step sim;  else fail_step sim; fi ;;
+  simvet) if timed step_simvet; then note_step "sim compile"; else fail_step simvet; fi ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
   # `exit 0` unconditionally, which made the answer readable only by a human
   # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
@@ -1931,9 +2065,9 @@ case "${1:-all}" in
     for m in $(docker_modules); do echo "$m: $(docker_order "$m")"; done
     echo "docker -p: $(docker_p)${GATE_DOCKER_P:+ (GATE_DOCKER_P)}"
     exit 0 ;;
-  docker) if timed step_docker; then gate_docker=ran; else rc=1; fi ;;
+  docker) if timed step_docker; then gate_docker=ran; else fail_step docker; fi ;;
   full)
-    if timed step_fmt;  then note_step fmt;  else rc=1; fi
+    if timed step_fmt;  then note_step fmt;  else fail_step fmt; fi
     # Scope is decided BEFORE the steps start, because it decides what the unit
     # step has to cover: when the docker step runs it already runs every untagged
     # test in the modules that carry docker tests, so only the modules it does
@@ -1980,31 +2114,31 @@ case "${1:-all}" in
     fi
     fan_join
     for l in modbuild lint scripts simvet unit docker side sim; do fan_print "$l"; done
-    if fan_ok modbuild; then note_step modbuild; else rc=1; fi
-    if fan_ok lint; then note_step lint; else rc=1; fi
+    if fan_ok modbuild; then note_step modbuild; else fail_step modbuild; fi
+    if fan_ok lint; then note_step lint; else fail_step lint; fi
     if fan_ok scripts; then
       if [ "$GATE_TIER" = push ]; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"
       else note_step scripts; fi
-    else rc=1; fi
+    else fail_step scripts; fi
     if [ "$GATE_TIER" = push ]; then
-      if fan_ok simvet; then note_step "sim compile"; else rc=1; fi
+      if fan_ok simvet; then note_step "sim compile"; else fail_step simvet; fi
     fi
-    if fan_ok unit; then note_step unit; else rc=1; fi
+    if fan_ok unit; then note_step unit; else fail_step unit; fi
     if [ "$GATE_TIER" = cert ]; then
-      if fan_ok race; then note_step race; else rc=1; fi
-      if fan_ok sim; then note_step sim; else rc=1; fi
+      if fan_ok race; then note_step race; else fail_step race; fi
+      if fan_ok sim; then note_step sim; else fail_step sim; fi
     else
-      if fan_ok sim; then note_step "sim (no -race)"; else rc=1; fi
+      if fan_ok sim; then note_step "sim (no -race)"; else fail_step sim; fi
     fi
     if [ "$docker_in" -eq 1 ]; then
-      if fan_ok docker; then gate_docker=ran; else rc=1; fi
+      if fan_ok docker; then gate_docker=ran; else fail_step docker; fi
     else
       gate_docker=skipped
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
     # Cert, where reuse is on: a binary push would have served whose fresh run did
     # not pass fails the certification (scripts/gate-reuse.sh).
-    reuse_audit || rc=1
+    reuse_audit || fail_step reuse-audit
     ;;
   all)
     # THE BARE GATE IS THE DEV TIER: fmt first (cheapest, and the only check that
@@ -2013,7 +2147,7 @@ case "${1:-all}" in
     # cache) all at once, printed in that order afterwards. Every step runs even
     # after one fails: a gate that stops at the first problem makes you re-run
     # the slow parts once per problem.
-    if timed step_fmt;  then note_step fmt;  else rc=1; fi
+    if timed step_fmt;  then note_step fmt;  else fail_step fmt; fi
     write_diff
     fan_reset modbuild lint scripts simvet unit
     fan modbuild timed step_modbuild
@@ -2023,21 +2157,21 @@ case "${1:-all}" in
     fan unit timed step_test
     fan_join
     for l in modbuild lint scripts simvet unit; do fan_print "$l"; done
-    if fan_ok modbuild; then note_step modbuild; else rc=1; fi
-    if fan_ok lint; then note_step lint; else rc=1; fi
-    if fan_ok scripts; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"; else rc=1; fi
-    if fan_ok simvet; then note_step "sim compile"; else rc=1; fi
+    if fan_ok modbuild; then note_step modbuild; else fail_step modbuild; fi
+    if fan_ok lint; then note_step lint; else fail_step lint; fi
+    if fan_ok scripts; then note_step "scripts ($(cat "$ROOT/.gate/scripts.summary" 2>/dev/null))"; else fail_step scripts; fi
+    if fan_ok simvet; then note_step "sim compile"; else fail_step simvet; fi
     if fan_ok unit; then
       u="$(cat "$ROOT/.gate/unit.summary" 2>/dev/null)"
       note_step "unit${u:+ ($u)}"
-    else rc=1; fi
+    else fail_step unit; fi
     ;;
   *) usage ;;
 esac
 
 # GATE_TESTSET=on: this side's verdicts recorded for this tree, and held
 # against the other side's when they are there (scripts/gate-testsets.sh).
-testset_finish || rc=1
+testset_finish || fail_step testsets
 
 # The run's wall, marked when it failed: a red run is not a measurement. fmt
 # is the pre-push hook's step and is left out. The selection line first, then
@@ -2049,7 +2183,9 @@ if [ "$GATE_MODE" != fmt ]; then
   else steps_log total-FAILED "$(_secs "$GATE_T0")" "$(gate_total_stamps)"; fi
   gatetime_done
 fi
-if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi
+# This run's logs into .gate/runs, before the last line names them.
+gate_keep_run
+if [ "$rc" -eq 0 ]; then echo "gate: clean"; else gate_failed_line; fi
 # Printed on PASS only: there is no sentence to paste for a gate that failed, and
 # emitting one would be the same hand-waving this replaces.
 [ "$rc" -eq 0 ] && gate_sentence
