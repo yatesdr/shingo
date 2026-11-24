@@ -318,7 +318,11 @@ func probeSource(t *testing.T, fn string) string {
 				if !isLit || lit.Kind != token.STRING {
 					return true
 				}
-				s[i], _ = strconv.Unquote(lit.Value)
+				v, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("probe source %s: argument %d: %v", fn, i, err)
+				}
+				s[i] = v
 			}
 			got = "package " + s[0] + "\n\nimport (\n" + s[1] + "\n)\n\n" + s[2]
 			return false

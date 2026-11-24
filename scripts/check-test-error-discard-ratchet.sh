@@ -125,7 +125,10 @@ cd "$(dirname "$0")/.."
 # the creates they had discarded.
 # 1356 → 1349: the failed-child compound test was rewritten to run every time,
 # and the seven reads it had discarded became checked ones or went.
-FROZEN=1349
+# 1349 → 1347: TestComplexOrder_RemainingUOP_ProcessNodeOnly, skipped since
+# 2026-05-01, was deleted with its two discards; the repolint probe-source
+# reader that came in with the raw-syscall rule checks its Unquote.
+FROZEN=1347
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"
