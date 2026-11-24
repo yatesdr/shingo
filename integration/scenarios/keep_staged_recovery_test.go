@@ -1362,6 +1362,9 @@ type ksrMoment struct {
 	lineEmpty bool
 	// afterCancel runs once the cancel is in, before the cell is left alone.
 	afterCancel func(c *ksrCell)
+	// leftAlone runs once the cell has been left alone after the cancel,
+	// before the operator's REQUEST.
+	leftAlone func(c *ksrCell, co ksrCO)
 }
 
 var ksrMoments = []ksrMoment{
@@ -1400,6 +1403,13 @@ var ksrMoments = []ksrMoment{
 				c.t.Logf("moment b: Core's scanner had already handed order %d bringing B to the fleet (%s, no robot yet)",
 					r.ID, c.vendorState(o.VendorOrderID))
 			}
+		}
+	}, leftAlone: func(c *ksrCell, co ksrCO) {
+		// The two staging modes: the spot is the changeover legs' inbound
+		// staging, so they wait for it and the cancel races Core's dispatch of
+		// them (cancelPath).
+		if c.mode == protocol.SwapModeTwoRobot || c.mode == protocol.SwapModeSingleRobot {
+			c.cancelPath(co)
 		}
 	}},
 	{name: "c", what: "while B is in flight to the spot", at: func(c *ksrCell, co ksrCO) {
@@ -1459,6 +1469,62 @@ var ksrMoments = []ksrMoment{
 			}
 		},
 		afterCancel: func(c *ksrCell) { c.takeLineBinOff() }},
+}
+
+// The two paths a moment-b cancel takes at Core in the two staging modes. The
+// lift frees the spot, and the bin's update starts a fulfillment scan on a
+// goroutine of Core's own (triggerFulfillment, shingo-core/engine/wiring.go),
+// which dispatches the changeover's legs waiting for the spot; the cancel
+// reaches Core at the cell's next pump. Either may come first, and both are
+// legal: the legs are cancelled while still queued, or Core has made their
+// vendor order and the cancel stops it at the fleet (the recorded runs show the
+// Edge, told "dispatched" after its cancel, sending the cancel again). The cell
+// does not drive the race: a scan run before the cancel would force the second
+// path and lose the first, and nothing short of Core's code holds the started
+// scan back. Seen over 16 runs per cell (2026-11-23, the T19 probe's recorder
+// bands): the legs queued in 15 or 16, dispatched in 0 or 1, per cell.
+const (
+	ksrCancelledQueued     = "cancelled while queued at Core"
+	ksrCancelledDispatched = "cancelled after Core dispatched it"
+)
+
+// cancelPath names the path the cancel took at Core for the changeover's legs,
+// once the cell has been left alone after it, and asserts that path's own end
+// state: each leg cancelled at Core and at Edge, and either no vendor order
+// (queued) or its vendor order stopped at the fleet (dispatched). The legs
+// should take one path together: Core holds a two-robot changeover's legs to go
+// to the fleet together (its queue reason: "the two legs go together"), and a
+// pair that went two ways fails here.
+func (c *ksrCell) cancelPath(co ksrCO) {
+	c.t.Helper()
+	if len(co.legs) == 0 {
+		c.notReached("the changeover made no legs for the cancel to race")
+	}
+	path := ""
+	for _, l := range co.legs {
+		o := c.coreOf(l)
+		p := ksrCancelledQueued
+		if o.VendorOrderID != "" {
+			p = ksrCancelledDispatched
+		}
+		switch {
+		case path == "":
+			path = p
+		case p != path:
+			c.t.Errorf("the changeover's legs took two paths at the cancel: leg %d %s, another %s", l.ID, p, path)
+		}
+		if o.Status != protocol.StatusCancelled {
+			c.t.Errorf("%s: leg %d reads %s at Core, want cancelled", p, l.ID, o.Status)
+		}
+		if e := c.edgeRow(l.ID); e.Status != protocol.StatusCancelled {
+			c.t.Errorf("%s: leg %d reads %s at Edge, want cancelled", p, l.ID, e.Status)
+		}
+		if st := c.vendorState(o.VendorOrderID); p == ksrCancelledDispatched && st != "STOPPED" {
+			c.t.Errorf("%s: leg %d's vendor order reads %q at the fleet, want STOPPED", p, l.ID, st)
+		}
+	}
+	harness.RecorderFor(c.t).Note("cancel_path", path)
+	c.t.Logf("moment b: the changeover's %d leg(s) %s", len(co.legs), path)
 }
 
 // takeLineBinOff is a person lifting the line's bin off by hand and setting it
@@ -1791,6 +1857,9 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				// Nobody touches anything.
 				c.quiet()
 				reached = "the cell left alone after the cancel"
+				if m.leftAlone != nil {
+					m.leftAlone(c, co)
+				}
 
 				// 1. The operator asks for A: a normal swap, to the end; on a line
 				// the cancel left empty, the delivery that fills it.

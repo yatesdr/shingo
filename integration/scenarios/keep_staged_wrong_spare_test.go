@@ -244,4 +244,27 @@ func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 		return false
 	})
 	t.Logf("EXIT: move %d cleared %s, swap leg %d went from %s", move.ID, spot, supply.ID, supply.SourceNode)
+
+	// THE END, at a named point: the held swap's dispatch reaches the station.
+	// Core dispatches the legs on whichever scan passes first once the spot
+	// clears: the one the move's set-down starts on Core's own goroutine
+	// (triggerFulfillment, shingo-core/engine/wiring.go), whose "dispatched" the
+	// wait's pump delivers when that scan passes before it, or the one the wait
+	// runs after its pump, which no pump followed. So the Edge's last word on
+	// the legs was that race's (the T19 probe, 2026-11-23: "dispatched" reached
+	// the Edge in 1 of 5 runs with the bins ticker off, 0 of 5 with it on) until
+	// this pump.
+	settle()
+	reached := true
+	for _, o := range legs {
+		if c, e := coreOf(o), edgeRow(o); c.VendorOrderID == "" || c.Status != protocol.StatusDispatched ||
+			e.Status != protocol.StatusDispatched {
+			reached = false
+			t.Errorf("END: leg %d (%s %s->%s) reads %s at Core (vendor %q) and %s at Edge, want dispatched at both",
+				o.ID, o.OrderType, o.SourceNode, o.DeliveryNode, c.Status, c.VendorOrderID, e.Status)
+		}
+	}
+	if reached {
+		t.Logf("END: the held swap's dispatch reached the station: %d legs dispatched at Core and at Edge", len(legs))
+	}
 }
