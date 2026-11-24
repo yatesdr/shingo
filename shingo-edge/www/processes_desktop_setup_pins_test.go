@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -136,12 +135,21 @@ type processSetupPinGroup struct {
 // package); the groups share nothing but the boot preview, which each runs for
 // itself, and the refusal goldens, which are handed to their reader here.
 //
-// At most GOMAXPROCS groups run at once. A reading group starts with the rest,
+// At most pinGroupSlots groups run at once. A reading group starts with the rest,
 // outside that bound (it blocks on its stdin, not a core, once its own pins are
 // done), and is handed what the other groups printed once they have all
 // finished, so a reader can never wait on a group that waits for a slot. A
 // golden printed by two groups, a group that prints none, and a group that
 // fails are each an error naming the group.
+// pinGroupSlots is how many node groups run at once. It was GOMAXPROCS (24 on
+// the gate laptop): 24 node processes each loading the 582 KB page script land
+// as one burst inside the gate's unit step, and on 2026-11-23 four different
+// timing-sensitive tests in other packages (Edge engine and cmd/shingoedge,
+// Core www) each failed once in ten tier runs of the tip, none in six of the
+// base, and each passed 20 of 20 alone. Four keeps the pins at a few seconds of
+// wall without that burst.
+const pinGroupSlots = 4
+
 func runProcessSetupPinGroups(t *testing.T, nodePath, script string) map[string]string {
 	t.Helper()
 	var stderr bytes.Buffer
@@ -212,7 +220,7 @@ func runProcessSetupPinGroups(t *testing.T, nodePath, script string) map[string]
 		results[i] = r
 	}
 
-	slots := make(chan struct{}, runtime.GOMAXPROCS(0))
+	slots := make(chan struct{}, pinGroupSlots)
 	var writers, readers sync.WaitGroup
 	for i := range groups {
 		if reads[i] != nil {
