@@ -22,12 +22,17 @@ func TestReleasePointsDoor_Arms(t *testing.T) {
 	notFound := func(uuid string) protocol.ReleasePoint {
 		return protocol.ReleasePoint{OrderUUID: uuid, Enters: []string{}, AwaitsLift: []protocol.LiftDependency{}}
 	}
+	// The answer an arm returns is called by the door's subtest and by its
+	// parallel twin through the ask (runDoorArms), so it reads pts and never
+	// writes it: writing nil to an empty list in place was a data race between
+	// the two (GitHub's docker-race shard, 2026-11-24).
 	points := func(pts ...protocol.ReleasePoint) func(*testing.T, *doorFix) (int, string) {
 		return func(t *testing.T, _ *doorFix) (int, string) {
-			if pts == nil {
-				pts = []protocol.ReleasePoint{}
+			out := pts
+			if out == nil {
+				out = []protocol.ReleasePoint{}
 			}
-			return http.StatusOK, doorJSON(t, protocol.ReleasePointsResponse{Points: pts})
+			return http.StatusOK, doorJSON(t, protocol.ReleasePointsResponse{Points: out})
 		}
 	}
 	// staged is an order of station edge.rp staged at its first wait, its next
