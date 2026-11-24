@@ -1,6 +1,7 @@
 // A bin already on its way to a line, sent by another station that shares the
-// line's position, and every request button of both roles pressed at the line
-// meanwhile. Carried end to end across the two modules.
+// line's position, and the request button of each role pressed at the line
+// meanwhile (seqDoors: the material and the produce request). Carried end to
+// end across the two modules.
 //
 //go:build docker
 
@@ -65,17 +66,16 @@ func pressAt(c *ksrCell, door string, nodeID int64) error {
 		_, err = c.edge.Engine.RequestNodeMaterial(nodeID, 1)
 	case "produce request":
 		_, err = c.edge.Engine.RequestProduceSwap(nodeID, 0)
-	case "empty-bin request":
-		_, err = c.edge.Engine.RequestEmptyBin(nodeID, ksrPartA)
 	}
 	return err
 }
 
 // The line is bare and a sibling station has already sent a bin to it. While
-// that bin is on its way, every button at the line is refused and makes
-// nothing: one line, one bin coming. Once the sibling's bin is delivered (and
-// not yet confirmed) the line holds a bin, and every button makes the swap,
-// which runs to the end with one bin on the line.
+// that bin is on its way, the button at the line is refused and makes nothing:
+// one line, one bin coming. Once the sibling's bin is delivered (and not yet
+// confirmed) the line holds a bin, and the button makes the swap, which runs to
+// the end with one bin on the line. The empty-bin button's answer in both
+// states: see seqDoors.
 func TestScenario_LineInbound_FromASiblingStation(t *testing.T) {
 	t.Parallel()
 	for _, d := range seqDoors {

@@ -15,9 +15,17 @@ import (
 	edgeengine "shingoedge/engine"
 )
 
-// seqDoors are the request buttons of a role: the material request on a
-// consume line, the produce request and the empty-bin request on a produce
-// line.
+// seqDoors are the request buttons this test and
+// TestScenario_LineInbound_FromASiblingStation carry end to end: the material
+// request on a consume line and the produce request on a produce line.
+//
+// THE EMPTY-BIN REQUEST IS NOT AMONG THEM. On a swap-mode line it asks what the
+// produce request asks (RequestEmptyBin goes through produceRequest, the same
+// line guards and plan), and in both tests its cell's delivered-order
+// transcript was the produce cell's in each of the recorder's 11 runs
+// (REMOVAL-CANDIDATES B3, B4, 2026-11-23). Which door was pressed is Edge-local;
+// that all three doors give one answer in every line state these two tests
+// reach is pinned by TestRequestButtons_OneAnswerPerLineState.
 var seqDoors = []struct {
 	name  string
 	role  protocol.ClaimRole
@@ -29,10 +37,6 @@ var seqDoors = []struct {
 	}},
 	{"produce request", protocol.ClaimRoleProduce, func(c *ksrCell) error {
 		_, err := c.edge.Engine.RequestProduceSwap(c.nodeID, 0)
-		return err
-	}},
-	{"empty-bin request", protocol.ClaimRoleProduce, func(c *ksrCell) error {
-		_, err := c.edge.Engine.RequestEmptyBin(c.nodeID, ksrPartA)
 		return err
 	}},
 }
@@ -170,8 +174,8 @@ func (c *ksrCell) seqRefused(label string, press func(c *ksrCell) error) {
 // confirmed, is refused and makes nothing. The backfill is called by the
 // removal's release at the line, not before. Once the operator confirms the
 // backfill, the next request starts the next cycle: two cycles back to back on
-// every button, each release making one backfill and each cycle ending with one
-// bin on the line.
+// each of seqDoors' buttons, each release making one backfill and each cycle
+// ending with one bin on the line.
 func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 	t.Parallel()
 	for _, d := range seqDoors {
