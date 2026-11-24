@@ -272,9 +272,19 @@ func ppRows() []ppRow {
 		rows = append(rows,
 			ppRow{door: "request", mode: mode, class: ppFull, today: ppAt40, after: ppAt40},
 			ppRow{door: "request", mode: mode, class: ppPartial, today: ppAt17, after: ppAt17},
-			ppRow{door: "request", mode: mode, class: ppEmpty, today: "refused", after: "refused"},
-			ppRow{door: "request", mode: mode, class: ppBare, today: "refused", after: "refused"},
 		)
+		if mode == protocol.SwapModeTwoRobot {
+			// A line with nothing made: the request's no-parts refusal
+			// (produceRequest) reads no swap mode, and nothing but registration
+			// crosses the bus. two_robot carries it end to end for both classes;
+			// the other modes' refusal is pinned at the Edge, by TestRequestCensus'
+			// count-0 rows (single_robot, sequential) and
+			// TestRequest_ColdPressWithFullCell (the press).
+			rows = append(rows,
+				ppRow{door: "request", mode: mode, class: ppEmpty, today: "refused", after: "refused"},
+				ppRow{door: "request", mode: mode, class: ppBare, today: "refused", after: "refused"},
+			)
+		}
 		if mode == protocol.SwapModeSequential {
 			// A one-position sequential cell plans no changeover leg (the
 			// planner asks for the partner); the sequential changeover leg is
