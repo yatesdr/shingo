@@ -55,11 +55,15 @@
 # The objects travel as a git bundle the caller builds natively from a private
 # object store (.gate/mirror/objects.git, alternates to the clone's objects):
 # nothing is written into the shared clone, no ref and no object. The first
-# sync sends the history once (about 80 MB); later ones send what is new.
+# sync sends the history once (about 80 MB); later ones send what is new. The
+# store is pruned past 64 MB, its size read at most once an hour
+# (mirror_store_prune).
 #
 # ONE MIRROR PER WORKTREE: ~/gate-mirrors/<worktree dir name> (GATE_MIRROR_ROOT
 # names another root). It records its source path in .git/gate-mirror, and a
-# second worktree with the same name is refused rather than sharing it.
+# second worktree with the same name is refused rather than sharing it. A
+# mirror whose worktree is gone is removed by the next sync of any other
+# (mirror_orphans).
 #
 # ONE GATE LOCK ACROSS BOTH SIDES. The caller takes the lock in the Windows
 # clone's git common dir as before; the mirror's gate is its nested run
@@ -83,6 +87,7 @@
 #                        wsl.exe: the pin's way of exercising the whole sync
 #                        on any OS, CI included
 #   GATE_WSL_DISTRO      the WSL distro (Ubuntu, as step_race and step_sim)
+#   GATE_MIRROR_STORE_MB the private store's size that prunes it (64)
 
 # ── Both halves ──────────────────────────────────────────────────────────
 
@@ -283,9 +288,10 @@ mirror_fallback() {
   export GATE_SIDE=windows GATE_TREE="$MS_TREE"
 }
 
-# mirror_tree — the worktree's tree id, its objects in the private store:
-# MS_INDEX (the index's tree), MS_TREE (the working tree's, gate_tree_id), and
-# from the same git call MS_HEAD and MS_BRANCH. 3 when HEAD is no commit.
+# mirror_tree — the worktree's tree id, its objects in the private store (once
+# the store is pruned, when past its size: mirror_store_prune): MS_INDEX (the
+# index's tree), MS_TREE (the working tree's, gate_tree_id), and from the same
+# git call MS_HEAD and MS_BRANCH. 3 when HEAD is no commit.
 mirror_tree() {
   local g=()
   [ -d "$MIRROR_W" ] || mkdir -p "$MIRROR_W" || return 1
@@ -306,9 +312,55 @@ mirror_tree() {
   fi
   _mirror_wpath MIRROR_OBJW "$MIRROR_OBJ/objects"
   echo "$MIRROR_COMMONW/objects" >"$MIRROR_OBJ/objects/info/alternates"
+  mirror_store_prune
   local -x GIT_OBJECT_DIRECTORY="$MIRROR_OBJW" GIT_ALTERNATE_OBJECT_DIRECTORIES="$MIRROR_COMMONW/objects"
   gate_tree_id "$MIRROR_W/tree.index" "${g[1]}" || return 1
   MS_INDEX="$GATE_TREE_INDEX" MS_TREE="$GATE_TREE_WORK"
+}
+
+# mirror_store_prune — before a sync writes to the private store: past
+# GATE_MIRROR_STORE_MB (64) MB it is pruned of what its refs and the tips the
+# mirror was last sent ($MIRROR_W/sent) do not reach, and of nothing under an
+# hour old (R50, brief A2 step 5).
+#
+# WHY. The store holds only what syncs write (blobs of uncommitted files, trees,
+# each sync's two synthetic commits), and each sync's are unreachable once the
+# next moves the refs, so it grows with every synced change: about 250 KB at
+# 2026-11-24, so this should almost never prune. The tips the mirror was last
+# sent stay so the next incremental bundle still cuts: a refused sync has moved
+# the refs (mirror_carry) without them. mirror_bundle's full fallback stays for
+# any other loss. The hour is for a gate run beside this one (GATE_NO_LOCK=1)
+# whose sync is writing objects nothing reaches yet. Pinned by
+# scripts/check-gate-mirror.sh case 14.
+#
+# THE SIZE IS READ AT MOST ONCE AN HOUR. git count-objects is one process more,
+# and on the loaded Windows host each costs 0.1-0.7 s against about twelve in a
+# no-change sync; the time of the last look is an epoch in
+# $MIRROR_W/store-checked, read and written with builtins.
+mirror_store_prune() {
+  local stamp="$MIRROR_W/store-checked" last="" k v kb=0 after=0 max="${GATE_MIRROR_STORE_MB:-64}" keep=()
+  read -r last <"$stamp" 2>/dev/null
+  if [[ "$last" =~ ^[0-9]+$ ]] && [ "$last" -le "$EPOCHSECONDS" ] && [ $((EPOCHSECONDS - last)) -lt 3600 ]; then
+    return 0
+  fi
+  echo "$EPOCHSECONDS" >"$stamp"
+  [[ "$max" =~ ^[0-9]+$ ]] || max=64
+  while read -r k v; do
+    case "$k" in size:|size-pack:|size-garbage:) kb=$((kb + v)) ;; esac
+  done < <(git --git-dir="$MIRROR_OBJ" count-objects -v 2>/dev/null)
+  [ "$kb" -ge $((max * 1024)) ] || return 0
+  # The tips the mirror has, those that are still objects here (a tip the clone
+  # has since dropped would stop git prune).
+  [ -s "$MIRROR_W/sent" ] && mapfile -t keep < <(git --git-dir="$MIRROR_OBJ" cat-file --batch-check='%(objectname)' \
+                                                  <"$MIRROR_W/sent" 2>/dev/null | grep -v ' missing$')
+  if git --git-dir="$MIRROR_OBJ" prune --expire=1.hour.ago -- "${keep[@]}" >&2; then
+    while read -r k v; do
+      case "$k" in size:|size-pack:|size-garbage:) after=$((after + v)) ;; esac
+    done < <(git --git-dir="$MIRROR_OBJ" count-objects -v 2>/dev/null)
+    echo "gate: the mirror's object store was $((kb / 1024)) MB, past $max MB: pruned to $((after / 1024)) MB (what its refs and the mirror's tips do not reach, an hour old)" >&2
+  else
+    echo "gate: the mirror's object store is $((kb / 1024)) MB, past $max MB, and git prune failed (above); the sync goes on" >&2
+  fi
 }
 
 # mirror_carry — after mirror_tree, what the Linux side needs beside it:
@@ -510,9 +562,10 @@ mirror_linux_run() {
     printf 'missing: %s\n' "${out:-$setup --check exited $rc and named nothing}" >"$st"
     return 0
   fi
-  # 2. The mirror, and whose it is.
+  # 2. The mirror, and whose it is; first, the mirrors whose worktree is gone.
   root="${GATE_MIRROR_ROOT:-$HOME/gate-mirrors}"
   m="$root/$MS_NAME"
+  mirror_orphans "$root" "$m"
   if [ -f "$m/.git/gate-mirror" ]; then
     out="$(cat "$m/.git/gate-mirror")"
     if [ "$out" != "$MS_SOURCE" ]; then
@@ -626,6 +679,30 @@ mirror_linux_run() {
   echo running >"$st"
   echo "$$" >"$wt/.gate/mirror/inner.pid"
   exec bash "$m/scripts/gate.sh" "${MS_ARGS[@]}"
+}
+
+# mirror_orphans ROOT KEEP — on the Linux side, as a sync starts: removes each
+# mirror under ROOT (a directory holding .git/gate-mirror) whose recorded
+# worktree no longer exists (R50, brief A2 step 5). Never KEEP, the one this sync
+# is for, whatever it records (a worktree of a gone one's name is refused
+# below, as before). Never when the worktree's parent directory cannot be read:
+# a /mnt/c that is not mounted, or a drive not there, reads as every worktree
+# gone. Pinned by scripts/check-gate-mirror.sh case 15.
+mirror_orphans() {
+  local root="$1" keep="$2" rec d src l
+  for rec in "$root"/*/.git/gate-mirror; do
+    [ -f "$rec" ] || continue
+    d="${rec%/.git/gate-mirror}"
+    [ "$d" = "$keep" ] && continue
+    src=""
+    read -r src <"$rec" 2>/dev/null
+    [ -n "$src" ] || continue
+    l="$(_mirror_lpath "$src")"
+    case "$l" in /*) ;; *) continue ;; esac
+    ls -A -- "${l%/*}/" >/dev/null 2>&1 || continue
+    if [ -e "$l" ] || [ -L "$l" ]; then continue; fi
+    rm -rf -- "$d" && echo "gate: removed the mirror $d: its worktree $src is gone" >&2
+  done
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
