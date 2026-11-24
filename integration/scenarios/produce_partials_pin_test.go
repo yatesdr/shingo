@@ -319,15 +319,17 @@ func ppRows() []ppRow {
 		// Core's extractRemainingUOP read it from a Data wrapper an order
 		// request's envelope does not have, so the claim was a plain one, no
 		// sync and no clear (FLAT BUG). After: the count lands, synced onto the
-		// carrier at its claim, and a count of 0 clears it.
+		// carrier at its claim, and a count of 0 clears it. The count of 0 is
+		// carried end to end by TestProducePartialsPin_MaterialPageCountOnAConsumeLine
+		// (a carrier holding 40 of the part, cleared), the produce line's 0 on
+		// the move by the Edge's
+		// TestProducePartials_TheMaterialPageSendsALineCountedAtNothing, and
+		// Core's clear at 0 (a carrier of 100 of its part, cleared) by
+		// shingo-core's TestPhase0_UOPBranch_PostState/zero_uop_clear_and_claim.
 		ppRow{door: "material", mode: tr, class: ppFull, today: ppNoIngest40,
 			after: "at=KSR-DEST uop=40 part=KSR-PA ledger=sync_uop_and_claim cms=40"},
 		ppRow{door: "material", mode: tr, class: ppPartial, today: ppNoIngest17,
 			after: "at=KSR-DEST uop=17 part=KSR-PA ledger=sync_uop_and_claim cms=17"},
-		ppRow{door: "material", mode: tr, class: ppEmpty, today: ppAt0,
-			after: "at=KSR-DEST uop=0 part=- ledger=clear_and_claim cms=0"},
-		ppRow{door: "material", mode: tr, class: ppBare, today: ppAtBare,
-			after: "at=KSR-DEST uop=0 part=- ledger=clear_and_claim cms=0"},
 		// The operator types 9 at the Material page: today Core kept the
 		// stream's 17; after, the operator's count lands.
 		ppRow{door: "material-count9", mode: tr, class: ppPartial, today: ppNoIngest17,
