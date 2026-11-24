@@ -251,6 +251,7 @@ func TestRequestCensus(t *testing.T) {
 		{produce, seq, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
 		{produce, seq, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
 		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 2}},
+		{produce, seq, doorProduce, lineOccupied, 0, censusResult{trips: requestTrips, refused: noParts}},
 		{produce, pi, doorProduce, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
 		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
