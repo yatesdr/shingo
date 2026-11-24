@@ -37,6 +37,12 @@
 #      gate queues past the stale window, lock-status names the mirror's gate,
 #      the lock frees as a dead holder's once it ends, its verdict is kept;
 #      INT and TERM stop the mirror's gate and free the lock at once (R47)
+#  14. the caller's private object store, past its size, loses what nothing
+#      reaches (an hour old), keeps the tips the mirror was sent (after a
+#      refused sync too), and the next bundle is still cut; below the size or
+#      within the hour of its last look it is not touched (R50)
+#  15. the Linux side removes a mirror whose worktree is gone, never the one
+#      being synced, never when that worktree's parent cannot be read (R50)
 #
 # A process costs 0.1-0.4 s on the loaded Windows laptop, so this pin takes
 # minutes there and seconds on the Linux side, where the gate now runs it.
@@ -442,6 +448,90 @@ EOF
 else
   fail "case 13 needs go and node on PATH"
 fi
+
+# ── 14. the caller's private object store is pruned past its size (R50) ──
+# Past GATE_MIRROR_STORE_MB (1 here) it loses what its refs and the tips the
+# mirror was last sent do not reach, but nothing under an hour old; below the
+# size, or within an hour of the last look, nothing goes; and the bundle after
+# a prune is still cut against what the mirror has (its prerequisites).
+S="$W/.gate/mirror/objects.git"
+sgit() { git --git-dir="$S" "$@"; }
+# plant AGE — an unreachable 2 MiB blob in the store, its file AGE seconds old.
+plant() {
+  local id
+  id="$(head -c 2097152 /dev/urandom | sgit hash-object -w --stdin)" || return 1
+  [ "$1" -gt 0 ] && touch -d "@$(( $(date +%s) - $1 ))" "$S/objects/${id:0:2}/${id:2}"
+  printf '%s' "$id"
+}
+# backdate — every loose object in the store two hours old, so only
+# reachability can keep one.
+backdate() { find "$S/objects" -type f -path '*/objects/??/*' -exec touch -d "@$(( $(date +%s) - 7200 ))" {} +; }
+# cut SINCE — the last sync wrote a bundle after SINCE, and it has prerequisites.
+cut() {
+  [ "$W/.gate/mirror/sync.bundle" -nt "$1" ] \
+    && [ "$(sed -n '2,/^$/p' "$W/.gate/mirror/sync.bundle" | grep -c '^-')" -gt 0 ]
+}
+a="$(plant 7200)" b="$(plant 0)"
+rm -f "$W/.gate/mirror/store-checked"
+printf '// 14 a\n' >>"$W/protocol/p.go"
+out="$(gate simvet)"; rc=$?
+{ [ "$rc" -eq 0 ] && sgit cat-file -e "$a" 2>/dev/null; } || fail "a store under the default 64 MB was pruned, or its sync went red (exit $rc): $out"
+printf '// 14 b\n' >>"$W/protocol/p.go"
+out="$(export GATE_MIRROR_STORE_MB=1; gate simvet)"; rc=$?
+{ [ "$rc" -eq 0 ] && sgit cat-file -e "$a" 2>/dev/null; } || fail "the store's size was read again within the hour of its last look (exit $rc): $out"
+rm -f "$W/.gate/mirror/store-checked"; backdate; touch -d "@$(date +%s)" "$S/objects/${b:0:2}/${b:2}"
+touch "$TMP/c14.mark"; sleep 1
+printf '// 14 c\n' >>"$W/protocol/p.go"
+out="$(export GATE_MIRROR_STORE_MB=1; gate simvet)"; rc=$?
+[ "$rc" -eq 0 ] || fail "the sync that pruned the store went red (exit $rc): $out"
+echo "$out" | grep -q "object store .* pruned" || fail "a prune past the size was not said: $out"
+sgit cat-file -e "$a" 2>/dev/null && fail "an unreachable object an hour old survived a prune past the size"
+sgit cat-file -e "$b" 2>/dev/null || fail "a prune took an object under an hour old"
+cut "$TMP/c14.mark" || fail "the sync that pruned sent a full bundle, not one cut against what the mirror had"
+# After a refused sync the store's refs have moved and the mirror's tips have
+# not: those tips must outlive a prune too.
+printf '// 14 d\n' >>"$W/protocol/p.go"
+printf '// by hand\n' >>"$M/docs/new.md"
+out="$(gate simvet)"; rc=$?
+{ [ "$rc" -ne 0 ] && echo "$out" | grep -q 'REFUSED'; } || fail "case 14: the hand edit was not refused (exit $rc): $out"
+git -C "$M" show 'refs/gate-mirror/synced:docs/new.md' >"$M/docs/new.md"
+a="$(plant 7200)"; rm -f "$W/.gate/mirror/store-checked"; backdate
+touch "$TMP/c14.mark2"; sleep 1
+out="$(export GATE_MIRROR_STORE_MB=1; gate simvet)"; rc=$?
+{ [ "$rc" -eq 0 ] && cut "$TMP/c14.mark2"; } \
+  || fail "a prune after a refused sync lost the tips the mirror was last sent: the bundle was not cut (exit $rc): $out"
+sgit cat-file -e "$a" 2>/dev/null && fail "the prune after a refused sync left an unreachable object an hour old"
+
+# ── 15. a mirror whose worktree is gone is removed (R50) ──────────────────
+# By the Linux side, as it syncs: a mirror under the root whose recorded
+# worktree no longer exists goes; never the one being synced; and only when
+# that worktree's parent directory can be read, since a /mnt/c that is not
+# mounted reads as every worktree gone.
+R="$GATE_MIRROR_ROOT"
+mk_mirror() { mkdir -p "$R/$1/.git" && printf '%s\n' "$2" >"$R/$1/.git/gate-mirror"; }
+mkdir -p "$TMP/gone-parent" "$TMP/locked" "$R/plain"
+mk_mirror gone "$TMP/gone-parent/gone"
+mk_mirror alive "$TMP/clone"
+mk_mirror nomount "$TMP/not-mounted/x"
+mk_mirror locked "$TMP/locked/x"
+chmod 000 "$TMP/locked"
+printf '// 15\n' >>"$W/protocol/p.go"
+out="$(gate simvet)"; rc=$?
+chmod 755 "$TMP/locked"
+[ "$rc" -eq 0 ] || fail "the sync that removes orphan mirrors went red (exit $rc): $out"
+[ -e "$R/gone" ] && fail "a mirror whose worktree is gone was kept: $out"
+echo "$out" | grep -q "removed the mirror $R/gone" || fail "the orphan's removal was not said: $out"
+for k in alive nomount plain; do [ -d "$R/$k" ] || fail "the mirror $R/$k was removed (its worktree is there, or cannot be read, or it is no mirror)"; done
+if [ "$(id -u)" != 0 ]; then [ -d "$R/locked" ] || fail "a mirror whose worktree's parent cannot be read was removed"; fi
+[ -d "$M/.git" ] || fail "the mirror being synced was removed"
+# Never the one being synced, even with its recorded worktree gone: a worktree
+# of the gone one's name is refused as case 10's is, and the mirror stays.
+mk_mirror fixwt3 "$TMP/gone-parent/fixwt3"
+g worktree add -q -b topic3 "$TMP/o3/fixwt3" main
+out="$(cd "$TMP/o3/fixwt3" && bash scripts/gate.sh simvet 2>&1)"; rc=$?
+{ [ "$rc" -ne 0 ] && echo "$out" | grep -q 'belongs to .*gone-parent/fixwt3'; } \
+  || fail "a worktree whose mirror records a gone worktree was not refused (exit $rc): $out"
+[ -d "$R/fixwt3/.git" ] || fail "the mirror being synced was removed because its recorded worktree is gone"
 
 if [ "$fails" -eq 0 ]; then
   echo "ok   gate-mirror (the working tree arrives whole, mtimes kept, hand edits refused, tree checked, one lock, both sides)"
