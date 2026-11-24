@@ -137,9 +137,26 @@ func TestPost_ClassMatrix(t *testing.T) {
 // written, so nothing arrived and re-sending cannot duplicate. Getting this
 // wrong in the safe direction costs one reconciler query; getting it wrong the
 // other way books a transfer twice.
+//
+// The lookup is failed by the test, not by the machine's DNS: the client's
+// dialer resolves through a Go resolver with no server to ask, so the failure
+// comes back at once as the *net.DNSError a real one is, through the real
+// net.Dialer, http.Transport and classifyTransportErr. Asking the machine made
+// the answer depend on its resolver: under WSL (whose DNS is a tunnel to the
+// host's) failing a .invalid name took about 1.3 s idle and passed the 2 s
+// client timeout under gate load, and the timeout is after-send by design
+// (work/loc-census-2026-11-20 REPORT-gate-fast.md, R31: red in 3 of 3 WSL gate
+// runs, green in every Windows one).
 func TestPost_UnresolvableHostIsBeforeSend(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, "http://this-host-does-not-resolve.invalid/api")
+	noDNS := &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("test resolver: no DNS server")
+	}}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil // a proxy from the environment would take the lookup instead
+	tr.DialContext = (&net.Dialer{Resolver: noDNS}).DialContext
+	c.http.Transport = tr
 	got := c.Post(context.Background(), []byte(`[]`), "sha")
 	if got.Class != ClassRetryableBeforeSend {
 		t.Errorf("class = %s, want retryable_before_send — DNS fails before any bytes go out", got.Class)
