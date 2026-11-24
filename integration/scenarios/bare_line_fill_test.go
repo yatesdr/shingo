@@ -1,5 +1,5 @@
 // A line with no bin on it, filled end to end across the two modules by every
-// button, in every swap mode.
+// button, in two_robot and on the press (the other modes: see the mode loop).
 //
 // Every swap opens by lifting the line's bin, so on a bare line the answer is
 // one plain order bringing a bin to it: a full of the part to a consume line,
@@ -44,6 +44,17 @@ func TestScenario_BareLine_EveryButtonFillsIt(t *testing.T) {
 		}},
 	}
 	for _, mode := range protocol.ConfigurableSwapModes() {
+		// SEQUENTIAL AND SINGLE_ROBOT ARE NOT CARRIED END TO END HERE. On a bare
+		// line every mode's answer is the one plain delivery (planVacantLine), so
+		// those two modes put the same orders on the bus as two_robot: one
+		// delivered-order transcript for all three in each of the recorder's 11
+		// runs (REMOVAL-CANDIDATES B1, 2026-11-23). The mode is Edge-local; the
+		// Edge's decision per mode and door is pinned by TestRequestCensus's bare
+		// rows for single_robot and sequential. The press makes a second delivery
+		// and stays.
+		if mode == protocol.SwapModeSequential || mode == protocol.SwapModeSingleRobot {
+			continue
+		}
 		for _, d := range doors {
 			t.Run(fmt.Sprintf("%s/%s", mode, d.name), func(t *testing.T) {
 				t.Parallel()

@@ -2698,3 +2698,12 @@ No assertion read any of the twelve.
 - coverage Δ: 0 (a skipped body covers nothing)
 - citations rewritten: none (no comment or doc names it)
 - verified at: the commit that adds this row
+
+### DUP — `TestScenario_BareLine_EveryButtonFillsIt`
+- test: `TestScenario_BareLine_EveryButtonFillsIt` · pkg `shingo/integration/scenarios` · run `-run '^TestScenario_BareLine_EveryButtonFillsIt$'` · `integration/scenarios/bare_line_fill_test.go:25` @ `10f1b27f` · tags `docker`
+- code: DUP (six of its twelve cells, `{sequential,single_robot}/{material,produce,empty-bin}_request`; the test stays with `two_robot/*` and `two_robot_press_index/*`; REMOVAL-CANDIDATES B1, owner's ruling)
+- assertion map: every cell runs one body (not refused `:55-58`; no swap leg, one delivery to the line, none to the deck `:62-80`; every delivery confirmed at Core `:95-99`; one bin on the line `:106-109`) → the same body in `two_robot/*`, whose orders and answers are the removed cells' (one delivered-order transcript for all three modes in each of the recorder's 11 runs over A, B2 and C-on; equal orders views in 16 of 16). The swap mode is Edge-local: the Edge's bare-line decision per mode and door → `TestRequestCensus` (`shingo-edge/engine/request_census_test.go:233`, `:237`, `:244-245`, `:251-252`, `:262`, `:266`), and the doors agree → `TestRequestCensus_BareLineIsTheSameForBothRoles` (`:302`)
+- mutation: `planVacantLine` (`shingo-edge/engine/vacant_line.go:231`) sets no line delivery for a sequential or single_robot claim (the bare-line downgrade skipped in those two modes) · removed cells red at `10f1b27f`: `go test -tags docker,lockcheck -p 1 -count=1 -run '^TestScenario_BareLine_EveryButtonFillsIt$' ./scenarios/` → all six `bare_line_fill_test.go:65: a swap leg 1 on a bare line, want a plain delivery`; the six kept cells green (they cannot see it) · guard red: `go test -count=1 -tags lockcheck -run '^TestRequestCensus$' ./engine/` (shingo-edge) → eight rows, each door in both modes, e.g. `TestRequestCensus/consume/sequential/material_request/bare: request_census_test.go:285: got {legs:1 toHead:0 ...} refused "", want {legs:0 toHead:1 ...}`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: the file header ("in every swap mode") and a comment at the mode loop naming the guard
+- verified at: the commit that adds this row
