@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -273,6 +277,116 @@ func serialCases() []ruleCase {
 	}
 }
 
+// probeFile is the reuse probe set, read from this module: the rules' cases
+// run over the sources its probes write, so a case cannot drift from its probe.
+var probeFile = filepath.Join("..", "gatetime", "reuse", "probes", "probes_test.go")
+
+// probeSource is the test source probe fn of the probe set writes: its body's
+// `src("a", imports, body)` call, both string arguments literals, put together
+// as src does ("package a", the imports, a blank line, the body). A probe that
+// no longer has that shape fails the case: it must not pass on no input.
+func probeSource(t *testing.T, fn string) string {
+	t.Helper()
+	data, err := os.ReadFile(probeFile)
+	if err != nil {
+		t.Fatalf("the probe set is unreadable, so probe %s's source is unknown: %v", fn, err)
+	}
+	af, err := parser.ParseFile(token.NewFileSet(), probeFile, data, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range af.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != fn || fd.Body == nil {
+			continue
+		}
+		var got string
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if got != "" {
+				return false
+			}
+			c, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if id, isID := c.Fun.(*ast.Ident); !isID || id.Name != "src" || len(c.Args) != 3 {
+				return true
+			}
+			var s [3]string
+			for i, a := range c.Args {
+				lit, isLit := a.(*ast.BasicLit)
+				if !isLit || lit.Kind != token.STRING {
+					return true
+				}
+				s[i], _ = strconv.Unquote(lit.Value)
+			}
+			got = "package " + s[0] + "\n\nimport (\n" + s[1] + "\n)\n\n" + s[2]
+			return false
+		})
+		if got != "" {
+			return got
+		}
+	}
+	t.Fatalf("%s has no func %s calling src with three string literals: the case has no probe source", probeFile, fn)
+	return ""
+}
+
+func rawSyscallCases() []ruleCase {
+	goMod := "module shingo/shared\n\ngo 1.25.0\n"
+	// probe 23 (p23): a test reading its input through syscall.Open, which no
+	// test log records; on Windows it came out RUN,REUSE,REUSE where FAIL was
+	// wanted (probes-windows-1.log). Its Open (line 9) and Read (15) fire;
+	// Close reads nothing.
+	tr := func(t *testing.T) *tree {
+		probe23 := probeSource(t, "p23")
+		return treeOf(
+			"shared/go.mod", goMod,
+			"shared/probe/a/a_test.go", probe23,
+			// not built, or not in a module: not read.
+			"shared/probe/testdata/t_test.go", probe23,
+			"scripts/x_test.go", probe23,
+			// the probe harness's shape: the call is text in a literal, not a call.
+			"shared/probe/harness_test.go", "package probe\n\nimport \"syscall\"\n\nvar _ = syscall.O_RDONLY\n\nconst p23 = `fd, err := syscall.Open(\"x\", syscall.O_RDONLY, 0)`\n",
+			// a test-only helper (only a test imports it) and one only it imports.
+			"shared/helper/h.go", lines("package helper", "", "import (", "\t\"syscall\"", "",
+				"\t\"shingo/shared/helper/deep\"", ")", "",
+				"func Size(p string) int64 {", "\tvar st syscall.Stat_t", "\t_ = syscall.Stat(p, &st)", // 11
+				"\treturn st.Size + deep.N()", "}"),
+			"shared/helper/deep/d.go", lines("package deep", "", "import xs \"syscall\"", "",
+				"func N() int64 { r, _, _ := xs.Syscall6(0, 0, 0, 0, 0, 0, 0); return int64(r) }"), // 5
+			"shared/user/u_test.go", "package user\n\nimport (\n\t\"testing\"\n\n\t\"shingo/shared/helper\"\n)\n\nfunc TestU(t *testing.T) { _ = helper.Size(\"x\") }\n",
+			// the tracer's shape: a package a main program imports; its own tests do not make it test-only.
+			"shared/tool/trace.go", "package tool\n\nimport \"syscall\"\n\nfunc Trace() { syscall.RawSyscall6(0, 0, 0, 0, 0, 0, 0) }\n",
+			"shared/tool/trace_test.go", "package tool_test\n\nimport (\n\t\"testing\"\n\n\t\"shingo/shared/tool\"\n)\n\nfunc TestT(t *testing.T) { tool.Trace() }\n",
+			"shared/tool/cmd/gt/main.go", "package main\n\nimport (\n\t\"shingo/shared/lib\"\n\t\"shingo/shared/tool\"\n)\n\nfunc main() { tool.Trace(); lib.L() }\n",
+			// a package only its own tests import: a library, not a test helper.
+			"shared/solo/s.go", "package solo\n\nimport \"syscall\"\n\nfunc S() { syscall.Open(\"x\", 0, 0) }\n",
+			"shared/solo/s_test.go", "package solo_test\n\nimport (\n\t\"testing\"\n\n\t\"shingo/shared/solo\"\n)\n\nfunc TestS(t *testing.T) { solo.S() }\n",
+			// a library a test and a product file both import, and a main package: product code.
+			"shared/lib/l.go", "package lib\n\nimport \"syscall\"\n\nfunc L() { syscall.Open(\"x\", 0, 0) }\n",
+			"shared/user/v_test.go", "package user\n\nimport (\n\t\"testing\"\n\n\t\"shingo/shared/lib\"\n)\n\nfunc TestV(t *testing.T) { lib.L() }\n",
+			"shared/cmd/x/main.go", "package main\n\nimport \"syscall\"\n\nfunc main() { syscall.Open(\"x\", 0, 0) }\n",
+			// raw calls that read nothing.
+			"shared/sig/s_test.go", "package sig\n\nimport (\n\t\"syscall\"\n\t\"testing\"\n)\n\nfunc TestS(t *testing.T) { _ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM); syscall.Close(0) }\n",
+			// x/sys, aliased; the DLL loader and CreateFile.
+			"shingo-core/x/x_test.go", lines("package x", "", "import (", "\t\"syscall\"", "\t\"testing\"", "",
+				"\tu \"golang.org/x/sys/unix\"", "\t\"golang.org/x/sys/windows\"", ")", "",
+				"func TestX(t *testing.T) {",
+				"\t_, _ = u.Openat(0, \"x\", 0, 0)",                    // 12
+				"\t_, _ = windows.CreateFile(nil, 0, 0, nil, 0, 0, 0)", // 13
+				"\t_ = syscall.NewLazyDLL(\"kernel32.dll\")",           // 14
+				"}"))
+	}
+	return []ruleCase{
+		{"raw-syscall-reads", "probe 23, a test-only helper and its import fire; tool, product and literal text do not",
+			tr, []string{"shared/helper/deep/d.go:5", "shared/helper/h.go:11", "shared/probe/a/a_test.go:15",
+				"shared/probe/a/a_test.go:9", "shingo-core/x/x_test.go:12", "shingo-core/x/x_test.go:13", "shingo-core/x/x_test.go:14"}},
+		{"raw-syscall-reads", "no go.mod read: a non-test raw importer is a finding, not product code",
+			fixed(treeOf("shared/lib/l.go", "package lib\n\nimport \"syscall\"\n\nfunc L() { syscall.Open(\"x\", 0, 0) }\n")),
+			[]string{"shared/lib/l.go"}},
+	}
+}
+
 // jsTree writes path, content pairs under a temp root, as node reads them from
 // disk. Without node it skips: the rule's own missing-node failure is pinned
 // by TestJSParse_MissingNodeFails.
@@ -361,7 +475,7 @@ func jsCases() []ruleCase {
 func allCases() []ruleCase {
 	var cs []ruleCase
 	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, jsCases, plantCases,
-		serialCases, sliceCases, swapCases, syntheticCases, textFileCases} {
+		rawSyscallCases, serialCases, sliceCases, swapCases, syntheticCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
 	return cs
@@ -388,7 +502,10 @@ func TestEveryRuleHasACaseThatFires(t *testing.T) {
 func TestRules(t *testing.T) {
 	for _, c := range allCases() {
 		t.Run(c.rule+"/"+c.name, func(t *testing.T) {
-			r, _ := ruleNamed(c.rule)
+			r, ok := ruleNamed(c.rule)
+			if !ok {
+				t.Fatalf("no rule is named %q, so nothing reports %q", c.rule, c.want)
+			}
 			res := r.check(c.tree(t))
 			want := append([]string{}, c.want...)
 			sort.Strings(want)
