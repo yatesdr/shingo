@@ -205,10 +205,10 @@ func sameWorld(t *testing.T, what string, want, got map[string][]string) {
 // the public schema, sorted, with each date or time column replaced by whether
 // it is set; each sequence's last value; and the bins' loaded ages against the
 // newest, to the minute (the rounding seedGoldenWorld's FIFO normalise gives
-// them). audit_log's own id is left out: one kanban save writes its pools'
-// audit rows in a map's order (store/kanban_save.go:169, docket R20/B8), so two
-// fresh seedings number them differently. Its rows and its sequence are still
-// compared.
+// them). audit_log's ids are compared with the rest: a kanban save writes its
+// pools' rows in the families' code order
+// (TestSaveKanban_PoolRowsComeInFamilyCodeOrder), so two fresh seedings number
+// them alike.
 func plantImage(t *testing.T, db *store.DB) map[string][]string {
 	t.Helper()
 	query := func(q string, args ...any) [][2]string {
@@ -244,9 +244,6 @@ func plantImage(t *testing.T, db *store.DB) map[string][]string {
 				if string(row[c]) != "null" {
 					row[c] = json.RawMessage(`"set"`)
 				}
-			}
-			if table == "audit_log" {
-				delete(row, "id")
 			}
 			masked, err := json.Marshal(row)
 			testutil.MustNoErr(t, err, "a row of "+table)
