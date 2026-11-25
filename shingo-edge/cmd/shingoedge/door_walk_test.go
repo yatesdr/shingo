@@ -620,7 +620,12 @@ func newWalk(t *testing.T) *walk {
 	w.mux = mux
 	w.srv = httptest.NewServer(handler)
 	t.Cleanup(w.srv.Close)
-	w.inbound = buildInboundRouter(eng, messaging.NewEdgeHandler(eng.OrderManager()), nopHeartbeater{}, func(string, ...any) {})
+	// The heartbeater's two syncs, wired as setupKafkaSubscribers wires them:
+	// unwired, the two Sync doors refuse 503.
+	hb := nopHeartbeater{}
+	eng.SetNodeSyncFunc(hb.RequestNodeSync)
+	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+	w.inbound = buildInboundRouter(eng, messaging.NewEdgeHandler(eng.OrderManager()), hb, func(string, ...any) {})
 	w.stations = []int64{w.pressStation, w.loaderSt}
 
 	// The first login creates the admin and signs it in.

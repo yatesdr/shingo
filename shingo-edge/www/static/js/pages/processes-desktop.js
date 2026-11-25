@@ -9563,8 +9563,11 @@ function openDeleteProcess() {
 async function syncCatalog() {
     S.settingsError = '';
     S.settingsNotice = '';
-    // The sync only asks the Edge to ask Core (apiSyncPayloadCatalog answers
-    // ok and never refuses), so what can fail here is this Edge: no answer, a
+    // The sync only asks the Edge to ask Core. apiSyncPayloadCatalog answers
+    // ok once the Edge's messaging is wired, and refuses 503 before (no broker
+    // configured, or the first moments of a boot) with its sentence, "the
+    // heartbeater is not running (messaging not connected yet): no catalog
+    // request sent". What else can fail here is this Edge: no answer, a
     // lapsed session, a panic. The door's sentence says which; "(0). Core may
     // be unreachable" named the wrong machine.
     const res = await send('POST', '/api/payload-catalog/sync', null, NO_NOTICE);

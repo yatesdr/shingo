@@ -153,13 +153,15 @@ func TestEngine_SetCoreNodesEmitsEvent(t *testing.T) {
 func TestEngine_RequestNodeSync(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
-	// No fn set → no-op, no panic.
-	eng.RequestNodeSync()
+	// No fn set → nothing asked, and the caller is told so.
+	if err := eng.RequestNodeSync(); err != errSyncNotWired {
+		t.Errorf("unwired RequestNodeSync err = %v, want errSyncNotWired", err)
+	}
 
 	called := 0
 	eng.SetNodeSyncFunc(func() { called++ })
-	eng.RequestNodeSync()
-	eng.RequestNodeSync()
+	testutil.MustNoErr(t, eng.RequestNodeSync(), "RequestNodeSync")
+	testutil.MustNoErr(t, eng.RequestNodeSync(), "RequestNodeSync")
 	if called != 2 {
 		t.Errorf("nodeSyncFn called %d times, want 2", called)
 	}
@@ -168,11 +170,13 @@ func TestEngine_RequestNodeSync(t *testing.T) {
 func TestEngine_RequestCatalogSync(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
-	eng.RequestCatalogSync() // no fn set — no-op
+	if err := eng.RequestCatalogSync(); err != errSyncNotWired { // no fn set
+		t.Errorf("unwired RequestCatalogSync err = %v, want errSyncNotWired", err)
+	}
 
 	called := 0
 	eng.SetCatalogSyncFunc(func() { called++ })
-	eng.RequestCatalogSync()
+	testutil.MustNoErr(t, eng.RequestCatalogSync(), "RequestCatalogSync")
 	if called != 1 {
 		t.Errorf("catalogSyncFn called %d times, want 1", called)
 	}

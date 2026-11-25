@@ -45,8 +45,22 @@ func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiSyncCoreNodes(w http.ResponseWriter, r *http.Request) {
-	h.orchestration.RequestNodeSync()
+	if err := h.orchestration.RequestNodeSync(); err != nil {
+		writeSyncNotSent(w, "node list request")
+		return
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// writeSyncNotSent refuses a Sync the engine had no heartbeater to ask
+// through: until main.go wires the two syncs (cmd/shingoedge
+// setupKafkaSubscribers, once messaging connects; never, on an Edge with no
+// broker configured). Both doors used to answer ok there and send nothing.
+// The words are the debug page's for its heartbeat in the same window
+// (apiSendManualMessage). PIN: TestApiConfig_SyncBeforeTheSyncsAreWired.
+func writeSyncNotSent(w http.ResponseWriter, what string) {
+	writeError(w, http.StatusServiceUnavailable,
+		"the heartbeater is not running (messaging not connected yet): no "+what+" sent")
 }
 
 func (h *Handlers) apiListPayloadCatalog(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +73,9 @@ func (h *Handlers) apiListPayloadCatalog(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handlers) apiSyncPayloadCatalog(w http.ResponseWriter, r *http.Request) {
-	h.orchestration.RequestCatalogSync()
+	if err := h.orchestration.RequestCatalogSync(); err != nil {
+		writeSyncNotSent(w, "catalog request")
+		return
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }

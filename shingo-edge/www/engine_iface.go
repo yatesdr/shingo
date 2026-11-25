@@ -111,8 +111,8 @@ type EngineOrchestration interface {
 	ApplyWarLinkConfig()
 	ReconnectKafka() error
 	SendEnvelope(env *protocol.Envelope) error
-	RequestNodeSync()
-	RequestCatalogSync()
+	RequestNodeSync() error
+	RequestCatalogSync() error
 
 	// ── Material orchestration ─────────────────────────────────────
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)

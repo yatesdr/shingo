@@ -203,8 +203,8 @@ func (s *stubEngine) CoreNodeKinds() domain.CoreNodeKinds {
 }
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo { return nil }
 func (s *stubEngine) ScenePointNames() map[string]bool               { return nil }
-func (s *stubEngine) RequestNodeSync()                               {}
-func (s *stubEngine) RequestCatalogSync()                            {}
+func (s *stubEngine) RequestNodeSync() error                         { return nil }
+func (s *stubEngine) RequestCatalogSync() error                      { return nil }
 func (s *stubEngine) EditProcessCounter(processID int64, edit domain.ProcessCounterEdit) error {
 	return s.db.SetProcessCounter(processID, edit.PLCName, edit.TagName, edit.Enabled, edit.IdentityTagName, edit.IdentityNone)
 }
