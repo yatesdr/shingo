@@ -105,7 +105,8 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 }
 
 // failOrderAndEmit fails an order in the DB AND emits EventOrderFailed so the
-// standard handler chain (audit, return order, edge notification) fires.
+// standard handler chain fires (wiring.go's failed subscribers: the Edge is
+// told, a compound leg's or a swap peer's unwind runs; no return order is made).
 //
 // Use this from any caller that previously did a bare db.FailOrderAtomic and
 // would otherwise leave the order silently failed in the DB. The fulfillment

@@ -173,7 +173,7 @@ func (e *Engine) wireEventHandlers() {
 		if orderErr == nil {
 			// If child of a compound order, handle parent failure. Otherwise a
 			// top-level order failing may be a two-robot swap leg — unwind its
-			// sibling so a half-swap can't strand/collide the line (ALN_003
+			// sibling so a half-swap can't strand/collide the line (a line's
 			// post-dispatch window; HandleSwapPeerTerminal self-gates on the
 			// durable sibling link, so it is a no-op for non-swap orders).
 			if order.ParentOrderID != nil && e.dispatcher != nil {
@@ -254,7 +254,7 @@ func (e *Engine) wireEventHandlers() {
 		// (store queueTellTx). This handler used to send a `confirmed` notice
 		// beside it, gated on the event's StationID — which MarkDelivered does not
 		// set, so a delivery was never told `confirmed`, and that held only because
-		// of an empty field (Springfield 2026-08-03: 115 of 331 swap legs in 14
+		// of an empty field (a plant, 2026-08-03: 115 of 331 swap legs in 14
 		// days confirmed by the sweep, each left `delivered` at the Edge). The
 		// write tells the status it wrote: `delivered` for a delivery,
 		// `confirmed` for a confirm.
@@ -314,13 +314,14 @@ func (e *Engine) wireEventHandlers() {
 		}
 
 		// A DISSOLVED DIG'S CANCELS RE-DRIVE THEIR COMPOUND, so the terminal arm can
-		// return the parent to the acquiring set. The dissolve deliberately does not
-		// transition the parent itself: {Reshuffling → Queued} fires the SYNCHRONOUS
-		// fulfillment scanner, and the dissolve is reachable from inside that scanner
-		// (tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
-		// AdvanceCompoundOrder) under a non-reentrant scanMu. This is the hop that
-		// breaks the loop — the same reason triggerFulfillment above spawns rather
-		// than calls.
+		// return the parent to the acquiring set. The dissolve does not transition
+		// the parent itself, and the dissolve is reachable from inside the
+		// fulfillment scanner (tryFulfill → PlanBuriedReshuffle →
+		// CreateCompoundOrder → AdvanceCompoundOrder) under a non-reentrant scanMu.
+		// The reason this gave was that the parent's way back ran its acquire in
+		// line; that way is {Reshuffling → Pending}, not Queued, and its acquire now
+		// runs on the after queue (the EventOrderResumed subscriber below), so the
+		// reason is gone and this hop was not re-argued when this was corrected.
 		//
 		// SCOPED TO DISSOLVE CANCELS, and narrowly, because the first version was
 		// not. Re-driving on EVERY child cancel put an advance in the middle of every
@@ -386,7 +387,7 @@ func (e *Engine) wireEventHandlers() {
 		// — material arriving from outside a tagged storeroom is exactly what
 		// an inventory ledger wants to hear.
 		//
-		// Hopkinsville 2026-09-08: a press delivered 3000 parts to SMN_01 as
+		// A plant, 2026-09-08: a press delivered 3000 parts to a line node as
 		// step 3 of a 5-step swap and the ledger stayed silent until the whole
 		// order finished 49 minutes later. Had the order been cancelled while
 		// wedged, the arrival would never have booked. It only worked before
@@ -593,7 +594,7 @@ func (e *Engine) wireEventHandlers() {
 		}, EventBinUpdated)
 
 		// P2-C9 contradiction check: a manual swap request (a complex order —
-		// the shape the SNF3 operator swap took) for a payload the ledger reads
+		// the shape an operator's swap at a plant took) for a payload the ledger reads
 		// as fully stocked is a contradiction. Log it, chip it, and re-read.
 		// Filtered to complex orders (the swap/manual-request family); the
 		// stocked-ledger gate + per-payload throttle keep it quiet in normal ops.
