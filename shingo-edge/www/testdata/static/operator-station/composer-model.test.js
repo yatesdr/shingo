@@ -268,6 +268,25 @@ test('a Sequential A/B position is given no partner; a prior pair and Index Swap
     assert.strictEqual(t.cells.PLN_01.paired, 'PLN_02', 'the prior pair was not kept');
 });
 
+// ONE ROBOT CAN RUN A ONE-NODE LINE (final brief 2c, point 5). The composer
+// names no robot for either order of a Sequential A/B position: its Advanced
+// offers no robot setting (Next carrier, refill_by, is Index Swap's alone and
+// Forbidden here), and the cell it sends carries no robot. "Robot 1" and
+// "Robot 2" on its card are the two orders, Order A then Order B, each one bin
+// and one trip; the fleet gives each to whichever robot is free, so a plant
+// with one robot runs them back to back (end to end:
+// TestScenario_SequentialLine_OneNodeHoldsOneBinAtEveryStep/steady_state).
+test('a one-node Sequential A/B line names no robot for its two orders', () => {
+    let s = M.reduce(initStyle(7), { type: 'startBlank' });
+    s = M.reduce(s, { type: 'addPosition', node: 'PLN_03', mode: 'sequential' });
+    assert.strictEqual(s.cells.PLN_03.paired, '', 'fixture: a one-node line');
+    assert.strictEqual(M.advancedShows(s, 'PLN_03', 'refill_by'), false, 'a robot setting is offered');
+    assert.strictEqual(FLOWSPEC.steady.consume.sequential.refill_by, 'forbidden');
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_03'), ['Robot 1 pulls old', 'Robot 2 brings new']);
+    const cell = M.toCells(s).find(c => c.core_node_name === 'PLN_03');
+    assert.ok(!/robot/i.test(JSON.stringify(cell)), 'the cell sent names a robot: ' + JSON.stringify(cell));
+});
+
 test('removePosition clears the partner role, and the partner is not left in the flow', () => {
     let s = initStyle(7);
     s = M.reduce(s, { type: 'removePosition', node: 'PLN_01' });
