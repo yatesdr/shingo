@@ -242,6 +242,14 @@ type ksrOpts struct {
 	extraHomesA int
 	buffers     int
 	heldBuffers int
+	// stagedAtHome (with home): each claim's inbound staging is its part's home
+	// too, and it names no outbound staging: a two-robot swap with no staging
+	// hop, its supply waiting at the home's full (brief G, Part A).
+	stagedAtHome bool
+	// nodeList: Core answers the Edge's node-list request, and the cell asks
+	// once after it registers, as a booting Edge does, so the Edge holds Core's
+	// node list (its names, groups and loaders) as a plant's does.
+	nodeList bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -490,6 +498,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 				if s.style == c.styleB {
 					in.InboundSource, in.OutboundDestination = ksrHomeB, ksrHomeB
 				}
+				if o.stagedAtHome {
+					in.InboundStaging, in.OutboundStaging = in.InboundSource, ""
+				}
 			}
 			if !o.plain {
 				// The spot is the keep-staged node. On the two staging modes it is
@@ -560,6 +571,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		routes = append(routes, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks)
 	}
 	routes = append(routes, protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat)
+	if o.nodeList {
+		routes = append(routes, protocol.SubjectNodeListRequest)
+	}
 	coreSide := coreharness.NewCore(t, c.core.eng, coreharness.RoutesOnly(routes...), coreharness.HooksOnly(coreharness.FeedHooks...))
 	c.side = coreSide
 	c.bus = harness.NewBus(t,
@@ -568,6 +582,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	)
 	harness.StartBinsFeed(t, c.bus, coreSide.Data, edge)
 	c.registerEdge()
+	if o.nodeList {
+		c.askNodeList()
+	}
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),
 			"publish plant claims")
@@ -2210,4 +2227,18 @@ func (c *ksrCell) registerEdge() {
 	mustNil(c.t, err, "encode edge.register")
 	_, err = c.edge.DB.EnqueueOutbox(raw, protocol.SubjectEdgeRegister)
 	mustNil(c.t, err, "send edge.register")
+}
+
+// askNodeList is the Edge asking Core for its node list, as the heartbeater
+// does at boot (sendNodeListRequest); the reply lands at the next settle.
+func (c *ksrCell) askNodeList() {
+	c.t.Helper()
+	env, err := protocol.NewDataEnvelope(protocol.SubjectNodeListRequest,
+		protocol.Address{Role: protocol.RoleEdge, Station: "edge.test"}, protocol.Address{Role: protocol.RoleCore},
+		&protocol.NodeListRequest{})
+	mustNil(c.t, err, "node list request")
+	raw, err := env.Encode()
+	mustNil(c.t, err, "encode node list request")
+	_, err = c.edge.DB.EnqueueOutbox(raw, protocol.SubjectNodeListRequest)
+	mustNil(c.t, err, "send node list request")
 }
