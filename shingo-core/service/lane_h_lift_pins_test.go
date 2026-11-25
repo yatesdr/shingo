@@ -107,11 +107,15 @@ func TestRelease_FencedReleaseSkipsALatePreReleaseDelta(t *testing.T) {
 //     (seq 2 not yet applied): RED, 88. The apply subtracts the stale cursor's
 //     net (-2) where the fence's (-6) stands, so the draws between the two,
 //     which the declared count already holds, are taken a second time. Skipped
-//     unless SHINGO_KNOWN_RED=1: no fix in this brief.
+//     unless SHINGO_KNOWN_RED=1, and left so by ruling (docket R71): its
+//     precondition is written at the skip.
 //
-// Core applies both on its one inbound reader today, so the two overlap only
-// across a messaging re-configure (Engine.ReconfigureMessaging), where the old
-// reader may still be inside a handler when the new one starts.
+// Core applies both on its one inbound reader of the orders topic, so the two
+// should not overlap at a plant. A messaging re-configure
+// (Engine.ReconfigureMessaging) closes the old reader and waits for its message
+// in hand before the new one starts (messaging Client.Close, docket B11); only
+// a handler still running at that wait's limit (closeWaitLimit, 30 s) is closed
+// under while the new reader starts.
 func TestRelease_ADeltaWaitingBehindAFencedRelease(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -141,6 +145,13 @@ func TestRelease_ADeltaWaitingBehindAFencedRelease(t *testing.T) {
 		{"a window past the fence applies only what is past it", "BIN-BEHIND-PAST", 3, -2, -8, false, 92, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// PRECONDITION of the red case: two inbound readers applying the
+			// orders topic at once. It is unreachable while Core applies both
+			// doors on one inbound reader goroutine per topic (messaging
+			// Client.Subscribe starts one readLoop a topic), where each door's
+			// transaction commits before the other's read begins; so it stays
+			// skipped, not fixed (docket R71). Revisit it, and fix the apply's
+			// cursor read, if a second reader of the orders topic is ever added.
 			if tc.knownRed && os.Getenv("SHINGO_KNOWN_RED") == "" {
 				t.Skip("docket B18 red pin, red until the apply reads its cursor after the bin row is locked; run with SHINGO_KNOWN_RED=1")
 			}
