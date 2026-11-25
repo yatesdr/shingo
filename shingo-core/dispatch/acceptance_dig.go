@@ -221,7 +221,7 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 		// Congestion, each with its own live releaser, and the classifier's cause
 		// on the row already names the one that applies. Nothing to arrange.
 		d.dbg("lane gate: order %d cannot dig %s open yet (%v)", req.order.ID, lane.Name, res.outcome)
-	case laneClearNoGroup, laneClearSlotNotInLane, laneClearBlockerAtDisabledNode, laneClearUnplannable:
+	case laneClearNoGroup, laneClearSlotNotInLane, laneClearBlockerAtDisabledNode, laneClearNamelessSlot, laneClearUnplannable:
 		// Geometry and configuration: the lane is in no group, the slot belongs to
 		// no lane, a bin in front of the target stands on a node the plant has
 		// switched off, or the plan could not be built. Same arm and same shape as

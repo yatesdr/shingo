@@ -234,6 +234,21 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 		if !b.slot.Enabled {
 			return nil, 0, fmt.Errorf("%w: %s holds bin %d", ErrBlockerAtDisabledNode, b.slot.Name, b.bin.ID)
 		}
+		if b.slot.Name == "" {
+			return nil, 0, &NamelessSlotError{SlotID: b.slot.ID}
+		}
+	}
+	// ── AND A SLOT WITH NO NAME IS NOT ONE THIS DIG CAN FINISH THROUGH ──
+	//
+	// A leg copies its pickup from its slot's name (legNeed), so a leg through
+	// a nameless slot is written with none and can never be sent: the dig
+	// would carry out the blockers in front of it and then fail the demand
+	// (failLegThatCannotBeBuilt, emptyPickupDetail). Refused here instead, so
+	// no blocker is moved for a dig that cannot finish (study round 5, section
+	// 2, point 5; TestCompound_NoBinIsMovedForADigThroughANamelessSlot). The
+	// target's slot is asked too when this dig retrieves from it.
+	if target != nil && targetSlot.Name == "" {
+		return nil, 0, &NamelessSlotError{SlotID: targetSlot.ID}
 	}
 
 	// ── CAN THIS GROUP CLEAR THESE BLOCKERS? THAT IS THE WHOLE QUESTION ───
@@ -1419,5 +1434,25 @@ var ErrSlotNotInLane = errors.New("target slot is not in a lane")
 // ErrBlockerAtDisabledNode — see ErrSlotNotInLane above for why it is a
 // sentinel and how its disposition differs from a read failure.
 var ErrBlockerAtDisabledNode = errors.New("a bin in front of the target is at a disabled node; an engineer must move it")
+
+// NamelessSlotError is the third configuration fault of the same kind: a dig
+// through a slot with no name, which no leg can be sent through (planUnbury).
+// Its sentence is the one the advance ends such a leg with, so the demand says
+// the same thing whichever of the two catches it, and it names the slot by id
+// because a blank is not findable (plan.ConfigFailureID). A type rather than a
+// sentinel because it carries the id.
+type NamelessSlotError struct {
+	SlotID int64
+}
+
+func (e *NamelessSlotError) Error() string {
+	return plan.ConfigFailureID("name of source node", e.SlotID)
+}
+
+// isNamelessSlot reports whether err is a NamelessSlotError.
+func isNamelessSlot(err error) bool {
+	var nameless *NamelessSlotError
+	return errors.As(err, &nameless)
+}
 
 var ErrNoShuffleSlot = plan.ErrNoShuffleSlot

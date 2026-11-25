@@ -880,6 +880,12 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		// codeReshuffle, which is terminal. Same event, same demand, opposite
 		// disposition, decided by which SELECT happened to fail (PLAN §R.45).
 		//
+		// A SLOT WITH NO NAME IS CONFIGURATION TOO, asked before the read arm for
+		// the reason below: the demand fails with the slot named by id, the sentence
+		// the advance would end the leg with (NamelessSlotError).
+		if isNamelessSlot(err) {
+			return nil, &planningError{Code: codeReshuffle, Detail: err.Error(), Err: err}
+		}
 		// ErrSlotNotInLane is asked first and deliberately: readFailed() is true for
 		// any non-nil error that is not sql.ErrNoRows, so the genuine configuration
 		// fault would otherwise park forever under a cause nothing can clear.

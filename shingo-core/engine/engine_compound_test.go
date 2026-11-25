@@ -888,14 +888,17 @@ func blankNodeName(t *testing.T, db *store.DB, nodeID int64) {
 // --- Test: a dig through a nameless slot in a lane (docket B1) ---
 //
 // Scenario: a lane three deep with a bin on every slot, the wanted bin
-// deepest, and the middle slot with no name (blankNodeName). The buried bin
-// is requested and the first unbury is driven to its landing.
+// deepest. The buried bin is requested, and under the open dig the middle
+// slot loses its name (blankNodeName) and its unbury its pickup: the leg a
+// plan through a nameless slot wrote before the planner refused one
+// (TestCompound_NoBinIsMovedForADigThroughANamelessSlot), which the advance
+// still has to end. The first unbury is driven to its landing.
 //
-// The middle unbury copies its pickup from the slot's name, so it is written
-// with none, and no re-plan can give it one. Its turn ends it through the
-// failure door with the slot named by id, the retrieve behind it is cancelled
-// and never sent, and the order fails with that sentence once the first unbury
-// has set its bin down (study round 5, section 2).
+// The middle unbury has no pickup and its slot no name, so no re-plan can give
+// it one. Its turn ends it through the failure door with the slot named by id,
+// the retrieve behind it is cancelled and never sent, and the order fails with
+// that sentence once the first unbury has set its bin down (study round 5,
+// section 2).
 //
 // Before B1's fix this order planned the same dig again and again with no
 // timer (pinned 2026-11-25, 6 of 6: pending and reshuffling alternating, three
@@ -909,7 +912,6 @@ func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "NONAME", NumSlots: 3, NumShuffles: 2})
 	nameless := sc.Slots[1]
-	blankNodeName(t, db, nameless.ID)
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -928,11 +930,14 @@ func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 	if len(legs) != 3 {
 		t.Fatalf("the first plan wrote %d legs, want 3 (two unburies and the retrieve)", len(legs))
 	}
-	if legs[0].VendorOrderID == "" || legs[1].SourceNode != "" || legs[2].SourceNode != sc.Slots[2].Name {
-		t.Fatalf("the first plan: leg 1 vendor=%q, leg 2 source=%q, leg 3 source=%q; want leg 1 sent, "+
-			"leg 2 with no pickup and leg 3 from %s", legs[0].VendorOrderID, legs[1].SourceNode,
-			legs[2].SourceNode, sc.Slots[2].Name)
+	if legs[0].VendorOrderID == "" || legs[1].SourceNode != nameless.Name || legs[1].VendorOrderID != "" {
+		t.Fatalf("the first plan: leg 1 vendor=%q, leg 2 source=%q vendor=%q; want leg 1 sent and leg 2 "+
+			"waiting at %s", legs[0].VendorOrderID, legs[1].SourceNode, legs[1].VendorOrderID, nameless.Name)
 	}
+	blankNodeName(t, db, nameless.ID)
+	_, err := db.Exec(`UPDATE orders SET source_node = '' WHERE id = $1`, legs[1].ID)
+	testutil.MustNoErr(t, err, "clear the middle unbury's pickup under the open dig")
+
 	driveLegRunToFinish(t, db, sim, legs[0].ID, legs[0].VendorOrderID)
 	// The order's end is the engine's to reach, on whichever goroutine closes
 	// the chapter; its lane goes just after its status.
@@ -996,17 +1001,17 @@ func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 
 // --- Test: a dig whose first move is through a nameless slot, from the intake (docket B1) ---
 //
-// The same fault on the dig's first leg: the lane two deep, the front slot with
-// no name, the wanted bin behind it. The request's acquire plans the dig and
-// advances it inside the scanner's lock (the intake runs in Scanner.Door), so
-// the leg is ended through the failure door, and the door's subscribers run,
-// under scanMu. Run with -tags docker,lockcheck, this is the lock-context check
-// study round 5 asks for before B1's fix: a subscriber that took a lock out of
-// order, or the scan lock again, fails it.
+// The lane two deep, the front slot with no name, the wanted bin behind it. The
+// request's acquire plans inside the scanner's lock (the intake runs in
+// Scanner.Door), and the planner refuses the dig: no leg is written, the order
+// fails naming the slot by id, nothing moves and the lane is not taken.
 //
-// Expected: no robot is sent, the order fails naming the slot by id, nothing
-// moved, and the lane is let go.
-func TestCompound_ANamelessFrontSlotFailsTheOrderAtItsFirstMove(t *testing.T) {
+// It was the lock-context check study round 5 asked for before B1's fix: at
+// ed166e4c the planner still wrote this dig, so its first leg was ended through
+// the failure door, and the door's subscribers ran, under scanMu, green under
+// -tags docker,lockcheck. Since the planner's refusal that path is not reached
+// from a nameless slot; under lockcheck this now covers the refusal at intake.
+func TestCompound_ANamelessFrontSlotFailsTheOrderBeforeAnyMove(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
@@ -1014,9 +1019,7 @@ func TestCompound_ANamelessFrontSlotFailsTheOrderAtItsFirstMove(t *testing.T) {
 	nameless := sc.Slots[0]
 	blankNodeName(t, db, nameless.ID)
 
-	sim := simulator.New()
-	eng := newTestEngine(t, db, sim)
-
+	eng := newTestEngine(t, db, simulator.New())
 	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 		OrderUUID:    "noname-front-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
@@ -1025,31 +1028,19 @@ func TestCompound_ANamelessFrontSlotFailsTheOrderAtItsFirstMove(t *testing.T) {
 		DeliveryNode: sc.LineNode.Name,
 		Quantity:     1,
 	})
-	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
-		return testdb.RequireOrder(t, db, "noname-front-1").Status.IsTerminal() &&
-			!eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID)
-	})
 
-	sentence := dplan.ConfigFailureID("name of source node", nameless.ID)
+	// The planner's failure carries its code in front, as every planning
+	// failure does (planningError.Error).
+	want := string(protocol.TermReshuffleError) + ": " + dplan.ConfigFailureID("name of source node", nameless.ID)
 	parent := testdb.RequireOrder(t, db, "noname-front-1")
-	if parent.Status != dispatch.StatusFailed || parent.ErrorDetail != sentence {
-		t.Errorf("the order is %q (%q), want failed with %q", parent.Status, parent.ErrorDetail, sentence)
+	if parent.Status != dispatch.StatusFailed || parent.ErrorDetail != want {
+		t.Errorf("the order is %q (%q), want failed with %q", parent.Status, parent.ErrorDetail, want)
 	}
-	legs := legsByID(t, db, parent.ID)
-	if len(legs) != 2 {
-		t.Fatalf("the order has %d legs, want the one plan's 2", len(legs))
+	if legs := legsByID(t, db, parent.ID); len(legs) != 0 {
+		t.Errorf("the order has %d legs, want none", len(legs))
 	}
-	for _, leg := range legs {
-		if leg.VendorOrderID != "" {
-			t.Errorf("leg %d was sent (%s): no robot may move for a dig that cannot finish", leg.ID, leg.VendorOrderID)
-		}
-	}
-	if legs[0].Status != dispatch.StatusFailed || legs[0].ErrorDetail != sentence {
-		t.Errorf("the front leg is %q (%q), want failed with %q", legs[0].Status, legs[0].ErrorDetail, sentence)
-	}
-	if legs[1].Status != dispatch.StatusCancelled || legs[1].ErrorDetail != dispatch.ReshuffleLegFailedDetail {
-		t.Errorf("the retrieve leg is %q (%q), want cancelled with %q", legs[1].Status, legs[1].ErrorDetail,
-			dispatch.ReshuffleLegFailedDetail)
+	if eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID) {
+		t.Errorf("lane %s is held for a dig that was not planned", sc.Lane.Name)
 	}
 	testdb.AssertBinAtNode(t, db, sc.Blockers[0].ID, nameless.ID)
 	testdb.AssertBinUnclaimed(t, db, sc.Blockers[0].ID)
@@ -1083,10 +1074,12 @@ func TestCompound_NoBinIsMovedForADigThroughANamelessSlot(t *testing.T) {
 		Quantity:     1,
 	})
 
-	sentence := dplan.ConfigFailureID("name of source node", nameless.ID)
+	// The planner's failure carries its code in front, as every planning
+	// failure does (planningError.Error).
+	want := string(protocol.TermReshuffleError) + ": " + dplan.ConfigFailureID("name of source node", nameless.ID)
 	order := testdb.RequireOrder(t, db, "noplan-dig-1")
-	if order.Status != dispatch.StatusFailed || order.ErrorDetail != sentence {
-		t.Errorf("the order is %q (%q), want failed with %q", order.Status, order.ErrorDetail, sentence)
+	if order.Status != dispatch.StatusFailed || order.ErrorDetail != want {
+		t.Errorf("the order is %q (%q), want failed with %q", order.Status, order.ErrorDetail, want)
 	}
 	if legs := legsByID(t, db, order.ID); len(legs) != 0 {
 		t.Errorf("the order has %d legs, want none: a dig that cannot finish is not planned", len(legs))

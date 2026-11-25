@@ -52,6 +52,7 @@ func TestClassifyPlanError(t *testing.T) {
 		// SITUATION 4 — the configuration fault. Asked BEFORE readFailed, or it
 		// would be swallowed as a stutter.
 		{"slot in no lane", fmt.Errorf("%w: GRP-L1-S2", ErrSlotNotInLane), laneClearSlotNotInLane},
+		{"slot with no name", fmt.Errorf("plan dig: %w", &NamelessSlotError{SlotID: 7}), laneClearNamelessSlot},
 
 		// SITUATIONS 1-3 — every planner read failure, whatever its depth.
 		{"situation 3: shuffle-pool read failed", transport, laneClearReadFailed},

@@ -27,7 +27,7 @@ Deploy: no migration; Core and Edges in either order.
 - A node save that leaves out the node's name, type or parent keeps them, as it keeps the zone; it used to blank the name and clear the type and the parent, taking a lane slot out of its lane. The Nodes page always sends all three, so its own saves are as before
 - Core's start-up log names any node with no name, by id, with its parent and the bins standing on it, and changes nothing; a plant with none prints nothing
 - An order that has to move bins out of a lane to reach its cart, where one of the moves names a slot that no longer exists, now fails saying which slot wherever that move falls, and frees the lane only after a robot still carrying a bin out of it has set the bin down; it used to plan the moves again, or free the lane under the robot
-- An order that has to move bins out of a lane to reach its cart, where one of those bins stands on a slot with no name, now fails naming the slot by its id, instead of planning the same moves again and again; no robot is sent for a move after one that cannot be made, and that move is reported like any other failed move
+- An order that has to move bins out of a lane to reach its cart, where one of those bins or the cart stands on a slot with no name, now fails at once naming the slot by its id, before any robot moves a bin for it; it used to plan the same moves again and again
 
 ## v0.19.0 — 2026-11-22
 

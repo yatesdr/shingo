@@ -1275,7 +1275,7 @@ func (d *Dispatcher) emptyPickupDetail(leg *orders.Order) (string, error) {
 	if err != nil || slot == nil || slot.Name != "" {
 		return damaged, nil
 	}
-	return dplan.ConfigFailureID("name of source node", slot.ID), nil
+	return (&NamelessSlotError{SlotID: slot.ID}).Error(), nil
 }
 
 // legHand is what a dig leg takes at its handover: the bin it moves, claimed
