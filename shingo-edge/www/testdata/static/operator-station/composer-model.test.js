@@ -244,6 +244,30 @@ test('addPosition on a swap that takes no partner sends none', () => {
     }
 });
 
+// A SEQUENTIAL A/B POSITION IS GIVEN NO PARTNER (final brief 2b). Its partner
+// is the engineer's pick; none is a one-node line. It took the line's first
+// free back position when added, or when its swap or role changed, which an
+// engineer meaning one node had to notice and clear. A pair the style already
+// had still wins, and an Index Swap still takes its structural back.
+test('a Sequential A/B position is given no partner; a prior pair and Index Swap keep theirs', () => {
+    let s = M.reduce(initStyle(7), { type: 'startBlank' });
+    s = M.reduce(s, { type: 'addPosition', node: 'PLN_03', mode: 'sequential' });
+    assert.strictEqual(s.cells.PLN_03.paired, '', 'added as Sequential A/B, it took ' + s.cells.PLN_03.paired);
+    s = M.reduce(s, { type: 'addPosition', node: 'PLN_06' });
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_06', mode: 'sequential' });
+    assert.strictEqual(s.cells.PLN_06.paired, '', 'set to Sequential A/B, it took ' + s.cells.PLN_06.paired);
+    s = M.reduce(s, { type: 'setRole', node: 'PLN_06', role: 'produce' });
+    assert.strictEqual(s.cells.PLN_06.paired, '', 'its role changed, it took ' + s.cells.PLN_06.paired);
+    assert.ok(!M.toCells(s).some(c => c.paired_core_node), 'the save is sent a partner: ' + JSON.stringify(M.toCells(s)));
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_03', mode: 'two_robot_press_index' });
+    assert.strictEqual(s.cells.PLN_03.paired, 'PLN_02', 'Index Swap: its back');
+    // Style 7's PLN_01 was paired with PLN_02: removed and put back as
+    // Sequential A/B, it returns to that pair.
+    let t = M.reduce(initStyle(7), { type: 'removePosition', node: 'PLN_01' });
+    t = M.reduce(t, { type: 'addPosition', node: 'PLN_01', mode: 'sequential' });
+    assert.strictEqual(t.cells.PLN_01.paired, 'PLN_02', 'the prior pair was not kept');
+});
+
 test('removePosition clears the partner role, and the partner is not left in the flow', () => {
     let s = initStyle(7);
     s = M.reduce(s, { type: 'removePosition', node: 'PLN_01' });

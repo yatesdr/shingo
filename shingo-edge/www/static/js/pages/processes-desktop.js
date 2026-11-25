@@ -925,7 +925,8 @@ const FIRST_ROLES = [['consume', 'Consume'], ['produce', 'Produce']];
 // back position; Sequential A/B may name one (flowspec Used since final brief
 // 2b: with none, the position is a one-node line). It is offered where the
 // swap uses it, from the Styles table's own list (partnerChoices); it starts
-// as the model pairs a new row, the map's free back position (addPosition).
+// as the model pairs a new row: an Index Swap on the map's free back position
+// (ensurePartner), a Sequential A/B position on none.
 // The second paired node is not offered here: only Index Swap has it, and
 // never Required (flowspec leaves it Used).
 const FIRST_PICKS = [

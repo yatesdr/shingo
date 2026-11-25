@@ -664,10 +664,13 @@ function reduce(state, action) {
             // THE PAIR THE STYLE ALREADY HAD WINS. A position put back after a
             // remove returns to the back position it was paired with, not to
             // whichever one happens to be free — the operator undid a mistake,
-            // they did not ask to be re-partnered.
+            // they did not ask to be re-partnered. With none, a free back
+            // position is picked only for a swap that needs one (Index Swap,
+            // ensurePartner below): a Sequential A/B partner is the engineer's
+            // pick, and none is a one-node line (final brief 2b).
             if (!cell.paired) {
                 const prior = s.priorClaims[action.node];
-                cell.paired = (prior && prior.paired_core_node) || freeBackPosition(s, action.node);
+                if (prior && prior.paired_core_node) cell.paired = prior.paired_core_node;
             }
             // NOTHING THE SWAP FORBIDS IS KEPT, as a swap change does: a back
             // handed to a 1-Robot Swap row is a partner the save refuses, with no
@@ -923,11 +926,15 @@ function droppedPresetCells(state, built) {
 }
 
 // An index position needs its structural partner; a fresh one takes the first
-// free back position in sequence order (SPEC §3).
+// free back position in sequence order (SPEC §3). A Sequential A/B position is
+// given none: its partner is the engineer's pick (the partner pick offers no
+// partner beside the positions), and none is a one-node line (final brief 2b).
+// It used to take the free back position too, which an engineer meaning a
+// one-node line had to notice and clear.
 function ensurePartner(state, node) {
     const cell = state.cells[node];
     if (!cell || !cell.on) return;
-    if (cell.mode !== 'two_robot_press_index' && cell.mode !== 'sequential') return;
+    if (cell.mode !== 'two_robot_press_index') return;
     if (cell.paired && state.cells[cell.paired]) return;
     const free = freeBackPosition(state, node);
     if (free) cell.paired = free;
@@ -2482,7 +2489,7 @@ function routingRoleOf(field) { return FIELD_ROLE[field] || ''; }
 //
 // TWO CHOREOGRAPHIES PAIR AND THEY PAIR WITH DIFFERENT THINGS, so they get
 // different sentences: a press index pairs with a BACK position (which is why
-// addPosition defaults its pair to freeBackPosition), and Sequential A/B flips
+// a fresh one takes the free back position, ensurePartner), and Sequential A/B flips
 // between two positions of any kind.
 //
 // THE NEXT ACTION IS ANOTHER POSITION. The desktop's Flows picker, the one
