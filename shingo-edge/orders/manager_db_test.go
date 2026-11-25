@@ -380,6 +380,52 @@ func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
 	}
 }
 
+// TestCreate_ARefusedMessageLeavesNoOrderCoreNeverHearsOf: an order's row and
+// its message to Core are written together or not at all. With the outbox
+// refusing the create's message (a trigger raises on its insert), each create
+// body answers an error and leaves no order row. Docket B12: the row was
+// written, then the outbox, then the status, each on its own, so the row stood
+// pending with nothing sent and the create answered as if it had worked.
+func TestCreate_ARefusedMessageLeavesNoOrderCoreNeverHearsOf(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		create func(*Manager) error
+	}{
+		{"retrieve", func(m *Manager) error {
+			_, err := m.CreateRetrieveOrder(RetrieveSpec{Quantity: 1, Delivery: "LINE-1", Origin: NoDemand()})
+			return err
+		}},
+		{"move", func(m *Manager) error {
+			_, err := m.CreateMoveOrder(nil, 1, "SRC-1", "LINE-1", false, NoDemand())
+			return err
+		}},
+		{"complex", func(m *Manager) error {
+			_, err := m.CreateComplexOrder(nil, 1, "LINE-1", "", []protocol.ComplexOrderStep{
+				{Action: "pickup", Node: "SRC-1"}, {Action: "dropoff", Node: "LINE-1"}}, NoDemand())
+			return err
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := testManagerDB(t)
+			mgr := NewManager(db, testEmitter{}, "edge.station")
+			_, err := db.DB.Exec(`CREATE TRIGGER outbox_refuses BEFORE INSERT ON outbox
+				BEGIN SELECT RAISE(ABORT, 'the outbox refuses'); END`)
+			testutil.MustNoErr(t, err, "the outbox's refusal")
+			err = c.create(mgr)
+			var rows int
+			testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM orders`).Scan(&rows), "count the orders")
+			if rows != 0 {
+				t.Errorf("%d order row(s) stand with no message to Core: the row and its message commit together", rows)
+			}
+			if err == nil {
+				t.Error("the create answered no error with its message refused")
+			}
+		})
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // PR 3.2 — HandleDispatchReply 8-way switch + unknown + missing-order.
 // ═══════════════════════════════════════════════════════════════════════
