@@ -62,7 +62,9 @@ Operator actions, by status:
   it empty (manifest cleared), a number releases it partial with that count. Parts pulled to lineside are
   recorded at the operator station, not here. A countdown shows when the staging hold expires.
 - **Submit** (`pending`): send an order that has not gone to Core.
-- **Abort**: cancel any order not yet `confirmed`, `cancelled`, `failed` or `skipped`, after a confirm.
+- **Abort**: cancel an order whose cart is not yet set down, after a confirm: any status but `delivered` and the
+  ended ones (`confirmed`, `cancelled`, `failed`, `skipped`). A delivered order offers only its Confirm, and a
+  cancel pressed on a page drawn before the delivery is refused with the reason.
 
 Statuses and transitions are in [order-lifecycle.md](../../docs/order-lifecycle.md).
 

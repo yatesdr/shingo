@@ -1,7 +1,6 @@
 package www
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -48,9 +47,6 @@ func TestEdgeOrders_AStagedOrderWhoseReleaseWentOutOffersNoRelease(t *testing.T)
 // row hid the cancel only for an order that had ended.
 func TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("final brief 1e red pin, red until a delivered row offers no cancel; run with SHINGO_KNOWN_RED=1")
-	}
 	html := renderOrdersBody(t, map[string]any{
 		"ActiveOrders": []domain.Order{
 			{ID: 31, UUID: "edge-in-transit", OrderType: protocol.OrderTypeRetrieve,
