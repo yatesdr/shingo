@@ -186,6 +186,10 @@ var neverDeadLetterWant = map[string]string{
 	// addressed station (C6): a lost declaration is a count the station never
 	// hears; a late one is rebased on its stream.
 	"data.inventory.uop_adjustment": "Core (bin service and manifest, the count declarations)",
+	// Added by the must-arrive table (final brief 5i): a lost confirm left Core
+	// reading delivered until its sweep, and for good on an order the sweep
+	// skips; a late one confirms only a delivered order.
+	"order.receipt": "Edge (orders manager)",
 }
 
 // msgTypeUniverse is every spelling a row's msg_type can take for a protocol

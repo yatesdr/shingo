@@ -421,7 +421,32 @@ type OrderCancel struct {
 	// CancelActorEdge it codes it abandoned. Additive: an older Core ignores it
 	// and codes every cancel a person's, as it always has.
 	Actor string `json:"actor,omitempty"`
+	// Intent marks a cancel that asks: the station has not ended its row and
+	// waits for Core's word. Core should decide it by where the order's cart is:
+	// an order still on its way is cancelled, and the terminal write's own
+	// order.update is the answer; an order whose cart is set down, or that had
+	// already ended, is not, and the answer is one order.error carrying
+	// CancelRefusedSetDown or CancelRefusedEnded and a sentence a person reads.
+	// False: the station ended its row before it sent (an older Edge, or a raw
+	// Kafka Direct envelope), and Core follows it as it always has. Additive:
+	// an older Core ignores it.
+	Intent bool `json:"intent,omitempty"`
 }
+
+// The order.error codes of Core's "cannot" to a cancel that asks
+// (OrderCancel.Intent): the order is not cancelled, and Detail is the sentence a
+// person reads. The station can tell the two apart: a cart set down is
+// confirmed at the station; an order that had already ended is ended by Core's
+// own word of it.
+const (
+	// CancelRefusedSetDown: the order's cart is set down where the order takes
+	// it (the order reads delivered, or its cart stands on its final drop with
+	// the order's claim released), so there is nothing left to stop.
+	CancelRefusedSetDown = "cancel_refused_set_down"
+	// CancelRefusedEnded: the order had already ended another way (confirmed,
+	// failed or skipped).
+	CancelRefusedEnded = "cancel_refused_ended"
+)
 
 // CancelActorEdge is OrderCancel.Actor on a cancel the Edge decided itself, not
 // a person at it: the robots it sends back from a line idle past its hour

@@ -205,6 +205,16 @@ var mustArrive = []MustArrive{
 		Lost: "a robot keeps working an order its operator ended",
 		Late: "it cancels what is still live, and is a no-op at Core on an order that has ended (dispatch.HandleOrderCancel)",
 	},
+	// A confirm (final brief 5i). It expired at 30 minutes, so one lost in a
+	// longer outage left Core reading delivered until its sweep confirmed the
+	// order, and for good on an order the sweep skips (skip_auto_confirm). The
+	// Edge stamps the exp at enqueue and its own outbox spends the retries, so
+	// this is the Edge's release, as the cancel's was.
+	{
+		Name: TypeOrderReceipt, Type: true, Sender: SentByEdge, NeverExpires: true, NeverDeadLetters: true,
+		Lost: "a cart confirmed at the station that Core reads delivered until its sweep confirms it, and for good on an order the sweep skips",
+		Late: "Core confirms only a delivered order, and a confirmed one is a no-op (dispatch.HandleOrderReceipt, LifecycleService.ConfirmReceipt)",
+	},
 	// Core's status tell (Core writes the row as "order.update"). It keeps its
 	// 10-minute TTL (defaultTTLs): only the dead letter is lifted.
 	{

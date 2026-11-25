@@ -217,6 +217,10 @@ var noExpiryWant = struct{ subjects, types []string }{
 	types: []string{
 		"order.cancel",
 		"order.ingest",
+		// Added by the must-arrive table (final brief 5i): a lost confirm left
+		// Core reading delivered until its sweep, and for good on an order the
+		// sweep skips; a late one confirms only a delivered order.
+		"order.receipt",
 		"order.release",
 	},
 }

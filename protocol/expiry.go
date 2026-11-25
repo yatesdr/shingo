@@ -17,7 +17,6 @@ var defaultTTLs = withNeverExpires(map[string]time.Duration{
 	TypeOrderAck:    10 * time.Minute,
 	TypeOrderUpdate: 10 * time.Minute,
 
-	TypeOrderReceipt:   30 * time.Minute,
 	TypeOrderWaybill:   30 * time.Minute,
 	TypeOrderError:     30 * time.Minute,
 	TypeOrderSkipped:   30 * time.Minute,
