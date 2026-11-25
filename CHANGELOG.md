@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: no migration; Core and Edges in either order.
+Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either order.
 
 - An order that has to move bins out of a lane to reach its cart, cancelled or re-planned while one of those moves is setting its bin down, lets that move finish and confirm; it used to cancel it and ask the fleet to stop its finished job, and a second cancel of the order answered the station twice
 - When one of those moves is cancelled by a person or stopped by the fleet and the order re-plans, its history now names that move, where it read "a dig leg failed" or "the dig's plan went stale"
@@ -48,6 +48,11 @@ Deploy: no migration; Core and Edges in either order.
 - A Sequential A/B position can run on one node with no partner (its paired core node left blank): each swap takes the old bin out, then brings the next, and a changeover takes the old part out and brings the new one
 - On the Processes page a Sequential A/B position with no partner carries one note in the bar beside Save, "PLN_01 has no partner: one node, empty from each lift until the next bin is set down", and the style still saves: the guard against a partner forgotten on a real A/B line
 - Setting up a Sequential A/B position on the Processes page, its partner pick offers "No partner (one node)" first and the page no longer picks a partner for it; a position with none says so on its row, is one card with its moves on the station picture, and has a one-slot glyph
+- A cancel at the Edge now asks Core and the order ends when Core cancels it: the Orders page's Cancel, a changeover's CANCEL and START, ABANDON, CANCEL SEND BACK and a line idle for its hour. Until Core answers the order stays as Core has it and reads "Cancel sent" (on the Orders page with how long ago, on the station's tile as its pill); it used to end on the Edge at once, before Core heard
+- Core answers "Not cancelled" with its reason when the cart is already set down (confirm it at the station) or the order had already ended; the Orders page shows that sentence under the order, and the station's pill says Not cancelled
+- With Core or Kafka unreachable a cancel stays "Cancel sent" until Core answers, and goes again when the Edge reconnects; the robot does what Core last told it either way. A changeover's CANCEL still ends the changeover and puts the style back at once, and its orders read "Cancel sent"
+- The Orders page's Cancel answers within 2 s: "Order cancelled", Core's sentence, or "Cancel sent; Core has not answered yet". A person's cancel pauses the position's auto-reorder when Core has cancelled the order, so a cancel Core refuses pauses nothing
+- A script that cancels an Edge order at /api/orders/{id}/abort still works for this release; the address is /api/orders/{id}/cancel, and /abort goes in the next
 
 ## v0.19.0 — 2026-11-22
 
