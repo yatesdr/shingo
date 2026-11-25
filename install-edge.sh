@@ -50,7 +50,7 @@ ASSUME_YES=no
 FORCE_REINSTALL=no
 # Seed timezone for a FRESH install's placeholder yaml. Default: the box's
 # own OS zone, which is a suggestion a human confirms at a plant whose OS
-# zone disagrees with the wall clock (Hopkinsville: OS Eastern, plant
+# zone disagrees with the wall clock (plant B: OS Eastern, plant
 # Central). --timezone overrides for unattended installs that know better.
 EDGE_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo "America/Chicago")
 # Distinguishes a zone somebody TYPED from one that merely defaulted to the OS
@@ -112,12 +112,12 @@ fi
 # Prerequisites:
 #   curl     — alert-on-stop.sh posts crash alerts to Teams via curl. A
 #              missing curl made the script silently log "WARN: webhook
-#              post failed" instead of anything actionable on Springfield
+#              post failed" instead of anything actionable on plant A
 #              2026-05-21, so we install it loudly here.
 #   sqlite3  — deploy/db-migration.sh shells out to the sqlite3 CLI for
 #              the WAL checkpoint before moving the DB into /var/lib.
 #              Without it the migration fails with "sqlite3: command not
-#              found" partway through (hit on Hopkinsville 2026-05-27).
+#              found" partway through (hit on plant B 2026-05-27).
 # apt-get is the only package manager we support; on anything else,
 # warn-and-continue — the service still works, only Teams alerts and
 # legacy-DB migration are degraded.
@@ -189,11 +189,11 @@ parse_config_flag() {
 # operator does before reinstalling. That is precisely when discovery fell
 # through to scanning the filesystem.
 #
-# Measured at Hopkinsville 2026-08-07: with the service stopped, the scan found
+# Measured at plant B 2026-08-07: with the service stopped, the scan found
 # three stray shingoedge.yaml files -- a copy inside the checkout, a `shingo-test`
 # tree pointing at localhost, and a pre-FHS relic under /opt -- so `--yes`
 # correctly refused to guess and the install aborted with the service already
-# down. Springfield had survived the same code path only because it happened to
+# down. Plant A had survived the same code path only because it happened to
 # carry exactly one stray file.
 #
 # The unit says what the operator DECLARED. It is present whether the process is
@@ -426,11 +426,11 @@ LEGACY_IS_FHS=no
 [ -n "$LEGACY_CONFIG" ] && [ "$LEGACY_CONFIG" = "/etc/shingo/shingoedge.yaml" ] && LEGACY_IS_FHS=yes
 
 # THE DESTINATION IS NEVER OVERWRITTEN. On 2026-07-29 this installer replaced
-# Springfield's live 37.7 MB Edge database with a stale 5.9 MB copy from
+# Plant A's live 37.7 MB Edge database with a stale 5.9 MB copy from
 # 2026-05-20 and reported "Migration verified" while doing it. The mechanism was
 # here: discovery keys on the YAML, and a legacy yaml left on disk routed to
 # MIGRATION even though FHS_DB_EXISTS was yes — computed just above, then never
-# consulted by the branch. Springfield only survived because someone had renamed
+# consulted by the branch. Plant A only survived because someone had renamed
 # the db file; the config was what the installer found.
 #
 # A populated /var/lib/shingo-edge/shingoedge.db means this box already lives on
@@ -522,7 +522,7 @@ echo "==> Building binary..."
 # writes "dev" into a database column rather than into a log line.
 #
 # The dubious-ownership explanation for the observed dev/unknown is REFUTED —
-# see the same block in install-core.sh for the measurement. Springfield's git
+# see the same block in install-core.sh for the measurement. Plant A's git
 # does not refuse root, every link in the -X chain works, and the next install
 # through this path stamped correctly. safe.directory is kept as hardening for
 # a box configured differently; it is a no-op where git already works and it
@@ -589,7 +589,7 @@ trap 'rm -f "$DEPLOY_MARKER"' EXIT
 # binary, because the swap happens further down this script. The relaunched
 # old process then satisfies the `systemctl start` and `is-active` checks at
 # the end, and the install reports success while the previous build runs.
-# That is exactly what happened at Springfield on 2026-07-20 (the auto-restart
+# That is exactly what happened at plant A on 2026-07-20 (the auto-restart
 # beat the binary swap by ~1s); see INCIDENT-springfield-stale-binary-deploy.
 #
 # `systemctl stop` is an INTENTIONAL exit, so the restart policy does not fire.
@@ -601,8 +601,12 @@ if [ "$UNIT_EXISTS" = "yes" ]; then
             echo "==> Stopping shingo-edge.service..."
             systemctl stop shingo-edge || true
             # Edge can be slow to shut down (the HTTP server has hit
-            # "shutdown: context deadline exceeded"), so give systemd room to
-            # finish; it escalates to SIGKILL itself per the unit's TimeoutStopSec.
+            # "shutdown: context deadline exceeded"). systemctl stop returns
+            # only once systemd has stopped the unit or killed it, and the unit
+            # sets no TimeoutStopSec (shingo-edge/deploy/shingo-edge.service),
+            # so the kill comes at systemd's default stop timeout
+            # (DefaultTimeoutStopSec, 90 s unless the host sets another); the
+            # wait below should find it stopped.
             for i in $(seq 1 45); do
                 systemctl is-active --quiet shingo-edge || break
                 sleep 1
@@ -661,18 +665,18 @@ fi
 # then -shm as three separate files with writes landing between them. That
 # is not a backup of any state the database was ever in:
 #
-#   * WAL mode (Springfield, and any edge on f34d5cad or later): the main
+#   * WAL mode (plant A, and any edge on f34d5cad or later): the main
 #     .db is stable only BETWEEN checkpoints. A checkpoint concurrent with
 #     the copy rewrites .db pages in place while tar is reading them and
 #     resets the -wal underneath it. Edge runs an hourly
 #     wal_checkpoint(TRUNCATE), so this is a scheduled collision, not a
 #     freak one.
-#   * Rollback-journal mode (Hopkinsville, and any edge predating f34d5cad
+#   * Rollback-journal mode (plant B, and any edge predating f34d5cad
 #     where the mattn-style DSN meant WAL never actually engaged): the main
 #     .db is modified IN PLACE during every transaction and the original
 #     pages live in shingoedge.db-journal — which this list never collected.
 #
-# MEASURED on a restored copy of the Springfield dump (20 MB,
+# MEASURED on a restored copy of plant A's dump (20 MB,
 # modernc.org/sqlite, writer running), not asserted from the docs:
 #
 #   WAL, ~750ms three-file copy under load
@@ -841,7 +845,7 @@ if [ ! -f /etc/shingo/shingoedge.yaml ]; then
         #
         # The timezone knob follows the same principle as station_uid: NEVER
         # INVENT ONE. Seeding the box's OS zone produces a plausible wrong
-        # number rather than a visible blank — at Hopkinsville the Pi reports
+        # number rather than a visible blank — at plant B the Pi reports
         # America/Indiana/Indianapolis while the plant runs Central. Empty is
         # honest: display falls back to UTC (visibly wrong, diagnosable) and
         # Core tells the edge the plant zone once it registers.
@@ -886,7 +890,7 @@ else
     echo "==> /etc/shingo/shingoedge.yaml already exists"
     # Narrow exception to "leave in place": a config whose timezone: is absent
     # or empty is an UNCONFIGURED clock — display falls back to UTC and
-    # hourly counts bucket in the box's OS zone (which at Hopkinsville is an
+    # hourly counts bucket in the box's OS zone (which at plant B is an
     # hour off the plant). Both live plants shipped with the key present but
     # empty, so "absent" alone would have matched neither.
     #
