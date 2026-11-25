@@ -7,6 +7,7 @@
 package scenarios
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -96,11 +97,15 @@ func (c *ksrCell) backfillOf(removal domain.Order) domain.Order {
 }
 
 // seqRelease is the operator's RELEASE of the removal at the line, which calls
-// the backfill; it is returned.
+// the backfill; it is returned. The cell's disposition when it has one (the
+// release modal's choice), else a plain release.
 func (c *ksrCell) seqRelease(label string, removal domain.Order) domain.Order {
 	c.t.Helper()
-	mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(removal.ID,
-		edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}), label+": release")
+	disp := edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}
+	if c.disp != nil {
+		disp = *c.disp
+	}
+	mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(removal.ID, disp), label+": release")
 	c.settle()
 	var backfill domain.Order
 	c.eventually(label+": the release at the line made the backfill", func() bool {
@@ -465,6 +470,108 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnMarket(t *testing.T) {
 				backfill := c.seqRelease("the request", removal)
 				c.seqLand("the request", removal, backfill)
 				c.seqConfirm("the request", removal, backfill)
+			})
+		}
+	}
+}
+
+// binAt is the node Core holds the bin labelled at, "" for none.
+func (c *ksrCell) binAt(label string) string {
+	c.t.Helper()
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	for _, b := range bins {
+		if b.Label == label {
+			return c.nodeName(b.NodeID)
+		}
+	}
+	return ""
+}
+
+// coreRoute logs each order's route as Core holds it: its source, its
+// delivery and its plan's stops.
+func (c *ksrCell) coreRoute(label string, ords ...domain.Order) {
+	c.t.Helper()
+	for _, o := range ords {
+		co := c.coreOf(o)
+		var stops []string
+		var steps []protocol.ComplexOrderStep
+		if err := json.Unmarshal([]byte(co.StepsJSON), &steps); err == nil {
+			for _, s := range steps {
+				stops = append(stops, s.Action+"("+s.Node+")")
+			}
+		}
+		c.t.Logf("%s: Core order %d (edge %d) %s -> %s status=%s cause=%q: %s", label, co.ID, o.ID,
+			co.SourceNode, co.DeliveryNode, co.Status, co.QueueCause, strings.Join(stops, " "))
+	}
+}
+
+// The owner's case with a dedicated home (final brief 2e, lane f-home): "what
+// if the market is also a dedicated home like hop will be doing". The line's
+// part has a pinned home on a dedicated-positions loader, named as the line's
+// inbound source and outbound destination, and the home holds the full the
+// backfill fetches: the removal (Order A) takes the line's emptied cart back to
+// be loaded, and the backfill (Order B) brings the home's full. On a paired A/B
+// side and on a one-node line, with one home and a free buffer, its buffer
+// holding an empty, no buffer, and a second home for the part standing bare,
+// the steady-state swap should run to the end: confirmed at both ends, the
+// home's full on the line and the old cart on a spot of the loader.
+//
+// IT FAILS IN EVERY CASE at 7a7d9a25, on both shapes, and is skipped unless
+// SHINGO_KNOWN_RED=1 (lane f-home's notes have the trace and the red output):
+//   - With a buffer free, A's drop moves off the occupied home to the buffer and
+//     A goes; B, made at A's release, lifts the home's full, and the loader
+//     park's Pattern A moves B's drop from the line onto the home it lifts from
+//     (a no-wait leg off a loader spot reads as a return there; nothing is in
+//     flight to it). B runs circular, both confirm, the line is left bare and
+//     the empty stands in the buffer, where nothing loads it
+//     (TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched).
+//   - With no buffer free, A waits queued at Core, loader-park-no-slot, and is
+//     never sent: the home holds the full, A has no sibling whose lift clears
+//     it, and the bare second home is never offered (Core's sentence names it
+//     all the same). RELEASE is refused and B is never made. A spot of the
+//     loader emptying by another door frees A, and B then runs circular.
+func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []struct {
+		name string
+		pair bool
+	}{{"a paired A/B side", true}, {"a one-node line", false}} {
+		for _, lc := range []struct {
+			name                      string
+			extraHomes, buffers, held int
+		}{
+			{"one home, a free buffer", 0, 1, 0},
+			{"one home, its buffer holding an empty", 0, 1, 1},
+			{"one home, no buffer", 0, 0, 0},
+			{"two homes, the second bare, no buffer", 1, 0, 0},
+			{"two homes, the second bare, a free buffer", 1, 1, 0},
+		} {
+			t.Run(shape.name+", "+lc.name, func(t *testing.T) {
+				if os.Getenv("SHINGO_KNOWN_RED") == "" {
+					t.Skip("final brief 2e (lane f-home) red pin, red until a sequential swap through its own home " +
+						"brings the line its cart; run with SHINGO_KNOWN_RED=1")
+				}
+				t.Parallel()
+				c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential,
+					plain: true, bareSpot: true, pair: shape.pair, home: true,
+					extraHomesA: lc.extraHomes, buffers: lc.buffers, heldBuffers: lc.held})
+				// RELEASE EMPTY: the cart goes back empty, to be loaded.
+				c.disp = &edgeengine.ReleaseDisposition{Mode: edgeengine.DispositionCaptureLineside, CalledBy: "ksr-operator"}
+				mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+				c.settle()
+				removal := c.seqRemoval("the request", seqDoors[0].press)
+				defer func() { c.coreRoute("at the end", c.rows()...) }()
+				c.seqAtTheLine("the request", removal)
+				backfill := c.seqRelease("the request", removal)
+				c.tick()
+				c.coreRoute("after the release", removal, backfill)
+				c.seqLand("the request", removal, backfill)
+				c.seqConfirm("the request", removal, backfill)
+				c.lineHolds("after the cycle", "KSR-HOME-A-FULL")
+				if at := c.binAt("KSR-LINE-BIN"); !strings.HasPrefix(at, "KSR-HOME-A") && !strings.HasPrefix(at, "KSR-BUF-") {
+					t.Errorf("the old cart is at %q after the cycle, want it on a spot of the loader", at)
+				}
 			})
 		}
 	}

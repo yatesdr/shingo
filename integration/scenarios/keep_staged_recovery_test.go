@@ -40,6 +40,7 @@ import (
 	coreconfig "shingocore/config"
 	"shingocore/dispatch"
 	coreengine "shingocore/engine"
+	corestore "shingocore/store"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
@@ -101,6 +102,10 @@ const (
 	ksrPartC  = "KSR-PC"   // the blocker in B's lane (case e)
 	ksrDeck   = "KSR-DECK" // a press's paired position (plain press cells)
 	ksrPair   = "KSR-PAIR" // a sequential line's partner position (pair cells)
+
+	// home cells: each part's pinned home on the cell's loader.
+	ksrHomeA = "KSR-HOME-A1"
+	ksrHomeB = "KSR-HOME-B1"
 )
 
 // ksrCell is one keep-staged cell, Core and Edge, on style A with an A spare
@@ -225,6 +230,18 @@ type ksrOpts struct {
 	// freeA of them.
 	loopA bool
 	freeA int
+	// home: each style's inbound source and outbound destination is its part's
+	// pinned home on one dedicated-positions loader (KSR-LOADER, produce,
+	// operator-driven): KSR-HOME-A1 holding a full of A unless bareHomeA, and
+	// KSR-HOME-B1 a full of B. The markets stand unused. extraHomesA more homes
+	// pinned to A's part (KSR-HOME-A2...) stand empty; buffers is the loader's
+	// buffer slots (KSR-BUF-1...), the first heldBuffers of them holding an empty
+	// of A's carrier.
+	home        bool
+	bareHomeA   bool
+	extraHomesA int
+	buffers     int
+	heldBuffers int
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -329,6 +346,36 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	}
 	for i := 0; i < stockedA && !o.dryA; i++ {
 		stock(fmt.Sprintf("KSR-A%d", i+1), ksrPartA, c.typeA, slotsA[i])
+	}
+	if o.home {
+		// The loader's members are stations with no parent, as a plant's
+		// positions are; a buffer pins no part.
+		loader, err := coreDB.CreateLoader(corestore.Loader{Name: "KSR-LOADER", Role: string(protocol.ClaimRoleProduce),
+			Layout: protocol.LoaderLayoutDedicatedPositions, Replenishment: protocol.LoaderReplenishmentOperator})
+		mustNil(t, err, "the loader")
+		member := func(name, part, kind string) *corenodes.Node {
+			n := node(&corenodes.Node{Name: name})
+			mustNil(t, coreDB.UpsertLoaderHome(corestore.LoaderHome{LoaderID: loader, PositionNodeID: n.ID,
+				PayloadCode: part, Kind: kind}), "loader member "+name)
+			return n
+		}
+		homeA := member(ksrHomeA, ksrPartA, protocol.LoaderHomeKindHome)
+		for i := 2; i <= 1+o.extraHomesA; i++ {
+			member(fmt.Sprintf("KSR-HOME-A%d", i), ksrPartA, protocol.LoaderHomeKindHome)
+		}
+		homeB := member(ksrHomeB, ksrPartB, protocol.LoaderHomeKindHome)
+		for i := 1; i <= o.buffers; i++ {
+			buf := member(fmt.Sprintf("KSR-BUF-%d", i), "", protocol.LoaderHomeKindBuffer)
+			if i <= o.heldBuffers {
+				empty := &corebins.Bin{BinTypeID: c.typeA.ID, Label: fmt.Sprintf("KSR-BUF-EMPTY-%d", i), NodeID: &buf.ID,
+					Status: "available"}
+				mustNil(t, coreDB.CreateBin(empty), "an empty in "+buf.Name)
+			}
+		}
+		if !o.bareHomeA {
+			stock("KSR-HOME-A-FULL", ksrPartA, c.typeA, homeA)
+		}
+		stock("KSR-HOME-B-FULL", ksrPartB, c.typeB, homeB)
 	}
 	if o.buriedB {
 		// B's market is one lane two deep: the blocker (another part, B's
@@ -437,6 +484,12 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 			}
 			if o.loopA && s.style == c.styleA {
 				in.OutboundDestination = ksrMktA
+			}
+			if o.home {
+				in.InboundSource, in.OutboundDestination = ksrHomeA, ksrHomeA
+				if s.style == c.styleB {
+					in.InboundSource, in.OutboundDestination = ksrHomeB, ksrHomeB
+				}
 			}
 			if !o.plain {
 				// The spot is the keep-staged node. On the two staging modes it is
