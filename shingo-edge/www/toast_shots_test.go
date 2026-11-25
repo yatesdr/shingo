@@ -790,3 +790,207 @@ const toastShotDriver = shotStream + `(function () {
   }, 1500);
 })();
 `
+
+// TestLoaderHomeStagedShots — the loader board's card for a dedicated loader's
+// home whose cart a line's robot is staged under (brief H H3), at the kiosk's
+// 1280x800, and what its CLEAR BIN answers there.
+//
+//	h3-loader-home-card-staged-1280.png    the home's card: LOADED (40 UoP), No
+//	                                       active orders, CLEAR BIN; nothing on
+//	                                       it says a robot stands under the cart
+//	h3-loader-home-clear-refused-1280.png  CLEAR BIN pressed: Core's refusal, as
+//	                                       the Edge's door answers it
+//
+// The page, the view and the card are the real ones: the engine's router, the
+// loader's screen made by its own door (CreateLoaderBoard) from Core's node
+// list, Core's bins copy with the cart on the home, the Edge's count for the
+// home at 40 (what a LOAD seats), and the line's supply staged at the home on
+// another process (its row is the line's, born with no source, as the Edge's
+// complex orders are). One thing is the harness's: no Core answers here, so
+// the CLEAR BIN's door is answered as the Edge's door answers when Core
+// refuses; TestScenario_TwoRobotLine_ThroughItsHome_LoaderCardWhileStaged
+// (integration/scenarios) holds that answer across the two modules. The
+// stand-in event stream is TestStationToastShots's. Synthetic names only.
+//
+// Run:
+//
+//	cd shingo-edge && TOAST_SHOTS_OUT=<dir> go test -tags shots -count=1 \
+//	    -run '^TestLoaderHomeStagedShots$' -v ./www/
+func TestLoaderHomeStagedShots(t *testing.T) {
+	t.Parallel()
+	out := os.Getenv("TOAST_SHOTS_OUT")
+	if out == "" {
+		t.Skip("TOAST_SHOTS_OUT not set")
+	}
+	chrome := chromeBinary()
+	if chrome == "" {
+		t.Fatal("no Chrome binary: set COMPOSER_SHOTS_CHROME")
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", out, err)
+	}
+	const home, buffer, line, cart, part = "SYN-HOME-01", "SYN-BUF-01", "SYN-LINE-01", "SYN-CART-01", "SYN-PART-A"
+
+	db := testdb.Open(t)
+	cfg := config.Defaults()
+	cfg.StationUID = "shots.loader"
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	eng.SetPayloadBinTypes(nil)
+	eng.Start()
+	t.Cleanup(eng.Stop)
+	eng.ApplyNodeList(&protocol.NodeListResponse{
+		Nodes: []protocol.NodeInfo{{Name: line}, {Name: home}, {Name: buffer}},
+		Loaders: []protocol.LoaderInfo{{Name: "SYN Loader", LoaderKey: "loader:1", Role: "produce",
+			Layout: protocol.LoaderLayoutDedicatedPositions, Replenishment: protocol.LoaderReplenishmentOperator,
+			Positions: []protocol.LoaderPosition{
+				{CoreNodeName: home, PayloadCode: part, HomeKind: protocol.LoaderHomeKindHome, Ordinal: 1},
+				{CoreNodeName: buffer, HomeKind: protocol.LoaderHomeKindBuffer, Ordinal: 2},
+			}}},
+	})
+	loadProc, err := db.CreateProcess("SYN-LOAD-OPS", "the loader's screen", "", "", false)
+	if err != nil {
+		t.Fatalf("the loader's process: %v", err)
+	}
+	station, err := eng.StationService().CreateLoaderBoard("loader:1", loadProc)
+	if err != nil {
+		t.Fatalf("the loader's screen: %v", err)
+	}
+	windows, err := db.ListProcessNodesByStation(station)
+	if err != nil {
+		t.Fatalf("the screen's windows: %v", err)
+	}
+	var homeID int64
+	for _, n := range windows {
+		if n.CoreNodeName == home {
+			homeID = n.ID
+		}
+	}
+	if homeID == 0 {
+		t.Fatalf("the loader's screen has no window at %s (%d windows)", home, len(windows))
+	}
+	if _, err := db.EnsureProcessNodeRuntime(homeID); err != nil {
+		t.Fatalf("the home's runtime: %v", err)
+	}
+	if err := db.SetProcessNodeRuntime(homeID, nil, 40); err != nil {
+		t.Fatalf("the home's count after its LOAD: %v", err)
+	}
+	lineProc, err := db.CreateProcess("SYN-LINE", "the line", "", "", false)
+	if err != nil {
+		t.Fatalf("the line's process: %v", err)
+	}
+	lineNode, err := db.CreateProcessNode(processes.NodeInput{ProcessID: lineProc, CoreNodeName: line, Code: line,
+		Name: line, Sequence: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("the line's position: %v", err)
+	}
+	supply, err := db.CreateOrder("5a1f0c2e-0000-4000-8000-000000000031", orders.TypeComplex, &lineNode, false, 1, line,
+		"", "", protocol.Height{}, false, part, "", "")
+	if err != nil {
+		t.Fatalf("the line's supply: %v", err)
+	}
+	if err := db.UpdateOrderStatus(supply, string(protocol.StatusStaged)); err != nil {
+		t.Fatalf("the supply staged: %v", err)
+	}
+	var rows []protocol.NodeBinsRow
+	for _, n := range eng.StationService().WatchedBinNodes() {
+		row := protocol.NodeBinsRow{Node: n, State: protocol.BinsStateEmpty}
+		if n == home {
+			row = protocol.NodeBinsRow{Node: n, State: protocol.BinsStateOccupied, Occupied: true, BinID: 1,
+				BinLabel: cart, BinTypeCode: "SYN-CARRIER", PayloadCode: part, ManifestConfirmed: true, Stocked: true,
+				UOPCapacity: 40}
+		}
+		rows = append(rows, row)
+	}
+	snap := protocol.NodeBinsSnapshot{Rows: rows, Groups: []protocol.NodeBinsGroup{}}
+	if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+		t.Fatalf("the bins copy's digest: %v", err)
+	}
+	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("Core's bins copy: %v", err)
+	}
+
+	const refusal = "clear bin: Not cleared: a robot is staged at " + home + " to take " + cart + " to " + line + "."
+	router := shotsRouter(t, eng)
+	srv := shotsServer(t, router, func(mux *http.ServeMux) {
+		mux.HandleFunc("/__shots/loader-driver.js", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			fmt.Fprintf(w, loaderShotDriver, r.URL.Query().Get("shot"), homeID)
+		})
+		mux.HandleFunc(fmt.Sprintf("/api/process-nodes/%d/clear-bin", homeID), func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "{\"error\":%q}\n", refusal)
+		})
+		mux.HandleFunc("/operator/station/", func(w http.ResponseWriter, r *http.Request) {
+			plain := r.Clone(r.Context())
+			plain.Header.Del("Accept-Encoding")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, plain)
+			page := rec.Body.String()
+			if !strings.Contains(page, "</body>") {
+				t.Errorf("the station page has no </body> to put the driver before:\n%.400s", page)
+			}
+			page = strings.Replace(page, "</body>",
+				`<script src="/__shots/loader-driver.js?shot=`+r.URL.Query().Get("shot")+`"></script></body>`, 1)
+			for k, v := range rec.Header() {
+				if k != "Content-Length" && k != "Etag" {
+					w.Header()[k] = v
+				}
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write([]byte(page))
+		})
+	})
+
+	for _, s := range []struct{ shot, file string }{
+		{"card", "h3-loader-home-card-staged-1280.png"},
+		{"refused", "h3-loader-home-clear-refused-1280.png"},
+	} {
+		u := fmt.Sprintf("%s/operator/station/%d?shot=%s", srv.URL, station, s.shot)
+		target := filepath.Join(out, s.file)
+		_ = os.Remove(target)
+		shotChrome(t, chrome, out, u, "--screenshot="+target)
+		info, err := os.Stat(target)
+		if err != nil || info.Size() < 10_000 {
+			t.Fatalf("%s missing or blank: %v", target, err)
+		}
+		dom := shotChrome(t, chrome, out, u, "--dump-dom")
+		if !strings.Contains(dom, `data-shot-done="`+s.shot+`"`) {
+			t.Errorf("%s: the driver did not finish (no data-shot-done)", s.shot)
+		}
+		for _, want := range []string{"LOADED (40 UoP)", "No active orders", ">CLEAR BIN<"} {
+			if !strings.Contains(dom, want) {
+				t.Errorf("%s: the card does not say %q", s.shot, want)
+			}
+		}
+		if up := toastsUp(dom); s.shot == "refused" && !strings.Contains(up, refusal) {
+			t.Errorf("refused: the toasts read %s, want the door's refusal", up)
+		}
+		t.Logf("wrote %s (%d bytes); toasts up: %s", target, info.Size(), toastsUp(dom))
+	}
+}
+
+// loaderShotDriver is TestLoaderHomeStagedShots's page driver (after the
+// stand-in stream), with the shot's name at %[1]q and the home's process node
+// at %[2]d. Once the board has drawn (1.5 s of virtual time) it opens the
+// home's card through the board's own module; the refused shot then presses
+// the card's CLEAR BIN and waits for the answer's toast.
+const loaderShotDriver = shotStream + `(function () {
+  var still = document.createElement('style');
+  still.textContent = '.notice-toast { animation: none !important; }';
+  document.head.appendChild(still);
+  var shot = %[1]q, node = %[2]d;
+  var done = function () { document.body.setAttribute('data-shot-done', shot); };
+  setTimeout(async function () {
+    var modal = await import('/static/operator-station/operator-modal.js');
+    modal.openModal(node);
+    setTimeout(function () {
+      if (shot === 'card') { done(); return; }
+      var btn = document.querySelector('[data-action="/api/process-nodes/' + node + '/clear-bin"]');
+      if (!btn) { document.body.setAttribute('data-shot-done', 'no-clear-button'); return; }
+      btn.click();
+      setTimeout(done, 1500);
+    }, 500);
+  }, 1500);
+})();
+`
