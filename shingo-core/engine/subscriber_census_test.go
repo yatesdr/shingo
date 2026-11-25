@@ -25,7 +25,9 @@ package engine
 // Subscribe, SubscribeTypes or SubscribeTyped (none exists); which of a
 // function's subscriptions a given engine makes (16 sit behind three nil
 // checks: the lane gate's 12 behind the dispatcher's, two behind the threshold
-// monitor's, two behind the sourceability monitor's); what a handler does.
+// monitor's, two behind the sourceability monitor's); what a handler does. The
+// order the subscribers run in on a real engine is
+// TestBusOrder_ADeliveryAndACancel (cmd/shingocore).
 
 import (
 	"fmt"
