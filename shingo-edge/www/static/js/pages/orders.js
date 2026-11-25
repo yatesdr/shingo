@@ -115,8 +115,10 @@ async function cancelOrder(orderID) {
         const res = await api.post('/api/orders/' + orderID + '/cancel', {});
         if (res && res.pending) toast(res.notice, 'info');
         else toast('Order cancelled', 'success');
-        htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e.message, 'error'); }
+    // The rows redraw on every answer: Core's refusal changes the row too (its
+    // status Core's, its sentence under it).
+    htmx.trigger(document.body, 'refreshOrders');
 }
 
 // Staged-expiry and fault clocks tick from shared installLiveDurations
