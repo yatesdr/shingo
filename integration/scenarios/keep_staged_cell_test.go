@@ -20,13 +20,11 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
 
 	"shingo/protocol/debuglog"
 	coreconfig "shingocore/config"
 	coreengine "shingocore/engine"
 	"shingocore/fleet/simulator"
-	coremessaging "shingocore/messaging"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
@@ -165,23 +163,20 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	}
 	mustNil(t, edge.DB.SetProcessNodeRuntime(nodeID, &claimA, 30), "runtime claim")
 
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", core.eng.Dispatcher())
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
-	router.Register(coreRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
-	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
-	askKinds := registerAsks(dataSubjects(coreRouter), coreDB, core.doors, coreHandler)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	// Core's tables as main builds them, less what this cell leaves out: every
+	// subject but the asks (its Edge also sends demand origins, never routed
+	// here) and every hook (the rig pushes the bins itself).
+	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
+			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.SubjectEdgeAsk),
+		coreharness.HooksOnly())
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
 	push := harness.StartBinsPush(t, coreDB, edge.Engine)
 	bus.SetBinsPush(push)
-	push.AnswerAsks(askKinds)
+	push.AnswerAsks(coreSide.AskKinds)
 	settle := func() {
 		for i := 0; i < 20; i++ {
 			if bus.PumpAll() == 0 {
