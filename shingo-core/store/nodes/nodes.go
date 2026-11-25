@@ -5,7 +5,7 @@
 // and node-state queries out of the flat store/ package and into this
 // sub-package. The outer store/ keeps one-line delegate methods on
 // *store.DB; callers name nodes.Node and its siblings directly. Cross-aggregate helpers (those that join bins or
-// payloads — GetGroupLayout, ListNodeStates, ListPayloadsForNode,
+// payloads — GetGroupLayout, ListNodeStates, GetEffectivePayloads,
 // FindSourceBinInLane, etc.) stay at the outer store/ level as
 // composition methods.
 package nodes

@@ -24,7 +24,7 @@ import (
 // payloads.go re-export (store.Payload).
 type Payload = domain.Payload
 
-// SelectCols is exported so cross-aggregate readers (e.g. ListPayloadsForNode
+// SelectCols is exported so cross-aggregate readers (e.g. GetEffectivePayloads
 // at the outer store/ level) can reuse the column list.
 const SelectCols = `id, code, description, uop_capacity, robot_group, advanced_load_sequence, near_empty_enabled, near_empty_robot_group, near_empty_threshold_pct, tote_layers, uop_per_tote, created_at, updated_at`
 

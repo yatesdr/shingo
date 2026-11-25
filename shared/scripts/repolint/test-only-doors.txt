@@ -27,7 +27,6 @@ door shingo-core/store DB.FailOrderAtomic UNAUDITED: 6 test reference(s), no pro
 door shingo-core/store DB.ListNodeTypes UNAUDITED: 2 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.ListOrdersByOrigin UNAUDITED: 3 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.ListOrphanFindings UNAUDITED: 2 test reference(s), no product caller, at the rule's start
-door shingo-core/store DB.ListPayloadsForNode UNAUDITED: no caller at all at the rule's start
 door shingo-core/store DB.MoveBinClearingStaging UNAUDITED: 30 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.MoveBinOffTransit UNAUDITED: no caller at all at the rule's start
 door shingo-core/store DB.MoveBinToTransit UNAUDITED: 9 test reference(s), no product caller, at the rule's start

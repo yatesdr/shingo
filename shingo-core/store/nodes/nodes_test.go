@@ -16,7 +16,8 @@ import (
 )
 
 // countNodePayloads peeks directly at the node_payloads junction table, since
-// ListPayloadsForNode lives in the outer store/ package (returns *Payload).
+// the readers that return a node's payloads live in the outer store/ package
+// (they return *Payload; GetEffectivePayloads).
 func countNodePayloads(t *testing.T, db *sql.DB, nodeID int64) int {
 	t.Helper()
 	var n int

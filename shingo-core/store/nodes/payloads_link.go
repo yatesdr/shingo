@@ -4,7 +4,7 @@ import "database/sql"
 
 // AssignPayload links a payload template to a node (upsert).
 // Owns the node_payloads junction table from the node side; payload-returning
-// queries (ListPayloadsForNode, GetEffectivePayloads) live at outer store/
+// queries (GetEffectivePayloads) live at outer store/
 // because they return *Payload.
 func AssignPayload(db *sql.DB, nodeID, payloadID int64) error {
 	_, err := db.Exec(`INSERT INTO node_payloads (node_id, payload_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, nodeID, payloadID)

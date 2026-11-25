@@ -20,20 +20,6 @@ func (db *DB) UnassignPayloadFromNode(nodeID, payloadID int64) error {
 	return nodes.UnassignPayload(db.DB, nodeID, payloadID)
 }
 
-// ListPayloadsForNode returns the directly-assigned payload templates for a
-// node. Cross-aggregate (nodes ↔ payloads).
-func (db *DB) ListPayloadsForNode(nodeID int64) ([]*payloads.Payload, error) {
-	rows, err := db.Query(fmt.Sprintf(`
-		SELECT %s FROM payloads
-		WHERE id IN (SELECT payload_id FROM node_payloads WHERE node_id=$1)
-		ORDER BY code`, payloads.SelectCols), nodeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return payloads.ScanPayloads(rows)
-}
-
 // ListNodesForPayload returns all nodes that have the given payload assigned.
 // Cross-aggregate (nodes ↔ payloads).
 func (db *DB) ListNodesForPayload(payloadID int64) ([]*nodes.Node, error) {
