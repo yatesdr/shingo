@@ -56,7 +56,8 @@ type Edge struct {
 // to round-trip cleanly.
 //
 // Subsystems intentionally NOT wired (and the rationale):
-//   - Kafka client, outbox drainer: harness.Bus + pump.go substitute.
+//   - Kafka client, outbox drainer: harness.Bus + pump.go substitute. The
+//     engine's direct sends ride the outbox to the Bus.
 //   - Heartbeater: emits register / heartbeat envelopes Core ignores in
 //     scenarios; adds noise without coverage.
 //   - InventoryDeltaReporter: HandleBinPickedUp's flush call already
@@ -95,6 +96,17 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	eng.SetPreflightSource(stockedPreflight{})
 	eng.Start()
 	t.Cleanup(eng.Stop)
+	// The engine's direct sends (its bins watch list, its order reconcile)
+	// through the outbox to the Bus, as main.go's data sender publishes them
+	// to the broker: the Edge's own door decides when the list goes.
+	eng.SetSendFunc(func(env *protocol.Envelope) error {
+		data, err := env.Encode()
+		if err != nil {
+			return err
+		}
+		_, err = db.EnqueueOutbox(data, "data.send")
+		return err
+	})
 
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 
@@ -120,6 +132,12 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
 		eng.HandleBinReturn(*br)
+	})
+	// Core's node-bins feed, the answer to the watch list, as main.go routes it.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinsSnapshot, func(_ *protocol.Envelope, snap *protocol.NodeBinsSnapshot) {
+		if err := eng.ApplyNodeBinsSnapshot(*snap); err != nil {
+			t.Logf("edge harness: node-bins snapshot: %v", err)
+		}
 	})
 	// Core's answers to this Edge's asks, as the production composition root
 	// routes them (cmd/shingoedge/main.go): applied by kind, handed to a waiter.
