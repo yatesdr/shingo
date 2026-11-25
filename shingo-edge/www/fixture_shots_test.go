@@ -135,6 +135,13 @@ func fxSwap(lane, from, to string) *domain.CellClaim {
 		InboundSource: from, OutboundDestination: to}
 }
 
+// fxSeq is a Sequential A/B position: partner names its pair, blank a one-node
+// line (final brief 2b).
+func fxSeq(partner, from, to string) *domain.CellClaim {
+	return &domain.CellClaim{SwapMode: string(protocol.SwapModeSequential), PairedCoreNode: partner,
+		InboundSource: from, OutboundDestination: to}
+}
+
 // fxCell is a synthetic station 1 whose pull is itself.
 func fxCell(code string, positions []domain.CellPosition, staging []domain.CellStaging, groups map[string][]string) realCell {
 	pic := domain.CellPicture{Positions: positions, Staging: staging, Groups: groups, Geometry: true}
@@ -226,8 +233,61 @@ func fixtureCells() []fixtureCell {
 		fxAt("ALN_03", 3, 5.0, 0.3, 1, fxSwap("SLN_02", "SMN_W03", "SMN_W03")),
 	}
 	grouped := recipeSeed{name: press6RecipeName, json: press6Recipe, stamp: true}
+	// A CONSUME LINE WITH A ONE-NODE SEQUENTIAL A/B POSITION (final brief 2d):
+	// SYN-CL-01 runs Sequential A/B with no partner, beside an A/B pair and a
+	// 2‑Robot Swap; SYN-CL-05 is a free back position the partner pick offers.
+	// A line 1.5 m a spot, invented. The fresh line has the same shape and no
+	// flow yet, for Setup's First style.
+	const clIn, clOut = "SYN-MKT-IN", "SYN-MKT-OUT"
+	consumeLine := []domain.CellPosition{
+		fxAt("SYN-CL-01", 1, 0, 0, 1, fxSeq("", clIn, clOut)),
+		fxAt("SYN-CL-02", 2, 1.5, 0, 1, fxSeq("SYN-CL-03", clIn, clOut)),
+		fxAt("SYN-CL-03", 3, 3.0, 0, 1, fxSeq("SYN-CL-02", clIn, clOut)),
+		fxAt("SYN-CL-04", 4, 4.5, 0, 1, fxSwap("SYN-SLN-04", clIn, clOut)),
+		fxBack(fxAt("SYN-CL-05", 5, 6.0, 1.2, 0, nil)),
+	}
+	freshLine := []domain.CellPosition{
+		fxAt("SYN-FS-01", 1, 0, 0, 1, nil),
+		fxAt("SYN-FS-02", 2, 1.5, 0, 1, nil),
+		fxBack(fxAt("SYN-FS-03", 3, 3.0, 1.2, 0, nil)),
+	}
+	consume := func(string, string) protocol.ClaimRole { return protocol.ClaimRoleConsume }
+	// Off the plant map, the station draws the module picture.
+	offMapLine := slices.Clone(consumeLine)
+	for i := range offMapLine {
+		offMapLine[i] = fxOffMap(offMapLine[i])
+	}
 
 	return []fixtureCell{
+		{
+			key: "consumeline", title: "Consume line shape, one position on one node (final brief 2d)",
+			cell: fxCell("CL", consumeLine, []domain.CellStaging{fxLane("SYN-SLN-04", 4.5, -1.2)}, nil),
+			// No recipe: at 37146992 a recipe saved from this style is refused
+			// (SYN-CL-01 has no partner), and the before shots need the same seed.
+			opts: seedOpts{name: fxNames("Consume line shape"), role: consume, recipes: []recipeSeed{},
+				parts: []string{"SYN-CL-P1", "SYN-CL-P2", "SYN-CL-P3", "SYN-CL-P4"}},
+			notes: []string{"SYN-CL-01 is a Sequential A/B position with no partner: a one-node line"},
+			shots: consumeLineShots,
+		},
+		{
+			key: "consumeline-nomap", title: "The consume line shape off the plant map: the station's module picture (final brief 2d)",
+			cell: fxCell("CN", offMapLine, nil, nil),
+			opts: seedOpts{name: fxNames("Consume line shape, off the map"), role: consume, recipes: []recipeSeed{},
+				parts: []string{"SYN-CN-P1", "SYN-CN-P2", "SYN-CN-P3", "SYN-CN-P4"}},
+			shots: func(t *testing.T, sc seededCell, c realCell) []shotSpec {
+				return []shotSpec{flowShot(sc, "no mock: final brief 2d")}
+			},
+		},
+		{
+			key: "freshline", title: "Consume line shape with no flow yet, for Setup's First style (final brief 2d)",
+			cell: fxCell("FS", freshLine, nil, nil),
+			opts: seedOpts{name: fxNames("Fresh line shape"), role: consume, parts: []string{"SYN-FS-P1", "SYN-FS-P2"},
+				routing: []domain.RoutingNodeInput{
+					{CoreNodeName: clIn, Role: domain.RoutingRoleSource},
+					{CoreNodeName: clOut, Role: domain.RoutingRoleDestination},
+				}},
+			shots: freshLineShots,
+		},
 		{
 			key: "press6", title: "Press 6 shape (Press 6's node names, invented coordinates)",
 			cell: fxCell("P6", press, nil, press6DockGroups),
@@ -376,6 +436,47 @@ func fallbackShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 			"relation picture asked for, one position off the map (1280)", ""),
 		flowShot(sc, ""),
 	}, spotsShots(sc, card, hash, "", func(string, string) string { return "" }, "PLN_008")...)
+}
+
+// consumeLineShots are the screens a one-node Sequential A/B position changes
+// (final brief 2d): the desktop Styles tab, its partner pick, its swap menu
+// and its row's robot work list, then the station's flow panel and relation
+// picture. Each click state's `want` is text only the clicked control shows,
+// so the frame driver makes the click (it clicks only when the URL alone does
+// not reach the state): the free back SYN-CL-05 is folded off the tab and
+// listed in the partner pick only; no row runs a 1‑Robot Swap.
+func consumeLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
+	const mock = "no mock: final brief 2d"
+	desk := func(state, what, want string, clicks ...string) shotSpec {
+		return pageShot(frame{src: fmt.Sprintf("/processes?process=%d#tab=flows", sc.processID), w: 1440, h: 900,
+			svg: "#pd-svg", want: want, clicks: clicks}, state, what, mock, "")
+	}
+	chip := func(node, kind string) string {
+		return fmt.Sprintf(`.pd-postbl [data-act="pick"][data-node="%s"][data-kind="%s"]`, node, kind)
+	}
+	return []shotSpec{
+		desk("styles-1440", "the Styles tab: SYN-CL-01 Sequential A/B with no partner, an A/B pair, a 2‑Robot Swap",
+			"SYN-CL-04"),
+		desk("partner-pick-1440", "SYN-CL-01's partner pick open", "SYN-CL-05", chip("SYN-CL-01", "col:partner:paired")),
+		desk("mode-menu-1440", "SYN-CL-01's swap menu open", "1‑Robot Swap", chip("SYN-CL-01", "mode")),
+		pageShot(frame{src: fmt.Sprintf("/processes?process=%d#tab=flows", sc.processID), w: 1440, h: 900, svg: "#pd-svg",
+			want: "Robot work lists", clicks: []string{`.pd-postbl [data-row="SYN-CL-01"] td:not(.pos)`},
+			scroll: "Robot work lists"}, "work-list-1440", "SYN-CL-01's row clicked: its robot work lists", mock, ""),
+		flowShot(sc, mock),
+		relationShot(sc, "Consume line shape", "relation-1280", "relation", 1280,
+			"the station's picture by relation (1280)", mock),
+	}
+}
+
+// freshLineShots is Setup's First style on a line with no flow yet, its first
+// position set to Sequential A/B: the partner pick as it starts (final brief
+// 2d).
+func freshLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
+	return []shotSpec{pageShot(frame{src: fmt.Sprintf("/processes?process=%d#tab=setup", sc.processID), w: 1440, h: 900,
+		svg: "#pd-svg", want: "Paired core node",
+		clicks: []string{`[data-act="setup-style"]`, `[data-act="fs-mode"][data-mode="sequential"]`}},
+		"first-style-1440", "Setup › First style: SYN-FS-01 set to Sequential A/B", "no mock: final brief 2d",
+		"First style draws no cell picture, so the frame driver cannot measure it: shot unmeasured")}
 }
 
 // ── plant A, before and after ──────────────────────────────────────────────

@@ -315,6 +315,10 @@ type seedOpts struct {
 	recipes []recipeSeed
 	// offers are staging lanes the routing set offers beyond the claims' own.
 	offers []string
+	// routing are routing rows beyond the claims' own, for a line with no flow
+	// yet (Setup's Nodes and part step asks for an inbound and an outbound);
+	// Core is given their nodes too.
+	routing []domain.RoutingNodeInput
 	// parts is the process's part set.
 	parts []string
 }
@@ -493,6 +497,13 @@ func seedRealCell(t *testing.T, c realCell, opts seedOpts, mount func(mux *http.
 			CoreNodeName: lane, Role: domain.RoutingRoleStaging, Enabled: true, Sequence: 100 + i})
 		must(t, err, "offered lane "+lane)
 	}
+	var routingNodes []protocol.NodeInfo
+	for i, r := range opts.routing {
+		r.ProcessID, r.Enabled, r.Sequence = sc.processID, true, 200+i
+		_, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, r)
+		must(t, err, "routing "+r.CoreNodeName)
+		routingNodes = append(routingNodes, protocol.NodeInfo{Name: r.CoreNodeName})
+	}
 	if len(opts.parts) > 0 {
 		must(t, db.ReplaceProcessPayloads(sc.processID, opts.parts), "the part set")
 	}
@@ -546,7 +557,7 @@ func seedRealCell(t *testing.T, c realCell, opts seedOpts, mount func(mux *http.
 	eng.SetPayloadBinTypes(nil)
 	eng.Start()
 	t.Cleanup(eng.Stop)
-	eng.SetCoreNodes(coreNodesOf(c, positions), false)
+	eng.SetCoreNodes(append(coreNodesOf(c, positions), routingNodes...), false)
 	if points, edges := sceneOf(c, positions); len(points) > 0 {
 		eng.SetSceneGeometry("real-"+c.plant, points, edges)
 	}
