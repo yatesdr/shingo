@@ -99,6 +99,15 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	eng.SetPreflightSource(stockedPreflight{})
 	eng.Start()
 	t.Cleanup(eng.Stop)
+	return WireEdge(t, eng, db, stationID)
+}
+
+// WireEdge wires a started engine as NewEdge wires its own: the send func, the
+// heartbeat, the inbound tables and the ingestor. For a scenario that builds
+// the engine itself (clocks of its own, an Edge restarted on the same
+// database), so its Edge is wired as every other harness Edge is.
+func WireEdge(t *testing.T, eng *engine.Engine, db *store.DB, stationID string) *Edge {
+	t.Helper()
 	// The engine's direct sends (its bins watch list, its order reconcile)
 	// through the outbox to the Bus, as main.go's data sender publishes them
 	// to the broker: the Edge's own door decides when the list goes.

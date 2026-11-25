@@ -46,7 +46,6 @@ import (
 	"shingo/integration/harness"
 	"shingo/protocol"
 	"shingo/protocol/clock"
-	"shingo/protocol/router"
 
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
@@ -426,46 +425,9 @@ func startW6Edge(t *testing.T, db *store.DB, wl plc.WarlinkClient, boot *w6Boot)
 	sink := edgeuop.New(db, w6Edge, db, db)
 	eng.SetInventoryDeltaSink(sink)
 
-	h := edgemessaging.NewEdgeHandler(eng.OrderManager())
-	subjects := router.NewSubject()
-	router.RegisterSubject(subjects, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, r *protocol.NodeListResponse) {
-		eng.SetCoreNodes(r.Nodes, false)
-	})
-	router.RegisterSubject(subjects, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
-		eng.HandleBinPickedUpMessage(*bp)
-	})
-	router.RegisterSubject(subjects, protocol.SubjectBinLanded, func(_ *protocol.Envelope, bl *protocol.BinLanded) {
-		eng.HandleBinLanded(*bl)
-	})
-	router.RegisterSubject(subjects, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
-		eng.HandleBinReturn(*br)
-	})
-	router.RegisterSubject(subjects, protocol.SubjectEdgeAnswer, eng.HandleEdgeAnswer)
-	router.RegisterSubject(subjects, protocol.SubjectSourcingState, func(_ *protocol.Envelope, r *protocol.SourcingStateReport) {
-		eng.HandleSourcingState(*r)
-	})
-	ing := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {
-		return hdr.Dst.Station == w6Edge || hdr.Dst.Station == protocol.StationBroadcast
-	})
-	r := router.New[string]()
-	router.Register(r, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { subjects.Dispatch(env, p) })
-	router.Register(r, protocol.TypeOrderRequest, func(*protocol.Envelope, *protocol.OrderRequest) {})
-	router.Register(r, protocol.TypeOrderCancel, func(*protocol.Envelope, *protocol.OrderCancel) {})
-	router.Register(r, protocol.TypeOrderReceipt, func(*protocol.Envelope, *protocol.OrderReceipt) {})
-	router.Register(r, protocol.TypeOrderRedirect, func(*protocol.Envelope, *protocol.OrderRedirect) {})
-	router.Register(r, protocol.TypeComplexOrderRequest, func(*protocol.Envelope, *protocol.ComplexOrderRequest) {})
-	router.Register(r, protocol.TypeOrderRelease, func(*protocol.Envelope, *protocol.OrderRelease) {})
-	router.Register(r, protocol.TypeOrderIngest, func(*protocol.Envelope, *protocol.OrderIngestRequest) {})
-	router.Register(r, protocol.TypeOrderAck, h.HandleOrderAck)
-	router.Register(r, protocol.TypeOrderWaybill, h.HandleOrderWaybill)
-	router.Register(r, protocol.TypeOrderUpdate, h.HandleOrderUpdate)
-	router.Register(r, protocol.TypeOrderDelivered, h.HandleOrderDelivered)
-	router.Register(r, protocol.TypeOrderError, h.HandleOrderError)
-	router.Register(r, protocol.TypeOrderCancelled, h.HandleOrderCancelled)
-	router.Register(r, protocol.TypeOrderStaged, h.HandleOrderStaged)
-	router.Register(r, protocol.TypeOrderSkipped, h.HandleOrderSkipped)
-	ing.Dispatch = func(env *protocol.Envelope) { r.Dispatch(env, env.Type) }
-	return &edgeharness.Edge{Engine: eng, Ingestor: ing, DB: db}, tickers, sink
+	// Wired as every harness Edge is (testharness.WireEdge): its tables, its
+	// direct sends through the outbox, its heartbeat.
+	return edgeharness.WireEdge(t, eng, db, w6Edge), tickers, sink
 }
 
 // ── the cell ────────────────────────────────────────────────────────────────
