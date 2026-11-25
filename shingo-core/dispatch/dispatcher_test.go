@@ -1191,8 +1191,6 @@ func TestDispatchDirect_Retrieve(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"), "set pending")
-	order.Status = StatusPending
 
 	vendorID, err := d.DispatchDirect(order, storageNode, lineNode)
 	if err != nil {
@@ -1247,8 +1245,6 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"), "set pending")
-	order.Status = StatusPending
 
 	vendorID, err := d.DispatchDirect(order, storageNode, lineNode)
 	if err == nil {
@@ -1332,8 +1328,6 @@ func TestDemoteAfterFleetRefusal_OnlyTheFirstRefusalTellsThePark(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"), "set pending")
-	order.Status = StatusPending
 
 	for pass := 1; pass <= 3; pass++ {
 		_, err := d.DispatchDirect(order, storageNode, lineNode)

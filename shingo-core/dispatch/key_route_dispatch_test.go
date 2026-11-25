@@ -38,8 +38,6 @@ func TestDispatchDirect_CarriesTheOrdersKeyRoute(t *testing.T) {
 		KeyTask:      "load",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "fixture"), "pending")
-	order.Status = StatusPending
 
 	// Read the order BACK before dispatching. The in-memory struct would carry
 	// the route whether or not the column exists, so a test that dispatched
@@ -91,7 +89,6 @@ func TestDispatchDirect_NoRouteStaysEmpty(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "fixture"), "pending")
 
 	stored, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "get order")

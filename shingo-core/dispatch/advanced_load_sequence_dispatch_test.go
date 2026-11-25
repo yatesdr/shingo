@@ -42,8 +42,6 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "fixture"), "pending")
-	order.Status = StatusPending
 
 	if _, err := d.DispatchDirect(order, storageNode, lineNode); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)
@@ -116,8 +114,6 @@ func TestDispatchDirect_UnconfiguredPayload_SingleLoadBlock(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "fixture"), "pending")
-	order.Status = StatusPending
 
 	if _, err := d.DispatchDirect(order, storageNode, lineNode); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)

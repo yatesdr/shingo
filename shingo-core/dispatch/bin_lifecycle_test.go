@@ -397,8 +397,9 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 		t.Fatalf("expected order to claim bin %d, got %d", bin.ID, *testdb.OnlyCart(t, order))
 	}
 
-	// Force StatusStaged so HandleOrderRelease accepts the release.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: simulate robot waiting"), "set order staged")
+	// Staged as the fleet's WAITING stages it (the lifecycle's MarkStaged), so
+	// HandleOrderRelease accepts the release.
+	testutil.MustNoErr(t, d.lifecycle.MarkStaged(order, "fleet", protocol.OrderUpdate{}), "stage the order")
 	order, _ = db.GetOrderByUUID(orderUUID)
 	return order, bin
 }
@@ -554,7 +555,7 @@ func TestHandleOrderRelease_ACountLandsOnlyOnTheCartAtTheLine(t *testing.T) {
 			}
 			// The fleet set the full down on staging before the wait.
 			testutil.MustNoErr(t, db.MoveBinClearingStaging(full.ID, at["G-STG"].ID, true), "the full to staging")
-			testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(StatusStaged), "test: at its wait"), "staged")
+			testutil.MustNoErr(t, d.lifecycle.MarkStaged(o, "fleet", protocol.OrderUpdate{}), "at its wait")
 			zero := 0
 			d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{OrderUUID: "g-count", RemainingUOP: &zero})
 
@@ -613,9 +614,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 		// BinID intentionally nil
 	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	// Force StatusStaged (CreateOrder may default to pending).
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback scenario"), "set order staged")
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order") // born staged: CreateOrder writes the status given
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -792,8 +791,7 @@ func TestHandleOrderRelease_BinIDNilFallbackPrefersClaim(t *testing.T) {
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 		// BinID intentionally nil — fallback path will fire.
 	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: claim-first fallback"), "set order staged")
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order") // born staged: CreateOrder writes the status given
 	// Set the claim AFTER the order exists so claimed_by points at a real ID.
 	if _, err := db.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, order.ID, bin.ID); err != nil {
 		t.Fatalf("set claimed_by: %v", err)
@@ -839,8 +837,7 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 		PayloadCode:  bp.Code,
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback partial scenario"), "set order staged")
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order") // born staged: CreateOrder writes the status given
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -885,8 +882,9 @@ func TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp(t *testing.T) {
 	order, _ := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-in-transit-noop", "BIN-IN-TRANSIT-NOOP")
 
 	// Simulate the prior release having already happened: order.Status is
-	// in_transit and WaitIndex has advanced past the only wait.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: prior release consumed the wait"), "force in_transit")
+	// in_transit (the lifecycle's Release) and WaitIndex has advanced past the
+	// only wait.
+	testutil.MustNoErr(t, d.lifecycle.Release(order, "test"), "the prior release")
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "advance wait_index")
 
 	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
@@ -932,8 +930,9 @@ func TestHandleOrderRelease_FaultedLegIsNoOp(t *testing.T) {
 	order, _ := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-faulted-noop", "BIN-FAULTED-NOOP")
 
 	// Simulate the delivery robot bumper-faulting mid-drop: SEER FAILED → Core
-	// `faulted` (recoverable), as rds/poller maps it.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusFaulted), "test: robot bumper-faulted mid-drop"), "force faulted")
+	// `faulted` (recoverable), as rds/poller maps it, through the lifecycle's
+	// MarkFaulted as the vendor-status arm calls it.
+	testutil.MustNoErr(t, d.lifecycle.MarkFaulted(order, "", protocol.TermRef{}, "robot bumper-faulted mid-drop", protocol.OrderUpdate{}), "fault the order")
 	before, _ := db.GetOrder(order.ID)
 
 	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
@@ -994,7 +993,6 @@ func TestHandleOrderRelease_InTransitPastAStationWaitIsANoOp(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "vendor-multi-wait", "DISPATCHED", ""), "set vendor")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: mid-choreography"), "set in_transit")
 	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "set wait_index")
 
 	backend := testdb.NewTrackingBackend()

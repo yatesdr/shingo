@@ -142,10 +142,10 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 		}
 	}
 
-	// In a full engine test the fleet tracker would transition the order to
-	// "staged" when the robot reports WAITING.  This dispatcher-level test has
-	// no engine wiring, so we advance the status manually.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "robot waiting (simulated)"), "set order staged")
+	// In a full engine test the vendor-status arm stages the order when the
+	// robot reports WAITING. This dispatcher-level test has no engine wiring,
+	// so it makes the arm's call itself: the lifecycle's MarkStaged.
+	testutil.MustNoErr(t, d.lifecycle.MarkStaged(order, "fleet", protocol.OrderUpdate{}), "robot waiting")
 
 	// Release: append post-wait blocks
 	d.HandleOrderRelease(env, &protocol.OrderRelease{

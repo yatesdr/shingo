@@ -72,7 +72,7 @@ func TestCompoundChild_IdentityIsMintedNotDerived(t *testing.T) {
 	for _, c := range first {
 		d.lifecycle.CancelOrder(c, "core", "dissolved; re-planning", CancelCause{})
 	}
-	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusPending), "dissolved; re-planning"), "resume for the re-plan")
+	testutil.MustNoErr(t, d.lifecycle.Restart(parent, "dissolved; re-planning"), "resume for the re-plan")
 	parent, _ = db.GetOrder(parent.ID)
 	if err := d.CreateCompoundOrder(parent, plan); err != nil {
 		t.Fatalf("re-planning the same parent failed: %v\n"+

@@ -1589,13 +1589,16 @@ func ReserveBin(t *testing.T, db *store.DB, orderID, binID int64) {
 	}
 }
 
-// SeedOrderStatus forces an order to an arbitrary status via a raw write,
-// bypassing both lifecycle validation and the terminal-status guard on
-// orders.UpdateStatus. For fixtures that must seed an order already in a
-// terminal state (failed/cancelled/skipped/confirmed) to exercise
-// reconciliation/recovery/matrix logic — NOT a stand-in for the real lifecycle
-// in behavior tests (those must go through TerminalizeOrder, which also releases
-// claims + reservations).
+// SeedOrderStatus forces an order to an arbitrary status via a raw write: no
+// transition check, no history row, no tell, no event. It is for a fixture
+// that needs a status no lifecycle call gives it from where the test holds
+// the order: one already in a terminal state (failed/cancelled/skipped/
+// confirmed) to exercise reconciliation/recovery/matrix logic, or a status a
+// pure read is fed that the lifecycle reaches only through steps the test
+// does not model (queued to staged takes a fleet's yes). It is NOT a stand-in
+// for the real lifecycle in behavior tests: a legal transition goes through
+// dispatch.LifecycleService, and a terminal one through TerminalizeOrder,
+// which also releases claims + reservations.
 func SeedOrderStatus(t *testing.T, db *store.DB, orderID int64, status, detail string) {
 	t.Helper()
 	if status == string(protocol.StatusDispatched) {

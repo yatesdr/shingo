@@ -37,8 +37,10 @@ func TestHandleOrderRelease_SecondReleasePastTheWaitDeclaresNothing(t *testing.T
 	if got.WaitIndex != 1 {
 		t.Fatalf("WaitIndex after the first release = %d, want 1", got.WaitIndex)
 	}
-	// The fleet picks the leg up and it drives on.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: robot driving"), "force in_transit")
+	// The release put the leg in transit past its only wait; the robot drives on.
+	if got.Status != StatusInTransit {
+		t.Fatalf("status after the first release = %s, want in_transit", got.Status)
+	}
 	first, err := db.GetBin(bin.ID)
 	testutil.MustNoErr(t, err, "get bin")
 	if first.UOPRemaining != 0 {

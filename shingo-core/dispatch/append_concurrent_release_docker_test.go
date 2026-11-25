@@ -35,12 +35,11 @@ import (
 // is precisely the shape of the race. The in-memory order still says staged;
 // the database has moved on.
 //
-// Terminal statuses take the TerminalizeOrder door: the store refuses a raw
-// UpdateOrderStatus into one ("route terminal transitions through
-// TerminalizeOrder"), so staging the hostile cases through the front door is
-// not optional here — and it is the more faithful simulation anyway, since a
-// real concurrent cancel arrives that way too.
-func concurrentWriter(t *testing.T, db *store.DB, id int64, to protocol.Status) {
+// It is the writer a plant has: the wiring layer's fleet poll, calling the
+// lifecycle (MarkInTransit, MarkDelivered) on an order it loaded itself.
+// Terminal statuses take the TerminalizeOrder door, the way a real concurrent
+// cancel arrives.
+func concurrentWriter(t *testing.T, db *store.DB, lc *LifecycleService, id int64, to protocol.Status) {
 	t.Helper()
 	if protocol.IsTerminal(to) {
 		if _, err := db.TerminalizeOrder(id, to, "concurrent writer"); err != nil {
@@ -48,7 +47,19 @@ func concurrentWriter(t *testing.T, db *store.DB, id int64, to protocol.Status) 
 		}
 		return
 	}
-	if err := db.UpdateOrderStatus(id, string(to), "concurrent writer"); err != nil {
+	cur, err := db.GetOrder(id)
+	if err != nil {
+		t.Fatalf("the concurrent writer's own read: %v", err)
+	}
+	switch to {
+	case protocol.StatusInTransit:
+		err = lc.MarkInTransit(cur, "", "fleet", protocol.OrderUpdate{})
+	case protocol.StatusDelivered:
+		err = lc.MarkDelivered(cur, "fleet", protocol.OrderUpdate{})
+	default:
+		t.Fatalf("no fleet report writes %s", to)
+	}
+	if err != nil {
 		t.Fatalf("stage the concurrent write to %s: %v", to, err)
 	}
 }
@@ -66,7 +77,7 @@ func TestAppendSegment_ConcurrentInTransitIsNotAFailure(t *testing.T) {
 		o.VendorOrderID = "sg-appendconc-benign"
 	})
 	// MarkInTransit lands between the fleet append and our transition.
-	backend.SetOnRelease(func() { concurrentWriter(t, db, ord.ID, protocol.StatusInTransit) })
+	backend.SetOnRelease(func() { concurrentWriter(t, db, d.lifecycle, ord.ID, protocol.StatusInTransit) })
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "concurrent probe")
 	if err != nil {
@@ -101,7 +112,7 @@ func TestAppendSegment_ConcurrentCancelStaysAFailure(t *testing.T) {
 		o.Status = protocol.StatusStaged
 		o.VendorOrderID = "sg-appendconc-cancel"
 	})
-	backend.SetOnRelease(func() { concurrentWriter(t, db, ord.ID, protocol.StatusCancelled) })
+	backend.SetOnRelease(func() { concurrentWriter(t, db, d.lifecycle, ord.ID, protocol.StatusCancelled) })
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "concurrent probe")
 	if err == nil {
@@ -130,7 +141,7 @@ func TestAppendSegment_ConcurrentDeliveredStaysAFailure(t *testing.T) {
 		o.Status = protocol.StatusStaged
 		o.VendorOrderID = "sg-appendconc-delivered"
 	})
-	backend.SetOnRelease(func() { concurrentWriter(t, db, ord.ID, protocol.StatusDelivered) })
+	backend.SetOnRelease(func() { concurrentWriter(t, db, d.lifecycle, ord.ID, protocol.StatusDelivered) })
 
 	err := d.appendSegmentAndAdvance(ord, aDropoffSegment(), false, 0, "concurrent probe")
 	if err == nil {

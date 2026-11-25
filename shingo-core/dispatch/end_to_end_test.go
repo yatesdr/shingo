@@ -83,8 +83,9 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 		t.Errorf("after dispatch, bin claimed_by = %v, want %d", dispatchedBin.ClaimedBy, order.ID)
 	}
 
-	// Phase 2: Simulate fleet delivery, then confirm receipt
-	db.UpdateOrderStatus(order.ID, string(StatusDelivered), "fleet delivered")
+	// Phase 2: the fleet delivers (the lifecycle's MarkDelivered, as the
+	// vendor-status arm calls it), then the receipt is confirmed
+	testutil.MustNoErr(t, d.lifecycle.MarkDelivered(order, "fleet", protocol.OrderUpdate{}), "fleet delivered")
 
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   "retrieve-uuid-1",
@@ -146,8 +147,9 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 
 	order := testdb.AssertOrderStatus(t, db, "move-uuid-1", StatusDispatched)
 
-	// Phase 2: Simulate fleet delivery, then confirm receipt
-	db.UpdateOrderStatus(order.ID, string(StatusDelivered), "fleet delivered")
+	// Phase 2: the fleet delivers (the lifecycle's MarkDelivered, as the
+	// vendor-status arm calls it), then the receipt is confirmed
+	testutil.MustNoErr(t, d.lifecycle.MarkDelivered(order, "fleet", protocol.OrderUpdate{}), "fleet delivered")
 
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   "move-uuid-1",

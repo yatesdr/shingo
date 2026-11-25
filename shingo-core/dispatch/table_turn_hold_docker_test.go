@@ -260,7 +260,7 @@ func TestTableTurn_PressWhileDriving(t *testing.T) {
 		t.Fatalf("a press while driving: %s, want taken and held", got)
 	}
 	r.table.turn(0, false)
-	testutil.MustNoErr(t, r.db.UpdateOrderStatus(o.ID, string(StatusStaged), "test: arrived"), "arrive")
+	testutil.MustNoErr(t, r.d.lifecycle.MarkStaged(o, "fleet", protocol.OrderUpdate{}), "arrive")
 	r.d.RedriveTableTurns(o.ID) // the staged hook
 	if n := r.turns(); n != 1 {
 		t.Fatalf("%d turns on arrival, want 1", n)

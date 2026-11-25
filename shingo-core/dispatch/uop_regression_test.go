@@ -171,8 +171,7 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 		PayloadCode:  bp.Code,
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 	}
-	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: regression #15 fallback"), "set order staged")
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order") // born staged: CreateOrder writes the status given
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

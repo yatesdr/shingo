@@ -113,7 +113,9 @@ func TestWantedBin_PreDispatchSwapWantsItsFirstStepNotThePostWaitPickup(t *testi
 	// HAS reached a wait, its wait_index means what it says, and its next entry is
 	// the work on the far side of that wait — which is the whole reason
 	// laneEntryAfterWait exists.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(protocol.StatusStaged), ""), "stage the order")
+	// A seeded status: wantedBin reads the row, and the lifecycle reaches staged
+	// from queued only through a fleet's yes, which this test has no fleet for.
+	testdb.SeedOrderStatus(t, db, order.ID, string(protocol.StatusStaged), "")
 	staged, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload the staged order")
 	after := wantedBin(staged)
