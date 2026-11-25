@@ -46,6 +46,7 @@ Deploy: no migration; Core and Edges in either order.
 - Core's order page says Cancel too: Terminate Order is now Cancel Order, and it and the list's Cancel ask Keep order or Cancel order; the Robots page says to cancel the order instead of force-completing it. Re-send Terminate keeps its name: it re-sends the fleet's own terminate for an order already ended
 - A Sequential A/B position can run on one node with no partner (its paired core node left blank): each swap takes the old bin out, then brings the next, and a changeover takes the old part out and brings the new one
 - On the Processes page a Sequential A/B position with no partner carries one note in the bar beside Save, "PLN_01 has no partner: one node, empty from each lift until the next bin is set down", and the style still saves: the guard against a partner forgotten on a real A/B line
+- Setting up a Sequential A/B position on the Processes page, its partner pick offers "No partner (one node)" first and the page no longer picks a partner for it; a position with none says so on its row, is one card with its moves on the station picture, and has a one-slot glyph
 
 ## v0.19.0 — 2026-11-22
 
