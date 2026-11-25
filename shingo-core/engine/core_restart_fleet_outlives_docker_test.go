@@ -248,7 +248,9 @@ func TestCoreRestart_AFaultInsideItsAlertBufferIsStillMailed(t *testing.T) {
 	res, err := db.Exec(`UPDATE order_history SET created_at = created_at - interval '4 minutes'
 		WHERE order_id = $1 AND status = $2`, order.ID, dispatch.StatusFaulted)
 	testutil.MustNoErr(t, err, "age the fault past its buffer")
-	if n, _ := res.RowsAffected(); n != 1 {
+	n, err := res.RowsAffected()
+	testutil.MustNoErr(t, err, "count the aged rows")
+	if n != 1 {
 		t.Fatalf("fixture: aged %d faulted history row(s) of order %d, want 1", n, order.ID)
 	}
 
