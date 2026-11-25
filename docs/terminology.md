@@ -587,7 +587,10 @@ three states — `active`, `completed`, `cancelled` — and moves once, to one o
 The node named by a claim's `paired_core_node`. The field means two different things depending on the swap mode: at
 a **sequential** (A/B) cell it is the partner position the line draws from while this one is swapped; at a
 **press-index** cell it is the back press position in a queue. One field, two meanings — read the mode before
-reading the field.
+reading the field. On a sequential claim it may be blank: the position is a **one-node line**, its two orders at
+its own node, and the setup screens offer and show that choice as **No partner (one node)**. The stored value is the
+blank, never a mode of its own (no `simple`), and the save warns in one line ("PLN_01 has no partner: one node,
+empty from each lift until the next bin is set down") without refusing it.
 
 ### Departed
 

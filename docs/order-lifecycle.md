@@ -398,6 +398,16 @@ of Order A at the line goes out (`ensureSequentialBackfill`), not before, and
 delivers the replacement from the inbound source in two steps
 (`BuildSequentialBackfillSteps`).
 
+A Sequential position with no partner (`paired_core_node` blank) is a **one-node
+line**: the same two orders at its own node, which stands empty from Order A's
+lift until Order B sets the next bin down. Nothing on it flips or parks; every
+count tick is charged to its bin. Its changeover is one order at the node, as
+a pair's active side: wait for the release, lift, drop at the outbound
+destination, fetch the incoming style's carrier, set it down
+(`buildSequentialPerPositionSwap`); a drop or an add is the plain one. The
+save takes the blank with a one-line warning, the guard against a partner
+forgotten on a real A/B line.
+
 **Two Robot** (`two_robot`) — Two robots work concurrently. Robot A (resupply)
 picks the replacement from the inbound source, drops it at inbound staging, and
 holds *there*; Robot B (removal) drives to lineside and holds. Edge releases B
@@ -484,10 +494,10 @@ destination blanks again at dispatch.
 | Claim field | Sequential | Two Robot | 2-Robot Press Index | Single Robot |
 |---|---|---|---|---|
 | `inbound_source` | **required** | used | used | used |
-| `inbound_staging` | forbidden | **required** | used | **required** |
+| `inbound_staging` | used (a tool change) | **required** | used | **required** |
 | `outbound_staging` | forbidden | forbidden | used | **required** |
 | `outbound_destination` | **required** | **required** | **required** | **required** |
-| `paired_core_node` | **required** | forbidden | **required** (back position) | forbidden |
+| `paired_core_node` | used (blank: one node) | forbidden | **required** (back position) | forbidden |
 | `second_paired_core_node` | forbidden | forbidden | used (3-position layout) | forbidden |
 | `payload_code` | **required** | **required** | **required** | **required** |
 
