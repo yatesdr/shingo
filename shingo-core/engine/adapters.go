@@ -205,6 +205,24 @@ func (e *pollerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID
 	}})
 }
 
+// EmitBinRowChanged puts EventBinRowChanged on the bus for binID: what a bin
+// shows changed through a write that emits no EventBinUpdated. main hands it
+// to the messaging layer for a count tick (SetBinCountEmitter) and calls it
+// after a station door's write (SetBinChangedFunc), so a harness can do the
+// same (cmd/shingocore/main.go).
+func (e *Engine) EmitBinRowChanged(binID int64) {
+	e.Events.Emit(Event{Type: EventBinRowChanged, Payload: BinRowChangedEvent{BinID: binID}})
+}
+
+// EmitCellTick puts EventCellTick on the bus for one projected production
+// tick, which the web layer rebroadcasts as cell-heartbeat. main hands it to
+// the messaging layer (SetCellTickEmitter).
+func (e *Engine) EmitCellTick(station string, processID, styleID int64, recordedAt time.Time) {
+	e.Events.Emit(Event{Type: EventCellTick, Payload: CellTickEvent{
+		Station: station, ProcessID: processID, StyleID: styleID, RecordedAt: recordedAt,
+	}})
+}
+
 // orderResolver implements fleet.OrderIDResolver — the tracker looks
 // up the internal order ID for a vendor order ID when it emits a
 // status-change event. Lives here because it's the same shape as the

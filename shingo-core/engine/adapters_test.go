@@ -5,6 +5,7 @@ package engine
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
@@ -14,7 +15,8 @@ import (
 // adapters_test.go — coverage tests for adapters.go.
 //
 // adapters.go holds two EventBus-bridging emitter structs
-// (dispatchEmitter, pollerEmitter) and one
+// (dispatchEmitter, pollerEmitter), the two Engine methods main hands the
+// messaging layer as its emitters (EmitBinRowChanged, EmitCellTick), and one
 // fleet.OrderIDResolver adapter (orderResolver). Each emitter has no
 // state of its own — it just repackages its arguments into an Event
 // and forwards to the bus. These tests assert every emitter method:
@@ -223,6 +225,41 @@ func TestPollerEmitter_EmitOrderStatusChanged_NilSnapshot(t *testing.T) {
 	}
 	if p.OrderID != 56 || p.NewStatus != "dispatched" {
 		t.Errorf("payload fields = %+v", p)
+	}
+}
+
+// ── the engine's emitters main hands the messaging layer ────────────
+
+func TestEngine_EmitBinRowChanged(t *testing.T) {
+	t.Parallel()
+	bus, mu, got := captureBus()
+	(&Engine{Events: bus}).EmitBinRowChanged(17)
+
+	mu.Lock()
+	defer mu.Unlock()
+	p, ok := got[EventBinRowChanged].Payload.(BinRowChangedEvent)
+	if !ok {
+		t.Fatalf("payload type = %T, want BinRowChangedEvent", got[EventBinRowChanged].Payload)
+	}
+	if p.BinID != 17 {
+		t.Errorf("BinRowChangedEvent fields = %+v", p)
+	}
+}
+
+func TestEngine_EmitCellTick(t *testing.T) {
+	t.Parallel()
+	bus, mu, got := captureBus()
+	at := time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)
+	(&Engine{Events: bus}).EmitCellTick("line-1", 3, 9, at)
+
+	mu.Lock()
+	defer mu.Unlock()
+	p, ok := got[EventCellTick].Payload.(CellTickEvent)
+	if !ok {
+		t.Fatalf("payload type = %T, want CellTickEvent", got[EventCellTick].Payload)
+	}
+	if p.Station != "line-1" || p.ProcessID != 3 || p.StyleID != 9 || !p.RecordedAt.Equal(at) {
+		t.Errorf("CellTickEvent fields = %+v", p)
 	}
 }
 

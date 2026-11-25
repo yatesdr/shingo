@@ -509,7 +509,7 @@ func main() {
 	// so it also tells the screens that bin's row changed (EventBinRowChanged).
 	eng.SetBinChangedFunc(func(binID int64) {
 		coreDataService.BinsChanged(binID)
-		eng.Events.Emit(engine.Event{Type: engine.EventBinRowChanged, Payload: engine.BinRowChangedEvent{BinID: binID}})
+		eng.EmitBinRowChanged(binID)
 	})
 	// A write door's refusal carries Core's current rows for the nodes it
 	// touched, read by the snapshot's own row code.
@@ -548,16 +548,10 @@ func main() {
 	// Fan projected ticks out to the engine event bus so the SSE layer can
 	// rebroadcast them as cell-heartbeat (Phase E). Set before the ingestor
 	// subscribes, so every handler call reads it race-free.
-	coreDataService.SetCellTickEmitter(func(station string, processID, styleID int64, recordedAt time.Time) {
-		eng.Events.Emit(engine.Event{Type: engine.EventCellTick, Payload: engine.CellTickEvent{
-			Station: station, ProcessID: processID, StyleID: styleID, RecordedAt: recordedAt,
-		}})
-	})
+	coreDataService.SetCellTickEmitter(eng.EmitCellTick)
 	// A station's count tick moves a bin's count with no EventBinUpdated, so the
 	// screens hear it as EventBinRowChanged (the Bins page's live UoP).
-	coreDataService.SetBinCountEmitter(func(binID int64) {
-		eng.Events.Emit(engine.Event{Type: engine.EventBinRowChanged, Payload: engine.BinRowChangedEvent{BinID: binID}})
-	})
+	coreDataService.SetBinCountEmitter(eng.EmitBinRowChanged)
 	// cell_part_events partitions now and daily, plus the daily retention
 	// passes (plan §12). The tick handlers project synchronously and need this
 	// month's partition before the first message.
