@@ -27,6 +27,7 @@ types, so no section's keeper or loader draws another's carts.
 | `[kanban5]` | Five presses of KP-PRESS's shape on one `P5-KANBAN` (pools 26 and 22) through one unloader of ten windows; its raid supermarket is `KP-SM` | EDGE 1 | (kanban's) |
 | `[window]` | Line 2, the observable-window line: LINE-2 (A/B direct and staged consume, a weld producing), its two loaders and its drain. Its processes name `edge: edge2.line1`: EDGE 2's operator pacing (60 s release, 30 s loads, `shingoedge.edge2.yaml`) is the window under test, and that pacing is per Edge | EDGE 2 | STANDARD-L2 |
 | `[one-node]` | LINE-1N: a Sequential A/B consume line on one node with no partner (ALN_1N_01), two styles on two parts for a part change, one flat market (`SYN_1N_MARKET`) as both its inbound source and its outbound destination, and a loader per part. Nothing in it counts, reorders or asks a loader: it moves only when a person presses REQUEST or starts the part change | EDGE 1 | STANDARD-1N |
+| `[two-robot-home]` | LINE-2H: a two-robot consume line on one node (ALN_2H_01) whose inbound source, inbound staging and outbound destination are all its part's pinned home on one dedicated-positions loader, `PLK_2H` (a home per part, `PLK_2H_HA` and `PLK_2H_HB`, and one free buffer); two styles on two parts for a part change. No staging node: the supply robot waits at the home. Nothing in it counts, reorders or asks the loader: it moves only when a person presses REQUEST or starts the part change | EDGE 1 | STANDARD-2H |
 
 Core is seeded from the whole file and every Edge it names is enrolled; each Edge is
 seeded with its own processes (`seeddev --edge`, `plantspec.Plant.ForEdge`).
@@ -42,6 +43,7 @@ seeded with its own processes (`seeddev --edge`, `plantspec.Plant.ForEdge`).
 | Multi-cart: several carts on one order, the invariant after every injected state | `cmd/seeddev` `TestOrderCartsFixture_*` (docker) | `[multi-cart]` |
 | The observable window: a changeover whose material lands minutes before it completes | EDGE 2 on the stack (its scheduled changeovers); the line's sizing: `cmd/seeddev` `TestEdge2Fixture_*` | `[window]` |
 | A one-node Sequential A/B line: a steady-state swap and a part change with one bin on the node at every step | EDGE 1 on the stack, pressed by a person (or a run kit) at its doors; the steady state without the stack: `integration/scenarios` `TestScenario_SequentialLine_*` | `[one-node]` |
+| A two-robot swap and a part change through the line's loader home, with no staging node: both legs staged (one robot at the line, one at the home), one release, where the old cart is set down | EDGE 1 on the stack, pressed by a person (or a run kit) at its doors | `[two-robot-home]` |
 | The deciders on the demo loop | `cmd/seeddev` `TestPlannerGolden_*` (the golden), `TestSeedDemo_*`; plantspec `TestShippedDemoPlant*` | `[demo]` |
 | The file as a whole: valid, clean at birth, every section marked, each on its own carriers | plantspec `TestMasterPlant_*`, `TestCommittedSpecsValidate` | all |
 
@@ -70,6 +72,8 @@ must show the plant lasting the run before a number taken on it counts.
   measured tick rates are not retuned to the model. Re-measure before retuning.
 - `[one-node]`'s PART-1N-A reads NO-DRAIN on the rate check, by design: LINE-1N has no
   counter (a person calls), so nothing draws what its loader could make.
+- `[two-robot-home]`'s PART-2H-A reads NO-DRAIN on the rate check for the same reason
+  (LINE-2H has no counter), and PART-2H-B IDLE (only the style not running takes it).
 
 ## The seed checks itself
 

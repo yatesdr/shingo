@@ -48,6 +48,15 @@
 #               in it counts, reorders or asks a loader (threshold 0): a person's REQUEST
 #               and START are its only triggers (the run kit presses them), so it stands
 #               still until pressed.
+#   [two-robot-home] THE PLANT'S LINE RUN AS CONFIGURATION (brief G, part A): a two-robot
+#               swap through the line's loader home, with no staging node between. LINE-2H
+#               at ALN_2H_01 on EDGE 1, one node, swap mode two_robot, whose inbound source,
+#               inbound staging and outbound destination are all its part's pinned home on
+#               one dedicated-positions loader, PLK_2H (two homes, one part each, and one
+#               free buffer). Two styles on two parts, each with its own home, so a part
+#               change runs. Nothing in it counts, reorders or asks the loader (threshold 0):
+#               a person's REQUEST and START are its only triggers (the home-run kit presses
+#               them), so it stands still until pressed.
 #
 # EVERY SECTION IS A CLOSED LOOP: fed from a market or a press, its empties back to the
 # pool they came from, its output to an unloader or its consumer. Each section rides
@@ -92,9 +101,9 @@ headroom:
 # [corridor] CORRIDOR is the 4x2 cell's carrier, its own so no other section's keeper
 # or loader draws from the corridor. [kanban] the 45x48 family and CART-32 (kanban-press
 # carried them first). [window] STANDARD-L2 is line 2's own, for the reason it always was
-# (TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType). [one-node] STANDARD-1N is its own.
-# Every bin outside [demo] names its type.
-bin_types: [STANDARD, STANDARD-SM, CORRIDOR, SMALL-45, BIG-45, TOTES-45, CART-32, STANDARD-L2, STANDARD-1N]
+# (TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType). [one-node] STANDARD-1N is its own,
+# and [two-robot-home] STANDARD-2H. Every bin outside [demo] names its type.
+bin_types: [STANDARD, STANDARD-SM, CORRIDOR, SMALL-45, BIG-45, TOTES-45, CART-32, STANDARD-L2, STANDARD-1N, STANDARD-2H]
 
 # carrier_robot_groups names the group REQUIRED to move a carrier, which refuses
 # the near-empty relaxation below rather than overriding a loaded bin's group.
@@ -196,6 +205,9 @@ payloads:
   # ══ [one-node] a Sequential A/B consume line on one node ═════════════════════════════════════
   - {code: PART-1N-A, uop_capacity: 40, bin_type: STANDARD-1N}
   - {code: PART-1N-B, uop_capacity: 40, bin_type: STANDARD-1N}
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  - {code: PART-2H-A, uop_capacity: 40, bin_type: STANDARD-2H}
+  - {code: PART-2H-B, uop_capacity: 40, bin_type: STANDARD-2H}
 
 # [demo] the note below is the demo loop's.
 #
@@ -1157,6 +1169,15 @@ stations:
   - {name: ALN_1N_01, kind: line_in}  # LINE-1N — the line's one node; no partner
   - {name: PLK_1N_01, kind: loader}   # L1N-LOAD-A — refills an empty with PART-1N-A
   - {name: PLK_1N_02, kind: loader}   # L1N-LOAD-B — refills an empty with PART-1N-B
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  # One line node and the three positions of one dedicated-positions loader, PLK_2H (a
+  # synthetic identity, as [demo]'s PLK_HOMES): a home per part and one buffer. No staging
+  # node: each style's inbound staging IS its part's home, so the supply robot waits at
+  # the home and lifts there on the release (the Edge's stageSteps same-node arm).
+  - {name: ALN_2H_01, kind: line_in}  # LINE-2H — the line's one node
+  - {name: PLK_2H_HA, kind: loader}   # PLK_2H home — PART-2H-A's one pinned home
+  - {name: PLK_2H_HB, kind: loader}   # PLK_2H home — PART-2H-B's one pinned home
+  - {name: PLK_2H_BUF, kind: loader}  # PLK_2H buffer — no payload, free at birth
 
 # [demo] the note below is the demo loop's.
 #
@@ -1483,6 +1504,16 @@ bins:
   - {name: L1N-MT-01, slot: SMN_1N_005, payload: "", uop: 0, bin_type: STANDARD-1N}
   - {name: L1N-MT-02, slot: SMN_1N_006, payload: "", uop: 0, bin_type: STANDARD-1N}
 
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  # THREE CARRIERS, ONE PER HOME AND ONE AT THE LINE; THE BUFFER FREE. The line's cart is at
+  # 10 of 40, ABOVE the floor's pull (2 of 40 on EDGE 1, lineside_pull_percent 5), so when
+  # REQUEST's pair has staged the sim operator leaves it ("parts left in the bin") and the
+  # release is the one a person (or the run kit) presses. A full on each home: the steady
+  # state's supply lifts PART-2H-A's, the part change's PART-2H-B's.
+  - {name: L2H-AT-LINE, slot: ALN_2H_01, payload: PART-2H-A, uop: 10, bin_type: STANDARD-2H}
+  - {name: L2H-A-01, slot: PLK_2H_HA, payload: PART-2H-A, uop: 40, bin_type: STANDARD-2H}
+  - {name: L2H-B-01, slot: PLK_2H_HB, payload: PART-2H-B, uop: 40, bin_type: STANDARD-2H}
+
 processes:
 
   # ══ [demo] the demo loop ═════════════════════════════════════════════════════════════════════
@@ -1538,6 +1569,13 @@ processes:
   # the line sends back is filled here. Threshold 0 (the demands block): never asked.
   - {name: L1N-LOAD-A, active_style: L1N-LOAD-A-RUN}
   - {name: L1N-LOAD-B, active_style: L1N-LOAD-B-RUN}
+
+  # ══ [two-robot-home] a two-robot line through its loader home, on EDGE 1 ══════════════════════
+  # No reporting point: LINE-2H does not count, so it never runs down and never asks by itself.
+  - {name: LINE-2H, active_style: L2H-A}
+  # The loader whose homes the line swaps through: one process, its three positions on one
+  # station (L2H-LOAD-OPS), which is the loader's board on EDGE 1.
+  - {name: L2H-LOAD, active_style: L2H-LOAD-RUN}
 
 # [demo] the note below is the demo loop's.
 #
@@ -1658,6 +1696,13 @@ styles:
   - {name: L1N-LOAD-A-RUN, process: L1N-LOAD-A, payload: PART-1N-A}
   - {name: L1N-LOAD-B-RUN, process: L1N-LOAD-B, payload: PART-1N-B}
 
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  # Two parts at the one node, each through its own home: A to B is the part change.
+  - {name: L2H-A, process: LINE-2H, payload: PART-2H-A}
+  - {name: L2H-B, process: LINE-2H, payload: PART-2H-B}
+  # The loader's one style: its claims name each home's own part (as PLK_HOMES's do).
+  - {name: L2H-LOAD-RUN, process: L2H-LOAD, payload: PART-2H-A}
+
 operator_stations:
   # [demo] the demo loop
   - PRESS-1-OPS
@@ -1704,6 +1749,9 @@ operator_stations:
   - LINE-1N-OPS
   - L1N-LOAD-A-OPS
   - L1N-LOAD-B-OPS
+  # [two-robot-home] a two-robot line through its loader home
+  - LINE-2H-OPS
+  - L2H-LOAD-OPS
 
 claims:
 
@@ -2551,6 +2599,50 @@ claims:
     outbound_destination: SYN_1N_MARKET
     operator_station: L1N-LOAD-B-OPS
 
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  # THE PLANT'S LINE, AS CONFIGURATION (brief G, part A). A one-node consume line, no
+  # partner, two_robot, whose inbound_source, inbound_staging and outbound_destination are
+  # all its part's pinned home on PLK_2H. outbound_staging and keep_staged_node blank. The
+  # Edge builds the pair from it (material_orders.go stageSteps' same-node arm): the supply
+  # wait(home), pickup(home), dropoff(line); the evac wait(line), pickup(line),
+  # dropoff(home). Each robot parks at its wait, one at the home and one at the line, and
+  # the line's one RELEASE sends both. auto_reorder off and no counter: REQUEST is the
+  # only ask. The part change A to B is the pair through B's home, the old cart back to A's.
+  - core_node: ALN_2H_01
+    style: L2H-A
+    role: consume
+    swap_mode: two_robot
+    payload: PART-2H-A
+    uop_capacity: 40
+    reorder_point: 10
+    auto_reorder: false
+    inbound_source: PLK_2H_HA
+    inbound_staging: PLK_2H_HA
+    outbound_destination: PLK_2H_HA
+    operator_station: LINE-2H-OPS
+  - core_node: ALN_2H_01
+    style: L2H-B
+    role: consume
+    swap_mode: two_robot
+    payload: PART-2H-B
+    uop_capacity: 40
+    reorder_point: 10
+    auto_reorder: false
+    inbound_source: PLK_2H_HB
+    inbound_staging: PLK_2H_HB
+    outbound_destination: PLK_2H_HB
+    operator_station: LINE-2H-OPS
+  # THE LOADER: dedicated positions, operator-driven. One home per part (as PLK_HOMES's
+  # note says why: a second home for a part lets the supply pool widen across both), and
+  # one buffer, the spare parking a return falls back to when its home is busy. No
+  # outbound_destination (a home's carrier waits on its home for the line's supply leg)
+  # and no inbound_source: nothing tops it up, and its demands are 0, so it is never
+  # asked. (The seeder writes every produce loader `replenishment: threshold`; at 0 it
+  # never fires.) The three positions take the process's one station, L2H-LOAD-OPS.
+  - {core_node: PLK_2H_HA, style: L2H-LOAD-RUN, role: produce, swap_mode: manual_swap, payload: PART-2H-A, uop_capacity: 40, reorder_point: 2, auto_reorder: false, home_of: PLK_2H}
+  - {core_node: PLK_2H_HB, style: L2H-LOAD-RUN, role: produce, swap_mode: manual_swap, payload: PART-2H-B, uop_capacity: 40, reorder_point: 2, auto_reorder: false, home_of: PLK_2H}
+  - {core_node: PLK_2H_BUF, style: L2H-LOAD-RUN, role: produce, swap_mode: manual_swap, payload: PART-2H-A, uop_capacity: 40, reorder_point: 2, auto_reorder: false, home_of: PLK_2H, home_kind: buffer}
+
 # [demo] the note below is the demo loop's.
 #
 # Core's loader switches (plantspec LoaderSettings). A loader claim seeds no Edge
@@ -2609,6 +2701,12 @@ demands:
   # person presses the line's REQUEST or START.
   - {payload: PART-1N-A, node: PLK_1N_01, replenish_uop_threshold: 0}
   - {payload: PART-1N-B, node: PLK_1N_02, replenish_uop_threshold: 0}
+
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  # Informational (0), keyed on the loader's identity (as PLK_HOMES's SHIM): the seeder
+  # stamps it on each home, so neither home is ever asked to refill.
+  - {payload: PART-2H-A, node: PLK_2H, replenish_uop_threshold: 0}
+  - {payload: PART-2H-B, node: PLK_2H, replenish_uop_threshold: 0}
 
 # [demo] the note below is the demo loop's.
 #
@@ -2734,6 +2832,9 @@ cell_configs:
   - {process: LINE-1N, station: LINE-1N-OPS}
   - {process: L1N-LOAD-A, station: L1N-LOAD-A-OPS}
   - {process: L1N-LOAD-B, station: L1N-LOAD-B-OPS}
+  # ══ [two-robot-home] a two-robot line through its loader home ═════════════════════════════════
+  - {process: LINE-2H, station: LINE-2H-OPS}
+  - {process: L2H-LOAD, station: L2H-LOAD-OPS}
 
 # [demo] the note below is the demo loop's.
 #

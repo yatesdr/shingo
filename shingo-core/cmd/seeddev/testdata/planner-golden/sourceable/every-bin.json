@@ -944,6 +944,24 @@
       "sourceable_sql": false
     },
     {
+      "bin": "L2H-A-01",
+      "payload": "PART-2H-A",
+      "node": "PLK_2H_HA",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2H-AT-LINE",
+      "payload": "PART-2H-A",
+      "node": "ALN_2H_01",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L2H-B-01",
+      "payload": "PART-2H-B",
+      "node": "PLK_2H_HB",
+      "sourceable_sql": true
+    },
+    {
       "bin": "P5-K-01",
       "node": "P5B_001",
       "sourceable_sql": false

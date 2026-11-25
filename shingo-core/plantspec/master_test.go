@@ -45,7 +45,7 @@ func TestMasterPlant_EverySectionIsMarked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tag := range []string{"[demo]", "[multi-cart]", "[4x2]", "[corridor]", "[kanban]", "[kanban5]", "[window]", "[one-node]"} {
+	for _, tag := range []string{"[demo]", "[multi-cart]", "[4x2]", "[corridor]", "[kanban]", "[kanban5]", "[window]", "[one-node]", "[two-robot-home]"} {
 		if !strings.Contains(string(raw), "# ══ "+tag) && !strings.Contains(string(raw), "# "+tag) {
 			t.Errorf("no section marked %s", tag)
 		}
@@ -87,11 +87,12 @@ func TestMasterPlant_EverySectionRidesItsOwnCarriers(t *testing.T) {
 	t.Parallel()
 	p := loadMaster(t)
 	sections := map[string][]string{
-		"demo":     {"PRESS-1", "PRESS-2", "WELD-1", "WELD-2", "WELD-3", "WELD-4", "WELD-5", "LOADER-SHIM", "LOADER-COMP", "LOADER-CLIP", "LOADER-STUD", "UNLOADER-A"},
-		"4x2":      {"WELD-6", "LOADER-COMMON-1", "LOADER-COMMON-2", "LOADER-COMMON-3", "LOADER-MIRROR-L", "LOADER-MIRROR-R"},
-		"kanban":   {"KP-PRESS", "KW-WELD", "KP-UNLOAD", "KW-UNLOAD", "P5-PRESS-1", "P5-PRESS-2", "P5-PRESS-3", "P5-PRESS-4", "P5-PRESS-5", "P5-UNLOAD-CELL"},
-		"window":   {"LINE-2", "SMN-10-W", "SMN-10-X", "DRAIN-10"},
-		"one-node": {"LINE-1N", "L1N-LOAD-A", "L1N-LOAD-B"},
+		"demo":           {"PRESS-1", "PRESS-2", "WELD-1", "WELD-2", "WELD-3", "WELD-4", "WELD-5", "LOADER-SHIM", "LOADER-COMP", "LOADER-CLIP", "LOADER-STUD", "UNLOADER-A"},
+		"4x2":            {"WELD-6", "LOADER-COMMON-1", "LOADER-COMMON-2", "LOADER-COMMON-3", "LOADER-MIRROR-L", "LOADER-MIRROR-R"},
+		"kanban":         {"KP-PRESS", "KW-WELD", "KP-UNLOAD", "KW-UNLOAD", "P5-PRESS-1", "P5-PRESS-2", "P5-PRESS-3", "P5-PRESS-4", "P5-PRESS-5", "P5-UNLOAD-CELL"},
+		"window":         {"LINE-2", "SMN-10-W", "SMN-10-X", "DRAIN-10"},
+		"one-node":       {"LINE-1N", "L1N-LOAD-A", "L1N-LOAD-B"},
+		"two-robot-home": {"LINE-2H", "L2H-LOAD"},
 	}
 	placed := map[string]bool{}
 	owner := map[string]string{}

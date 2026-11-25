@@ -34,6 +34,8 @@ edge edge1.line1
   process LINE-1N on edge1.line1
   process L1N-LOAD-A on edge1.line1
   process L1N-LOAD-B on edge1.line1
+  process LINE-2H on edge1.line1
+  process L2H-LOAD on edge1.line1
   style PRESS-1-RUN of PRESS-1
   style PRESS-1-ALT of PRESS-1
   style PRESS-1-MOVED of PRESS-1
@@ -93,6 +95,9 @@ edge edge1.line1
   style L1N-B of LINE-1N
   style L1N-LOAD-A-RUN of L1N-LOAD-A
   style L1N-LOAD-B-RUN of L1N-LOAD-B
+  style L2H-A of LINE-2H
+  style L2H-B of LINE-2H
+  style L2H-LOAD-RUN of L2H-LOAD
   claim PLN_001 PRESS-1-RUN operator=
   claim PLN_001 PRESS-1-ALT operator=
   claim PLN_001 PRESS-1-R3 operator=
@@ -209,6 +214,11 @@ edge edge1.line1
   claim ALN_1N_01 L1N-B operator=LINE-1N-OPS
   claim PLK_1N_01 L1N-LOAD-A-RUN operator=L1N-LOAD-A-OPS
   claim PLK_1N_02 L1N-LOAD-B-RUN operator=L1N-LOAD-B-OPS
+  claim ALN_2H_01 L2H-A operator=LINE-2H-OPS
+  claim ALN_2H_01 L2H-B operator=LINE-2H-OPS
+  claim PLK_2H_HA L2H-LOAD-RUN operator=
+  claim PLK_2H_HB L2H-LOAD-RUN operator=
+  claim PLK_2H_BUF L2H-LOAD-RUN operator=
   point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-RUN
   point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-ALT
   point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-R3
@@ -250,6 +260,8 @@ edge edge1.line1
   cell LINE-1N LINE-1N-OPS
   cell L1N-LOAD-A L1N-LOAD-A-OPS
   cell L1N-LOAD-B L1N-LOAD-B-OPS
+  cell LINE-2H LINE-2H-OPS
+  cell L2H-LOAD L2H-LOAD-OPS
   operator PRESS-1-OPS
   operator PRESS-2-OPS
   operator WELD-1-OPS
@@ -285,7 +297,9 @@ edge edge1.line1
   operator LINE-1N-OPS
   operator L1N-LOAD-A-OPS
   operator L1N-LOAD-B-OPS
-  core bin_types=9 payloads=31 zones=14 stations=98 bins=218 demands=15 kanbans=4 loader_settings=2
+  operator LINE-2H-OPS
+  operator L2H-LOAD-OPS
+  core bin_types=10 payloads=33 zones=14 stations=102 bins=221 demands=17 kanbans=4 loader_settings=2
 
 edge edge2.line1
   view station edge2.line1
@@ -321,4 +335,4 @@ edge edge2.line1
   operator SMN-10-OPS
   operator SMN-10X-OPS
   operator DRAIN-10-OPS
-  core bin_types=9 payloads=31 zones=14 stations=98 bins=218 demands=15 kanbans=4 loader_settings=2
+  core bin_types=10 payloads=33 zones=14 stations=102 bins=221 demands=17 kanbans=4 loader_settings=2
