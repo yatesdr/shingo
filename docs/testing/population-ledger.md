@@ -2824,3 +2824,48 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none
 - verified at: the commit that adds this row
+
+### STALE — `TestTerminateOrder_CancelsActiveOrder`
+- test: `TestTerminateOrder_CancelsActiveOrder` · pkg `shingocore/engine` · run `-run '^TestCancelOrder_CancelsActiveOrder$'` · `shingo-core/engine/orders_test.go:203` @ `6bd55616` · tags `docker`
+- code: STALE (final brief 5h, one word, cancel, in the code as on the screens: `Engine.TerminateOrder` became `Engine.CancelOrder`, and the test was renamed with it)
+- assertion map: renamed `TestCancelOrder_CancelsActiveOrder` (`shingo-core/engine/orders_test.go:207`), every assertion kept, unchanged: the order reads cancelled, the cancelled event names it, its reason names the operator, its PreviousStatus is set; only the call (`eng.CancelOrder`) and its error label changed
+- mutation: none run for this row: a rename with every assertion unchanged, green under the new name at the tip
+- coverage Δ: not measured (the same path runs under the new name)
+- citations rewritten: none (`git grep` finds the old name only here)
+- verified at: the commit that adds this row
+
+### STALE — `TestTerminateOrder_RejectsTerminalStatus`
+- test: `TestTerminateOrder_RejectsTerminalStatus` · pkg `shingocore/engine` · run `-run '^TestCancelOrder_RejectsTerminalStatus$'` · `shingo-core/engine/orders_test.go:252` @ `6bd55616` · tags `docker`
+- code: STALE (final brief 5h: renamed with `Engine.CancelOrder`)
+- assertion map: renamed `TestCancelOrder_RejectsTerminalStatus` (`shingo-core/engine/orders_test.go:256`), every assertion kept, unchanged: a confirmed order is refused with an error saying "cannot cancel"; only the call changed
+- mutation: none run for this row: a rename with every assertion unchanged, green under the new name at the tip
+- coverage Δ: not measured (the same path runs under the new name)
+- citations rewritten: none (`git grep` finds the old name only here)
+- verified at: the commit that adds this row
+
+### STALE — `TestTerminateOrder_MissingOrder`
+- test: `TestTerminateOrder_MissingOrder` · pkg `shingocore/engine` · run `-run '^TestCancelOrder_MissingOrder$'` · `shingo-core/engine/orders_test.go:275` @ `6bd55616` · tags `docker`
+- code: STALE (final brief 5h: renamed with `Engine.CancelOrder`)
+- assertion map: renamed `TestCancelOrder_MissingOrder` (`shingo-core/engine/orders_test.go:279`), every assertion kept, unchanged: an unknown order id answers an error saying "not found"; only the call changed
+- mutation: none run for this row: a rename with every assertion unchanged, green under the new name at the tip
+- coverage Δ: not measured (the same path runs under the new name)
+- citations rewritten: none (`git grep` finds the old name only here)
+- verified at: the commit that adds this row
+
+### STALE — `TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle`
+- test: `TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle` · pkg `shingocore/engine` · run `-run '^TestCancelOrder_RejectsConfirmedStatus_FullLifecycle$'` · `shingo-core/engine/engine_terminal_test.go:124` @ `6bd55616` · tags `docker`
+- code: STALE (final brief 5h: renamed with `Engine.CancelOrder`)
+- assertion map: renamed `TestCancelOrder_RejectsConfirmedStatus_FullLifecycle` (`shingo-core/engine/engine_terminal_test.go:122`), every assertion kept, unchanged: a retrieve run to confirmed through the simulator is refused by the UI door, makes no auto_return order and leaves its bin unclaimed; its failure messages name `CancelOrder`, and its header, which still said the status guard was missing, now records the bug it pinned as history
+- mutation: none run for this row: a rename with every assertion unchanged, green under the new name at the tip
+- coverage Δ: not measured (the same path runs under the new name)
+- citations rewritten: none (`git grep` finds the old name only here)
+- verified at: the commit that adds this row
+
+### STALE — `TestPinOrders_TerminateFailureAnswers`
+- test: `TestPinOrders_TerminateFailureAnswers` · pkg `shingocore/www` · run `-run '^TestPinOrders_CancelFailureAnswers$'` · `shingo-core/www/lane_f_pins_test.go:208` @ `6bd55616` · tags `docker`
+- code: STALE (final brief 5h: `apiTerminateOrder` became `apiCancelOrder` and its route `/api/orders/cancel`, and the test was renamed with them)
+- assertion map: renamed `TestPinOrders_CancelFailureAnswers` (`shingo-core/www/lane_f_pins_test.go:210`), every assertion kept, unchanged: an unknown order answers 500 "order not found"; a delivered, confirmed or failed one answers 409 with its sentence; only the handler and the route it posts changed, and its header, which said the row only logs a failure, now says it toasts it (lane F)
+- mutation: none run for this row: a rename with every assertion unchanged, green under the new name at the tip
+- coverage Δ: not measured (the same path runs under the new name)
+- citations rewritten: `shingo-core/engine/orders.go` (`OrderFinishedError`'s doc names the new test)
+- verified at: the commit that adds this row
