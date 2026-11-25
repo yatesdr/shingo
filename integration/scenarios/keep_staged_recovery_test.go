@@ -1470,10 +1470,12 @@ var ksrMoments = []ksrMoment{
 // to transit) and the cancel follows at once, before any message from Core
 // reaches Edge, while Edge still holds every order bringing B as not yet with
 // the fleet. Where no leg parks on the spot there should be no such order at
-// all: no pump has run since the lift, so no bins push has told the keeper of
-// it (BinsPush pushes after a pump, not on a timer). Until 2026-11-24 a 20 ms
-// ticker could land it first, and the keeper's refill was then still Edge's
-// own (keepSpotsOnBinsChange).
+// all: no pump has run since the lift, so no snapshot has told the keeper of
+// it. Core's push for the lift is armed, and the rig runs and delivers it at
+// the end of a pump (harness.BinsFeed); its own timer, firing first, leaves
+// the snapshot in Core's outbox until then. Until 2026-11-24 a 20 ms ticker
+// of the rig's could land it first, and the keeper's refill was then still
+// Edge's own (keepSpotsOnBinsChange).
 func ksrSpareLifted(c *ksrCell, co ksrCO) {
 	ret := c.coreOf(co.returns[0])
 	if ret.VendorOrderID == "" {

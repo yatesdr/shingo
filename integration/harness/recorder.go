@@ -31,13 +31,14 @@ import (
 //     with diff and two cells with one transcript share a sha256.
 //   - <cell>.raw: the same envelopes as they were sent, for reading a
 //     transcript difference back to the bytes.
-//   - <cell>.counts.json: the bins pushes by caller (and how many of each
-//     changed the Edge's copy), every wait a scenario records (passes until
+//   - <cell>.counts.json: Core's bins pushes the rig's flushes ran, by caller
+//     (the snapshots they sent are the transcript's bins.snapshot lines), every
+//     wait a scenario records (passes until
 //     its condition held, wall, and whether the satisfying pass followed one of
 //     Core's robot polls), counters, and notes (S6's TriggeredBy).
 //
 // Unset, RecorderFor returns nil, every method on a nil *Recorder and a nil
-// *Wait returns at once, and the Bus and BinsPush take no stamp and build no
+// *Wait returns at once, and the Bus and BinsFeed take no stamp and build no
 // line: a run without it costs one nil check per message, push and wait and
 // takes every path it takes today.
 //
@@ -76,9 +77,8 @@ type Recorder struct {
 }
 
 type pushCount struct {
-	N       int64 `json:"n"`
-	Changed int64 `json:"changed"`
-	WallNS  int64 `json:"wall_ns"`
+	N      int64 `json:"n"`
+	WallNS int64 `json:"wall_ns"`
 }
 
 // RecorderFor is t's recorder, or nil when RecordEnv is unset. Every caller
@@ -146,23 +146,6 @@ func (r *Recorder) Sent(route string, payload []byte) {
 		return
 	}
 	r.msg(0, route, payload)
-}
-
-// push records one bins push: who called it, whether it changed the copy the
-// Edge holds (its digest differs from the push before), and its wall.
-func (r *Recorder) push(caller string, changed bool, wall time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	pc := r.pushes[caller]
-	if pc == nil {
-		pc = &pushCount{}
-		r.pushes[caller] = pc
-	}
-	pc.N++
-	if changed {
-		pc.Changed++
-	}
-	pc.WallNS += int64(wall)
 }
 
 // feedPushes records n pushes Core's feed ran in one flush (BinsFeed), and the

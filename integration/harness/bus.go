@@ -39,8 +39,6 @@ type Bus struct {
 	edgePub *memPublisher
 	corePub *memPublisher
 
-	// bins, when set, pushes Core's bins to the Edge after every pump.
-	bins *BinsPush
 	// feed, when set, runs Core's own bins pushes after every pump
 	// (StartBinsFeed).
 	feed *BinsFeed
@@ -139,32 +137,19 @@ func (b *Bus) PumpEdgeOutbox() int {
 	if b.feed != nil {
 		b.feed.settle("pump-edge", false)
 	}
-	b.pushBins("pump-edge")
 	return n
 }
 
-// SetBinsPush makes every pump end with p's push of Core's bins to the Edge,
-// as Core's bins push follows the change that moved a bin (BinsPush).
-func (b *Bus) SetBinsPush(p *BinsPush) { b.bins = p }
-
-// PushBins pushes Core's bins to the Edge now: for a scenario that changed
-// Core's bins directly (a fixture write), as Core's push would follow it. On
-// the real feed (StartBinsFeed) the Edge sends its watch list again and Core
-// answers it.
+// PushBins brings Core's bins to the Edge now, for a scenario that changed
+// Core's bins directly (a fixture write) and so told Core's feed nothing: the
+// Edge sends its watch list again and Core answers it with a fresh snapshot
+// (BinsFeed). A Bus not on the feed has nothing to push and fails the test.
 func (b *Bus) PushBins() {
-	if b.feed != nil {
-		b.feed.republish()
-		return
+	b.t.Helper()
+	if b.feed == nil {
+		b.t.Fatal("harness: PushBins on a Bus with no bins feed (StartBinsFeed)")
 	}
-	b.pushBins("explicit")
-}
-
-// pushBins pushes through b's BinsPush, if it has one; caller names who asked,
-// for the recorder's count by caller.
-func (b *Bus) pushBins(caller string) {
-	if b.bins != nil {
-		b.bins.push(caller)
-	}
+	b.feed.republish()
 }
 
 // PumpAll drains both directions until both outboxes are empty in the
@@ -184,7 +169,6 @@ func (b *Bus) PumpAll() int {
 	if b.feed != nil {
 		n += b.feed.settle("pump-all", true)
 	}
-	b.pushBins("pump-all")
 	return n
 }
 

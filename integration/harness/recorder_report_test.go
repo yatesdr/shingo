@@ -18,8 +18,8 @@ import (
 //     sha256, two or more cells): the removal-candidate evidence;
 //  2. across directories (runs), each cell whose transcript differs from run
 //     to run, with the first differing line of the first two that differ;
-//  3. per test, summed over its cells and runs: bins pushes by caller and the
-//     ticker's share, the waits' passes, how many satisfying passes followed a
+//  3. per test, summed over its cells and runs: Core's bins pushes by caller
+//     and their share, the waits' passes, how many satisfying passes followed a
 //     Core robot poll, and the notes (TriggeredBy).
 //
 // Skipped unless SHINGO_SCENARIO_RECORD_REPORT names the directories, comma
@@ -493,7 +493,6 @@ func writeCounts(b *strings.Builder, runs []recordRun) {
 					a.pushes[caller] = q
 				}
 				q.N += p.N
-				q.Changed += p.Changed
 				q.WallNS += p.WallNS
 			}
 			for _, w := range c.Waits {
@@ -525,13 +524,12 @@ func writeCounts(b *strings.Builder, runs []recordRun) {
 	fmt.Fprintf(b, "## Counts by test, summed over cells and runs\n\n")
 	for _, n := range names {
 		a := tests[n]
-		var total, changed int64
+		var total int64
 		for _, p := range a.pushes {
 			total += p.N
-			changed += p.Changed
 		}
 		fmt.Fprintf(b, "### %s: %d cell-runs (%d failed)\n\n", n, a.cells, a.failed)
-		fmt.Fprintf(b, "| push caller | pushes | share | changed the copy | push wall s |\n|---|---|---|---|---|\n")
+		fmt.Fprintf(b, "| push caller | pushes | share | push wall s |\n|---|---|---|---|\n")
 		callers := make([]string, 0, len(a.pushes))
 		for c := range a.pushes {
 			callers = append(callers, c)
@@ -539,10 +537,9 @@ func writeCounts(b *strings.Builder, runs []recordRun) {
 		sort.Strings(callers)
 		for _, c := range callers {
 			p := a.pushes[c]
-			fmt.Fprintf(b, "| %s | %d | %.1f%% | %d | %.1f |\n", c, p.N, pct(p.N, total), p.Changed,
-				time.Duration(p.WallNS).Seconds())
+			fmt.Fprintf(b, "| %s | %d | %.1f%% | %.1f |\n", c, p.N, pct(p.N, total), time.Duration(p.WallNS).Seconds())
 		}
-		fmt.Fprintf(b, "| all | %d | | %d | |\n\n", total, changed)
+		fmt.Fprintf(b, "| all | %d | | |\n\n", total)
 		fmt.Fprintf(b, "| wait | waits | met | passes | mean | 1 pass | 2 | 3-5 | 6+ | met after a robot poll (observed / inferred) |\n")
 		fmt.Fprintf(b, "|---|---|---|---|---|---|---|---|---|---|\n")
 		kinds := make([]string, 0, len(a.waits))
