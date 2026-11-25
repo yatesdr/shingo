@@ -22,6 +22,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -795,4 +797,331 @@ func (c *ksrCell) partChangeWaits(supply, evac domain.Order) {
 	out, err := c.core.eng.DB().GetNodeByDotName(ksrOutStg)
 	mustNil(c.t, err, "where the spare goes")
 	c.moveByHand(spare[0], out.ID, "move A's spare off its home")
+}
+
+// homeCard is the loader board's card for a home, from the home's tile as GET
+// /api/operator-stations/{id}/view serves it (www apiGetOperatorStationView):
+// the keys the card's status word, its order list and its CLEAR BIN are drawn
+// from (www static/operator-station/operator-modal.js renderModal, :145-224
+// and :579-584).
+type homeCard struct {
+	Node struct {
+		ID int64 `json:"id"`
+	} `json:"node"`
+	Runtime *struct {
+		RemainingUOPCached int `json:"remaining_uop_cached"`
+	} `json:"runtime"`
+	Orders []struct {
+		ID     int64  `json:"id"`
+		Status string `json:"status"`
+	} `json:"orders"`
+	BinState *struct {
+		BinLabel    string `json:"bin_label"`
+		PayloadCode string `json:"payload_code"`
+		Occupied    bool   `json:"occupied"`
+		Stocked     bool   `json:"stocked"`
+	} `json:"bin_state"`
+	Loader *struct {
+		Layout string `json:"layout"`
+	} `json:"loader"`
+}
+
+// count is the card's count: the tile's runtime count, the Edge's own for the
+// node, 0 with no runtime (operator-modal.js:147-148).
+func (h homeCard) count() int {
+	if h.Runtime == nil {
+		return 0
+	}
+	return h.Runtime.RemainingUOPCached
+}
+
+// word is the card's status word at a ratio of 1 (operator-modal.js:165-166).
+func (h homeCard) word() string {
+	if n := h.count(); n > 0 {
+		return fmt.Sprintf("LOADED (%d UoP)", n)
+	}
+	return "EMPTY"
+}
+
+// offersClear is loaderOffersClear (operator-modal.js:732-736) on the card's
+// bin and count: whether the card draws CLEAR BIN (:579-584).
+func (h homeCard) offersClear() bool {
+	b := h.BinState
+	switch {
+	case b == nil || !b.Occupied:
+		return false
+	case h.count() > 0:
+		return true
+	}
+	return b.PayloadCode != "" && !b.Stocked
+}
+
+func (h homeCard) String() string {
+	var orders []string
+	for _, o := range h.Orders {
+		orders = append(orders, fmt.Sprintf("%d %s", o.ID, o.Status))
+	}
+	bin := "none"
+	if b := h.BinState; b != nil {
+		bin = fmt.Sprintf("%s part=%q occupied=%v stocked=%v", b.BinLabel, b.PayloadCode, b.Occupied, b.Stocked)
+	}
+	return fmt.Sprintf("%s; orders %v; bin %s; a loader card %v; CLEAR BIN %v", h.word(), orders, bin, h.Loader != nil,
+		h.offersClear())
+}
+
+// The brief's H3 (brief H; the owner, 2026-11-25: "a robot staging should not
+// invite loader interaction"). The line through its home (A1's, no buffer),
+// its home's cart loaded at the Edge's own LOAD as a plant's loader operator
+// loads it, so the Edge's count for the home is the cart's. REQUEST; both
+// robots to their waits, the supply's staged at the home under the cart it
+// holds. What the loader board's card for the home offers, and what Core
+// answers to its CLEAR BIN; then the same once the supply has lifted the cart
+// and gone, and once the swap is done, with nothing staged at the home.
+//
+// The card is read from the board's own JSON (the loader's screen made by its
+// own door, CreateLoaderBoard; the view as the board fetches it) and drawn by
+// the board's rules, named on homeCard. CLEAR BIN is pressed through the door
+// the card posts to (POST /api/process-nodes/{id}/clear-bin: Engine.ClearBin,
+// Core's bin.clear), not the home clear (BRING PARTIAL HOME's, clear_home).
+//
+// The card, as it is at 92351072 and stays (no loader board change in this
+// brief, the owner's word): with the supply's robot under the cart it reads
+// LOADED (40 UoP), lists no order (the supply's row is the line's and carries
+// no source, ListActiveByNodeKeys), says nothing of a robot and offers CLEAR
+// BIN. Core should refuse that clear, saying a robot is staged at the home,
+// and change nothing: the cart keeps its part and count, the supply its hold
+// and its wait, the card its LOADED. At 92351072 Core takes it: the cart is
+// zeroed under the robot and the supply carries an empty to the line. With
+// the cart lifted off the home the card offers no CLEAR BIN and Core answers
+// that there is no bin; with the swap done and the old cart on the home, held
+// by nothing, the card offers CLEAR BIN and Core takes it, as the loader's own.
+func TestScenario_TwoRobotLine_ThroughItsHome_LoaderCardWhileStaged(t *testing.T) {
+	t.Parallel()
+	o := homeLine(0, 0)
+	o.bareHomeA = true
+	c := newKsrCell(t, o)
+	r := newDloRig(c)
+	coreDB := c.core.eng.DB()
+
+	// asked runs a door that waits for Core's answer while the bus carries the
+	// ask and the answer, as the two outbox drainers do on a plant.
+	asked := func(door func() error) error {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- door() }()
+		for {
+			select {
+			case err := <-done:
+				c.settle()
+				return err
+			case <-time.After(10 * time.Millisecond):
+				c.bus.PumpAll()
+			}
+		}
+	}
+
+	// ── the loader's screen, made by its own door, and the home's cart loaded at it ──
+	loaders, err := c.edge.DB.ListCoreLoaders()
+	mustNil(t, err, "the Edge's loaders")
+	key := ""
+	for _, l := range loaders {
+		if l.Name == "KSR-LOADER" {
+			key = l.LoaderKey
+		}
+	}
+	if key == "" {
+		t.Fatalf("the Edge holds no KSR-LOADER from Core's node list (%d loaders)", len(loaders))
+	}
+	loadProc, err := c.edge.DB.CreateProcess("KSR-LOAD-OPS", "the loader's screen", "", "", false)
+	mustNil(t, err, "the loader's process")
+	board, err := c.edge.Engine.StationService().CreateLoaderBoard(key, loadProc)
+	mustNil(t, err, "the loader's screen")
+	windows, err := c.edge.DB.ListProcessNodesByStation(board)
+	mustNil(t, err, "the screen's windows")
+	var home int64
+	for _, n := range windows {
+		if n.CoreNodeName == ksrHomeA {
+			home = n.ID
+		}
+	}
+	if home == 0 {
+		t.Fatalf("the loader's screen has no window at %s (%d windows)", ksrHomeA, len(windows))
+	}
+	hn, err := coreDB.GetNodeByDotName(ksrHomeA)
+	mustNil(t, err, "the home")
+	empty := &corebins.Bin{BinTypeID: c.typeA.ID, Label: "KSR-HOME-A-FULL", NodeID: &hn.ID, Status: "available"}
+	mustNil(t, coreDB.CreateBin(empty), "an empty of A's carrier on the home")
+	c.bus.PushBins()
+	c.settle()
+	pack := int64(40)
+	mustNil(t, asked(func() error { return c.edge.Engine.LoadBin(home, ksrPartA, &pack, nil) }),
+		"the loader operator's LOAD of 40 on the home")
+
+	card := func() homeCard {
+		t.Helper()
+		res, err := http.Get(fmt.Sprintf("%s/api/operator-stations/%d/view", r.page, board))
+		mustNil(t, err, "GET the loader screen's view")
+		defer res.Body.Close()
+		body, err := io.ReadAll(res.Body)
+		mustNil(t, err, "read the loader screen's view")
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("GET the loader screen's view: %d %s", res.StatusCode, body)
+		}
+		var view struct {
+			Nodes []homeCard `json:"nodes"`
+		}
+		mustNil(t, json.Unmarshal(body, &view), "decode the loader screen's view")
+		for _, h := range view.Nodes {
+			if h.Node.ID == home {
+				return h
+			}
+		}
+		t.Fatalf("the loader screen's view has no card for %s (node %d): %s", ksrHomeA, home, body)
+		return homeCard{}
+	}
+	// clearBin is the card's CLEAR BIN: the door it posts to, with the body it
+	// posts (operator-util.js postAction), and the door's answer: its status
+	// and the sentence the board toasts ("ok" for an accept).
+	clearBin := func() (int, string) {
+		t.Helper()
+		var status int
+		var said string
+		mustNil(t, asked(func() error {
+			res, err := http.Post(fmt.Sprintf("%s/api/process-nodes/%d/clear-bin", r.page, home), "application/json",
+				strings.NewReader("{}"))
+			if err != nil {
+				return err
+			}
+			defer res.Body.Close()
+			var ans struct {
+				Status string `json:"status"`
+				Error  string `json:"error"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&ans); err != nil {
+				return err
+			}
+			status, said = res.StatusCode, ans.Error
+			if said == "" {
+				said = ans.Status
+			}
+			return nil
+		}), "press CLEAR BIN")
+		return status, said
+	}
+	// cartsAt is Core's carts at node, each as label, part, count and holder.
+	cartsAt := func(node string) []string {
+		t.Helper()
+		var out []string
+		for _, b := range c.binsAt(node) {
+			held := "nobody"
+			if b.ClaimedBy != nil {
+				held = fmt.Sprintf("order %d", *b.ClaimedBy)
+			}
+			out = append(out, fmt.Sprintf("%s %q %d held by %s", b.Label, b.PayloadCode, b.UOPRemaining, held))
+		}
+		return out
+	}
+
+	loaded := card()
+	t.Logf("loaded: the home's card reads %s; Core's home holds %v", loaded, cartsAt(ksrHomeA))
+	if want := []string{`KSR-HOME-A-FULL "KSR-PA" 40 held by nobody`}; !slices.Equal(cartsAt(ksrHomeA), want) ||
+		loaded.word() != "LOADED (40 UoP)" || !loaded.offersClear() {
+		t.Fatalf("fixture: after the LOAD the card reads %s and Core's home holds %v; want LOADED (40 UoP) over %v",
+			loaded, cartsAt(ksrHomeA), want)
+	}
+
+	// ── the supply staged at the home, under the cart it holds ──
+	supply, evac := c.homeLineStaged("the request")
+	defer func() { c.coreRoute("at the end", c.rows()...) }()
+	sp := c.coreOf(supply)
+	heldCart := []string{fmt.Sprintf(`KSR-HOME-A-FULL "KSR-PA" 40 held by order %d`, sp.ID)}
+	if got := cartsAt(ksrHomeA); sp.Status != protocol.StatusStaged || !slices.Equal(got, heldCart) {
+		t.Fatalf("fixture: the supply (Core order %d) reads %s and Core's home holds %v; want staged, holding %v",
+			sp.ID, sp.Status, got, heldCart)
+	}
+	staged := card()
+	t.Logf("staged: the supply's robot at the home (Core order %d %s); its card reads %s", sp.ID, sp.Status, staged)
+	if staged.word() != "LOADED (40 UoP)" || len(staged.Orders) != 0 || staged.BinState == nil ||
+		staged.BinState.BinLabel != "KSR-HOME-A-FULL" || !staged.BinState.Stocked || !staged.offersClear() {
+		t.Errorf("staged: the card reads %s; want it as it is: LOADED (40 UoP), no order, KSR-HOME-A-FULL stocked, "+
+			"CLEAR BIN offered", staged)
+	}
+	status, said := clearBin()
+	t.Logf("staged: CLEAR BIN answers %d %q", status, said)
+	want := "clear bin: Not cleared: a robot is staged at " + ksrHomeA + " to take KSR-HOME-A-FULL to " + ksrLine + "."
+	if status != http.StatusBadRequest || said != want {
+		t.Errorf("staged: CLEAR BIN answers %d %q; want %d %q", status, said, http.StatusBadRequest, want)
+	}
+	after := card()
+	t.Logf("staged, after CLEAR BIN: Core's home holds %v; the card reads %s; %s; %s", cartsAt(ksrHomeA), after,
+		c.legRow("supply", supply), c.legRow("evac", evac))
+	if got := cartsAt(ksrHomeA); !slices.Equal(got, heldCart) || after.word() != "LOADED (40 UoP)" ||
+		c.coreOf(supply).Status != protocol.StatusStaged || c.edgeRow(supply.ID).Status != protocol.StatusStaged {
+		t.Errorf("staged, after CLEAR BIN: Core's home holds %v, the card reads %s, the supply %s; want nothing "+
+			"changed: %v, LOADED (40 UoP), staged", got, after, c.legRow("supply", supply), heldCart)
+	}
+
+	// ── the supply lifts the cart and goes: nothing staged at the home ──
+	mustNil(t, c.edge.Engine.ReleaseStagedOrders(c.nodeID, edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}),
+		"RELEASE")
+	c.settle()
+	c.eventually("the one RELEASE sends both legs on", func() bool {
+		_, s := c.fleetBlocks(supply)
+		_, e := c.fleetBlocks(evac)
+		return s && e
+	})
+	if !c.pickupAt(c.coreOf(supply), ksrHomeA) {
+		t.Fatalf("the supply holds no pickup at %s", ksrHomeA)
+	}
+	lifted := card()
+	t.Logf("lifted: Core's home holds %v; the card reads %s", cartsAt(ksrHomeA), lifted)
+	if got := cartsAt(ksrHomeA); len(got) != 0 || lifted.word() != "EMPTY" || lifted.offersClear() ||
+		len(lifted.Orders) != 0 {
+		t.Errorf("lifted: Core's home holds %v and the card reads %s; want nothing there, EMPTY, no CLEAR BIN", got,
+			lifted)
+	}
+	status, said = clearBin()
+	t.Logf("lifted: CLEAR BIN answers %d %q", status, said)
+	if want := "clear bin: no bin at node " + ksrHomeA; status != http.StatusBadRequest || said != want {
+		t.Errorf("lifted: CLEAR BIN answers %d %q; want %d %q", status, said, http.StatusBadRequest, want)
+	}
+
+	// ── the swap done: the old cart on the home, held by nothing ──
+	if !c.pickupAt(c.coreOf(evac), ksrLine) {
+		t.Fatalf("the evac holds no pickup at %s", ksrLine)
+	}
+	c.drive(c.coreOf(evac), "RUNNING", "FINISHED")
+	c.drive(c.coreOf(supply), "RUNNING", "FINISHED")
+	c.driveUntil("both legs confirmed", func() bool {
+		done := true
+		for _, l := range []domain.Order{supply, evac} {
+			if c.edgeRow(l.ID).Status == protocol.StatusDelivered {
+				mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(l.ID, 1), "confirm")
+			}
+			if !protocol.IsTerminal(c.edgeRow(l.ID).Status) || !protocol.IsTerminal(c.coreOf(l).Status) {
+				done = false
+			}
+		}
+		return done
+	})
+	// The line has the full; the home the old cart (Core counts it 40: this
+	// cell does not carry the line's draws to Core), held by nothing.
+	swapped := card()
+	t.Logf("swapped: the line holds %v; Core's home holds %v; the card reads %s", cartsAt(ksrLine),
+		cartsAt(ksrHomeA), swapped)
+	if got := cartsAt(ksrLine); !slices.Equal(got, []string{`KSR-HOME-A-FULL "KSR-PA" 40 held by nobody`}) {
+		t.Errorf("swapped: the line holds %v; want the full the supply carried, KSR-HOME-A-FULL \"KSR-PA\" 40", got)
+	}
+	if got := cartsAt(ksrHomeA); !slices.Equal(got, []string{`KSR-LINE-BIN "KSR-PA" 40 held by nobody`}) ||
+		swapped.word() != "LOADED (40 UoP)" || !swapped.offersClear() {
+		t.Errorf("swapped: Core's home holds %v and the card reads %s; want the old cart, held by nobody, "+
+			"LOADED (40 UoP), CLEAR BIN offered", got, swapped)
+	}
+	status, said = clearBin()
+	t.Logf("swapped: CLEAR BIN answers %d %q; Core's home holds %v", status, said, cartsAt(ksrHomeA))
+	if got := cartsAt(ksrHomeA); status != http.StatusOK || said != "ok" ||
+		!slices.Equal(got, []string{`KSR-LINE-BIN "" 0 held by nobody`}) {
+		t.Errorf("swapped: CLEAR BIN answers %d %q and Core's home holds %v; want it taken: 200, the old cart "+
+			"emptied", status, said, got)
+	}
 }
