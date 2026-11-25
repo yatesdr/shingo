@@ -1,0 +1,2038 @@
+[
+  {
+    "name": "home-fed/any/changeover/drop-release",
+    "config": "home-fed",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "drop-release",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/any/changeover/stage",
+    "config": "home-fed",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "stage",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      }
+    ]
+  },
+  {
+    "name": "home-fed/any/changeover/staged-deliver",
+    "config": "home-fed",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "staged-deliver",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/any/changeover/tooling",
+    "config": "home-fed",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "tooling",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "tooling_done"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/sequential/changeover/A",
+    "config": "home-fed",
+    "mode": "sequential",
+    "phase": "changeover",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/sequential/steady/A",
+    "config": "home-fed",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/sequential/steady/backfill",
+    "config": "home-fed",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "backfill",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/single_robot/changeover/B",
+    "config": "home-fed",
+    "mode": "single_robot",
+    "phase": "changeover",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/single_robot/steady/A",
+    "config": "home-fed",
+    "mode": "single_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot/changeover/evac",
+    "config": "home-fed",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot/changeover/supply",
+    "config": "home-fed",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot/changeover/evac",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot/steady/A",
+    "config": "home-fed",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot/steady/B",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot/steady/B",
+    "config": "home-fed",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot_press_index/changeover/evac",
+    "config": "home-fed",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot_press_index/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot_press_index/changeover/supply",
+    "config": "home-fed",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot_press_index/changeover/evac",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot_press_index/steady/A",
+    "config": "home-fed",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot_press_index/steady/B",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OUT"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "home-fed/two_robot_press_index/steady/B",
+    "config": "home-fed",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-fed/two_robot_press_index/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/any/changeover/drop-release",
+    "config": "home-return",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "drop-release",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-return/any/changeover/stage",
+    "config": "home-return",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "stage",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "MARKET-B"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      }
+    ]
+  },
+  {
+    "name": "home-return/any/changeover/staged-deliver",
+    "config": "home-return",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "staged-deliver",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/any/changeover/tooling",
+    "config": "home-return",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "tooling",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "MARKET-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "tooling_done"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/sequential/changeover/A",
+    "config": "home-return",
+    "mode": "sequential",
+    "phase": "changeover",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "MARKET-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/sequential/steady/A",
+    "config": "home-return",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-return/sequential/steady/backfill",
+    "config": "home-return",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "backfill",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "MARKET"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/single_robot/changeover/B",
+    "config": "home-return",
+    "mode": "single_robot",
+    "phase": "changeover",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "MARKET-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-return/single_robot/steady/A",
+    "config": "home-return",
+    "mode": "single_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "MARKET"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot/changeover/evac",
+    "config": "home-return",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot/changeover/supply",
+    "config": "home-return",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot/changeover/evac",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "MARKET-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot/steady/A",
+    "config": "home-return",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot/steady/B",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "MARKET"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot/steady/B",
+    "config": "home-return",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot_press_index/changeover/evac",
+    "config": "home-return",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot_press_index/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "MARKET-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot_press_index/changeover/supply",
+    "config": "home-return",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot_press_index/changeover/evac",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot_press_index/steady/A",
+    "config": "home-return",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot_press_index/steady/B",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "MARKET"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "home-return/two_robot_press_index/steady/B",
+    "config": "home-return",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-return/two_robot_press_index/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/any/changeover/drop-release",
+    "config": "home-staging",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "drop-release",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/any/changeover/staged-deliver",
+    "config": "home-staging",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "staged-deliver",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/any/changeover/tooling",
+    "config": "home-staging",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "tooling",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "wait",
+        "node": "HOME",
+        "wait_kind": "station",
+        "purpose": "tooling_done"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/sequential/changeover/A",
+    "config": "home-staging",
+    "mode": "sequential",
+    "phase": "changeover",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/sequential/steady/A",
+    "config": "home-staging",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/sequential/steady/backfill",
+    "config": "home-staging",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "backfill",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/single_robot/changeover/B",
+    "config": "home-staging",
+    "mode": "single_robot",
+    "phase": "changeover",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/single_robot/steady/A",
+    "config": "home-staging",
+    "mode": "single_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot/changeover/evac",
+    "config": "home-staging",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot/changeover/supply",
+    "config": "home-staging",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot/changeover/evac",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "HOME-B",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot/steady/A",
+    "config": "home-staging",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot/steady/B",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "HOME",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot/steady/B",
+    "config": "home-staging",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot_press_index/changeover/evac",
+    "config": "home-staging",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot_press_index/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot_press_index/changeover/supply",
+    "config": "home-staging",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot_press_index/changeover/evac",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot_press_index/steady/A",
+    "config": "home-staging",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot_press_index/steady/B",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "home-staging/two_robot_press_index/steady/B",
+    "config": "home-staging",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "home-staging/two_robot_press_index/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/any/changeover/drop-release",
+    "config": "staged",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "drop-release",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "staged/any/changeover/stage",
+    "config": "staged",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "stage",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      }
+    ]
+  },
+  {
+    "name": "staged/any/changeover/staged-deliver",
+    "config": "staged",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "staged-deliver",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/any/changeover/tooling",
+    "config": "staged",
+    "mode": "any",
+    "phase": "changeover",
+    "leg": "tooling",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "tooling_done"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/sequential/changeover/A",
+    "config": "staged",
+    "mode": "sequential",
+    "phase": "changeover",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/sequential/steady/A",
+    "config": "staged",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "staged/sequential/steady/backfill",
+    "config": "staged",
+    "mode": "sequential",
+    "phase": "steady",
+    "leg": "backfill",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/single_robot/changeover/B",
+    "config": "staged",
+    "mode": "single_robot",
+    "phase": "changeover",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "staged/single_robot/steady/A",
+    "config": "staged",
+    "mode": "single_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "OSTAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      },
+      {
+        "action": "pickup",
+        "node": "OSTAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot/changeover/evac",
+    "config": "staged",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot/changeover/supply",
+    "config": "staged",
+    "mode": "two_robot",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-Y",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot/changeover/evac",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot/steady/A",
+    "config": "staged",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot/steady/B",
+    "steps": [
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "STAGE",
+        "exclusive_slot": true
+      },
+      {
+        "action": "wait",
+        "node": "STAGE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "STAGE"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot/steady/B",
+    "config": "staged",
+    "mode": "two_robot",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot_press_index/changeover/evac",
+    "config": "staged",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "evac",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot_press_index/changeover/supply",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME-B",
+        "payload_code": "PART-Y"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot_press_index/changeover/supply",
+    "config": "staged",
+    "mode": "two_robot_press_index",
+    "phase": "changeover",
+    "leg": "supply",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot_press_index/changeover/evac",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "ready"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot_press_index/steady/A",
+    "config": "staged",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "A",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot_press_index/steady/B",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "LINE",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "LINE"
+      },
+      {
+        "action": "dropoff",
+        "node": "HOME"
+      },
+      {
+        "action": "pickup",
+        "node": "HOME"
+      },
+      {
+        "action": "dropoff",
+        "node": "PAIR"
+      }
+    ]
+  },
+  {
+    "name": "staged/two_robot_press_index/steady/B",
+    "config": "staged",
+    "mode": "two_robot_press_index",
+    "phase": "steady",
+    "leg": "B",
+    "payload_code": "PART-X",
+    "process_node": "LINE",
+    "sibling": "staged/two_robot_press_index/steady/A",
+    "steps": [
+      {
+        "action": "wait",
+        "node": "PAIR",
+        "wait_kind": "station",
+        "purpose": "swap"
+      },
+      {
+        "action": "pickup",
+        "node": "PAIR"
+      },
+      {
+        "action": "dropoff",
+        "node": "LINE"
+      }
+    ]
+  }
+]

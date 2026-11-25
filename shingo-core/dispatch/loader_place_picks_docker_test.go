@@ -3,17 +3,23 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingo/shared/parkvectors"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // loader_place_picks_docker_test.go — what each of loader placement's choose
@@ -546,5 +552,596 @@ func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t 
 	if wait := d.placeForDedicatedLoader(ret, steps, nil); wait != "" || ret.DeliveryNode != buffer.Name {
 		t.Fatalf("a return placed while the refill holds %s landed at %s (wait %q), want the buffer %s: "+
 			"the refill holds the home from its issue", home.Name, ret.DeliveryNode, wait, buffer.Name)
+	}
+}
+
+// ── EVERY BUILDER LEG THROUGH THE PARK (brief G B2, 2026-11-25) ─────────────
+//
+// The picks above hand-build the legs. These take every leg the Edge's step
+// builders write for a consume line whose routing runs through a dedicated
+// loader (shared/parkvectors, kept current by the Edge's
+// TestParkVectors_AreTheBuildersShapes): each is sent through Core's intake as
+// the Edge sends it, naming its partner, with its process node and without,
+// and one scan pass runs. The pin is where each leg then stands: sent, or its
+// status and cause; every drop of its plan after the park, a vacate-stamped one
+// marked; and "drain" when the park recorded one. A leg with no pin fails and
+// prints the line to add.
+
+// parkWorld is the pick fixture's loader (HOME, two buffers, the outbound
+// OUT) with the incoming part's home HOME-B on it, and the line's other nodes,
+// keyed by the vectors' role names.
+type parkWorld struct {
+	fx   *pickFixture
+	node map[string]string // role -> node name
+	role map[string]string // node name -> role
+}
+
+func newParkWorld(t *testing.T, db *store.DB) *parkWorld {
+	t.Helper()
+	fx := newPickFixture(t, db)
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-Y", Description: "Y", UOPCapacity: 10}),
+		"create PART-Y")
+	w := &parkWorld{fx: fx, role: map[string]string{}, node: map[string]string{"HOME": fx.home.Name,
+		"BUF": fx.buffer.Name, "BUF2": fx.buffer2.Name, "OUT": fx.outbound.Name}}
+	for _, r := range []string{"HOME-B", "HOME2", "LINE", "PAIR", "STAGE", "OSTAGE", "MARKET", "MARKET-B"} {
+		w.node[r] = prNode(t, db, "PV-"+r).Name
+	}
+	testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: fx.loaderID,
+		PositionNodeID: w.at(t, db, "HOME-B").ID, PayloadCode: "PART-Y", Kind: loaders.HomeKindHome}), "HOME-B")
+	for r, n := range w.node {
+		w.role[n] = r
+	}
+	return w
+}
+
+func (w *parkWorld) at(t *testing.T, db *store.DB, role string) *nodes.Node {
+	t.Helper()
+	n, err := db.GetNodeByDotName(w.node[role])
+	testutil.MustNoErr(t, err, "node "+role)
+	return n
+}
+
+// put stands a cart of payload on role's node ("" payload: an empty).
+func (w *parkWorld) put(t *testing.T, db *store.DB, role, payload, label string, uop int) *bins.Bin {
+	t.Helper()
+	if payload == "" {
+		return makeEmptyBin(t, db, w.at(t, db, role).ID, label)
+	}
+	return makeLoaderBin(t, db, payload, w.at(t, db, role).ID, label, uop, time.Now().UTC())
+}
+
+// stock stands the walk's world: each part's full on its home and on its
+// market, the old cart (a partial) on the line, a cart on the index press's
+// back position. The buffers stand free.
+func (w *parkWorld) stock(t *testing.T, db *store.DB) {
+	t.Helper()
+	w.put(t, db, "HOME", "PART-X", "pv-home-full", 10)
+	w.put(t, db, "HOME-B", "PART-Y", "pv-homeb-full", 10)
+	w.put(t, db, "MARKET", "PART-X", "pv-market-full", 10)
+	w.put(t, db, "MARKET-B", "PART-Y", "pv-marketb-full", 10)
+	w.put(t, db, "LINE", "PART-X", "pv-line-old", 3)
+	w.put(t, db, "PAIR", "PART-X", "pv-pair-cart", 10)
+}
+
+// addHome2 makes HOME2 a second home pinned to the line's part.
+func (w *parkWorld) addHome2(t *testing.T, db *store.DB) {
+	t.Helper()
+	testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: w.fx.loaderID,
+		PositionNodeID: w.at(t, db, "HOME2").ID, PayloadCode: "PART-X", Kind: loaders.HomeKindHome}), "HOME2")
+}
+
+func parkLegUUID(name string) string { return "pv-" + strings.ReplaceAll(name, "/", "-") }
+
+// submit sends one leg through Core's intake as the Edge sends it.
+func (w *parkWorld) submit(t *testing.T, d *Dispatcher, c parkvectors.Case, sibling string, withProcess bool) string {
+	t.Helper()
+	var steps []protocol.ComplexOrderStep
+	testutil.MustNoErr(t, json.Unmarshal(c.Steps, &steps), c.Name)
+	for i := range steps {
+		if steps[i].Node == "" {
+			continue
+		}
+		n, ok := w.node[steps[i].Node]
+		if !ok {
+			t.Fatalf("%s: the vectors name %q, which the park world has no node for", c.Name, steps[i].Node)
+		}
+		steps[i].Node = n
+	}
+	pn := ""
+	if withProcess {
+		pn = w.node[c.ProcessNode]
+	}
+	uuid := parkLegUUID(c.Name)
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{OrderUUID: uuid,
+		PayloadCode: c.PayloadCode, Quantity: 1, ProcessNode: pn, SiblingOrderUUID: sibling, Steps: steps})
+	return uuid
+}
+
+// submitUnit sends a unit's legs in the Edge's creation order, each pair leg
+// naming the other.
+func (w *parkWorld) submitUnit(t *testing.T, d *Dispatcher, unit []parkvectors.Case, withProcess bool) []string {
+	t.Helper()
+	uuids := make([]string, len(unit))
+	for i, c := range unit {
+		sib := ""
+		if c.Sibling != "" {
+			sib = parkLegUUID(c.Sibling)
+		}
+		uuids[i] = w.submit(t, d, c, sib, withProcess)
+	}
+	return uuids
+}
+
+// landing is where a leg stands: "sent" when the fleet has it, else its status
+// and cause; every drop of its plan, by role, one carrying a vacate stamp
+// marked +v(own), +v(partner) or +v(sibling); "drain" when the park recorded
+// one for it.
+func (w *parkWorld) landing(t *testing.T, db *store.DB, uuid string) string {
+	t.Helper()
+	o := prReloadUUID(t, db, uuid)
+	state := "sent"
+	if o.VendorOrderID == "" {
+		state = fmt.Sprintf("%s:%s", o.Status, o.QueueCause)
+	}
+	steps, ok := decodeSteps(o.StepsJSON)
+	if !ok {
+		t.Fatalf("%s: its stored plan does not read", uuid)
+	}
+	var drops []string
+	for _, s := range steps {
+		if s.Action != protocol.ActionDropoff {
+			continue
+		}
+		r, ok := w.role[s.Node]
+		if !ok {
+			r = s.Node
+		}
+		if st := plan.StampHonoured(s); st != nil {
+			switch {
+			case st.Kind != "":
+				r += "+v(" + st.Kind + ")"
+			case st.Partner != 0:
+				r += "+v(partner)"
+			default:
+				r += "+v(own)"
+			}
+		}
+		drops = append(drops, r)
+	}
+	out := state + " drops=" + strings.Join(drops, ",")
+	acts, err := db.ListRecoveryActions(500)
+	testutil.MustNoErr(t, err, "recovery actions")
+	for _, a := range acts {
+		if a.Action == "loader_park_no_slot" && a.TargetType == "order" && a.TargetID == o.ID {
+			out += " drain"
+			break
+		}
+	}
+	return out
+}
+
+// sentence is the wait's sentence with node names read back as roles.
+func (w *parkWorld) sentence(t *testing.T, db *store.DB, uuid string) string {
+	t.Helper()
+	s := prReloadUUID(t, db, uuid).QueueReason
+	for n, r := range w.role {
+		s = strings.ReplaceAll(s, n, r)
+	}
+	return s
+}
+
+// parkUnits is the vectors in units the Edge creates together: a pair (its
+// supply or Order A first, as the doors create them) or a single leg.
+func parkUnits(t *testing.T, cases []parkvectors.Case) [][]parkvectors.Case {
+	t.Helper()
+	byName := map[string]parkvectors.Case{}
+	for _, c := range cases {
+		byName[c.Name] = c
+	}
+	done := map[string]bool{}
+	var out [][]parkvectors.Case
+	for _, c := range cases {
+		if done[c.Name] {
+			continue
+		}
+		done[c.Name] = true
+		if c.Sibling == "" {
+			out = append(out, []parkvectors.Case{c})
+			continue
+		}
+		sib, ok := byName[c.Sibling]
+		if !ok {
+			t.Fatalf("%s names a partner %s the vectors do not hold", c.Name, c.Sibling)
+		}
+		done[sib.Name] = true
+		if c.Leg == "B" || c.Leg == "evac" {
+			c, sib = sib, c
+		}
+		out = append(out, []parkvectors.Case{c, sib})
+	}
+	return out
+}
+
+func parkPinKey(name string, withProcess bool) string {
+	if withProcess {
+		return name + " pn=LINE"
+	}
+	return name + " pn=none"
+}
+
+// TestLoaderPark_EveryBuilderLeg pins where today's park lands every builder
+// leg, in the world stock stands (each part's full on its home, the buffers
+// free), with the process node the builders' callers send and without it.
+func TestLoaderPark_EveryBuilderLeg(t *testing.T) {
+	t.Parallel()
+	cases, err := parkvectors.Cases()
+	testutil.MustNoErr(t, err, "the park vectors")
+	if len(cases) == 0 {
+		t.Fatal("no park vectors: shared/parkvectors/vectors.json is empty")
+	}
+	seen := map[string]bool{}
+	for _, unit := range parkUnits(t, cases) {
+		for _, withProcess := range []bool{true, false} {
+			unit, withProcess := unit, withProcess
+			for _, c := range unit {
+				seen[parkPinKey(c.Name, withProcess)] = true
+			}
+			t.Run(parkPinKey(unit[0].Name, withProcess), func(t *testing.T) {
+				t.Parallel()
+				db := testDB(t)
+				w := newParkWorld(t, db)
+				w.stock(t, db)
+				for _, c := range unit {
+					if c.Leg == "staged-deliver" && c.Config != "home-staging" {
+						// The delivery collects what the stage set down there.
+						w.put(t, db, "STAGE", "PART-Y", "pv-staged-incoming", 10)
+					}
+				}
+				d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+				uuids := w.submitUnit(t, d, unit, withProcess)
+				prScanPass(t, d, db, uuids...)
+				for i, c := range unit {
+					key := parkPinKey(c.Name, withProcess)
+					got := w.landing(t, db, uuids[i])
+					want, ok := parkBuilderPins[key]
+					if !ok {
+						t.Errorf("no pinned placement for %s; today it lands %q. Add:\n\t%q: %q,", key, got, key, got)
+						continue
+					}
+					if got != want {
+						t.Errorf("%s lands %q, pinned %q", key, got, want)
+					}
+				}
+			})
+		}
+	}
+	for key := range parkBuilderPins {
+		if !seen[key] {
+			t.Errorf("pin %q names no leg in shared/parkvectors: the builders no longer write it; delete the pin", key)
+		}
+	}
+}
+
+// parkBuilderPins is today's landing of every builder leg
+// (TestLoaderPark_EveryBuilderLeg).
+var parkBuilderPins = map[string]string{
+	"home-fed/any/changeover/drop-release pn=LINE":             "sent drops=OUT",
+	"home-fed/any/changeover/drop-release pn=none":             "sent drops=OUT",
+	"home-fed/any/changeover/stage pn=LINE":                    "sent drops=HOME-B", // B23's class: a supply with no wait, set back down where it lifts
+	"home-fed/any/changeover/stage pn=none":                    "sent drops=HOME-B", // B23's class: a supply with no wait, set back down where it lifts
+	"home-fed/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",
+	"home-fed/any/changeover/staged-deliver pn=none":           "sent drops=LINE",
+	"home-fed/any/changeover/tooling pn=LINE":                  "sent drops=OUT,LINE",
+	"home-fed/any/changeover/tooling pn=none":                  "sent drops=OUT,LINE",
+	"home-fed/sequential/changeover/A pn=LINE":                 "sent drops=OUT,LINE",
+	"home-fed/sequential/changeover/A pn=none":                 "sent drops=OUT,LINE",
+	"home-fed/sequential/steady/A pn=LINE":                     "sent drops=OUT",
+	"home-fed/sequential/steady/A pn=none":                     "sent drops=OUT",
+	"home-fed/sequential/steady/backfill pn=LINE":              "sent drops=HOME", // B23: set back down on the home it lifts from
+	"home-fed/sequential/steady/backfill pn=none":              "sent drops=HOME", // B23: set back down on the home it lifts from
+	"home-fed/single_robot/changeover/B pn=LINE":               "sent drops=STAGE,OSTAGE,LINE,OUT",
+	"home-fed/single_robot/changeover/B pn=none":               "sent drops=STAGE,OSTAGE,LINE,OUT",
+	"home-fed/single_robot/steady/A pn=LINE":                   "sent drops=STAGE,OSTAGE,LINE,OUT",
+	"home-fed/single_robot/steady/A pn=none":                   "sent drops=STAGE,OSTAGE,LINE,OUT",
+	"home-fed/two_robot/changeover/evac pn=LINE":               "sent drops=OUT",
+	"home-fed/two_robot/changeover/evac pn=none":               "sent drops=OUT",
+	"home-fed/two_robot/changeover/supply pn=LINE":             "sent drops=STAGE,LINE",
+	"home-fed/two_robot/changeover/supply pn=none":             "sent drops=STAGE,LINE",
+	"home-fed/two_robot/steady/A pn=LINE":                      "sent drops=STAGE,LINE",
+	"home-fed/two_robot/steady/A pn=none":                      "sent drops=STAGE,LINE",
+	"home-fed/two_robot/steady/B pn=LINE":                      "sent drops=OUT",
+	"home-fed/two_robot/steady/B pn=none":                      "sent drops=OUT",
+	"home-fed/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=OUT,PAIR",
+	"home-fed/two_robot_press_index/changeover/evac pn=none":   "sent drops=OUT,PAIR",
+	"home-fed/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
+	"home-fed/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
+	"home-fed/two_robot_press_index/steady/A pn=LINE":          "sent drops=OUT,PAIR",
+	"home-fed/two_robot_press_index/steady/A pn=none":          "sent drops=OUT,PAIR",
+	"home-fed/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
+	"home-fed/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
+
+	"home-return/any/changeover/drop-release pn=LINE":             "sent drops=BUF",
+	"home-return/any/changeover/drop-release pn=none":             "sent drops=BUF",
+	"home-return/any/changeover/stage pn=LINE":                    "sent drops=STAGE",
+	"home-return/any/changeover/stage pn=none":                    "sent drops=STAGE",
+	"home-return/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",
+	"home-return/any/changeover/staged-deliver pn=none":           "sent drops=LINE",
+	"home-return/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"home-return/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"home-return/sequential/steady/A pn=LINE":                     "sent drops=BUF",
+	"home-return/sequential/steady/A pn=none":                     "sent drops=BUF",
+	"home-return/sequential/steady/backfill pn=LINE":              "sent drops=LINE",
+	"home-return/sequential/steady/backfill pn=none":              "sent drops=LINE",
+	"home-return/single_robot/changeover/B pn=LINE":               "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-return/single_robot/changeover/B pn=none":               "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-return/single_robot/steady/A pn=LINE":                   "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-return/single_robot/steady/A pn=none":                   "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-return/two_robot/changeover/evac pn=LINE":               "sent drops=BUF",
+	"home-return/two_robot/changeover/evac pn=none":               "sent drops=BUF",
+	"home-return/two_robot/changeover/supply pn=LINE":             "sent drops=STAGE,LINE",
+	"home-return/two_robot/changeover/supply pn=none":             "sent drops=STAGE,LINE",
+	"home-return/two_robot/steady/A pn=LINE":                      "sent drops=STAGE,LINE",
+	"home-return/two_robot/steady/A pn=none":                      "sent drops=STAGE,LINE",
+	"home-return/two_robot/steady/B pn=LINE":                      "sent drops=BUF",
+	"home-return/two_robot/steady/B pn=none":                      "sent drops=BUF",
+	"home-return/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/two_robot_press_index/changeover/evac pn=none":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
+	"home-return/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
+	"home-return/two_robot_press_index/steady/A pn=LINE":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/two_robot_press_index/steady/A pn=none":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
+	"home-return/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
+
+	"home-staging/any/changeover/drop-release pn=LINE":             "sent drops=BUF",
+	"home-staging/any/changeover/drop-release pn=none":             "sent drops=BUF",
+	"home-staging/any/changeover/staged-deliver pn=LINE":           "sent drops=HOME-B",    // B23's class: a supply with no wait, set back down where it lifts
+	"home-staging/any/changeover/staged-deliver pn=none":           "sent drops=HOME-B",    // B23's class: a supply with no wait, set back down where it lifts
+	"home-staging/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"home-staging/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"home-staging/sequential/steady/A pn=LINE":                     "sent drops=BUF",
+	"home-staging/sequential/steady/A pn=none":                     "sent drops=BUF",
+	"home-staging/sequential/steady/backfill pn=LINE":              "sent drops=HOME",            // B23: set back down on the home it lifts from
+	"home-staging/sequential/steady/backfill pn=none":              "sent drops=HOME",            // B23: set back down on the home it lifts from
+	"home-staging/single_robot/changeover/B pn=LINE":               "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-staging/single_robot/changeover/B pn=none":               "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-staging/single_robot/steady/A pn=LINE":                   "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-staging/single_robot/steady/A pn=none":                   "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"home-staging/two_robot/changeover/evac pn=LINE":               "sent drops=BUF",
+	"home-staging/two_robot/changeover/evac pn=none":               "sent drops=BUF",
+	"home-staging/two_robot/changeover/supply pn=LINE":             "sent drops=LINE",
+	"home-staging/two_robot/changeover/supply pn=none":             "sent drops=LINE",
+	"home-staging/two_robot/steady/A pn=LINE":                      "sent drops=LINE",
+	"home-staging/two_robot/steady/A pn=none":                      "sent drops=LINE",
+	"home-staging/two_robot/steady/B pn=LINE":                      "sent drops=HOME",      // A2's row: HOME, no stamp, so nothing holds its release
+	"home-staging/two_robot/steady/B pn=none":                      "sent drops=BUF",       // the wait proxy reads this return as no return
+	"home-staging/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/two_robot_press_index/changeover/evac pn=none":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
+	"home-staging/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
+	"home-staging/two_robot_press_index/steady/A pn=LINE":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/two_robot_press_index/steady/A pn=none":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
+	"home-staging/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
+
+	"staged/any/changeover/drop-release pn=LINE":             "sent drops=BUF",
+	"staged/any/changeover/drop-release pn=none":             "sent drops=BUF",
+	"staged/any/changeover/stage pn=LINE":                    "sent drops=HOME-B", // B23's class: a supply with no wait, set back down where it lifts
+	"staged/any/changeover/stage pn=none":                    "sent drops=HOME-B", // B23's class: a supply with no wait, set back down where it lifts
+	"staged/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",
+	"staged/any/changeover/staged-deliver pn=none":           "sent drops=LINE",
+	"staged/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"staged/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"staged/sequential/steady/A pn=LINE":                     "sent drops=BUF",
+	"staged/sequential/steady/A pn=none":                     "sent drops=BUF",
+	"staged/sequential/steady/backfill pn=LINE":              "sent drops=HOME",                  // B23: set back down on the home it lifts from
+	"staged/sequential/steady/backfill pn=none":              "sent drops=HOME",                  // B23: set back down on the home it lifts from
+	"staged/single_robot/changeover/B pn=LINE":               "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"staged/single_robot/changeover/B pn=none":               "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"staged/single_robot/steady/A pn=LINE":                   "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"staged/single_robot/steady/A pn=none":                   "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
+	"staged/two_robot/changeover/evac pn=LINE":               "sent drops=BUF",
+	"staged/two_robot/changeover/evac pn=none":               "sent drops=BUF",
+	"staged/two_robot/changeover/supply pn=LINE":             "sent drops=STAGE,LINE",
+	"staged/two_robot/changeover/supply pn=none":             "sent drops=STAGE,LINE",
+	"staged/two_robot/steady/A pn=LINE":                      "sent drops=STAGE,LINE",
+	"staged/two_robot/steady/A pn=none":                      "sent drops=STAGE,LINE",
+	"staged/two_robot/steady/B pn=LINE":                      "sent drops=HOME",
+	"staged/two_robot/steady/B pn=none":                      "sent drops=BUF",       // the wait proxy reads this return as no return
+	"staged/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/two_robot_press_index/changeover/evac pn=none":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
+	"staged/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
+	"staged/two_robot_press_index/steady/A pn=LINE":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/two_robot_press_index/steady/A pn=none":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
+	"staged/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
+}
+
+// clear takes every cart off role's node.
+func (w *parkWorld) clear(t *testing.T, db *store.DB, role string) {
+	t.Helper()
+	bs, err := db.ListBinsByNode(w.at(t, db, role).ID)
+	testutil.MustNoErr(t, err, "bins on "+role)
+	for _, b := range bs {
+		testutil.MustNoErr(t, db.DeleteBin(b.ID), "clear "+role)
+	}
+}
+
+// fillBuffers stands a cart nobody lifts on both buffers.
+func (w *parkWorld) fillBuffers(t *testing.T, db *store.DB) {
+	t.Helper()
+	w.put(t, db, "BUF", "PART-X", "pv-buf-full", 4)
+	w.put(t, db, "BUF2", "PART-X", "pv-buf2-full", 4)
+}
+
+// manualOrderCase is the Manual Order page's complex order
+// (shingo-edge/www/static/js/pages/manual-order.js, createOrder; the
+// production page sends the same): fetch at the staging node, set it down
+// there, a bare wait, lift it again, deliver. It has no Go builder; with no
+// process node picked it reaches Core with none (handlers_api_orders.go,
+// PressOf), the one door that does.
+func manualOrderCase(t *testing.T, name, staging, production string) parkvectors.Case {
+	t.Helper()
+	steps, err := json.Marshal([]protocol.ComplexOrderStep{{Action: protocol.ActionPickup, Node: staging},
+		{Action: protocol.ActionDropoff, Node: staging}, {Action: protocol.ActionWait},
+		{Action: protocol.ActionPickup, Node: staging}, {Action: protocol.ActionDropoff, Node: production}})
+	testutil.MustNoErr(t, err, "marshal "+name)
+	return parkvectors.Case{Name: name, Config: "manual", Leg: "manual", PayloadCode: "PART-X", ProcessNode: "LINE",
+		Steps: steps}
+}
+
+// parkRow is one of brief G's rows, in a world of its own: the walk's world,
+// then world's changes.
+type parkRow struct {
+	name   string
+	legs   []string // vector case names (a pair in creation order), or
+	manual []string // a Manual Order page order: its staging and production nodes
+	world  func(t *testing.T, db *store.DB, w *parkWorld)
+	// noProcess sends the legs with no process node.
+	noProcess bool
+	// refuseLast: the fleet refuses the last leg's create in the first pass, and
+	// a second pass sends it alone (its partner committed a pass earlier).
+	refuseLast bool
+	// want is each leg's landing (landing) after the pass; under refuseLast the
+	// last leg's after the first pass, then after the second.
+	want []string
+	// sentence is the first leg's wait sentence, node names read as roles.
+	sentence string
+}
+
+var parkBriefRows = []parkRow{
+	{name: "WELD-5: two-robot through its home with staging, every buffer full",
+		legs:  []string{"staged/two_robot/steady/A", "staged/two_robot/steady/B"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.fillBuffers(t, db) },
+		want:  []string{"sent drops=STAGE,LINE", "sent drops=HOME"}},
+	{name: "WELD-5: the return's create refused, sent alone a pass later, the full not yet lifted",
+		legs:       []string{"staged/two_robot/steady/A", "staged/two_robot/steady/B"},
+		refuseLast: true,
+		want:       []string{"sent drops=STAGE,LINE", "queued:fleet-error drops=HOME", "sent drops=HOME"}},
+	{name: "A's line: home as source, staging and destination, every buffer full",
+		legs:  []string{"home-staging/two_robot/steady/A", "home-staging/two_robot/steady/B"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.fillBuffers(t, db) },
+		want:  []string{"sent drops=LINE", "sent drops=HOME"}},
+	{name: "A's line: a buffer holding an empty, the other full",
+		legs: []string{"home-staging/two_robot/steady/A", "home-staging/two_robot/steady/B"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) {
+			w.put(t, db, "BUF", "", "pv-buf-empty", 0)
+			w.put(t, db, "BUF2", "PART-X", "pv-buf2-full", 4)
+		},
+		want: []string{"sent drops=LINE", "sent drops=HOME"}},
+	{name: "A's line: the return's create refused, sent alone a pass later",
+		legs:       []string{"home-staging/two_robot/steady/A", "home-staging/two_robot/steady/B"},
+		refuseLast: true,
+		want:       []string{"sent drops=LINE", "queued:fleet-error drops=HOME", "sent drops=HOME"}},
+	{name: "Sequential removal through its home, no buffer free",
+		legs:     []string{"staged/sequential/steady/A"},
+		world:    func(t *testing.T, db *store.DB, w *parkWorld) { w.fillBuffers(t, db) },
+		want:     []string{"pending:loader-park-no-slot drops=HOME"},
+		sentence: "Waiting for a slot at HOME — empty one of HOME, BUF, BUF2 and it goes"},
+	{name: "Sequential removal, two homes (the second bare), no buffer free",
+		legs: []string{"staged/sequential/steady/A"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) {
+			w.addHome2(t, db)
+			w.fillBuffers(t, db)
+		},
+		want:     []string{"pending:loader-park-no-slot drops=HOME"},
+		sentence: "Waiting for a slot at HOME — empty one of HOME, BUF, BUF2, HOME2 and it goes"},
+	{name: "Sequential removal, two homes (the second bare), a buffer free",
+		legs:  []string{"staged/sequential/steady/A"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.addHome2(t, db) },
+		want:  []string{"sent drops=BUF"}},
+	{name: "Sequential backfill after its removal landed in a buffer (B23)",
+		legs: []string{"staged/sequential/steady/backfill"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) {
+			w.clear(t, db, "LINE")
+			w.put(t, db, "BUF", "", "pv-removed-empty", 0)
+		},
+		want: []string{"sent drops=HOME"}},
+	{name: "Part change through two homes, the old home bare",
+		legs:  []string{"staged/sequential/changeover/A"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.clear(t, db, "HOME") },
+		want:  []string{"sent drops=HOME,LINE"}},
+	{name: "Two-robot part change through two homes, the old home bare",
+		legs:  []string{"staged/two_robot/changeover/supply", "staged/two_robot/changeover/evac"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.clear(t, db, "HOME") },
+		want:  []string{"sent drops=STAGE,LINE", "sent drops=HOME"}},
+	{name: "Manual Order page: staged at STAGE, delivered onto HOME, no process node",
+		manual:    []string{"STAGE", "HOME"},
+		world:     func(t *testing.T, db *store.DB, w *parkWorld) { w.put(t, db, "STAGE", "PART-X", "pv-manual-cart", 10) },
+		noProcess: true,
+		want:      []string{"sent drops=STAGE,BUF"}},
+	{name: "Manual Order page: staged at HOME, delivered to the line, no process node",
+		manual:    []string{"HOME", "LINE"},
+		noProcess: true,
+		want:      []string{"sent drops=HOME,LINE"}},
+}
+
+// TestLoaderPark_TheBriefsRows pins where today's park lands the rows brief G
+// names, each in a world of its own: the two-robot lines through a home (with
+// staging, and A's line with none) including a partner committed a pass
+// earlier; the Sequential rows behind B23; the part change behind B24; the two
+// homes; the one door that sends no process node.
+func TestLoaderPark_TheBriefsRows(t *testing.T) {
+	t.Parallel()
+	cases, err := parkvectors.Cases()
+	testutil.MustNoErr(t, err, "the park vectors")
+	byName := map[string]parkvectors.Case{}
+	for _, c := range cases {
+		byName[c.Name] = c
+	}
+	for _, row := range parkBriefRows {
+		row := row
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			var unit []parkvectors.Case
+			for _, n := range row.legs {
+				c, ok := byName[n]
+				if !ok {
+					t.Fatalf("the park vectors hold no %s", n)
+				}
+				unit = append(unit, c)
+			}
+			if row.manual != nil {
+				unit = append(unit, manualOrderCase(t, "manual/"+row.manual[0]+"-"+row.manual[1], row.manual[0],
+					row.manual[1]))
+			}
+			db := testDB(t)
+			w := newParkWorld(t, db)
+			w.stock(t, db)
+			if row.world != nil {
+				row.world(t, db, w)
+			}
+			backend := &failCreateFor{MockTrackingBackend: testdb.NewTrackingBackend()}
+			if row.refuseLast {
+				backend.uuid = parkLegUUID(unit[len(unit)-1].Name)
+			}
+			d, _ := newTestDispatcher(t, db, backend)
+			uuids := w.submitUnit(t, d, unit, !row.noProcess)
+			prScanPass(t, d, db, uuids...)
+			var got []string
+			for _, u := range uuids {
+				got = append(got, w.landing(t, db, u))
+			}
+			if row.refuseLast {
+				backend.uuid = ""
+				prScanPass(t, d, db, uuids[len(uuids)-1])
+				got = append(got, w.landing(t, db, uuids[len(uuids)-1]))
+			}
+			if strings.Join(got, " | ") != strings.Join(row.want, " | ") {
+				t.Errorf("lands\n\t%q\npinned\n\t%q", got, row.want)
+			}
+			if row.sentence != "" {
+				if s := w.sentence(t, db, uuids[0]); s != row.sentence {
+					t.Errorf("waits saying %q, pinned %q", s, row.sentence)
+				}
+			}
+		})
 	}
 }

@@ -84,6 +84,7 @@ drift guard (`protocol/wire_vocabulary_drift_test.go`) shipped with it.
 
 `shared/` holds the UI assets both services serve, cross-surface answers and
 rules (`windoworder`, `planttime`, `clockglobals`), and cross-module case tables
-and fixtures (`loadervectors`, `fedshape`, `comingvectors`, `scenefixtures`). It
-is **not** the home for infrastructure — that is `protocol/` — and it is not a
-place to put something because two files look alike.
+and fixtures (`loadervectors`, `fedshape`, `comingvectors`, `parkvectors`,
+`scenefixtures`). It is **not** the home for infrastructure — that is
+`protocol/` — and it is not a place to put something because two files look
+alike.

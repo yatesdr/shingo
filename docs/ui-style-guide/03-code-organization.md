@@ -34,7 +34,7 @@ What it holds, by kind:
   plant clock), `clockglobals` (the page globals `clock.js` needs),
   `windoworder` (the order of a loader's windows).
 - **Cross-module fixtures** pinning Core against Edge: `loadervectors`,
-  `comingvectors`, `fedshape`, `scenefixtures`.
+  `comingvectors`, `parkvectors`, `fedshape`, `scenefixtures`.
 - **Repo tooling** under `scripts/` (Go, not shipped).
 
 The binaries embed the shared assets at build time; nothing reads `shared/` at
