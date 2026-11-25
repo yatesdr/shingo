@@ -513,8 +513,8 @@ func (e *Engine) carryFlipBucket(node, partner *processes.Node, orderUUID string
 	e.endUnheldEpisode(node.ID)
 	log.Printf("release flip: node %s: its hold of %d of part %s carried to %s (bin +%d, held %d)",
 		node.CoreNodeName, a.PendingUOPDelta, part, partner.CoreNodeName, c.charge, c.hold)
-	if c.charge > 0 && e.inventoryDelta != nil {
-		_ = e.inventoryDelta.Produced(uop.TickEvent{NodeID: partner.ID, BinID: *b.ActiveBinID, PayloadCode: part,
+	if sink := e.deltaSink(); c.charge > 0 && sink != nil {
+		_ = sink.Produced(uop.TickEvent{NodeID: partner.ID, BinID: *b.ActiveBinID, PayloadCode: part,
 			BinEpoch: b.ActiveBinEpoch, BinRemainder: c.charge})
 	}
 }

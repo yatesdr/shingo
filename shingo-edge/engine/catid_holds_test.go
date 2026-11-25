@@ -502,7 +502,7 @@ func TestHold_ReleaseChargesWhatItLatched(t *testing.T) {
 		testutil.MustNoErr(t, err, "hold "+v)
 	}
 	holds := openHolds(t, eng, pid)
-	eng.SetInventoryDeltaSink(&strokeOnConsume{fakeDeltaSink: eng.inventoryDelta.(*fakeDeltaSink), stroke: func() {
+	eng.SetInventoryDeltaSink(&strokeOnConsume{fakeDeltaSink: eng.deltaSink().(*fakeDeltaSink), stroke: func() {
 		_, err := eng.db.HoldCatidDraw(pid, "1004", 0, "", holdReasonHeld, 2, time.Now())
 		testutil.MustNoErr(t, err, "a stroke on 1004")
 	}})

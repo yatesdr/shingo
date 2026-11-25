@@ -357,8 +357,8 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		// claim-only statement cannot (DESIGN-H §9.1, pin
 		// TestPinH_ClaimAdvanceStatementWritesNoCount). An unbound slot's count
 		// is already 0: the carrier's departure zeroed it (carrierLeft).
-		if e.inventoryDelta != nil {
-			if err := e.inventoryDelta.SetClaim(nodeID, &claimID); err != nil {
+		if sink := e.deltaSink(); sink != nil {
+			if err := sink.SetClaim(nodeID, &claimID); err != nil {
 				return err
 			}
 		}

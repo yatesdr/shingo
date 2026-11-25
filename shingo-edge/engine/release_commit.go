@@ -151,8 +151,8 @@ func (e *Engine) commitFlip(ll *legLoad) error {
 	e.countMu.Lock()
 	// MarkAttributionBoundary is synchronous — an error means the flush
 	// failed, and the pull must not move.
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.MarkAttributionBoundary(partner.ID); err != nil {
+	if sink := e.deltaSink(); sink != nil {
+		if err := sink.MarkAttributionBoundary(partner.ID); err != nil {
 			e.countMu.Unlock()
 			return fmt.Errorf("attribution boundary flush failed: %w", err)
 		}
@@ -261,7 +261,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 
 	// The capture: the piles' gain and the bin's capture_reduction, as one
 	// verb, against the ORDER's payload (the bin's), not the target claim's.
-	if e.inventoryDelta != nil {
+	if sink := e.deltaSink(); sink != nil {
 		var binEpoch int64
 		if runtime != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == resolvedBinID {
 			binEpoch = runtime.ActiveBinEpoch
@@ -292,7 +292,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		if rec, ok := capturedRecord(disp, prior, resolvedBinID, binEpoch, isSupply); ok {
 			ev.InTx = func(tx *sql.Tx) error { return store.PutReleaseCapture(tx, order.ID, rec) }
 		}
-		_, err = e.inventoryDelta.CaptureToLineside(ev)
+		_, err = sink.CaptureToLineside(ev)
 		e.countMu.Unlock()
 		if err != nil {
 			return err
@@ -333,8 +333,8 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 
 	// Flush boundary: the accumulated deltas and pile levels reach the outbox
 	// before the OrderRelease envelope.
-	if e.inventoryDelta != nil {
-		e.inventoryDelta.Flush()
+	if sink := e.deltaSink(); sink != nil {
+		sink.Flush()
 	}
 	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo, fence)
 }
@@ -500,8 +500,8 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, departing *store
 		e.logRelease("order=%d node=%s — counted %d of a strict pack of %d; declared full by %q (%s)",
 			departing.ID, node.Name, qty, pack, by.calledBy, how)
 	}
-	if e.inventoryDelta != nil {
-		e.inventoryDelta.Flush()
+	if sink := e.deltaSink(); sink != nil {
+		sink.Flush()
 	}
 	// Quantity is the bin's count: Core writes it to uop_remaining, and what
 	// that is in pieces is protocol.ManifestItem's count rule (a bin of one

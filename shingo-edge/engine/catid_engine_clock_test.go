@@ -784,7 +784,7 @@ func TestCatidMonitor_UnmappedPartAtTheProductionVerifyWindow(t *testing.T) {
 	if pv.Refusal != "" || pv.StyleID != r.b || len(pv.Rows) != 2 || bins[9961] != 4 || bins[9962] != 4 {
 		t.Fatalf("the preview %+v (rows %+v), want B drawing 4 from each position's cart", pv, pv.Rows)
 	}
-	sink := r.eng.inventoryDelta.(*fakeDeltaSink)
+	sink := r.eng.deltaSink().(*fakeDeltaSink)
 	sink.mu.Lock()
 	mark := len(sink.binCalls)
 	sink.mu.Unlock()

@@ -187,7 +187,7 @@ func (e *Engine) advanceEvacDropOnPickup(order *domain.Order, location string) {
 // read, flush and leave the old path made for the order's node. A lift at a
 // place no seat holds it costs the one read; it used to cost the node read.
 func (e *Engine) leaveSeatsAtLift(order *domain.Order, bp protocol.BinPickedUp) {
-	if e.inventoryDelta == nil {
+	if e.deltaSink() == nil {
 		// Nothing wired to flush or leave through (test contexts).
 		return
 	}
@@ -244,7 +244,7 @@ func (e *Engine) leaveSeatAtLift(node *processes.Node, order *domain.Order, bp p
 		return
 	}
 	hold, holdPart := e.takeTicksAfterLift(node, rt, bp)
-	if err := e.inventoryDelta.OnBinPickedUp(&node.ID); err != nil {
+	if err := e.deltaSink().OnBinPickedUp(&node.ID); err != nil {
 		e.logFn("bin_picked_up: flush failed: %v", err)
 	}
 	if err := e.carrierLeftAtPickup(node.ID, node.CoreNodeName, bp.Epoch, hold, holdPart); err != nil {
@@ -285,7 +285,7 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 	if bp.Epoch <= rt.ActiveBinEpoch || bp.PickedUpAt.IsZero() {
 		return 0, ""
 	}
-	sum, err := e.inventoryDelta.TakeAfterLift(bp.BinID, rt.ActiveBinEpoch, bp.PickedUpAt)
+	sum, err := e.deltaSink().TakeAfterLift(bp.BinID, rt.ActiveBinEpoch, bp.PickedUpAt)
 	if err != nil {
 		log.Printf("bin_picked_up: windows after the lift of bin %d: %v", bp.BinID, err)
 	}
@@ -309,7 +309,7 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 	} else if held > 0 {
 		drains, rest := e.drainLinesideFirst(node.ID, claim, held)
 		if len(drains) > 0 {
-			_ = e.inventoryDelta.Consumed(uop.TickEvent{NodeID: node.ID, CoreNodeName: node.CoreNodeName, Drains: drains})
+			_ = e.deltaSink().Consumed(uop.TickEvent{NodeID: node.ID, CoreNodeName: node.CoreNodeName, Drains: drains})
 		}
 		if rest > 0 && claim != nil {
 			catid := e.confirmedCATID(node.ProcessID)

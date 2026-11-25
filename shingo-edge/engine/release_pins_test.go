@@ -100,7 +100,7 @@ func (s *boundarySpy) MarkAttributionBoundary(nodeID int64) error {
 // pBoundary reports how many attribution boundaries the act marked on the
 // partner position.
 func pBoundary(h *relHarness) []string {
-	spy := h.eng.inventoryDelta.(*boundarySpy)
+	spy := h.eng.deltaSink().(*boundarySpy)
 	return []string{fmt.Sprintf("boundary=%d", spy.marked[h.partnerID])}
 }
 

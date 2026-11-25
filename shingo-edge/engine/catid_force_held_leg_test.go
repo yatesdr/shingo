@@ -28,7 +28,7 @@ func TestPinForcedCutover_AHeldBackLegsStrokesAreLogged(t *testing.T) {
 	fromClaim := runtimeOf(t, eng, nodeID).ActiveClaimID
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, fromClaim, binPtr(9951), 40), "the outgoing cart")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "PART-OLD", true, "landing"), "landed PART-OLD")
-	sink := eng.inventoryDelta.(*fakeDeltaSink)
+	sink := eng.deltaSink().(*fakeDeltaSink)
 	mark := len(sink.binCalls)
 
 	st := changedTo(cm, pid, "1002", time.Now().Add(-5*time.Minute))

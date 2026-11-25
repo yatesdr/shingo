@@ -143,7 +143,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// lock). This used to refuse while a pile was held, "not binding over
 		// them", and the count never landed. A bind the departed rule refuses
 		// writes nothing and keeps the pile.
-		if e.inventoryDelta == nil {
+		if e.deltaSink() == nil {
 			return
 		}
 		bound, err := e.bindStagedByCount(node, rt, adj)
@@ -304,7 +304,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	// (see epochAssign in store/processes). Zero is simply not greater. The count
 	// lands either way — it is written unconditionally, the guard is on the epoch
 	// column alone.
-	if e.inventoryDelta == nil {
+	if e.deltaSink() == nil {
 		return
 	}
 	if err := e.writeCoreCount(node, rt, adj); err != nil {
@@ -335,7 +335,7 @@ func (e *Engine) bindStagedByCount(node *processes.Node, rt *processes.RuntimeSt
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
 	return e.bindEndingHold(node, seat, &adj.BinID, holdDropByRecount, holdDropByRecount, false, func(ex processes.DBTX) (bool, error) {
-		return e.inventoryDelta.BindStagedUnlessDeparted(ex, node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
+		return e.deltaSink().BindStagedUnlessDeparted(ex, node.ID, rt.ActiveClaimID, adj.BinID, adj.Epoch, adj.NewRemaining)
 	})
 }
 
@@ -348,7 +348,7 @@ func (e *Engine) writeCoreCount(node *processes.Node, rt *processes.RuntimeState
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
 	_, err := e.writeCountClearingHold(node, !protocol.IsLifecycleActor(adj.Actor), func(ex processes.DBTX) (bool, error) {
-		return true, e.inventoryDelta.BindFromCore(ex, node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining)
+		return true, e.deltaSink().BindFromCore(ex, node.ID, rt.ActiveClaimID, rt.ActiveBinID, adj.Epoch, adj.NewRemaining)
 	})
 	return err
 }

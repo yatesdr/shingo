@@ -62,8 +62,8 @@ type DebugLogFunc = types.DebugLogFunc
 // only exercise one concern.
 //
 // nil-safe: callers in the PLC tick path and the release path guard
-// every verb call with a nil check on Engine.inventoryDelta so
-// tests / off-modes can leave the field unset.
+// every verb call with a nil check on the sink Engine.deltaSink returns,
+// so tests / off-modes can leave it unset.
 type InventoryDeltaSink = uop.Sink
 
 // Engine centralizes all business logic and orchestrates subsystems.
@@ -279,9 +279,12 @@ type Engine struct {
 	cellCatalogFn func() ([]protocol.CellCatalogEntry, error)
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
-	// root via SetInventoryDeltaSink. Nil in test contexts that don't
-	// care about delta emission; every call site nil-guards.
-	inventoryDelta InventoryDeltaSink
+	// root via SetInventoryDeltaSink after Start (main.go), while the
+	// goroutines Start began may read it, so it is stored as the hooks
+	// above are, and every read goes through deltaSink (D31). PIN:
+	// TestEngine_TheDeltaSinkIsStoredAsTheHooksAre. Nil in test contexts
+	// that don't care about delta emission; every call site nil-guards.
+	inventoryDelta atomic.Pointer[InventoryDeltaSink]
 
 	// watch is the freeze alarm (protocol/liveness): the PLC poll marks its
 	// passes, and a pass past 30 s logs one entry with the goroutine dump and
@@ -518,7 +521,13 @@ func New(c Config) *Engine {
 // disables delta emission — useful in tests that don't care about
 // Phase 1 plumbing.
 func (e *Engine) SetInventoryDeltaSink(s InventoryDeltaSink) {
-	e.inventoryDelta = s
+	e.inventoryDelta.Store(&s)
+}
+
+// deltaSink is the sink SetInventoryDeltaSink stored, or nil: every read of
+// inventoryDelta goes through here (D31).
+func (e *Engine) deltaSink() InventoryDeltaSink {
+	return loaded(&e.inventoryDelta)
 }
 
 // Start creates all managers, wires event handlers, and starts subsystems.

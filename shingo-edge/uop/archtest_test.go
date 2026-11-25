@@ -58,9 +58,11 @@ func TestArch_NoDirectRecordBinOrRecordBucket(t *testing.T) {
 			return err
 		}
 		text := string(data)
+		// The methods with no receiver: the engine reaches the sink through
+		// Engine.deltaSink, a local or a parameter, and each is caught.
 		for _, pat := range []string{
-			"inventoryDelta.RecordBin",
-			"inventoryDelta.RecordBucket",
+			".RecordBin(",
+			".RecordBucket(",
 		} {
 			if strings.Contains(text, pat) {
 				rel, _ := filepath.Rel(root, path)
@@ -300,12 +302,18 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 	t.Parallel()
 	root := edgeRepoRoot(t)
 	verb := filepath.Join("engine", "carrier_left.go")
-	patterns := []string{
-		".ClearActiveBin(",
-		"inventoryDelta.ClearActiveBinIfBound(", // one named carrier's form of it (carrierLeftIfBound)
-		"inventoryDelta.LeaveAtPickup(",         // the pickup's form of the same statement (Lane H, D11)
-		"domain.CarrierDeparted",
-		"inventoryDelta.SetClaimCountAndEpoch(", // a Core-made count, under countMu
+	// The store's delegates run the statements of the same two names
+	// (processes.ClearActiveBinIfBound, processes.LeaveAtPickup) that the
+	// sink's verbs reach through uop's store surface: not calls on the sink.
+	delegates := filepath.Join("store", "process_node_runtime.go")
+	// The sink's methods with no receiver, so a call is caught whatever names
+	// the sink: Engine.deltaSink, a local, a parameter.
+	patterns := []struct{ text, alsoAllowed string }{
+		{".ClearActiveBin(", ""},
+		{".ClearActiveBinIfBound(", delegates}, // one named carrier's form of it (carrierLeftIfBound)
+		{".LeaveAtPickup(", delegates},         // the pickup's form of the same statement (Lane H, D11)
+		{"domain.CarrierDeparted", ""},
+		{".SetClaimCountAndEpoch(", ""}, // a Core-made count, under countMu
 	}
 	var bad []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -333,8 +341,8 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 			return rerr
 		}
 		for _, pat := range patterns {
-			if strings.Contains(string(data), pat) {
-				bad = append(bad, rel+" uses "+pat)
+			if rel != pat.alsoAllowed && strings.Contains(string(data), pat.text) {
+				bad = append(bad, rel+" uses "+pat.text)
 			}
 		}
 		return nil

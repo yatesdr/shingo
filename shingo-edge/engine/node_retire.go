@@ -56,8 +56,8 @@ func (e *Engine) RetireNode(nodeID int64) error {
 	if err := e.processService.DeleteNode(nodeID); err != nil {
 		return err
 	}
-	if len(piles) > 0 && e.inventoryDelta != nil {
-		e.inventoryDelta.PilesChanged(piles...)
+	if sink := e.deltaSink(); len(piles) > 0 && sink != nil {
+		sink.PilesChanged(piles...)
 	}
 	return nil
 }

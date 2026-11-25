@@ -91,8 +91,8 @@ func (e *Engine) strandLinesidePiles(proc *processes.Process, styleID *int64) er
 			lineside.Key{NodeID: s.NodeID, CoreNodeName: s.CoreNodeName, PayloadCode: s.PayloadCode, State: lineside.StateActive},
 			lineside.Key{NodeID: s.NodeID, CoreNodeName: s.CoreNodeName, PayloadCode: s.PayloadCode, State: lineside.StateStranded})
 	}
-	if len(keys) > 0 && e.inventoryDelta != nil {
-		e.inventoryDelta.PilesChanged(keys...)
+	if sink := e.deltaSink(); len(keys) > 0 && sink != nil {
+		sink.PilesChanged(keys...)
 	}
 	return nil
 }

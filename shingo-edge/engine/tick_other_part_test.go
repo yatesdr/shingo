@@ -63,14 +63,14 @@ func wantSeat(t *testing.T, eng *Engine, pid, nodeID int64, what string, count i
 
 // deltasSince is the bin deltas the sink recorded after mark.
 func deltasSince(eng *Engine, mark int) []fakeBinCall {
-	sink := eng.inventoryDelta.(*fakeDeltaSink)
+	sink := eng.deltaSink().(*fakeDeltaSink)
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return append([]fakeBinCall(nil), sink.binCalls[mark:]...)
 }
 
 func deltaMark(eng *Engine) int {
-	sink := eng.inventoryDelta.(*fakeDeltaSink)
+	sink := eng.deltaSink().(*fakeDeltaSink)
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return len(sink.binCalls)

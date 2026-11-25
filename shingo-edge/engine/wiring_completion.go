@@ -241,10 +241,10 @@ func matchStagedDelivery(ctx *orderCompletionCtx) bool {
 func applyStagedDelivery(e *Engine, ctx *orderCompletionCtx) bool {
 	toClaim := ctx.ToClaim() // cached in Match
 	claimID := toClaim.ID
-	if e.inventoryDelta != nil {
+	if sink := e.deltaSink(); sink != nil {
 		// The claim only: the count on ctx.runtime was read when the context
 		// loaded, and writing it back would erase any tick since (DESIGN-H §9.1).
-		if err := e.inventoryDelta.SetClaim(ctx.node.ID, &claimID); err != nil {
+		if err := sink.SetClaim(ctx.node.ID, &claimID); err != nil {
 			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 		}
 	}
@@ -469,7 +469,8 @@ func applyChangeoverRelease(e *Engine, ctx *orderCompletionCtx) bool {
 // that FAILED leaves the pointer alone: clearing on a database error would take
 // a node off its claim for a reason that has nothing to do with the node.
 func advanceClaimOnRelease(e *Engine, ctx *orderCompletionCtx) {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return
 	}
 	var claimID *int64
@@ -487,7 +488,7 @@ func advanceClaimOnRelease(e *Engine, ctx *orderCompletionCtx) {
 		return
 	}
 	// The claim only, never the count read with ctx (DESIGN-H §9.1).
-	if err := e.inventoryDelta.SetClaim(ctx.node.ID, claimID); err != nil {
+	if err := sink.SetClaim(ctx.node.ID, claimID); err != nil {
 		log.Printf("changeover release: advance claim for node %d: %v", ctx.node.ID, err)
 	}
 }

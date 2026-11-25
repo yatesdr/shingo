@@ -74,13 +74,14 @@ func (e *Engine) reportLinesideLevels() {
 	// and the same snapshot enqueue as before, a few milliseconds under lock.
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		if err := e.buildAndEnqueueLinesideReport(uop.Pending{}); err != nil {
 			log.Printf("lineside-reporter: %v", err)
 		}
 		return
 	}
-	if err := e.inventoryDelta.WithPending(e.buildAndEnqueueLinesideReport); err != nil {
+	if err := sink.WithPending(e.buildAndEnqueueLinesideReport); err != nil {
 		log.Printf("lineside-reporter: %v", err)
 	}
 }

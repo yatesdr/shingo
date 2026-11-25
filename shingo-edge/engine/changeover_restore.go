@@ -89,7 +89,7 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 					if toStyleID > 0 && coreNodeName != "" {
 						if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, coreNodeName); err == nil {
 							claimID := toClaim.ID
-							if e.inventoryDelta != nil {
+							if sink := e.deltaSink(); sink != nil {
 								// A BOUND CARRIER KEEPS ITS COUNT. The arm fires
 								// because the staging order reached a terminal state
 								// while Edge was down — which is precisely the case
@@ -103,7 +103,7 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 								// back (0 when no carrier was bound, and 0 on a failed
 								// read, over a bound carrier); the re-read went with
 								// it (DESIGN-H §9.1).
-								if err := e.inventoryDelta.SetClaim(task.ProcessNodeID, &claimID); err != nil {
+								if err := sink.SetClaim(task.ProcessNodeID, &claimID); err != nil {
 									log.Printf("changeover: set runtime for node %d: %v", task.ProcessNodeID, err)
 								}
 							}

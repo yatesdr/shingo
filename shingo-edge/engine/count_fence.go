@@ -52,7 +52,8 @@ import (
 // seat with a hold adds the runtime read and the hold's drop, in one
 // transaction.
 func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj protocol.UOPAdjustment) (handled, applied bool, remaining int) {
-	if adj.AsOfNet == nil || adj.AsOfSeq == nil || e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if adj.AsOfNet == nil || adj.AsOfSeq == nil || sink == nil {
 		return false, false, 0
 	}
 	if adj.AsOfStation != e.cfg.StationID() {
@@ -76,7 +77,7 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 		readFailed bool
 	)
 	e.countMu.Lock()
-	err := e.inventoryDelta.WithPending(func(p uop.Pending) error {
+	err := sink.WithPending(func(p uop.Pending) error {
 		flushed, err := e.db.InventoryDeltaNet(protocol.InvDeltaScopeBin, strconv.FormatInt(adj.BinID, 10), adj.Epoch)
 		if err != nil {
 			readFailed = true
@@ -216,8 +217,9 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 		log.Printf("release: node %s declared %d (%s, as the leg read it) — unfenced: %s", node.CoreNodeName, count, source, why)
 		return nil, count
 	}
+	sink := e.deltaSink()
 	switch {
-	case e.inventoryDelta == nil:
+	case sink == nil:
 		return unfenced("no accumulator", true)
 	case rt == nil:
 		return unfenced("the leg read no runtime row", true)
@@ -233,7 +235,7 @@ func (e *Engine) writeReleaseCount(node *processes.Node, rt *processes.RuntimeSt
 		found   bool
 	)
 	e.countMu.Lock()
-	err := e.inventoryDelta.WithPending(func(p uop.Pending) error {
+	err := sink.WithPending(func(p uop.Pending) error {
 		w, seq, net, ok, err := e.db.ReleaseCountWithCursor(node.ID, declared, protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch, clock.Now())
 		if err != nil || !ok {
 			return err

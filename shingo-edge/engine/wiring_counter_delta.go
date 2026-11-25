@@ -1069,10 +1069,10 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		return tickParts{tick: part, hold: part, carrier: part, pack: pack, holdCap: capN}
 	})
 
-	if e.inventoryDelta != nil && binAttributed > 0 {
+	if sink := e.deltaSink(); sink != nil && binAttributed > 0 {
 		binID, _, epoch := e.binAtNode(runtime, claim)
 		payload := producedPayload(claim)
-		_ = e.inventoryDelta.Produced(uop.TickEvent{
+		_ = sink.Produced(uop.TickEvent{
 			NodeID:       node.ID,
 			BinID:        binID,
 			PayloadCode:  payload,
@@ -1393,11 +1393,12 @@ func (e *Engine) handleABFallthrough(tick tickScope, node *processes.Node, runti
 // the actual emission to uop.Mutator.Consumed which locks in the
 // reason taxonomy (a pile drain + consume_tick).
 func (e *Engine) emitConsumeTickDeltas(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return
 	}
 	binID, payload, epoch := e.binAtNode(runtime, claim)
-	_ = e.inventoryDelta.Consumed(uop.TickEvent{
+	_ = sink.Consumed(uop.TickEvent{
 		NodeID:       node.ID,
 		CoreNodeName: node.CoreNodeName,
 		BinID:        binID,
@@ -1414,11 +1415,12 @@ func (e *Engine) emitConsumeTickDeltas(node *processes.Node, runtime *processes.
 // drained regardless of which side of the A/B pair the count
 // attributed to).
 func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return
 	}
 	binID, payload, epoch := e.binAtNode(runtime, claim)
-	_ = e.inventoryDelta.Fallthrough(uop.TickEvent{
+	_ = sink.Fallthrough(uop.TickEvent{
 		NodeID:       node.ID,
 		CoreNodeName: node.CoreNodeName,
 		BinID:        binID,

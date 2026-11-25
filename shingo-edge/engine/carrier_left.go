@@ -48,10 +48,11 @@ import (
 // nil sink (tests and off-modes): nothing is written, pointer or identity,
 // matching the nil-guard every caller of the sink had before.
 func (e *Engine) carrierLeft(nodeID int64, nodeName string) error {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return nil
 	}
-	wasBound, err := e.inventoryDelta.ClearActiveBin(nodeID)
+	wasBound, err := sink.ClearActiveBin(nodeID)
 	if wasBound || err != nil {
 		e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
 	}
@@ -85,12 +86,13 @@ func (e *Engine) carrierLeftLocked(nodeID int64, nodeName string) error {
 // Core): a seat bound at a newer stamp is the carrier landed again, and keeps
 // it, in the same statement.
 func (e *Engine) carrierLeftIfBound(nodeID int64, nodeName string, binID, endedSeq int64) (bool, error) {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return false, nil
 	}
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
-	cleared, err := e.inventoryDelta.ClearActiveBinIfBound(nodeID, binID, endedSeq)
+	cleared, err := sink.ClearActiveBinIfBound(nodeID, binID, endedSeq)
 	if cleared || err != nil {
 		e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
 	}
@@ -104,12 +106,13 @@ func (e *Engine) carrierLeftIfBound(nodeID int64, nodeName string, binID, endedS
 // the count and holds no lock. nil sink: nothing is written. Pinned by
 // TestSeatWriters_TakeTheCountLock.
 func (e *Engine) setSeatCountLocked(nodeID int64, claimID *int64, count int, binID, deltaEpoch int64) error {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return nil
 	}
 	e.countMu.Lock()
 	defer e.countMu.Unlock()
-	return e.inventoryDelta.SetClaimCountAndEpoch(nodeID, claimID, count, binID, deltaEpoch)
+	return sink.SetClaimCountAndEpoch(nodeID, claimID, count, binID, deltaEpoch)
 }
 
 // carrierGone reads what carrierLeft writes: no bin bound to the seat, and the
@@ -128,10 +131,11 @@ func carrierGone(rt *processes.RuntimeState) bool {
 // holdPart to the seat's hold — the ticks counted after the lift that had been
 // charged to the carrier (R4). Same statement count as carrierLeft (+0).
 func (e *Engine) carrierLeftAtPickup(nodeID int64, nodeName string, pickupEpoch int64, hold int, holdPart string) error {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return nil
 	}
-	err := e.inventoryDelta.LeaveAtPickup(nodeID, pickupEpoch, hold, holdPart)
+	err := sink.LeaveAtPickup(nodeID, pickupEpoch, hold, holdPart)
 	e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
 	return err
 }
@@ -145,7 +149,7 @@ func (e *Engine) carrierLeftAtPickup(nodeID int64, nodeName string, pickupEpoch 
 // identity is an answer, not an absence. The count is written under countMu
 // (setSeatCountLocked); neither caller holds it.
 func (e *Engine) carrierClearedInPlace(nodeID int64, nodeName string, claimID *int64, binID, deltaEpoch int64) error {
-	if e.inventoryDelta == nil {
+	if e.deltaSink() == nil {
 		return nil
 	}
 	err := e.setSeatCountLocked(nodeID, claimID, 0, binID, deltaEpoch)

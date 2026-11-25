@@ -384,8 +384,8 @@ func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.
 		// the event handler ends up with nil. The LoadBin response is the
 		// authoritative pointer at this exact moment.
 		if loadResp != nil && loadResp.BinID > 0 {
-			if e.inventoryDelta != nil {
-				if err := e.inventoryDelta.BindActiveBin(nodeID, loadResp.BinID, loadResp.DeltaEpoch); err != nil {
+			if sink := e.deltaSink(); sink != nil {
+				if err := sink.BindActiveBin(nodeID, loadResp.BinID, loadResp.DeltaEpoch); err != nil {
 					log.Printf("bin_ops: bind active bin for node %d: %v", nodeID, err)
 				}
 			}
@@ -396,8 +396,8 @@ func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.
 		// before the new bin starts driving counts. Periodic 5s flush
 		// would catch them eventually, but firing here makes the audit
 		// trail align with the operator action.
-		if e.inventoryDelta != nil {
-			e.inventoryDelta.Flush()
+		if sink := e.deltaSink(); sink != nil {
+			sink.Flush()
 		}
 		e.clearRefusalOnLoad(node.CoreNodeName, payloadCode)
 		return
@@ -511,10 +511,10 @@ func (e *Engine) confirmDeliveredAt(coreNodeName string, retrieveEmpty bool, fin
 // with it, and a stopped seat's stop is lifted (U1), all in the load's own
 // transaction (bindEndingHold). Under the count lock, as every seat write.
 func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeBinID *int64, deltaEpoch int64, uopCount int, payloadCode string) {
-	if e.inventoryDelta != nil {
+	if sink := e.deltaSink(); sink != nil {
 		e.countMu.Lock()
 		_, err := e.bindEndingHold(node, nil, activeBinID, holdDropByManualLoad, holdDropByManualLoad, true, func(ex processes.DBTX) (bool, error) {
-			return true, e.inventoryDelta.ManualLoad(ex, node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount)
+			return true, sink.ManualLoad(ex, node.ID, claimIDPtr, activeBinID, deltaEpoch, uopCount)
 		})
 		e.countMu.Unlock()
 		if err != nil {

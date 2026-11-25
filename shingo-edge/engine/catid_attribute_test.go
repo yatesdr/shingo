@@ -205,7 +205,7 @@ func TestTick_TargetCATIDChargesAnIncomingOnlyNode(t *testing.T) {
 func TestWalk_TargetTickBeforeTheLiftIsLogged(t *testing.T) {
 	t.Parallel()
 	eng, _, pid, nodeID, _, to := runOutRig(t)
-	sink := eng.inventoryDelta.(*fakeDeltaSink)
+	sink := eng.deltaSink().(*fakeDeltaSink)
 	mark := len(sink.binCalls)
 	tickConsume(eng, pid, to, 1)
 	if s := readSeat55(t, eng, pid, nodeID); s.cart != 17 || s.hold != 0 || s.logged != 1 {

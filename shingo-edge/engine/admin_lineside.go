@@ -35,8 +35,8 @@ func (e *Engine) AdminClearLinesideBucket(bucketID int64) error {
 	// report (countMu); PilesChanged takes the flush lock inside it.
 	e.countMu.Lock()
 	err = e.db.DeleteLinesideBucket(bucketID)
-	if err == nil && e.inventoryDelta != nil {
-		e.inventoryDelta.PilesChanged(lineside.Key{
+	if sink := e.deltaSink(); err == nil && sink != nil {
+		sink.PilesChanged(lineside.Key{
 			NodeID: bucket.NodeID, CoreNodeName: coreNodeName,
 			PayloadCode: bucket.PayloadCode, State: bucket.State,
 		})

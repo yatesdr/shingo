@@ -198,7 +198,8 @@ func (e *Engine) bindEndingHold(node *processes.Node, seat *processes.RuntimeSta
 // (H.7).
 func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carrier domain.LinesideCarrier,
 	src domain.CarrierSource, why, by string) bool {
-	if e.inventoryDelta == nil {
+	sink := e.deltaSink()
+	if sink == nil {
 		return false
 	}
 	// A never-active seat may have no runtime row yet.
@@ -212,7 +213,7 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 	e.countMu.Lock()
 	var activePull bool
 	landed, err := e.bindEndingHold(node, nil, &l.BinID, by, holdDropByLanding, false, func(ex processes.DBTX) (bool, error) {
-		landed, ap, err := e.inventoryDelta.Land(ex, node.ID, l)
+		landed, ap, err := sink.Land(ex, node.ID, l)
 		activePull = ap
 		return landed, err
 	})
