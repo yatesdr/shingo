@@ -5,6 +5,7 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -641,4 +642,247 @@ func TestDeliveredLeg_CutCascade(t *testing.T) {
 	if n := c.ordersSince(t, r); n != 0 {
 		t.Errorf("%d order(s) made since the repeat, want none", n)
 	}
+}
+
+// fourLegDig is the owner's example up to leg 2's set-down: a dig over three
+// blockers, four legs (three unburies, then the retrieve). Leg 1 has set its
+// blocker down at its parking and confirmed; leg 2 is carrying its blocker,
+// dwelling in the lane; leg 3 and the retrieve have not started. It returns
+// the parent, the lane, its slots shallowest first and the legs in sequence
+// order, reloaded.
+func fourLegDig(t *testing.T, r twiceRig, prefix string) (*orders.Order, *nodes.Node, []*nodes.Node, []*orders.Order) {
+	t.Helper()
+	parent, lane, slots, legs := liftedDig(t, r, prefix, 3)
+	leg1 := landLegBin(t, r, legs[0]) // released (the wake sends leg 2), then set down
+	r.d.RedriveHeldCompoundLegs(lane.ID)
+	testutil.MustNoErr(t, markLegDelivered(r, leg1), "leg 1's delivered write")
+	r.d.HandleChildOrderComplete(leg1)
+	testutil.MustNoErr(t, autoConfirmLeg(r, leg1), "leg 1's confirm")
+	r.d.HandleChildOrderComplete(reloadLeg(t, r, leg1.ID))
+	leg2 := reloadLeg(t, r, legs[1].ID)
+	if leg2.VendorOrderID == "" {
+		t.Fatalf("fixture: leg 2 was not sent at leg 1's release (cause %q)", leg2.QueueCause)
+	}
+	transit, err := r.db.GetNodeByDotName("_TRANSIT")
+	testutil.MustNoErr(t, err, "resolve _TRANSIT")
+	liftBin(t, r.db, r.d, leg2, slots[1], transit)
+	legs = legsOf(t, r.db, parent.ID)
+	if len(legs) != 4 || legs[0].Status != StatusConfirmed || protocol.IsTerminal(legs[1].Status) ||
+		protocol.IsTerminal(legs[2].Status) || legs[2].VendorOrderID != "" || legs[3].Status != StatusPending {
+		t.Fatalf("fixture: legs %v, want leg 1 confirmed, leg 2 carrying, legs 3 and 4 not started", statusesOf(legs))
+	}
+	return parent, lane, slots, legs
+}
+
+func statusesOf(legs []*orders.Order) []string {
+	var out []string
+	for _, l := range legs {
+		out = append(out, fmt.Sprintf("%d:%s vendor=%q", l.ID, l.Status, l.VendorOrderID))
+	}
+	return out
+}
+
+// assertOwnersExample is the end the owner gave for his example: legs 1 and 2
+// confirmed, legs 3 and 4 cancelled, and no cancel sent for leg 2, whose job
+// finished when it put its bin down.
+func assertOwnersExample(t *testing.T, r twiceRig, c cut, legs []*orders.Order) {
+	t.Helper()
+	for i, want := range []protocol.Status{StatusConfirmed, StatusConfirmed, StatusCancelled, StatusCancelled} {
+		got := reloadLeg(t, r, legs[i].ID)
+		t.Logf("record: leg %d (%d) %s (%q) history=%v", i+1, got.ID, got.Status, got.ErrorDetail, historyOf(t, r, got.ID))
+		if got.Status != want {
+			t.Errorf("leg %d is %q (%q), want %q: a leg that has put its bin down finishes and confirms; "+
+				"legs not started, or driving to their pickup, cancel", i+1, got.Status, got.ErrorDetail, want)
+		}
+	}
+	if got := cancelsOf(r.e.mockEmitter, legs[1].ID); len(got) != 0 {
+		t.Errorf("cancels emitted for leg 2: %q, want none", got)
+	}
+	if slices.Contains(c.stopsSince(r), legs[1].VendorOrderID) {
+		t.Errorf("the fleet was asked to stop leg 2's job %s, which finished when it set its bin down (stops %v)",
+			legs[1].VendorOrderID, c.stopsSince(r))
+	}
+}
+
+// TestDeliveredLeg_FourLegDigClosedAsLeg2SetsDown is the owner's example (final
+// brief 1c): "a leg is finished when it puts its bin down, and it
+// auto-confirms; legs not started, or driving to their pickup, all cancel; a
+// leg carrying its bin sets it down first". A four-leg dig closed as leg 2
+// sets down ends with legs 1 and 2 confirmed and legs 3 and 4 cancelled, at
+// each door that can close a dig then: the parent's cascade, the dissolve,
+// the chapter end and the cut cascade. Two doors cannot reach it: the failure
+// door's failed leg ends failed, not cancelled (TestDeliveredLeg_FailureDoor
+// keeps its set-down sibling), and a home clear's end has its own two legs
+// (TestDeliveredLeg_EndClear).
+func TestDeliveredLeg_FourLegDigClosedAsLeg2SetsDown(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("final brief 1c red pin, red until splitLiftedLegs keeps a leg that has set its bin down; " +
+			"run with SHINGO_KNOWN_RED=1")
+	}
+	cancelEnv := func(parent *orders.Order) *protocol.Envelope {
+		return &protocol.Envelope{ID: "env-" + parent.EdgeUUID, Type: protocol.TypeOrderCancel,
+			Src: protocol.Address{Role: protocol.RoleEdge, Station: parent.Requester()},
+			Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"}}
+	}
+
+	// A station cancels the dig while leg 2's bin is down at its parking and
+	// its delivered write has not landed: the landed half, which still reads
+	// in_transit. Leg 3 is driving to its pickup.
+	t.Run("the parent's cascade, leg 2 landed", func(t *testing.T) {
+		t.Parallel()
+		r := newTwiceRig(t)
+		parent, lane, _, legs := fourLegDig(t, r, "FL-PC")
+		leg2 := landLegBin(t, r, legs[1]) // released (the wake sends leg 3), then set down
+		r.d.RedriveHeldCompoundLegs(lane.ID)
+		if got := reloadLeg(t, r, legs[2].ID); got.VendorOrderID == "" {
+			t.Fatalf("fixture: leg 3 was not sent at leg 2's release (cause %q)", got.QueueCause)
+		}
+
+		c := cutNow(t, r)
+		r.d.HandleOrderCancel(cancelEnv(parent), &protocol.OrderCancel{OrderUUID: parent.EdgeUUID, Reason: "operator abort"})
+		if err := markLegDelivered(r, leg2); err != nil {
+			t.Errorf("leg 2's delivered write after the cancel: %v", err)
+		}
+		if err := autoConfirmLeg(r, leg2); err != nil {
+			t.Errorf("leg 2's confirm after the cancel: %v", err)
+		}
+
+		legs = legsOf(t, r.db, parent.ID)
+		assertOwnersExample(t, r, c, legs)
+		if got := c.stopsSince(r); !slices.Equal(got, []string{legs[2].VendorOrderID}) {
+			t.Errorf("fleet stops since the cancel: %v, want leg 3's job %s alone", got, legs[2].VendorOrderID)
+		}
+		if got := reloadLeg(t, r, parent.ID); got.Status != StatusCancelled {
+			t.Errorf("parent is %q, want cancelled", got.Status)
+		}
+		if r.d.laneLock.IsLocked(lane.ID) {
+			t.Errorf("lane %s is still held after the parent's cancel", lane.Name)
+		}
+	})
+
+	// Leg 3's pickup is walled by a bin whose claimant has stopped moving, and
+	// leg 2's landing re-asks it: the plan went stale. The dissolve keeps leg 2
+	// and, with it, the lane and the parent until its confirm.
+	t.Run("the dissolve, leg 2 landed", func(t *testing.T) {
+		t.Parallel()
+		r := newTwiceRig(t)
+		parent, lane, slots, legs := fourLegDig(t, r, "FL-DIS")
+		wall := testdb.CreateBinAtNode(t, r.db, parent.PayloadCode, slots[1].ID, "FL-DIS-WALL")
+		hauler := testdb.CreateOrder(t, r.db, func(o *orders.Order) {
+			o.EdgeUUID = "FL-DIS-hauler"
+			o.Status, o.VendorOrderID = protocol.StatusDispatched, "sg-FL-DIS-hauler"
+		})
+		testdb.ClaimBinInDugLaneForTest(t, r.db, wall.ID, hauler.ID)
+		leg2 := releaseDwell(t, r.d, r.db, legs[1])
+		if got := reloadLeg(t, r, legs[2].ID); got.VendorOrderID != "" || QueueCause(got.QueueCause) != CauseLaneTargetBuried {
+			t.Fatalf("fixture: leg 3 after leg 2's release: vendor=%q cause=%q, want it held unsent behind the wall",
+				got.VendorOrderID, got.QueueCause)
+		}
+		stallOrder(t, r, hauler.ID)
+		leg2 = landLegBin(t, r, leg2)
+
+		c := cutNow(t, r)
+		r.d.RedriveHeldCompoundLegs(lane.ID) // the landing's re-drive: leg 3's plan is stale
+		if !r.d.laneLock.IsLocked(lane.ID) {
+			t.Errorf("the dissolve let lane %s go before leg 2 confirmed", lane.Name)
+		}
+		if got := reloadLeg(t, r, parent.ID); got.Status != StatusReshuffling {
+			t.Errorf("parent is %q before leg 2 confirmed, want reshuffling", got.Status)
+		}
+		if err := markLegDelivered(r, leg2); err != nil {
+			t.Errorf("leg 2's delivered write after the dissolve: %v", err)
+		}
+		if err := autoConfirmLeg(r, leg2); err != nil {
+			t.Errorf("leg 2's confirm after the dissolve: %v", err)
+		}
+		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the confirm's re-drive")
+
+		legs = legsOf(t, r.db, parent.ID)
+		assertOwnersExample(t, r, c, legs)
+		for _, l := range legs[2:] {
+			if l.ErrorDetail != reshuffleDissolveDetail {
+				t.Errorf("leg %d is %q (%q), want cancelled under the dissolve marker", l.ID, l.Status, l.ErrorDetail)
+			}
+		}
+		if got := c.stopsSince(r); len(got) != 0 {
+			t.Errorf("fleet stops since the landing: %v, want none: leg 3 was never sent and leg 2's job finished", got)
+		}
+		if r.d.laneLock.IsLocked(lane.ID) {
+			t.Errorf("lane %s is still held after leg 2 confirmed and the chapter closed", lane.Name)
+		}
+		assertRestarted(t, r, parent.ID, reshuffleDissolveDetail)
+	})
+
+	// A person ends the retrieve from the orders page as leg 2 sets down (a
+	// cancel with no chapter-end marker, which re-drives nothing); leg 2's own
+	// delivery is the chapter end. Leg 3 is driving to its pickup.
+	t.Run("the chapter end, leg 2 delivered", func(t *testing.T) {
+		t.Parallel()
+		r := newTwiceRig(t)
+		parent, lane, _, legs := fourLegDig(t, r, "FL-CE")
+		leg2 := landLegBin(t, r, legs[1]) // released (the wake sends leg 3), then set down
+		r.d.RedriveHeldCompoundLegs(lane.ID)
+		if got := reloadLeg(t, r, legs[2].ID); got.VendorOrderID == "" {
+			t.Fatalf("fixture: leg 3 was not sent at leg 2's release (cause %q)", got.QueueCause)
+		}
+		r.d.CancelOrderWithCascade(legs[3], legs[3].Requester(), "cancelled by test-operator",
+			CancelCause{Code: protocol.TermOperatorCancelled, Actor: "test-operator"})
+		testutil.MustNoErr(t, markLegDelivered(r, leg2), "leg 2's delivered write")
+
+		c := cutNow(t, r)
+		r.d.HandleChildOrderComplete(leg2) // the delivery's own advance: the chapter end
+		if err := autoConfirmLeg(r, leg2); err != nil {
+			t.Errorf("leg 2's confirm after the chapter end: %v", err)
+		}
+		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the confirm's re-drive")
+
+		legs = legsOf(t, r.db, parent.ID)
+		assertOwnersExample(t, r, c, legs)
+		if legs[2].ErrorDetail != reshuffleLegFailedDetail {
+			t.Errorf("leg 3 is %q (%q), want cancelled under the chapter-end marker", legs[2].Status, legs[2].ErrorDetail)
+		}
+		if got := c.stopsSince(r); !slices.Equal(got, []string{legs[2].VendorOrderID}) {
+			t.Errorf("fleet stops since the delivery: %v, want leg 3's job %s alone", got, legs[2].VendorOrderID)
+		}
+		if r.d.laneLock.IsLocked(lane.ID) {
+			t.Errorf("lane %s is still held after the chapter closed", lane.Name)
+		}
+		assertRestarted(t, r, parent.ID, fmt.Sprintf(
+			"reshuffle dissolved: dig leg %d was cancelled (cancelled by test-operator); the demand re-plans", legs[3].ID))
+	})
+
+	// A station cancels the dig while leg 2 carries its bin: leg 2 is kept and
+	// legs 3 and 4 go. Leg 2 sets its bin down and is delivered, and the same
+	// cancel comes again (a redelivery, or a second press) before the confirm.
+	t.Run("the cut cascade, leg 2 delivered", func(t *testing.T) {
+		t.Parallel()
+		r := newTwiceRig(t)
+		parent, _, _, legs := fourLegDig(t, r, "FL-CC")
+		req := &protocol.OrderCancel{OrderUUID: parent.EdgeUUID, Reason: "operator abort"}
+		r.d.HandleOrderCancel(cancelEnv(parent), req)
+		if got := reloadLeg(t, r, legs[1].ID); protocol.IsTerminal(got.Status) {
+			t.Fatalf("fixture: the first cancel ended leg 2 (%q); it is carrying its bin and is kept", got.Status)
+		}
+		leg2 := landLegBin(t, r, reloadLeg(t, r, legs[1].ID))
+		testutil.MustNoErr(t, markLegDelivered(r, leg2), "leg 2's delivered write")
+		r.d.HandleChildOrderComplete(leg2) // the delivery's own advance: the parent is cancelled
+
+		c := cutNow(t, r)
+		r.d.HandleOrderCancel(cancelEnv(parent), req) // the same cancel, delivered again
+		if err := autoConfirmLeg(r, leg2); err != nil {
+			t.Errorf("leg 2's confirm after the repeat: %v", err)
+		}
+
+		legs = legsOf(t, r.db, parent.ID)
+		assertOwnersExample(t, r, c, legs)
+		if got := c.stopsSince(r); len(got) != 0 {
+			t.Errorf("fleet stops since the repeat: %v, want none", got)
+		}
+		for _, m := range toldSince(t, r.db, c.outbox) {
+			if strings.HasPrefix(m, protocol.TypeOrderCancelled) {
+				t.Errorf("the repeat answered the station again: %s", m)
+			}
+		}
+	})
 }
