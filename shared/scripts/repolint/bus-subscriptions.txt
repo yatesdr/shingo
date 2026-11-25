@@ -1,0 +1,33 @@
+# The places a subscription to an engine's event bus may be made, Core's and
+# the Edge's, each with why it subscribes there. Read by the repolint rule
+# bus-subscriptions (shared/scripts/repolint/sites.go), which fails a site in
+# the tree this list does not name and a line here whose site makes no
+# subscription now.
+#
+# The bus runs its subscribers in the order they subscribed, on the emitter's
+# goroutine, so a site's place in that order is behaviour. The design's places
+# (design round 4): the engine registers its own reactions (wireEventHandlers,
+# from Start, and the sets it calls); a consumer in another layer subscribes
+# itself (www); where messaging must hear an engine event, main subscribes on
+# its behalf, through an engine method. Core's order is pinned by
+# TestSubscriberCensus (shingo-core/engine/subscriber_census_test.go), so a new
+# Core site also takes its rows there, where it runs.
+#
+# site <file>:<func> <why it subscribes there>
+
+# Core: the engine's registry, which Start calls.
+site shingo-core/engine/wiring.go:wireEventHandlers the engine's own reactions, registered at Start; it calls the two sets below at their places
+site shingo-core/engine/cancel_return.go:wireCancelReturnNotices the engine's cancel-return notices, which wireEventHandlers registers first
+site shingo-core/engine/wiring_lane_gate.go:wireLaneGateHandlers the engine's lane gate, which wireEventHandlers registers after every handler that releases a mouth row
+# Core: main, on messaging's behalf.
+site shingo-core/engine/bins_feed.go:SubscribeBinsFeed the bins feed: an engine method main calls after Start, so messaging's push hears the engine's bin and order events (design round 4, candidate d); a harness calls the same method
+# Core: the web layer subscribes itself.
+site shingo-core/www/sse.go:SetupEngineListeners the web layer's: each subscription rebroadcasts its event to the screens; www.NewRouter calls it, last of the three sets
+
+# Edge: the engine's registry, which Start calls.
+site shingo-edge/engine/wiring.go:wireEventHandlers the Edge engine's own reactions, registered at Start; who hears its four status events is pinned by status_event_census_test.go
+# Edge: the web layer subscribes itself.
+site shingo-edge/www/sse.go:SetupEngineListeners the web layer's hub: one subscription to every event, rebroadcast to the screens
+site shingo-edge/www/robot_stream.go:start the web layer's robot stream: an order's status change and the board nudge ring an open stream
+# Edge: the sim build (//go:build sim), never in a plant binary.
+site shingo-edge/engine/sim_operator.go:StartSimOperator the sim build's operator: it plays the floor's taps after a delivery and a status change

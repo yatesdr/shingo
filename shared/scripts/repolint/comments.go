@@ -225,7 +225,8 @@ func (d *decls) declares(sym string) bool {
 	return false
 }
 
-// typeName is the base name of a receiver or embedded type.
+// typeName is the base name of a receiver or embedded type, or of a call's
+// function (the identifier, or the selector's name, under any type arguments).
 func typeName(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Ident:
@@ -333,9 +334,9 @@ func pinsIn(f *file) ([]pin, error) {
 	return out, nil
 }
 
-// parseAll parses files in parallel and calls each with every parsed file, under
-// one lock. It returns the files that do not parse.
-func parseAll(files []*file, each func(*file, *ast.File)) []Finding {
+// parseAll parses files in parallel and calls each with every parsed file and
+// its file set, under one lock. It returns the files that do not parse.
+func parseAll(files []*file, each func(*file, *ast.File, *token.FileSet)) []Finding {
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
@@ -347,14 +348,15 @@ func parseAll(files []*file, each func(*file, *ast.File)) []Finding {
 		sem <- struct{}{}
 		go func(f *file) {
 			defer func() { <-sem; wg.Done() }()
-			af, err := parser.ParseFile(token.NewFileSet(), f.path, f.data, parser.SkipObjectResolution)
+			fset := token.NewFileSet()
+			af, err := parser.ParseFile(fset, f.path, f.data, parser.SkipObjectResolution)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				bad = append(bad, Finding{File: f.path, Why: "does not parse, so what it declares is unknown: " + err.Error()})
 				return
 			}
-			each(f, af)
+			each(f, af, fset)
 		}(f)
 	}
 	wg.Wait()
@@ -377,7 +379,7 @@ func expiry(t *tree) result {
 	}
 	if len(pins) > 0 { // the declarations are read only when a pin needs them
 		d := &decls{any: map[string]bool{}, top: map[string]map[string]bool{}, members: map[string]map[string]bool{}}
-		fs = append(fs, parseAll(files, func(_ *file, af *ast.File) { d.addFile(af) })...)
+		fs = append(fs, parseAll(files, func(_ *file, af *ast.File, _ *token.FileSet) { d.addFile(af) })...)
 		for _, p := range pins {
 			if !d.declares(p.symbol) {
 				fs = append(fs, Finding{File: p.file, Line: p.line,

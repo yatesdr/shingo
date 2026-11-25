@@ -335,6 +335,45 @@ func costCases() []ruleCase {
 	}
 }
 
+func busCases() []ruleCase {
+	list := lines("# the list",
+		"site shingo-core/engine/wiring.go:wireEventHandlers the engine's own reactions",
+		"site shingo-edge/www/sse.go:SetupEngineListeners the web layer's own",
+		"site shingo-edge/engine/sim_op.go:StartSimOperator the sim build's operator",
+		"site shingo-core/engine/gone.go:wireGone it was renamed", // 5: no longer in the tree
+		"site shingo-core/engine/wiring.go:wireEventHandlers named again",
+		"site shingo-core/engine/x.go:noReason",
+		"bogus line")
+	core := "package engine\n\n" + lines(
+		"func (e *Engine) wireEventHandlers() {",
+		"\teventbus.SubscribeTyped(e.Events, func(evt Ev) { e.x() }, EventA)",
+		"\te.Events.SubscribeTypes(e.h, EventB)",
+		"}",
+		"",
+		"func (e *Engine) wireNew() {",
+		"\tif e.on {",
+		"\t\te.Events.Subscribe(func(evt Event) {})", // 10: the new site, named at its first subscription
+		"\t}",
+		"}")
+	tr := treeOf(busSiteList, list,
+		"shingo-core/engine/wiring.go", core,
+		// The Kafka clients' Subscribe takes a topic and a handler.
+		"shingo-core/messaging/client.go", "package messaging\n\nfunc (c *Client) restore() { c.Subscribe(topic, handler) }\n",
+		"shingo-edge/www/sse.go", "package www\n\nfunc (h *EventHub) SetupEngineListeners(eng *engine.Engine) {\n\teng.Events.Subscribe(func(evt engine.Event) {})\n}\n",
+		"shingo-edge/engine/sim_op.go", "//go:build sim\n\npackage engine\n\nfunc (e *Engine) StartSimOperator() { e.Events.SubscribeTypes(op.on, EventD) }\n",
+		// Tests, testdata and the other modules are not read.
+		"shingo-core/engine/a_test.go", "package engine\n\nfunc TestX(t *testing.T) { e.Events.SubscribeTypes(rec, EventA) }\n",
+		"shingo-core/engine/testdata/b.go", "package b\n\nfunc f() { bus.SubscribeTypes(h, A) }\n",
+		"protocol/eventbus/payload.go", "package eventbus\n\nfunc SubscribeTyped() { bus.SubscribeTypes(h, A) }\n")
+	return []ruleCase{
+		{"bus-subscriptions", "an unlisted site, and gone, doubled, unreasoned and unknown lines fire; listed sites, Kafka, tests and testdata pass",
+			fixed(tr), []string{"shingo-core/engine/wiring.go:10",
+				busSiteList + ":5", busSiteList + ":6", busSiteList + ":7", busSiteList + ":8"}},
+		{"bus-subscriptions", "no list is a finding, not a pass", fixed(treeOf("shingo-core/engine/wiring.go", core)),
+			[]string{busSiteList}},
+	}
+}
+
 // jsTree writes path, content pairs under a temp root, as node reads them from
 // disk. Without node it skips: the rule's own missing-node failure is pinned
 // by TestJSParse_MissingNodeFails.
@@ -422,7 +461,7 @@ func jsCases() []ruleCase {
 
 func allCases() []ruleCase {
 	var cs []ruleCase
-	for _, f := range []func() []ruleCase{commentRefCases, conflictCases, expiryCases, jsCases, pathCaseCases,
+	for _, f := range []func() []ruleCase{busCases, commentRefCases, conflictCases, expiryCases, jsCases, pathCaseCases,
 		plantCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
@@ -567,7 +606,8 @@ func TestRun_GuardShapedOutput(t *testing.T) {
 	if run(tr, "conflict-markers", &buf) {
 		t.Fatal("a marker line must fail the run")
 	}
-	want := "FAIL conflict-markers  CHANGELOG.md:1  merge-conflict marker line\n     " + rules[1].hint + "\n"
+	cm, _ := ruleNamed("conflict-markers")
+	want := "FAIL conflict-markers  CHANGELOG.md:1  merge-conflict marker line\n     " + cm.hint + "\n"
 	if buf.String() != want {
 		t.Errorf("output %q, want %q", buf.String(), want)
 	}
