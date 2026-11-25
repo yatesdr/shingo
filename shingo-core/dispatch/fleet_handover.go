@@ -145,7 +145,7 @@ import (
 // row to release, because it never committed. The seam assertion runs first: it
 // only reads, so a refusal there has nothing to undo.
 func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string, hand Hand, entering ...*nodes.Node) error {
-	if err := d.assertDeclaredEveryLaneItEnters(order.ID, req, entering); err != nil {
+	if err := d.assertDeclaredEveryLaneItEnters(order.ID, req, entering, hand.nodeReads(d.db)); err != nil {
 		return err // nothing taken, nothing sent
 	}
 	if d.preHandHook != nil {
@@ -241,7 +241,8 @@ func IsSyntheticLocation(err error) bool {
 // entrant paragraph gives. The name is kept because the lane invariant is the
 // load-bearing one and its message is cited elsewhere; a rename is worth doing
 // only alongside one that widens the contract deliberately.
-func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.CreateOrderRequest, declared []*nodes.Node) error {
+func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.CreateOrderRequest, declared []*nodes.Node,
+	r nodeReads) error {
 	held := make(map[int64]bool, len(declared))
 	for _, laneID := range d.lanesFor(declared...) {
 		held[laneID] = true
@@ -250,7 +251,7 @@ func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.Cr
 		if b.Location == "" {
 			continue
 		}
-		node, err := d.db.GetNodeByDotName(b.Location)
+		node, err := r.GetNodeByDotName(b.Location)
 		if err != nil || node == nil {
 			continue // not a Core node — a gate point, or a vendor-only location
 		}
@@ -268,7 +269,7 @@ func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.Cr
 		if node.IsSynthetic {
 			return SyntheticLocation{OrderID: orderID, Location: b.Location}
 		}
-		lane, err := d.db.LaneOf(node)
+		lane, err := r.LaneOf(node)
 		if err != nil {
 			// An unreadable lane is a lane we cannot prove we declared. Fail closed:
 			// the same rule TakeLaneOccupancy applies to a presence it could not

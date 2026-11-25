@@ -780,7 +780,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 			}
 		}
 	}
-	spliced, target, gated, err := d.spliceCoreWaits(plan, order.ID)
+	spliced, target, gated, err := d.spliceCoreWaits(d.db, plan, order.ID)
 	if err != nil {
 		return "", err
 	}

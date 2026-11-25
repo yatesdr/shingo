@@ -245,8 +245,9 @@ func (d *Dispatcher) prepareComplexHandWith(order *orders.Order, pc *pairPass, r
 		return nil, Hand{}, nil, st, phasePrepare
 	}
 	// The attempt's one read of its plan's nodes (attemptNodes), for the phases
-	// that walk the steps again: the destination's slot needs and final drop,
-	// the hand's, and the lanes verdict. Dropped with the attempt.
+	// that walk the steps again: the destination's gates and slot needs, the
+	// sources, the hand's, the lanes verdict and the commit. Dropped with the
+	// attempt.
 	reads := readAttemptNodes(d.db, resolvedSteps)
 	if st := d.applySwapGates(order, resolvedSteps); st.done {
 		return nil, Hand{}, nil, st, phaseSwapGates
@@ -265,6 +266,9 @@ func (d *Dispatcher) prepareComplexHandWith(order *orders.Order, pc *pairPass, r
 	if st := d.admitComplexLanesVerdict(order, resolvedSteps, reads); st.done {
 		return nil, Hand{}, nil, st, phaseLanes
 	}
+	// The commit walks the same plan again (the splice, the nodes it enters, the
+	// seam assertion): the hand carries the attempt's read to it (Hand.reads).
+	hand.reads = reads
 	return resolvedSteps, hand, assigned, dispatchStep{}, phaseReached
 }
 
@@ -723,7 +727,9 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 	// so this phase cannot re-enter for it. A create the fleet refused re-queues
 	// the order with the spliced plan persisted (Q6); its next pass strips the
 	// waits at load (withoutInsertedWaits), so this splices once again.
-	spliced, target, gated, err := d.spliceCoreWaits(resolvedSteps, order.ID)
+	// The plan's nodes are read through the attempt's read the hand carries.
+	reads := hand.nodeReads(d.db)
+	spliced, target, gated, err := d.spliceCoreWaits(reads, resolvedSteps, order.ID)
 	if err != nil {
 		// A refusal here is structural: a lane entry that is not concrete yet, or a
 		// wait that would gate nothing. Both are plans Core cannot gate safely, and
@@ -768,7 +774,7 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 			d.refuseComplexHandover(order, gErr)
 			return nil, gErr
 		}
-		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(preWait),
+		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(reads, preWait),
 			hand: hand, actor: "dispatcher", gated: true, target: target, hasWait: true}, nil
 	}
 	// A PLAN THAT GAINED A TURN WAIT AND NO LANE WAIT is STORED, because the
@@ -782,7 +788,7 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 			d.refuseComplexHandover(order, uErr)
 			return nil, uErr
 		}
-		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(preWait),
+		return &complexCommit{order: order, steps: spliced, req: req, entering: d.planNodes(reads, preWait),
 			hand: hand, actor: "scanner", hasWait: true}, nil
 	}
 
@@ -816,7 +822,7 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 		Complete: false, // staged: a multi-wait complex order dwells (Complete=false) until its final segment is released
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
-	return &complexCommit{order: order, steps: resolvedSteps, req: req, entering: d.planNodes(preWait),
+	return &complexCommit{order: order, steps: resolvedSteps, req: req, entering: d.planNodes(reads, preWait),
 		hand: hand, actor: "scanner", hasWait: hasWait}, nil
 }
 

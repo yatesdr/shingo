@@ -81,6 +81,21 @@ type Hand struct {
 	// AfterCommit runs once the hand has committed — audit lines that must not
 	// claim a hold the rollback took back.
 	AfterCommit []func()
+	// reads is the read of its plan's nodes a complex attempt built this hand
+	// over (attemptNodes), for the commit's walks over the same plan: the splice,
+	// the nodes the create enters and the seam assertion. nil for every other
+	// hand, which those walks read from the store (nodeReads). Dropped with the
+	// hand; nothing takes a hold from it.
+	reads nodeReads
+}
+
+// nodeReads is what the commit's walks read a node through: the attempt's read
+// the hand was built over, else the store.
+func (h Hand) nodeReads(db nodeReads) nodeReads {
+	if h.reads != nil {
+		return h.reads
+	}
+	return db
 }
 
 // HandSlot is one storage slot to hard-claim. TakenFirst is the bins at the

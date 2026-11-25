@@ -347,7 +347,7 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexCommit) error {
 	takes := make([]handTake, 0, len(commits))
 	for _, c := range commits {
-		if err := d.assertDeclaredEveryLaneItEnters(c.order.ID, c.req, c.entering); err != nil {
+		if err := d.assertDeclaredEveryLaneItEnters(c.order.ID, c.req, c.entering, c.hand.nodeReads(d.db)); err != nil {
 			d.refuseComplexHandover(c.order, err)
 			return d.pairLegStopped(legs, c.order, err)
 		}

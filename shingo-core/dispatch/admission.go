@@ -676,7 +676,7 @@ var skipsForComplexEntry = admissionSkips{entryWhenGated: true}
 // else. Same predicate (pickup/dropoff, non-blank, resolvable), same silent skip
 // of what cannot be resolved — a node admitPlan could not classify is a node this
 // cannot take a row on either.
-func (d *Dispatcher) planNodes(steps []resolvedStep) []*nodes.Node {
+func (d *Dispatcher) planNodes(r nodeReads, steps []resolvedStep) []*nodes.Node {
 	var out []*nodes.Node
 	for _, step := range steps {
 		if step.Action != protocol.ActionPickup && step.Action != protocol.ActionDropoff {
@@ -685,7 +685,7 @@ func (d *Dispatcher) planNodes(steps []resolvedStep) []*nodes.Node {
 		if step.Node == "" {
 			continue
 		}
-		node, err := d.db.GetNodeByDotName(step.Node)
+		node, err := r.GetNodeByDotName(step.Node)
 		if err != nil || node == nil {
 			continue
 		}

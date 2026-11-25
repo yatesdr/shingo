@@ -100,7 +100,7 @@ func (d *Dispatcher) repoint(order *orders.Order, steps []resolvedStep, mv stepM
 		}
 	}
 	moveStep(&plan[k], mv)
-	out, _, _, err := d.spliceCoreWaitsFrom(plan, order.ID, *after)
+	out, _, _, err := d.spliceCoreWaitsFrom(d.db, plan, order.ID, *after)
 	if err == nil {
 		// The wait the robot stands at gates the first step of the new route:
 		// it is checked with the waits the splice planned, which the splice

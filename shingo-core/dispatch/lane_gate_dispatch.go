@@ -272,7 +272,7 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 // from is where the walk starts (spliceFrom): the whole plan from outside every
 // lane at a create, the rest of the route at a re-plan (repoint), whose earlier
 // steps keep the waits they were given.
-func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64, from spliceFrom) ([]resolvedStep, laneGateTarget, bool, error) {
+func (d *Dispatcher) spliceLaneWait(r nodeReads, steps []resolvedStep, orderID int64, from spliceFrom) ([]resolvedStep, laneGateTarget, bool, error) {
 	// gate is one inserted wait: where it goes, and which lane it guards.
 	type gate struct {
 		idx    int
@@ -297,12 +297,12 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64, from sp
 			}
 			continue
 		}
-		node, err := d.db.GetNodeByDotName(s.Node)
+		node, err := r.GetNodeByDotName(s.Node)
 		if err != nil || node == nil {
 			inside = 0 // somewhere we cannot classify is somewhere else
 			continue   // not a Core node we can classify; the claim path surfaces it
 		}
-		lane, err := d.db.LaneOf(node)
+		lane, err := r.LaneOf(node)
 		if err != nil {
 			return nil, laneGateTarget{}, false, fmt.Errorf("splice: resolve lane for %q: %w", s.Node, err)
 		}
@@ -395,8 +395,8 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64, from sp
 // Returns the plan unchanged (the same slice) when nothing is inserted, and
 // gated only when a lane wait was: the lane valve is the lane's. A plan that
 // gained only a turn wait goes out unsealed through its seam's own arm.
-func (d *Dispatcher) spliceCoreWaits(steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
-	return d.spliceCoreWaitsFrom(steps, orderID, spliceFrom{})
+func (d *Dispatcher) spliceCoreWaits(r nodeReads, steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
+	return d.spliceCoreWaitsFrom(r, steps, orderID, spliceFrom{})
 }
 
 // spliceFrom is where a splice starts: the first step it may put a wait in
@@ -414,8 +414,8 @@ type spliceFrom struct {
 // owner check over the whole plan. steps must carry no Core-inserted wait at or
 // after from.at (withoutInsertedWaits); the steps before it are read as context
 // (the step a turn wait would stand behind) and are not changed.
-func (d *Dispatcher) spliceCoreWaitsFrom(steps []resolvedStep, orderID int64, from spliceFrom) ([]resolvedStep, laneGateTarget, bool, error) {
-	out, target, gated, err := d.spliceLaneWait(steps, orderID, from)
+func (d *Dispatcher) spliceCoreWaitsFrom(r nodeReads, steps []resolvedStep, orderID int64, from spliceFrom) ([]resolvedStep, laneGateTarget, bool, error) {
+	out, target, gated, err := d.spliceLaneWait(r, steps, orderID, from)
 	if err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
@@ -785,7 +785,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	// the write see one set. The gate point contributes nothing: it is a property,
 	// never resolved against nodes, which is what still makes the gated lane's own
 	// row appendGateTail's to take.
-	if err := d.commitToFleet(order, req, "dispatcher", hand, d.planNodes(preWait)...); err != nil {
+	if err := d.commitToFleet(order, req, "dispatcher", hand, d.planNodes(d.db, preWait)...); err != nil {
 		return "", err
 	}
 	return d.afterGatedCreate(order, target, plan, req.OrderID), nil
