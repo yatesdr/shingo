@@ -27,17 +27,17 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
+	"shingo/protocol/debuglog"
 	"shingo/protocol/router"
 
 	coreconfig "shingocore/config"
 	coreengine "shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	corestore "shingocore/store"
 	coreorders "shingocore/store/orders"
 	coreharness "shingocore/testharness"
+	"shingocore/www"
 
 	edgeengine "shingoedge/engine"
 	edgeharness "shingoedge/testharness"
@@ -85,11 +85,11 @@ func (f *pathFleet) SetAvailability(string, bool) error { return nil }
 func (f *pathFleet) RetryFailed(string) error           { return nil }
 func (f *pathFleet) ForceComplete(string) error         { return nil }
 
-// feedCore is a running Core, its data service and the topic.
+// feedCore is a running Core, its data service and tables, and the topic.
 type feedCore struct {
 	db    *corestore.DB
 	eng   *coreengine.Engine
-	svc   *coremessaging.CoreDataService
+	side  *coreharness.Core
 	topic *harness.EphemeralTopic
 	uuids map[string]string // order name → its uuid
 }
@@ -137,10 +137,20 @@ func startFeedCore(t *testing.T, verified bool) *feedCore {
 		c.uuids[o.name] = order.EdgeUUID
 	}
 
-	coreHandler := coremessaging.NewCoreHandler(db, nil, "core", "shingo.dispatch", nil)
-	c.svc = coremessaging.NewCoreDataService(db, coreHandler, service.EpochAnnounce{})
+	// Core's web layer, as main builds it after the rest: its doors are what
+	// the ask server answers through.
+	dbg, err := debuglog.New(64, nil)
+	mustNil(t, err, "debuglog")
+	doors := www.NewDoors(eng)
+	_, stopWeb, err := www.NewRouter(eng, doors, dbg)
+	mustNil(t, err, "core router")
+	t.Cleanup(stopWeb)
+	// Core's tables as main builds them, less what this cell leaves out: every
+	// type and subject but the heartbeat, and every hook. The topic and its
+	// reader are the Kafka client's in main, so the cell sets them itself.
+	c.side = coreharness.NewCore(t, eng, doors, coreharness.RoutesOnly(protocol.SubjectEdgeHeartbeat), coreharness.HooksOnly())
 	if verified {
-		c.svc.SetEphemeralTopic(func() string { return feedTopic })
+		c.side.Data.SetEphemeralTopic(func() string { return feedTopic })
 		eng.SetRobotPositionsPublisher(c.topic.Publish)
 		// Core's reader, as routers.go builds it (buildEphemeralReader).
 		watches := router.New[string]()
@@ -197,13 +207,7 @@ func startFeedEdge(t *testing.T, core *feedCore) *feedEdge {
 	eng.SetEphemeralLink(fe.link)
 
 	// The heartbeat and its ack over the bus, routed as the two composition
-	// roots route them.
-	coreSubjects := router.NewSubject()
-	router.RegisterSubject(coreSubjects, protocol.SubjectEdgeHeartbeat, core.svc.HandleEdgeHeartbeat)
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { coreSubjects.Dispatch(env, p) })
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	// roots route them: Core's by NewCore's tables (startFeedCore).
 	edgeSubjects := router.NewSubject()
 	router.RegisterSubject(edgeSubjects, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
 		eng.OnCoreAck(ack)
@@ -214,7 +218,7 @@ func startFeedEdge(t *testing.T, core *feedCore) *feedEdge {
 	edgeIngestor.Dispatch = func(env *protocol.Envelope) { edgeRouter.Dispatch(env, env.Type) }
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: fe.edge.DB, EdgeIngestor: edgeIngestor},
-		harness.CoreSide{CoreStore: core.db, CoreIngestor: coreIngestor})
+		harness.CoreSide{CoreStore: core.db, CoreIngestor: core.side.Ingestor})
 	drainOutbox(t, fe.edge)
 	hb, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: feedStation}, protocol.Address{Role: protocol.RoleCore},
