@@ -37,13 +37,10 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/debuglog"
-	"shingo/protocol/router"
 
 	coreconfig "shingocore/config"
 	"shingocore/dispatch"
 	coreengine "shingocore/engine"
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
@@ -474,42 +471,34 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		mustNil(t, edge.DB.SetActivePull(c.pairID, false), "KSR-PAIR stands by")
 	}
 
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", c.core.eng.Dispatcher())
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
-	router.Register(coreRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
-	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
-	// A produce release ships its count as an ingest, as the plant's router
-	// takes it (cmd/shingocore/routers.go).
-	router.Register(coreRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
-	dataSvc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{
-		Topic: "shingo.dispatch", CoreStation: "core",
-	})
-	subjects := router.NewSubject()
-	// The Edge registers as a plant's does, so Core addresses it by the schema
-	// version it reports (service/bin_landing.go: a landing, not the legacy
-	// Bound).
-	router.RegisterSubject(subjects, protocol.SubjectEdgeRegister, dataSvc.HandleEdgeRegister)
+	// Core's tables as main builds them, less what this cell leaves out: the
+	// redirect, every subject but these (its Edge also sends demand origins,
+	// never routed here) and every hook (the rig pushes the bins itself).
+	routes := []string{
+		protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt,
+		protocol.TypeOrderRelease,
+		// A produce release ships its count as an ingest, as the plant's router
+		// takes it (cmd/shingocore/routers.go).
+		protocol.TypeOrderIngest,
+		// The Edge registers as a plant's does, so Core addresses it by the
+		// schema version it reports (service/bin_landing.go: a landing, not the
+		// legacy Bound).
+		protocol.SubjectEdgeRegister,
+		protocol.SubjectEdgeAsk,
+	}
 	if o.buriedB || o.mirror {
 		// The Edge's claims reach Core's mirror as in the plant: the publisher's
 		// report over the wire. The cancel-return policy reads that mirror.
-		router.RegisterSubject(subjects, protocol.SubjectPlantClaims, dataSvc.HandlePlantClaims)
+		routes = append(routes, protocol.SubjectPlantClaims)
 	}
-	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-		subjects.Dispatch(env, p)
-	})
-	askKinds := registerAsks(subjects, coreDB, c.core.doors, coreHandler)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	coreSide := coreharness.NewCore(t, c.core.eng, c.core.doors, coreharness.RoutesOnly(routes...), coreharness.HooksOnly())
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
 	push := harness.StartBinsPush(t, coreDB, edge.Engine)
 	c.bus.SetBinsPush(push)
-	push.AnswerAsks(askKinds)
+	push.AnswerAsks(coreSide.AskKinds)
 	c.registerEdge()
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),
