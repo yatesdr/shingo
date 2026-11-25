@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -257,5 +260,219 @@ func TestCheck_TheOkLineCountsEachKind(t *testing.T) {
 		"ok   test-cost (6 new since 6bd55616: 1 say why they cost, 2 under 10s alone, 1 skip alone, 1 not timed by tag, 1 not judged)\n"
 	if out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// TestMain lets this test binary stand in for docker: with fakeDockerEnv
+// naming a state directory it answers as fakeDocker does, so
+// TestServerStart_PublishesOnAPortOfItsOwn can put it on PATH as docker.
+func TestMain(m *testing.M) {
+	if dir := os.Getenv(fakeDockerEnv); dir != "" {
+		os.Exit(fakeDocker(dir, os.Args[1:]))
+	}
+	os.Exit(m.Run())
+}
+
+const fakeDockerEnv = "TESTCOST_FAKE_DOCKER"
+
+// fakeDocker is a docker that only records, for one server start: each
+// call's verb goes to dir/calls and each run's -p value to dir/ports. A run
+// creates the container (dir/container) unless dir/nocreate exists (docker
+// down, no image), and the first runs that dir/taken counts fail as docker
+// fails on a taken port: the start fails and the container is left, created.
+// `container inspect` answers whether it exists, rm removes it, port answers a
+// port of docker's own choosing, and exec (pg_isready) answers ready. 4 is
+// the fake's own failure.
+func fakeDocker(dir string, args []string) int {
+	if len(args) == 0 || appendLine(filepath.Join(dir, "calls"), args[0]) != nil {
+		return 4
+	}
+	container := filepath.Join(dir, "container")
+	switch args[0] {
+	case "run":
+		p := ""
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-p" {
+				p = args[i+1]
+			}
+		}
+		if appendLine(filepath.Join(dir, "ports"), p) != nil {
+			return 4
+		}
+		runs := len(readLines(filepath.Join(dir, "ports")))
+		taken, err := strconv.Atoi(strings.Join(readLines(filepath.Join(dir, "taken")), ""))
+		switch {
+		case err != nil:
+			return 4
+		case runs > 50:
+			return 3 // a start that never stops asking
+		case exists(filepath.Join(dir, "nocreate")):
+			return 125
+		}
+		if os.WriteFile(container, nil, 0o644) != nil {
+			return 4
+		}
+		if runs <= taken {
+			return 125
+		}
+		fmt.Println("c0ffee")
+	case "rm":
+		if err := os.Remove(container); err != nil && !os.IsNotExist(err) {
+			return 4
+		}
+	case "container":
+		if !exists(container) {
+			return 1
+		}
+	case "port":
+		fmt.Println("127.0.0.1:54321")
+	}
+	return 0
+}
+
+func appendLine(path, line string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(f, line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// readLines is the file's lines, none when it is missing.
+func readLines(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(data))
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+var publishRe = regexp.MustCompile(`^127\.0\.0\.1:([0-9]+):5432$`)
+
+// pickedPort is the host port of a -p value, when it is 127.0.0.1:<port>:5432
+// with a port in 61000-65535.
+func pickedPort(p string) (int, bool) {
+	m := publishRe.FindStringSubmatch(p)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	return n, err == nil && n >= 61000 && n <= 65535
+}
+
+// TestServerStart_PublishesOnAPortOfItsOwn pins the host port test-cost's own
+// Postgres is published on (docket G23), as scripts/check-gate-exec.sh pins
+// pg_up's. start, against a docker that only records (this binary on PATH),
+// publishes the server on 127.0.0.1:<port>:5432 with a port it picks in
+// 61000-65535, above the ports Linux hands a client, and its address is that
+// pick; a pick docker cannot start the server on moves to another, the
+// container the failed start left removed first; a docker that creates no
+// container is asked once; with every pick taken it gives up and leaves no
+// container. The root holds no module, so start's last step, the template
+// warm-up, fails at once: what is pinned is the docker conversation before it.
+func TestServerStart_PublishesOnAPortOfItsOwn(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"+exeSuffix()), exe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	root := t.TempDir()
+
+	for _, c := range []struct {
+		name     string
+		taken    int  // the first runs that find their port taken
+		nocreate bool // no run creates a container
+		started  bool // the server starts: start's error, if any, is the warm-up's
+		runs     int  // docker runs; 0 is more than one
+		runRm    string
+	}{
+		{name: "free", started: true, runs: 1, runRm: "run"},
+		{name: "two picks taken", taken: 2, started: true, runs: 3, runRm: "run rm run rm run"},
+		{name: "docker creates nothing", nocreate: true, runs: 1, runRm: "run"},
+		{name: "every pick taken", taken: 1000},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			state := t.TempDir()
+			if err := os.WriteFile(filepath.Join(state, "taken"), []byte(strconv.Itoa(c.taken)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if c.nocreate {
+				if err := os.WriteFile(filepath.Join(state, "nocreate"), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv(fakeDockerEnv, state)
+			s := &server{}
+			err := s.start(root, t.TempDir())
+			calls, ports := readLines(filepath.Join(state, "calls")), readLines(filepath.Join(state, "ports"))
+			left := exists(filepath.Join(state, "container"))
+			s.stop()
+
+			seen := map[string]bool{}
+			for _, p := range ports {
+				if _, ok := pickedPort(p); !ok {
+					t.Errorf("start published the server with -p %q: want -p 127.0.0.1:<port>:5432 with a port it picks in 61000-65535, where Linux hands no client port (a port left to docker is one Docker Desktop's listen inside WSL can lose to a client socket, and then every dial from WSL is refused: docket G23, pg_up in scripts/gate.sh)", p)
+				}
+				if seen[p] {
+					t.Errorf("start tried one port twice: %v", ports)
+				}
+				seen[p] = true
+			}
+			want := "more than one"
+			if c.runs > 0 {
+				want = strconv.Itoa(c.runs)
+			}
+			if (c.runs > 0 && len(ports) != c.runs) || (c.runs == 0 && len(ports) < 2) {
+				t.Errorf("start ran docker run %d times (%v), want %s: a start that fails on a taken port must move to another port, and one that created no container is not repeated", len(ports), ports, want)
+			}
+			var runRm []string
+			for _, v := range calls {
+				if v == "run" || v == "rm" {
+					runRm = append(runRm, v)
+				}
+			}
+			if c.runRm != "" && strings.Join(runRm, " ") != c.runRm {
+				t.Errorf("start ran docker %v: want its runs and removals to be %q, the container each failed start left removed before the next run (its name is the next run's)", calls, c.runRm)
+			}
+			if c.started {
+				if err != nil && !strings.Contains(err.Error(), "template warm-up") {
+					t.Errorf("start: %v; want the server started, only the warm-up failing (the root holds no module)", err)
+				}
+				last := ""
+				if len(ports) > 0 {
+					last = ports[len(ports)-1]
+				}
+				if n, ok := pickedPort(last); !ok || s.addr != "127.0.0.1:"+strconv.Itoa(n) {
+					t.Errorf("start's address is %q: want 127.0.0.1 and the port of the run that started the server (-p %q), not docker port's answer", s.addr, last)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), "docker run") {
+					t.Errorf("start: %v; want docker run's error", err)
+				}
+				if s.addr != "" || left {
+					t.Errorf("start failed with address %q, its container left: %v; want no address, and each container a failed start created removed", s.addr, left)
+				}
+			}
+			if exists(filepath.Join(state, "container")) {
+				t.Errorf("stop left the server's container behind")
+			}
+		})
 	}
 }
