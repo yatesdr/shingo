@@ -78,7 +78,7 @@ func TestReserve_SelfContainedLegWithALineBinAlreadyParks(t *testing.T) {
 	order := selfContainedOrderAt(t, db, line, source)
 	order.PayloadCode = bp.Code
 
-	assigned, outcome, err := d.allocator.reserveComplexPlan(order, &ComplexPlan{ResolvedSteps: steps})
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, &ComplexPlan{ResolvedSteps: steps}, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 
 	if len(assigned) != 1 {

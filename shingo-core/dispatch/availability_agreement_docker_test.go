@@ -419,7 +419,7 @@ func availAllocated(t *testing.T, d *Dispatcher, c availCopies, processNode stri
 	if (processNode != "") != (pk.kind == pickupRemoval) {
 		t.Fatalf("%s: fixture drift — the pickup at %s is kind %v", c.fx.name, c.flat.Name, pk.kind)
 	}
-	got, hadBins, err := d.allocator.findAvailableForNeed(pk, resolvedStepPayload(step, c.payload))
+	got, hadBins, err := d.allocator.findAvailableForNeed(pk, resolvedStepPayload(step, c.payload), d.db)
 	if err != nil {
 		t.Fatalf("%s: findAvailableForNeed: %v", c.fx.name, err)
 	}

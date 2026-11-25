@@ -77,7 +77,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 	if out, err := d.allocator.reserveComplexSlots(order, steps, d.db); err != nil || out != reserveComplete {
 		t.Fatalf("reserveComplexSlots: %v (outcome %v), want the store drop %s reserved", err, out, storeNode.Name)
 	}
-	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan, d.db)
 	if rerr != nil {
 		t.Fatalf("reserveComplexPlan: %v", rerr)
 	}

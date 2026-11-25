@@ -109,7 +109,7 @@ func TestRule5_EveryStepKindAgainstEveryCarrierState(t *testing.T) {
 				if pk.kind != k.kind {
 					t.Fatalf("%s: the pickup reads as kind %d, not the step kind it is written as (fixture drift)", name, pk.kind)
 				}
-				got, hadBins, err := d.allocator.findAvailableForNeed(pk, resolvedStepPayload(pk.step, part))
+				got, hadBins, err := d.allocator.findAvailableForNeed(pk, resolvedStepPayload(pk.step, part), d.db)
 				testutil.MustNoErr(t, err, name)
 				if !hadBins || (got != nil && got.ID != standing.ID) {
 					t.Fatalf("%s: the node does not hold its one carrier %s (fixture drift)", name, standing.Label)

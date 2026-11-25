@@ -283,7 +283,7 @@ func TestKanbanArm_AtTheReserve(t *testing.T) {
 	}
 
 	// The reserve alone: no hand, no confirm.
-	if _, _, st := c.d.reserveComplexSources(o, steps); st.done {
+	if _, _, st := c.d.reserveComplexSources(o, steps, c.d.db); st.done {
 		t.Fatalf("the reserve stopped: %v", st.err)
 	}
 	pre := prReload(t, c.db, o.ID)

@@ -239,7 +239,7 @@ func (a *Allocator) logReserveMiss(orderID int64, stepIndex int, node string, no
 // On incomplete, the order holds its partial reservations and waits, parked, for
 // the scanner to retry. Pure of transitions/claims — the hard
 // claim happens later, in confirmComplexPlan.
-func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (assigned []reservedPickup, outcome reserveOutcome, err error) {
+func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan, r nodeReads) (assigned []reservedPickup, outcome reserveOutcome, err error) {
 	pickups := complexPickups(plan.ResolvedSteps, order.ProcessNode)
 
 	held, err := a.heldReservations(order.ID)
@@ -315,7 +315,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		//
 		// Removal keeps ignoring payload entirely — it clears whatever is resident
 		// (SPR ALN_006) — and that arm is inside findAvailableForNeed, untouched.
-		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk, resolvedStepPayload(pk.step, order.PayloadCode))
+		bin, nodeHadBins, ferr := a.findAvailableForNeed(pk, resolvedStepPayload(pk.step, order.PayloadCode), r)
 		if ferr != nil {
 			return nil, reserveHolding, ferr
 		}
@@ -339,7 +339,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	//    press tranche's sim, 2026-10-23, run 2, PRESS-1). Answered after, the
 	//    refill holds its carrier and the finder passes it over.
 	for _, m := range misses {
-		got, out, perr := a.missPickup(order, plan, m.pk, m.nodeHadBins)
+		got, out, perr := a.missPickup(order, plan, m.pk, m.nodeHadBins, r)
 		if perr != nil {
 			return nil, reserveHolding, perr
 		}
@@ -485,7 +485,8 @@ func (a *Allocator) reservePickup(order *orders.Order, pk pickupNeed, bin *binss
 // logged. reserveComplete for a skip or a re-anchor, reserveHoldingForOutside
 // for a carrier coming, reserveHolding for a miss; the caller tallies the miss
 // against the node.
-func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickupNeed, nodeHadBins bool) (*reservedPickup, reserveOutcome, error) {
+func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickupNeed, nodeHadBins bool,
+	r nodeReads) (*reservedPickup, reserveOutcome, error) {
 	// Relay rule: a potential relay (earlier dropoff at N) AND the node
 	// empty at reserve. An empty potential-relay node is the relay target
 	// (its bin hasn't relayed there yet) — skip, not a miss. A node WITH
@@ -501,7 +502,7 @@ func (a *Allocator) missPickup(order *orders.Order, plan *ComplexPlan, pk pickup
 	// bins" the re-collect was a miss on every pass: the supply held a
 	// partial set for ever and its evac waited behind it.
 	if pk.potentialRelay {
-		remaining, _, oerr := a.binsAtStep(order, plan.ResolvedSteps, pk.stepIndex, pk.step.Node)
+		remaining, _, oerr := a.binsAtStep(r, order, plan.ResolvedSteps, pk.stepIndex, pk.step.Node)
 		if oerr != nil {
 			return nil, reserveHolding, oerr
 		}
@@ -924,9 +925,9 @@ func isRemovalPickup(step resolvedStep, processNode string) bool {
 // scanMu (Scanner.RunOnce serializes scan(), fulfillment/scanner.go). Do NOT call
 // the reserve reconcile from a non-serialized path, or two ticks could read
 // occupancy across each other and mis-classify a moot vs a present-but-taken node.
-func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string) (bin *binsstore.Bin, nodeHadBins bool, err error) {
+func (a *Allocator) findAvailableForNeed(pk pickupNeed, payloadCode string, r nodeReads) (bin *binsstore.Bin, nodeHadBins bool, err error) {
 	step := pk.step
-	node, err := a.db.GetNodeByDotName(step.Node)
+	node, err := r.GetNodeByDotName(step.Node)
 	if err != nil || node == nil {
 		return nil, false, nil // node unresolvable → treat as empty (miss), retry next tick
 	}
@@ -1088,7 +1089,7 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 		// bin its own earlier pickup takes is gone by then (binsAtStep).
 		// ConfirmSlotClaim re-checks inside the claim that this order still holds
 		// every bin named here.
-		_, takenFirst, oerr := a.binsAtStep(order, steps, sn.stepIndex, sn.nodeName)
+		_, takenFirst, oerr := a.binsAtStep(a.db, order, steps, sn.stepIndex, sn.nodeName)
 		if oerr != nil {
 			return &planningError{Code: codeClaimFailed, Detail: fmt.Sprintf("read slot %s for order %d: %v", sn.nodeName, order.ID, oerr)}
 		}

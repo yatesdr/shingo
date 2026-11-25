@@ -95,7 +95,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 	testdb.ReserveBin(t, db, order.ID, binA.ID)
 
 	planAB := BuildComplexPlan(stepsAB)
-	_, outcome, err := d.allocator.reserveComplexPlan(order, planAB)
+	_, outcome, err := d.allocator.reserveComplexPlan(order, planAB, d.db)
 	testutil.MustNoErr(t, err, "reserve AB")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete (A kept, B acquired)", outcome)
@@ -118,7 +118,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	planC := BuildComplexPlan(stepsC)
-	_, outcome2, err := d.allocator.reserveComplexPlan(order, planC)
+	_, outcome2, err := d.allocator.reserveComplexPlan(order, planC, d.db)
 	testutil.MustNoErr(t, err, "reserve C")
 	if outcome2 != reserveComplete {
 		t.Fatalf("outcome2 = %v, want reserveComplete", outcome2)
@@ -155,7 +155,7 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 	plan := BuildComplexPlan(steps)
 
 	// Tick 1: only A available (B's node empty, and A is reserved so it's not moot).
-	_, outcome1, err := d.allocator.reserveComplexPlan(order, plan)
+	_, outcome1, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve tick 1")
 	if outcome1 != reserveHolding {
 		t.Fatalf("tick 1 outcome = %v, want reserveHolding", outcome1)
@@ -169,7 +169,7 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 	binB := testdb.CreateBinAtNode(t, db, bp.Code, nodeB.ID, "PH-BIN-B")
 
 	// Tick 2: both available → complete → confirm claims both.
-	assigned2, outcome2, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned2, outcome2, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve tick 2")
 	if outcome2 != reserveComplete {
 		t.Fatalf("tick 2 outcome = %v, want reserveComplete", outcome2)
@@ -209,7 +209,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	order := mkComplexOrder(t, db, "confirm-zero-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete", outcome)
@@ -230,11 +230,11 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 
 	// Rider (a): re-reserve + confirm, then confirm AGAIN — the already-confirmed,
 	// claimed-by-us bin is skipped (idempotent), not a false claim_failed.
-	assigned2, _, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned2, _, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "re-reserve")
 	testutil.MustNoErr(t, d.allocator.confirmComplexPlan(order, plan, assigned2), "first confirm")
 	// Re-derive the assignment (now the reservation is confirmed) and confirm again.
-	assigned3, _, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned3, _, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve for idempotent confirm")
 	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned3); cerr != nil {
 		t.Fatalf("idempotent confirm of an already-claimed-by-us bin must NOT fail: %v", cerr)
@@ -279,7 +279,7 @@ func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 		t.Fatalf("seed reservation = %q, want pending (the wedge half-state)", stateOf(seed, binA.ID))
 	}
 
-	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete", outcome)
@@ -339,7 +339,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 	plan := BuildComplexPlan(steps)
 
 	// ── Tick 1: reserve all three, then force the confirm to fail on need #2. ──
-	assigned1, outcome1, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned1, outcome1, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve tick 1")
 	if outcome1 != reserveComplete {
 		t.Fatalf("tick 1 outcome = %v, want reserveComplete", outcome1)
@@ -367,7 +367,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 	}
 
 	// ── Tick 2: re-reserve (re-acquires B) and confirm converges the whole set. ──
-	assigned2, outcome2, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned2, outcome2, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve tick 2")
 	if outcome2 != reserveComplete {
 		t.Fatalf("tick 2 outcome = %v, want reserveComplete", outcome2)
@@ -422,7 +422,7 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 	order := mkComplexOrder(t, db, "moot-1", empty.Name, empty.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	_, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	_, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveMoot {
 		t.Fatalf("outcome = %v, want reserveMoot (no bin at any source, work is void)", outcome)
@@ -465,7 +465,7 @@ func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 	order := mkComplexOrder(t, db, "filler-1", index.Name, lineNode.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	_, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	_, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveHolding {
 		t.Fatalf("outcome = %v, want reserveHolding — an unstaged filler source is demand waiting for material, not void work", outcome)
@@ -507,7 +507,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	order := mkComplexOrder(t, db, "pbt-1", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveHolding {
 		t.Fatalf("outcome = %v, want reserveHolding — a present-but-taken bin is sourceable, must NOT moot-skip", outcome)
@@ -547,7 +547,7 @@ func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 	order := mkComplexOrder(t, db, "regrab-1", src.Name, src.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if outcome != reserveComplete {
 		t.Fatalf("outcome = %v, want reserveComplete — the empty staging pickup is a re-grab, not a miss", outcome)
@@ -1117,7 +1117,7 @@ func TestReserveHonoursTheStepsOwnPayload(t *testing.T) {
 		outgoing.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 
 	if outcome == reserveHolding {

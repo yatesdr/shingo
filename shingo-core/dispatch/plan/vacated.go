@@ -277,10 +277,19 @@ type SlotBookDB interface {
 // `at` finds the node clear exactly when remaining is empty.
 func BinsAtStep(db SlotBookDB, orderID int64, steps []Step, at int, node string) (
 	remaining []*bins.Bin, taken []int64, err error) {
+	return BinsAtStepOver(db, db, orderID, steps, at, node)
+}
+
+// BinsAtStepOver is BinsAtStep with the node read by name through byName: the
+// store, or a complex attempt's one read of its plan (dispatch's attemptNodes,
+// pinned against the store by TestAttemptNodes_AnswerAsTheStoreDoes). What
+// stands on the node and what the order holds are the store's reads.
+func BinsAtStepOver(db SlotBookDB, byName NodeByName, orderID int64, steps []Step, at int, node string) (
+	remaining []*bins.Bin, taken []int64, err error) {
 	if node == "" {
 		return nil, nil, nil
 	}
-	n, err := db.GetNodeByDotName(node)
+	n, err := byName.GetNodeByDotName(node)
 	if err != nil || n == nil {
 		return nil, nil, nil // an unresolvable node holds nothing anyone can count
 	}

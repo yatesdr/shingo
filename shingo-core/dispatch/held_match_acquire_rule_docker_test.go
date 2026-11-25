@@ -42,12 +42,12 @@ func TestReserveReconcile_AHeldBinIsKeptByTheRuleThatAcquiredIt(t *testing.T) {
 	order := mkComplexOrder(t, db, "held-match-1", spot.Name, lineNode.Name, lineNode.Name, bp.Code, steps)
 	plan := BuildComplexPlan(steps)
 
-	_, first, err := d.allocator.reserveComplexPlan(order, plan)
+	_, first, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "first reserve")
 	if first != reserveComplete {
 		t.Fatalf("first reserve = %v, want reserveComplete (the empty carrier and the line bin are both takeable)", first)
 	}
-	_, again, err := d.allocator.reserveComplexPlan(order, plan)
+	_, again, err := d.allocator.reserveComplexPlan(order, plan, d.db)
 	testutil.MustNoErr(t, err, "second reserve")
 	if again != reserveComplete {
 		t.Fatalf("second reserve of the same plan = %v, want reserveComplete: the order's own holds read as taken", again)
@@ -82,7 +82,7 @@ func TestReserveReconcile_AStockPickupKeepsNoHeldEmpty(t *testing.T) {
 	order := mkComplexOrder(t, db, "held-match-2", spot.Name, lineNode.Name, lineNode.Name, bp.Code, steps)
 	testdb.ReserveBin(t, db, order.ID, empty.ID)
 
-	_, out, err := d.allocator.reserveComplexPlan(order, BuildComplexPlan(steps))
+	_, out, err := d.allocator.reserveComplexPlan(order, BuildComplexPlan(steps), d.db)
 	testutil.MustNoErr(t, err, "reserve")
 	if out == reserveComplete {
 		t.Fatalf("reserve = reserveComplete: the payload pickup kept the empty it holds as stock of %s", bp.Code)

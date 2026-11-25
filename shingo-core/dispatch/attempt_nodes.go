@@ -21,12 +21,14 @@ type nodeReads interface {
 // attemptNodes is one complex attempt's read of its plan's nodes, in the
 // store.GroupPassReads shape: read what the call chain needs once, carry it,
 // forget it. The attempt's walks over its steps (the destination's and the
-// hand's slot needs, the final drop's storage question, admission and the
-// lane-revisit tripwire) each asked the store for a step's node by its dot-name
-// and for its parent, again. Here every pickup and drop node the plan names is
-// read in one statement (GetNodesByDotNames) at the first ask of one, so an
-// attempt that stops before asking reads nothing; a node read by id is kept for
-// the attempt; a name the plan did not name is read through and kept.
+// hand's slot needs, the final drop's storage question and its capacity gate's,
+// the slot book's node at a step (binsAtStep), the sources' find at each
+// pickup, admission and the lane-revisit tripwire) each asked the store for a
+// step's node by its dot-name and for its parent, again. Here every pickup and
+// drop node the plan names is read in one statement (GetNodesByDotNames) at the
+// first ask of one, so an attempt that stops before asking reads nothing; a node
+// read by id is kept for the attempt; a name the plan did not name is read
+// through and kept.
 //
 // THE SAME ANSWERS. A name the batch did not answer is absent, as
 // GetNodeByDotName answers sql.ErrNoRows for it
@@ -36,10 +38,13 @@ type nodeReads interface {
 // parent. Pinned against the store: TestAttemptNodes_AnswerAsTheStoreDoes.
 //
 // WHAT IT MAY HOLD. The walks read a node's name, id, type, parent and
-// synthetic mark, which nothing inside an attempt changes. None reads
-// claimed_by from it; the slot and bin claims stay in SQL (ClaimSlotTx and the
-// hand's confirms). Copies are handed out, so a caller that edits a node edits
-// nothing the next ask is answered from. One per attempt
+// synthetic mark, which nothing inside an attempt should change, and the sources'
+// find its enabled mark, which a person sets (the node form,
+// www/handlers_nodes.go; scenesync and the loader rename write it back as read)
+// outside the scan lock, so a pass that read it a step earlier saw a state as
+// current. None reads claimed_by from it; the slot and bin claims stay in SQL
+// (ClaimSlotTx and the hand's confirms). Copies are handed out, so a caller that
+// edits a node edits nothing the next ask is answered from. One per attempt
 // (prepareComplexHandWith), dropped with it: nothing outlives the attempt.
 type attemptNodes struct {
 	db     *store.DB

@@ -378,7 +378,7 @@ func TestByContents_ACarrierBroughtBackToItsPositionHasNotLeft(t *testing.T) {
 	if !ok {
 		t.Fatalf("steps: %s", o.StepsJSON)
 	}
-	if _, _, st := c.d.reserveComplexSources(o, steps); st.done {
+	if _, _, st := c.d.reserveComplexSources(o, steps, c.d.db); st.done {
 		t.Fatalf("the reserve stopped: %v", st.err)
 	}
 	got, _ := decodeSteps(prReload(t, c.db, o.ID).StepsJSON)

@@ -75,7 +75,7 @@ func TestStepOccupancy_GateAndSlotClaimAgree(t *testing.T) {
 			if err := db.ReserveSlot(stage.ID, order.ID); err != nil && !errors.Is(err, reservations.ErrReservationConflict) {
 				t.Fatalf("reserve the staging slot: %v", err)
 			}
-			_, takenFirst, err := d.allocator.binsAtStep(order, steps, stageStep, stage.Name)
+			_, takenFirst, err := d.allocator.binsAtStep(d.db, order, steps, stageStep, stage.Name)
 			testutil.MustNoErr(t, err, "binsAtStep")
 			testdb.SeedAsk(t, db, order.ID, StatusPending, "sg-"+order.EdgeUUID) // (C1.5: the slot claim is taken in the hand, with the ask)
 			claimOK := db.ConfirmSlotClaim(stage.ID, order.ID, takenFirst) == nil

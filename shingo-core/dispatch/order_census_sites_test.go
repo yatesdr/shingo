@@ -180,10 +180,14 @@ func TestCensus_PersonDoors(t *testing.T) {
 func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 	t.Parallel()
 	got := callSites(t, scanCoreSources(t), "CheckDropoffCapacity", "DropoffCapacity", "DropoffCapacityForType", "CheckDropoffCapacityForType",
+		"CheckDropoffCapacityOver", "DropoffCapacityOver", "dropoffCapacityForTypeOver",
 		"CountInFlightOrdersByDeliveryNodeExcluding", "CountInFlightByDeliveryNode",
 		"CountInFlightByDeliveryNodeExcluding", "InFlightForDropoffSQL")
 	sameSites(t, "the dropoff-capacity gate's callers", got, map[string]string{
 		"dispatch/plan/capacity.go:DropoffCapacity":                   "the gate itself, through its typed form (the planner's since B2; dispatch's CheckDropoffCapacity is its face)",
+		"dispatch/plan/capacity.go:DropoffCapacityOver":               "the gate with its destination read by name through a walk's own read (a complex attempt's); DropoffCapacity is it over the store",
+		"dispatch/plan/capacity.go:DropoffCapacityForType":            "the typed door, over the store (dropoffCapacityForTypeOver is the gate's body)",
+		"dispatch/capacity.go:CheckDropoffCapacityOver":               "dispatch's face on the gate over a complex attempt's read of its plan",
 		"dispatch/capacity.go:CheckDropoffCapacityForType":            "the typed door's face, for the cancel-return chooser",
 		"dispatch/plan/capacity.go:DropoffCapacityAt":                 "the gate's in-flight arm (the cleanup phase folds the wrapper away)",
 		"dispatch/plan/capacity.go:checkNGRPCapacity":                 "the NGRP arm: in-flight per child",

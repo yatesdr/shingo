@@ -110,7 +110,7 @@ func TestReserve_EvacHoldingItsReplacementIsMootWhenTheLineBinIsGone(t *testing.
 	}
 
 	plan := &ComplexPlan{ResolvedSteps: steps}
-	assigned, outcome, err := d.allocator.reserveComplexPlan(evac, plan)
+	assigned, outcome, err := d.allocator.reserveComplexPlan(evac, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 
 	if outcome != reserveMoot {
@@ -160,7 +160,7 @@ func TestReserve_EvacWithBinsPresentStillHolds(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: back.Name},
 	}}
 
-	_, outcome, err := d.allocator.reserveComplexPlan(evac, plan)
+	_, outcome, err := d.allocator.reserveComplexPlan(evac, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 
 	if outcome == reserveMoot {
@@ -199,7 +199,7 @@ func TestReserve_FillerWithEmptySourceStillHolds(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: front.Name},
 	}}
 
-	_, outcome, err := d.allocator.reserveComplexPlan(filler, plan)
+	_, outcome, err := d.allocator.reserveComplexPlan(filler, plan, d.db)
 	testutil.MustNoErr(t, err, "reserve")
 
 	if outcome == reserveMoot {

@@ -20,6 +20,14 @@ type stepReader interface {
 	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
 }
 
+// NodeByName is the one node door a walk may answer from a read of its own: a
+// node by its dot-name, as store.DB.GetNodeByDotName answers it (the replay
+// walk's walkNodes, or a complex attempt's read of its plan, dispatch's
+// attemptNodes).
+type NodeByName interface {
+	GetNodeByDotName(name string) (*nodes.Node, error)
+}
+
 // StepNodesDB is the replay walk's one read of the nodes its steps name: every
 // name in one statement, keyed by the name as asked, a name the store does not
 // answer absent (store.DB.GetNodesByDotNames; pinned against GetNodeByDotName by

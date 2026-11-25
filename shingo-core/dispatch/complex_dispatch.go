@@ -254,7 +254,7 @@ func (d *Dispatcher) prepareComplexHandWith(order *orders.Order, pc *pairPass, r
 	if st := d.reserveComplexDestination(order, resolvedSteps, pc, reads); st.done {
 		return nil, Hand{}, nil, st, phaseDestination
 	}
-	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps)
+	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps, reads)
 	if st.done {
 		return nil, Hand{}, nil, st, phaseSources
 	}
@@ -307,7 +307,7 @@ func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan,
 		if gatedGroupDrop(order, steps, sn.stepIndex, node) {
 			continue
 		}
-		_, takenFirst, oerr := a.binsAtStep(order, steps, sn.stepIndex, sn.nodeName)
+		_, takenFirst, oerr := a.binsAtStep(reads, order, steps, sn.stepIndex, sn.nodeName)
 		if oerr != nil {
 			return claimFailed(fmt.Sprintf("read slot %s for order %d: %v", sn.nodeName, order.ID, oerr))
 		}
@@ -552,7 +552,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 // the pair: the plan, and a pending reservation on every
 // pickup bin. Nothing is confirmed here: a solo order confirms in its hand, a
 // pair's legs in their one hand.
-func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []resolvedStep) (*ComplexPlan, []reservedPickup, dispatchStep) {
+func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []resolvedStep, reads nodeReads) (*ComplexPlan, []reservedPickup, dispatchStep) {
 	// THE GUARD AGAINST A CANCELLED ORDER is in the reservation statements: every
 	// insert takes the owner's row and refuses a terminal one
 	// (reservations.OwnerLiveSQL), and the refusal stops this pass (ownerEnded).
@@ -571,7 +571,7 @@ func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []
 	// job it can't finish, and give-up is operator-driven, never a timer. A crash
 	// leaves a pre-dispatch order whose pending holds the owner-liveness reaper
 	// reclaims, never one with claimed bins: the hard claims are the hand's.
-	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
+	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan, reads)
 	if rerr == nil && outcome == reserveComplete {
 		d.placeByContentsAtReserve(order, plan, assigned)
 	}
@@ -1016,7 +1016,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// it was.
 	finalChecked := isStorageDropoff(reads, order.DeliveryNode)
 	if finalChecked {
-		blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID)
+		blocked, cap := CheckDropoffCapacityOver(d.db, reads, order.DeliveryNode, order.ID)
 		// ── THE VACATED-SLOT RULE, IN TODAY'S WAIT BRANCH ONLY ────────────────
 		//
 		// Three cases, in this order, when the final drop is blocked:
@@ -1134,11 +1134,11 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 		// this plan takes every bin on the node before it gets there; an empty node,
 		// or one still holding a bin this plan will not take, goes to the capacity
 		// check as before.
-		if remaining, taken, oerr := d.allocator.binsAtStep(order, resolvedSteps, i, s.Node); oerr == nil &&
+		if remaining, taken, oerr := d.allocator.binsAtStep(reads, order, resolvedSteps, i, s.Node); oerr == nil &&
 			len(taken) > 0 && len(remaining) == 0 {
 			continue
 		}
-		if blocked, cap := CheckDropoffCapacity(d.db, s.Node, order.ID); blocked {
+		if blocked, cap := CheckDropoffCapacityOver(d.db, reads, s.Node, order.ID); blocked {
 			// (a) was asked above. In the branch that would wait, ask (b): the
 			// partner that acquired earlier in this pass may be the lift that empties
 			// this node before the release lets this leg drop.

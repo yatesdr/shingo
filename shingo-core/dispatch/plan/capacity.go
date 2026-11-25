@@ -182,8 +182,19 @@ type CapacityVerdict struct {
 // below fails it closed. The three reads now agree: if occupancy cannot be read,
 // do not risk the drop.
 func DropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityVerdict) {
+	return DropoffCapacityOver(db, db, deliveryNode, excludeOrderID)
+}
+
+// DropoffCapacityOver is DropoffCapacity with the destination read by name
+// through byName: the store, or a complex attempt's one read of its plan
+// (dispatch's attemptNodes, pinned against the store by
+// TestAttemptNodes_AnswerAsTheStoreDoes). Every other read is db's, and the call
+// is observed on db, as DropoffCapacity's is, so the zero-write books still
+// bracket it.
+func DropoffCapacityOver(db CapacityDB, byName NodeByName, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityVerdict) {
 	defer observe(db, "capacity")()
-	return DropoffCapacityForType(db, deliveryNode, excludeOrderID, binresolver.UnknownBinType("the capacity gate: no type named"))
+	return dropoffCapacityForTypeOver(db, byName, deliveryNode, excludeOrderID,
+		binresolver.UnknownBinType("the capacity gate: no type named"))
 }
 
 // DropoffCapacityForType is DropoffCapacity for a caller that holds the
@@ -198,11 +209,18 @@ func DropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (
 // whatever is arriving.
 func DropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID int64,
 	stated binresolver.BinTypeStatement) (blocked bool, block CapacityVerdict) {
+	return dropoffCapacityForTypeOver(db, db, deliveryNode, excludeOrderID, stated)
+}
+
+// dropoffCapacityForTypeOver is DropoffCapacityForType with the destination read
+// by name through byName (DropoffCapacityOver).
+func dropoffCapacityForTypeOver(db CapacityDB, byName NodeByName, deliveryNode string, excludeOrderID int64,
+	stated binresolver.BinTypeStatement) (blocked bool, block CapacityVerdict) {
 	if deliveryNode == "" {
 		return false, CapacityVerdict{}
 	}
 	params := Params{Destination: deliveryNode}
-	node, err := db.GetNodeByDotName(deliveryNode)
+	node, err := byName.GetNodeByDotName(deliveryNode)
 	switch {
 	case errors.Is(err, sql.ErrNoRows), err == nil && node == nil:
 		// No such node — let dispatch produce the real error.

@@ -44,6 +44,15 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 	return capacityBlockOf(blocked, v)
 }
 
+// CheckDropoffCapacityOver is CheckDropoffCapacity with the destination read by
+// name through byName, a complex attempt's one read of its plan (attemptNodes):
+// plan.DropoffCapacityOver, said the same way.
+func CheckDropoffCapacityOver(db CapacityDB, byName plan.NodeByName, deliveryNode string, excludeOrderID int64) (
+	blocked bool, block CapacityBlock) {
+	blocked, v := plan.DropoffCapacityOver(db, byName, deliveryNode, excludeOrderID)
+	return capacityBlockOf(blocked, v)
+}
+
 func capacityBlockOf(blocked bool, v plan.CapacityVerdict) (bool, CapacityBlock) {
 	if !blocked {
 		return false, CapacityBlock{}
