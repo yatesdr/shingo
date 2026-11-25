@@ -75,7 +75,7 @@ func (e *Engine) AbandonChangeoverSupply(processID, processNodeID int64, acceptH
 		if acceptHalf {
 			reason = protocol.CancelReasonAcceptHalfSwap
 		}
-		if err := e.orderMgr.AbortOrderWithReason(supply.ID, reason); err != nil {
+		if err := e.orderMgr.CancelOrderWithReason(supply.ID, reason); err != nil {
 			return fmt.Errorf("cancel supply order %d: %w", supply.ID, err)
 		}
 	}

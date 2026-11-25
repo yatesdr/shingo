@@ -149,7 +149,7 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// and the press heard nothing.
 		//
 		// "Did not ask for" is read off the status BEFORE the mirror moves it:
-		// AbortOrderWithReason transitions this order to cancelled before Core
+		// CancelOrderWithReason transitions this order to cancelled before Core
 		// can echo the cancel, so an operator's own abort arrives here already
 		// terminal and is not toasted back at them.
 		//

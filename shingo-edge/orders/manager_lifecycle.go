@@ -223,7 +223,7 @@ func (m *Manager) SetOrderETA(uuid, eta string) error {
 	return m.db.UpdateOrderETA(order.ID, eta)
 }
 
-// ErrDelivered is the abort's refusal of an order that reads delivered: its
+// ErrDelivered is the cancel's refusal of an order that reads delivered: its
 // cart is set down, so a cancel has nothing left to stop, and the person
 // confirms the order instead. The owner's ruling of 2026-11-25 (final brief
 // 1e): no cancel on a delivered order or past it. Callers read it with
@@ -232,7 +232,7 @@ func (m *Manager) SetOrderETA(uuid, eta string) error {
 var ErrDelivered = errors.New("delivered: its cart is already set down. Confirm it instead of cancelling")
 
 // operatorCancelReason is the reason a person's cancel carries when its door
-// names none: AbortOrder's (the Orders page, the changeover CANCEL), and the
+// names none: CancelOrder's (the Orders page, the changeover CANCEL), and the
 // resend's when the cancel's own reason cannot be read. The operator's word is
 // Cancel (the owner, 2026-11-25); until then this read "aborted by operator".
 // Core's classifier takes "cancelled by" and "aborted by" alike as a person's
@@ -241,36 +241,36 @@ var ErrDelivered = errors.New("delivered: its cart is already set down. Confirm 
 // text an older Edge sends classifies as this does.
 const operatorCancelReason = "cancelled by operator"
 
-// AbortOrder cancels a live order that is not delivered and enqueues a cancel
+// CancelOrder cancels a live order that is not delivered and enqueues a cancel
 // message. The cancel message is enqueued BEFORE the local transition so that
 // Core is guaranteed to receive the cancellation — preventing a robot from
 // continuing to execute a cancelled order on the floor.
-func (m *Manager) AbortOrder(orderID int64) error {
-	return m.AbortOrderWithReason(orderID, operatorCancelReason)
+func (m *Manager) CancelOrder(orderID int64) error {
+	return m.CancelOrderWithReason(orderID, operatorCancelReason)
 }
 
-// AbortOrderWithReason is AbortOrder with a caller-chosen cancel reason. The
+// CancelOrderWithReason is CancelOrder with a caller-chosen cancel reason. The
 // reason travels in the OrderCancel envelope and Core keys behavior on it —
 // protocol.CancelReasonAcceptHalfSwap tells Core's swap-peer arm to leave the
 // partner leg alone (the accepted half-swap) where any other reason cascades
 // the cancel. It is also the local transition detail, so the HMI shows it.
-func (m *Manager) AbortOrderWithReason(orderID int64, reason string) error {
-	return m.abortOrder(orderID, reason, "")
+func (m *Manager) CancelOrderWithReason(orderID int64, reason string) error {
+	return m.cancelOrder(orderID, reason, "")
 }
 
-// AbortOrderAsEdge is AbortOrderWithReason for a cancel the Edge decided
+// CancelOrderAsEdge is CancelOrderWithReason for a cancel the Edge decided
 // itself, not a person at it (engine/idle_cancel.go): the cancel carries
 // protocol.CancelActorEdge, so Core files it abandoned rather than an
 // operator's. An older Core ignores the field.
-func (m *Manager) AbortOrderAsEdge(orderID int64, reason string) error {
-	return m.abortOrder(orderID, reason, protocol.CancelActorEdge)
+func (m *Manager) CancelOrderAsEdge(orderID int64, reason string) error {
+	return m.cancelOrder(orderID, reason, protocol.CancelActorEdge)
 }
 
-// abortOrder is the one cancel door: the cancel queued first, then the row
-// ended (AbortOrderWithReason's doc). It refuses an order that has ended, and
+// cancelOrder is the one cancel door: the cancel queued first, then the row
+// ended (CancelOrderWithReason's doc). It refuses an order that has ended, and
 // one that reads delivered (ErrDelivered), sending nothing.
-func (m *Manager) abortOrder(orderID int64, reason, actor string) error {
-	m.DebugLog.Log("abort: id=%d reason=%q", orderID, reason)
+func (m *Manager) cancelOrder(orderID int64, reason, actor string) error {
+	m.DebugLog.Log("cancel: id=%d reason=%q", orderID, reason)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)

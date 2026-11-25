@@ -317,7 +317,7 @@ func (c *startCancel) abort(orderID int64, why string) {
 	if err != nil || order == nil || protocol.IsTerminal(order.Status) {
 		return
 	}
-	if err := c.e.orderMgr.AbortOrderWithReason(orderID, why); err != nil {
+	if err := c.e.orderMgr.CancelOrderWithReason(orderID, why); err != nil {
 		c.e.logFn("changeover: cancel %s order %d at start: %v", order.Status, orderID, err)
 		return
 	}

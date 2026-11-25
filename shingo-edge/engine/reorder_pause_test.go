@@ -51,10 +51,10 @@ func TestReask_AfterEachKindOfEnd(t *testing.T) {
 			testutil.MustNoErr(t, eng.orderMgr.HandleDispatchReply(o.UUID, orders.ReplyError, "", "", "no route"), "Core fails it")
 		}},
 		{name: "a person aborts it on the Orders page", hold: domain.ReorderHoldPaused, end: func(t *testing.T, eng *Engine, o *storeorders.Order) {
-			testutil.MustNoErr(t, eng.orderMgr.AbortOrderByPerson(o.ID), "a person aborts")
+			testutil.MustNoErr(t, eng.orderMgr.CancelOrderByPerson(o.ID), "a person aborts")
 		}},
 		{name: "the Edge aborts it for a changeover", end: func(t *testing.T, eng *Engine, o *storeorders.Order) {
-			testutil.MustNoErr(t, eng.orderMgr.AbortOrderWithReason(o.ID, "cancelled at changeover start"), "the Edge aborts")
+			testutil.MustNoErr(t, eng.orderMgr.CancelOrderWithReason(o.ID, "cancelled at changeover start"), "the Edge aborts")
 		}},
 		{name: "Core skips it", end: func(t *testing.T, eng *Engine, o *storeorders.Order) {
 			testutil.MustNoErr(t, eng.orderMgr.HandleDispatchReply(o.UUID, orders.ReplySkipped, "", "", "no source bin"), "Core skips")

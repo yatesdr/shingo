@@ -51,6 +51,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		// Order lifecycle
 		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
+		r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
 		r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 	})
 
@@ -71,7 +72,7 @@ func newApiOrdersRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // buttons away. Of the lifecycle it posts release alone (operator-modal.js, a
 // staged order's RELEASE); submit and abort are the Orders page's (orders.js)
 // and need a session, abort because it writes a person's pause on the
-// position's auto-reorder (orders.AbortOrderByPerson). Changed 2026-11-14:
+// position's auto-reorder (orders.CancelOrderByPerson). Changed 2026-11-14:
 // submit and abort were public. Both directions are asserted so a later "tidy
 // the routes" pass cannot move one without noticing the other.
 func TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot(t *testing.T) {
@@ -84,6 +85,7 @@ func TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot(t *testing.T) {
 		"/api/orders/complex",
 		"/api/orders/ingest",
 		"/api/orders/1/submit",
+		"/api/orders/1/cancel",
 		"/api/orders/1/abort",
 	} {
 		resp := doRequest(t, r, "POST", path, map[string]any{}, nil)
@@ -93,7 +95,7 @@ func TestApiOrders_CreationSubmitAbortNeedLogin_ReleaseDoesNot(t *testing.T) {
 	}
 
 	admin := authCookie(t, h)
-	for _, path := range []string{"/api/orders/retrieve", "/api/orders/move", "/api/orders/1/submit", "/api/orders/1/abort"} {
+	for _, path := range []string{"/api/orders/retrieve", "/api/orders/move", "/api/orders/1/submit", "/api/orders/1/cancel", "/api/orders/1/abort"} {
 		resp := doRequest(t, r, "POST", path, map[string]any{}, admin)
 		if resp.StatusCode == http.StatusSeeOther {
 			t.Errorf("authenticated POST %s was still redirected — the gate must let the /manual-order and Orders pages through", path)
@@ -789,8 +791,8 @@ func TestApiOrders_SubmitOrder_MissingOrder(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Abort — apiCancelOrder (the /cancel alias was dropped 2026-09-27; the
-// orders page posts /abort)
+// Cancel — apiCancelOrder, at /cancel (the Orders page posts it) and at
+// /abort, the cancel's old route, kept one release (router.go)
 // DB call sites: DB.GetOrder, DB.EnqueueOutbox (sender.Queue),
 // DB.UpdateOrderStatus + DB.InsertOrderHistory (TransitionOrder to cancelled).
 // ═══════════════════════════════════════════════════════════════════════
@@ -800,15 +802,17 @@ func TestApiOrders_AbortOrder_Success(t *testing.T) {
 	h, router := newApiOrdersRouter(t)
 	db := dbOf(h)
 
-	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusSubmitted)
+	for _, route := range []string{"cancel", "abort"} {
+		orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusSubmitted)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
-	assertStatus(t, resp, http.StatusOK)
+		resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/"+route, nil, nil)
+		assertStatus(t, resp, http.StatusOK)
 
-	stored, _ := db.GetOrder(orderID)
-	if stored.Status != orders.StatusCancelled {
-		t.Errorf("status after abort: got %q, want %q",
-			stored.Status, orders.StatusCancelled)
+		stored, _ := db.GetOrder(orderID)
+		if stored.Status != orders.StatusCancelled {
+			t.Errorf("status after the cancel at /%s: got %q, want %q", route,
+				stored.Status, orders.StatusCancelled)
+		}
 	}
 }
 
@@ -816,7 +820,7 @@ func TestApiOrders_AbortOrder_InvalidID(t *testing.T) {
 	t.Parallel()
 	_, router := newApiOrdersRouter(t)
 
-	resp := doRequest(t, router, "POST", "/api/orders/bad/abort", nil, nil)
+	resp := doRequest(t, router, "POST", "/api/orders/bad/cancel", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid order ID")
 }
@@ -826,10 +830,10 @@ func TestApiOrders_AbortOrder_AlreadyTerminal(t *testing.T) {
 	h, router := newApiOrdersRouter(t)
 	db := dbOf(h)
 
-	// Cancelled (terminal) orders cannot be aborted again.
+	// Cancelled (terminal) orders cannot be cancelled again.
 	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusCancelled)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/cancel", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -843,7 +847,7 @@ func TestApiOrders_AbortOrder_Delivered(t *testing.T) {
 
 	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusDelivered)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/cancel", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "order "+itoa(orderID)+" is "+orders.ErrDelivered.Error())
 	stored, err := db.GetOrder(orderID)
@@ -881,12 +885,12 @@ func TestApiOrders_DecodeHelper_StringInsteadOfInt(t *testing.T) {
 
 // TestApiOrders_AbortPausesThePositionsAutoReorder: the Orders page's abort is
 // the HMI abort door. It cancels the order and pauses its position's
-// auto-reorder (orders.Manager.AbortOrderByPerson), so the sweep does not ask
+// auto-reorder (orders.Manager.CancelOrderByPerson), so the sweep does not ask
 // again a minute after a person said stop.
 func TestApiOrders_AbortPausesThePositionsAutoReorder(t *testing.T) {
 	t.Parallel()
 	h, r := newTestHandlers(t)
-	r.Post("/api/orders/{orderID}/abort", h.apiCancelOrder)
+	r.Post("/api/orders/{orderID}/cancel", h.apiCancelOrder)
 	db := dbOf(h)
 	procID, err := db.CreateProcess("ABORT-PROC", "", "", "", false)
 	if err != nil {
@@ -906,7 +910,7 @@ func TestApiOrders_AbortPausesThePositionsAutoReorder(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 
-	resp := doRequest(t, r, "POST", "/api/orders/"+strconv.FormatInt(orderID, 10)+"/abort", map[string]any{}, nil)
+	resp := doRequest(t, r, "POST", "/api/orders/"+strconv.FormatInt(orderID, 10)+"/cancel", map[string]any{}, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("abort: status %d", resp.StatusCode)
 	}

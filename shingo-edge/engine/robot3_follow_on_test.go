@@ -150,7 +150,7 @@ func TestRobot3_APairCancelledBeforeTheLiftOrdersNothing(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, r1, r2 := robot3Pair(t, protocol.RefillByOwnRobot)
 	for _, leg := range []*orders.Order{r1, r2} {
-		testutil.MustNoErr(t, eng.orderMgr.AbortOrder(leg.ID), "cancel the pair before the lift")
+		testutil.MustNoErr(t, eng.orderMgr.CancelOrder(leg.ID), "cancel the pair before the lift")
 	}
 	if got := followOnsTo(t, db, nodeID, "INDEX-B"); len(got) != 0 {
 		t.Errorf("a pair cancelled before Robot 2's lift: %d orders to the back, want none", len(got))

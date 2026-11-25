@@ -165,7 +165,16 @@ func routeFixtures() map[string]routeFixture {
 		// ── order lifecycle ──
 		"POST /api/orders/{orderID}/release": {want: 200, req: on(func(w *walk) (string, any) { return "/api/orders/" + id(w.order) + "/release", map[string]any{} })},
 		"POST /api/orders/{orderID}/submit":  {want: 200, req: on(func(w *walk) (string, any) { return "/api/orders/" + id(w.order) + "/submit", map[string]any{} })},
-		"POST /api/orders/{orderID}/abort":   {want: 200, moves: true, req: on(func(w *walk) (string, any) { return "/api/orders/" + id(w.order) + "/abort", map[string]any{} })},
+		"POST /api/orders/{orderID}/cancel":  {want: 200, moves: true, req: on(func(w *walk) (string, any) { return "/api/orders/" + id(w.order) + "/cancel", map[string]any{} })},
+		// The cancel's old route, kept one release (router.go): a live order of
+		// its own, since the walk's order is the cancel route's.
+		"POST /api/orders/{orderID}/abort": {want: 200, moves: true, req: on(func(w *walk) (string, any) {
+			o, err := w.db.GetOrderByUUID(w.freshOrder("acknowledged"))
+			if err != nil {
+				w.t.Fatalf("read the fresh order: %v", err)
+			}
+			return "/api/orders/" + id(o.ID) + "/abort", map[string]any{}
+		})},
 
 		// ── lineside ──
 		"POST /api/lineside/buckets/{id}/clear": {want: 400, req: on(func(w *walk) (string, any) {
@@ -451,7 +460,7 @@ func subjectFixtures() map[string]subjectFixture {
 		}},
 		"data:" + protocol.SubjectOrderStatusResponse: {moves: true, env: func(w *walk) *protocol.Envelope {
 			// A live order of its own, like the order doors above. The walk's
-			// order is cancelled by the abort route before the inbound doors
+			// order is cancelled by the cancel route before the inbound doors
 			// run, and the reconcile leaves an ended row as it ended, so a
 			// snapshot naming it moves nothing.
 			o := w.freshOrder("acknowledged")

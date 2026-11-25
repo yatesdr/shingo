@@ -492,7 +492,7 @@ func TestDeliveredOrder_SwapPeer(t *testing.T) {
 // (bare_line_fill_test.go's door), minted with auto_confirm false (neither the
 // claim nor the station sets it); the fleet carries it and sets the bin down.
 //
-// The Orders page's cancel (www apiCancelOrder: Manager.AbortOrderByPerson, the
+// The Orders page's cancel (www apiCancelOrder: Manager.CancelOrderByPerson, the
 // one call it makes) refuses the delivered order (final brief 1e, the owner's
 // ruling of 2026-11-25: no cancel on a delivered order or past it): it answers
 // orders.ErrDelivered, sends nothing and pauses nothing; the order stays
@@ -565,7 +565,7 @@ func TestDeliveredOrder_WireCancel(t *testing.T) {
 
 	// The Orders page's cancel: refused. Nothing is sent and nothing paused.
 	m := r.mark()
-	err := c.edge.Engine.OrderManager().AbortOrderByPerson(d.ID)
+	err := c.edge.Engine.OrderManager().CancelOrderByPerson(d.ID)
 	t.Logf("record: the Orders page's cancel answered %v", err)
 	if !errors.Is(err, edgeorders.ErrDelivered) {
 		t.Errorf("the Orders page's cancel of the delivered order answered %v, want orders.ErrDelivered", err)

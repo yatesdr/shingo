@@ -383,7 +383,7 @@ func TestFollowOns_CoresCancelledNoticeSendsTheWaitingCarrierBackOnce(t *testing
 		eng, h, nodeID, id := fixture(t, 3)
 		trail := trailOf(eng, map[int64]string{id: "supply"})
 
-		testutil.MustNoErr(t, eng.orderMgr.AbortOrderWithReason(id, "cancelled by operator"), "the operator's abort")
+		testutil.MustNoErr(t, eng.orderMgr.CancelOrderWithReason(id, "cancelled by operator"), "the operator's abort")
 		trail.expect(t, "the abort", "supply staged->cancelled", "supply completed")
 		expectNoCarrierBack(t, eng.db, "the operator's abort")
 

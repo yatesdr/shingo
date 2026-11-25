@@ -122,7 +122,7 @@ func (f *deckFleet) ForceComplete(string) error         { return nil }
 // WHAT IS REAL. Every step runs through the production code path:
 //   - the Edge plans and creates the swap (StartProcessChangeover, two_robot),
 //     publishes its claims (PlantClaimsPublisher), releases the wait
-//     (ReleaseChangeoverWait) and cancels the evac (Manager.AbortOrder);
+//     (ReleaseChangeoverWait) and cancels the evac (Manager.CancelOrder);
 //   - every envelope crosses the Bus both ways and is handled by Core's real
 //     CoreHandler / CoreDataService and the Edge's real handlers;
 //   - Core's intake, pair dispatch, release and cancel are the engine's, against
@@ -329,7 +329,7 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	bus.PumpAll()
 
 	// ── The operator cancels the evac at the Edge. ──
-	if err := edge.Engine.OrderManager().AbortOrder(edgeEvac.ID); err != nil {
+	if err := edge.Engine.OrderManager().CancelOrder(edgeEvac.ID); err != nil {
 		t.Fatalf("abort the evac: %v", err)
 	}
 	bus.PumpAll()

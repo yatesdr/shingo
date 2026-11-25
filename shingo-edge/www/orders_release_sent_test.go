@@ -30,8 +30,8 @@ func TestEdgeOrders_AStagedOrderWhoseReleaseWentOutOffersNoRelease(t *testing.T)
 	}{
 		{`data-action="releaseOrder:21"`, false},
 		{`data-action="releaseOrder:22"`, true},
-		{`data-action="abortOrder:21"`, true},
-		{`data-action="abortOrder:22"`, true},
+		{`data-action="cancelOrder:21"`, true},
+		{`data-action="cancelOrder:22"`, true},
 	} {
 		if got := strings.Contains(html, c.action); got != c.want {
 			t.Errorf("the rows carry %s: %v, want %v\n%s", c.action, got, c.want, html)
@@ -42,7 +42,7 @@ func TestEdgeOrders_AStagedOrderWhoseReleaseWentOutOffersNoRelease(t *testing.T)
 // TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel: no cancel on a
 // delivered order, or past it (the owner's ruling of 2026-11-25, final brief
 // 1e). A delivered row offers Confirm and not the cancel, which the abort door
-// refuses there (orders.Manager.abortOrder); a row whose cart is still on its
+// refuses there (orders.Manager.cancelOrder); a row whose cart is still on its
 // way offers the cancel, and an ended one neither. RED at 37146992, where the
 // row hid the cancel only for an order that had ended.
 func TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel(t *testing.T) {
@@ -62,11 +62,11 @@ func TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel(t *testing.T) {
 		action string
 		want   bool
 	}{
-		{`data-action="abortOrder:31"`, true},
+		{`data-action="cancelOrder:31"`, true},
 		{`data-action="confirmDelivery:31:`, false},
-		{`data-action="abortOrder:32"`, false},
+		{`data-action="cancelOrder:32"`, false},
 		{`data-action="confirmDelivery:32:1"`, true},
-		{`data-action="abortOrder:33"`, false},
+		{`data-action="cancelOrder:33"`, false},
 		{`data-action="confirmDelivery:33:`, false},
 	} {
 		if got := strings.Contains(html, c.action); got != c.want {

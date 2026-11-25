@@ -188,7 +188,7 @@ func TestSequentialBackfill_NoneForARemovalEndedBeforeItsRelease(t *testing.T) {
 		do   func(h *relHarness)
 	}{
 		{"a person's abort", func(h *relHarness) {
-			testutil.MustNoErr(h.t, h.eng.orderMgr.AbortOrder(h.leg("removal")), "abort A")
+			testutil.MustNoErr(h.t, h.eng.orderMgr.CancelOrder(h.leg("removal")), "abort A")
 		}},
 		{"Core's cancel", func(h *relHarness) {
 			h.handler.HandleOrderCancelled(&protocol.Envelope{}, &protocol.OrderCancelled{OrderUUID: h.order("removal").UUID, Reason: "cancelled at Core"})

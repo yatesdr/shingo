@@ -36,7 +36,7 @@ import (
 // PR 3.3 — lifecycle helpers: ApplyCoreStatusSnapshot across all forced-
 //   transition branches, lookupPayloadMeta via CreateMoveOrder (nil node,
 //   active-style-only, target-style overrides active during changeover),
-//   ReleaseOrder and AbortOrder happy paths plus their
+//   ReleaseOrder and CancelOrder happy paths plus their
 //   terminal-rejection guards, TransitionOrder delegation, and
 //   HandleDeliveredWithExpiry persisting the expiry timestamp.
 // ═══════════════════════════════════════════════════════════════════════
@@ -665,7 +665,7 @@ func TestHandleDispatchReply_OneToastPerDeadSwap(t *testing.T) {
 
 // TestHandleDispatchReply_CancelledEchoOfOwnAbort pins the other half: a cancel
 // this station sent is already terminal here when Core echoes it, so the
-// operator who pressed it is not toasted back. AbortOrder is the real door.
+// operator who pressed it is not toasted back. CancelOrder is the real door.
 func TestHandleDispatchReply_CancelledEchoOfOwnAbort(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
@@ -675,7 +675,7 @@ func TestHandleDispatchReply_CancelledEchoOfOwnAbort(t *testing.T) {
 	oid, err := db.CreateOrder("uuid-own", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	oid = testutil.Must(t, oid, err, "CreateOrder")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusSubmitted)), "UpdateOrderStatus")
-	testutil.MustNoErr(t, mgr.AbortOrder(oid), "AbortOrder")
+	testutil.MustNoErr(t, mgr.CancelOrder(oid), "CancelOrder")
 
 	_ = mgr.HandleDispatchReply("uuid-own", ReplyCancelled, "", "", "cancelled by operator")
 	if len(emitter.cancelledByCore) != 0 {
@@ -1404,7 +1404,7 @@ func TestAbortOrder_HappyPath_QueuesCancelAndTransitions(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-abrt", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	testutil.MustNoErr(t, mgr.AbortOrder(oid), "AbortOrder")
+	testutil.MustNoErr(t, mgr.CancelOrder(oid), "CancelOrder")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusCancelled {
 		t.Errorf("Status: got %q, want cancelled", o.Status)
@@ -1428,7 +1428,7 @@ func TestAbortOrder_RejectsTerminal(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-abrt-t", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
 	_ = db.UpdateOrderStatus(oid, string(StatusCancelled))
 
-	err := mgr.AbortOrder(oid)
+	err := mgr.CancelOrder(oid)
 	if err == nil {
 		t.Fatal("expected error aborting terminal order")
 	}
@@ -1450,10 +1450,10 @@ func TestAbortOrder_RefusesADeliveredOrder(t *testing.T) {
 		name  string
 		abort func(m *Manager, id int64) error
 	}{
-		{"AbortOrder", func(m *Manager, id int64) error { return m.AbortOrder(id) }},
-		{"AbortOrderWithReason", func(m *Manager, id int64) error { return m.AbortOrderWithReason(id, "changeover cancelled") }},
-		{"AbortOrderAsEdge", func(m *Manager, id int64) error { return m.AbortOrderAsEdge(id, protocol.CancelReasonLineIdle) }},
-		{"AbortOrderByPerson", func(m *Manager, id int64) error { return m.AbortOrderByPerson(id) }},
+		{"CancelOrder", func(m *Manager, id int64) error { return m.CancelOrder(id) }},
+		{"CancelOrderWithReason", func(m *Manager, id int64) error { return m.CancelOrderWithReason(id, "changeover cancelled") }},
+		{"CancelOrderAsEdge", func(m *Manager, id int64) error { return m.CancelOrderAsEdge(id, protocol.CancelReasonLineIdle) }},
+		{"CancelOrderByPerson", func(m *Manager, id int64) error { return m.CancelOrderByPerson(id) }},
 	} {
 		t.Run(door.name, func(t *testing.T) {
 			t.Parallel()
@@ -1494,7 +1494,7 @@ func TestAbortOrder_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.AbortOrder(99999)
+	err := mgr.CancelOrder(99999)
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}

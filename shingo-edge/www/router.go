@@ -435,14 +435,20 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Post("/orders/complex", h.apiCreateComplexOrder)
 				r.Post("/orders/ingest", h.apiCreateIngestOrder)
 
-				// SUBMIT AND ABORT, the Orders page's (orders.js), the only
+				// SUBMIT AND CANCEL, the Orders page's (orders.js), the only
 				// callers in the static tree and the templates; the station
-				// posts neither. Abort writes a person's pause on its position's
-				// auto-reorder (orders.AbortOrderByPerson): behind login, a
+				// posts neither. Cancel writes a person's pause on its position's
+				// auto-reorder (orders.CancelOrderByPerson): behind login, a
 				// person is signed in to have said it. Until 2026-11-14 both
 				// sat in the public group, on a comment that the station drove
 				// them; it drove release alone.
+				//
+				// /abort is the cancel's old route (the word was Abort until
+				// 2026-11-25), kept for one release for a page open across the
+				// upgrade and for any caller outside the repo, which cannot be
+				// checked. It goes in the release after this one.
 				r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
+				r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
 				r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 
 				// PLCs / WarLink

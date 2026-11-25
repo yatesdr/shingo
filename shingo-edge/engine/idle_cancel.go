@@ -53,7 +53,7 @@ import (
 // WITHIN A PASS it runs first (reconcileDemand), and for each group writes off
 // at its position before it cancels: the level pass after it reads the off and
 // asks for nothing, and the keep-staged keeper after it sees the cancels. The
-// cancels go through AbortOrderAsEdge, the door every Edge cancel takes,
+// cancels go through CancelOrderAsEdge, the door every Edge cancel takes,
 // with protocol.CancelReasonLineIdle and protocol.CancelActorEdge, so Core
 // files them as the Edge's and not a person's; the cancel never expires.
 //
@@ -262,7 +262,7 @@ func (e *Engine) sendBackParked(processID int64, node *processes.Node, g parkedG
 	}
 	e.noteSentBack(processID)
 	for _, id := range g.orderIDs {
-		if err := e.orderMgr.AbortOrderAsEdge(id, protocol.CancelReasonLineIdle); err != nil {
+		if err := e.orderMgr.CancelOrderAsEdge(id, protocol.CancelReasonLineIdle); err != nil {
 			e.logFn("idle-cancel: node %s: cancel order %d: %v", node.Name, id, err)
 			continue
 		}

@@ -103,12 +103,11 @@ async function templateOf(code) {
 
 // The operator's word is Cancel (the owner, 2026-11-25): the button, this
 // dialog and its toast. The dialog's own buttons name the choice, since a plain
-// Cancel beside "Cancel this order?" would read as the order's cancel. The
-// function, the route and the data-action keep the old name for now.
-async function abortOrder(orderID) {
+// Cancel beside "Cancel this order?" would read as the order's cancel.
+async function cancelOrder(orderID) {
     if (!await confirm('Cancel this order?', { ok: 'Cancel order', cancel: 'Keep order' })) return;
     try {
-        await api.post('/api/orders/' + orderID + '/abort', {});
+        await api.post('/api/orders/' + orderID + '/cancel', {});
         toast('Order cancelled', 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e.message, 'error'); }
@@ -156,7 +155,7 @@ if (_searchInput) {
 // threw a ReferenceError at module load that killed every button
 // handler on this page.)
 delegateActions(document.body, {
-    abortOrder,
+    cancelOrder,
     confirmDelivery,
     navigateToProcessOrOrders,
     releaseOrder,

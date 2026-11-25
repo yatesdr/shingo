@@ -64,7 +64,7 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 
 	testutil.MustNoErr(t, db.Close(), "close db")
 
-	if err := mgr.AbortOrder(orderID); err == nil {
+	if err := mgr.CancelOrder(orderID); err == nil {
 		t.Fatalf("expected abort to fail when cancel enqueue fails")
 	}
 }

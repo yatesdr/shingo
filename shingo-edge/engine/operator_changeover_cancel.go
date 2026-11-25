@@ -260,7 +260,7 @@ func (e *Engine) abortCarriersComingBehindFronts(tasks []processes.NodeTask) {
 			}
 			for _, c := range claims {
 				if comingToAnotherPosition(o, c) && !isSpotRefill(o, c) {
-					if err := e.orderMgr.AbortOrderWithReason(o.ID,
+					if err := e.orderMgr.CancelOrderWithReason(o.ID,
 						"changeover cancelled: the carrier coming to "+o.DeliveryNode+" was for the incoming style"); err != nil {
 						log.Printf("changeover cancel: abort order %d to %s: %v", o.ID, o.DeliveryNode, err)
 					}

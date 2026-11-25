@@ -396,7 +396,7 @@ var sppDeliveryOrders = []struct {
 // TestStatusPairPin_AbortVsCoreAutoConfirm pins the abort that loses to Core's
 // own confirm, in the window it has left. The robot sets the bin down and Core
 // reads delivered, but its notice is held, so the Edge still reads in_transit;
-// the operator aborts there (Manager.AbortOrder: the Edge writes cancelled and
+// the operator aborts there (Manager.CancelOrder: the Edge writes cancelled and
 // queues order.cancel). Before the cancel reaches Core, Core's stuck-delivered
 // sweep confirms the order through lifecycle ConfirmReceipt and queues
 // order.update confirmed. The cancel lands on a terminal order: CancelOrder
@@ -420,7 +420,7 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 		t.Parallel()
 		c := newSppCell(t)
 		o := c.delivered()
-		err := c.edge.Engine.OrderManager().AbortOrder(o.ID)
+		err := c.edge.Engine.OrderManager().CancelOrder(o.ID)
 		if !errors.Is(err, edgeorders.ErrDelivered) {
 			t.Fatalf("the abort of a delivered row answered %v, want orders.ErrDelivered", err)
 		}
@@ -462,7 +462,7 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 
 			// The operator aborts. The Edge writes cancelled and holds the cancel.
 			c.edgeOut.hold(true)
-			mustNil(t, c.edge.Engine.OrderManager().AbortOrder(o.ID), "abort")
+			mustNil(t, c.edge.Engine.OrderManager().CancelOrder(o.ID), "abort")
 			if s := c.edgeRow(o.ID).Status; s != protocol.StatusCancelled {
 				t.Fatalf("after the abort the Edge reads %q, want cancelled", s)
 			}

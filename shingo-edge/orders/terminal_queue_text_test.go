@@ -22,7 +22,7 @@ func TestCancelledRowDropsItsQueueText(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusQueued)), "queue it")
 	testutil.MustNoErr(t, db.SetOrderQueueReason("uuid-q-cancel", "Waiting for a slot at SYN-LANE-1", "waiting_for_slot"), "set reason")
 
-	testutil.MustNoErr(t, mgr.AbortOrderWithReason(oid, "operator cancel"), "cancel")
+	testutil.MustNoErr(t, mgr.CancelOrderWithReason(oid, "operator cancel"), "cancel")
 	o, err := db.GetOrder(oid)
 	testutil.MustNoErr(t, err, "reload")
 	if o.Status != StatusCancelled {

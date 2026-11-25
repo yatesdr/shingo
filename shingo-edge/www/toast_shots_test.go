@@ -334,7 +334,7 @@ const ordersShotDriver = shotStream + `(function () {
   if (shot === 'rows') { setTimeout(done, 1500); return; }
   setTimeout(async function () {
     if (shot === 'refused') await fetch('/__shots/deliver', { method: 'POST' });
-    var btn = document.querySelector('[data-action="abortOrder:' + id + '"]');
+    var btn = document.querySelector('[data-action="cancelOrder:' + id + '"]');
     if (!btn) { document.body.setAttribute('data-shot-done', 'no-cancel-button'); return; }
     btn.click();
     setTimeout(function () {

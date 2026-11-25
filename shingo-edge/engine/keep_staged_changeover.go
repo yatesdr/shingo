@@ -414,7 +414,7 @@ func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) ([]domain.Order, ma
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
-		if err := e.orderMgr.AbortOrderWithReason(o.ID, "changeover cancelled: the keep-staged spot goes back to the outgoing style"); err != nil {
+		if err := e.orderMgr.CancelOrderWithReason(o.ID, "changeover cancelled: the keep-staged spot goes back to the outgoing style"); err != nil {
 			e.logFn("keep-staged: cancel spot order %d: %v", o.ID, err)
 			continue
 		}

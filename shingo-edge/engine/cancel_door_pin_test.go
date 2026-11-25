@@ -263,7 +263,7 @@ func TestCancelDoorPin_Abandon(t *testing.T) {
 }
 
 // TestCancelDoorPin_OrdersPage: the Orders page's Cancel (www apiCancelOrder:
-// Manager.AbortOrderByPerson, its one call) of an order with a robot on it.
+// Manager.CancelOrderByPerson, its one call) of an order with a robot on it.
 // Its own work is the reorder hold's: a pause on the position, so the sweep
 // does not ask again a minute after a person said stop. Today the order ends
 // at the tap, its completion clears the position's order slot, and the pause
@@ -287,7 +287,7 @@ func TestCancelDoorPin_OrdersPage(t *testing.T) {
 	before := len(p.history(id))
 	note := fmt.Sprintf("a person cancelled order %d", id)
 
-	testutil.MustNoErr(t, eng.orderMgr.AbortOrderByPerson(id), "the person's cancel")
+	testutil.MustNoErr(t, eng.orderMgr.CancelOrderByPerson(id), "the person's cancel")
 
 	expectLines(t, "the tile after the tap", p.tile(nodeID, "TEST-NODE"))
 	p.expectSent("the tap", cancelOf(o.UUID, "cancelled by operator", ""))
@@ -313,7 +313,7 @@ func TestCancelDoorPin_OrdersPage(t *testing.T) {
 }
 
 // TestCancelDoorPin_IdleRule: the idle rule sends back a swap pair parked at
-// a line silent for its hour (idle_cancel.go, AbortOrderAsEdge): off at the
+// a line silent for its hour (idle_cancel.go, CancelOrderAsEdge): off at the
 // position first, then each leg's cancel with the rule's reason and the
 // Edge's actor. Its own work in the next pass: nothing, the pair is gone.
 // Today both legs end at the tap; Core's word moves nothing on the ended rows.

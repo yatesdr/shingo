@@ -324,7 +324,7 @@ func TestStatusMirrorPin_ALostCancelAndTheUnlistedProjectionLeaveACancelledRowCa
 	r := newMirrorRig(t)
 	id := r.leg("lost-cancel-leg", protocol.StatusInTransit)
 
-	testutil.MustNoErr(t, r.eng.OrderManager().AbortOrderWithReason(id, "cancelled by operator"), "the operator's abort")
+	testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, "cancelled by operator"), "the operator's abort")
 	r.expect("the abort", "status in_transit->cancelled", "completed")
 	cancels, err := r.db.ListUnsentOutboxByType([]string{protocol.TypeOrderCancel})
 	testutil.MustNoErr(t, err, "read the cancels")
@@ -406,7 +406,7 @@ func TestStatusMirrorPin_TheCancelToastAndTheHoldNeedTheRowLive(t *testing.T) {
 		{
 			name: "order.cancelled echoing the operator's abort",
 			before: func(r *mirrorRig, id int64) {
-				testutil.MustNoErr(r.t, r.eng.OrderManager().AbortOrder(id), "the operator's abort")
+				testutil.MustNoErr(r.t, r.eng.OrderManager().CancelOrder(id), "the operator's abort")
 			},
 			core: func(r *mirrorRig) {
 				r.h.HandleOrderCancelled(wire, &protocol.OrderCancelled{OrderUUID: "co-leg", Reason: "cancelled by operator"})
@@ -436,7 +436,7 @@ func TestStatusMirrorPin_TheCancelToastAndTheHoldNeedTheRowLive(t *testing.T) {
 		{
 			name: "order.error on a row the operator aborted",
 			before: func(r *mirrorRig, id int64) {
-				testutil.MustNoErr(r.t, r.eng.OrderManager().AbortOrder(id), "the operator's abort")
+				testutil.MustNoErr(r.t, r.eng.OrderManager().CancelOrder(id), "the operator's abort")
 			},
 			core: func(r *mirrorRig) {
 				r.h.HandleOrderError(wire, &protocol.OrderError{OrderUUID: "co-leg", ErrorCode: "fleet_failed", Detail: fleet})

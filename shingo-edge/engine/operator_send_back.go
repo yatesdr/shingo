@@ -264,7 +264,7 @@ func (e *Engine) CancelSendBack(nodeID int64) (int, error) {
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
-		if err := e.orderMgr.AbortOrderWithReason(o.ID, "SEND BACK cancelled at "+node.Name); err != nil {
+		if err := e.orderMgr.CancelOrderWithReason(o.ID, "SEND BACK cancelled at "+node.Name); err != nil {
 			return n, fmt.Errorf("cancel order %d: %w", o.ID, err)
 		}
 		n++

@@ -149,7 +149,7 @@ const (
 	// stopping it, an admin terminating it on Core, a swap partner's death:
 	// Core's reason rides along, and the station board toasts it (SSE
 	// "order-cancelled"). A cancel this station sent is already terminal here
-	// when Core's echo arrives (orders.Manager.AbortOrderWithReason transitions
+	// when Core's echo arrives (orders.Manager.CancelOrderWithReason transitions
 	// locally first), so it never fires this.
 	EventOrderCancelledByCore
 

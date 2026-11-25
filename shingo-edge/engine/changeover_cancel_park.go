@@ -211,7 +211,7 @@ func (e *Engine) taskLeftOnStaging(task processes.NodeTask) []parkedBin {
 			order.Status != protocol.StatusCancelled && order.Status != protocol.StatusFailed
 		aborted := false
 		if !ordermgr.IsTerminal(order.Status) {
-			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
+			if err := e.orderMgr.CancelOrder(order.ID); err != nil {
 				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
 			} else {
 				aborted = true

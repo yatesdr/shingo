@@ -551,7 +551,7 @@ func TestCoreWord_AnOperatorsCancelCoreStillHoldsLiveIsSentAgain(t *testing.T) {
 	id := r.leg(uuid, protocol.StatusDispatched)
 	r.live(uuid, protocol.StatusInTransit, 2)
 
-	testutil.MustNoErr(t, r.eng.OrderManager().AbortOrderWithReason(id, reason), "the operator's abort")
+	testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, reason), "the operator's abort")
 	r.expect("the abort", "status in_transit->cancelled", "completed")
 	expectCancels(t, "the abort", r.cancels(), uuid, reason, 1)
 
@@ -861,7 +861,7 @@ func TestCoreWord_AVersionedProjectionGoesThroughTheApplier(t *testing.T) {
 		const uuid = "projected-cancelled-leg"
 		id := r.leg(uuid, protocol.StatusDispatched)
 		r.live(uuid, protocol.StatusInTransit, 3)
-		testutil.MustNoErr(t, r.eng.OrderManager().AbortOrderWithReason(id, "cancelled by operator"), "the operator's abort")
+		testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, "cancelled by operator"), "the operator's abort")
 		r.events = nil
 		ended, before := r.row(id), r.history(id)
 
