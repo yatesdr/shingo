@@ -146,12 +146,14 @@ func TestRelease_ADeltaWaitingBehindAFencedRelease(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// PRECONDITION of the red case: two inbound readers applying the
-			// orders topic at once. It is unreachable while Core applies both
-			// doors on one inbound reader goroutine per topic (messaging
-			// Client.Subscribe starts one readLoop a topic), where each door's
+			// orders topic at once. It should not be reached while Core applies
+			// both doors on one inbound reader of the orders topic (main
+			// subscribes it once, and each Subscribe starts one readLoop:
+			// TestCoreReadsTheOrdersTopicOnOneReader, engine), where each door's
 			// transaction commits before the other's read begins; so it stays
 			// skipped, not fixed (docket R71). Revisit it, and fix the apply's
-			// cursor read, if a second reader of the orders topic is ever added.
+			// cursor read, if a second reader of the orders topic is ever added:
+			// that pin fails first.
 			if tc.knownRed && os.Getenv("SHINGO_KNOWN_RED") == "" {
 				t.Skip("docket B18 red pin, red until the apply reads its cursor after the bin row is locked; run with SHINGO_KNOWN_RED=1")
 			}

@@ -34,6 +34,20 @@ import (
 // offset (messaging.Client.readLoop), so only a resend of the same
 // envelope reaches it again.
 //
+// ONE READER A TOPIC is this design's precondition, and B18's (the delta
+// apply reads its cursor before the bin lock, uop readBinScope). A read
+// before the handler and a row after it keep a message to one run only
+// while no two goroutines handle one envelope at once. Core reads the orders
+// topic on one reader, which runs each message's handler to its end before
+// it fetches the next (messaging.Client.readLoop), so a repeat comes after
+// the first run wrote its row or was cut; two readers given one envelope
+// would both read no row and both run its handler. Pinned by
+// TestCoreReadsTheOrdersTopicOnOneReader (engine). A second reader of the
+// orders topic should first make this middleware claim the envelope before
+// its handler. The one overlap today: a re-configure whose Close gave up on
+// a handler at its limit starts the new reader while that handler still
+// runs (messaging.Client.Close).
+//
 // Compose with router.UseFor scoped to the order-channel envelope
 // Types (TypeOrderRequest, TypeOrderCancel, TypeOrderReceipt,
 // TypeOrderRedirect, TypeComplexOrderRequest, TypeOrderRelease,

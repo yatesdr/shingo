@@ -1142,8 +1142,8 @@ func stampOrNone(t sql.NullTime) string {
 // The cursor is joined, not locked, so a read that waited on the bin's lock can
 // read the cursor from before the other apply's claim: B18, the
 // past-the-fence case of TestRelease_ADeltaWaitingBehindAFencedRelease, red and
-// skipped unless SHINGO_KNOWN_RED=1 (one inbound reader a topic keeps it from a
-// plant today).
+// skipped unless SHINGO_KNOWN_RED=1 (one inbound reader of the orders topic
+// should keep it from a plant: TestCoreReadsTheOrdersTopicOnOneReader, engine).
 func readBinScope(tx *sql.Tx, station, scopeKey string, d *protocol.BinUOPDelta) (int64, scopeCursor, error) {
 	var (
 		epoch   int64
