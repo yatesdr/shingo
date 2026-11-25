@@ -131,6 +131,7 @@ Every loop Edge's `Engine.Start` starts, in the order it starts them.
 | `catidMonitor.run` | `shingo-edge/engine/plc_catid_monitor.go` | `startCatidMonitor` | 500ms (`plcPollInterval`) | run is the monitor's goroutine: a read every plcPollInterval on the process clock, each stamped with it, so every time the monitor writes (a read, a confirm, the declaration's window, a refusal, the verify deadline) is on the clock the engine stamps its rows and changeovers with. |
 | `catidMonitor.runSlotWatch` | `shingo-edge/engine/catid_slot_watch.go` | `startCatidMonitor` | 1m (`slotWatchInterval`) | runSlotWatch is the watch's goroutine: a pass a minute of the process clock until the engine stops. |
 | `startIntentWorker` | `shingo-edge/engine/release_act.go` | `Engine.Start` | 15s (`intentFloor`) | startIntentWorker runs the worker goroutine, the 15 s floor, and the boot sweep of every node holding an intent. |
+| `runKeeperWorker` | `shingo-edge/engine/keep_staged_keeper.go` | `startKeeperWorker` | no ticker | runKeeperWorker is the keeper's worker: one drain of the marked passes per wake, until the engine stops (startKeeperWorker). |
 | `robotWatchLoop` | `shingo-edge/engine/robot_watch.go` | `startRobotWatchLoop` | 5s (`protocol.RobotWatchInterval`) | robotWatchLoop opens and closes the ephemeral link as Core names the topic, and sends robot.watch at once when the shown orders change and again each interval (every) while any are shown, until the engine stops. |
 
 <!-- /generated -->

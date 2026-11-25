@@ -7,7 +7,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -190,11 +192,6 @@ func TestKeepStagedOneOwner_TheWrongSpareGoesBackAndTheLegNeverTakesIt(t *testin
 	}
 }
 
-// knownRedEnv runs this file's red pins: cases that fail today on purpose and
-// wait for their fix's own brief. Unset, they skip and say which finding they
-// pin.
-const knownRedEnv = "SHINGO_KNOWN_RED"
-
 // THE COPY CATCHING UP IS A DECISION POINT. The keeper decides from the bins
 // copy, and Core's push of a bin's move races the message that ends or lifts
 // the order that moved it. A kick that reads the copy first decides from the
@@ -229,17 +226,16 @@ func TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint(t *testing.T) {
 		}
 	})
 
-	// The copy's change lands while another section holds the cell's lock:
-	// the wake's pass is turned away (TryLock), and the refill follows when the
-	// holder unlocks. Red by design until docket B6 is fixed: today the wake
-	// turned away is logged, and the next level sweep, up to a minute later,
-	// re-asks. It is not shown to be the cause of the KSR leaf d flake, which
-	// is UNKNOWN. Skipped unless knownRedEnv is set, so no gate runs it; with
-	// it set the case should fail at the refills-after-unlock check.
+	// The copy's change lands while another goroutine holds the cell's lock:
+	// the wake's pass is turned away (TryLock) and marked, and the keeper's own
+	// background work runs it once the cell is free (drainKeeperMarks, the
+	// worker's drain, called here as the door it is). No reconciler runs in
+	// this fixture, so the refill can only come from the mark; the drain waits
+	// for the holder, and a second drain makes nothing more. Docket B6: the
+	// pass turned away was logged and dropped, and only the next level sweep,
+	// up to a minute on, asked again. It is not shown to be the cause of the
+	// KSR leaf d flake, which is UNKNOWN.
 	t.Run("the copy catches up while the cell is being decided", func(t *testing.T) {
-		if os.Getenv(knownRedEnv) == "" {
-			t.Skip("docket B6 red pin, red until the dropped wake is fixed; run with " + knownRedEnv + "=1")
-		}
 		t.Parallel()
 		c := pinCase{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobotPressIndex, read: readWrong}
 		fx := c.seed(t)
@@ -250,18 +246,47 @@ func TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint(t *testing.T) {
 			t.Fatalf("returns = %+v, want the outgoing spare sent back", returns)
 		}
 		land(t, fx, returns[0].ID)
-		mu := fx.eng.primeNodeLock(&processes.NodeClaim{CoreNodeName: "L1"})
-		mu.Lock()
+		held, release, let := make(chan struct{}), make(chan struct{}), sync.Once{}
+		letGo := func() { let.Do(func() { close(release) }) }
+		t.Cleanup(letGo)
+		go func() {
+			mu := fx.eng.primeNodeLock(&processes.NodeClaim{CoreNodeName: "L1"})
+			mu.Lock()
+			close(held)
+			<-release
+			mu.Unlock()
+		}()
+		<-held
 		restubSpot(t, fx, line, protocol.NodeBinInfo{})
 		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 0 {
-			mu.Unlock()
 			t.Fatalf("refills = %+v while the cell's lock is held, want none yet", refills)
 		}
-		mu.Unlock()
+		drained := make(chan struct{})
+		go func() {
+			fx.eng.drainKeeperMarks()
+			close(drained)
+		}()
+		select {
+		case <-drained:
+		case <-time.After(50 * time.Millisecond):
+		}
+		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 0 {
+			t.Fatalf("refills = %+v with another goroutine still holding the cell: the drain must wait for it", refills)
+		}
+		letGo()
+		select {
+		case <-drained:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the drain did not run once the cell was free")
+		}
 		refills, _ := liveSpot(t, fx, pinSpot)
 		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || !refills[0].RetrieveEmpty {
-			t.Fatalf("refills once the holder unlocked = %+v, want one empty for PART-NEW: the pass the held "+
+			t.Fatalf("refills once the cell was free = %+v, want one empty for PART-NEW: the pass the held "+
 				"lock turned away was never run again", refills)
+		}
+		fx.eng.drainKeeperMarks()
+		if again, _ := liveSpot(t, fx, pinSpot); len(again) != 1 {
+			t.Fatalf("refills after a second drain = %+v, want still the one", again)
 		}
 	})
 
@@ -296,10 +321,10 @@ func TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint(t *testing.T) {
 }
 
 // runTurnedAway runs, once the cell is free, the keeper passes a held cell lock
-// turned away, as the Edge's own background work would. Docket B6: at this tree
-// nothing does; a pass turned away is logged and dropped, and the next level
-// sweep, up to a minute on, asks again.
-func runTurnedAway(eng *Engine) {}
+// turned away, as the Edge's own background work does: the keeper's worker's
+// drain (drainKeeperMarks), called as the door it is, since no worker runs in
+// an unstarted fixture.
+func runTurnedAway(eng *Engine) { eng.drainKeeperMarks() }
 
 // A CHANGEOVER'S OWN DECISION IS ITS SPOTS' UNTIL THE KEEPER'S NEXT. A start and
 // a cancel hold their lines' cells for their whole body, and the orders they

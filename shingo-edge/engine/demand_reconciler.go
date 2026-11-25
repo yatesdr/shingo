@@ -181,7 +181,7 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 		// The claim resolved above is the active style's, which would judge the
 		// incoming spare wrong, so the spot's claim is resolved on its own.
 		if kept := sweptSpotClaim(process, node, claim, claims); spotNode(kept) != "" {
-			e.keepSpot(node, kept)
+			e.keepSpot(node, kept, keeperSweep)
 		}
 		e.sweepNodeLevel(node, runtime, claim)
 	}

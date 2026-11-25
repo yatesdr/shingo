@@ -121,8 +121,13 @@ func blockNodeSet(plan *changeoverPlan) []string {
 // fleet is cancelled here, so that when START decides the spot nothing is
 // coming to it (blockNodeSet refuses one already flown). A refill still wanted
 // by a keep-staged claim is not lost: the keeper orders it again for the claim
-// the spot is kept for (keptFor), once START lets go of the cell's lock. Pinned
-// by TestKeepStagedChangeover_AQueuedRefillIsCancelledAtStart.
+// the spot is kept for (keptFor) at its next decision point after START lets go
+// of the cell's lock, at the latest the next level sweep
+// (TestKeepStagedOneOwner_AStartThatAbortsARefillLeavesTheKeeperArmed). Not as
+// START lets go: the pass the cancelled refill's end asked for is turned away by
+// START's lock, and START drops it (letGoDecided,
+// TestKeepStagedOneOwner_AChangeoverDropsOnlyThePassesOnItsSpots). Pinned by
+// TestKeepStagedChangeover_AQueuedRefillIsCancelledAtStart.
 //
 // Widening the BLOCK to a position is safe: it says "not yet", the operator presses
 // again. Widening the CANCEL to one is the Hopkinsville deadlock — and widening
@@ -517,13 +522,17 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// prime locks, taken once for the whole start (startLockedLines): from the
 	// cancel below, which clears the spots of orders not yet flown and a press's
 	// queued clear and prime, to the last spot order, so a request on one of
-	// those lines cannot add to what the start is deciding between.
-	defer e.lockCells(startLockedLines(plan))()
-	// Every keep-staged spot either style names, read in ONE call under those
-	// locks and before anything is cancelled. A start that cannot tell what stands
-	// on a spot cannot decide whether its leg takes the spare, so it refuses, as a
-	// REQUEST does (readSpotAtRequest), and a refused start cancels nothing.
+	// those lines cannot add to what the start is deciding between. Every
+	// keep-staged spot either style names is the start's to decide (spots): as it
+	// lets go, on every return, it drops the keeper's marks on them
+	// (letGoDecided), so no pass a held lock turned away there orders, the moment
+	// the start returns, the refill the start leaves to the keeper.
 	spots := changeoverSpots(plan.fromClaims, plan.toClaims, plan.nodes)
+	defer e.letGoDecided("start", processID, spots, e.lockCells(startLockedLines(plan)))
+	// Every keep-staged spot, read in ONE call under those locks and before
+	// anything is cancelled. A start that cannot tell what stands on a spot
+	// cannot decide whether its leg takes the spare, so it refuses, as a REQUEST
+	// does (readSpotAtRequest), and a refused start cancels nothing.
 	spotReads := e.readSpots(spots)
 	if unknown := unknownSpots(spots, spotReads); len(unknown) > 0 {
 		return nil, errUnknownSpots(unknown)

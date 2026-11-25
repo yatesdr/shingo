@@ -72,6 +72,7 @@ type (
 	SimStatements struct{}
 	SimPLC        struct{}
 
+	KeeperMarks struct{}
 	EngineLoops struct{}
 )
 
@@ -112,6 +113,12 @@ func (QueryCount) Rank() int      { return 990 }
 func (SimOperator) Rank() int   { return 180 }
 func (SimStatements) Rank() int { return 991 }
 func (SimPLC) Rank() int        { return 184 }
+
+// KeeperMarks is the lock of the keep-staged keeper's marks (keeperQueue), held
+// only to add, take or drop marks. markKeeper takes it inside a trigger's own
+// section, and the keeper's worker and a changeover's let-go under a cell's
+// lock, so it should rank above every lock such a caller holds.
+func (KeeperMarks) Rank() int { return 186 }
 
 // EngineLoops is the lock of the engine's goroutine group (protocol/gogroup),
 // held only across an Add and a go statement. It should rank above every lock
@@ -159,5 +166,7 @@ func (QueryCount) Name() string      { return "store.queryCount.mu" }
 func (SimOperator) Name() string   { return "engine.simOperator.mu" }
 func (SimStatements) Name() string { return "main.stmtObserver.mu" }
 func (SimPLC) Name() string        { return "simwarlink.FakeClient.mu" }
+
+func (KeeperMarks) Name() string { return "engine.keeperQueue.mu" }
 
 func (EngineLoops) Name() string { return "engine.Engine.loops.mu" }

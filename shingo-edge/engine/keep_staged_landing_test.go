@@ -82,7 +82,7 @@ func keeperRefillsBehindTheLegs(t *testing.T, fx *coFixture) {
 	}
 	node, err := fx.db.GetProcessNode(fx.nodeIDs["L1"])
 	testutil.MustNoErr(t, err, "node")
-	fx.eng.keepSpot(node, fx.eng.spotClaimAt(node))
+	fx.eng.keepSpot(node, fx.eng.spotClaimAt(node), keeperSweep)
 }
 
 // (a) A changeover is armed and the incoming style's refill lands before

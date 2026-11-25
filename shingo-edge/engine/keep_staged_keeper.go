@@ -2,10 +2,15 @@ package engine
 
 import (
 	"fmt"
+	"slices"
+	"strings"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
+	"shingoedge/internal/lockorder"
 	ordermgr "shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -18,7 +23,8 @@ import (
 // keep-staged line, idle ones included, so a spot is topped up without anyone
 // pressing anything; and the end of any order of the line, a pickup at the spot,
 // or the spot's row changing in the bins copy, at once instead of at the next
-// sweep, unless the cell's lock is held then (keepSpot skips that pass). A
+// sweep; a pass the cell's held lock turns away runs once the cell is free,
+// unless a changeover start or cancel deciding the spot drops it (keepSpot). A
 // REQUEST does not: it asks only for the line, taking the spare when one stands
 // and the market's carrier when none does (requestClaim), so cancelling what a
 // REQUEST made leaves nothing of the spot's behind (a plant's line, 2026-10-08:
@@ -37,33 +43,51 @@ import (
 // rows alone settle it (paused, or a leg dropping onto the spot), the spot's row
 // from the bins table (memory), per keep-staged line per sweep.
 
-// keepSpot runs the keeper for one keep-staged line.
+// keepSpot runs the keeper for one keep-staged line; trigger names what asked
+// (keeperSweep, keeperOrderEnd, keeperLift, keeperBinsCopy, keeperResume).
 //
-// TRY, NEVER WAIT. A held lock is another door deciding this cell now (a
+// TRY, NEVER WAIT, HERE. A held lock is another door deciding this cell now (a
 // request, a changeover start or cancel, a save, among others), and its
 // decision may not cover the spot: a REQUEST orders nothing for it (above), and
 // a holder that read the bins copy before its change decided from the old one.
 // The order-end kick runs inside the completion cascade, which events deliver
-// synchronously: a changeover start aborting under the lock reaches here on its
-// own goroutine. The miss is logged; the next decision point re-asks, at the
-// latest the next level sweep (demandReconcileInterval, 60 s).
+// synchronously: a changeover start or cancel aborting under the lock reaches
+// here on its own goroutine, and the bins copy's wake arrives on the one inbound
+// goroutine. So a pass that meets a held lock waits for nothing: it is marked
+// for the line (markKeeper), and the keeper's worker runs it once the cell is
+// free, from the rows as they stand then (drainKeeperMarks). A changeover start
+// or cancel drops, as it lets go, the marks on the spots its own decision covers
+// (letGoDecided); for those the next decision point re-asks, at the latest the
+// next level sweep (demandReconcileInterval, 60 s), as it did for every pass a
+// held lock turned away until 2026-11-25 (docket B6). Pinned by
+// TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint and
+// TestKeepStagedOneOwner_AChangeoverDropsOnlyThePassesOnItsSpots.
 //
 // Every run records the line as keeping the spot (keptSpotLines), so the spot's
 // row changing in the bins copy runs it again (keepSpotsOnBinsChange).
-func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
+func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim, trigger string) {
 	spot := spotNode(claim)
 	if node == nil || spot == "" {
 		return
 	}
-	e.keptSpotLines.Store(keptSpotLine{spot: spot, nodeID: node.ID}, struct{}{})
+	line := keptSpotLine{spot: spot, nodeID: node.ID}
+	e.keptSpotLines.Store(line, struct{}{})
 	mu := e.primeNodeLock(claim)
 	if !mu.TryLock() {
-		e.logFn("keep-staged: node %s: spot %s: the cell is being decided (its lock is held) — this pass skipped, the next re-asks",
-			node.Name, spot)
+		turnedAway := e.markKeeper(line, claim.CoreNodeName, trigger)
+		e.logFn("keep-staged: node %s: spot %s: the cell is being decided (its lock is held) — the pass %s asked for "+
+			"is marked for when the cell is free (%d turned away since its last run)",
+			node.Name, spot, trigger, turnedAway)
 		return
 	}
 	defer mu.Unlock()
+	e.keepSpotLocked(node, claim)
+}
 
+// keepSpotLocked is the keeper's pass for one line, run under the cell's lock
+// (keepSpot, runMarked): it decides from the rows it reads now.
+func (e *Engine) keepSpotLocked(node *processes.Node, claim *processes.NodeClaim) {
+	spot := spotNode(claim)
 	rows, err := storeorders.ListKeptSpotRows(e.db.DB, node.ID, spot, claim.CoreNodeName)
 	if err != nil {
 		e.logFn("keep-staged: node %s: read the line's orders: %v — the next pass re-asks", node.Name, err)
@@ -98,6 +122,203 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 	plan, note := decideSpot(claim, f)
 	e.setKeepStagedNote(claim.CoreNodeName, note)
 	e.applySpotPlan(node, claim, plan, liftingOrigin(rows, claim))
+}
+
+// What asked for a keeper pass (keepSpot's trigger), as a turned-away pass's
+// mark and the worker's log line name it.
+const (
+	keeperSweep    = "the level sweep"
+	keeperOrderEnd = "an order's end"
+	keeperLift     = "a lift at the spot"
+	keeperBinsCopy = "the bins copy"
+	keeperResume   = "RESUME"
+)
+
+// keeperQueue is the keeper passes a held cell lock turned away, one mark per
+// line, oldest first, and the wake of the worker that runs them
+// (startKeeperWorker).
+type keeperQueue struct {
+	mu      lockcheck.Mutex[lockorder.KeeperMarks]
+	marks   []keeperMark
+	running bool          // a worker goroutine drains it (startKeeperWorker)
+	signal  chan struct{} // the worker's wake, buffered 1
+}
+
+// keeperMark is one line's turned-away passes since its last run: the line, the
+// cell whose held lock turned them away (the line's core node, the key of
+// primeNodeLock), how many, and which triggers asked, in the order they first
+// did.
+type keeperMark struct {
+	line     keptSpotLine
+	cell     string
+	count    int
+	triggers []string
+}
+
+// markKeeper records a pass on line that trigger asked for and the held lock of
+// cell turned away, merged into the line's one mark, wakes the worker when one
+// runs, and returns the line's turned-away count since its last run. It waits
+// for nothing: it is called from inside the triggers' own sections.
+func (e *Engine) markKeeper(line keptSpotLine, cell, trigger string) int {
+	q := &e.keeper
+	q.mu.Lock()
+	i := slices.IndexFunc(q.marks, func(m keeperMark) bool { return m.line == line })
+	if i < 0 {
+		q.marks = append(q.marks, keeperMark{line: line, cell: cell})
+		i = len(q.marks) - 1
+	}
+	m := &q.marks[i]
+	m.count++
+	if !slices.Contains(m.triggers, trigger) {
+		m.triggers = append(m.triggers, trigger)
+	}
+	n, running, signal := m.count, q.running, q.signal
+	q.mu.Unlock()
+	if running {
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
+	}
+	return n
+}
+
+// oldestCell is the cell of the oldest mark; ok is false when none is left.
+func (q *keeperQueue) oldestCell() (cell string, ok bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.marks) == 0 {
+		return "", false
+	}
+	return q.marks[0].cell, true
+}
+
+// takeWhere removes and returns, oldest first, every mark hit reports true for.
+func (q *keeperQueue) takeWhere(hit func(m keeperMark) bool) []keeperMark {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var taken, kept []keeperMark
+	for _, m := range q.marks {
+		if hit(m) {
+			taken = append(taken, m)
+		} else {
+			kept = append(kept, m)
+		}
+	}
+	q.marks = kept
+	return taken
+}
+
+// drainKeeperMarks runs every marked keeper pass, the oldest mark's cell first.
+// It takes the cell's lock with a wait and only then the cell's marks, so a
+// mark a changeover start or cancel holding the cell drops as it lets go
+// (letGoDecided) is never one it runs; for each it reads the line again and
+// runs the same pass as keepSpot (runMarked), deciding from the rows as they
+// stand once the cell is free. A pass turned away while this runs is marked
+// again and run in turn. It is the worker's whole job and the door a test
+// calls; no clock paces it. On a stopping engine it leaves what is left: the
+// marks are memory, and the next start's first sweep runs every kept line.
+// Pinned by TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint and
+// TestKeepStagedOneOwner_AChangeoverDropsOnlyThePassesOnItsSpots.
+func (e *Engine) drainKeeperMarks() {
+	for !e.stopping() {
+		cell, ok := e.keeper.oldestCell()
+		if !ok {
+			return
+		}
+		mu := e.primeNodeLock(&processes.NodeClaim{CoreNodeName: cell})
+		mu.Lock()
+		for _, m := range e.keeper.takeWhere(func(m keeperMark) bool { return m.cell == cell }) {
+			e.runMarked(m)
+		}
+		mu.Unlock()
+	}
+}
+
+// runMarked runs one marked pass under its cell's lock (drainKeeperMarks), for
+// the claim the line keeps the spot for now (lineKeeping). A line that no
+// longer keeps the spot, or keeps it from another cell, is forgotten: its next
+// pass is its next decision point's.
+func (e *Engine) runMarked(m keeperMark) {
+	node, claim := e.lineKeeping(m.line.nodeID, m.line.spot)
+	if claim == nil || claim.CoreNodeName != m.cell {
+		e.keptSpotLines.Delete(m.line)
+		return
+	}
+	e.logFn("keep-staged: node %s: spot %s: the cell is free — the keeper runs the pass %s asked for (%d turned away)",
+		node.Name, m.line.spot, strings.Join(m.triggers, ", "), m.count)
+	e.keepSpotLocked(node, claim)
+}
+
+// letGoDecided is a changeover start's or cancel's let-go of the cells it held
+// (what names it, for the log): first it drops the keeper's marks on the spots
+// its own decision covers, each spot with the lines that keep or kept it there
+// (spotChange's keeper and leaver), then it releases the cells' locks (unlock).
+// The drop comes first, so the worker, which takes a cell's marks only holding
+// the cell's lock (drainKeeperMarks), never runs one of them. A mark on any
+// other spot of a cell it held stays and is run. Docket B6, R77: run as the
+// cancel let go, the passes its own aborts turned away ordered refills the
+// moment it returned, ahead of the landing of its flown return
+// (TestScenario_KeepStagedCell_CallChangeoverCancel, red so on 2026-11-24); a
+// start's would order, as it returns, the refill it leaves to the keeper.
+// Pinned by TestKeepStagedOneOwner_AChangeoverDropsOnlyThePassesOnItsSpots.
+func (e *Engine) letGoDecided(what string, processID int64, spots []spotChange, unlock func()) {
+	covered := map[keeperCellSpot]bool{}
+	for _, ch := range spots {
+		for _, c := range []*processes.NodeClaim{ch.keeper, ch.leaver} {
+			if c != nil {
+				covered[keeperCellSpot{cell: c.CoreNodeName, spot: ch.spot}] = true
+			}
+		}
+	}
+	dropped := 0
+	if len(covered) > 0 {
+		for _, m := range e.keeper.takeWhere(func(m keeperMark) bool {
+			return covered[keeperCellSpot{cell: m.cell, spot: m.line.spot}]
+		}) {
+			dropped += m.count
+		}
+	}
+	if dropped > 0 {
+		e.logFn("keep-staged: process %d's changeover %s: %d keeper pass(es) turned away on the spots it decided are "+
+			"dropped — the keeper's next decision point asks again", processID, what, dropped)
+	}
+	unlock()
+}
+
+// keeperCellSpot is a spot kept from a cell (letGoDecided).
+type keeperCellSpot struct{ cell, spot string }
+
+// startKeeperWorker runs the keeper's worker on the engine's group: it drains
+// the marks (drainKeeperMarks) each time one is made, and once at its start
+// for any made before it. It leaves on the stop channel, and Stop waits for it
+// as for every goroutine on the group (TestEngineStop_WaitsForTheLoopsStartLaunched).
+func (e *Engine) startKeeperWorker() {
+	q := &e.keeper
+	q.mu.Lock()
+	q.running, q.signal = true, make(chan struct{}, 1)
+	q.signal <- struct{}{}
+	q.mu.Unlock()
+	e.loops.spawn(e.runKeeperWorker)
+}
+
+// runKeeperWorker is the keeper's worker: one drain of the marked passes per
+// wake, until the engine stops (startKeeperWorker).
+func (e *Engine) runKeeperWorker() {
+	q := &e.keeper
+	defer func() {
+		q.mu.Lock()
+		q.running = false
+		q.mu.Unlock()
+	}()
+	for {
+		select {
+		case <-e.stopChan:
+			return
+		case <-q.signal:
+			e.drainKeeperMarks()
+		}
+	}
 }
 
 // spotFactsOf reads the facts decideSpot decides from: the spot read with a
@@ -211,9 +432,13 @@ func spotPause(rows []domain.Order, c *processes.NodeClaim, resumed *time.Time) 
 }
 
 // ResumeKeepStaged is the board's RESUME on a line whose keep-staged keeper a
-// cancel paused: it stamps the line's resume and runs the keeper at once (a
-// pass the cell's held lock turns away waits for the next decision point), so
-// the spot is refilled without a REQUEST and without anything sent to the line.
+// cancel paused: it stamps the line's resume and runs the keeper at once, so the
+// spot is refilled without a REQUEST and without anything sent to the line. A
+// tap that meets the cell being decided marks the pass, and the keeper's worker
+// runs it once the cell is free (keepSpot); a changeover start or cancel
+// deciding the spot drops it as it lets go, and the stamp stands for the
+// keeper's next pass. Until 2026-11-25 such a tap said it worked and did nothing
+// (docket B6).
 func (e *Engine) ResumeKeepStaged(nodeID int64) error {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil || node == nil {
@@ -227,7 +452,7 @@ func (e *Engine) ResumeKeepStaged(nodeID int64) error {
 		return err
 	}
 	e.logFn("keep-staged: node %s: resumed from the board", node.Name)
-	e.keepSpot(node, claim)
+	e.keepSpot(node, claim, keeperResume)
 	return nil
 }
 
@@ -278,8 +503,9 @@ func (e *Engine) KeepStagedNote(line string) string {
 // is changing to. Its own guards cover the window: a leg still bringing a
 // carrier to the spot holds it (legDropsOnSpot), nothing is ordered ahead of a
 // lift, and it only tries the cell's lock, which a start or a cancel holds while
-// it decides. The changeover row exists only from START, so a changeover that
-// is armed has started.
+// it decides, and a pass that lock turns away is theirs to drop as they let go
+// (letGoDecided). The changeover row exists only from START, so a changeover
+// that is armed has started.
 func keptFor(active *processes.NodeClaim, targetStyleID int64, incoming func(styleID int64) *processes.NodeClaim) *processes.NodeClaim {
 	if targetStyleID == 0 {
 		return active
@@ -305,7 +531,7 @@ func (e *Engine) kickKeepSpot(ctx *orderCompletionCtx) {
 	if claim == nil || spotNode(claim) == "" {
 		return
 	}
-	e.keepSpot(ctx.node, claim)
+	e.keepSpot(ctx.node, claim, keeperOrderEnd)
 }
 
 // keepSpotOnPickup runs the keeper when Core reports a lift at a line's spot, so
@@ -319,7 +545,7 @@ func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 		return
 	}
 	if node, claim := e.lineKeeping(*order.ProcessNodeID, location); claim != nil {
-		e.keepSpot(node, claim)
+		e.keepSpot(node, claim, keeperLift)
 	}
 }
 
@@ -366,7 +592,7 @@ func (e *Engine) keepSpotsOnBinsChange(nodes []string) {
 			return true
 		}
 		e.logFn("keep-staged: node %s: spot %s changed in the bins copy — the keeper decides it again", node.Name, l.spot)
-		e.keepSpot(node, claim)
+		e.keepSpot(node, claim, keeperBinsCopy)
 		return true
 	})
 }

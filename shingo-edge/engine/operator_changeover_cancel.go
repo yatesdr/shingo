@@ -48,18 +48,22 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// styles reversed — the outgoing style keeps its spots again, the incoming
 	// one's are to be left empty. The cancel sends back a spare the staying style
 	// does not want and orders nothing for the spot: the keeper refills it for the
-	// staying claim once the changeover is gone (keptFor).
+	// staying claim at its next decision point once the changeover is gone
+	// (keptFor), the landing of a flown return among them.
 	origin := e.changeoverOrigin(changeover.ID)
 	spots := e.cancelledChangeoverSpots(processID, changeover)
 	// Under the spots' cell locks from the abort to the reconcile: the target
 	// style clears in between, and a request on one of those lines may run again
-	// from then. Released before a redirect, whose start takes them itself.
+	// from then. Released before a redirect, whose start takes them itself. As it
+	// lets go, on every return, the cancel drops the keeper's marks on its spots
+	// (letGoDecided): the passes its own aborts turned away there would otherwise
+	// order the staying claim's refill the moment it returns.
 	unlock := e.lockCells(spotLines(spots))
 	locked := true
 	release := func() {
 		if locked {
 			locked = false
-			unlock()
+			e.letGoDecided("cancel", processID, spots, unlock)
 		}
 	}
 	defer release()

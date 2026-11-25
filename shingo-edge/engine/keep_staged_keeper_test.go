@@ -126,12 +126,13 @@ func TestKeepStagedKeeper_IdleBareSpotGetsOneRefill(t *testing.T) {
 	}
 }
 
-// Whoever holds the cell's prime lock decides the cell, and the keeper started
-// in that moment leaves it to them: a request, or a changeover start writing the
-// spot's refills. Here the test holds it the way a changeover start does: the
-// keeper, with nothing coming yet, finds the cell being decided and leaves it;
-// the holder writes its refills. Without the lock the keeper reads nothing
-// coming and adds its own.
+// Whoever holds the cell's prime lock decides the cell now, and a keeper pass
+// started in that moment does not decide beside it: turned away, it is marked
+// and run once the cell is free (drainKeeperMarks), from the rows the holder
+// wrote. Here the test holds the lock and writes two refills while the pass
+// starts: the pass, whether turned away and run by the drain or run after the
+// holder let go, finds both coming and adds nothing. Without the lock the
+// keeper reads nothing coming and adds its own.
 func TestKeepStagedKeeper_RequestAndKeeperTogetherCreateOnce(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID := keeperCell(t)
@@ -144,11 +145,12 @@ func TestKeepStagedKeeper_RequestAndKeeperTogetherCreateOnce(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		eng.keepSpot(node, claim)
+		eng.keepSpot(node, claim, keeperSweep)
 	}()
 	eng.refillSpot(node, claim, 2, orders.Attached("floor-request"))
 	mu.Unlock()
 	<-done
+	eng.drainKeeperMarks()
 
 	if got := readSpotOrders(t, db, nodeID); got.refills != 2 {
 		t.Fatalf("refills = %d, want the request's 2 and nothing from the keeper", got.refills)

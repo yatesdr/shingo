@@ -386,6 +386,9 @@ type Engine struct {
 	// per node the click doors and the worker share (release_act.go).
 	intents  intentQueue
 	relLocks nodeLocks
+	// keeper is the keep-staged passes a held cell lock turned away, and the
+	// keeper's worker's wake (keep_staged_keeper.go).
+	keeper keeperQueue
 	// points is where the act reads Core's release points; nil reads them
 	// from the Core client (releasePointSource).
 	points releasePointSource
@@ -619,6 +622,11 @@ func (e *Engine) Start() {
 	e.startCatidMonitor()
 
 	e.startIntentWorker()
+
+	// The keep-staged keeper's worker: it runs, once the cell is free, a keeper
+	// pass a held cell lock turned away and no changeover start or cancel
+	// deciding the spot dropped (drainKeeperMarks).
+	e.startKeeperWorker()
 
 	// The live robot feed's sender: idle (no timer) until Core names the
 	// ephemeral topic and an operator station shows an order.
