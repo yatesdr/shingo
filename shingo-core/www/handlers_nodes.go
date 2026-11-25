@@ -241,27 +241,41 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawName := r.FormValue("name")
-	name := strings.TrimSpace(rawName)
-	if name != rawName {
-		log.Printf("WARNING admin handleNodeUpdate: trimmed whitespace from name %q", rawName)
+	// A SAVE KEEPS WHAT IT WAS NOT SENT (docket B15): the name, the type and
+	// the parent, as the zone below. The Nodes page sends all three back every
+	// time (hidden inputs), so only a request made by hand leaves one out, and
+	// leaving one out used to blank the name, or clear the type and the parent
+	// and take a lane slot out of its lane. Sent empty, the type or the parent
+	// still clears. enabled is read as before: an unticked box sends nothing.
+	// Pinned by TestNodeForms_ARequestWithNoName and
+	// TestHandleNodeUpdate_ThePagesOwnSaveKeepsNameTypeAndParent.
+	if _, sent := r.Form["name"]; sent {
+		rawName := r.FormValue("name")
+		name := strings.TrimSpace(rawName)
+		if name != rawName {
+			log.Printf("WARNING admin handleNodeUpdate: trimmed whitespace from name %q", rawName)
+		}
+		node.Name = name
 	}
-	node.Name = name
 	// The nodes page has no zone field: a save that does not send one leaves it.
 	if _, sent := r.Form["zone"]; sent {
 		node.Zone = r.FormValue("zone")
 	}
 	node.Enabled = r.FormValue("enabled") == "on"
 
-	if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {
-		node.NodeTypeID = &ntID
-	} else {
-		node.NodeTypeID = nil
+	if _, sent := r.Form["node_type_id"]; sent {
+		if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {
+			node.NodeTypeID = &ntID
+		} else {
+			node.NodeTypeID = nil
+		}
 	}
-	if parentID, err := strconv.ParseInt(r.FormValue("parent_id"), 10, 64); err == nil && parentID > 0 {
-		node.ParentID = &parentID
-	} else {
-		node.ParentID = nil
+	if _, sent := r.Form["parent_id"]; sent {
+		if parentID, err := strconv.ParseInt(r.FormValue("parent_id"), 10, 64); err == nil && parentID > 0 {
+			node.ParentID = &parentID
+		} else {
+			node.ParentID = nil
+		}
 	}
 
 	// NodeService.ApplyAssignments always writes the station + bin-type mode,

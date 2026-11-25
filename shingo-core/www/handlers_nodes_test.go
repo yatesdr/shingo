@@ -444,10 +444,12 @@ func TestHandleNodeUpdate_ThePagesOwnSaveKeepsNameTypeAndParent(t *testing.T) {
 }
 
 // TestNodeForms_ARequestWithNoName (docket B2, B15): the two form doors sent a
-// request made by hand, with a name of spaces or none. Each answers 400 and
-// writes nothing: the store refuses a node with no name. Before the guard each
-// saved one, and an update that left the type and the parent out cleared them
-// too, which took a lane slot out of its lane.
+// request made by hand, with a name of spaces or none. A name of spaces is
+// answered 400 and nothing is written: the store refuses a node with no name.
+// An update that sends no name, no type and no parent keeps all three, as it
+// keeps the zone; one that sends the parent empty still clears it. Before the
+// guard each saved a node with no name, and an update that left the type and
+// the parent out cleared them, which took a lane slot out of its lane.
 func TestNodeForms_ARequestWithNoName(t *testing.T) {
 	t.Parallel()
 	refused := func(t *testing.T, rec *httptest.ResponseRecorder) {
@@ -495,7 +497,27 @@ func TestNodeForms_ARequestWithNoName(t *testing.T) {
 		form := url.Values{}
 		form.Set("id", strconv.FormatInt(slot.ID, 10))
 		form.Set("enabled", "on")
-		refused(t, postForm(t, h.handleNodeUpdate, "/nodes/update", form))
+		rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("update: %d, want 303; body=%s", rec.Code, rec.Body.String())
+		}
 		asItWas(t, db, slot)
+	})
+
+	t.Run("an update that sends the parent empty", func(t *testing.T) {
+		t.Parallel()
+		h, db := testHandlers(t)
+		slot := typedLaneSlot(t, db, "NOPARENT")
+		form := pageSaveForm(slot)
+		form.Set("parent_id", "")
+		rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("update: %d, want 303; body=%s", rec.Code, rec.Body.String())
+		}
+		got, err := db.GetNode(slot.ID)
+		testutil.MustNoErr(t, err, "read the slot after the save")
+		if got.ParentID != nil || got.Name != slot.Name {
+			t.Errorf("parent %s, name %q; want no parent (sent empty) and the name kept", idOf(got.ParentID), got.Name)
+		}
 	})
 }
