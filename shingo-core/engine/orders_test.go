@@ -5,7 +5,6 @@ package engine
 import (
 	"errors"
 	"fmt"
-	"os"
 	"shingocore/internal/testdb"
 	"slices"
 	"strings"
@@ -304,14 +303,10 @@ func TestTerminateOrder_MissingOrder(t *testing.T) {
 // LifecycleService.CancelOrder, waits behind the yes. The test lets the row go;
 // the yes commits, and the ending lands on a `dispatched` row.
 //
-// RED AT a63768f5 (docket B20): CancelOrder decides the stop from the copy
-// TerminateOrder read. Skipped unless SHINGO_KNOWN_RED is set; the fix removes
-// the skip.
+// RED AT a63768f5 (docket B20): CancelOrder decided the stop from the copy
+// TerminateOrder read. Green since the ending stops the job it finds on the
+// row.
 func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
-			"run with SHINGO_KNOWN_RED=1")
-	}
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := testdb.SetupTestData(t, db)

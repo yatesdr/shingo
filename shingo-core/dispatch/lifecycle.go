@@ -265,9 +265,23 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// status write and the history row belong to the winner — so a refusal
 		// here never strands a hold.
 		var won bool
-		told, won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev), tell)
+		var job string
+		told, job, won, err = s.db.TerminalizeOrderWithReason(ord.ID, to, detail, s.historyReason(ord, to, ev), tell)
 		if err == nil && !won {
 			return ConcurrentTransition{OrderID: ord.ID, Expected: from, To: to}
+		}
+		// A CANCEL STOPS THE JOB ITS ENDING FINDS ON THE ROW (docket B20).
+		// CancelOrder stopped the job its caller's copy names before this write,
+		// and the CAS is on "still live", not on that copy: a handover's yes that
+		// landed after the caller read the order (`dispatched`, naming the job) is
+		// ended here, and only this write sees the job. Stopped now, before the
+		// actions fire the cancelled event, as the copy's job was. Pinned by
+		// TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob (the wire door),
+		// TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob (the UI
+		// terminate) and TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob
+		// (the parent's cascade).
+		if err == nil && to == StatusCancelled && job != "" && job != ord.VendorOrderID {
+			s.stopFleetJob(job)
 		}
 	} else {
 		detail := ev.Reason
@@ -484,6 +498,11 @@ type CancelCause struct {
 // bin claim release). Caller supplies the loaded order, station ID for
 // the emitter, a reason string, and who/why (see CancelCause).
 //
+// The vendor order stopped first is the one the caller's copy names. A job the
+// row names and the copy does not, from a yes that landed after the caller read
+// the order, is stopped by the ending itself, which reads the row's job back
+// (transition, docket B20).
+//
 // Signature preserved from Derek's original but for the cause. Internals now go
 // through transition().
 func (s *LifecycleService) CancelOrder(ord *orders.Order, stationID, reason string, cause CancelCause) {
@@ -498,12 +517,7 @@ func (s *LifecycleService) CancelOrder(ord *orders.Order, stationID, reason stri
 	// already-cancelled order. Fleet errors are logged but don't block
 	// the local cancellation.
 	if ord.VendorOrderID != "" {
-		if err := s.backend.CancelOrder(ord.VendorOrderID); err != nil {
-			log.Printf("dispatch: cancel vendor order %s: %v", ord.VendorOrderID, err)
-			s.dbg("cancel fleet error: vendor_id=%s: %v", ord.VendorOrderID, err)
-		} else {
-			s.dbg("cancel fleet ok: vendor_id=%s", ord.VendorOrderID)
-		}
+		s.stopFleetJob(ord.VendorOrderID)
 	}
 
 	actor := cause.Actor
@@ -518,6 +532,18 @@ func (s *LifecycleService) CancelOrder(ord *orders.Order, stationID, reason stri
 	}); err != nil {
 		log.Printf("dispatch: cancel order %d: %v", ord.ID, err)
 	}
+}
+
+// stopFleetJob asks the fleet to stop a job of an order Core is cancelling: the
+// one its caller's copy names (CancelOrder), or the one its ending found on the
+// row (transition). A refusal is logged and does not hold the cancel.
+func (s *LifecycleService) stopFleetJob(vendorOrderID string) {
+	if err := s.backend.CancelOrder(vendorOrderID); err != nil {
+		log.Printf("dispatch: cancel vendor order %s: %v", vendorOrderID, err)
+		s.dbg("cancel fleet error: vendor_id=%s: %v", vendorOrderID, err)
+		return
+	}
+	s.dbg("cancel fleet ok: vendor_id=%s", vendorOrderID)
 }
 
 // ConfirmReceipt transitions Delivered → Confirmed with a receipt.

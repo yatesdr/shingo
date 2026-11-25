@@ -1742,7 +1742,7 @@ func (r HistoryReason) refJSON() any {
 }
 
 func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail string) (bool, error) {
-	_, won, err := db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{}, protocol.OrderUpdate{})
+	_, _, won, err := db.TerminalizeOrderWithReason(orderID, status, detail, HistoryReason{}, protocol.OrderUpdate{})
 	return won, err
 }
 
@@ -1755,12 +1755,16 @@ func (db *DB) TerminalizeOrder(orderID int64, status protocol.Status, detail str
 // The winner's write tells the order's station in the same transaction
 // (queueTellTx), whoever called: the lifecycle's typed writers, and the doors
 // that end an order without it (a compound leg's fail, the boot retirement).
-// It returns the winner's row as written (orders.Told); a loser gets the zero
-// Told and tells nothing.
-func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, bool, error) {
+// It returns the winner's row as written (orders.Told) and the fleet job that
+// row names (its vendor_order_id, read back by the same statement); a loser
+// gets the zero Told and no job, and tells nothing. The job is the row's, not
+// the caller's copy's: a yes that landed after the caller read the order is
+// named here only, and the cancel stops it (LifecycleService.transition,
+// docket B20; TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob).
+func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, detail string, reason HistoryReason, tell protocol.OrderUpdate) (orders.Told, string, bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return orders.Told{}, false, err
+		return orders.Told{}, "", false, err
 	}
 	defer tx.Rollback()
 
@@ -1805,11 +1809,13 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 	// The history row keeps it. The order waited for that reason, and ending does
 	// not unmake the fact; what is cleared is only the live column that claims it
 	// is STILL waiting.
+	var job string
 	told, err := orders.ScanTold(tx.QueryRow(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5, version=version+1,
 		queue_reason='', queue_code=NULL, queue_cause=NULL
-		WHERE id=$3 AND status <> ALL($4)`+orders.ToldReturning, string(status), errDetail, orderID, terminalNames, clock.Now().UTC()))
+		WHERE id=$3 AND status <> ALL($4)`+orders.ToldReturning+`, vendor_order_id`,
+		string(status), errDetail, orderID, terminalNames, clock.Now().UTC()), &job)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return orders.Told{}, false, err
+		return orders.Told{}, "", false, err
 	}
 	won := err == nil
 	// History only for the winner — a losing terminalize must not add a second
@@ -1820,10 +1826,10 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 			 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7)`,
 			orderID, string(status), detail,
 			reason.Code, reason.Actor, reason.refJSON(), clock.Now().UTC()); err != nil {
-			return orders.Told{}, false, err
+			return orders.Told{}, "", false, err
 		}
 		if err := db.queueTellTx(tx, told, tell, detail); err != nil {
-			return orders.Told{}, false, err
+			return orders.Told{}, "", false, err
 		}
 	}
 	// EVERYTHING BELOW RUNS FOR THE LOSER TOO, and commits.
@@ -1845,18 +1851,18 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
 		WHERE claimed_by=$1
 		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
-		return orders.Told{}, false, err
+		return orders.Told{}, "", false, err
 	}
 	if err := releaseOrderHoldingsTx(tx, orderID); err != nil {
-		return orders.Told{}, false, err
+		return orders.Told{}, "", false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return orders.Told{}, false, err
+		return orders.Told{}, "", false, err
 	}
 	if !won {
-		return orders.Told{}, false, nil
+		return orders.Told{}, "", false, nil
 	}
-	return told, true, nil
+	return told, job, true, nil
 }
 
 // releaseOrderHoldingsTx gives an order's acquisitions back: its hard bin

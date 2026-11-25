@@ -32,6 +32,7 @@ Deploy: no migration; Core and Edges in either order.
 - At shutdown an Edge lets its background work, and the message from Core it is handling, finish before its database closes, and stops waiting for them after 20 s
 - A carrier left on staging by an order cancelled at its wait is sent back by the Edge's once-a-minute check when the send-back at the cancel did not happen (the Edge restarted first, or could not read Core's bins at that moment), as long as no other order of that line has been made since
 - An order the Edge cannot queue for Core is no longer left on the screens as pending and never sent: the request that made it reports that it failed
+- A cancel that reaches Core in the moment it sends the order to the robots now stops the robot's job too, whichever way it came (a station's cancel or a cancelled changeover, Terminate on Core's order page, or an order cancelled while it moves bins out of a lane to reach its cart); the order used to read cancelled while the fleet kept the job, and a robot could start it
 
 ## v0.19.0 — 2026-11-22
 

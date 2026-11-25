@@ -49,8 +49,14 @@ const (
 //     near-simultaneous double-terminal never acts on an already-dead peer;
 //   - BOUNDED — a single cancel or a single surface, never a re-creation loop;
 //   - every state change routes through lifecycle.CancelOrder's atomic
-//     transition, so a concurrent DispatchPreparedComplex can't race it (the
-//     transition rejects a change out of an already-advanced state).
+//     transition. Its ending is a compare-and-swap on "still live", not on
+//     the peer as read here, so a concurrent DispatchPreparedComplex can land
+//     its yes between this read and the ending; the ending then finds the
+//     job on the row and the transition stops it (docket B20; the mechanism's
+//     pin is TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob, and this
+//     door's own read is not pinned). This said a concurrent dispatch "can't
+//     race it" because the transition rejects a change out of an
+//     already-advanced state; an ending never did, and that was not checked.
 func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind string) {
 	dead, err := d.db.GetOrder(deadOrderID)
 	if err != nil || dead == nil {

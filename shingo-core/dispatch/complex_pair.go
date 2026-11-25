@@ -321,8 +321,12 @@ func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Or
 }
 
 // commitPairToFleet sends a pair as ONE JOB (C2b A.2): both legs' hands and
-// both `dispatched` writes in one transaction (acquireHands), so the pair holds
-// both or neither; then the creates, lifter first. The owner's model is
+// asks in one transaction (acquireHands), so the pair holds both or neither;
+// then the creates, lifter first, each leg's `dispatched` written by its own
+// yes after its create (handoverToFleet, LifecycleService.Dispatch). This said
+// both `dispatched` writes were in the hands' transaction; they are not
+// (acquireHand: the order keeps its status until the fleet's yes), so a cancel
+// can end one leg between the two yeses (docket B20). The owner's model is
 // "release both or neither", and it is the hand's rule, not the fleet's (P0
 // ruling Q7):
 //

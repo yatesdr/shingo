@@ -5,7 +5,6 @@ package dispatch
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"testing"
 	"time"
@@ -231,12 +230,14 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 // HandleOrderCancel and engine.TerminateOrder each call with the order they
 // loaded. No lock stands between a door's read and that call.
 //
-// RED AT 93bd3cd6 (docket B20). LifecycleService.CancelOrder decides whether to
-// stop the fleet job from the vendor id on the copy in its hand, which names
-// none, and its ending is a compare-and-swap on "still live"
+// RED AT 93bd3cd6 AND a63768f5 (docket B20). LifecycleService.CancelOrder
+// decided whether to stop the fleet job from the vendor id on the copy in its
+// hand, which names none, and its ending is a compare-and-swap on "still live"
 // (store.TerminalizeOrderWithReason), which a `dispatched` row passes. The yes
 // was written, so the handover's arm for an order that ended during its create
-// does not run either. The row ends `cancelled` naming a job nobody stopped.
+// does not run either. The row ended `cancelled` naming a job nobody stopped.
+// Green since the ending reads the row's job back and the cancel stops it
+// (LifecycleService.transition).
 //
 // It was seen on GitHub in 3 of 8 runs of the integration scenario
 // TestScenario_KeepStagedRecovery_AfterCancelledChangeover, two_robot, moment b
@@ -244,15 +245,7 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 // 2026-11-24): "leg 1's vendor order reads "CREATED" at the fleet, want
 // STOPPED". There the copy was HandleOrderCancel's own read, made while a
 // fulfillment scan was handing the pair to the fleet.
-//
-// Skipped unless SHINGO_KNOWN_RED is set, so no gate runs it: the fix is
-// product work in the cancel path and waits for its ruling. The fix removes
-// the skip.
 func TestHandover_ACancelReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
-			"run with SHINGO_KNOWN_RED=1")
-	}
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -325,13 +318,9 @@ func TestHandover_ACancelReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
 // RED AT 93bd3cd6 for the reason the pin above gives. This is the pin a narrowed
 // window does not pass: a fix that reads the order once more before it decides
 // stays red here, because every read made before the ending predates the yes.
-// Only the ending itself, or a read after it, can learn of the job. Skipped
-// unless SHINGO_KNOWN_RED is set; the fix removes the skip.
+// Only the ending itself, or a read after it, can learn of the job: the fix is
+// the ending's own read-back of the row's job, and this pin is green since.
 func TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob(t *testing.T) {
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
-			"run with SHINGO_KNOWN_RED=1")
-	}
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -508,13 +497,9 @@ func TestHandover_ACancelEndingBeforeTheYesStopsTheFleetJob(t *testing.T) {
 //
 // RED AT a63768f5 (docket B20): the cascade ends each leg through
 // LifecycleService.CancelOrder with the copy its list read, and CancelOrder
-// decides the stop from that copy. Skipped unless SHINGO_KNOWN_RED is set; the
-// fix removes the skip.
+// decided the stop from that copy alone. Green since the ending stops the job
+// it finds on the row.
 func TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob(t *testing.T) {
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
-			"run with SHINGO_KNOWN_RED=1")
-	}
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
