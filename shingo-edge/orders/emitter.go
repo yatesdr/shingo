@@ -6,7 +6,10 @@ import "shingo/protocol"
 type EventEmitter interface {
 	EmitOrderCreated(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64)
 	EmitOrderStatusChanged(orderID int64, orderUUID string, orderType protocol.OrderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64)
-	EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64)
+	// EmitOrderCompleted says the order ended. cancelBy is who asked when the end is
+	// Core's word on a cancel this station asked (domain.CancelIntent.By), read
+	// by the completion's keep-staged kick; "" for any other end.
+	EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64, cancelBy string)
 	// EmitOrderDelivered carries deliveryNode alongside processNodeID because an
 	// Edge order row may legitimately have NO process node — a manual move order
 	// is created against a Core node name, not an Edge process node. Without the

@@ -152,7 +152,18 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	}
 	// Any order of a keep-staged line going terminal re-runs the spot's keeper
 	// once the cascade below has settled the line's slots (kickKeepSpot).
-	defer e.kickKeepSpot(ctx)
+	//
+	// BUT NOT A CANCEL A DECIDING FLOW ASKED (completed.CancelBy ==
+	// domain.CancelByDecided: a changeover's START or CANCEL, which decides the
+	// order's spot itself). Its pass is the flow's: under the flow's cell locks
+	// a pass is turned away, and the flow drops it as it lets go (letGoDecided),
+	// so the spot waits for the keeper's next decision point. The cancel asked
+	// of Core ends by Core's word after the flow has let go, where its kick
+	// would order the refill the flow left to the keeper at once (docket B6,
+	// R77). Pinned by TestCancelDoorPin_KeepStagedSpotCancels.
+	if completed.CancelBy != domain.CancelByDecided {
+		defer e.kickKeepSpot(ctx)
+	}
 
 	// EmitOrderCompleted fires for any terminal status (confirmed, cancelled,
 	// failed) — it's the engine bus's "order reached terminal" signal. Every

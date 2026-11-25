@@ -41,7 +41,7 @@ type noopEmitter struct{}
 func (noopEmitter) EmitOrderCreated(int64, string, protocol.OrderType, *int64, *int64) {}
 func (noopEmitter) EmitOrderStatusChanged(int64, string, protocol.OrderType, string, string, string, *int64, *int64) {
 }
-func (noopEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64, *int64) {}
+func (noopEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64, *int64, string) {}
 func (noopEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64, *int, *string, int64, string, string, bool) {
 }
 func (noopEmitter) EmitOrderDeliveredFallback(int64, *int, *string, int64, string, bool) {}

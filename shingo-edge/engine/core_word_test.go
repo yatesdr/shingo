@@ -13,6 +13,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"sort"
@@ -878,4 +879,119 @@ func TestCoreWord_AVersionedProjectionGoesThroughTheApplier(t *testing.T) {
 		expectRows(t, "history", r.history(id), before)
 		expectCancels(t, "the Unlisted projection", r.cancels(), uuid, "cancelled by operator", 2)
 	})
+}
+
+// askCancelByHand writes a cancel this station asked onto the row, as the
+// cancel door writes it (orders.cancel_intent), for the readers' pins.
+func (r *wordRig) askCancelByHand(id int64, by, env string) {
+	r.t.Helper()
+	raw, err := domain.CancelIntent{Reason: "cancelled by operator", By: by, Env: env,
+		SentAt: "2026-11-25T12:00:00Z"}.Encode()
+	testutil.MustNoErr(r.t, err, "encode the cancel")
+	_, err = r.db.DB.Exec(`UPDATE orders SET cancel_intent = ? WHERE id = ?`, raw, id)
+	testutil.MustNoErr(r.t, err, "write the cancel")
+}
+
+// TestCoreWord_TheStationsOwnCancelIsNotCoresToast: Core's word that cancels a
+// row carrying the cancel this station asked (unanswered) is the station's
+// cancel ended, not Core's: no "Core cancelled" toast, and the hold is the
+// asker's (orders coreEnded). A person's (the Orders page) pauses the position
+// there; the Edge's own doors hold nothing. The completion event names who
+// asked, for the keep-staged kick. A cancel Core refused, then cancelled on its
+// own, is Core's again; and a row with no cancel asked is today's.
+func TestCoreWord_TheStationsOwnCancelIsNotCoresToast(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, by   string
+		refused    bool
+		asked      bool
+		wantToasts int
+		wantHold   domain.ReorderHold
+		wantNote   string
+		wantBy     string
+	}{
+		{name: "a person's cancel", asked: true, by: domain.CancelByPerson, wantHold: domain.ReorderHoldPaused,
+			wantNote: "a person cancelled order %d", wantBy: domain.CancelByPerson},
+		{name: "a deciding flow's cancel", asked: true, by: domain.CancelByDecided, wantBy: domain.CancelByDecided},
+		{name: "another door's cancel", asked: true},
+		{name: "a cancel Core refused, then Core's own", asked: true, refused: true, wantToasts: 1,
+			wantHold: domain.ReorderHoldPaused, wantNote: "Core cancelled order %d (fleet stop)"},
+		{name: "no cancel asked", wantToasts: 1, wantHold: domain.ReorderHoldPaused,
+			wantNote: "Core cancelled order %d (fleet stop)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newWordRig(t)
+			var by []string
+			r.eng.Events.Subscribe(func(evt Event) {
+				if c, ok := evt.Payload.(OrderCompletedEvent); ok {
+					by = append(by, c.CancelBy)
+				}
+			})
+			id := r.leg("asked-leg", protocol.StatusInTransit)
+			r.live("asked-leg", protocol.StatusInTransit, 2)
+			if tc.asked {
+				r.askCancelByHand(id, tc.by, "env-1")
+			}
+			if tc.refused {
+				_, err := r.db.DB.Exec(`UPDATE orders SET cancel_intent = json_set(cancel_intent, '$.refused', 'set down') WHERE id = ?`, id)
+				testutil.MustNoErr(t, err, "refuse the cancel")
+			}
+
+			r.update(protocol.OrderUpdate{OrderUUID: "asked-leg", Status: string(protocol.StatusCancelled), Version: 3,
+				Detail: "fleet stop"})
+
+			o := r.at("Core's cancelled", id, protocol.StatusCancelled, 3)
+			if o.CancelIntent != "" {
+				t.Errorf("the ended row keeps cancel_intent %q, want it cleared with the terminal", o.CancelIntent)
+			}
+			if len(r.toasts) != tc.wantToasts {
+				t.Errorf("toasts %q, want %d", r.toasts, tc.wantToasts)
+			}
+			rt, err := r.db.GetProcessNodeRuntime(r.nodeID)
+			testutil.MustNoErr(t, err, "the runtime row")
+			note := ""
+			if tc.wantNote != "" {
+				note = fmt.Sprintf(tc.wantNote, id)
+			}
+			if rt.ReorderHold != tc.wantHold || rt.ReorderHoldNote != note {
+				t.Errorf("the position holds %q %q, want %q %q", rt.ReorderHold, rt.ReorderHoldNote, tc.wantHold, note)
+			}
+			if !slices.Equal(by, []string{tc.wantBy}) {
+				t.Errorf("the completion named who asked %q, want [%q]", by, tc.wantBy)
+			}
+		})
+	}
+}
+
+// TestCoreWord_ANotFoundToTheCancelEndsTheRow: Core's not_found answer to the
+// cancel this station asked (its CorID the cancel's envelope) ends the row
+// here, cancelled "Core holds no such order", since no word of Core's will; a
+// not_found answering another envelope changes nothing on the versioned row.
+func TestCoreWord_ANotFoundToTheCancelEndsTheRow(t *testing.T) {
+	t.Parallel()
+	r := newWordRig(t)
+	id := r.leg("nf-leg", protocol.StatusInTransit)
+	r.live("nf-leg", protocol.StatusInTransit, 2)
+	r.askCancelByHand(id, domain.CancelByPerson, "env-1")
+
+	r.h.HandleOrderError(&protocol.Envelope{CorID: "env-0"}, &protocol.OrderError{OrderUUID: "nf-leg",
+		ErrorCode: "not_found", Detail: "order not found or access denied"})
+	r.at("a not_found of another envelope", id, protocol.StatusInTransit, 2)
+
+	r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, &protocol.OrderError{OrderUUID: "nf-leg",
+		ErrorCode: "not_found", Detail: "order not found or access denied"})
+	o := r.row(id)
+	if o.Status != protocol.StatusCancelled || o.CancelIntent != "" {
+		t.Errorf("after the not_found of its cancel the row reads %s with %q, want cancelled and no intent", o.Status, o.CancelIntent)
+	}
+	h := r.history(id)
+	if len(h) == 0 || h[len(h)-1] != "in_transit->cancelled: "+orders.CoreHoldsNoSuchOrderDetail {
+		t.Errorf("history %q, want it to end in_transit->cancelled: %s", h, orders.CoreHoldsNoSuchOrderDetail)
+	}
+	rt, err := r.db.GetProcessNodeRuntime(r.nodeID)
+	testutil.MustNoErr(t, err, "the runtime row")
+	if rt.ReorderHold != domain.ReorderHoldPaused || rt.ReorderHoldNote != fmt.Sprintf("a person cancelled order %d", id) {
+		t.Errorf("the position holds %q %q, want the person's pause", rt.ReorderHold, rt.ReorderHoldNote)
+	}
 }

@@ -592,7 +592,7 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 	nodeID := int64(42)
 	em.EmitOrderCreated(1, "uuid-1", "complex", nil, &nodeID)
 	em.EmitOrderStatusChanged(1, "uuid-1", "complex", "planning", "dispatched", "eta", nil, &nodeID)
-	em.EmitOrderCompleted(1, "uuid-1", "complex", nil, &nodeID)
+	em.EmitOrderCompleted(1, "uuid-1", "complex", nil, &nodeID, "")
 	em.EmitOrderFailed(1, "uuid-1", "complex", "no_bin", "timeout")
 
 	if _, ok := received[EventOrderCreated]; !ok {

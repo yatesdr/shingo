@@ -97,9 +97,9 @@ func (e *orderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, o
 	}})
 }
 
-func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
+func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64, cancelBy string) {
 	e.bus.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, CancelBy: cancelBy,
 	}})
 }
 

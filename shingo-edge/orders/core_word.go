@@ -177,22 +177,52 @@ func (m *Manager) coreMoved(order *orders.Order, w CoreWord) {
 	if !IsTerminal(w.Status) {
 		return
 	}
-	m.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
+	cancelBy := ""
+	if asked := askedCancel(order); asked != nil && w.Status == StatusCancelled {
+		cancelBy = asked.By
+	}
+	m.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID, cancelBy)
 	if w.Status == StatusFailed {
 		m.emitter.EmitOrderFailed(order.ID, order.UUID, order.OrderType, w.ErrorCode, detail)
 	}
 	m.coreEnded(order, w.Status, detail)
 }
 
+// askedCancel is the cancel this station asked Core for on the row as it was
+// before Core's word (domain.CancelIntent), while unanswered; nil when none
+// (an unreadable one reads as none, as the scan reads it).
+func askedCancel(order *orders.Order) *domain.CancelIntent {
+	in, err := domain.DecodeCancelIntent(order.CancelIntent)
+	if err != nil || in == nil || !in.Unanswered() {
+		return nil
+	}
+	return in
+}
+
 // coreEnded is what Core ending a live order says to the operator, the same for
 // a live tell and a reconcile: a cancel this station did not ask for is
 // announced (once per dead swap: a partner whose sibling already ended is not
 // toasted again), and the position's auto-reorder holds for a cancel or a
-// failure. An operator's own abort never reaches here: its row ended at the
-// abort, and a Core word on an ended row moves nothing (coreWordOnEnded).
+// failure.
+//
+// A CANCEL THIS STATION ASKED (the row in hand carries it, unanswered) is the
+// station's, not Core's: it is not announced, and its hold is the asker's. A
+// person's (domain.CancelByPerson, the Orders page) pauses the position here,
+// when Core has done it, and not at the tap, so a cancel Core refuses leaves
+// no pause naming a cancel that did not happen; the Edge's own doors hold
+// nothing here (the idle rule wrote its off before it asked). Pinned by
+// TestCoreWord_TheStationsOwnCancelIsNotCoresToast. A cancel ended here at the
+// tap (a row with no versioned word) never reaches here: a Core word on an
+// ended row moves nothing (coreWordOnEnded).
 func (m *Manager) coreEnded(order *orders.Order, status protocol.Status, detail string) {
 	switch status {
 	case StatusCancelled:
+		if asked := askedCancel(order); asked != nil {
+			if asked.By == domain.CancelByPerson {
+				m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(order.ID))
+			}
+			return
+		}
 		if !m.siblingAlreadyEnded(order) {
 			m.emitter.EmitOrderCancelledByCore(order.ID, order.UUID, order.OrderType, detail)
 		}
@@ -301,3 +331,38 @@ func (m *Manager) deliveredFollowOns(order *orders.Order, seed deliveredSeed) {
 // versioned word of Core's has been applied to it. Its non-status messages then
 // write no status (the file's header).
 func versioned(order *orders.Order) bool { return order.CoreVersion > 0 }
+
+// CoreHoldsNoSuchOrderDetail is the history row's sentence for a row this Edge
+// ended because Core answered its cancel not_found (EndCancelCoreDoesNotHold).
+const CoreHoldsNoSuchOrderDetail = "Core holds no such order"
+
+// EndCancelCoreDoesNotHold is Core's not_found answer to the cancel this
+// station asked (corID is the reply's correlation id, the cancel's envelope
+// id): Core holds no such order, so no word of Core's will end the row, and
+// the Edge ends it as asked, cancelled, with CoreHoldsNoSuchOrderDetail. Core
+// has no row, so the two sides cannot read the order two ways. A person's
+// cancel pauses its position, as Core's end of it would (coreEnded). It
+// reports whether the answer was the cancel's; any other not_found is left to
+// the error's other arms. Pinned by TestCoreWord_ANotFoundToTheCancelEndsTheRow.
+func (m *Manager) EndCancelCoreDoesNotHold(corID, uuid string) bool {
+	if corID == "" {
+		return false
+	}
+	order, err := m.db.GetOrderByUUID(uuid)
+	if err != nil || order == nil || IsTerminal(order.Status) {
+		return false
+	}
+	asked := askedCancel(order)
+	if asked == nil || asked.Env != corID {
+		return false
+	}
+	m.lifecycle.debug = m.DebugLog
+	if err := m.lifecycle.ForceTransition(order.ID, StatusCancelled, CoreHoldsNoSuchOrderDetail); err != nil {
+		log.Printf("orders: end order %d Core holds no row for: %v", order.ID, err)
+		return true
+	}
+	if asked.By == domain.CancelByPerson {
+		m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(order.ID))
+	}
+	return true
+}

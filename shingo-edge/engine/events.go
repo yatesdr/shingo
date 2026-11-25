@@ -148,9 +148,11 @@ const (
 	// live on this Edge — one this station did not ask to cancel. The fleet
 	// stopping it, an admin terminating it on Core, a swap partner's death:
 	// Core's reason rides along, and the station board toasts it (SSE
-	// "order-cancelled"). A cancel this station sent is already terminal here
-	// when Core's echo arrives (orders.Manager.CancelOrderWithReason transitions
-	// locally first), so it never fires this.
+	// "order-cancelled"). A cancel this station sent should never fire it:
+	// either the row ended here before Core's echo (an order with no versioned
+	// word of Core's, ended at the tap), or Core's word ends a row that carries
+	// the cancel it asked, which the applier does not announce (orders
+	// coreEnded, pinned by TestCoreWord_TheStationsOwnCancelIsNotCoresToast).
 	EventOrderCancelledByCore
 
 	// EventChangeoverVerifyCleared fires when a standing post-cutover flag
@@ -241,6 +243,12 @@ type OrderCompletedEvent struct {
 	OrderUUID     string             `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
 	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
+	// CancelBy is who asked when the order ended by Core's word on a cancel
+	// this station asked (domain.CancelIntent.By; orders coreMoved): its one
+	// reader is the completion's keep-staged kick, which is the deciding
+	// flow's for domain.CancelByDecided (handleNodeOrderCompleted). "" for any
+	// other end.
+	CancelBy string `json:"cancel_by,omitempty"`
 }
 
 // PLCEvent is emitted for PLC connection state changes.

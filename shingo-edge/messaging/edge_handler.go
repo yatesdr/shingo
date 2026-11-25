@@ -239,6 +239,14 @@ func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.Order
 		return
 	}
 
+	// Core holds no such order: its answer to a cancel this station asked (the
+	// reply's CorID is the cancel's envelope) ends the row here, since no word
+	// of Core's will (orders EndCancelCoreDoesNotHold). Any other not_found
+	// takes the arm below, as it always did.
+	if p.ErrorCode == "not_found" && env != nil && h.orderMgr.EndCancelCoreDoesNotHold(env.CorID, p.OrderUUID) {
+		return
+	}
+
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyError, "", "", p.Detail); err != nil {
 		log.Printf("edge_handler: handle error for %s: %v", p.OrderUUID, err)
 	}

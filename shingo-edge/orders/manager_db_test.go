@@ -69,7 +69,7 @@ func (e *capturingEmitter) EmitOrderStatusChanged(orderID int64, orderUUID strin
 	e.status = append(e.status, oldStatus+"→"+newStatus)
 }
 
-func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
+func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64, cancelBy string) {
 	e.completed = append(e.completed, string(orderType)+":"+orderUUID)
 }
 

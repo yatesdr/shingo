@@ -61,6 +61,11 @@ func (m *Manager) CancelOrderByPerson(orderID int64) error {
 		log.Printf("orders: auto-reorder hold for order %d: read the cancelled order: %v", orderID, err)
 		return nil
 	}
-	m.holdReorderAt(order, domain.ReorderHoldPaused, fmt.Sprintf("a person cancelled order %d", orderID))
+	m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(orderID))
 	return nil
+}
+
+// personCancelledNote is the pause a person's cancel writes on its position.
+func personCancelledNote(orderID int64) string {
+	return fmt.Sprintf("a person cancelled order %d", orderID)
 }

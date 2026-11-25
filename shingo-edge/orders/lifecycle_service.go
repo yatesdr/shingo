@@ -235,7 +235,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binPayloadCode, binEpoch, binDestNode, order.DeliveryNode, landingSent)
 	}
 	if IsTerminal(newStatus) {
-		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
+		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID, "")
 		if newStatus == StatusFailed {
 			// No code: Core's code rides only its versioned tell (core_word.go).
 			s.emitter.EmitOrderFailed(order.ID, order.UUID, order.OrderType, "", detail)
