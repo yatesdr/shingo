@@ -3,15 +3,25 @@
 package messaging
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"runtime"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/segmentio/kafka-go"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/messaging/middleware"
+	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
@@ -258,3 +268,206 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 func (noopEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)           {}
 func (noopEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string) {}
 func (noopEmitter) EmitBinHeld(int64)                                                            {}
+
+// TestCoreHandler_AnOrderCutInHalfIsCreatedOnceAfterRedelivery (docket B11).
+// Core writes an inbound message's inbox row, then runs its handler, then
+// commits its offset (middleware.NewInboxDedup, Client.readLoop). A message cut
+// after the inbox row and before the handler's work is delivered again, because
+// its offset never moved, and the dedup drops the redelivery as a duplicate: the
+// order the station sent never exists at Core. Each case cuts a first Core
+// there, then hands a second Core (the restart) what the first did not commit.
+//
+//   - A stop with the message in hand. main stopped the engine, then closed the
+//     consumer, whose Close waited for no handler, then closed the database
+//     under the handler.
+//   - A crash between the inbox row and the order's INSERT. No order of the inbox
+//     row, the handler and the offset closes it: one of the two cuts either side
+//     of the handler's work loses or repeats. Skipped unless SHINGO_KNOWN_RED=1
+//     (the lane's NOTES.md, B11's design note, says what would close it).
+func TestCoreHandler_AnOrderCutInHalfIsCreatedOnceAfterRedelivery(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		knownRed bool
+		// cut runs the message through the first Core and cuts it there, and
+		// reports whether the first Core committed the message's offset.
+		cut func(t *testing.T, first *store.DB, deliver func(on *store.DB, work func())) bool
+	}{
+		{name: "a stop with the message in hand", cut: cutByAStop},
+		{name: "a crash between the inbox row and the order", knownRed: true, cut: cutByACrash},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.knownRed && os.Getenv("SHINGO_KNOWN_RED") == "" {
+				t.Skip("docket B11 red pin, red until the inbox row and the handler's work commit together; run with SHINGO_KNOWN_RED=1")
+			}
+			t.Parallel()
+			db, cfg := testdb.OpenWithConfig(t)
+			dest := &nodes.Node{Name: "LINE-CUT", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
+			payload := &payloads.Payload{Code: "PART-C", Description: "Part C", UOPCapacity: 10}
+			testutil.MustNoErr(t, db.CreatePayload(payload), "create payload")
+			env := &protocol.Envelope{
+				ID:   "msg-cut-1",
+				Type: protocol.TypeOrderRequest,
+				Src:  protocol.Address{Role: protocol.RoleEdge, Station: "edge.1"},
+				Dst:  protocol.Address{Role: protocol.RoleCore, Station: "core"},
+			}
+			req := &protocol.OrderRequest{
+				OrderUUID:    "uuid-cut-1",
+				OrderType:    dispatch.OrderTypeRetrieve,
+				PayloadCode:  payload.Code,
+				DeliveryNode: dest.Name,
+				Quantity:     1,
+			}
+			// deliver is one Core's inbound path for this message, on that Core's
+			// pool: the dedup, then the order request's handler. work runs between
+			// the two, where the handler's own work begins.
+			deliver := func(on *store.DB, work func()) {
+				h := NewCoreHandler(on, nil, "core", "dispatch",
+					dispatch.NewDispatcher(on, &countingBackend{}, noopEmitter{}, "core", "dispatch", nil))
+				middleware.NewInboxDedup(on, nil)(env, env.Type, func() {
+					work()
+					h.HandleOrderRequest(env, req)
+				})
+			}
+			// The first Core's own pool on the same database, closed at its stop
+			// as main closes Core's.
+			first, err := store.OpenWithoutMigrate(cfg)
+			testutil.MustNoErr(t, err, "open the first Core's pool")
+			t.Cleanup(func() { first.Close() })
+
+			if committed := tc.cut(t, first, deliver); !committed {
+				// The restart: Kafka delivers again what was not committed.
+				deliver(db, func() {})
+			}
+
+			got, err := db.ListOrders("", 10)
+			testutil.MustNoErr(t, err, "list orders")
+			if len(got) != 1 {
+				t.Fatalf("%d order(s) for the station's request %s after the cut and the redelivery, want 1",
+					len(got), req.OrderUUID)
+			}
+		})
+	}
+}
+
+// cutByAStop runs the message through the first Core's consumer and stops that
+// Core while the handler is at work: the stop comes once the inbox row is
+// written, and the handler's work outlasts it by a moment. The stop is main's
+// order for these two: the consumer's Close, then the pool's.
+func cutByAStop(t *testing.T, first *store.DB, deliver func(on *store.DB, work func())) bool {
+	const topic = "shingo.orders"
+	part := &partition{msgs: []kafka.Message{{Topic: topic, Value: []byte("msg-cut-1")}}}
+	r := part.reader()
+	c := NewClient(&config.MessagingConfig{})
+	c.kafka = &kafkaState{readers: map[string]kafkaReader{topic: r}}
+
+	inHand, stopping, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		c.readLoop(topic, r, func(string, []byte) {
+			deliver(first, func() {
+				close(inHand)
+				<-stopping
+				time.Sleep(50 * time.Millisecond) // the rest of the handler's work
+			})
+		})
+	}()
+	select {
+	case <-inHand:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first Core's consumer never handed the message to its handler")
+	}
+	close(stopping)
+	c.Close()
+	first.Close()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first Core's read loop did not end after its Close")
+	}
+	return part.committed() > 0
+}
+
+// cutByACrash ends the first Core inside the handler, after the inbox row and
+// before the order's INSERT: the goroutine ends there, as the process would, and
+// nothing is committed.
+func cutByACrash(t *testing.T, first *store.DB, deliver func(on *store.DB, work func())) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deliver(first, runtime.Goexit)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first Core did not end inside its handler")
+	}
+	return false
+}
+
+// partition is one Kafka partition and its consumer group's committed offset. A
+// reader starts at the committed offset; a commit through a closed reader moves
+// nothing, and a fetch from one ends, as kafka-go v0.4.50's Reader answers
+// io.ErrClosedPipe and io.EOF after Close.
+type partition struct {
+	mu   sync.Mutex
+	msgs []kafka.Message
+	next int64 // the committed offset: the first message a new reader is given
+}
+
+func (p *partition) committed() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.next
+}
+
+func (p *partition) reader() *partitionReader {
+	return &partitionReader{p: p, at: p.committed(), closed: make(chan struct{})}
+}
+
+type partitionReader struct {
+	p      *partition
+	at     int64
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (r *partitionReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
+	r.p.mu.Lock()
+	if r.at < int64(len(r.p.msgs)) {
+		m := r.p.msgs[r.at]
+		m.Offset = r.at
+		r.at++
+		r.p.mu.Unlock()
+		return m, nil
+	}
+	r.p.mu.Unlock()
+	select {
+	case <-r.closed:
+		return kafka.Message{}, io.EOF
+	case <-ctx.Done():
+		return kafka.Message{}, ctx.Err()
+	}
+}
+
+func (r *partitionReader) CommitMessages(_ context.Context, msgs ...kafka.Message) error {
+	select {
+	case <-r.closed:
+		return io.ErrClosedPipe
+	default:
+	}
+	r.p.mu.Lock()
+	defer r.p.mu.Unlock()
+	for _, m := range msgs {
+		if m.Offset+1 > r.p.next {
+			r.p.next = m.Offset + 1
+		}
+	}
+	return nil
+}
+
+func (r *partitionReader) Close() error {
+	r.once.Do(func() { close(r.closed) })
+	return nil
+}
