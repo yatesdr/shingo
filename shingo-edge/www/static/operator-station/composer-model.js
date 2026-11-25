@@ -31,6 +31,12 @@ const MODES = {
     sequential: 'Sequential A/B',
 };
 
+// NO_PARTNER is the partner pick's choice of none on Sequential A/B, beside
+// the partner positions, and what a row with none says: a one-node line (final
+// brief 2b). It is no mode and no stored value — paired_core_node is blank —
+// so it is said once, here, for every surface that offers or shows it.
+const NO_PARTNER = 'No partner (one node)';
+
 // SHAPE_FIELDS — what a flow's SHAPE is made of (U10).
 //
 // NO WORDS HERE AT ALL, which is the point. This names the FIELDS; what each
@@ -2621,7 +2627,7 @@ function savedBody(styleId, stationId) {
     const api = {
         init, reduce, toCells, takenOff, applyPreview,
         legs, dockNotes, cellRobots, cardLines, pictureCells, relationLayout, hasCoords, bar,
-        findings, findingShort, cardFindings,
+        findings, findingShort, cardFindings, NO_PARTNER,
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,

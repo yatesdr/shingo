@@ -239,7 +239,7 @@ ok   a partner kept through the change to Sequential A/B is paired back, as if p
 ok   the back given its row again has its part again
   Sequential A/B, POS_A3 picked: Part=PART-1 · Paired core node=POS_A3 · Comes from=GRP_A · Goes to=DST_1 · POS_A3 runs Sequential A/B paired with POS_A1
 ok   a Sequential partner is paired back
-  POS_A4 opened: Part=PART-2 · Paired core node=none · Comes from=GRP_A · Goes to=DST_1
+  POS_A4 opened: Part=PART-2 · Paired core node=No partner (one node) · Comes from=GRP_A · Goes to=DST_1
 ok   the next position opened does not take the partner of the one before it
   every other position with a part, POS_A2 picked: line "POS_A2’s part, PART-10, is on no position now: pick it in a position’s Part field."
 ok   with no position free, the line says the back's part is on none

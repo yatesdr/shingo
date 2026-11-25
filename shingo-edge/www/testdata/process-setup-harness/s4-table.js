@@ -305,6 +305,11 @@ const BUGS = [
             await page.settle();
             const out = [['POS_A7 set to no partner: POS_A7 names ' + (names('POS_A7') || 'none') + ' · POS_A8 names ' + (names('POS_A8') || 'none'),
                 !names('POS_A7') && names('POS_A8') !== 'POS_A7', 'POS_A8 still names POS_A7']];
+            // ITS PARTNER CELL SAYS THE CHOICE (final brief 2b): a Sequential
+            // A/B row with none is one node, not a gap.
+            const cellText = String(page.pd('columnCell')('POS_A7', 'partner')).replace(/<[^>]*>/g, '');
+            out.push(['POS_A7\'s partner cell reads ' + JSON.stringify(cellText),
+                cellText === page.pd('M')().NO_PARTNER, 'the cell does not name the choice']);
             T.pickChip(page, 'POS_A9', 'mode', page.S.model.cells.POS_A5.mode);
             await page.settle();
             out.push(['POS_A9 given a swap with no partner: POS_A9 names ' + (names('POS_A9') || 'none') + ' · POS_A10 names ' + (names('POS_A10') || 'none'),

@@ -1152,7 +1152,7 @@ function firstPositionHTML(n, rows) {
         const cell = S.model.cells[n];
         const value = (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
         const shown = value || (x[1] === 'required' ? (firstChoices(p, n).length ? 'pick one'
-            : p.box === 'partner' ? 'no other position on this line' : 'none in the ' + boxWord(p.box) + ' box') : 'none');
+            : p.box === 'partner' ? 'no other position on this line' : 'none in the ' + boxWord(p.box) + ' box') : p.box === 'partner' ? M().NO_PARTNER : 'none');
         // The partner pick's one line: a back's part, and where it went.
         const note = p.box === 'partner' ? firstBackNote(n) : '';
         return '<div class="pd-fsfield"><span class="pd-fsflbl"><i class="setpick-dot" data-role="' + p.role + '"></i>' + esc(p.label || W(p.field)) + '</span>' +
@@ -1331,7 +1331,7 @@ function openFirstPick(btn) {
     if (!pop || !d || !p || !n || !S.model) return;
     const e = firstEff(n);
     const use = firstUse(S.model, e.role, e.mode, p);
-    const rows = (use === 'used' ? [{ value: '-', label: 'none' }] : []).concat(firstChoices(p, n).map(x => ({ value: x, label: x })));
+    const rows = (use === 'used' ? [{ value: '-', label: p.box === 'partner' ? M().NO_PARTNER : 'none' }] : []).concat(firstChoices(p, n).map(x => ({ value: x, label: x })));
     openRowPicker(pop, btn, rows, v => {
         d.own[n].picks[p.key] = v === '-' ? '' : v;
         // Its own pick: a copy pairing wrote is n's own now (firstRows).
@@ -3448,8 +3448,12 @@ function columnCell(node, column) {
     const live = chips.some(c => c.required || c.value) ||
         chips.some(c => isOpen(node, 'col:' + column + ':' + c.key));
     if (!live) {
-        return blank(node, 'col:' + column + ':' + chips[0].key, '<span class="pd-dim">—</span>',
-            chips.map(c => c.label).join(' · '));
+        // A SEQUENTIAL A/B ROW WITH NO PARTNER SAYS SO (final brief 2b): its
+        // blank is the choice of one node, not a gap to fill.
+        const none = column === 'partner' && (S.model.cells[node] || {}).mode === 'sequential';
+        return blank(node, 'col:' + column + ':' + chips[0].key,
+            '<span class="pd-dim">' + (none ? esc(M().NO_PARTNER) : '—') + '</span>',
+            none ? M().NO_PARTNER : chips.map(c => c.label).join(' · '));
     }
     // A CELL DOES NOT REPEAT ITS COLUMN HEADING. The chip word is there to tell
     // two chips in one cell apart — `Inbound PLN_02 · Outbound —` under STAGING
@@ -4030,11 +4034,13 @@ function optionsFor(node, kind) {
             const arg = { paired: 'partner', secondPaired: 'partner', staging: 'staging', parkOld: 'staging' }[key];
             // A REQUIRED CHIP SAYS SO. It has no `none` row, and a list that
             // simply lacked one gave no reason why; the first line names the
-            // mode that needs the field.
+            // mode that needs the field. A Sequential A/B partner's none is
+            // the choice of one node (NO_PARTNER, final brief 2b), offered
+            // first beside the partner positions.
             const clear = chip.required
                 ? [{ note: 'required for ' + (M().modeLabels()[c.mode] || c.mode) }]
                 : [{
-                    value: '', label: 'none', on: !chip.value,
+                    value: '', label: key === 'paired' ? M().NO_PARTNER : 'none', on: !chip.value,
                     action: Object.assign({ type: act, node: node }, { [arg]: '' }),
                 }];
             // SHARED STAGING IS A WARNING, NOT A REFUSAL. Two positions of one
