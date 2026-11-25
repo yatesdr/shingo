@@ -1776,3 +1776,130 @@ func TestHandleDelivered_FallbackCarriesThePayload(t *testing.T) {
 		t.Errorf("payload = %q, want %q", *got, payload)
 	}
 }
+
+// askedRow is an order at status that Core has told at version 2: a row the
+// one cancel door asks for.
+func askedRow(t *testing.T, db *store.DB, uuid string, status protocol.Status) int64 {
+	t.Helper()
+	oid, err := db.CreateOrder(uuid, TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+	oid = testutil.Must(t, oid, err, "CreateOrder")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(status)), "put at "+string(status))
+	_, err = db.DB.Exec(`UPDATE orders SET core_version = 2 WHERE id = ?`, oid)
+	testutil.MustNoErr(t, err, "Core's version")
+	return oid
+}
+
+// TestAskCancel_TheOneDoor: the one cancel door (final brief 5c). On a row
+// whose status is Core's versioned word it asks: one order.cancel with the
+// flag and the cancel on the row, in one transaction, no status and no
+// history row; a second ask sends nothing. A delivered row and an ended one
+// are refused, sending nothing. A row with no versioned word keeps today's
+// body: ended at the tap, the cancel without the flag.
+func TestAskCancel_TheOneDoor(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	asked := askedRow(t, db, "uuid-ask", StatusInTransit)
+	testutil.MustNoErr(t, mgr.AskCancel(asked, CancelAsk{By: domain.CancelByPerson}), "ask")
+	testutil.MustNoErr(t, mgr.AskCancel(asked, CancelAsk{By: domain.CancelByPerson}), "ask again")
+	var cancel protocol.OrderCancel
+	env := decodeOnlyOutboxPayload(t, db, protocol.TypeOrderCancel, &cancel)
+	if cancel.OrderUUID != "uuid-ask" || cancel.Reason != operatorCancelReason || !cancel.Intent || cancel.Actor != "" {
+		t.Errorf("the ask sent %+v, want the person's reason, asking", cancel)
+	}
+	o, err := db.GetOrder(asked)
+	o = testutil.Must(t, o, err, "GetOrder")
+	if o.Status != StatusInTransit || !o.CancelSent {
+		t.Errorf("after the ask the row reads %s sent=%v, want in_transit and the cancel sent", o.Status, o.CancelSent)
+	}
+	in, err := domain.DecodeCancelIntent(o.CancelIntent)
+	in = testutil.Must(t, in, err, "decode the cancel")
+	if in.Env != env.ID || in.By != domain.CancelByPerson || in.Reason != operatorCancelReason {
+		t.Errorf("the row's cancel is %+v, want envelope %s, by a person", in, env.ID)
+	}
+	hist, err := db.ListOrderHistory(asked)
+	hist = testutil.Must(t, hist, err, "ListOrderHistory")
+	if len(hist) != 0 {
+		t.Errorf("the ask wrote history %+v, want none", hist)
+	}
+
+	for _, s := range []protocol.Status{StatusDelivered, StatusConfirmed} {
+		id := askedRow(t, db, "uuid-ask-"+string(s), s)
+		if err := mgr.AskCancel(id, CancelAsk{}); err == nil {
+			t.Errorf("the ask of a %s row was taken, want it refused", s)
+		}
+	}
+	if s := mgr.AskCancel(askedRow(t, db, "uuid-ask-dl", StatusDelivered), CancelAsk{}); !errors.Is(s, ErrDelivered) {
+		t.Errorf("the ask of a delivered row answered %v, want ErrDelivered", s)
+	}
+
+	plain, err := db.CreateOrder("uuid-plain", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+	plain = testutil.Must(t, plain, err, "CreateOrder")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(plain, string(StatusInTransit)), "in transit")
+	testutil.MustNoErr(t, mgr.AskCancel(plain, CancelAsk{Reason: "changeover cancelled"}), "ask a row with no version")
+	if o, _ := db.GetOrder(plain); o.Status != StatusCancelled || o.CancelIntent != "" {
+		t.Errorf("a row with no versioned word reads %s %q after the door, want cancelled at the tap", o.Status, o.CancelIntent)
+	}
+	msgs, err := db.ListPendingOutbox(100)
+	msgs = testutil.Must(t, msgs, err, "ListPendingOutbox")
+	if n := len(msgs); n != 2 {
+		t.Errorf("the outbox holds %d messages, want the ask's and today's cancel", n)
+	}
+}
+
+// TestAwaitCancel_AnswersAsTheAsksDo: the tap's wait (final brief 5d) answers
+// cancelled when Core's word ends the order inside it, Core's sentence when
+// Core refuses, and "sent; Core has not answered yet" when the wait runs out;
+// a row ended at the tap answers at once.
+func TestAwaitCancel_AnswersAsTheAsksDo(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	plain, err := db.CreateOrder("uuid-wait-plain", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+	plain = testutil.Must(t, plain, err, "CreateOrder")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(plain, string(StatusInTransit)), "in transit")
+	testutil.MustNoErr(t, mgr.AskCancel(plain, CancelAsk{}), "the tap")
+	if a, err := mgr.AwaitCancel(plain, time.Hour); err != nil || !a.Cancelled {
+		t.Errorf("a row ended at the tap answered %+v %v, want cancelled at once", a, err)
+	}
+
+	quiet := askedRow(t, db, "uuid-wait-quiet", StatusInTransit)
+	testutil.MustNoErr(t, mgr.AskCancel(quiet, CancelAsk{}), "the tap")
+	if a, err := mgr.AwaitCancel(quiet, 20*time.Millisecond); err != nil || !a.Pending || a.Sentence(quiet) != CancelPendingNotice {
+		t.Errorf("a cancel Core did not answer answered %+v %v, want pending %q", a, err, CancelPendingNotice)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		answer func(id int64, uuid, env string)
+		want   CancelAnswer
+	}{
+		{"Core's word", func(id int64, uuid, env string) {
+			testutil.MustNoErr(t, mgr.ApplyCoreWord(uuid, CoreWord{Status: StatusCancelled, Version: 3}), "Core's cancelled")
+		}, CancelAnswer{Cancelled: true}},
+		{"Core's refusal", func(id int64, uuid, env string) {
+			mgr.RefuseCancel(env, uuid, "The cart was set down.")
+		}, CancelAnswer{Refused: "The cart was set down."}},
+	} {
+		id := askedRow(t, db, "uuid-wait-"+tc.name, StatusInTransit)
+		testutil.MustNoErr(t, mgr.AskCancel(id, CancelAsk{}), "the tap")
+		o, err := db.GetOrder(id)
+		o = testutil.Must(t, o, err, "GetOrder")
+		in, err := domain.DecodeCancelIntent(o.CancelIntent)
+		in = testutil.Must(t, in, err, "decode")
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			tc.answer(id, o.UUID, in.Env)
+		}()
+		start := time.Now()
+		a, err := mgr.AwaitCancel(id, 10*time.Second)
+		if err != nil || a != tc.want {
+			t.Errorf("%s: the tap answered %+v %v, want %+v", tc.name, a, err, tc.want)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("%s: the tap waited %s, want it woken by the answer", tc.name, d)
+		}
+	}
+}

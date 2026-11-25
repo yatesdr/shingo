@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/release"
 	"shingoedge/store"
@@ -297,6 +298,113 @@ func (m *Manager) cancelOrder(orderID int64, reason, actor string) error {
 	if err := m.TransitionOrder(orderID, StatusCancelled, reason); err != nil {
 		return err
 	}
+	return nil
+}
+
+// CancelAsk is who asks the one cancel door (AskCancel) and why.
+type CancelAsk struct {
+	// Reason is the cancel's reason, sent to Core and written as the row's
+	// end; "" is a person's, operatorCancelReason.
+	Reason string
+	// Actor is protocol.CancelActorEdge for a cancel the Edge decided itself
+	// (the idle rule), so Core files it abandoned; "" is a person's.
+	Actor string
+	// By is who asked, for what follows Core's end of the order
+	// (domain.CancelIntent.By): domain.CancelByPerson or
+	// domain.CancelByDecided, "" for the other doors.
+	By string
+}
+
+// errCancelRowMoved is the ask's write finding the row moved since the door
+// read it (a word of Core's in between): the door reads it again.
+var errCancelRowMoved = errors.New("the order moved while its cancel was asked")
+
+// AskCancel is the one door for a cancel (final brief 5c). It refuses an order
+// that has ended, and one that reads delivered (ErrDelivered), sending
+// nothing.
+//
+// FOR AN ORDER WHOSE STATUS IS CORE'S VERSIONED WORD the cancel asks: in one
+// transaction, as the release's tap is written, the order.cancel goes out with
+// protocol.OrderCancel.Intent and the row takes the cancel
+// (orders.cancel_intent); no status, no history row. The row keeps Core's
+// status, and Core's versioned word ends it (core_word.go), or Core answers
+// that it cannot (RefuseCancel), or that it holds no such order
+// (EndCancelCoreDoesNotHold). A cancel already sent and unanswered sends
+// nothing, and the door answers nil: a second tap or a second pass changes
+// nothing. A word of Core's that moved the row between the read and the write
+// makes the write miss; the door reads the row again and answers by it.
+//
+// An order no versioned word of Core's has reached (an older Core, or one Core
+// has not told yet) keeps today's body (cancelOrder): ended here at the tap,
+// the cancel queued first. Pinned by TestAskCancel_TheOneDoor.
+func (m *Manager) AskCancel(orderID int64, a CancelAsk) error {
+	reason := a.Reason
+	if reason == "" {
+		reason = operatorCancelReason
+	}
+	for attempt := 0; ; attempt++ {
+		order, err := m.db.GetOrder(orderID)
+		if err != nil {
+			return fmt.Errorf("get order: %w", err)
+		}
+		if !versioned(order) {
+			return m.cancelOrder(orderID, reason, a.Actor)
+		}
+		err = m.askCancel(order, reason, a)
+		if !errors.Is(err, errCancelRowMoved) || attempt > 0 {
+			return err
+		}
+	}
+}
+
+// askCancel is AskCancel's write for an order whose status is Core's word.
+func (m *Manager) askCancel(order *orders.Order, reason string, a CancelAsk) error {
+	m.DebugLog.Log("cancel asked: id=%d reason=%q actor=%q by=%q", order.ID, reason, a.Actor, a.By)
+	if IsTerminal(order.Status) {
+		return fmt.Errorf("order is already in terminal state: %s", order.Status)
+	}
+	if order.Status == StatusDelivered {
+		return fmt.Errorf("order %d is %w", order.ID, ErrDelivered)
+	}
+	if askedCancel(order) != nil {
+		m.DebugLog.Log("cancel asked: id=%d already sent and unanswered; nothing sent", order.ID)
+		return nil
+	}
+	env, err := m.sender.build(protocol.TypeOrderCancel, &protocol.OrderCancel{
+		OrderUUID: order.UUID, Reason: reason, Actor: a.Actor, Intent: true,
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue cancel message: %w", err)
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("enqueue cancel message: marshal envelope: %w", err)
+	}
+	intent, err := domain.CancelIntent{Reason: reason, Actor: a.Actor, By: a.By, Env: env.ID,
+		SentAt: clock.Now().UTC().Format(time.RFC3339Nano)}.Encode()
+	if err != nil {
+		return err
+	}
+	if err := m.db.InTx(func(tx *sql.Tx) error {
+		if _, err := store.EnqueueOutboxIn(tx, data, env.Type); err != nil {
+			return err
+		}
+		wrote, err := orders.AskCancel(tx, order.ID, intent, string(order.Status), order.CoreVersion)
+		if err != nil {
+			return err
+		}
+		if !wrote {
+			return errCancelRowMoved
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, errCancelRowMoved) {
+			return err
+		}
+		return fmt.Errorf("enqueue cancel message: %w", err)
+	}
+	storemsg.NotifyEnqueued()
+	m.emitter.EmitOrderTouched(order.ID, order.UUID, order.ProcessNodeID)
 	return nil
 }
 

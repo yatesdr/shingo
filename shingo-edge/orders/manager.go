@@ -46,6 +46,10 @@ type Manager struct {
 	// lands second runs the follow-ons (core_word.go, coreDelivered).
 	deliveredFacts    sync.Map
 	deliveredAwaiting sync.Map
+
+	// cancelWaits is the taps waiting on Core's answer to a cancel they asked
+	// (cancel_wait.go), keyed by order id: memory only.
+	cancelWaits sync.Map
 }
 
 // NewManager creates an order manager.

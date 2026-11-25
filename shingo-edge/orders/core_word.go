@@ -194,6 +194,7 @@ func (m *Manager) coreMoved(order *orders.Order, w CoreWord) {
 		m.emitter.EmitOrderFailed(order.ID, order.UUID, order.OrderType, w.ErrorCode, detail)
 	}
 	m.coreEnded(order, w.Status, detail)
+	m.cancelAnswered(order.ID)
 }
 
 // askedCancel is the cancel this station asked Core for on the row as it was
@@ -372,6 +373,7 @@ func (m *Manager) EndCancelCoreDoesNotHold(corID, uuid string) bool {
 	if asked.By == domain.CancelByPerson {
 		m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(order.ID))
 	}
+	m.cancelAnswered(order.ID)
 	return true
 }
 
@@ -404,6 +406,7 @@ func (m *Manager) RefuseCancel(corID, uuid, sentence string) bool {
 	}
 	m.DebugLog.Log("cancel refused: id=%d uuid=%s: %s", order.ID, order.UUID, sentence)
 	m.emitter.EmitOrderTouched(order.ID, order.UUID, order.ProcessNodeID)
+	m.cancelAnswered(order.ID)
 	return true
 }
 
