@@ -560,10 +560,17 @@ func TestRunTwice_StampedIngest(t *testing.T) {
 // event: the parent is cancelled, its legs are not.
 func TestRunTwice_CancelCutInsideTheCascade(t *testing.T) {
 	t.Parallel()
-	setup := func(t *testing.T, prefix string) (twiceRig, *orders.Order, *protocol.Envelope, *protocol.OrderCancel) {
+	// lifted: the dig's first leg has lifted its bin before the cancel, so the
+	// cascade keeps it (TestCancelCascade_ALiftedLegFinishesItsStore).
+	setup := func(t *testing.T, prefix string, lifted bool) (twiceRig, *orders.Order, *protocol.Envelope, *protocol.OrderCancel) {
 		t.Helper()
 		r := newTwiceRig(t)
-		parent, _, _, _ := planDigToDissolve(t, r.db, r.d, prefix, 1)
+		parent, _, slots, legs := planDigToDissolve(t, r.db, r.d, prefix, 1)
+		if lifted {
+			transit, err := r.db.GetNodeByDotName("_TRANSIT")
+			testutil.MustNoErr(t, err, "resolve _TRANSIT")
+			liftBin(t, r.db, r.d, legs[0], slots[0], transit)
+		}
 		env := &protocol.Envelope{
 			ID: "env-" + prefix, Type: protocol.TypeOrderCancel,
 			Src: protocol.Address{Role: protocol.RoleEdge, Station: parent.Requester()},
@@ -586,7 +593,7 @@ func TestRunTwice_CancelCutInsideTheCascade(t *testing.T) {
 	// first run's lines compare to a cut one's.
 	var whole []string
 	t.Run("the station is told on a first run", func(t *testing.T) {
-		r, parent, env, req := setup(t, "RT-CC")
+		r, parent, env, req := setup(t, "RT-CC", false)
 		mark := outboxMark(t, r.db)
 		r.d.HandleOrderCancel(env, req)
 		whole = toldSince(t, r.db, mark)
@@ -602,8 +609,7 @@ func TestRunTwice_CancelCutInsideTheCascade(t *testing.T) {
 	})
 
 	t.Run("run, cut, run again", func(t *testing.T) {
-		b11KnownRed(t, "an already-cancelled parent with live children finishes its cascade")
-		r, parent, env, req := setup(t, "RT-CC")
+		r, parent, env, req := setup(t, "RT-CC", false)
 		r.e.cut = func(event string, orderID int64) {
 			if event == "cancelled" && orderID == parent.ID {
 				runtime.Goexit()
@@ -627,7 +633,7 @@ func TestRunTwice_CancelCutInsideTheCascade(t *testing.T) {
 	})
 
 	t.Run("run, finish, run again", func(t *testing.T) {
-		r, parent, env, req := setup(t, "RT-CC")
+		r, parent, env, req := setup(t, "RT-CC", false)
 		r.d.HandleOrderCancel(env, req)
 		creates, cancels := len(r.backend.CreateRequests()), len(r.backend.CancelRequests())
 		mark := outboxMark(t, r.db)
@@ -639,6 +645,29 @@ func TestRunTwice_CancelCutInsideTheCascade(t *testing.T) {
 		}
 		if live := liveLegs(t, r.db, parent.ID); len(live) != 0 {
 			t.Errorf("legs live after the repeat: %v", live)
+		}
+	})
+
+	// A whole cancel keeps a leg carrying its bin, so its parent is cancelled
+	// with a live leg the cascade has nothing to say to. The repeat has nothing
+	// to cancel: no second cascade, no second answer.
+	t.Run("run, finish, run again, a leg carrying its bin kept", func(t *testing.T) {
+		r, parent, env, req := setup(t, "RT-CK", true)
+		r.d.HandleOrderCancel(env, req)
+		kept := liveLegs(t, r.db, parent.ID)
+		if len(kept) != 1 {
+			t.Fatalf("fixture: legs live after the whole cancel %v, want the one carrying its bin", kept)
+		}
+		creates, cancels := len(r.backend.CreateRequests()), len(r.backend.CancelRequests())
+		mark := outboxMark(t, r.db)
+		r.d.HandleOrderCancel(env, req)
+
+		assertTold(t, "the repeat told the station", toldSince(t, r.db, mark), nil)
+		if c, k := len(r.backend.CreateRequests()), len(r.backend.CancelRequests()); c != creates || k != cancels {
+			t.Errorf("the repeat reached the fleet: creates %d -> %d, cancels %d -> %d", creates, c, cancels, k)
+		}
+		if live := liveLegs(t, r.db, parent.ID); strings.Join(live, ",") != strings.Join(kept, ",") {
+			t.Errorf("legs live after the repeat %v, want the kept one %v", live, kept)
 		}
 	})
 }

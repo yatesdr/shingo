@@ -1208,7 +1208,21 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 		d.replies.SendError(env, p.OrderUUID, "not_found", "order not found or access denied")
 		return
 	}
+	// CODED BY WHO DECIDED IT. Every Edge door but one is a person's — the abort
+	// button, the changeover abandon / cancel / start paths — and sends no
+	// actor: operator_cancelled, without a name (Core knows a station asked, not
+	// who at it). The Edge's idle rule, which sends back robots parked at a line
+	// that has counted nothing for its hour, says so with
+	// protocol.CancelActorEdge: abandoned, the machine's. An older Edge sends no
+	// actor and every cancel reads as a person's, as it always did.
+	cause := CancelCause{Code: protocol.TermOperatorCancelled}
+	if p.Actor == protocol.CancelActorEdge {
+		cause = CancelCause{Code: protocol.TermAbandoned} // the station itself: "system:"+station
+	}
 	if order.Status == StatusCancelled {
+		if d.finishCutCascade(env, order, p, cause) {
+			return
+		}
 		d.dbg("cancel request: uuid=%s already cancelled", p.OrderUUID)
 		return
 	}
@@ -1246,20 +1260,48 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	// reservations that are the lock, then cancels parent-then-children in that
 	// order. See CancelOrderWithCascade for why both orderings matter and why
 	// they are in tension.
-	//
-	// CODED BY WHO DECIDED IT. Every Edge door but one is a person's — the abort
-	// button, the changeover abandon / cancel / start paths — and sends no
-	// actor: operator_cancelled, without a name (Core knows a station asked, not
-	// who at it). The Edge's idle rule, which sends back robots parked at a line
-	// that has counted nothing for its hour, says so with
-	// protocol.CancelActorEdge: abandoned, the machine's. An older Edge sends no
-	// actor and every cancel reads as a person's, as it always did.
-	cause := CancelCause{Code: protocol.TermOperatorCancelled}
-	if p.Actor == protocol.CancelActorEdge {
-		cause = CancelCause{Code: protocol.TermAbandoned} // the station itself: "system:"+station
-	}
 	d.CancelOrderWithCascade(order, stationID, p.Reason, cause)
 	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
+}
+
+// finishCutCascade finishes a cancel cut inside its cascade, for a parent the
+// cancel's first run ended (docket B11), and reports whether it ran. The inbox
+// row is written after the handler (middleware.NewInboxDedup), so a cancel cut
+// by a crash between the parent's ending and its legs' is delivered again and
+// meets a cancelled parent with live legs. Left alone, a dispatched leg drives
+// its job to its end with the parent's lane already let go (the lane goes with
+// the parent's ending), and the pending legs wait for the compound's next
+// advance, whose terminal-parent arm cancels them (AdvanceCompoundOrder). When
+// the cascade has a leg to cancel, it runs as the first run's would have, with
+// the lanes the parent still holds, and the station is answered as that run
+// would have answered it. A leg carrying its bin is kept, as the cascade keeps
+// it (splitLiftedLegs), so the repeat of a cancel that finished has nothing to
+// cancel and does nothing. Pinned by TestRunTwice_CancelCutInsideTheCascade.
+func (d *Dispatcher) finishCutCascade(env *protocol.Envelope, parent *orders.Order, p *protocol.OrderCancel, cause CancelCause) bool {
+	children, err := d.db.ListChildOrders(parent.ID)
+	if err != nil {
+		log.Printf("dispatch: cancel %s: list the legs of cancelled order %d: %v (a cut cascade is not finished)",
+			p.OrderUUID, parent.ID, err)
+		return false
+	}
+	var live []*orders.Order
+	for _, child := range children {
+		if !protocol.IsTerminal(child.Status) {
+			live = append(live, child)
+		}
+	}
+	cancel, _, err := d.splitLiftedLegs(parent.ID, live)
+	if err != nil {
+		cancel = live // the cascade's own rule: unreadable cancels every live leg
+	}
+	if len(cancel) == 0 {
+		return false
+	}
+	log.Printf("dispatch: cancel %s from %s: order %d is cancelled with %d leg(s) live: a cancel cut inside its cascade, finished now",
+		p.OrderUUID, env.Src.Station, parent.ID, len(cancel))
+	d.cancelCompoundChildren(parent, env.Src.Station, p.Reason, cause, d.digLanesHeld(parent.ID))
+	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
+	return true
 }
 
 // HandleOrderReceipt processes a delivery confirmation from ShinGo Edge.
