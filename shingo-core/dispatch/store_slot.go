@@ -260,23 +260,23 @@ func isStorageDropoff(db *store.DB, deliveryNode string) bool {
 // A GROUP DROP'S ROW IS THE GROUP'S PAPER (plainGroupDrop): the slot stands in
 // a lane of a group and Core chose it, so the row is tagged GroupRoomTag, and
 // that tag is where the plain path keeps the group it chose from until its plan
-// is written. The node is read once and its parent once (storageDropoffOf),
-// and the loader-home row once for a drop that is not storage.
-func holdPosition(db *store.DB, order *orders.Order) error {
+// is written. It is handed the destination as the settle read it (at: the node
+// and its storage answer, dropAt), and reads the loader-home row once for a drop
+// that is not storage.
+func holdPosition(db *store.DB, order *orders.Order, at settleRead) error {
 	if order.DeliveryNode == "" {
 		return nil // no dest — nothing to hold
 	}
-	node, err := db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil || node == nil {
+	if at.node == nil {
 		// Not readable is not a position to hold here; the caller's
 		// settle-read reports it with the order's id.
 		return nil
 	}
-	held, lane := OneCarrierAt(db, node)
+	held, lane := oneCarrierGiven(db, at.node, at.storage, at.lane)
 	if !held {
 		return nil // line / consume point — nothing to hold
 	}
-	return claimStoreSlotAs(db, order, node, plainGroupDrop(order, lane))
+	return claimStoreSlotAs(db, order, at.node, plainGroupDrop(order, lane))
 }
 
 // OneCarrierAt is holdPosition's rule for a node in hand: a drop there is one
@@ -299,7 +299,15 @@ func holdPosition(db *store.DB, order *orders.Order) error {
 // waited on each other). Whether a complex step's hold on a window would bring
 // that wait back was not established, so its slot reserve does not hold one.
 func OneCarrierAt(db *store.DB, node *nodes.Node) (bool, *nodes.Node) {
-	if storage, lane := storageDropoffOf(db, node); storage {
+	storage, lane := storageDropoffOf(db, node)
+	return oneCarrierGiven(db, node, storage, lane)
+}
+
+// oneCarrierGiven is OneCarrierAt with its storage half already answered for
+// node (storageDropoffOf's storage and lane), so a caller holding that answer
+// reads only the loader home, and only for a node that is not storage.
+func oneCarrierGiven(db *store.DB, node *nodes.Node, storage bool, lane *nodes.Node) (bool, *nodes.Node) {
+	if storage {
 		return true, lane
 	}
 	if node == nil || node.IsSynthetic {
@@ -350,6 +358,29 @@ func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes
 	return stor, nil
 }
 
+// settleRead is a plain order's destination as one settle reads it: the node by
+// its dot-name, nil when the read failed, and storageDropoffOf's answer for it.
+// The settle reads it once and hands it to the dug-lane check, the hold and the
+// back-to-group arm (settleDropoff).
+type settleRead struct {
+	node    *nodes.Node
+	storage bool
+	lane    *nodes.Node
+}
+
+// dropAt is the settle's read of the destination named name: held when the
+// resolve already read that node, else by its dot-name (no read for no name),
+// then its storage answer, one read of the parent. A failed read is a nil node;
+// the settle asks again and reports it with the order's id, as it always did.
+func dropAt(db *store.DB, name string, held *nodes.Node) settleRead {
+	at := settleRead{node: held}
+	if held == nil && name != "" {
+		at.node, _ = db.GetNodeByDotName(name)
+	}
+	at.storage, at.lane = storageDropoffOf(db, at.node)
+	return at
+}
+
 // ReserveStorageDropoff is the Dispatcher-surface (interface) entrypoint the
 // scanner uses to node-drive the plain-path destination hold before a fleet
 // dispatch (holdPosition) — the Stage-3 generalization of the former
@@ -383,21 +414,33 @@ func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
 // arm already chose (ChooseWindowPush): the same re-aim, hold and back-to-group, and
 // no second resolve.
 func (d *Dispatcher) ReserveChosenPush(order *orders.Order, slot *nodes.Node) StorageDropoff {
-	return d.settleDropoff(order, func(o *orders.Order) error { return d.aimStoreAt(o, slot.Name) })
+	return d.settleDropoff(order, func(o *orders.Order) (*nodes.Node, error) { return nil, d.aimStoreAt(o, slot.Name) })
 }
 
-// settleDropoff is the settle with its resolve named.
-func (d *Dispatcher) settleDropoff(order *orders.Order, resolve func(*orders.Order) error) StorageDropoff {
+// settleDropoff is the settle with its resolve named. resolve hands back the
+// destination node it read when it left the order aimed there, else nil.
+//
+// THE DESTINATION IS READ ONCE (2026-11-25): after the resolve, with its storage
+// answer (dropAt), and handed to the dug-lane check, the hold and the
+// back-to-group arm, where each step read it again by its dot-name, the dug-lane
+// check twice and its lane once more (nine node reads a settle on a lane slot,
+// now two). A step that re-aims the order reads the new destination. The
+// settled node returned is that read; only a read that failed is asked again.
+func (d *Dispatcher) settleDropoff(order *orders.Order, resolve func(*orders.Order) (*nodes.Node, error)) StorageDropoff {
 	refuse := func(err error) StorageDropoff {
 		return StorageDropoff{Cause: causeForStorageDropoff(err), Err: err}
 	}
 	asked := order.DeliveryNode
-	if err := resolve(order); err != nil {
+	held, err := resolve(order)
+	if err != nil {
 		return refuse(err)
 	}
 	resolved := order.DeliveryNode != asked
-	d.redirectStoreOffDugLane(order)
-	if err := holdPosition(d.db, order); err != nil {
+	at := dropAt(d.db, order.DeliveryNode, held)
+	if d.redirectStoreOffDugLane(order, at) {
+		at = dropAt(d.db, order.DeliveryNode, nil)
+	}
+	if err := holdPosition(d.db, order, at); err != nil {
 		// A SLOT LOST TO A RACE GOES BACK TO ITS GROUP. The resolved slot was
 		// written onto the order before the claim, so an order that kept it would
 		// wait for that one slot: the winner's bin lands there, and a storage slot
@@ -414,7 +457,7 @@ func (d *Dispatcher) settleDropoff(order *orders.Order, resolve func(*orders.Ord
 			back := ""
 			if resolved {
 				back = asked
-			} else if slot, group := d.groupOfPlainDrop(order); group != "" {
+			} else if slot, group := groupOfPlainDrop(order, at); group != "" {
 				// Its own paper on a slot it cannot have goes with it (a bin landed
 				// there), or the row would hold a slot nobody is coming to.
 				if rErr := d.db.ReleaseSlotReservation(slot.ID, order.ID); rErr != nil {
@@ -433,7 +476,10 @@ func (d *Dispatcher) settleDropoff(order *orders.Order, resolve func(*orders.Ord
 		}
 		return refuse(err)
 	}
-	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	node := at.node
+	if node == nil {
+		node, err = d.db.GetNodeByDotName(order.DeliveryNode)
+	}
 	if err != nil {
 		return refuse(fmt.Errorf("read settled destination %q for order %d: %w",
 			order.DeliveryNode, order.ID, errRead(err)))
@@ -446,14 +492,14 @@ func (d *Dispatcher) settleDropoff(order *orders.Order, resolve func(*orders.Ord
 }
 
 // groupOfPlainDrop is the group a plain order's slot was chosen from, when its
-// drop is a group drop (plainGroupDrop), with the slot; or nil and "".
-func (d *Dispatcher) groupOfPlainDrop(order *orders.Order) (*nodes.Node, string) {
-	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil || node == nil {
+// drop is a group drop (plainGroupDrop), with the slot; or nil and "". at is the
+// destination as the settle read it.
+func groupOfPlainDrop(order *orders.Order, at settleRead) (*nodes.Node, string) {
+	if at.node == nil {
 		return nil, ""
 	}
-	if _, lane := storageDropoffOf(d.db, node); plainGroupDrop(order, lane) {
-		return node, lane.ParentName
+	if plainGroupDrop(order, at.lane) {
+		return at.node, at.lane.ParentName
 	}
 	return nil, ""
 }
@@ -517,24 +563,30 @@ func IsSyntheticUnresolved(err error) bool {
 // group's resolve below is the cap. The scanner's gate arm has usually asked it
 // already, and settled the slot it chose (ReserveChosenPush); a door that holds its bin
 // and comes straight here (HandHeld) asks here.
-func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
+//
+// A concrete destination is handed back as read, for the settle to carry; nil
+// when it re-aimed the order or read nothing.
+func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) (*nodes.Node, error) {
 	if d.resolver == nil || order == nil || order.DeliveryNode == "" {
-		return nil
+		return nil, nil
 	}
 	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil || node == nil || !node.IsSynthetic {
+	if err != nil || node == nil {
 		// A read error is left to the settle-read below, which reports it with
 		// the order id attached rather than swallowing it here.
-		return nil
+		return nil, nil
+	}
+	if !node.IsSynthetic {
+		return node, nil // the settle carries the node it would read again
 	}
 	stated := d.carrierOf(order, node.Name)
 	if WindowPushShaped(order) && node.NodeTypeCode == protocol.NodeClassNGRP {
 		if c := d.pure.ChoosePush(plan.PushAsk{Group: node, Source: order.SourceNode, Stated: stated,
 			Asker: digAskerFor(order)}); c.Applies {
 			if c.Slot == nil {
-				return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: c.Err}
+				return nil, SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: c.Err}
 			}
-			return d.aimStoreAt(order, c.Slot.Name)
+			return nil, d.aimStoreAt(order, c.Slot.Name)
 		}
 	}
 	choice, rErr := d.pure.StoreDrop(node, order.PayloadCode, stated, digAskerFor(order))
@@ -551,9 +603,9 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 		slot, _ = d.pure.OverflowDestination(node, order.PayloadCode, stated, digAskerFor(order))
 	}
 	if slot == "" {
-		return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: rErr}
+		return nil, SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: rErr}
 	}
-	return d.aimStoreAt(order, slot)
+	return nil, d.aimStoreAt(order, slot)
 }
 
 // aimStoreAt is the settle's one re-aim: a group's order aimed at the child chosen
@@ -619,28 +671,28 @@ func (d *Dispatcher) takeOfferedPaper(order *orders.Order, choice plan.DropChoic
 //
 // Best-effort throughout: every doubt leaves the order exactly as it was, and the
 // worst case is the behaviour that existed before this function.
-func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
+//
+// at is the destination as the settle read it (dropAt): the node, and its lane
+// from the storage answer, which is the lane LaneForNode would read again. It
+// reports whether it re-aimed the order, so the settle reads the new one.
+func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order, at settleRead) bool {
 	if d.resolver == nil || order == nil ||
 		(order.OriginClass == protocol.OriginClassNoDemand && order.RecoversOrderID == nil) {
-		return
+		return false
 	}
-	if !isStorageDropoff(d.db, order.DeliveryNode) {
-		return
+	if !at.storage {
+		return false
 	}
-	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil || node == nil {
-		return
-	}
-	lane, err := d.db.LaneForNode(node.ID)
-	if err != nil || lane == nil || lane.ParentID == nil {
-		return // not a lane slot, or a lane with no group to re-select within
+	node, lane := at.node, at.lane
+	if lane == nil || lane.ParentID == nil {
+		return false // not a lane slot, or a lane with no group to re-select within
 	}
 	if !d.laneLock.IsLocked(lane.ID) {
-		return // the ordinary case: the destination is still fine
+		return false // the ordinary case: the destination is still fine
 	}
 	group, err := d.db.GetNode(*lane.ParentID)
 	if err != nil || group == nil {
-		return
+		return false
 	}
 
 	// The resolver's candidate read drops dig-locked lanes, so this either comes
@@ -651,13 +703,13 @@ func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
 	if err != nil || choice.Slot == nil || choice.Slot.ID == node.ID {
 		d.dbg("store: order %d is aimed at %s in dug lane %s and the group has nowhere else — waiting",
 			order.ID, node.Name, lane.Name)
-		return
+		return false
 	}
 	result := &binresolver.ResolveResult{Node: choice.Slot}
 	// A STRANGER'S PAPER THE CHOOSER OFFERED is taken before the old hold goes,
 	// take-before-release: a refused take leaves the order aimed where it was.
 	if !d.takeOfferedPaper(order, choice) {
-		return
+		return false
 	}
 
 	// Drop this order's row on the slot it is no longer going to, so whoever can
@@ -668,16 +720,17 @@ func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
 	if rErr := d.db.ReleaseSlotReservation(node.ID, order.ID); rErr != nil {
 		d.dbg("store: order %d could not release its hold on %s (%v) — leaving it aimed there",
 			order.ID, node.Name, rErr)
-		return
+		return false
 	}
 	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, result.Node.Name); uErr != nil {
 		log.Printf("dispatch: order %d re-aimed off dug lane %s but delivery_node could not be "+
 			"written (%v) — it keeps the old destination and waits", order.ID, lane.Name, uErr)
-		return
+		return false
 	}
 	order.DeliveryNode = result.Node.Name
 	log.Printf("dispatch: order %d re-aimed from %s to %s — a dig took lane %s after the destination "+
 		"was chosen, and the group had somewhere else", order.ID, node.Name, result.Node.Name, lane.Name)
+	return true
 }
 
 // The plain path's confirm-at-dispatch (ConfirmForDispatch) is gone: the slot and the bin are confirmed in the order's

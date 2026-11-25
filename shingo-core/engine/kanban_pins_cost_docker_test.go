@@ -85,8 +85,9 @@ const (
 	// `dispatched`, its history and its tell in a transaction of its own, where
 	// the vendor id was one bare statement (+BEGIN, +COMMIT).
 	// 50 since the lane questions ask LaneOf of the nodes the pass holds: node
-	// reads by id that only read again a node in hand (2026-11-25).
-	parkedPass = 50
+	// reads by id that only read again a node in hand (2026-11-25). 47 since the
+	// destination's settle reads its node once (dispatch.settleDropoff).
+	parkedPass = 47
 	// cancelReturnDoor is the cancel-return's store of a window's cancelled push into
 	// K, Z45 short: the position's loader, the door's one read, Z45's three.
 	cancelReturnDoor = 5
