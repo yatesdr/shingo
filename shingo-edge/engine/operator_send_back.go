@@ -233,10 +233,13 @@ func (e *Engine) sendBackRefusal(node *processes.Node, c sendBackCell, f domain.
 	return fmt.Errorf("%s: nothing to send back", node.Name)
 }
 
-// CancelSendBack aborts SEND BACK's orders on the press at nodeID that have
+// CancelSendBack cancels SEND BACK's orders on the press at nodeID that have
 // not moved (protocol.ChangeoverStartActionFor says Cancel), under the line's
-// lock. A moving one finishes. The existing abort door would abort a moving
-// one too, so this asks first.
+// lock. A moving one finishes. The one cancel door would cancel a moving one
+// too, so this asks first. Each cancel asks Core (orders.Manager.AskCancel),
+// and the count is of the cancels now out: an order whose cancel is already
+// sent and unanswered is counted, and nothing is sent for it again. It does
+// not wait for Core: it holds the line's lock.
 func (e *Engine) CancelSendBack(nodeID int64) (int, error) {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -264,7 +267,7 @@ func (e *Engine) CancelSendBack(nodeID int64) (int, error) {
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
-		if err := e.orderMgr.CancelOrderWithReason(o.ID, "SEND BACK cancelled at "+node.Name); err != nil {
+		if err := e.orderMgr.AskCancel(o.ID, ordermgr.CancelAsk{Reason: "SEND BACK cancelled at " + node.Name}); err != nil {
 			return n, fmt.Errorf("cancel order %d: %w", o.ID, err)
 		}
 		n++

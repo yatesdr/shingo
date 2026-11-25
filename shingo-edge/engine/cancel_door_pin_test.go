@@ -389,8 +389,11 @@ func TestCancelDoorPin_IdleRule(t *testing.T) {
 
 // TestCancelDoorPin_CancelSendBack: CANCEL on a press whose SEND BACK has not
 // moved (CancelSendBack): both of SEND BACK's orders cancelled with its
-// reason, and the count of them is what the tap answers. Today both end at
-// the tap; Core's word moves nothing on the ended rows.
+// reason, asking Core (final brief 5g), and the count of them is what the tap
+// answers. After the tap both keep Core's status and read cancel sent on the
+// outside's tile; a second CANCEL counts them again and sends nothing. Core's
+// word ends each. Until 2026-11-25 both ended at the tap, and Core's word
+// moved nothing.
 func TestCancelDoorPin_CancelSendBack(t *testing.T) {
 	t.Parallel()
 	c := seedSendBackPress(t, testEngineDB(t))
@@ -404,11 +407,14 @@ func TestCancelDoorPin_CancelSendBack(t *testing.T) {
 	testutil.MustNoErr(t, err, "the press")
 	reason := "SEND BACK cancelled at " + press.Name
 	var want []map[string]any
+	var tile []string
 	statusAt := map[int64]protocol.Status{}
 	for _, id := range ids {
-		want = append(want, cancelOf(p.row(id).UUID, reason, ""))
+		want = append(want, askOf(p.row(id).UUID, reason, ""))
 		statusAt[id] = p.row(id).Status
+		tile = append(tile, fmt.Sprintf("%d %s cancel_sent=true", id, statusAt[id]))
 	}
+	sort.Strings(tile)
 
 	n, err := c.eng.CancelSendBack(c.press)
 	testutil.MustNoErr(t, err, "CANCEL")
@@ -418,11 +424,18 @@ func TestCancelDoorPin_CancelSendBack(t *testing.T) {
 	}
 	outside, err := c.db.GetProcessNode(c.outside)
 	testutil.MustNoErr(t, err, "the outside")
-	expectLines(t, "the outside's tile after the tap", p.tile(c.outside, outside.CoreNodeName))
+	expectLines(t, "the outside's tile after the tap", p.tile(c.outside, outside.CoreNodeName), tile...)
 	p.expectSent("the tap", want...)
+	p.drain()
+	n, err = c.eng.CancelSendBack(c.press)
+	testutil.MustNoErr(t, err, "CANCEL again")
+	if n != 2 {
+		t.Errorf("a second CANCEL answered %d, want the two cancels still out", n)
+	}
+	p.expectSent("the second tap")
 	for _, id := range ids {
-		if s := p.row(id).Status; s != orders.StatusCancelled {
-			t.Errorf("order %d reads %s after the tap, want cancelled", id, s)
+		if s := p.row(id).Status; s != statusAt[id] {
+			t.Errorf("order %d reads %s after the tap, want %s: Core's status until its word", id, s, statusAt[id])
 		}
 		p.coreCancels(id, reason, statusAt[id])
 		if s := p.row(id).Status; s != orders.StatusCancelled {
