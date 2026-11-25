@@ -212,8 +212,8 @@ func (e *Engine) pointProcessAtStyle(processID int64, styleID *int64) error {
 // wired at the composition root). The notifier's own errors are logged
 // inside the closure — a failed publish must not surface as a flip failure.
 func (e *Engine) publishPlantClaims(processID int64) {
-	if e.plantClaimsFn != nil {
-		e.plantClaimsFn(processID)
+	if fn := loaded(&e.plantClaimsFn); fn != nil {
+		fn(processID)
 	}
 }
 

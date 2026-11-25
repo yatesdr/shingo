@@ -250,20 +250,25 @@ type Engine struct {
 	// cache, so a station board knows its bin list (buffer spots, outbound
 	// groups) may have moved. In memory: the list is rebuilt after a restart.
 	loaderGeneration atomic.Uint64
-	nodeSyncFn       func()
-	catalogSyncFn    func()
-	sendFn           func(*protocol.Envelope) error
-	kafkaReconnFn    func() error
+	// The hooks main.go sets after Start (docket D31): each is set on main or
+	// on the kafka-connect-retry goroutine while a web handler, the
+	// heartbeater or one of the engine's own loops may read it, so each is an
+	// atomic.Pointer, set with Store and read through loaded. PIN:
+	// TestEngine_HooksAreSetAndReadOnTwoGoroutines.
+	nodeSyncFn    atomic.Pointer[func()]
+	catalogSyncFn atomic.Pointer[func()]
+	sendFn        atomic.Pointer[func(*protocol.Envelope) error]
+	kafkaReconnFn atomic.Pointer[func() error]
 	// heartbeatBodyFn builds the heartbeat as this Edge's heartbeater sends it
-	// (SetHeartbeatBodyFunc). Atomic: main.go wires it with the heartbeater,
-	// which on the Kafka retry path is after the web server is up and the
-	// debug page can read it (HeartbeatBody).
+	// (SetHeartbeatBodyFunc). main.go wires it on the kafka-connect-retry
+	// goroutine after the heartbeater's boot burst, while the web server that
+	// serves the debug page reading it (HeartbeatBody) may already be up.
 	heartbeatBodyFn atomic.Pointer[func() *protocol.EdgeHeartbeat]
 	// plantClaimsFn publishes one process's plant.claims report so Core's
 	// mirror follows an active-style flip within one message instead of
 	// waiting for the snapshot. Wired at the composition root; nil in
 	// tests that don't assert the publish (call sites nil-guard).
-	plantClaimsFn func(processID int64)
+	plantClaimsFn atomic.Pointer[func(processID int64)]
 	// claimsSource reads and sends this Edge's plant claims for the claims
 	// family of the owned map (owned.go, SetClaimsSource), and cellCatalogFn
 	// reads its cell catalog for the cells family (SetCellCatalogFunc). Both
@@ -341,14 +346,16 @@ type Engine struct {
 	// shape appeared in the 2026-07-31 over-ordering incident; deleting it is the
 	// durable fix, not a tidy-up.
 
-	kafkaConnFn func() bool
+	// kafkaConnFn and the two below are hooks main.go sets after Start, atomic
+	// as the ones above are (D31).
+	kafkaConnFn atomic.Pointer[func() bool]
 	// kafkaLastPublishFn reports the outcome of the most recent publish
 	// attempt. Injected like kafkaConnFn so the engine keeps no hard
 	// dependency on the messaging package.
-	kafkaLastPublishFn func() (bool, time.Time, bool)
+	kafkaLastPublishFn atomic.Pointer[func() (bool, time.Time, bool)]
 	// productionTickLagFn reports the production tick shipper's backlog for
 	// /status. Injected for the same reason.
-	productionTickLagFn func() (pending, oldestAgeMS int64, err error)
+	productionTickLagFn atomic.Pointer[func() (pending, oldestAgeMS int64, err error)]
 
 	// The pending market-pullback intent is NOT here: it lives on the order
 	// row (orders.pending_intent, order_intent.go) so an Edge restart between
@@ -659,23 +666,24 @@ func (e *Engine) MarkSubscribersWired() {
 // connected to Kafka. Returns false if the client is nil (test
 // fixtures) or if the connection has not been established.
 func (e *Engine) KafkaConnected() bool {
-	if e.kafkaConnFn == nil {
+	fn := loaded(&e.kafkaConnFn)
+	if fn == nil {
 		return false
 	}
-	return e.kafkaConnFn()
+	return fn()
 }
 
 // SetKafkaConnFunc injects the messaging client's IsConnected
 // closure so the engine can report it via /status without taking
 // a hard dependency on the messaging package.
 func (e *Engine) SetKafkaConnFunc(fn func() bool) {
-	e.kafkaConnFn = fn
+	e.kafkaConnFn.Store(&fn)
 }
 
 // SetKafkaLastPublishFunc injects the messaging client's LastPublish
 // closure. Same indirection as SetKafkaConnFunc.
 func (e *Engine) SetKafkaLastPublishFunc(fn func() (bool, time.Time, bool)) {
-	e.kafkaLastPublishFn = fn
+	e.kafkaLastPublishFn.Store(&fn)
 }
 
 // SetProductionTickNotifier wires the PLC poll pass to the production tick
@@ -690,7 +698,7 @@ func (e *Engine) SetProductionTickNotifier(fn func()) {
 // SetProductionTickLagFunc injects the production tick shipper's Lag, for
 // /status.
 func (e *Engine) SetProductionTickLagFunc(fn func() (pending, oldestAgeMS int64, err error)) {
-	e.productionTickLagFn = fn
+	e.productionTickLagFn.Store(&fn)
 }
 
 // errNoTickShipper is what /status shows before the shipper is wired.
@@ -700,10 +708,11 @@ var errNoTickShipper = errors.New("production tick shipper not running")
 // the age in ms of the oldest of them. A shipper that stalls says so nowhere
 // else.
 func (e *Engine) ProductionTickLag() (pending, oldestAgeMS int64, err error) {
-	if e.productionTickLagFn == nil {
+	fn := loaded(&e.productionTickLagFn)
+	if fn == nil {
 		return 0, 0, errNoTickShipper
 	}
-	return e.productionTickLagFn()
+	return fn()
 }
 
 // KafkaLastPublish reports the outcome of the most recent publish attempt:
@@ -714,10 +723,11 @@ func (e *Engine) ProductionTickLag() (pending, oldestAgeMS int64, err error) {
 // Connect until shutdown, because Connect performs no I/O. During the
 // Springfield outage of 2026-08-21 KafkaConnected read true throughout.
 func (e *Engine) KafkaLastPublish() (bool, time.Time, bool) {
-	if e.kafkaLastPublishFn == nil {
+	fn := loaded(&e.kafkaLastPublishFn)
+	if fn == nil {
 		return false, time.Time{}, false
 	}
-	return e.kafkaLastPublishFn()
+	return fn()
 }
 
 // StationID returns the station identifier from config.
@@ -960,35 +970,45 @@ func (e *Engine) CoreNodes() map[string]protocol.NodeInfo {
 
 // ── Func injection (wired by main.go) ───────────────────────────────
 
+// loaded is the hook a Store left in p: nil when none was stored, or when nil
+// was. Every read of a hook main.go sets goes through here (D31).
+func loaded[F any](p *atomic.Pointer[F]) F {
+	if fn := p.Load(); fn != nil {
+		return *fn
+	}
+	var none F
+	return none
+}
+
 // SetNodeSyncFunc sets the function to call when a node sync is requested.
 func (e *Engine) SetNodeSyncFunc(fn func()) {
-	e.nodeSyncFn = fn
+	e.nodeSyncFn.Store(&fn)
 }
 
 // RequestNodeSync triggers a node list request to core.
 func (e *Engine) RequestNodeSync() {
-	if e.nodeSyncFn != nil {
-		e.nodeSyncFn()
+	if fn := loaded(&e.nodeSyncFn); fn != nil {
+		fn()
 	}
 }
 
 // SetCatalogSyncFunc sets the function to call when a payload catalog sync is requested.
 func (e *Engine) SetCatalogSyncFunc(fn func()) {
-	e.catalogSyncFn = fn
+	e.catalogSyncFn.Store(&fn)
 }
 
 // SetPlantClaimsFunc injects the plant-claims publisher's changed-process
 // publish, so a flip verb (lineside_strand.go) can tell Core about the new
 // running style without the engine taking a dependency on the messaging
-// package — the same indirection as SetSendFunc above.
+// package — the same indirection as SetSendFunc below.
 func (e *Engine) SetPlantClaimsFunc(fn func(processID int64)) {
-	e.plantClaimsFn = fn
+	e.plantClaimsFn.Store(&fn)
 }
 
 // RequestCatalogSync triggers a payload catalog request to core.
 func (e *Engine) RequestCatalogSync() {
-	if e.catalogSyncFn != nil {
-		e.catalogSyncFn()
+	if fn := loaded(&e.catalogSyncFn); fn != nil {
+		fn()
 	}
 }
 
@@ -1000,14 +1020,15 @@ func (e *Engine) SetHeartbeatBodyFunc(fn func() *protocol.EdgeHeartbeat) {
 }
 
 // HeartbeatBody is the heartbeat this Edge's heartbeater would send now, as
-// the heartbeater builds it; nil while none is wired (messaging not yet
-// connected). The debug page sends it as its edge.heartbeat: Core's ack goes
+// the heartbeater builds it; nil while none is wired (main.go wires it after
+// the heartbeater's boot burst, cmd/shingoedge setupKafkaSubscribers). The
+// debug page sends it as its edge.heartbeat: Core's ack goes
 // to this Edge whoever sent the heartbeat, and the Edge takes the ack's ask
 // kinds, feed confirmations and owned answers as the answer to its own
 // digests (OnCoreAck), so the heartbeat must quote them.
 func (e *Engine) HeartbeatBody() *protocol.EdgeHeartbeat {
-	if fn := e.heartbeatBodyFn.Load(); fn != nil && *fn != nil {
-		return (*fn)()
+	if fn := loaded(&e.heartbeatBodyFn); fn != nil {
+		return fn()
 	}
 	return nil
 }
@@ -1063,27 +1084,29 @@ func catalogEntryOf(b protocol.CatalogPayloadInfo) *catalog.CatalogEntry {
 
 // SetSendFunc sets the function used to publish protocol envelopes.
 func (e *Engine) SetSendFunc(fn func(*protocol.Envelope) error) {
-	e.sendFn = fn
+	e.sendFn.Store(&fn)
 }
 
 // SetKafkaReconnectFunc sets the function to reconnect the Kafka client
 // after broker configuration changes at runtime.
 func (e *Engine) SetKafkaReconnectFunc(fn func() error) {
-	e.kafkaReconnFn = fn
+	e.kafkaReconnFn.Store(&fn)
 }
 
 // ReconnectKafka triggers a Kafka client reconnection using the current config.
 func (e *Engine) ReconnectKafka() error {
-	if e.kafkaReconnFn == nil {
+	fn := loaded(&e.kafkaReconnFn)
+	if fn == nil {
 		return fmt.Errorf("kafka reconnect not configured")
 	}
-	return e.kafkaReconnFn()
+	return fn()
 }
 
 // SendEnvelope publishes a protocol envelope via the configured send function.
 func (e *Engine) SendEnvelope(env *protocol.Envelope) error {
-	if e.sendFn == nil {
+	send := loaded(&e.sendFn)
+	if send == nil {
 		return fmt.Errorf("send function not configured (messaging not connected)")
 	}
-	return e.sendFn(env)
+	return send(env)
 }

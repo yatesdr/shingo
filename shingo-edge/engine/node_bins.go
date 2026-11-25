@@ -308,7 +308,8 @@ func (e *Engine) PublishBinWatchAtBoot(publish func(*protocol.BinWatchList) erro
 // sendBinWatchMember sends the list the family holds (the empty list when this
 // Edge watches none) to a Core quoting quoted, through the resend guard.
 func sendBinWatchMember(e *Engine, h ownedHeld, _, quoted string) bool {
-	if e.sendFn == nil {
+	send := loaded(&e.sendFn)
+	if send == nil {
 		return true
 	}
 	if !e.sendDue(binWatchKey, h.raw, quoted) {
@@ -325,7 +326,7 @@ func sendBinWatchMember(e *Engine, h ownedHeld, _, quoted string) bool {
 		e.logFn("feeds: build bins watch: %v", err)
 		return true
 	}
-	if err := e.sendFn(env); err != nil {
+	if err := send(env); err != nil {
 		e.logFn("feeds: publish bins watch (%d nodes): %v — the next ack asks again", len(nodes), err)
 	}
 	return true

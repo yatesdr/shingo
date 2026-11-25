@@ -48,7 +48,8 @@ func (s *CoreSyncService) StartupReconcile() error {
 // answer, and the hole would never close.
 func (s *CoreSyncService) RequestOrderStatusSync() error {
 	e := s.engine
-	if e.sendFn == nil {
+	send := loaded(&e.sendFn)
+	if send == nil {
 		return fmt.Errorf("send function not configured (messaging not connected)")
 	}
 	orders, err := e.db.ListActiveOrders()
@@ -68,7 +69,7 @@ func (s *CoreSyncService) RequestOrderStatusSync() error {
 	if err != nil {
 		return err
 	}
-	return e.sendFn(env)
+	return send(env)
 }
 
 func (s *CoreSyncService) HandleOrderStatusSnapshots(items []protocol.OrderStatusSnapshot) {
