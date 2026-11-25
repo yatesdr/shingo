@@ -2743,6 +2743,10 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: the file header (the moment f exists only where the changeover sends a swap robot)
 - verified at: the commit that adds this row
+- restored (final brief 2b, 2026-11-25): a one-position sequential cell, a one-node line, plans one changeover
+  leg that waits at the line, so `{consume,produce}/sequential/f` drive a real swap robot again and run (green);
+  `{consume,produce}/sequential/{e,e-held}` leave the cell instead (`ksrDigOnTheSpotsRefill`): with a leg that
+  fetches from the spot, Core sources B for the leg itself and the spot's refill never digs. 58 leaves to 56
 
 ### DUP — `TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs`
 - test: `TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs` · pkg `shingo/integration/scenarios` · run `-run '^TestScenario_KeepStagedChangeover_CancelledWhileItsOwnFetchDigs$/^(two_robot|single_robot)$/^blocker-part-unclaimed$'` · `integration/scenarios/keep_staged_changeover_dig_cancel_test.go:26` @ `10f1b27f` · tags `docker`

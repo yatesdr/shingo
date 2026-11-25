@@ -28,7 +28,8 @@ import (
 // ── WHY A WALKER AND NOT A TABLE ──────────────────────────────────────────
 //
 // A table asserts what its author already believed. This walks
-// ConfigurableSwapModes × both flip states × 2- and 3-position, so a swap mode
+// ConfigurableSwapModes × both flip states × 2- and 3-position (and Sequential
+// A/B with no partner too, standardPartners), so a swap mode
 // added to that list is a mode this test covers on the day it is added — which
 // is the only way "every mode must work" can be a property rather than a
 // promise. The positional confirm literals this replaces were correct for
@@ -40,85 +41,91 @@ func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
 				for _, keep := range []bool{false, true} {
-					// Keep-staged is a dimension of every swap mode: its swap is the
-					// same cell's choreography fetching from the spot, and it is held
-					// to the same standard. A loader card has no swap to fetch for.
-					if keep && mode == protocol.SwapModeManualSwap {
-						continue
-					}
-					name := string(mode)
-					if flipped {
-						name += "/flipped"
-					}
-					if second != "" {
-						name += "/3pos"
-					}
-					if keep {
-						name += "/keep_staged"
-					}
-					t.Run(name, func(t *testing.T) {
-						t.Parallel()
-						claim := standardClaim(mode, second, flipped)
+					for _, partner := range standardPartners(mode) {
+						// Keep-staged is a dimension of every swap mode: its swap is the
+						// same cell's choreography fetching from the spot, and it is held
+						// to the same standard. A loader card has no swap to fetch for.
+						if keep && mode == protocol.SwapModeManualSwap {
+							continue
+						}
+						name := string(mode)
+						if flipped {
+							name += "/flipped"
+						}
+						if second != "" {
+							name += "/3pos"
+						}
 						if keep {
-							claim.KeepStagedNode = "STANDARD-SPOT"
+							name += "/keep_staged"
 						}
-						disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
-						if err != nil {
-							t.Fatalf("BuildSwapDispatch: %v", err)
+						if partner == "" {
+							name += "/no_partner"
 						}
-						if disp == nil {
-							// manual_swap issues no complex orders — it uses a
-							// multi-order queue and has no swap choreography to
-							// depart from. Nothing to walk.
-							return
-						}
+						t.Run(name, func(t *testing.T) {
+							t.Parallel()
+							claim := standardClaim(mode, second, flipped)
+							claim.PairedCoreNode = partner
+							if keep {
+								claim.KeepStagedNode = "STANDARD-SPOT"
+							}
+							disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
+							if err != nil {
+								t.Fatalf("BuildSwapDispatch: %v", err)
+							}
+							if disp == nil {
+								// manual_swap issues no complex orders — it uses a
+								// multi-order queue and has no swap choreography to
+								// depart from. Nothing to walk.
+								return
+							}
 
-						cell := cellSetFor(claim)
-						legs := []struct {
-							label string
-							steps []protocol.ComplexOrderStep
-							auto  bool
-						}{
-							{"leg A", disp.StepsA, disp.AutoConfirmA},
-							{"leg B", disp.StepsB, disp.AutoConfirmB},
-						}
-						if mode == protocol.SwapModeSequential {
-							// SEQUENTIAL'S OTHER HALF IS NOT IN THE DISPATCH. Its
-							// backfill leg is minted later by ensureSequentialBackfill
-							// when the removal is released at the line, and it never passes
-							// through BuildSwapDispatch — so a walker that only read
-							// the dispatch would certify half a cycle. It runs at the
-							// cell like any other leg and is held to the same standard.
-							// createComplexOrder gives it autoConfirm=false.
-							legs = append(legs, struct {
+							cell := cellSetFor(claim)
+							legs := []struct {
 								label string
 								steps []protocol.ComplexOrderStep
 								auto  bool
-							}{"backfill leg (auto-created)", BuildSequentialBackfillSteps(claim), false})
-						}
-						receipts := 0
-						for _, leg := range legs {
-							if len(leg.steps) == 0 {
-								continue
+							}{
+								{"leg A", disp.StepsA, disp.AutoConfirmA},
+								{"leg B", disp.StepsB, disp.AutoConfirmB},
 							}
-							assertDepartureIsProvable(t, leg.label, mode, leg.steps, cell)
-							assertConfirmFollowsPlacement(t, leg.label, leg.steps, claim.CoreNodeName, leg.auto)
-							if protocol.PlacesBinAt(leg.steps, claim.CoreNodeName) {
-								receipts++
+							if mode == protocol.SwapModeSequential {
+								// SEQUENTIAL'S OTHER HALF IS NOT IN THE DISPATCH. Its
+								// backfill leg is minted later by ensureSequentialBackfill
+								// when the removal is released at the line, and it never passes
+								// through BuildSwapDispatch — so a walker that only read
+								// the dispatch would certify half a cycle. It runs at the
+								// cell like any other leg and is held to the same standard.
+								// createComplexOrder gives it autoConfirm=false.
+								legs = append(legs, struct {
+									label string
+									steps []protocol.ComplexOrderStep
+									auto  bool
+								}{"backfill leg (auto-created)", BuildSequentialBackfillSteps(claim), false})
 							}
-						}
-						// EXACTLY ONE, not "at least one". Zero means the cycle puts
-						// nothing on the machine and nobody ever counts a bin in; two
-						// means the operator taps twice for one swap, which is what the
-						// whole-cell rule cost unflipped press-index (R1's index
-						// backfill alongside R2's press placement).
-						if receipts != 1 {
-							t.Errorf("this cycle asks for %d operator receipts; exactly one leg must leave a bin "+
-								"on %s. Zero means nothing lands on the machine; more than one means the operator "+
-								"signs twice for one swap.\nA: %v\nB: %v",
-								receipts, claim.CoreNodeName, disp.StepsA, disp.StepsB)
-						}
-					})
+							receipts := 0
+							for _, leg := range legs {
+								if len(leg.steps) == 0 {
+									continue
+								}
+								assertDepartureIsProvable(t, leg.label, mode, leg.steps, cell)
+								assertConfirmFollowsPlacement(t, leg.label, leg.steps, claim.CoreNodeName, leg.auto)
+								if protocol.PlacesBinAt(leg.steps, claim.CoreNodeName) {
+									receipts++
+								}
+							}
+							// EXACTLY ONE, not "at least one". Zero means the cycle puts
+							// nothing on the machine and nobody ever counts a bin in; two
+							// means the operator taps twice for one swap, which is what the
+							// whole-cell rule cost unflipped press-index (R1's index
+							// backfill alongside R2's press placement).
+							if receipts != 1 {
+								t.Errorf("this cycle asks for %d operator receipts; exactly one leg must leave a bin "+
+									"on %s. Zero means nothing lands on the machine; more than one means the operator "+
+									"signs twice for one swap.\nA: %v\nB: %v",
+									receipts, claim.CoreNodeName, disp.StepsA, disp.StepsB)
+							}
+						})
+					}
 				}
 			}
 		}
@@ -218,52 +225,58 @@ func TestEveryChangeoverLegDepartsProvably(t *testing.T) {
 	modes := withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode))
 	for _, mode := range modes {
 		for _, second := range []string{"", "STANDARD-C"} {
-			name := string(mode)
-			if second != "" {
-				name += "/3pos"
-			}
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-				// ONE GEOMETRY, TWO STYLES. from and to are the same physical
-				// cell — a changeover swaps the payload, not the node names —
-				// so cellSetFor is the same set either way, which is what makes
-				// the question well-posed: the stamp resolves the claim through
-				// requestedClaimAtNode and does not know which of the two it got.
-				from := standardClaim(mode, second, false)
-				to := standardClaim(mode, second, false)
-				to.PayloadCode = "WIDGET-B"
-				cell := cellSetFor(from)
-
-				for _, situation := range []struct {
-					label string
-					disp  ChangeoverDispatch
-				}{
-					{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
-					{"tool change", ChangeoverDispatch{StepsA: toolChangeLeg(from, to)}},
-				} {
-					legs := map[string][]protocol.ComplexOrderStep{
-						situation.label + " A": situation.disp.StepsA,
-						situation.label + " B": situation.disp.StepsB,
-					}
-					if r := situation.disp.Roles; r != nil {
-						legs[situation.label+" supply"] = r.supply.steps
-						legs[situation.label+" evac"] = r.evac.steps
-					}
-					walked := 0
-					for label, steps := range legs {
-						if len(steps) == 0 {
-							continue
-						}
-						walked++
-						assertDepartureIsProvable(t, label, mode, steps, cell)
-					}
-					if walked == 0 {
-						t.Errorf("%s changeover for %s produced no legs at all, so this mode is walked "+
-							"vacuously. Either the claim fixture is missing a field the builder needs, or "+
-							"the builder has an arm that returns nothing", situation.label, mode)
-					}
+			for _, partner := range standardPartners(mode) {
+				name := string(mode)
+				if second != "" {
+					name += "/3pos"
 				}
-			})
+				if partner == "" {
+					name += "/no_partner"
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					// ONE GEOMETRY, TWO STYLES. from and to are the same physical
+					// cell — a changeover swaps the payload, not the node names —
+					// so cellSetFor is the same set either way, which is what makes
+					// the question well-posed: the stamp resolves the claim through
+					// requestedClaimAtNode and does not know which of the two it got.
+					from := standardClaim(mode, second, false)
+					to := standardClaim(mode, second, false)
+					from.PairedCoreNode, to.PairedCoreNode = partner, partner
+					to.PayloadCode = "WIDGET-B"
+					cell := cellSetFor(from)
+
+					for _, situation := range []struct {
+						label string
+						disp  ChangeoverDispatch
+					}{
+						{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
+						{"tool change", ChangeoverDispatch{StepsA: toolChangeLeg(from, to)}},
+					} {
+						legs := map[string][]protocol.ComplexOrderStep{
+							situation.label + " A": situation.disp.StepsA,
+							situation.label + " B": situation.disp.StepsB,
+						}
+						if r := situation.disp.Roles; r != nil {
+							legs[situation.label+" supply"] = r.supply.steps
+							legs[situation.label+" evac"] = r.evac.steps
+						}
+						walked := 0
+						for label, steps := range legs {
+							if len(steps) == 0 {
+								continue
+							}
+							walked++
+							assertDepartureIsProvable(t, label, mode, steps, cell)
+						}
+						if walked == 0 {
+							t.Errorf("%s changeover for %s produced no legs at all, so this mode is walked "+
+								"vacuously. Either the claim fixture is missing a field the builder needs, or "+
+								"the builder has an arm that returns nothing", situation.label, mode)
+						}
+					}
+				})
+			}
 		}
 	}
 }
@@ -309,21 +322,34 @@ func TestTheStandardCoversEveryConfigurableMode(t *testing.T) {
 		}
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
-				d, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: "STANDARD-A"},
-					standardClaim(mode, second, flipped))
-				if err != nil {
-					t.Errorf("mode %s (flipped=%v, second=%q) fails to build: %v — the standard walks it "+
-						"vacuously", mode, flipped, second, err)
-					continue
-				}
-				if d == nil || len(d.StepsA) == 0 {
-					t.Errorf("mode %s (flipped=%v, second=%q) produces no leg A, so the standard walks it "+
-						"vacuously. Either the claim fixture is missing a field this builder needs, or the "+
-						"builder has an arm that returns nothing", mode, flipped, second)
+				for _, partner := range standardPartners(mode) {
+					claim := standardClaim(mode, second, flipped)
+					claim.PairedCoreNode = partner
+					d, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: "STANDARD-A"}, claim)
+					if err != nil {
+						t.Errorf("mode %s (flipped=%v, second=%q, partner=%q) fails to build: %v — the standard "+
+							"walks it vacuously", mode, flipped, second, partner, err)
+						continue
+					}
+					if d == nil || len(d.StepsA) == 0 {
+						t.Errorf("mode %s (flipped=%v, second=%q, partner=%q) produces no leg A, so the standard "+
+							"walks it vacuously. Either the claim fixture is missing a field this builder needs, "+
+							"or the builder has an arm that returns nothing", mode, flipped, second, partner)
+					}
 				}
 			}
 		}
 	}
+}
+
+// standardPartners is the partner the walkers give a mode's claim: the one
+// standardClaim names, and for Sequential A/B also none, a one-node line
+// (final brief 2b), whose legs are held to the same standard.
+func standardPartners(mode protocol.SwapMode) []string {
+	if mode == protocol.SwapModeSequential {
+		return []string{"STANDARD-B", ""}
+	}
+	return []string{"STANDARD-B"}
 }
 
 // TestOnlySingleRobotDepartsWhileItStillOwesAPlacement is consequence 3, and it
@@ -347,27 +373,31 @@ func TestTheStandardCoversEveryConfigurableMode(t *testing.T) {
 func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
 	t.Parallel()
 
-	// Steady state: ConfigurableSwapModes × both flip states × 2- and 3-position.
+	// Steady state: ConfigurableSwapModes × both flip states × 2- and 3-position,
+	// and Sequential A/B with no partner as well (standardPartners).
 	steady := map[string]bool{}
 	for _, mode := range withManualSwap(protocol.ConfigurableSwapModes()) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
-				claim := standardClaim(mode, second, flipped)
-				disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
-				if err != nil || disp == nil {
-					continue
-				}
-				cell := cellSetFor(claim)
-				legs := map[string][]protocol.ComplexOrderStep{
-					"leg A": disp.StepsA,
-					"leg B": disp.StepsB,
-				}
-				if mode == protocol.SwapModeSequential {
-					legs["backfill leg"] = BuildSequentialBackfillSteps(claim)
-				}
-				for label, steps := range legs {
-					if departsWhileOwingAPlacement(steps, cell, claim.CoreNodeName) {
-						steady[string(mode)+" "+label] = true
+				for _, partner := range standardPartners(mode) {
+					claim := standardClaim(mode, second, flipped)
+					claim.PairedCoreNode = partner
+					disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
+					if err != nil || disp == nil {
+						continue
+					}
+					cell := cellSetFor(claim)
+					legs := map[string][]protocol.ComplexOrderStep{
+						"leg A": disp.StepsA,
+						"leg B": disp.StepsB,
+					}
+					if mode == protocol.SwapModeSequential {
+						legs["backfill leg"] = BuildSequentialBackfillSteps(claim)
+					}
+					for label, steps := range legs {
+						if departsWhileOwingAPlacement(steps, cell, claim.CoreNodeName) {
+							steady[string(mode)+" "+label] = true
+						}
 					}
 				}
 			}
@@ -386,28 +416,31 @@ func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
 	changeover := map[string]bool{}
 	for _, mode := range withManualSwap(append(protocol.ConfigurableSwapModes(), pressPositionSwapMode)) {
 		for _, second := range []string{"", "STANDARD-C"} {
-			from := standardClaim(mode, second, false)
-			to := standardClaim(mode, second, false)
-			to.PayloadCode = "WIDGET-B"
-			cell := cellSetFor(from)
-			for _, situation := range []struct {
-				label string
-				disp  ChangeoverDispatch
-			}{
-				{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
-				{"tool change", ChangeoverDispatch{StepsA: toolChangeLeg(from, to)}},
-			} {
-				legs := map[string][]protocol.ComplexOrderStep{
-					"A": situation.disp.StepsA,
-					"B": situation.disp.StepsB,
-				}
-				if r := situation.disp.Roles; r != nil {
-					legs["supply"] = r.supply.steps
-					legs["evac"] = r.evac.steps
-				}
-				for label, steps := range legs {
-					if departsWhileOwingAPlacement(steps, cell, from.CoreNodeName) {
-						changeover[string(mode)+" "+situation.label+" "+label] = true
+			for _, partner := range standardPartners(mode) {
+				from := standardClaim(mode, second, false)
+				to := standardClaim(mode, second, false)
+				from.PairedCoreNode, to.PairedCoreNode = partner, partner
+				to.PayloadCode = "WIDGET-B"
+				cell := cellSetFor(from)
+				for _, situation := range []struct {
+					label string
+					disp  ChangeoverDispatch
+				}{
+					{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
+					{"tool change", ChangeoverDispatch{StepsA: toolChangeLeg(from, to)}},
+				} {
+					legs := map[string][]protocol.ComplexOrderStep{
+						"A": situation.disp.StepsA,
+						"B": situation.disp.StepsB,
+					}
+					if r := situation.disp.Roles; r != nil {
+						legs["supply"] = r.supply.steps
+						legs["evac"] = r.evac.steps
+					}
+					for label, steps := range legs {
+						if departsWhileOwingAPlacement(steps, cell, from.CoreNodeName) {
+							changeover[string(mode)+" "+situation.label+" "+label] = true
+						}
 					}
 				}
 			}

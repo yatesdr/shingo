@@ -65,15 +65,15 @@ rowColumns    single_robot          produce staging no-back | staging      field
 rowColumns    single_robot          produce staging no-back | parkOld      field=outbound_staging        label="Outbound staging"        value=""      required=true  possible=true
 rowColumns    single_robot          produce staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=true  possible=true
 rowColumns    single_robot          produce staging set     | parkOld      field=outbound_staging        label="Outbound staging"        value="STG_2" required=true  possible=true
-rowColumns    sequential            consume partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
-rowColumns    sequential            consume partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
-rowColumns    sequential            consume partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=true  possible=true
+rowColumns    sequential            consume partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=false possible=true
+rowColumns    sequential            consume partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=false possible=true
+rowColumns    sequential            consume partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=false possible=true
 rowColumns    sequential            consume staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
 rowColumns    sequential            consume staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
 rowColumns    sequential            consume staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=false possible=true
-rowColumns    sequential            produce partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
-rowColumns    sequential            produce partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=true  possible=true
-rowColumns    sequential            produce partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=true  possible=true
+rowColumns    sequential            produce partner blank   | paired       field=paired_core_node        label="Paired core node"        value=""      required=false possible=true
+rowColumns    sequential            produce partner no-back | paired       field=paired_core_node        label="Paired core node"        value=""      required=false possible=true
+rowColumns    sequential            produce partner set     | paired       field=paired_core_node        label="Paired core node"        value="BK_1"  required=false possible=true
 rowColumns    sequential            produce staging blank   | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
 rowColumns    sequential            produce staging no-back | staging      field=inbound_staging         label="Inbound staging"         value=""      required=false possible=true
 rowColumns    sequential            produce staging set     | staging      field=inbound_staging         label="Inbound staging"         value="STG_1" required=false possible=true
@@ -248,7 +248,7 @@ fieldRequired single_robot          produce pack_tolerance_pct                = 
 fieldRequired single_robot          produce hold_limit                        = false
 fieldRequired sequential            consume inbound_staging                   = false
 fieldRequired sequential            consume outbound_staging                  = false
-fieldRequired sequential            consume paired_core_node                  = true
+fieldRequired sequential            consume paired_core_node                  = false
 fieldRequired sequential            consume outbound_destination              = true
 fieldRequired sequential            consume inbound_source                    = true
 fieldRequired sequential            consume second_paired_core_node           = false
@@ -274,7 +274,7 @@ fieldRequired sequential            consume pack_tolerance_pct                = 
 fieldRequired sequential            consume hold_limit                        = false
 fieldRequired sequential            produce inbound_staging                   = false
 fieldRequired sequential            produce outbound_staging                  = false
-fieldRequired sequential            produce paired_core_node                  = true
+fieldRequired sequential            produce paired_core_node                  = false
 fieldRequired sequential            produce outbound_destination              = true
 fieldRequired sequential            produce inbound_source                    = true
 fieldRequired sequential            produce second_paired_core_node           = false

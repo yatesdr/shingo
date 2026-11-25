@@ -474,7 +474,8 @@ type NodeClaim struct {
 	//
 	//   - at a sequential (A/B) cell it is the PARTNER POSITION — the side the
 	//     line draws from while this one is swapped, and vice versa after a
-	//     cutover. The two are peers; neither is "behind" the other.
+	//     cutover. The two are peers; neither is "behind" the other. Blank,
+	//     the position is a one-node line (final brief 2b).
 	//   - at a press-index cell it is the BACK PRESS POSITION — a place in a
 	//     queue, not a peer. (With SecondPairedCoreNode set the layout is
 	//     C → B → A and this field is the middle one.)
@@ -775,8 +776,8 @@ func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim 
 // UNGATED BY SWAP MODE, deliberately. A claim occupies the nodes it names,
 // whatever mode it runs. A two_robot_press_index claim names its index
 // positions behind the front; a sequential claim names its partner in
-// PairedCoreNode too (claim_validation.go requires it), so this is not "the
-// front node" for every other mode. (No other mode's row is stored with a
+// PairedCoreNode too when it has one (a one-node line leaves it blank, final
+// brief 2b), so this is not "the front node" for every other mode. (No other mode's row is stored with a
 // paired name: the save drops it, NodeClaimInput.SavedPairs; a claim built in
 // memory can still carry one.) A caller that needs only the positions a swap
 // works from asks DependentPositions, which carries the mode gate; folding a

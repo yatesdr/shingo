@@ -128,7 +128,7 @@ window.FLOWSPEC = {
         "outbound_destination": "required",
         "outbound_staging": "forbidden",
         "pack_tolerance_pct": "forbidden",
-        "paired_core_node": "required",
+        "paired_core_node": "used",
         "partial_destination": "unused",
         "payload_code": "required",
         "refill_by": "forbidden",
@@ -298,7 +298,7 @@ window.FLOWSPEC = {
         "outbound_destination": "required",
         "outbound_staging": "forbidden",
         "pack_tolerance_pct": "used",
-        "paired_core_node": "required",
+        "paired_core_node": "used",
         "partial_destination": "used",
         "payload_code": "required",
         "refill_by": "forbidden",
@@ -438,7 +438,7 @@ window.FLOWSPEC = {
     "sequential": {
       "from": {
         "outbound_destination": "required",
-        "paired_core_node": "required"
+        "paired_core_node": "used"
       },
       "to": {
         "inbound_source": "required"

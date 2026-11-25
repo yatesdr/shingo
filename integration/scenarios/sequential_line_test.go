@@ -8,7 +8,6 @@ package scenarios
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -221,9 +220,8 @@ func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 // The steady state's two orders ride one robot, back to back, as a plant with
 // one robot runs them (point 5).
 //
-// The changeover half is refused at 37146992: the planner asks for the partner
-// and leaves the line's task in error. It is a known red until the
-// save-and-changeover commit, and runs only under SHINGO_KNOWN_RED=1.
+// The changeover half was refused until final brief 2b: the planner asked for
+// the partner and left the line's task in error.
 func TestScenario_SequentialLine_OneNodeHoldsOneBinAtEveryStep(t *testing.T) {
 	t.Parallel()
 	t.Run("steady state", func(t *testing.T) {
@@ -269,10 +267,6 @@ func TestScenario_SequentialLine_OneNodeHoldsOneBinAtEveryStep(t *testing.T) {
 		}
 	})
 	t.Run("changeover", func(t *testing.T) {
-		if os.Getenv("SHINGO_KNOWN_RED") == "" {
-			t.Skip("final brief 2a red pin, red until a Sequential A/B position runs with no partner; " +
-				"run with SHINGO_KNOWN_RED=1")
-		}
 		t.Parallel()
 		c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential, plain: true})
 		c.lineHolds("before the changeover", "KSR-LINE-BIN")

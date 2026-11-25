@@ -109,13 +109,12 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 
 		// SEQUENTIAL HAD NO ARM AT ALL. Every other mode's required routing is
 		// refused here, at the moment the operator saves the claim; sequential
-		// fell through the switch, so a claim missing its partner or its routing
-		// saved clean and failed at runtime as an empty dispatch — a changeover
-		// that plans, creates nothing, and leaves the node task in error with a
-		// message about the builder rather than about the field.
-		{"sequential without a paired position", func(c *NodeClaimInput) {
-			c.SwapMode, c.PairedCoreNode = protocol.SwapModeSequential, ""
-		}, "paired_core_node"},
+		// fell through the switch, so a claim missing its routing saved clean and
+		// failed at runtime as an empty dispatch — a changeover that plans,
+		// creates nothing, and leaves the node task in error with a message about
+		// the builder rather than about the field. A claim with NO PARTNER is not
+		// among them since final brief 2b: it is a one-node line
+		// (TestValidateNodeClaim_SequentialWithNoPartnerSaves).
 		{"sequential paired to itself", func(c *NodeClaimInput) {
 			c.SwapMode, c.PairedCoreNode = protocol.SwapModeSequential, "PRESS"
 		}, "paired_core_node"},
@@ -138,6 +137,21 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 				t.Errorf("error is not tagged %q — fields raised: %v", tc.field, fieldsOf(got, SeverityError))
 			}
 		})
+	}
+}
+
+// TestValidateNodeClaim_SequentialWithNoPartnerSaves: a Sequential A/B claim
+// with no paired position is a one-node line (final brief 2b), and the save
+// takes it: no error, as the planner plans its changeover. Until then it was
+// refused, "Sequential A/B requires a paired core node".
+func TestValidateNodeClaim_SequentialWithNoPartnerSaves(t *testing.T) {
+	t.Parallel()
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		c := validClaim()
+		c.Role, c.SwapMode, c.PairedCoreNode = role, protocol.SwapModeSequential, ""
+		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+			t.Errorf("%s: a sequential claim with no partner was refused: %+v", role, got)
+		}
 	}
 }
 

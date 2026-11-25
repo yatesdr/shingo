@@ -395,12 +395,16 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	pi[KeepStagedNode] = Used
 	rows[protocol.SwapModeTwoRobotPressIndex] = pi
 
-	// sequential: A/B cycling by direct trips. A partner position, where the
-	// old bin goes and where the new carrier comes from; no staging hop.
+	// sequential: A/B cycling by direct trips, no staging hop: where the old
+	// bin goes and where the new carrier comes from. The partner position is
+	// Used, not Required (final brief 2b): a sequential position with no
+	// partner is a one-node line, whose two orders name its own node only and
+	// whose changeover is one leg at it
+	// (TestBuildSwapChangeoverSteps_SequentialUnpaired_OneLegAtItsNode).
 	sq := steadyBase()
 	noChoreography(sq)
 	sq[PayloadCode] = Required
-	sq[PairedCoreNode] = Required
+	sq[PairedCoreNode] = Used
 	sq[OutboundDestination] = Required
 	sq[InboundSource] = Required
 	// Inbound staging is where a tool change holds the incoming carrier: Used,
@@ -587,10 +591,11 @@ func Changeover(fromMode protocol.SwapMode) map[SideField]Need {
 			{SideTo, InboundSource}:         Required,
 		}
 	case protocol.SwapModeSequential:
-		// Direct trips, no staging hop: the A/B partner, where evacuated bins
-		// go, and where new bins come from.
+		// Direct trips, no staging hop: where evacuated bins go, and where new
+		// bins come from. The A/B partner is Used: a position with none is a
+		// one-node line, planned as its own active side (final brief 2b).
 		return map[SideField]Need{
-			{SideFrom, PairedCoreNode}:      Required,
+			{SideFrom, PairedCoreNode}:      Used,
 			{SideFrom, OutboundDestination}: Required,
 			{SideTo, InboundSource}:         Required,
 		}

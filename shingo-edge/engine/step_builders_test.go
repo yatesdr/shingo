@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"shingoedge/release"
 	"testing"
 
@@ -453,19 +454,41 @@ func TestBuildSwapChangeoverSteps_Sequential_ActiveSideWaitsForCutover(t *testin
 	}
 }
 
-// Sequential without PairedCoreNode → empty dispatch (planner emits
-// NodeAction.Err). Tested for both Swap and Evacuate.
-func TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T) {
+// Sequential without PairedCoreNode is a one-node line (final brief 2b): its
+// changeover is ONE leg at its own node, the active side's shape, whatever the
+// role — the operator's release there, the old bin lifted as a full or the
+// outgoing style's partial (never an on-deck empty: nothing is parked), taken
+// to the outbound destination, the incoming carrier fetched and set down. The
+// planner hands it no parked side (resolveSequentialActivePull answers blank
+// for an unpaired claim). It was refused as an empty dispatch until then.
+func TestBuildSwapChangeoverSteps_SequentialUnpaired_OneLegAtItsNode(t *testing.T) {
 	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE",
-		OutboundDestination: "DEST",
-		SwapMode:            "sequential",
-	}
-	to := &processes.NodeClaim{CoreNodeName: "CORE", InboundSource: "MARKET"}
-	disp := BuildSwapChangeoverSteps(from, to, "CORE", "")
-	if disp.StepsA != nil || disp.StepsB != nil {
-		t.Errorf("unpaired sequential should produce empty dispatch, got A=%v B=%v", disp.StepsA, disp.StepsB)
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		from := &processes.NodeClaim{
+			CoreNodeName:        "CORE",
+			OutboundDestination: "DEST",
+			SwapMode:            "sequential",
+			Role:                role,
+		}
+		to := &processes.NodeClaim{CoreNodeName: "CORE", InboundSource: "MARKET", Role: role}
+		disp := BuildSwapChangeoverSteps(from, to, "", "")
+		want := []protocol.ComplexOrderStep{
+			stationWait("CORE", release.PurposeReady),
+			{Action: "pickup", Node: "CORE"},
+			{Action: "dropoff", Node: "DEST"},
+			{Action: "pickup", Node: "MARKET", Empty: role == protocol.ClaimRoleProduce},
+			{Action: "dropoff", Node: "CORE"},
+		}
+		if !reflect.DeepEqual(disp.StepsA, want) {
+			t.Errorf("%s: StepsA = %+v, want %+v", role, disp.StepsA, want)
+		}
+		if disp.StepsB != nil || disp.Roles != nil {
+			t.Errorf("%s: a second leg was built: B=%v roles=%v", role, disp.StepsB, disp.Roles)
+		}
+		if disp.DeliveryNodeA != "CORE" || !disp.AutoConfirmA || !disp.CarriesFromPayloadA {
+			t.Errorf("%s: delivery %q auto-confirm %v carries the from-payload %v, want CORE, true, true",
+				role, disp.DeliveryNodeA, disp.AutoConfirmA, disp.CarriesFromPayloadA)
+		}
 	}
 }
 
@@ -488,8 +511,9 @@ func TestBuildSwapChangeoverSteps_Sequential_MissingActivePull_EmptyDispatch(t *
 }
 
 // resolveSequentialActivePull resolves inactive/active node names from
-// the active-pull snapshot. Tie-break (both false) uses convention:
-// CoreNodeName=inactive, PairedCoreNode=active.
+// the active-pull snapshot. The tie-break (both bits the same, or no
+// snapshot) parks the lower name of the pair, so both positions' diffs agree;
+// here that is CORE-A, the claim's own node.
 func TestResolveSequentialActivePull(t *testing.T) {
 	t.Parallel()
 	claim := &processes.NodeClaim{CoreNodeName: "CORE-A", PairedCoreNode: "CORE-B"}

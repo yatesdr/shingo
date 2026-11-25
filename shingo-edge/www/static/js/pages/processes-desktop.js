@@ -920,13 +920,14 @@ const FIRST_ROLES = [['consume', 'Consume'], ['produce', 'Produce']];
 // key, the claim field, its word, its role's colour, the routing box its
 // choices come from, and the model's action with its argument.
 //
-// THE PARTNER (round 5): Index Swap and Sequential A/B need a Paired core
-// node (flowspec Required), and without one the step dead-ended on a line
-// whose map marks no back position. It is offered only where flowspec
-// requires it, from the Styles table's own list (partnerChoices); it starts
+// THE PARTNER (round 5): Index Swap needs a Paired core node (flowspec
+// Required), and without one the step dead-ended on a line whose map marks no
+// back position; Sequential A/B may name one (flowspec Used since final brief
+// 2b: with none, the position is a one-node line). It is offered where the
+// swap uses it, from the Styles table's own list (partnerChoices); it starts
 // as the model pairs a new row, the map's free back position (addPosition).
-// The second paired node is never Required (flowspec's Index Swap row leaves
-// it Used), so it is not offered here.
+// The second paired node is not offered here: only Index Swap has it, and
+// never Required (flowspec leaves it Used).
 const FIRST_PICKS = [
     { key: 'paired', field: 'paired_core_node', label: '', role: 'positions', box: 'partner', act: 'setPartner', arg: 'partner' },
     { key: 'source', field: 'inbound_source', label: 'Comes from', role: 'inbound', box: 'source', act: 'setSource', arg: 'source' },
@@ -1138,9 +1139,11 @@ function firstPositionHTML(n, rows) {
     // `used` on Index Swap and Sequential A/B for a tool change, which holds
     // the incoming carrier there (changeover_tooling.go); their steady swap
     // never reads it (the work list beside shows no stop there), and First
-    // style marks no tool change. The Styles table keeps both.
+    // style marks no tool change. The Styles table keeps both. THE PARTNER
+    // PICK WHEREVER THE SWAP TAKES ONE: Index Swap's is required, Sequential
+    // A/B's used (left at none, the position is a one-node line).
     const picks = FIRST_PICKS.map(p => [p, firstUse(S.model, e.role, e.mode, p)])
-        .filter(x => x[1] && ((x[0].box !== 'staging' && x[0].box !== 'partner') || x[1] === 'required')).map(x => {
+        .filter(x => x[1] && (x[0].box !== 'staging' || x[1] === 'required')).map(x => {
         const p = x[0];
         // What the position runs with, in the draft or (a position with no
         // part yet, not in the draft) as it would. No colour on the box: the

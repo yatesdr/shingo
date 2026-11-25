@@ -656,9 +656,10 @@ func (d ChangeoverDispatch) rejected() bool {
 //   - two_robot_press_index: mirrors BuildTwoRobotPressIndexSwapSteps —
 //     R1 evacuates from CoreNodeName then refills from InboundSource into
 //     the back position; R2 indexes the press.
-//   - sequential: single robot, single complex order, mid-sequence wait
-//     at the active position. Cutover click flips ActivePull and
-//     releases the wait.
+//   - sequential: one order per position (per-node since 2026-08-28),
+//     opening with a wait at that position's own node: lift, drop at the
+//     outbound destination, fetch the incoming carrier, set it down. A
+//     position with no partner is the active side (final brief 2b).
 //
 // For unrecognised / "simple" modes, falls back to the single-robot
 // pattern.
@@ -1022,17 +1023,28 @@ func buildToolingEvacSteps(position, outbound string, fromClaim, toClaim *proces
 // FULL standby bin and keeps the full-retrieve invariant.
 //
 // inactiveNode is the parked side as resolveSequentialActivePull sees it — a
-// property of the PAIR, so both positions' diffs agree on which is which.
+// property of the PAIR, so both positions' diffs agree on which is which. It
+// is blank for a position with no partner.
 //
-// Empty dispatch on a malformed claim; the planner turns that into
-// NodeAction.Err. requiredChangeoverFields and (since this ruling) the
-// claim-validation arm both catch the field cases first, with a message naming
-// the field.
+// ── A POSITION WITH NO PARTNER IS A ONE-NODE LINE (final brief 2b) ────────
+//
+// There is no pair, so nothing is parked: the position is the line's only
+// one, the active side, and its leg is the active side's, the same five steps
+// at its own node: the operator's release, the old bin lifted (a full or the
+// outgoing style's partial, never an on-deck empty) and taken to the outbound
+// destination, the incoming style's carrier fetched and set down. The owner's
+// words: drop then bring when the part changes. Pinned by
+// TestBuildSwapChangeoverSteps_SequentialUnpaired_OneLegAtItsNode.
+//
+// Empty dispatch on a malformed claim (a paired one the planner gave no parked
+// side, or a missing destination or source); the planner turns that into
+// NodeAction.Err. requiredChangeoverFields and the claim-validation arm both
+// catch the field cases first, with a message naming the field.
 func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, inactiveNode string) ChangeoverDispatch {
 	if fromClaim == nil || toClaim == nil {
 		return ChangeoverDispatch{}
 	}
-	if fromClaim.PairedCoreNode == "" || inactiveNode == "" {
+	if fromClaim.PairedCoreNode != "" && inactiveNode == "" {
 		return ChangeoverDispatch{}
 	}
 	if fromClaim.OutboundDestination == "" || toClaim.InboundSource == "" {
@@ -1042,7 +1054,7 @@ func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, ina
 	if pos == "" {
 		return ChangeoverDispatch{}
 	}
-	parked := pos == inactiveNode
+	parked := fromClaim.PairedCoreNode != "" && pos == inactiveNode
 	onDeckEmpty := parked && fromClaim.Role == protocol.ClaimRoleProduce
 
 	// BOTH POSITIONS OPEN WITH A WAIT AT THEIR OWN NODE (owner ruling

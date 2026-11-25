@@ -91,8 +91,10 @@ func directTripChangeoverMode(swapMode protocol.SwapMode) bool {
 }
 
 // resolveSequentialActivePull computes inactive/active node names for a
-// sequential A/B-paired claim using the active-pull snapshot. Unpaired claims
-// return empty strings; the planner uses that as the misconfiguration signal.
+// sequential A/B-paired claim using the active-pull snapshot. An unpaired
+// claim, a one-node line, returns empty strings: it has no pair, so no side is
+// parked, and its builder plans its node as the active side (final brief 2b;
+// buildSequentialPerPositionSwap).
 //
 // ── THE TIE-BREAK IS BY NAME, NOT BY WHICH CLAIM IS ASKING (per-node) ─────
 //

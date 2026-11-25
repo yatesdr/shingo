@@ -833,9 +833,12 @@ func describeProcessIDs(ids []int64) string {
 // destination or no source saved clean and failed much later as an EMPTY
 // DISPATCH — the builder returned a zero ChangeoverDispatch, the planner
 // turned that into a generic "cannot build swap steps for node X", and the
-// node task landed in error naming a builder instead of a field. The three
-// fields are the ones the per-node builder actually reads, and they are the
-// same three requiredChangeoverFields demands at plan time.
+// node task landed in error naming a builder instead of a field. The fields
+// worded here are the ones the per-node builder cannot do without, and they
+// are the ones requiredChangeoverFields demands at plan time: the destination
+// and the source. The partner left the list with final brief 2b: a
+// sequential position with no partner is a one-node line, which the builder
+// plans as its own active side, so the save and the plan take it together.
 var routingRequiredMessages = map[protocol.SwapMode]map[flowspec.Field]string{
 	protocol.SwapModeSingleRobot: {
 		// One robot does the whole swap, so it needs somewhere to park the
@@ -861,7 +864,6 @@ var routingRequiredMessages = map[protocol.SwapMode]map[flowspec.Field]string{
 		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeSequential: {
-		flowspec.PairedCoreNode:      "a paired core node",
 		flowspec.OutboundDestination: "an outbound destination",
 		flowspec.InboundSource:       "an inbound source",
 	},

@@ -275,8 +275,9 @@ func TestPlanNodeAction_Swap_Sequential(t *testing.T) {
 		t.Errorf("LogTag = %q, want swap_sequential", action.LogTag)
 	}
 	// Tie-break on an empty active-pull snapshot is canonical by name, so of
-	// {N1, N1B} the parked side is N1 — this diff's own position. The parked
-	// side runs immediately: four steps, no wait, all at its own node.
+	// {N1, N1B} the parked side is N1 — this diff's own position. Since the
+	// owner's ruling of 2026-08-28 both sides open with a wait at their own
+	// node: five steps, all at this position or its routing.
 	//
 	// PER-NODE (2026-08-28): this used to read a NINE-step whole-press order out
 	// of this single diff and assert the cutover wait at index 4. That wait now
@@ -384,8 +385,12 @@ func assertSequentialPlanRoles(t *testing.T, activePull map[string]bool, wantPar
 	}
 }
 
-// Sequential without PairedCoreNode → loud NodeAction.Err.
-func TestPlanNodeAction_Sequential_RequiresPairedCoreNode(t *testing.T) {
+// Sequential without PairedCoreNode is a one-node line (final brief 2b): the
+// planner plans its swap and its evacuation as ONE leg at its own node, the
+// active side's (nothing is parked: there is no pair), instead of the loud
+// NodeAction.Err it gave until then, "sequential changeover requires
+// from-claim Paired core node".
+func TestPlanNodeAction_Sequential_NoPartnerPlansOneLeg(t *testing.T) {
 	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "sequential"
@@ -401,15 +406,24 @@ func TestPlanNodeAction_Sequential_RequiresPairedCoreNode(t *testing.T) {
 		}
 		node := &processes.Node{ID: 42, Name: "N1"}
 		action := planNodeAction(diff, node, false, nil)
-		if action.Err == nil {
-			t.Errorf("situation=%s: expected NodeAction.Err for unpaired sequential, got none", situation)
+		if action.Err != nil {
+			t.Errorf("situation=%s: a one-node line was refused: %v", situation, action.Err)
+			continue
 		}
-		// Per-mode validation reports the user-facing field name.
-		if action.Err != nil && !strings.Contains(action.Err.Error(), "Paired core node") {
-			t.Errorf("situation=%s: err message = %q, want substring %q", situation, action.Err.Error(), "Paired core node")
+		if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil || action.EvacOrder != nil {
+			t.Fatalf("situation=%s: want one complex order and no second, got supply %+v evac %+v",
+				situation, action.SupplyOrder, action.EvacOrder)
 		}
-		if action.SupplyOrder != nil || action.EvacOrder != nil {
-			t.Errorf("situation=%s: misconfigured plan must dispatch no orders", situation)
+		var got []string
+		for _, s := range action.SupplyOrder.Complex.Steps {
+			got = append(got, s.Action+"@"+s.Node)
+		}
+		want := "wait@N1 pickup@N1 dropoff@ODST_N1 pickup@SRC_N1 dropoff@N1"
+		if strings.Join(got, " ") != want {
+			t.Errorf("situation=%s: the leg is %v, want %s", situation, got, want)
+		}
+		if action.LogTag != "swap_sequential" {
+			t.Errorf("situation=%s: LogTag = %q, want swap_sequential", situation, action.LogTag)
 		}
 	}
 }
@@ -863,11 +877,13 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name:       "sequential_missing_paired",
-			fromMode:   "sequential",
-			from:       processes.NodeClaim{SwapMode: "sequential", OutboundDestination: "OD"},
-			to:         processes.NodeClaim{InboundSource: "MARKET"},
-			wantSubstr: []string{"Paired core node"},
+			// No partner is a one-node line, not a missing field (final brief
+			// 2b): this case asked for "Paired core node" until then.
+			name:     "sequential_no_partner_complete",
+			fromMode: "sequential",
+			from:     processes.NodeClaim{SwapMode: "sequential", OutboundDestination: "OD"},
+			to:       processes.NodeClaim{InboundSource: "MARKET"},
+			wantOK:   true,
 		},
 		{
 			// Synthesized per-position claim from the press-index different-

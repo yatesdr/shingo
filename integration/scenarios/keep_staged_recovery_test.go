@@ -433,12 +433,12 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 				if s.mode == protocol.SwapModeSequential || s.mode == protocol.SwapModeTwoRobotPressIndex {
 					in.InboundStaging = ""
 				}
-				// A sequential cell here, unless pair, is one position with no partner, as the
-				// sequential line scenarios run it. Its changeover leg is not
-				// planned (the planner asks for the partner and leaves the line to
-				// the operator), so its rows prove the spot's own decisions at the
-				// start and the cancel, and the recovery after; the leg fetching
-				// from the spot is pinned in the Edge's changeover tests.
+				// A sequential cell here, unless pair, is one position with no
+				// partner, a one-node line, as the sequential line scenarios run
+				// it. Its changeover is one leg at the line since final brief 2b
+				// (until then the planner asked for the partner and planned none):
+				// it waits there, lifts, drops at the outbound and fetches its
+				// carrier from the spot.
 			}
 			if s.mode == protocol.SwapModeTwoRobotPressIndex {
 				in.PairedCoreNode = ksrDeck
@@ -1345,10 +1345,9 @@ type ksrMoment struct {
 	// where the spot is the changeover legs' inbound staging.
 	staging bool
 	// swapRobots: the moment exists only where the changeover sends a leg that
-	// works the line (swapLegs), which a one-position sequential cell's does
-	// not: its changeover leg is asked of the partner (produce_partials_pin_test's
-	// table says the same). There, f was d with an empty wait (REMOVAL-CANDIDATES
-	// B5, 2026-11-23).
+	// works the line (swapLegs). Every cell's does since final brief 2b: until
+	// then a one-position sequential cell's changeover planned no leg, and there
+	// f was d with an empty wait (REMOVAL-CANDIDATES B5, 2026-11-23).
 	swapRobots bool
 	// lineEmpty: the cancel leaves the line without a bin, so the operator's
 	// REQUEST is answered by a plain delivery to the line, not a swap: a full on
@@ -1836,17 +1835,22 @@ func (c *ksrCell) assertRecovered() {
 // ── the table ───────────────────────────────────────────────────────────────
 
 // ksrDigOnTheSpotsRefill reports whether a buried B is dug by the keeper's
-// refill of the spot, which is the dig moment e cancels at. Only the sequential
-// and the produce press cells have it. In the two staging modes the spot is the
-// inbound staging, so B reaches it on the changeover's own leg (since
-// 2026-10-16 the start orders no refill), and that leg's fetch is not a
-// refill's dig: a produce leg's Empty pickup never digs, and a consume leg digs
-// through its own intake. A consume press changing carrier type sends each
-// position its own leg from B's market, which Core judges by the order's
-// payload and digs ahead of the spot's refill.
+// refill of the spot, which is the dig moment e cancels at. Only the produce
+// press cell has it. In the two staging modes the spot is the inbound staging,
+// so B reaches it on the changeover's own leg (since 2026-10-16 the start
+// orders no refill), and that leg's fetch is not a refill's dig: a produce
+// leg's Empty pickup never digs, and a consume leg digs through its own
+// intake. A consume press changing carrier type sends each position its own
+// leg from B's market, which Core judges by the order's payload and digs ahead
+// of the spot's refill. The one-position sequential cell, a one-node line, had
+// it until final brief 2b, when it had no changeover leg; its leg fetches from
+// the spot, and with no right spare there Core sources B for the leg itself
+// (consume: the leg's own dig, holding B's lane; produce: B's empty claimed for
+// the leg), so the spot's refill waits behind it and never digs (runs of
+// 2026-11-25, f-ab NOTES).
 func ksrDigOnTheSpotsRefill(role protocol.ClaimRole, mode protocol.SwapMode) bool {
 	switch mode {
-	case protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot:
+	case protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot, protocol.SwapModeSequential:
 		return false
 	case protocol.SwapModeTwoRobotPressIndex:
 		return role == protocol.ClaimRoleProduce
@@ -1863,7 +1867,7 @@ func ksrDigOnTheSpotsRefill(role protocol.ClaimRole, mode protocol.SwapMode) boo
 // THE SUBTESTS RUN IN PARALLEL, and the test beside the package's others: each
 // cell builds its own Core, Edge, databases and reconciler clock (kickClock),
 // so no two share anything but the Postgres server.
-// cost: 58 leaves, a cell and a moment each, each its own Core, Edge and databases driven through a
+// cost: 56 leaves, a cell and a moment each, each its own Core, Edge and databases driven through a
 // changeover, its cancel and two A cycles, some of its waits on Core's 2 s robot poll (ksrCell.eventually).
 // The recovery is choreography across Core and Edge, which neither module's own tests can drive.
 func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
@@ -1891,9 +1895,6 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 			}
 			if m.staging && !ksrStaging(cl.mode) {
 				continue // no inbound staging on the spot, so no dispatch for the cancel to race
-			}
-			if m.swapRobots && cl.mode == protocol.SwapModeSequential {
-				continue // no changeover leg works a one-position sequential line: see swapRobots
 			}
 			if m.buriedB && !ksrDigOnTheSpotsRefill(cl.role, cl.mode) {
 				continue // the moment does not exist in this cell: see ksrDigOnTheSpotsRefill

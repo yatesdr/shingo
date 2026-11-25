@@ -276,7 +276,7 @@ POS_A7  mode  #0  value="two_robot_press_index"  label="Index Swap"  on=no  icon
 POS_A7  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A7","mode":"two_robot"}
 POS_A7  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A7","mode":"single_robot"}
 POS_A7  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A7","mode":"sequential"}
-POS_A7  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A7  col:partner:paired  #0  value=""  label="none"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":""}
 POS_A7  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B1"}
 POS_A7  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B2"}
 POS_A7  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A7","partner":"POS_B3"}
@@ -321,7 +321,7 @@ POS_A8  mode  #0  value="two_robot_press_index"  label="Index Swap"  on=no  icon
 POS_A8  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A8","mode":"two_robot"}
 POS_A8  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A8","mode":"single_robot"}
 POS_A8  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A8","mode":"sequential"}
-POS_A8  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A8  col:partner:paired  #0  value=""  label="none"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":""}
 POS_A8  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B1"}
 POS_A8  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B2"}
 POS_A8  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A8","partner":"POS_B3"}
@@ -366,7 +366,7 @@ POS_A9  mode  #0  value="two_robot_press_index"  label="Index Swap"  on=no  icon
 POS_A9  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A9","mode":"two_robot"}
 POS_A9  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A9","mode":"single_robot"}
 POS_A9  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A9","mode":"sequential"}
-POS_A9  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A9  col:partner:paired  #0  value=""  label="none"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":""}
 POS_A9  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B1"}
 POS_A9  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B2"}
 POS_A9  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A9","partner":"POS_B3"}
@@ -408,7 +408,7 @@ POS_A10  mode  #0  value="two_robot_press_index"  label="Index Swap"  on=no  ico
 POS_A10  mode  #1  value="two_robot"  label="2‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A10","mode":"two_robot"}
 POS_A10  mode  #2  value="single_robot"  label="1‑Robot Swap"  on=no  icon=present  action={"type":"setMode","node":"POS_A10","mode":"single_robot"}
 POS_A10  mode  #3  value="sequential"  label="Sequential A/B"  on=yes  icon=present  action={"type":"setMode","node":"POS_A10","mode":"sequential"}
-POS_A10  col:partner:paired  #0  note="required for Sequential A/B"
+POS_A10  col:partner:paired  #0  value=""  label="none"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":""}
 POS_A10  col:partner:paired  #1  value="POS_B1"  label="POS_B1"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B1"}
 POS_A10  col:partner:paired  #2  value="POS_B2"  label="POS_B2"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B2"}
 POS_A10  col:partner:paired  #3  value="POS_B3"  label="POS_B3"  on=no  icon=absent  action={"type":"setPartner","node":"POS_A10","partner":"POS_B3"}

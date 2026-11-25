@@ -44,6 +44,7 @@ Deploy: no migration; Core and Edges in either order.
 - Cancelling a changeover no longer cancels a leg that has already set its cart down (delivered): that leg is confirmed as usual, and no robot is sent to move a bin for it
 - The Edge's Orders page says Cancel, not Abort: its button, its question (Keep order or Cancel order) and its toast. A person's cancel now reads "cancelled by operator" (it read "aborted by operator")
 - Core's order page says Cancel too: Terminate Order is now Cancel Order, and it and the list's Cancel ask Keep order or Cancel order; the Robots page says to cancel the order instead of force-completing it. Re-send Terminate keeps its name: it re-sends the fleet's own terminate for an order already ended
+- A Sequential A/B position can run on one node with no partner (its paired core node left blank): each swap takes the old bin out, then brings the next, and a changeover takes the old part out and brings the new one
 
 ## v0.19.0 — 2026-11-22
 

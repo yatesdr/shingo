@@ -264,6 +264,8 @@ const (
 	// unconfirmed, and still booked.
 	ppNoIngest40 = "at=KSR-DEST uop=40 part=KSR-PA ledger=- cms=40"
 	ppNoIngest17 = "at=KSR-DEST uop=17 part=KSR-PA ledger=- cms=17"
+	// No leg at all: a one-node line's changeover before final brief 2b.
+	ppNoLeg = "no leg: the planner asked for the partner"
 )
 
 func ppRows() []ppRow {
@@ -285,18 +287,18 @@ func ppRows() []ppRow {
 				ppRow{door: "request", mode: mode, class: ppBare, today: "refused", after: "refused"},
 			)
 		}
-		if mode == protocol.SwapModeSequential {
-			// A one-position sequential cell plans no changeover leg (the
-			// planner asks for the partner); the sequential changeover leg is
-			// pinned in the Edge's changeover tests.
-			continue
-		}
 		today40, today17 := ppAt40, ppAt17
 		if mode == protocol.SwapModeTwoRobotPressIndex {
 			// Today a press changing carrier type lifts each position on a leg
 			// that is never station-released, so no ingest ships. After: every
 			// lift off a line position goes through its release (the one door).
 			today40, today17 = ppNoIngest40, ppNoIngest17
+		}
+		if mode == protocol.SwapModeSequential {
+			// A one-position sequential cell, a one-node line, planned no
+			// changeover leg until final brief 2b (the planner asked for the
+			// partner). Its leg is the active side's now, released at the line.
+			today40, today17 = ppNoLeg, ppNoLeg
 		}
 		rows = append(rows,
 			ppRow{door: "changeover", mode: mode, class: ppFull, today: today40, after: ppAt40},
@@ -358,13 +360,14 @@ func ppFinishLaterRows() []ppRow {
 			ppRow{door: "request", mode: mode, class: ppFull, finish: true, today: ppAt40, after: ppAt40},
 			ppRow{door: "request", mode: mode, class: ppPartial, finish: true, today: ppAt17, after: home17},
 		)
-		if mode != protocol.SwapModeSequential {
-			today := ppAt17
-			if mode == protocol.SwapModeTwoRobotPressIndex {
-				today = ppNoIngest17
-			}
-			rows = append(rows, ppRow{door: "changeover", mode: mode, class: ppPartial, finish: true, today: today, after: home17})
+		today := ppAt17
+		switch mode {
+		case protocol.SwapModeTwoRobotPressIndex:
+			today = ppNoIngest17
+		case protocol.SwapModeSequential:
+			today = ppNoLeg // a one-node line's changeover, final brief 2b
 		}
+		rows = append(rows, ppRow{door: "changeover", mode: mode, class: ppPartial, finish: true, today: today, after: home17})
 	}
 	tr := protocol.SwapModeTwoRobot
 	return append(rows,

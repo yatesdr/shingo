@@ -171,10 +171,12 @@ func TestStrictPack_ForbiddenOnConsumeAndLoaderClaimsOnly(t *testing.T) {
 // requiredChangeoverFields.)
 //
 // D3: sequential. Characterised: NO field-set divergence. The save path
-// requires paired position, outbound destination and inbound source on every
-// claim; the planner requires the first two on the outgoing claim and the third
-// on the incoming one. A unary validator cannot say which side, so requiring
-// all three on every claim is the union and is correct. Pinned as an absence.
+// requires outbound destination and inbound source on every claim; the planner
+// requires the first on the outgoing claim and the second on the incoming one.
+// A unary validator cannot say which side, so requiring both on every claim is
+// the union and is correct. Pinned as an absence. The paired position left
+// both lists together (final brief 2b): with none, the position is a one-node
+// line, which the save takes and the planner plans.
 //
 // D4 (UpsertClaim has no single_robot / sequential arm) is a store fact and is
 // pinned in store/store_test.go as TestStoreStillAcceptsWhatFlowspecRefuses.
@@ -233,7 +235,7 @@ func TestFlowspecPinsKnownDisagreements(t *testing.T) {
 			planned[sf.Field] = true
 			plan = append(plan, sf.Field)
 		}
-		wantRouting := []flowspec.Field{flowspec.PairedCoreNode, flowspec.OutboundDestination, flowspec.InboundSource}
+		wantRouting := []flowspec.Field{flowspec.OutboundDestination, flowspec.InboundSource}
 		if !reflect.DeepEqual(saveRouting, wantRouting) {
 			t.Errorf("save-time sequential routing requirements = %v, want %v", saveRouting, wantRouting)
 		}
@@ -278,7 +280,7 @@ func TestFlowspecChangeoverOrderReproducesPlannerLists(t *testing.T) {
 		protocol.SwapModeTwoRobot:           {sf(to, flowspec.InboundStaging), sf(from, flowspec.OutboundDestination)},
 		protocol.SwapModeTwoRobotPressIndex: {sf(from, flowspec.PairedCoreNode), sf(from, flowspec.OutboundDestination)},
 		flowspec.SwapModePressPosition:      {sf(from, flowspec.OutboundDestination), sf(to, flowspec.InboundSource)},
-		protocol.SwapModeSequential:         {sf(from, flowspec.PairedCoreNode), sf(from, flowspec.OutboundDestination), sf(to, flowspec.InboundSource)},
+		protocol.SwapModeSequential:         {sf(from, flowspec.OutboundDestination), sf(to, flowspec.InboundSource)},
 		protocol.SwapModeManualSwap:         nil,
 		protocol.SwapModeSimple:             {sf(to, flowspec.InboundStaging), sf(from, flowspec.OutboundStaging), sf(from, flowspec.OutboundDestination)},
 	}
@@ -298,7 +300,8 @@ func TestFlowspecChangeoverOrderReproducesPlannerLists(t *testing.T) {
 
 // TestFlowspecRoutingFieldsOrder pins the save-time finding order the same
 // way: single_robot reports inbound before outbound staging, sequential
-// reports paired, destination, source.
+// reports destination, source (the paired position is not required since
+// final brief 2b).
 func TestFlowspecRoutingFieldsOrder(t *testing.T) {
 	t.Parallel()
 	want := []flowspec.Field{flowspec.InboundStaging, flowspec.OutboundStaging, flowspec.PairedCoreNode, flowspec.OutboundDestination, flowspec.InboundSource}
@@ -309,7 +312,7 @@ func TestFlowspecRoutingFieldsOrder(t *testing.T) {
 		t.Fatalf("Fields() does not open with the routing fields: %v", got)
 	}
 	seq := flowspec.RequiredFields(flowspec.Steady(protocol.ClaimRoleConsume, protocol.SwapModeSequential))
-	if want := []flowspec.Field{flowspec.PairedCoreNode, flowspec.OutboundDestination, flowspec.InboundSource, flowspec.PayloadCode}; !reflect.DeepEqual(seq, want) {
+	if want := []flowspec.Field{flowspec.OutboundDestination, flowspec.InboundSource, flowspec.PayloadCode}; !reflect.DeepEqual(seq, want) {
 		t.Errorf("RequiredFields(sequential) = %v, want %v", seq, want)
 	}
 }
