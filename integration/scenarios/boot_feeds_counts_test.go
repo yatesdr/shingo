@@ -22,8 +22,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/router"
 
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	coreharness "shingocore/testharness"
 
 	"shingoedge/config"
@@ -57,8 +55,6 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 
 	coreDB := coreharness.OpenDB(t)
 	coreharness.SetupStandardData(t, coreDB) // nodes and one payload: a node list and a catalog to send
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", nil)
-	svc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{})
 
 	var mu sync.Mutex
 	var n bootCount
@@ -68,25 +64,20 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 		mu.Unlock()
 	}
 
-	// Core: the subjects one boot sends, as cmd/shingocore buildSubjectRouter
-	// registers them, the two asks counted on the way in.
-	coreSubjects := router.NewSubject()
-	router.RegisterSubject(coreSubjects, protocol.SubjectEdgeRegister, svc.HandleEdgeRegister)
-	router.RegisterSubject(coreSubjects, protocol.SubjectEdgeHeartbeat, svc.HandleEdgeHeartbeat)
-	router.RegisterSubject(coreSubjects, protocol.SubjectNodeListRequest, func(env *protocol.Envelope, req *protocol.NodeListRequest) {
-		count(func(c *bootCount) { c.nodeAsks++ })
-		svc.HandleNodeListRequest(env, req)
-	})
-	router.RegisterSubjectBare(coreSubjects, protocol.SubjectCatalogPayloadsRequest, func(env *protocol.Envelope) {
-		count(func(c *bootCount) { c.catalogAsks++ })
-		svc.HandleCatalogPayloadsRequest(env)
-	})
-	router.RegisterSubject(coreSubjects, protocol.SubjectOrderStatusRequest, svc.HandleOrderStatusRequest)
-	router.RegisterSubject(coreSubjects, protocol.SubjectBinsWatch, svc.HandleBinWatch)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { coreSubjects.Dispatch(env, p) })
-	coreIngestor := protocol.NewIngestor(nil)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	// Core: main's tables with no engine, routing the subjects one boot sends,
+	// the two asks counted on the way in.
+	core := coreharness.NewTables(t, coreDB, nil,
+		coreharness.RoutesOnly(protocol.SubjectEdgeRegister, protocol.SubjectEdgeHeartbeat, protocol.SubjectNodeListRequest,
+			protocol.SubjectCatalogPayloadsRequest, protocol.SubjectOrderStatusRequest, protocol.SubjectBinsWatch),
+		coreharness.Tap(func(_ *protocol.Envelope, subject string) {
+			count(func(c *bootCount) {
+				if subject == protocol.SubjectNodeListRequest {
+					c.nodeAsks++
+				} else {
+					c.catalogAsks++
+				}
+			})
+		}, protocol.SubjectNodeListRequest, protocol.SubjectCatalogPayloadsRequest))
 
 	edgeDB := edgeharness.OpenDB(t)
 
@@ -132,7 +123,7 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 		edgeIngestor.Dispatch = func(env *protocol.Envelope) { edgeRouter.Dispatch(env, env.Type) }
 		bus := harness.NewBus(t,
 			harness.EdgeSide{EdgeStore: edgeDB, EdgeIngestor: edgeIngestor},
-			harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+			harness.CoreSide{CoreStore: coreDB, CoreIngestor: core.Ingestor},
 		)
 
 		// The Edge's sends, through its outbox to the bus: the heartbeater's
