@@ -49,9 +49,10 @@ var doorFeedsPlantWide = []string{protocol.FeedNodes, protocol.FeedScene, protoc
 var doorFeedsAtStations = []string{protocol.FeedNodes}
 
 // feedPush is one station's armed push: the feeds the doors named since it was
-// armed.
+// armed, and its timer (stopped by a flush that runs it now, FlushPushes).
 type feedPush struct {
-	keys map[string]bool
+	keys  map[string]bool
+	timer *time.Timer
 }
 
 // FeedsChanged is the change doors' body (service.FeedDoors, wired at the
@@ -180,7 +181,7 @@ func (f *feedState) armPushes(stations, keys []string, push func(station string,
 			p = &feedPush{keys: map[string]bool{}}
 			f.pending[st] = p
 			station := st
-			time.AfterFunc(f.pushDelay, func() { push(station, f.pushStarted(station)) })
+			p.timer = time.AfterFunc(f.pushDelay, func() { push(station, f.pushStarted(station)) })
 		}
 		for _, key := range keys {
 			p.keys[key] = true
@@ -211,6 +212,23 @@ func (f *feedState) pushDone() {
 	f.mu.Lock()
 	f.running--
 	f.mu.Unlock()
+}
+
+// takeArmed stops the timer of every armed push whose timer has not fired and
+// returns those stations, sorted, for the caller to push now (FlushPushes),
+// each through pushStarted as its timer would. A push whose timer has fired is
+// left to the timer.
+func (f *feedState) takeArmed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for station, p := range f.pending {
+		if p.timer.Stop() {
+			out = append(out, station)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // pushesSettled reports whether no push is armed or running.

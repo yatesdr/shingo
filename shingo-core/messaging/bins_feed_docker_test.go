@@ -503,6 +503,44 @@ func TestBinsPush_AfterAChangeAtAWatchedBin(t *testing.T) {
 	}
 }
 
+// FlushPushes runs what is armed, now, on the caller's goroutine. The delays
+// here outlive any test, so every send below is the flush's: a burst for one
+// Edge is one push, a push whose snapshot is the one last sent sends nothing,
+// and a change door's pushes run with the bins pushes.
+func TestFlushPushes_RunsWhatIsArmedNow(t *testing.T) {
+	t.Parallel()
+	svc, resp, f, _ := pushFixture(t)
+	svc.bins.delay, svc.feeds.pushDelay = time.Hour, time.Hour
+	if n := svc.FlushPushes(); n != 0 {
+		t.Fatalf("nothing armed: the flush ran %d pushes, want 0", n)
+	}
+
+	_, err := svc.db.DB.Exec(`UPDATE bins SET uop_remaining = 0 WHERE id = $1`, f.full) // emptied
+	testutil.MustNoErr(t, err, "empty the bin")
+	for i := 0; i < 5; i++ { // one delivery emits several events
+		svc.BinsChanged(f.full, f.a1)
+	}
+	if n := svc.FlushPushes(); n != 1 {
+		t.Errorf("a burst for one Edge: the flush ran %d pushes, want 1", n)
+	}
+	if a, b := resp.count("edge.a"), resp.count("edge.b"); a != 2 || b != 1 {
+		t.Errorf("after the flush: sends a=%d b=%d, want one more to a only, sent by the flush", a, b)
+	}
+
+	svc.BinsChanged(f.full) // nothing edge.a draws has moved since that send
+	if n, a := svc.FlushPushes(), resp.count("edge.a"); n != 1 || a != 2 {
+		t.Errorf("an unchanged snapshot: the flush ran %d pushes and a has %d sends, want 1 and still 2", n, a)
+	}
+
+	svc.FeedsChanged(nil) // the plant-wide door: a push for each station Core has sent to
+	if n := svc.FlushPushes(); n != 2 {
+		t.Errorf("the plant-wide door: the flush ran %d pushes, want edge.a's and edge.b's", n)
+	}
+	if !svc.bins.settled() || !svc.feeds.pushesSettled() {
+		t.Error("a push is armed or running after the flush returned")
+	}
+}
+
 // An order to or from a watched place pushes its Edges when it starts and when
 // it ends; an order elsewhere arms nothing and is not remembered.
 func TestBinsPush_OrdersToAWatchedPlace(t *testing.T) {

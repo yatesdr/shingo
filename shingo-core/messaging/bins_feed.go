@@ -226,6 +226,31 @@ func (b *binsFeed) pushDone() {
 	b.mu.Unlock()
 }
 
+// takeArmed stops the timer of every armed push whose timer has not fired and
+// returns those Edges, sorted, for the caller to push now (FlushPushes). Each
+// stays pending until its push starts, so a change meanwhile joins it, as it
+// joins a push its timer is about to start. A push whose timer has fired is
+// left to the timer.
+func (b *binsFeed) takeArmed() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []string
+	for station, timer := range b.pending {
+		if timer.Stop() {
+			out = append(out, station)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// settled reports whether no push is armed or running.
+func (b *binsFeed) settled() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.pending) == 0 && b.running == 0
+}
+
 // list is the names an Edge watches and their digest; ok is false when Core
 // holds no list for it.
 func (b *binsFeed) list(station string) (names []string, digest string, ok bool) {
@@ -666,4 +691,36 @@ func (s *CoreDataService) pushBins(station string) {
 	}
 	s.resp.sendData(protocol.SubjectBinsSnapshot, station, e.value)
 	s.feeds.recordPush(station, protocol.FeedBins, e.digest, now)
+}
+
+// FlushPushes runs every armed push now, on the caller's goroutine, and stops
+// its timer: each dirty Edge's bins push (pushBins) and each station's
+// change-door push (pushFeeds), as their timers would run them
+// binsPushDelay later. Nothing in a push changes: every mark since an Edge's
+// last push is one build, a digest equal to the last one sent sends nothing,
+// and each send is stamped by the one clock (clock.Now). A push its own timer
+// has already started is not run again; FlushPushes waits for it to end. It
+// returns the number of pushes it ran, and returns once none is armed or
+// running. The scenario rig drives the feed through it in place of a wait
+// (integration/harness); no product path calls it. Pinned by
+// TestFlushPushes_RunsWhatIsArmedNow.
+func (s *CoreDataService) FlushPushes() int {
+	ran := 0
+	for {
+		bins, doors := s.bins.takeArmed(), s.feeds.takeArmed()
+		for _, station := range bins {
+			s.pushBins(station)
+		}
+		for _, station := range doors {
+			s.pushFeeds(station, s.feeds.pushStarted(station))
+		}
+		ran += len(bins) + len(doors)
+		if len(bins) > 0 || len(doors) > 0 {
+			continue
+		}
+		if s.bins.settled() && s.feeds.pushesSettled() {
+			return ran
+		}
+		time.Sleep(time.Millisecond) // a push its timer started is still running
+	}
 }
