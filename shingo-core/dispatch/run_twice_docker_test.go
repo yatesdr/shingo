@@ -405,7 +405,6 @@ func TestRunTwice_Redirect(t *testing.T) {
 		env.ID, env.Type = "env-"+uuid, protocol.TypeOrderRedirect
 		return r, env, &protocol.OrderRedirect{OrderUUID: uuid, NewDeliveryNode: to.Name}
 	}
-	const until = "an order already bound for the asked destination answers as the first run did"
 
 	// Each case has its own database, so one uuid serves them all and a whole
 	// first run's lines compare to a cut one's.
@@ -422,7 +421,6 @@ func TestRunTwice_Redirect(t *testing.T) {
 	})
 
 	t.Run("run, cut, run again", func(t *testing.T) {
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-rd")
 		r.e.cut = func(event string, _ int64) {
 			if event == "dispatched" {
@@ -450,7 +448,6 @@ func TestRunTwice_Redirect(t *testing.T) {
 	})
 
 	t.Run("run, finish, run again", func(t *testing.T) {
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-rd")
 		mark := outboxMark(t, r.db)
 		r.d.HandleOrderRedirect(env, req)

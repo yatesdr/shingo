@@ -1341,6 +1341,24 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	// treats that code as recoverable, so the operator sees a refusal and the Edge
 	// mirror survives. Any other code terminalizes the Edge row.
 	if !order.PreDispatch() {
+		// A REPEAT OF A REDIRECT THAT HAPPENED answers as its first run did
+		// (docket B11). The inbox row is written after the handler
+		// (middleware.NewInboxDedup), so a redirect cut by a crash after its fleet
+		// create is delivered again and meets the order it re-aimed: past
+		// dispatch, bound for the node it asks for. It was refused here, the
+		// station told invalid_state for a redirect that happened. A live order
+		// bound for the asked node is sent the ack dispatchToFleet sends, naming
+		// the source as PrepareRedirect resolves it; its dispatch told the station
+		// its status from the write. An order that has ended is refused, as
+		// before. Pinned by TestRunTwice_Redirect.
+		if order.DeliveryNode == p.NewDeliveryNode && !protocol.IsTerminal(order.Status) {
+			if src, err := d.db.GetNodeByDotName(order.SourceNode); err == nil && src != nil {
+				log.Printf("dispatch: redirect %s from %s: order %d is already bound for %s (%s): a repeat, answered with its ack",
+					p.OrderUUID, env.Src.Station, order.ID, p.NewDeliveryNode, order.Status)
+				d.sendAck(env, order.EdgeUUID, order.ID, src.Name)
+				return
+			}
+		}
 		d.dbg("redirect refused: order %d is %s — past the point where a redirect is an edit",
 			order.ID, order.Status)
 		d.replies.SendError(env, p.OrderUUID, "invalid_state",
