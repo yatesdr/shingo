@@ -18,10 +18,8 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
 
 	"shingocore/dispatch"
-	coremessaging "shingocore/messaging"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
@@ -141,19 +139,15 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 		t.Fatalf("create outbound node: %v", err)
 	}
 
-	// Build the Core dispatcher + handler stack. The trackingBackend
+	// Build the Core dispatcher and main's tables over it (no engine),
+	// routing the release alone, with no inbox dedup. The trackingBackend
 	// captures fleet calls so we can assert them if needed (not used
 	// by this scenario but sets up the dispatcher correctly).
 	backend := coreharness.NewTrackingBackend()
 	emitter := &noopEmitter{}
 	dispatcher := dispatch.NewDispatcher(coreDB, backend, emitter, "core", "shingo.dispatch", nil)
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", dispatcher)
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) {
-		coreRouter.Dispatch(env, env.Type)
-	}
+	core := coreharness.NewTables(t, coreDB, dispatcher,
+		coreharness.RoutesOnly(protocol.TypeOrderRelease), coreharness.NoInboxDedup())
 
 	// ── Edge setup ─────────────────────────────────────────────────
 	// Edge side is minimal: we just need an outbox to enqueue from
@@ -173,7 +167,7 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 		},
 		harness.CoreSide{
 			CoreStore:    coreDB,
-			CoreIngestor: coreIngestor,
+			CoreIngestor: core.Ingestor,
 		},
 	)
 
