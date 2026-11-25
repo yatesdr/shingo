@@ -1,6 +1,7 @@
 package www
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -32,6 +33,45 @@ func TestEdgeOrders_AStagedOrderWhoseReleaseWentOutOffersNoRelease(t *testing.T)
 		{`data-action="releaseOrder:22"`, true},
 		{`data-action="abortOrder:21"`, true},
 		{`data-action="abortOrder:22"`, true},
+	} {
+		if got := strings.Contains(html, c.action); got != c.want {
+			t.Errorf("the rows carry %s: %v, want %v\n%s", c.action, got, c.want, html)
+		}
+	}
+}
+
+// TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel: no cancel on a
+// delivered order, or past it (the owner's ruling of 2026-11-25, final brief
+// 1e). A delivered row offers Confirm and not the cancel, which the abort door
+// refuses there (orders.Manager.abortOrder); a row whose cart is still on its
+// way offers the cancel, and an ended one neither. RED at 37146992, where the
+// row hid the cancel only for an order that had ended.
+func TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("final brief 1e red pin, red until a delivered row offers no cancel; run with SHINGO_KNOWN_RED=1")
+	}
+	html := renderOrdersBody(t, map[string]any{
+		"ActiveOrders": []domain.Order{
+			{ID: 31, UUID: "edge-in-transit", OrderType: protocol.OrderTypeRetrieve,
+				Status: protocol.StatusInTransit, DeliveryNode: "ALN_001", Quantity: 1},
+			{ID: 32, UUID: "edge-delivered", OrderType: protocol.OrderTypeRetrieve,
+				Status: protocol.StatusDelivered, DeliveryNode: "ALN_002", Quantity: 1},
+			{ID: 33, UUID: "edge-confirmed", OrderType: protocol.OrderTypeRetrieve,
+				Status: protocol.StatusConfirmed, DeliveryNode: "ALN_003", Quantity: 1},
+		},
+		"WaitSince": map[int64]string{},
+	})
+	for _, c := range []struct {
+		action string
+		want   bool
+	}{
+		{`data-action="abortOrder:31"`, true},
+		{`data-action="confirmDelivery:31:`, false},
+		{`data-action="abortOrder:32"`, false},
+		{`data-action="confirmDelivery:32:1"`, true},
+		{`data-action="abortOrder:33"`, false},
+		{`data-action="confirmDelivery:33:`, false},
 	} {
 		if got := strings.Contains(html, c.action); got != c.want {
 			t.Errorf("the rows carry %s: %v, want %v\n%s", c.action, got, c.want, html)
