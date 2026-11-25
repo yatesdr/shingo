@@ -692,10 +692,17 @@ func LaneForNode(db *sql.DB, nodeID int64) (*Node, error) {
 // LaneForNode keeps its own two reads, so the agreement pin
 // (TestLaneOf_AgreesWithLaneForNode, dot_names_test.go) compares two walks.
 func LaneOf(db *sql.DB, n *Node) (*Node, error) {
+	return LaneOfWith(n, func(id int64) (*Node, error) { return Get(db, id) })
+}
+
+// LaneOfWith is LaneOf's walk with the parent read by get: a read view that
+// keeps the nodes it has read (dispatch's attemptNodes) asks it with its own
+// door, so the walk has one definition.
+func LaneOfWith(n *Node, get func(id int64) (*Node, error)) (*Node, error) {
 	if n.ParentID == nil {
 		return nil, nil
 	}
-	parent, err := Get(db, *n.ParentID)
+	parent, err := get(*n.ParentID)
 	if err != nil {
 		return nil, err
 	}

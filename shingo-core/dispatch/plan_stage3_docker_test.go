@@ -3,6 +3,9 @@
 package dispatch
 
 import (
+	"database/sql"
+	"errors"
+	"reflect"
 	"testing"
 
 	"shingo/protocol"
@@ -61,6 +64,97 @@ func TestStage3_IsStorageDropoff(t *testing.T) {
 	for _, c := range cases {
 		if got := isStorageDropoff(db, c.node); got != c.want {
 			t.Errorf("isStorageDropoff(%s=%q) = %v, want %v", c.name, c.node, got, c.want)
+		}
+	}
+}
+
+// TestAttemptNodes_AnswerAsTheStoreDoes pins one complex attempt's read of its
+// plan (attemptNodes) to the store's doors: for every name the steps name, a
+// name they do not, a wait's node, a dotted child and an unknown one, the
+// view's GetNodeByDotName answers what the store's does (the same node, or
+// sql.ErrNoRows), asked once and asked again; for every node it finds, GetNode
+// and LaneOf answer as the store's, and the storage question
+// (isStorageDropoff) answers the same over both. The want columns state each
+// node's lane and storage answer, so a fixture that stops building what it says
+// fails here rather than agreeing vacuously.
+func TestAttemptNodes_AnswerAsTheStoreDoes(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	testdb.SetupStandardData(t, db) // the node types, STOR among them
+	storType, err := db.GetNodeTypeByCode("STOR")
+	testutil.MustNoErr(t, err, "get STOR type")
+	laneType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "get LANE type")
+	mk := func(n *nodes.Node) *nodes.Node {
+		t.Helper()
+		n.Enabled = true
+		testutil.MustNoErr(t, db.CreateNode(n), "create "+n.Name)
+		return n
+	}
+	grp := testdb.MarkedGroup(t, db, "AN-GRP")
+	lane := mk(&nodes.Node{Name: "AN-LANE", IsSynthetic: true, NodeTypeID: &laneType.ID, ParentID: grp})
+	s1 := mk(&nodes.Node{Name: "AN-S1", ParentID: &lane.ID})
+	mk(&nodes.Node{Name: "AN-S2", ParentID: &lane.ID})
+	mk(&nodes.Node{Name: "AN-FLAT", ParentID: grp})
+	mk(&nodes.Node{Name: "AN-STOR", NodeTypeID: &storType.ID})
+	mk(&nodes.Node{Name: "AN-LINE"})
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: s1.Name},
+		{Action: protocol.ActionDropoff, Node: "AN-STOR"},
+		{Action: protocol.ActionPickup, Node: "AN-FLAT"},
+		{Action: protocol.ActionDropoff, Node: "AN-LANE.AN-S2"},
+		{Action: protocol.ActionDropoff, Node: "AN-NOPE"},
+		{Action: protocol.ActionPickup, Node: s1.Name},
+		{Action: protocol.ActionWait, Node: "AN-LINE"},
+		{Action: protocol.ActionDropoff},
+	}
+	view := readAttemptNodes(db, steps)
+	cases := []struct {
+		name    string
+		lane    string // "" in no lane; "-" not found
+		storage bool
+	}{
+		{"AN-S1", "AN-LANE", true},
+		{"AN-STOR", "", true},
+		{"AN-FLAT", "", true},
+		{"AN-LANE.AN-S2", "AN-LANE", true},
+		{"AN-NOPE", "-", false},
+		{"AN-LINE", "", false},          // a wait's node: not in the batch, read through
+		{"AN-GRP", "", false},           // named by no step: read through
+		{"AN-LANE.AN-NOPE", "-", false}, // a dotted name with no such child
+	}
+	for _, c := range cases {
+		for ask := 1; ask <= 2; ask++ {
+			want, wErr := db.GetNodeByDotName(c.name)
+			got, gErr := view.GetNodeByDotName(c.name)
+			if (wErr == nil) != (gErr == nil) || (wErr != nil && !errors.Is(gErr, sql.ErrNoRows)) ||
+				!reflect.DeepEqual(want, got) {
+				t.Errorf("%q (ask %d): the store answers %+v, %v; the view %+v, %v", c.name, ask, want, wErr, got, gErr)
+				continue
+			}
+			if (got == nil) != (c.lane == "-") {
+				t.Errorf("%q (ask %d) found %+v, want found=%v", c.name, ask, got, c.lane != "-")
+			}
+			if got == nil {
+				continue
+			}
+			wantRaw, err := db.GetNode(got.ID)
+			wantByID := testutil.Must(t, wantRaw, err, "the store's GetNode")
+			if byID, err := view.GetNode(got.ID); err != nil || !reflect.DeepEqual(byID, wantByID) {
+				t.Errorf("%q: GetNode(%d) over the view = %+v, %v; the store's %+v", c.name, got.ID, byID, err, wantByID)
+			}
+			wantLane, wlErr := db.LaneOf(got)
+			gotLane, glErr := view.LaneOf(got)
+			if wlErr != nil || glErr != nil || !reflect.DeepEqual(wantLane, gotLane) {
+				t.Errorf("%q: LaneOf over the store %+v, %v; over the view %+v, %v", c.name, wantLane, wlErr, gotLane, glErr)
+			}
+			if name := nodeName(gotLane); (gotLane == nil && c.lane != "") || (gotLane != nil && name != c.lane) {
+				t.Errorf("%q stands in lane %q, want %q", c.name, name, c.lane)
+			}
+		}
+		if s, v := isStorageDropoff(db, c.name), isStorageDropoff(view, c.name); s != v || s != c.storage {
+			t.Errorf("%q: isStorageDropoff over the store %v, over the view %v, want %v", c.name, s, v, c.storage)
 		}
 	}
 }

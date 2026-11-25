@@ -233,7 +233,7 @@ func orderHoldsSlotReservation(db *store.DB, orderID, nodeID int64) bool {
 // isStorageDropoff is storageDropoffOf for a node named by its dot-name: a
 // storage slot a plain order exclusively occupies (a STOR node, or a child of a
 // LANE or an NGRP). A missing or unreadable node is not one.
-func isStorageDropoff(db *store.DB, deliveryNode string) bool {
+func isStorageDropoff(db nodeReads, deliveryNode string) bool {
 	if deliveryNode == "" {
 		return false
 	}
@@ -337,7 +337,7 @@ func oneCarrierGiven(db *store.DB, node *nodes.Node, storage bool, lane *nodes.N
 // (a LANE or NGRP parent, no STOR arm) until the owner's ruling of 2026-10-25: a complex
 // step dropping on a standalone STOR node now reserves its slot as a plain
 // order's drop there does (TestComplexDropOnAStandaloneStorNodeIsHeldAsAPlainDropThereIs).
-func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes.Node) {
+func storageDropoffOf(db nodeReads, node *nodes.Node) (storage bool, lane *nodes.Node) {
 	if node == nil || node.IsSynthetic {
 		return false, nil
 	}
