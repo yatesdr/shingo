@@ -389,7 +389,10 @@ func (e *Engine) cancelledChangeoverSpots(processID int64, co *processes.Changeo
 // style that stays may want. An order already flown lands: a refill the cancel
 // could not stop goes back when it does (returnUnwantedLanding), and a return
 // with the fleet counts as the spare leaving. It returns the live rows it read
-// and the ids it aborted, for readsLessLeaving.
+// and the ids it asked Core to cancel, for readsLessLeaving: each asks as the
+// cancel's own (orders.Manager.AskCancel, by a deciding flow), and an order
+// asked is gone from the spot's decision though its row keeps Core's status
+// until Core's word ends it.
 func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) ([]domain.Order, map[int64]bool) {
 	if len(spots) == 0 {
 		return nil, nil
@@ -414,7 +417,7 @@ func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) ([]domain.Order, ma
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
 			continue
 		}
-		if err := e.orderMgr.CancelOrderWithReason(o.ID, "changeover cancelled: the keep-staged spot goes back to the outgoing style"); err != nil {
+		if err := e.orderMgr.AskCancel(o.ID, ordermgr.CancelAsk{Reason: "changeover cancelled: the keep-staged spot goes back to the outgoing style", By: domain.CancelByDecided}); err != nil {
 			e.logFn("keep-staged: cancel spot order %d: %v", o.ID, err)
 			continue
 		}

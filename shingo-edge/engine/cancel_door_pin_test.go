@@ -593,11 +593,13 @@ func TestCancelDoorPin_ChangeoverCancel(t *testing.T) {
 // TestCancelDoorPin_KeepStagedSpotCancels: a keep-staged line's changeover
 // CANCEL (abortSpotOrdersNotFlown): the spot's return the start made and no
 // robot has taken is cancelled, so the staying style keeps its empty, and the
-// cancel orders nothing for the spot. With the return already flying it is
-// left to land, and the spot is the keeper's at its next decision point: the
-// cancel's own aborts' passes are turned away under its cell locks and
-// dropped as it lets go (letGoDecided). Today the spot's and the legs' orders
-// end at the tap; Core's word moves nothing on the ended rows.
+// cancel orders nothing for the spot; the return's cancel asks Core (final
+// brief 5g), and the return keeps Core's status until Core's word ends it.
+// With the return already flying it is left to land, and the spot is the
+// keeper's at its next decision point: the cancel's own aborts' passes are
+// turned away under its cell locks and dropped as it lets go (letGoDecided).
+// Until 2026-11-25 the spot's and the legs' orders ended at the tap, and
+// Core's word moved nothing on the ended rows.
 func TestCancelDoorPin_KeepStagedSpotCancels(t *testing.T) {
 	t.Parallel()
 	t.Run("the return not flown is cancelled", func(t *testing.T) {
@@ -623,16 +625,18 @@ func TestCancelDoorPin_KeepStagedSpotCancels(t *testing.T) {
 
 		testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "CANCEL")
 
-		if s := p.row(ret.ID).Status; s != orders.StatusCancelled {
-			t.Errorf("the spot's return reads %s after the tap, want cancelled", s)
+		// After the tap the return keeps Core's status, its cancel sent (final
+		// brief 5g), and the cancel sends nothing back and orders nothing.
+		if r := p.row(ret.ID); r.Status != ret.Status || !r.CancelSent {
+			t.Errorf("the spot's return reads %s sent=%v after the tap, want %s with its cancel sent", r.Status, r.CancelSent, ret.Status)
 		}
 		sent := p.sent()
-		spotCancel := cancelOf(ret.UUID, "changeover cancelled: the keep-staged spot goes back to the outgoing style", "")
+		spotCancel := askOf(ret.UUID, "changeover cancelled: the keep-staged spot goes back to the outgoing style", "")
 		if len(sent) == 0 || fmt.Sprint(sent[0]) != fmt.Sprint(spotCancel) {
 			t.Errorf("the CANCEL queued %v first, want the spot's return's cancel %v", sent, spotCancel)
 		}
-		if refills, returns := liveSpot(t, fx, "SPOT"); len(refills) != 0 || len(returns) != 0 {
-			t.Errorf("after the CANCEL the spot has %d refills and %d returns live, want none", len(refills), len(returns))
+		if refills, returns := liveSpot(t, fx, "SPOT"); len(refills) != 0 || len(returns) != 1 || returns[0].ID != ret.ID {
+			t.Errorf("after the CANCEL the spot has %d refills and %d returns live, want only the return whose cancel is out", len(refills), len(returns))
 		}
 		for _, id := range ids {
 			p.coreCancels(id, "cancelled", protocol.StatusQueued)
