@@ -2784,3 +2784,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: none (`scripts/check-test-citations.sh` ok)
 - verified at: `b6eb5ff5` (`test-gate-fast`, the fold cherry-picked as `168396ef` from `8319c666`)
+
+### STALE — `TestWireBinsFeed_EventsReachTheHooks`
+- test: `TestWireBinsFeed_EventsReachTheHooks` · pkg `shingocore/cmd/shingocore` · run `-run '^TestWireBinsFeed_EventsReachTheHooks$'` · `shingo-core/cmd/shingocore/bins_feed_test.go:14` @ `93bd3cd6` · tags `none`
+- code: STALE (the function it tests moved to the engine package as a method, `Engine.SubscribeBinsFeed`; the test moved with it and renamed)
+- assertion map: every assertion kept → `TestSubscribeBinsFeed_EventsReachTheHooks` (`shingo-core/engine/bins_feed_test.go:12`): the same nine events emitted, the same eight hook calls in order, none for `EventNodeUpdated`; the bare bus becomes a bare engine's (`&Engine{Events: NewEventBus()}`)
+- mutation: the lift's hook loses the node it left (`h.Changed(evt.Payload.BinID, evt.Payload.FromNodeID)` → `h.Changed(evt.Payload.BinID)`, `engine/bins_feed.go`) · survivor red: `bins_feed_test.go:43: hooks called = [... "changed 9 []" ...] want [... "changed 9 [5]" ...]` (`gate-fast/lanes-B/rig/runs/20261125T013932Z-45372.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/messaging/bins_epoch_push_census_test.go:28`
+- verified at: the commit that adds this row

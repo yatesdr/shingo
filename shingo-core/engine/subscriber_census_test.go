@@ -67,7 +67,7 @@ var coreBusSites = []busSite{
 	// Start, then the bins feed, then the web layer's when the router is built.
 	{busRoot, []string{
 		"-> eng.Start",
-		"-> wireBinsFeed",
+		"-> eng.SubscribeBinsFeed",
 		"-> www.NewRouter",
 	}},
 	{"engine/engine_lifecycle.go:Start", []string{
@@ -136,16 +136,17 @@ var coreBusSites = []busSite{
 		"EventOrderSkipped vacateTerminal",
 	}},
 	// main's, for messaging: the bus events that can change what an Edge's
-	// watched nodes hold, pointed at the bins feed's push.
-	{"cmd/shingocore/bins_feed.go:wireBinsFeed", []string{
-		"EventBinUpdated h.changed",
-		"EventBinEnteredTransit h.changed",
-		"EventOrderReceived h.started",
-		"EventOrderDispatched h.started",
-		"EventOrderCompleted h.ended",
-		"EventOrderFailed h.ended",
-		"EventOrderCancelled h.ended",
-		"EventOrderSkipped h.ended",
+	// watched nodes hold, pointed at the bins feed's push. An engine method
+	// main calls, so a harness can make the same eight.
+	{"engine/bins_feed.go:SubscribeBinsFeed", []string{
+		"EventBinUpdated h.Changed",
+		"EventBinEnteredTransit h.Changed",
+		"EventOrderReceived h.Started",
+		"EventOrderDispatched h.Started",
+		"EventOrderCompleted h.Ended",
+		"EventOrderFailed h.Ended",
+		"EventOrderCancelled h.Ended",
+		"EventOrderSkipped h.Ended",
 	}},
 	// The web layer's: each rebroadcasts its event to the screens.
 	{"www/router.go:NewRouter", []string{

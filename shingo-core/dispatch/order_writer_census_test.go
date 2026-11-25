@@ -397,7 +397,7 @@ func TestCensus_IssuersSeeANewCaller(t *testing.T) {
 // TestCensus_OrderReceivedAtBirth asks every census door one more question:
 // does the order report its receipt (EmitOrderReceived) when it is issued?
 // Everything that hears an order arrive hangs off that event — the bins feed's
-// push of the node it delivers to (cmd/shingocore/bins_feed.go), the audit row,
+// push of the node it delivers to (engine/bins_feed.go), the audit row,
 // Core's own pages — so a door that does not emit is seen by them at dispatch,
 // not at its issue. The comment that said "a Core-originated order emits its own
 // event" was false for every Core door until AdmitCoreAsk emitted

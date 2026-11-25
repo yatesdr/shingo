@@ -25,7 +25,7 @@ import (
 // Edges, or to the entry point where the act ends with no push.
 //
 // WHAT COUNTS AS A PUSH, each wired to the feed in cmd/shingocore (pinned by
-// TestWireBinsFeed_EventsReachTheHooks and SetBinChangedFunc):
+// TestSubscribeBinsFeed_EventsReachTheHooks and SetBinChangedFunc):
 //   - EventBinUpdated emitted on the bus (BinsChanged by bin and nodes);
 //   - the bin manifest service's notifyBinChanged, or NotifyBinChanged for a
 //     writer outside it (BinsChanged by bin);

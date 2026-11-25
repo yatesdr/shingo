@@ -93,10 +93,10 @@ func TestBusOrder_ADeliveryAndACancel(t *testing.T) {
 	}
 	dbg.SetStderr(nil)
 	feed := &feedCalls{log: dbg.Func(feedSubsystem)}
-	wireBinsFeed(eng.Events, binsFeedHooks{
-		changed: func(binID int64, nodeIDs ...int64) { feed.add(feedCall{"changed", 0, binID, nodeIDs, nil}) },
-		started: func(orderID int64, names ...string) { feed.add(feedCall{"started", orderID, 0, nil, names}) },
-		ended:   func(orderID int64) { feed.add(feedCall{"ended", orderID, 0, nil, nil}) },
+	eng.SubscribeBinsFeed(engine.BinsFeedHooks{
+		Changed: func(binID int64, nodeIDs ...int64) { feed.add(feedCall{"changed", 0, binID, nodeIDs, nil}) },
+		Started: func(orderID int64, names ...string) { feed.add(feedCall{"started", orderID, 0, nil, names}) },
+		Ended:   func(orderID int64) { feed.add(feedCall{"ended", orderID, 0, nil, nil}) },
 	})
 	handler, stopWeb, err := www.NewRouter(eng, www.NewDoors(eng), dbg)
 	if err != nil {

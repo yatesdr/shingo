@@ -518,10 +518,10 @@ func main() {
 	// and a level save pushes it.
 	coreDataService.SetGroupLinesFunc(eng.UnloaderGroupLines)
 	eng.SetLevelChangedFunc(coreDataService.BinsLevelChanged)
-	wireBinsFeed(eng.Events, binsFeedHooks{
-		changed: coreDataService.BinsChanged,
-		started: coreDataService.BinsOrderStarted,
-		ended:   coreDataService.BinsOrderEnded,
+	eng.SubscribeBinsFeed(engine.BinsFeedHooks{
+		Changed: coreDataService.BinsChanged,
+		Started: coreDataService.BinsOrderStarted,
+		Ended:   coreDataService.BinsOrderEnded,
 	})
 
 	// The ask pair (protocol/ask.go): Core answers an Edge's asks through the

@@ -8,8 +8,8 @@
 //   - the engine's, here: wireCancelReturnNotices (cancel_return.go) first,
 //     then this file's, with wireLaneGateHandlers (wiring_lane_gate.go)
 //     before the two window pulls at the end;
-//   - main's, on messaging's behalf: the bins feed (wireBinsFeed,
-//     cmd/shingocore/bins_feed.go), after Start;
+//   - main's, on messaging's behalf: the bins feed (SubscribeBinsFeed,
+//     bins_feed.go), which main calls after Start;
 //   - the web layer's: www's SetupEngineListeners (www/sse.go), when the
 //     router is built.
 //
