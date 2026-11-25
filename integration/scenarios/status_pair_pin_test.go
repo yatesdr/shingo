@@ -35,10 +35,8 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
 
 	"shingocore/dispatch"
-	coremessaging "shingocore/messaging"
 	corestore "shingocore/store"
 	corestoremessaging "shingocore/store/messaging"
 	coreorders "shingocore/store/orders"
@@ -202,21 +200,20 @@ func newSppCell(t *testing.T) *sppCell {
 
 	edge := edgeharness.NewEdge(t, sppStation)
 
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", core.eng.Dispatcher())
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
-	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	// Core's tables as main builds them, less what this cell leaves out: every
+	// data subject, the complex request, the redirect and the ingest, and every
+	// hook.
+	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt,
+			protocol.TypeOrderRelease),
+		coreharness.HooksOnly())
 
 	c := &sppCell{t: t, core: core, coreDB: coreDB, edge: edge, std: std}
 	c.edgeOut = &sppEdgeOutbox{EdgeOutboxOps: edge.DB, t: t}
 	c.coreOut = &sppCoreOutbox{CoreOutboxOps: coreDB, t: t}
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: c.edgeOut, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: c.coreOut, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: c.coreOut, CoreIngestor: coreSide.Ingestor},
 	)
 	c.settle()
 	return c
