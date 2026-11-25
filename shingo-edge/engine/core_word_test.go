@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -1108,10 +1109,9 @@ func TestCoreWord_ARefusalWritesOnlyTheSentence(t *testing.T) {
 // row with none send nothing.
 func TestCoreWord_AReconcileSendsAnUnansweredCancelAgain(t *testing.T) {
 	t.Parallel()
-	young := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, tc := range []struct {
 		name      string
-		sentAt    string
+		young     bool
 		refused   bool
 		asked     bool
 		reconcile bool
@@ -1119,7 +1119,7 @@ func TestCoreWord_AReconcileSendsAnUnansweredCancelAgain(t *testing.T) {
 	}{
 		{name: "a reconcile, an old unanswered cancel", asked: true, reconcile: true, want: 1},
 		{name: "a live tell", asked: true},
-		{name: "a young cancel", asked: true, sentAt: young, reconcile: true},
+		{name: "a young cancel", asked: true, young: true, reconcile: true},
 		{name: "a refused cancel", asked: true, refused: true, reconcile: true},
 		{name: "no cancel asked", reconcile: true},
 	} {
@@ -1131,8 +1131,12 @@ func TestCoreWord_AReconcileSendsAnUnansweredCancelAgain(t *testing.T) {
 			if tc.asked {
 				in := domain.CancelIntent{Reason: protocol.CancelReasonLineIdle, Actor: protocol.CancelActorEdge, Env: "env-1",
 					SentAt: "2026-11-25T12:00:00Z"}
-				if tc.sentAt != "" {
-					in.SentAt = tc.sentAt
+				// Young is stamped here, on the clock the resend reads, and not
+				// when the parent test starts: a parallel subtest can wait longer
+				// than the resend's 35 s for a slot under load, and a stamp taken
+				// before that wait reads old (the push gate of 2026-11-25).
+				if tc.young {
+					in.SentAt = clock.Now().UTC().Format(time.RFC3339Nano)
 				}
 				if tc.refused {
 					in.Refused = "set down"
