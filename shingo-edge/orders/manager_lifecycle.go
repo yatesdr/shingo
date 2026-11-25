@@ -231,12 +231,22 @@ func (m *Manager) SetOrderETA(uuid, eta string) error {
 // is". Pinned by TestAbortOrder_RefusesADeliveredOrder.
 var ErrDelivered = errors.New("delivered: its cart is already set down. Confirm it instead of cancelling")
 
+// operatorCancelReason is the reason a person's cancel carries when its door
+// names none: AbortOrder's (the Orders page, the changeover CANCEL), and the
+// resend's when the cancel's own reason cannot be read. The operator's word is
+// Cancel (the owner, 2026-11-25); until then this read "aborted by operator".
+// Core's classifier takes "cancelled by" and "aborted by" alike as a person's
+// cancel (shingo-core domain ClassifyCancelOrigin and ClassifyTermination,
+// pinned by TestClassifyCancelOrigin and TestClassifyTermination), so the old
+// text an older Edge sends classifies as this does.
+const operatorCancelReason = "cancelled by operator"
+
 // AbortOrder cancels a live order that is not delivered and enqueues a cancel
 // message. The cancel message is enqueued BEFORE the local transition so that
 // Core is guaranteed to receive the cancellation — preventing a robot from
 // continuing to execute a cancelled order on the floor.
 func (m *Manager) AbortOrder(orderID int64) error {
-	return m.AbortOrderWithReason(orderID, "aborted by operator")
+	return m.AbortOrderWithReason(orderID, operatorCancelReason)
 }
 
 // AbortOrderWithReason is AbortOrder with a caller-chosen cancel reason. The

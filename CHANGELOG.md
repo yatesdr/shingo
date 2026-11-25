@@ -42,6 +42,7 @@ Deploy: no migration; Core and Edges in either order.
 - A keep-staged spot's spare is ordered as soon as the line is free when the Edge was busy with that line at the moment the spare should have been ordered (a request, a SEND BACK, a settings save, the Edge's once-a-minute check), and a RESUME tap at such a moment takes effect then; both used to wait up to a minute, and the tap did nothing. A changeover start or cancel still leaves its own spots to the next moment the spot is decided: after a cancel, the landing of the spare's return
 - An order whose cart is already at the line (delivered) can no longer be cancelled at the Edge: confirm it instead. The Orders page no longer offers its cancel on a delivered order, and one pressed on a page drawn earlier is refused, says so, and sends nothing to Core
 - Cancelling a changeover no longer cancels a leg that has already set its cart down (delivered): that leg is confirmed as usual, and no robot is sent to move a bin for it
+- The Edge's Orders page says Cancel, not Abort: its button, its question (Keep order or Cancel order) and its toast. A person's cancel now reads "cancelled by operator" (it read "aborted by operator")
 
 ## v0.19.0 — 2026-11-22
 

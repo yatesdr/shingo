@@ -677,7 +677,7 @@ func TestHandleDispatchReply_CancelledEchoOfOwnAbort(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusSubmitted)), "UpdateOrderStatus")
 	testutil.MustNoErr(t, mgr.AbortOrder(oid), "AbortOrder")
 
-	_ = mgr.HandleDispatchReply("uuid-own", ReplyCancelled, "", "", "aborted by operator")
+	_ = mgr.HandleDispatchReply("uuid-own", ReplyCancelled, "", "", "cancelled by operator")
 	if len(emitter.cancelledByCore) != 0 {
 		t.Errorf("cancelled-by-Core emits = %q, want none for the echo of this station's own abort",
 			emitter.cancelledByCore)

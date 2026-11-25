@@ -232,7 +232,7 @@ func (m *Manager) coreWordOnEnded(order *orders.Order, w CoreWord) error {
 // robot is still working the order. A copy Core already acted on is a no-op
 // there: it does not move an ended order.
 func (m *Manager) resendCancel(order *orders.Order, w CoreWord) {
-	reason := "aborted by operator"
+	reason := operatorCancelReason
 	if d, err := m.db.LatestOrderHistoryDetailsForStatus([]int64{order.ID}, string(StatusCancelled)); err == nil && d[order.ID] != "" {
 		reason = d[order.ID]
 	}

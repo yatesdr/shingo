@@ -532,18 +532,18 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 			// What crossed the Bus about the order once the robot set the bin down.
 			edgeSent := c.edgeOut.forOrder(o.UUID)
 			t.Logf("record: the Edge sent %+v", edgeSent)
-			if len(edgeSent) != 2 || edgeSent[0].Type != protocol.TypeOrderCancel || edgeSent[0].Reason != "aborted by operator" ||
-				edgeSent[1].Type != protocol.TypeOrderCancel || edgeSent[1].Reason != "aborted by operator" {
-				t.Errorf("the Edge sent %+v, want two order.cancel \"aborted by operator\": the abort's, and the copy "+
+			if len(edgeSent) != 2 || edgeSent[0].Type != protocol.TypeOrderCancel || edgeSent[0].Reason != "cancelled by operator" ||
+				edgeSent[1].Type != protocol.TypeOrderCancel || edgeSent[1].Reason != "cancelled by operator" {
+				t.Errorf("the Edge sent %+v, want two order.cancel \"cancelled by operator\": the abort's, and the copy "+
 					"Core's delivered on the cancelled row sends again", edgeSent)
 			}
 			coreSent := c.coreOut.forOrder(o.UUID)
 			t.Logf("record: Core sent %+v", coreSent)
 			if !slices.Equal(sppKinds(coreSent), []string{protocol.TypeOrderDelivered + " ", protocol.TypeOrderUpdate + " delivered",
-				protocol.TypeOrderUpdate + " confirmed", protocol.TypeOrderCancelled + " aborted by operator",
-				protocol.TypeOrderCancelled + " aborted by operator"}) {
+				protocol.TypeOrderUpdate + " confirmed", protocol.TypeOrderCancelled + " cancelled by operator",
+				protocol.TypeOrderCancelled + " cancelled by operator"}) {
 				t.Errorf("Core sent %+v, want its delivered notice, order.update confirmed, then order.cancelled "+
-					"\"aborted by operator\" for each cancel (the dispatcher's answer, sent though its order reads "+
+					"\"cancelled by operator\" for each cancel (the dispatcher's answer, sent though its order reads "+
 					"confirmed)", coreSent)
 			}
 			if p := c.edgeOut.pending(o.UUID); len(p) != 0 {

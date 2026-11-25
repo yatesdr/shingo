@@ -861,13 +861,13 @@ func TestCoreWord_AVersionedProjectionGoesThroughTheApplier(t *testing.T) {
 		const uuid = "projected-cancelled-leg"
 		id := r.leg(uuid, protocol.StatusDispatched)
 		r.live(uuid, protocol.StatusInTransit, 3)
-		testutil.MustNoErr(t, r.eng.OrderManager().AbortOrderWithReason(id, "aborted by operator"), "the operator's abort")
+		testutil.MustNoErr(t, r.eng.OrderManager().AbortOrderWithReason(id, "cancelled by operator"), "the operator's abort")
 		r.events = nil
 		ended, before := r.row(id), r.history(id)
 
 		_, err := r.eng.ApplyOrderProjection(projection(uuid, protocol.StatusInTransit, 3))
 		testutil.MustNoErr(t, err, "a pushed projection at v3")
-		expectCancels(t, "a pushed projection at v3", r.cancels(), uuid, "aborted by operator", 1)
+		expectCancels(t, "a pushed projection at v3", r.cancels(), uuid, "cancelled by operator", 1)
 
 		r.eng.HandleUnlistedOrders([]protocol.OrderProjection{projection(uuid, protocol.StatusInTransit, 3)})
 		if after := r.row(id); !reflect.DeepEqual(after, ended) {
@@ -876,6 +876,6 @@ func TestCoreWord_AVersionedProjectionGoesThroughTheApplier(t *testing.T) {
 		}
 		r.expect("the Unlisted projection")
 		expectRows(t, "history", r.history(id), before)
-		expectCancels(t, "the Unlisted projection", r.cancels(), uuid, "aborted by operator", 2)
+		expectCancels(t, "the Unlisted projection", r.cancels(), uuid, "cancelled by operator", 2)
 	})
 }

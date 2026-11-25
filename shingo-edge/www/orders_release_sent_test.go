@@ -12,7 +12,7 @@ import (
 // versions its orders keeps a released leg staged until its robot moves, so
 // the admin Orders row reads the sent release (domain.Order.ReleaseSent) to
 // drop its Release button; a staged order whose release has not gone out keeps
-// it. Both rows still offer Abort.
+// it. Both rows still offer the cancel.
 func TestEdgeOrders_AStagedOrderWhoseReleaseWentOutOffersNoRelease(t *testing.T) {
 	t.Parallel()
 	html := renderOrdersBody(t, map[string]any{

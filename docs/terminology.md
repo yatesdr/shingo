@@ -734,6 +734,16 @@ bin), with Core's own note (`missing PANEL-A`) on the row and as the pill's titl
 Core has not checked reads **Not checked at Core**. A pill that says more than its source said is a pill that sends
 someone looking for the wrong problem.
 
+### Cancel (an order)
+
+The operator's one word for ending an order before it is done (the owner, 2026-11-25: "abort = cancel too"),
+in rendered text: the Edge Orders page's **Cancel**, its dialog (**Cancel order** / **Keep order**) and its toast,
+and the reason a person's cancel carries, `cancelled by operator`. Never *Abort*. A delivered order is not
+cancelled, its cart being set down: it is confirmed, and the Edge refuses a cancel of it (`orders.ErrDelivered`).
+Code names, routes and data-actions keep their old word for now (`AbortOrder`, `/api/orders/{id}/abort`,
+`abortOrder`). An older Edge sends `aborted by operator`, which Core classifies as a person's cancel, as it does
+the new text.
+
 ### State words
 
 What a process or a station is doing is **three words, derived, never stored**:

@@ -104,7 +104,7 @@
                      2026-11-25): its cart is set down, the row offers its Confirm, and
                      the abort door refuses one sent anyway (orders.ErrDelivered). */}}
                 {{if and (ne .Status "delivered") (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed") (ne .Status "skipped")}}
-                    <button class="btn btn-sm btn-danger" data-action="abortOrder:{{.ID}}">Abort</button>
+                    <button class="btn btn-sm btn-danger" data-action="abortOrder:{{.ID}}">Cancel</button>
                 {{end}}
             </td>
         </tr>
