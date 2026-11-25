@@ -54,6 +54,7 @@ Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either ord
 - The Orders page's Cancel answers within 2 s: "Order cancelled", Core's sentence, or "Cancel sent; Core has not answered yet". A person's cancel pauses the position's auto-reorder when Core has cancelled the order, so a cancel Core refuses pauses nothing
 - A script that cancels an Edge order at /api/orders/{id}/abort still works for this release; the address is /api/orders/{id}/cancel, and /abort goes in the next
 - Core's "Not cancelled" for an order that had already ended says how and when it ended, and no longer the history words after it, such as "(receipt: auto_confirm_timeout, count: 0)"; they stay in the order's history on Core's order page
+- The Edge's Orders page shows Core's "Not cancelled" as Core's answer, an amber note with no "Error:" in front of it; a cancel the Edge itself refuses, or one with no answer, still reads as an error
 
 ## v0.19.0 — 2026-11-22
 

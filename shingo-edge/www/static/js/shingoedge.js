@@ -107,12 +107,17 @@ function sseTriggerTypes(el) {
 // 2xx, which used to reject with a SyntaxError) and rejects an Error whose
 // message is the door's one sentence: the server's own error, else "No
 // answer from the server", "Signed out", "Server error (500)" and the rest
-// http.js lists. A write given no body sends {}, the door's rule.
+// http.js lists. The Error's status is the answer's HTTP status (0 when
+// nothing answered), for a page that words one refusal differently: the
+// Orders page's cancel shows Core's 409 as an answer, not an error. A write
+// given no body sends {}, the door's rule.
 const QUIET = { notice: false };
 function answered(p) {
     return p.then(function(res) {
         if (res.ok) return res.body;
-        throw new Error(res.error);
+        const err = new Error(res.error);
+        err.status = res.status;
+        throw err;
     });
 }
 export const api = {

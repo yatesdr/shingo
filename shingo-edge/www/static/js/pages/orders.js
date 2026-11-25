@@ -106,16 +106,23 @@ async function templateOf(code) {
 // Cancel beside "Cancel this order?" would read as the order's cancel.
 //
 // The cancel asks Core (www apiCancelOrder): cancelled when Core has done it
-// within the wait; Core's sentence, as the error, when it cannot; or pending
-// with "Cancel sent; Core has not answered yet", and the row then says
-// "Cancel sent" until Core's word ends it.
+// within the wait; Core's sentence when it cannot (409); or pending with
+// "Cancel sent; Core has not answered yet", and the row then says "Cancel
+// sent" until Core's word ends it.
+//
+// CORE'S "CANNOT" IS AN ANSWER, NOT AN ERROR (brief G D, DOCKET R146b): its
+// sentence is shown as Core sends it, on a warning, with no "Error:" in front.
+// Every other refusal (the Edge's own, a lost answer) keeps "Error:".
 async function cancelOrder(orderID) {
     if (!await confirm('Cancel this order?', { ok: 'Cancel order', cancel: 'Keep order' })) return;
     try {
         const res = await api.post('/api/orders/' + orderID + '/cancel', {});
         if (res && res.pending) toast(res.notice, 'info');
         else toast('Order cancelled', 'success');
-    } catch (e) { toast('Error: ' + e.message, 'error'); }
+    } catch (e) {
+        if (e.status === 409) toast(e.message, 'warning');
+        else toast('Error: ' + e.message, 'error');
+    }
     // The rows redraw on every answer: Core's refusal changes the row too (its
     // status Core's, its sentence under it).
     htmx.trigger(document.body, 'refreshOrders');

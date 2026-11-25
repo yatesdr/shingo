@@ -589,6 +589,11 @@ func TestCancelAskShots(t *testing.T) {
 		if !strings.Contains(dom, `data-shot-done="`+shot+`"`) {
 			t.Errorf("%s: the driver did not finish (no data-shot-done)", shot)
 		}
+		// Core's refusal is an answer, not an error (brief G D, R146b): its
+		// toast is Core's sentence alone.
+		if up := toastsUp(dom); shot == "refused" && (!strings.Contains(up, refusal) || strings.Contains(up, "Error:")) {
+			t.Errorf("refused: the toasts read %s, want Core's sentence with no \"Error:\"", up)
+		}
 		t.Logf("wrote %s (%d bytes); rows offer: %s; toasts up: %s; cancel sent rows: %d", target, info.Size(),
 			rowActions(dom), toastsUp(dom), strings.Count(dom, "Cancel sent"))
 	}
