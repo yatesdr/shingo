@@ -278,7 +278,13 @@ func TestStepsDone_ARestartThatReplaysFinishedBlocksCountsNothing(t *testing.T) 
 		t.Fatalf("the fleet's yes: moved=%v err=%v", moved, err)
 	}
 	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "v-replay-1", "RUNNING", "AMR-01"), "the robot running it")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(protocol.StatusInTransit), "in transit"), "in transit")
+	// In transit by the write the lifecycle's MarkInTransit makes (the CAS from
+	// dispatched): no engine exists yet to carry the lifecycle itself.
+	_, moved, err = db.UpdateOrderStatusFromWithReason(o.ID, string(protocol.StatusDispatched), string(protocol.StatusInTransit),
+		"fleet reported in transit", store.HistoryReason{Actor: "fleet"}, protocol.OrderUpdate{})
+	if err != nil || !moved {
+		t.Fatalf("in transit: moved=%v err=%v", moved, err)
+	}
 	vendor.hold("v-replay-1", rds.StateRunning, 0,
 		rds.Block{BlockID: "v-replay-1-b1", Location: "SMN_A", BinTask: "JackLoad"},
 		rds.Block{BlockID: "v-replay-1-b2", Location: "SLN_B", BinTask: "JackUnload"})

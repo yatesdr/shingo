@@ -133,10 +133,12 @@ func moveThroughDelivery(t *testing.T, eng *Engine, db *store.DB, from, to *node
 	}
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{OrderID: res.OrderID, BlockID: "b1",
 		Location: from.Name, BinTask: "load"})
-	testutil.MustNoErr(t, db.UpdateOrderStatus(res.OrderID, string(protocol.StatusDelivered), "test: delivered"), "set delivered")
+	// The fleet's FINISHED as the vendor-status arm takes it: the bins land
+	// first, then the lifecycle marks the order delivered.
 	o, err := db.GetOrder(res.OrderID)
 	testutil.MustNoErr(t, err, "reload")
 	eng.handleOrderDelivered(o)
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkDelivered(o, "fleet", protocol.OrderUpdate{}), "mark delivered")
 	bin, err := db.GetBin(*testdb.OnlyCart(t, o))
 	testutil.MustNoErr(t, err, "reload the bin")
 	if bin.NodeID == nil || *bin.NodeID != to.ID {

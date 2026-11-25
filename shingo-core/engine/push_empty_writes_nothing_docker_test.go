@@ -77,10 +77,12 @@ func TestPushEmpty_CoreWritesNothingTheCarrierCarries(t *testing.T) {
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{
 		OrderID: u2.ID, BlockID: "pe-b1", Location: window.Name, BinTask: "JackLoad",
 	})
-	testutil.MustNoErr(t, db.UpdateOrderStatus(u2.ID, string(protocol.StatusDelivered), "test: delivered"), "delivered")
+	// The fleet's FINISHED as the vendor-status arm takes it: the carrier lands
+	// first, then the lifecycle marks the push delivered.
 	delivered, err := db.GetOrder(u2.ID)
 	testutil.MustNoErr(t, err, "reload the push")
 	eng.handleOrderDelivered(delivered)
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkDelivered(delivered, "fleet", protocol.OrderUpdate{}), "mark delivered")
 
 	after := pushEmptyBinRow(t, db, carrier.ID)
 	if got, want := after["node_id"], float64(outbound.ID); got != want {

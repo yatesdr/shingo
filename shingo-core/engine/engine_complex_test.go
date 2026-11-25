@@ -224,8 +224,10 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "DWELLING")
 
-	// Mark order as staged (simulating the dwell callback)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling at lineside"), "update to staged")
+	// Mark order as staged, as the dwell callback does (the fleet's WAITING
+	// reaches the lifecycle's MarkStaged).
+	order = testdb.RequireOrder(t, db, "cx-empty-wait-1")
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkStaged(order, "fleet", protocol.OrderUpdate{}), "mark staged")
 
 	// Edge sends release — there are no post-wait steps
 	d.HandleOrderRelease(env, &protocol.OrderRelease{
@@ -309,7 +311,8 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "DWELLING")
 
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling"), "update to staged")
+	order = testdb.RequireOrder(t, db, "cx-redir-1")
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkStaged(order, "fleet", protocol.OrderUpdate{}), "mark staged")
 
 	// Simulate redirect: update DeliveryNode directly (PrepareRedirect does this).
 	// StepsJSON still has storageNode as the last dropoff — this is the TC-48 bug surface.

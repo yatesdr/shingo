@@ -54,7 +54,7 @@ func TestU2Pickup_WindowReadsEmptyBeforeTheLanding(t *testing.T) {
 		t.Fatalf("before pickup the window holds %d bin(s), want the carrier", got)
 	}
 
-	testutil.MustNoErr(t, db.UpdateOrderStatus(u2.ID, string(dispatch.StatusInTransit), "robot moving"), "in transit")
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkInTransit(u2, "", "fleet", protocol.OrderUpdate{}), "in transit")
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{
 		OrderID: u2.ID, BlockID: "u2p-b1", Location: window.Name, BinTask: "JackLoad",
 	})

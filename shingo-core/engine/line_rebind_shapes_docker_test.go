@@ -97,7 +97,8 @@ func TestSingleRobotChangeover_SwapLegRebindsTheCarrierItsPartnerStaged(t *testi
 
 	// Past its wait, the robot works the plan: lift the old carrier, park it,
 	// collect the staged one, set it on the line.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(swap.ID, string(dispatch.StatusInTransit), "released"), "release")
+	swap = testdb.RequireOrder(t, db, "src25-swap")
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().MarkInTransit(swap, "", "fleet", protocol.OrderUpdate{}), "past its wait")
 	eng.handlePickupBlockCompleted(BlockCompletedEvent{
 		OrderID: swap.ID, BlockID: "src25-b1", Location: line.Name, BinTask: "JackLoad",
 	})

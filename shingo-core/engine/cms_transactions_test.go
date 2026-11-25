@@ -318,7 +318,6 @@ func TestOrdinaryDelivery_StampsRobotAndOrder(t *testing.T) {
 	// the test would assert against an order that never had a robot.
 	testutil.MustNoErr(t, db.UpdateOrderRobotID(order.ID, "AMR-007"), "assign robot")
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, "delivered", "test: delivered"), "set delivered")
 	order, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
 	if order.RobotID != "AMR-007" {
