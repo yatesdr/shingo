@@ -43,7 +43,7 @@ func TestArch_EveryArrivalWriterAnnouncesOrIsNamed(t *testing.T) {
 		"store/internal/helpers/place_bin.go:PlaceBinTx": {
 			why: "THE placement; it returns what its UPDATE moved (helpers.Placed), and every caller announces it (placeCallers below)"},
 		"store/bins/bins.go:move": {calls: "onPlaced(tx, placed)",
-			why: "the hand move's statement; MoveByHandAnnounced passes the verb (BinService.move, so Move, the engine's carrier parking, onto a synthetic deck node where nothing is sent, and MoveByHand, which also writes the Released of the node the bin left). MoveAndClearStaging / MoveOffTransit pass nil and have no production caller"},
+			why: "the hand move's statement; MoveByHandAnnounced passes the verb (BinService.move, so Move, the engine's carrier parking, onto a synthetic deck node where nothing is sent, and MoveByHand, which also writes the Released of the node the bin left). MoveAndClearStaging passes nil and has no production caller"},
 		"store/bins/bins.go:RecoverToNode": {calls: "onPlaced(tx, placed)",
 			why: "the recovery's statement; RecoverTransitAnomaly passes the verb: a person placed the found carrier, and it told nobody before"},
 

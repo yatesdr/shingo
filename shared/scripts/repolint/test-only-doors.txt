@@ -28,7 +28,6 @@ door shingo-core/store DB.ListNodeTypes UNAUDITED: 2 test reference(s), no produ
 door shingo-core/store DB.ListOrdersByOrigin UNAUDITED: 3 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.ListOrphanFindings UNAUDITED: 2 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.MoveBinClearingStaging UNAUDITED: 30 test reference(s), no product caller, at the rule's start
-door shingo-core/store DB.MoveBinOffTransit UNAUDITED: no caller at all at the rule's start
 door shingo-core/store DB.MoveBinToTransit UNAUDITED: 9 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.ReplacePlantClaims UNAUDITED: 11 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.RollUpRobotConfidence UNAUDITED: 31 test reference(s), no product caller, at the rule's start

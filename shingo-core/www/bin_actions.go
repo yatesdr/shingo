@@ -238,11 +238,11 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 	}
 	// RE-ARM THE LOG, for the same reason apiClearTransitAnomaly does: a bin
 	// moved off `_TRANSIT` or off a deck has its anomaly cleared in the same
-	// statement (bins.MoveOffTransit), and the engine's silencer holds the note
-	// it last printed for that bin. Unconditional on purpose — the map is a
-	// record of what was said, not state, and forgetting a note that was not
-	// stale only means the next genuine stranding announces itself, which is
-	// what it is supposed to do.
+	// transaction (bins.MoveByHandAnnounced, offTransit), and the engine's
+	// silencer holds the note it last printed for that bin. Unconditional on
+	// purpose — the map is a record of what was said, not state, and
+	// forgetting a note that was not stale only means the next genuine
+	// stranding announces itself, which is what it is supposed to do.
 	h.engine.Recovery().ForgetStrandedNote(b.ID)
 	h.engine.AuditService().Append("bin", b.ID, "moved", b.NodeName, res.DestNode.Name, protocol.AuditActorUI)
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{

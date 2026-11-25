@@ -1463,25 +1463,17 @@ func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) e
 	return move(db, binID, toNodeID, clearStaging, false, nil)
 }
 
-// MoveOffTransit is MoveAndClearStaging for a bin coming off `_TRANSIT` or a
-// robot's carrier node, and it clears the transit anomaly in the same
-// transaction.
+// MoveByHandAnnounced is the hand move (MoveAndClearStaging's statement) with
+// the landing verb run in the move's own transaction (Lane H, H.2): the admin
+// move announces its drop as an outbox row that commits with it, where it used
+// to broadcast a Bound after the commit.
 //
-// A SEPARATE DOOR RATHER THAN A SECOND BOOLEAN, because the situation is what
-// decides, not a flag: `anomaly_at` and `anomaly_note` describe a bin nobody
-// could locate, and the moment somebody puts it at a real node both are false.
-// The operator's manual move was the path that did NOT clear them — bin 5 sat
-// at its correct home on 2026-08-24 still carrying a 2026-05-12 stamp and a
-// note naming a park point, because RecoverToNode clears the stamp and this
-// path never did.
-func MoveOffTransit(db *sql.DB, binID, toNodeID int64, clearStaging bool) error {
-	return move(db, binID, toNodeID, clearStaging, true, nil)
-}
-
-// MoveByHandAnnounced is the hand move (MoveAndClearStaging, or MoveOffTransit
-// when offTransit) with the landing verb run in the move's own transaction
-// (Lane H, H.2): the admin move announces its drop as an outbox row that
-// commits with it, where it used to broadcast a Bound after the commit.
+// offTransit is a bin coming off `_TRANSIT` or a robot's carrier node, and the
+// move clears the transit anomaly with it: `anomaly_at` and `anomaly_note`
+// describe a bin nobody could locate, and the moment somebody puts it at a real
+// node both are false. The operator's manual move used not to clear them (bin 5
+// sat at its correct home on 2026-08-24 still carrying a 2026-05-12 stamp and a
+// note naming a park point).
 func MoveByHandAnnounced(db *sql.DB, binID, toNodeID int64, clearStaging, offTransit bool, onPlaced helpers.OnPlaced) error {
 	return move(db, binID, toNodeID, clearStaging, offTransit, onPlaced)
 }
