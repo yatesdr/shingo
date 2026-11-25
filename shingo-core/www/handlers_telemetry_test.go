@@ -24,6 +24,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/payloads"
 )
 
@@ -713,6 +714,51 @@ func TestBinClearDoor_Arms(t *testing.T) {
 			},
 			answer: refusedAt(storage, http.StatusConflict, "bin CL-HELD holds 7 of CL-PPH, unfinished and held here to be called "+
 				"back to its line; UNLOAD to clear it anyway")},
+		// A cart a robot is staged at the node to lift next is not cleared:
+		// the owner ruled on a staged robot (brief H H3, 2026-11-25: "a robot
+		// staging should not invite loader interaction"; stagedCartRefusal).
+		// Every other hold clears, as it did before the ruling: a cart claimed
+		// by a robot on its way, or by one staged elsewhere, is left for a
+		// ruling (clearing it is probably harmful, but an operator's CLEAR on it
+		// works today); a queued order's reservation is no claim.
+		{name: "a cart a robot staged at the node is to lift is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-STAGED")
+				o := testdb.CreateOrder(t, f.db, stagedFor(storage(f), storage(f)))
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict,
+					"Not cleared: a robot is staged at "+storage(f)+" to take CL-STAGED to CL-LINE.")
+			}},
+		{name: "a cart a robot staged elsewhere has claimed still clears",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-STAGED-AWAY")
+				o := testdb.CreateOrder(t, f.db, stagedFor("CL-AWAY", storage(f)))
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-STAGED-AWAY", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-STAGED-AWAY")},
+		{name: "a cart an order in transit has claimed still clears",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-TRANSIT")
+				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusInTransit })
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-TRANSIT", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-TRANSIT")},
+		{name: "a cart a queued order has only reserved clears",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-SOFT")
+				o := testdb.CreateOrder(t, f.db)
+				testdb.ReserveBin(t, f.db, o.ID, b.ID)
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-SOFT", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-SOFT")},
 		{name: "a stage 1 with nowhere to send the cart is refused",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				_, _, w1, _ := twoStagePair(t, f.h, f.db, "CLN", []string{"CLN-S1-W1"}, nil)
@@ -744,6 +790,16 @@ func TestBinClearDoor_Arms(t *testing.T) {
 			},
 			answer: cleared("CL-OK", "PART-A", 100, "DEFAULT"),
 			wrote:  wroteClear("CL-OK")},
+		{name: "a claim an ended order left on the cart is no hold: the clear empties it",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-ENDED")
+				o := testdb.CreateOrder(t, f.db)
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				testdb.SeedOrderStatus(t, f.db, o.ID, string(protocol.StatusConfirmed), "")
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-ENDED", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-ENDED")},
 		{name: "UNLOAD clears a held partial",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := heldPartial(t, f, "CL-HELD-UNLOAD")
@@ -770,6 +826,17 @@ func TestBinClearDoor_Arms(t *testing.T) {
 			answer: cleared("CL-TWO-2", "PART-A", 100, "DEFAULT"),
 			wrote:  wroteClear("CL-TWO-2")},
 	})
+}
+
+// stagedFor is a CreateOrder option: a line's supply staged at its wait at
+// waitAt, to lift its cart at liftAt next and take it to CL-LINE (a two-robot
+// supply with no staging waits where it lifts).
+func stagedFor(waitAt, liftAt string) func(*orders.Order) {
+	return func(o *orders.Order) {
+		o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeComplex, protocol.StatusStaged, "CL-LINE"
+		o.StepsJSON = fmt.Sprintf(`[{"action":"wait","node":%q},{"action":"pickup","node":%q},`+
+			`{"action":"dropoff","node":"CL-LINE"}]`, waitAt, liftAt)
+	}
 }
 
 // clearHomeRig is the smallest dedicated loader a home clear takes: home

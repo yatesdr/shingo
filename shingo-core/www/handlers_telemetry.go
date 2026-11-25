@@ -313,6 +313,9 @@ func (d *Doors) binClear(req protocol.BinClearRequest) asks.Result {
 	if refusal != nil {
 		return *refusal
 	}
+	if refusal := d.stagedCartRefusal(req.NodeName, bin); refusal != nil {
+		return *refusal
+	}
 
 	// A HELD PARTIAL IS NOT CLEARED ON ONE TAP. An unfinished carrier standing in
 	// a partial home of its own part waits there to be called back to its line
@@ -393,6 +396,56 @@ func (d *Doors) binClear(req protocol.BinClearRequest) asks.Result {
 		// marker — for the board's CLEAR line.
 		ClearedBinTypeCode: clearedType,
 	})
+}
+
+// stagedCartRefusal refuses the CLEAR of a cart whose claimant's robot is
+// staged at the node to lift it next (stagedToLiftAt), nil otherwise: the
+// clear would zero the cart under the robot, and the order would then carry an
+// empty to its line. The owner's ruling (brief H H3, 2026-11-25): "a robot
+// staging should not invite loader interaction"; the case was a line's
+// two-robot supply staged at a loader home under the cart it has claimed, and
+// the loader board's CLEAR BIN on that home. Every other cart clears as it did
+// before the ruling: one a live order has claimed whose robot is not staged
+// there (on its way, or staged elsewhere), one a queued order has only
+// reserved, and one whose claimant cannot be read (it cannot be shown staged).
+// Those are left for a ruling. Read outside the clear's transaction, as the
+// bin_id check is, so a robot that stages between this read and the clear is
+// not refused. Pinned by TestBinClearDoor_Arms and, across the two modules,
+// by TestScenario_TwoRobotLine_ThroughItsHome_LoaderCardWhileStaged.
+func (d *Doors) stagedCartRefusal(nodeName string, bin *domain.Bin) *asks.Result {
+	if bin.ClaimedBy == nil {
+		return nil
+	}
+	claimant, err := d.engine.OrderService().GetOrder(*bin.ClaimedBy)
+	if err != nil || !stagedToLiftAt(claimant, nodeName) {
+		return nil
+	}
+	res := d.refuseAt(nodeName, http.StatusConflict, fmt.Sprintf(
+		"Not cleared: a robot is staged at %s to take %s to %s.", nodeName, bin.Label, claimant.DeliveryNode))
+	return &res
+}
+
+// stagedToLiftAt reports whether o's robot stands staged at node to lift the
+// cart there next: Core reads o staged, the wait it stands at (the first not
+// yet released, Order.WaitIndex) is at node, and the step after that wait is
+// a pickup at node.
+func stagedToLiftAt(o *domain.Order, node string) bool {
+	if o == nil || o.Status != protocol.StatusStaged {
+		return false
+	}
+	steps := domain.OrderPlan(o)
+	waits := 0
+	for i, s := range steps {
+		if s.Action != protocol.ActionWait {
+			continue
+		}
+		if waits == o.WaitIndex {
+			return s.Node == node && i+1 < len(steps) && steps[i+1].Action == protocol.ActionPickup &&
+				steps[i+1].Node == node
+		}
+		waits++
+	}
+	return false
 }
 
 // binToClear resolves which bin a clear names. One bin → unambiguous. More
