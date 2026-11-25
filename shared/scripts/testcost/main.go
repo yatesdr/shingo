@@ -53,6 +53,7 @@ import (
 	"fmt"
 	"go/build"
 	"io"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -622,14 +623,28 @@ func waitQuiet(line float64, wait time.Duration) (bool, float64) {
 
 // ── the server the docker tests run against ───────────────────────────────
 
-// server is a Postgres of this tool's own, started as scripts/gate.sh's pg_up
-// starts the gate's (same image and settings), never a server named in the
-// environment: reset drops databases, and must only ever drop its own.
+// server is a Postgres of this tool's own, never a server named in the
+// environment: reset drops databases, and must only ever drop its own. It is
+// started as scripts/gate.sh's pg_up starts the gate's: the same image and
+// settings, published on a host port it picks itself, above the ports Linux
+// hands a client, with another pick when docker cannot start the server on
+// one (docket G23; pg_up's comment says why the number matters). Pinned by
+// TestServerStart_PublishesOnAPortOfItsOwn.
 type server struct {
 	name, addr, template string
 	cleanup              []func()
 	stopped              bool
 }
+
+// The host ports the server may be published on, picked as pg_up picks them:
+// a random first pick in 61000-65535, then pgPortStep on (past a Windows
+// exclusion block of 100), pgPortPicks in all.
+const (
+	pgPortLo    = 61000
+	pgPortSpan  = 4536 // 61000-65535
+	pgPortStep  = 257
+	pgPortPicks = 8
+)
 
 func (s *server) env() []string {
 	return []string{"SHINGO_TEST_PG=" + s.addr, "SHINGO_TEST_PG_TEMPLATE=" + s.template, "SHINGO_TEST_REQUIRE_DOCKER=1"}
@@ -638,15 +653,9 @@ func (s *server) env() []string {
 func (s *server) start(root, tmp string) error {
 	s.name = fmt.Sprintf("shingo-testcost-%d", os.Getpid())
 	s.template = fmt.Sprintf("template_testcost_%d", os.Getpid())
-	out, err := exec.Command("docker", "run", "-d", "--name", s.name,
-		"-e", "POSTGRES_USER=test", "-e", "POSTGRES_PASSWORD=test", "-e", "POSTGRES_DB=postgres",
-		"-e", "PGDATA=/var/lib/postgresql/data/pgdata",
-		"--tmpfs", "/var/lib/postgresql/data:rw,size=4g",
-		"-p", "127.0.0.1::5432", "postgres:16-alpine",
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
-		"-c", "max_connections=500", "-c", "shared_buffers=256MB").CombinedOutput()
+	port, err := s.run()
 	if err != nil {
-		return fmt.Errorf("docker run: %v: %s", err, firstLine(out))
+		return err
 	}
 	s.cleanup = append(s.cleanup, func() { _ = exec.Command("docker", "rm", "-f", s.name).Run() })
 	deadline := time.Now().Add(60 * time.Second)
@@ -656,13 +665,37 @@ func (s *server) start(root, tmp string) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	out, err = exec.Command("docker", "port", s.name, "5432/tcp").Output()
-	if err != nil {
-		return fmt.Errorf("docker port: %v", err)
-	}
-	hp := firstLine(out)
-	s.addr = "127.0.0.1:" + hp[strings.LastIndex(hp, ":")+1:]
+	s.addr = fmt.Sprintf("127.0.0.1:%d", port)
 	return s.warm(root, tmp)
+}
+
+// run creates and starts the server's container on a host port of its own
+// pick and returns the port. A start docker refuses on a taken port leaves
+// the container created; it is removed before the next pick, whose run takes
+// its name. A run that left no container did not fail on its port (docker
+// down, no image) and is not repeated.
+func (s *server) run() (int, error) {
+	first := rand.IntN(pgPortSpan)
+	var err error
+	for try := range pgPortPicks {
+		port := pgPortLo + (first+try*pgPortStep)%pgPortSpan
+		out, rerr := exec.Command("docker", "run", "-d", "--name", s.name,
+			"-e", "POSTGRES_USER=test", "-e", "POSTGRES_PASSWORD=test", "-e", "POSTGRES_DB=postgres",
+			"-e", "PGDATA=/var/lib/postgresql/data/pgdata",
+			"--tmpfs", "/var/lib/postgresql/data:rw,size=4g",
+			"-p", fmt.Sprintf("127.0.0.1:%d:5432", port), "postgres:16-alpine",
+			"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
+			"-c", "max_connections=500", "-c", "shared_buffers=256MB").CombinedOutput()
+		if rerr == nil {
+			return port, nil
+		}
+		err = fmt.Errorf("docker run: %v: %s", rerr, firstLine(out))
+		if exec.Command("docker", "container", "inspect", s.name).Run() != nil {
+			return 0, err
+		}
+		_ = exec.Command("docker", "rm", "-f", s.name).Run()
+	}
+	return 0, fmt.Errorf("%w (each of %d host ports in %d-%d refused)", err, pgPortPicks, pgPortLo, pgPortLo+pgPortSpan-1)
 }
 
 // warm builds the Core template on the server: warmTest, from its own binary.
