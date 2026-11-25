@@ -98,13 +98,18 @@ import (
 // home just found occupied; the caller queues the order rather than dispatching
 // it there (see placeForLoader).
 func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep, pc *pairPass) (waitHome string) {
-	// Pattern A: SourceNode is a home position (produce-side return).
-	// Pattern B: DeliveryNode is a home position (consume-side removal leg).
-	// Both route to the same home/buffer/drain logic; the only structural
-	// difference is that Pattern A guards against same-order double-commit
-	// (orderDeliversTo) while Pattern B does not — delivering to the home IS
-	// the intent for the removal leg, and the single-robot-swap shape can't
-	// produce a same-order conflict here.
+	// Pattern A: SourceNode is a home position and the plan holds no wait, read
+	// as a return lifted at its home. No builder's leg is one: the legs it takes
+	// are supplies with no wait lifted at a home, whose drop it moves onto that
+	// home (B23; TestLoaderPark_EveryBuilderLeg's backfill and stage rows).
+	// Pattern B: the last drop (DeliveryNode, or its anchor) is a home position:
+	// a return, or a supply to the home.
+	// Both fall back to the same buffer/vacated/wait logic (placeForLoader). They
+	// differ in their first question: Pattern A asks the in-flight count and its
+	// own plan (orderDeliversTo); Pattern B asks a return's home clear
+	// (homeClearForReturn) and everything else the physical gate. Only Pattern A
+	// can reach the drain (it points at a node other than the home). Neither asks
+	// about a set-down before the plan's last (B24, the same test).
 
 	// Pattern A DECLINING must fall through to Pattern B, not end placement.
 	// Before this was extracted, Pattern A's three lookup failures each
@@ -781,26 +786,31 @@ func orderDeliversTo(steps []resolvedStep, node string) bool {
 }
 
 // hasWaitStep reports whether any step in a resolved step list is a wait action.
-// Used to distinguish evac/return legs (simple pickup→dropoff, no wait) from
-// supply-from-home legs (staging wait embedded in the two-robot swap chain).
+// Pattern A (placeForDedicatedLoader) reads "no wait" as "a return lifted at a
+// home", and legReturnsToHome reads it that way for an order that names no
+// process node.
 //
 // KNOWN FALSE PROXY — deliberately still here. A wait step is a proxy for leg
-// role, not the role itself, and it misclassifies a press-index R1 evac (which
-// carries a wait) as a supply leg. Replacing it with the role predicates in
-// swap_leg_role.go was planned and then FALSIFIED as specified: legTakesLineBin
-// returns false — not "unknown" — when order.ProcessNode is empty, and ~12% of
-// the complex orders that reach this file carry no ProcessNode (measured at
-// Springfield: 193 of 1518, including 56 home-source and 47 home-delivery
-// legs). A bare swap would stop Pattern A firing for those and would drop
-// Pattern B's supply legs onto the in-flight-only branch, losing the physical
-// capacity check that exists to prevent a robot fault on arrival.
+// role, not the role itself. What it catches, read from every leg the Edge's
+// builders write (TestLoaderPark_EveryBuilderLeg, 2026-11-25): no builder writes
+// a return lifted at a home with no wait. The no-wait legs that lift at a home
+// are all supplies (the Sequential backfill, a part change's stage, a staged
+// delivery whose staging is a home), and Pattern A sets each back down on the
+// home it lifts from (B23). So its misroute is not "biased to buffer", as this
+// comment said; legReturnsToHome's is, with no process node (the pn=none
+// two-robot returns through their home land in a buffer, same test).
 //
-// The two call sites also ask OPPOSITE questions, so one predicate cannot serve
-// both by negation. Correct per-site predicates are deferred to a written
-// proposal (Amendment 1 §A1.5); until then this stays, because round 1
-// established its misroute is conservative — it biases to buffer, which is
-// fail-safe — and a wrong replacement is strictly worse than the status quo.
-// See EXEC-LOG-cobalt-kestrel-2284.md, "Queue item 4 — B-park".
+// Replacing it with the role predicates in swap_leg_role.go was planned and
+// FALSIFIED as specified (Amendment 1 §A1.5; EXEC-LOG-cobalt-kestrel-2284.md,
+// "Queue item 4 — B-park"): legTakesLineBin answers false, not "unknown", with
+// no ProcessNode, and 193 of 1518 complex orders measured at Springfield carried
+// none (all from before 2026-05-04, as that measurement reported). No step
+// builder sends one now. The one door that does is the Edge's complex-order API
+// (the Manual Order and production pages, with no process node picked or a
+// loader's node), and its order always carries a wait, so no order without a
+// process node reaches Pattern A (TestLoaderPark_TheBriefsRows, the Manual Order
+// page rows). The two call sites ask opposite questions, so one predicate should
+// not serve both by negation.
 func hasWaitStep(steps []resolvedStep) bool {
 	for _, s := range steps {
 		if s.Action == protocol.ActionWait {
@@ -827,10 +837,12 @@ func hasWaitStep(steps []resolvedStep) bool {
 // UNKNOWN IS NOT SUPPLY. legTakesLineBin answers false both for "this is a
 // supply leg" and for "I cannot tell" (empty ProcessNode); collapsing those is
 // the trap SHINGO_TODO records against the naive swap. The unreadable case is
-// separated out first and keeps the previous behaviour verbatim, so those orders
-// move exactly as they do today. It is unreachable in live traffic: every
-// complex order since 2026-05-04 carries a ProcessNode, and the 193 that do not
-// all predate it.
+// separated out first and keeps the wait proxy. It is reachable: no step builder
+// sends an empty ProcessNode (TestLoaderPark_EveryBuilderLeg), but the Edge's
+// complex-order API does when no process node, or a loader's node, is picked
+// (the Manual Order page), and that order carries a wait, so its drop at a home
+// takes the physical gate (TestLoaderPark_TheBriefsRows, "Manual Order page:
+// staged at STAGE, delivered onto HOME").
 func (d *Dispatcher) legReturnsToHome(order *orders.Order, steps []resolvedStep) bool {
 	if order.ProcessNode == "" {
 		return !hasWaitStep(steps)
@@ -901,8 +913,9 @@ func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string, pc
 // nil, and the pick is plain FIFO, when this leg has no sibling returning to a
 // dedicated-loader home (or it cannot be read), when spotsThatTake has nothing
 // to say, or when one of those spots stands free: the return has room without
-// the supply's help. Otherwise the spots themselves; why names them, for the
-// record a changed pick writes.
+// the supply's help, unless the free spot is a second home of its part, which
+// the return does not land on (see spotsThatTake). Otherwise the spots
+// themselves; why names them, for the record a changed pick writes.
 func (d *Dispatcher) returnLiftFrom(supply *orders.Order) (liftFrom []int64, why string) {
 	ret, retSteps, ok := d.swapSiblingPlan(supply, nil)
 	if !ok || protocol.IsTerminal(ret.Status) || !d.legReturnsToHome(ret, retSteps) {
@@ -925,11 +938,16 @@ func (d *Dispatcher) returnLiftFrom(supply *orders.Order) (liftFrom []int64, why
 
 // spotsThatTake is the members of the dedicated loader a return leg parks at
 // that take its carrier: every buffer, and any home the carrier belongs on
-// (homeAcceptsCarrier). The placement chain lands the carrier on one of them or
-// waits for one (placeForLoader), so these are also the spots whose emptying
-// lets a waiting return go. ok is false, with nothing to say, when the leg does
-// not park at a dedicated loader, or its carrier's part cannot be read or it
-// carries none (every member takes it then).
+// (homeAcceptsCarrier). They are what the wait's sentence names
+// (parkNoSlotParams) and what returnLiftFrom asks about. NOT EVERY ONE OF THEM
+// LETS A WAITING RETURN GO: the placement chain lands the carrier on its own
+// home, a buffer, or a member a partner empties (placeForLoader), never on
+// another home of its part, so a second home named here frees nothing
+// (TestLoaderPark_TheBriefsRows, "Sequential removal, two homes (the second
+// bare), no buffer free": it waits naming HOME2 while HOME2 stands bare). ok is
+// false, with nothing to say, when the leg does not park at a dedicated loader,
+// or its carrier's part cannot be read or it carries none (every member takes it
+// then).
 func (d *Dispatcher) spotsThatTake(ret *orders.Order, retSteps []resolvedStep) (spots []store.LoaderPlacementMember, carrier string, ok bool) {
 	target := ret.DeliveryNode
 	if f := lastDropIndex(retSteps); f >= 0 && retSteps[f].Anchor != "" {
@@ -963,8 +981,9 @@ func (d *Dispatcher) spotsThatTake(ret *orders.Order, retSteps []resolvedStep) (
 }
 
 // parkNoSlotParams is the wait a return parks under when its loader has no spot
-// for it: the home it waits at, and the spots any one of which, emptied, lets it
-// go (spotsThatTake).
+// for it: the home it waits at, and the spots spotsThatTake names. Emptying a
+// second home of the carrier's part among them does not let it go (see
+// spotsThatTake).
 func (d *Dispatcher) parkNoSlotParams(ret *orders.Order, retSteps []resolvedStep, waitHome string) QueueParams {
 	params := QueueParams{Destination: waitHome}
 	if spots, _, ok := d.spotsThatTake(ret, retSteps); ok {

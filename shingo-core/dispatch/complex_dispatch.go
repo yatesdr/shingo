@@ -519,18 +519,22 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 		}
 	}
 
-	// Dedicated home loader PARK: when this is a changeover return from a
-	// dedicated-loader home (order.SourceNode = the evac pickup), Core decides where
-	// the bin lands — HOME if free, else a buffer slot — and rewrites DeliveryNode.
-	// The Edge shipped DeliveryNode="" and named no target, so Core is the single
-	// authority; the park moves the drop in the plan this pass sends and in the
-	// stored one (repoint), so the create carries it. A non-dedicated / non-loader
-	// source is left untouched.
+	// Dedicated home loader PARK (placeForDedicatedLoader), asked of every complex
+	// order. Core decides where the plan's LAST set-down lands when it is a
+	// dedicated-loader member: its home if clear, else a free buffer, else a member
+	// a partner empties. It also moves that set-down onto the home an order lifts
+	// at when the plan holds no wait (Pattern A), which takes a supply from a home
+	// with no wait, the Sequential backfill, and sets it back down on that home
+	// (B23, TestLoaderPark_EveryBuilderLeg). A set-down before the last is asked
+	// nothing (B24, the same test). The park moves the drop in the plan this pass
+	// sends and in the stored one (repoint), so the create carries it. An order
+	// that lifts and sets down at no dedicated-loader member is left untouched.
 	//
 	// When neither can take the bin and the only destination left is the home just
 	// found unavailable, the order WAITS here rather than being dispatched onto it.
-	// Only a leg whose drop is a loader home can reach that answer, so a supply leg
-	// bound for the line is never held by it.
+	// Only a leg whose last drop is a loader member can reach that answer; Pattern
+	// A, finding no buffer, keeps the drop it was pointed at, so a supply bound for
+	// the line is never held here.
 	if waitHome := d.placeForDedicatedLoader(order, resolvedSteps, pc); waitHome != "" {
 		if d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLoaderParkNoSlot,
 			d.parkNoSlotParams(order, resolvedSteps, waitHome)) {

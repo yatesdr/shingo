@@ -582,9 +582,10 @@ func TestPlaceForDedicatedLoader_ReturnWithWait_ForeignCarrier_RoutesBuffer(t *t
 }
 
 // An unreadable role (no ProcessNode) must keep the previous behaviour verbatim
-// rather than collapsing into "supply". Live traffic has carried a ProcessNode on
-// every complex order since 2026-05-04, so this covers the 193 historical rows and
-// any future regression that stops stamping it.
+// rather than collapsing into "supply". No step builder sends an empty
+// ProcessNode, but the Edge's complex-order API (the Manual Order page) does when
+// no process node is picked (TestLoaderPark_TheBriefsRows), so this covers live
+// orders, not only the 193 historical rows.
 func TestPlaceForDedicatedLoader_ReturnWithWait_UnknownRole_KeepsProxyBehaviour(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
