@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,8 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/config"
+	"shingoedge/engine"
+	"shingoedge/internal/testdb"
 )
 
 // TestHeartbeater_NodeListRequestQuotesTheCachedSceneRevision pins the Edge
@@ -242,6 +245,90 @@ func TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers(t *testing.T)
 	// What main owes after the burst (its boot reconcile), once, after it.
 	if n := afterBursts.Load(); n != 1 {
 		t.Errorf("AfterOwedBurst ran %d times, want once, after the late burst", n)
+	}
+}
+
+// TestHeartbeater_ASyncPressSendsOnceAndAnswersWhetherKafkaTookIt is docket
+// R72. A Sync button's press (www apiSyncCoreNodes, apiSyncPayloadCatalog)
+// asks through the engine's door (RequestNodeSync, RequestCatalogSync), which
+// calls the hook main.go sets from this heartbeater. With Kafka down the press
+// went through the sender's three tries (2+4+8 s of backoff) and then answered
+// ok, though nothing was sent. A press should send once and answer at once: ok
+// only when Kafka took the ask, refused when it did not. The boot burst, the
+// loop and the resyncs Core asks for keep the sender's tries (B14's test above).
+//
+// A real engine (built as the www door test builds one) and a real Heartbeater
+// on a real Client over the fake broker, wired as main.go's
+// setupKafkaSubscribers wires them, with the sender NewHeartbeater makes (its
+// stop open, so a second try waits out its backoff). "At once" is read as an
+// order, not a time: the answer comes before any second try.
+func TestHeartbeater_ASyncPressSendsOnceAndAnswersWhetherKafkaTookIt(t *testing.T) {
+	t.Parallel()
+	for _, door := range []struct {
+		name, subject string
+		press         func(*engine.Engine) error
+	}{
+		{"node sync", protocol.SubjectNodeListRequest, (*engine.Engine).RequestNodeSync},
+		{"catalog sync", protocol.SubjectCatalogPayloadsRequest, (*engine.Engine).RequestCatalogSync},
+	} {
+		t.Run(door.name, func(t *testing.T) {
+			t.Parallel()
+			broker := &fakeBroker{}
+			c := NewClient(func() config.MessagingConfig { return config.MessagingConfig{} })
+			c.kafkaW = &kafkago.Writer{Addr: kafkago.TCP("broker.test:9092"), Transport: broker, Balancer: &kafkago.Hash{},
+				RequiredAcks: kafkago.RequireOne, BatchTimeout: time.Millisecond}
+			t.Cleanup(c.Close)
+			h := NewHeartbeater(c, "edge.r72", "v-test", "inst-1", "shingo.orders")
+			t.Cleanup(h.Stop)
+			cfg := config.Defaults()
+			cfg.StationUID = "edge.r72"
+			eng := engine.New(engine.Config{AppConfig: cfg, DB: testdb.Open(t), LogFunc: func(string, ...any) {}})
+			eng.SetNodeSyncFunc(h.RequestNodeSync)
+			eng.SetCatalogSyncFunc(h.RequestCatalogSync)
+
+			// Kafka down: the answer, or a second try, whichever comes first.
+			answer := make(chan error, 1)
+			go func() { answer <- door.press(eng) }()
+			triedAgain, watched := make(chan struct{}), make(chan struct{})
+			defer close(watched)
+			go func() {
+				for broker.refused.Load() < 2 {
+					select {
+					case <-watched:
+						return
+					case <-time.After(time.Millisecond):
+					}
+				}
+				close(triedAgain)
+			}()
+			var err error
+			select {
+			case err = <-answer:
+			case <-triedAgain:
+				t.Errorf("Kafka down: the press tried a second time before it answered: a press sends once, " +
+					"with no retry ladder, and answers at once")
+				h.Stop() // the sender's backoff ends at its stop
+				err = <-answer
+			case <-time.After(30 * time.Second):
+				t.Fatal("Kafka down: the press neither answered nor tried again in 30 s")
+			}
+			if err == nil || !strings.Contains(err.Error(), "Kafka did not take it") {
+				t.Errorf("Kafka down: the press answered %v, want refused with \"Kafka did not take it\": "+
+					"the ask was not sent, and ok is only for an ask Kafka took", err)
+			}
+			if n := broker.refused.Load(); n != 1 {
+				t.Errorf("Kafka down: the press tried %d times, want 1", n)
+			}
+
+			// Kafka up: the ask taken once, and the press answered ok.
+			broker.up.Store(true)
+			if err := door.press(eng); err != nil {
+				t.Errorf("Kafka up: the press answered %v, want ok", err)
+			}
+			if n := broker.took()[door.subject]; n != 1 {
+				t.Errorf("Kafka up: the broker took %d %s, want 1", n, door.subject)
+			}
+		})
 	}
 }
 

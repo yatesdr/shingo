@@ -2,8 +2,12 @@ package www
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -641,6 +645,42 @@ func TestApiConfig_SyncBeforeTheSyncsAreWired(t *testing.T) {
 				t.Errorf("wired: the door asked the heartbeater %d times, want 1", asked)
 			}
 		})
+	}
+}
+
+// TestProcessesPage_TheCatalogSyncSaysItWasRequested: the Processes page's
+// Sync from Core says what the door's ok means, that the Edge asked Core for
+// the catalog; the catalog arrives with Core's answer, later (docket R72). It
+// said "Catalog synced from Core.", as if the catalog had come.
+func TestProcessesPage_TheCatalogSyncSaysItWasRequested(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile(filepath.Join("static", "js", "pages", "processes-desktop.js"))
+	if err != nil {
+		t.Fatalf("read processes-desktop.js: %v", err)
+	}
+	s := strings.ReplaceAll(string(src), "\r\n", "\n")
+	start := strings.Index(s, "\nasync function syncCatalog(")
+	if start < 0 {
+		t.Fatal("syncCatalog not found in processes-desktop.js: this pin lost its input; name the function that sends POST /api/payload-catalog/sync")
+	}
+	body := s[start+1:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	// The ok sentence: the one notice syncCatalog sets that is not the reset.
+	var said []string
+	for _, m := range regexp.MustCompile(`S\.settingsNotice = '([^']*)'`).FindAllStringSubmatch(body, -1) {
+		if m[1] != "" {
+			said = append(said, m[1])
+		}
+	}
+	if len(said) != 1 {
+		t.Fatalf("syncCatalog sets %d non-empty S.settingsNotice sentences, want 1, its ok sentence: this pin lost its input; its body:\n%s",
+			len(said), body)
+	}
+	if notice := strings.ToLower(said[0]); !strings.Contains(notice, "requested") || strings.Contains(notice, "synced") {
+		t.Errorf("syncCatalog's ok sentence is %q: want it to say the sync was requested, not that the catalog was synced; "+
+			"the door's ok means the Edge asked Core, and the catalog arrives with Core's answer", said[0])
 	}
 }
 
