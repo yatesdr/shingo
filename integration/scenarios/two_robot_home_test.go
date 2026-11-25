@@ -21,6 +21,7 @@ package scenarios
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -35,6 +36,7 @@ import (
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
+	edgestore "shingoedge/store"
 )
 
 // homeLine is the cell options for the two-robot line through its home: the
@@ -462,6 +464,166 @@ func TestScenario_TwoRobotLine_ThroughItsHome_HoldsTheOldCartOffTheFull(t *testi
 				t.Logf("the evac set the old cart down: %s holds %v; the full is at %q; the old cart at %q",
 					ksrHomeA, labels(c.binsAt(ksrHomeA)), c.binAt("KSR-HOME-A-FULL"), c.binAt("KSR-LINE-BIN"))
 			}
+		})
+	}
+}
+
+// legRow is what Core and the Edge say of one leg, in one line.
+func (c *ksrCell) legRow(name string, o domain.Order) string {
+	c.t.Helper()
+	co := c.coreOf(o)
+	e := c.edgeRow(o.ID)
+	return fmt.Sprintf("%s: Core %s (vendor %s) cause=%q reason=%q | Edge %s code=%q reason=%q", name, co.Status,
+		c.vendorState(co.VendorOrderID), co.QueueCause, co.QueueReason, e.Status, e.QueueCode, e.QueueReason)
+}
+
+// swapReady is the station's RELEASE button for the line: the answer its
+// view gives (store.ComputeSwapReady).
+func (c *ksrCell) swapReady() bool {
+	c.t.Helper()
+	claim, err := c.edge.DB.GetStyleNodeClaim(c.claimA)
+	mustNil(c.t, err, "the line's claim")
+	rt, err := c.edge.DB.GetProcessNodeRuntime(c.nodeID)
+	mustNil(c.t, err, "the line's runtime")
+	return edgestore.ComputeSwapReady(c.edge.DB, claim, rt, nil)
+}
+
+// The brief's A3: one robot free at REQUEST. Core gives every leg to the fleet
+// (it reads no robot's availability), and the fleet gives its one robot to one
+// leg; the other stands unassigned (CREATED). The docker harness's simulator
+// has no robot pool (the pool is the sim build's Driver), so that is modelled
+// by driving one leg's robot and leaving the other's order alone.
+//
+// Pinned as it runs at 9c282051. The leg with no robot reads dispatched at Core
+// and the Edge, with no cause and no sentence. Nothing is lifted while one
+// robot serves the pair, whichever leg it takes. With the evac parked the
+// station shows RELEASE, and a press is held at the Edge on the home's lift and
+// remembered; with the supply parked it shows none. A second robot reaching its
+// wait frees the swap: the remembered press goes out by itself, or the RELEASE
+// the station now shows runs it.
+func TestScenario_TwoRobotLine_ThroughItsHome_OneRobotFree(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		evacFirst bool
+	}{{"the robot takes the evac", true}, {"the robot takes the supply", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newKsrCell(t, homeLine(1, 0))
+			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+			c.settle()
+			before := c.lastID()
+			c.operatorRequest()
+			c.tick()
+			supply, evac := c.pairLegs("the request", before)
+			defer func() { c.coreRoute("at the end", c.rows()...) }()
+			c.eventually("both legs with the fleet", func() bool {
+				return c.coreOf(supply).VendorOrderID != "" && c.coreOf(evac).VendorOrderID != ""
+			})
+			served, idle := evac, supply
+			if !tc.evacFirst {
+				served, idle = supply, evac
+			}
+			c.drive(c.coreOf(served), "RUNNING", "WAITING")
+			c.eventually("the served leg parks at its wait", func() bool {
+				return c.edgeRow(served.ID).Status == protocol.StatusStaged
+			})
+			for i := 0; i < 3; i++ {
+				c.tick()
+			}
+			t.Logf("one robot: %s", c.legRow("supply", supply))
+			t.Logf("one robot: %s", c.legRow("evac", evac))
+			ready := c.swapReady()
+			t.Logf("one robot: the station's RELEASE button shows: %v", ready)
+			// The leg with no robot: dispatched at Core and the Edge, unassigned
+			// at the fleet, with no cause and no sentence on either row.
+			co, e := c.coreOf(idle), c.edgeRow(idle.ID)
+			if v := c.vendorState(co.VendorOrderID); v != "CREATED" || co.Status != protocol.StatusDispatched ||
+				e.Status != protocol.StatusDispatched || co.QueueCause != "" || e.QueueReason != "" {
+				t.Errorf("the leg with no robot reads %s", c.legRow("it", idle))
+			}
+			// RELEASE shows with the evac parked, not with the supply alone
+			// (store.ComputeSwapReady gates on the evac).
+			if ready != tc.evacFirst {
+				t.Errorf("RELEASE shows %v with one robot on the %s", ready, map[bool]string{true: "evac", false: "supply"}[tc.evacFirst])
+			}
+			if ready {
+				// Pressed, it sends nothing: the evac's drop needs the supply's
+				// lift (G7), and the supply has no robot. The press is remembered.
+				err := c.edge.Engine.ReleaseStagedOrders(c.nodeID, edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"})
+				t.Logf("one robot: RELEASE answers %v", err)
+				if err == nil || !strings.Contains(err.Error(), "waiting for the bin on "+ksrHomeA+" to be lifted") {
+					t.Errorf("RELEASE with one robot on the evac answers %v, want it held on the home's lift", err)
+				}
+				c.settle()
+				for i := 0; i < 3; i++ {
+					c.tick()
+				}
+				t.Logf("one robot, after RELEASE: %s", c.legRow("supply", supply))
+				t.Logf("one robot, after RELEASE: %s", c.legRow("evac", evac))
+				for _, l := range []struct {
+					name string
+					o    domain.Order
+				}{{"supply", supply}, {"evac", evac}} {
+					blocks, complete := c.fleetBlocks(l.o)
+					t.Logf("one robot, after RELEASE: the %s's vendor order holds %v (complete=%v)", l.name, blocks, complete)
+					if complete {
+						t.Errorf("one robot: RELEASE sent the %s on", l.name)
+					}
+				}
+			}
+			if got := labels(c.binsAt(ksrLine)); !slices.Equal(got, []string{"KSR-LINE-BIN"}) {
+				t.Errorf("with one robot the line holds %v, want its cart untouched", got)
+			}
+			if got := labels(c.binsAt(ksrHomeA)); !slices.Equal(got, []string{"KSR-HOME-A-FULL"}) {
+				t.Errorf("with one robot the home holds %v, want its full untouched", got)
+			}
+
+			// A second robot comes free and takes the other leg to its wait.
+			c.drive(c.coreOf(idle), "RUNNING", "WAITING")
+			c.eventually("the second robot parks at its wait", func() bool {
+				return c.edgeRow(idle.ID).Status == protocol.StatusStaged || c.edgeRow(idle.ID).Status == protocol.StatusInTransit
+			})
+			for i := 0; i < 3; i++ {
+				c.tick()
+			}
+			t.Logf("two robots: %s", c.legRow("supply", supply))
+			t.Logf("two robots: %s", c.legRow("evac", evac))
+			_, sentS := c.fleetBlocks(supply)
+			_, sentE := c.fleetBlocks(evac)
+			t.Logf("two robots: the remembered release went out by itself: supply %v, evac %v; RELEASE shows %v",
+				sentS, sentE, c.swapReady())
+			// The press made with one robot goes out by itself when the second
+			// parks; with no press made, the swap waits for one.
+			if sentS != tc.evacFirst || sentE != tc.evacFirst {
+				t.Errorf("when the second robot parks the legs went on supply=%v evac=%v, want %v (a press was made: %v)",
+					sentS, sentE, tc.evacFirst, tc.evacFirst)
+			}
+			if !sentS || !sentE {
+				mustNil(t, c.edge.Engine.ReleaseStagedOrders(c.nodeID, edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}),
+					"RELEASE with two robots")
+				c.settle()
+			}
+			c.eventually("both legs sent on", func() bool {
+				_, s := c.fleetBlocks(supply)
+				_, e := c.fleetBlocks(evac)
+				return s && e
+			})
+			c.drive(c.coreOf(supply), "RUNNING", "FINISHED")
+			c.drive(c.coreOf(evac), "RUNNING", "FINISHED")
+			c.driveUntil("both legs confirmed", func() bool {
+				done := true
+				for _, l := range []domain.Order{supply, evac} {
+					if c.edgeRow(l.ID).Status == protocol.StatusDelivered {
+						mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(l.ID, 1), "confirm")
+					}
+					if !protocol.IsTerminal(c.edgeRow(l.ID).Status) || !protocol.IsTerminal(c.coreOf(l).Status) {
+						done = false
+					}
+				}
+				return done
+			})
+			c.lineHolds("after the swap", "KSR-HOME-A-FULL")
 		})
 	}
 }
