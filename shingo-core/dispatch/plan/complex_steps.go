@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"database/sql"
 	"fmt"
 
 	"shingo/protocol"
@@ -17,6 +18,76 @@ import (
 type stepReader interface {
 	GetNodeByDotName(name string) (*nodes.Node, error)
 	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
+}
+
+// StepNodesDB is the replay walk's one read of the nodes its steps name: every
+// name in one statement, keyed by the name as asked, a name the store does not
+// answer absent (store.DB.GetNodesByDotNames; pinned against GetNodeByDotName by
+// TestGetByDotNames_AgreesWithGetByDotName).
+type StepNodesDB interface {
+	GetNodesByDotNames(names []string) (map[string]*nodes.Node, error)
+}
+
+// walkNodes is one replay walk's read of the nodes its steps name
+// (ReComplexSteps), in the store.GroupPassReads shape: read what the walk needs
+// once, carry it, forget it. The walk asked the store for every step's node by
+// name, and its helpers asked again for the same names: the re-resolve's own
+// read of the step (StepNode), the carrier before a drop (BinTypeBeforeStep, twice
+// for a group drop) and the Q1 re-ask's group and later pickups
+// (unwallOwnPickups). Here every name a step names is one statement at the start
+// of the walk, and those asks are answered from it.
+//
+// THE SAME ANSWERS. A name the statement did not answer is absent, which is
+// GetNodeByDotName's sql.ErrNoRows (TestGetByDotNames_AgreesWithGetByDotName); a
+// statement that failed leaves every name to the store as asked, as the walk
+// read before; a name no step names (a slot the walk has just chosen) is read
+// from the store. A lane wait's node is an RDS point the walk never asks
+// (ReComplexSteps' lane-wait arm), so it is not read. Copies are handed out.
+// Pinned against the store's door: TestWalkNodes_AnswerAsTheStoreDoes.
+//
+// WHAT IT MAY HOLD. The walk reads a node's name, id, type, parent, depth and
+// synthetic mark, which nothing inside a planner call changes: the planner
+// writes nothing (cmd/seeddev/planner_zero_write_docker_test.go). One per
+// walk, dropped with it.
+type walkNodes struct {
+	db     Reader
+	asked  map[string]bool        // the names the steps name
+	byName map[string]*nodes.Node // the statement's answers; nil when it failed
+}
+
+// readWalkNodes is the walk's one statement over the names steps name.
+func readWalkNodes(db Reader, steps []Step) *walkNodes {
+	w := &walkNodes{db: db, asked: map[string]bool{}}
+	var names []string
+	for _, s := range steps {
+		if s.Node == "" || s.WaitKind == WaitKindLane || w.asked[s.Node] {
+			continue
+		}
+		w.asked[s.Node] = true
+		names = append(names, s.Node)
+	}
+	if found, err := db.GetNodesByDotNames(names); err == nil {
+		w.byName = found
+	}
+	return w
+}
+
+// GetNodeByDotName is the store's door over the walk's read.
+func (w *walkNodes) GetNodeByDotName(name string) (*nodes.Node, error) {
+	if w.byName == nil || !w.asked[name] {
+		return w.db.GetNodeByDotName(name)
+	}
+	n, ok := w.byName[name]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	c := *n
+	return &c, nil
+}
+
+// ListBinsByNode is the store's: the walk carries nodes, not what stands on them.
+func (w *walkNodes) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
+	return w.db.ListBinsByNode(nodeID)
 }
 
 // Planner is the planner's parts that choose a destination or shape legs, over

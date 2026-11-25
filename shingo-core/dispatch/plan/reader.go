@@ -14,8 +14,8 @@ import (
 // used: the picker's (FinderDB), the group resolver's (binresolver.Store), the
 // capacity gate's (CapacityDB), the loader window choice's (LoaderWindowsDB),
 // the slot book's (SlotBookDB), the dig verdict's (DigDB), the group drop
-// chooser's (ChooseDropDB), the overflow's (nodes.OverflowReader) and the push's door
-// (PushDB).
+// chooser's (ChooseDropDB), the overflow's (nodes.OverflowReader), the push's door
+// (PushDB) and the replay walk's one read of its steps' nodes (StepNodesDB).
 type Reader interface {
 	FinderDB
 	binresolver.Store
@@ -26,4 +26,5 @@ type Reader interface {
 	ChooseDropDB
 	nodes.OverflowReader
 	PushDB
+	StepNodesDB
 }
