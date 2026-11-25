@@ -1,8 +1,15 @@
-// wiring.go — Edge event-handler master registry.
+// wiring.go — Edge event-handler registry.
 //
-// wireEventHandlers subscribes every EventBus consumer in shingo-edge's
-// engine package. Handler implementations live in focused sibling
-// files so this master file stays a top-down readable contract:
+// wireEventHandlers subscribes the engine's own reactions to its bus. In a
+// plant build it is every subscription the engine package makes; a sim build
+// adds the sim operator's two (StartSimOperator, sim_operator.go). It is not
+// every subscription on the bus: www subscribes its own (the robot panel's
+// stream, robot_stream.go; the boards' SSE broadcast, which hears every event,
+// sse.go's SetupEngineListeners), and main subscribes none (its one Subscribe
+// is the Kafka client's). status_event_census_test.go holds the subscribers of
+// the four status-derived events; no test holds the rest of the list.
+//
+// Handler implementations live in focused sibling files, among them:
 //
 //   wiring_counter_delta.go    – CounterDelta UOP tracking, A/B
 //                                cycling, lineside drain, auto-reorder/
@@ -27,13 +34,14 @@
 //                                backfill is not one: the release act calls
 //                                it when Order A's release at the line goes
 //                                out (sequential_backfill.go).
+//   wiring_delivered.go        – the OrderDelivered handler.
 //
 // Stage 2A.2 (2026-04) split this file out of an 813-line monolith to
 // match the Phase 2C precedent on the core side. The split is a pure
 // move — no logic changes — and adding a new handler now means
 // (a) write the function in the right sibling file, (b) subscribe it
-// here. The master registry stays the one place to read the entire
-// reactive contract.
+// here. This is the one place to read the engine's own reactions; www's
+// and the sim operator's are read where they are made.
 
 package engine
 

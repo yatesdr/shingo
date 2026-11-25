@@ -1,10 +1,25 @@
 // wiring.go — Core event handler wiring.
 //
 // This is the reactive heart of ShinGo Core. wireEventHandlers() is the
-// single master registry — every EventBus subscription lives here so
-// the full reactive contract can be read top-to-bottom without cross-
-// referencing other files. Handler implementations are split by
-// functional concern into sibling files:
+// engine's registry: the engine's own reactions to its bus, registered from
+// Start. It is not every subscription on the bus. Three sets subscribe, each
+// from its own package, in this order:
+//
+//   - the engine's, here: wireCancelReturnNotices (cancel_return.go) first,
+//     then this file's, with wireLaneGateHandlers (wiring_lane_gate.go)
+//     before the two window pulls at the end;
+//   - main's, on messaging's behalf: the bins feed (wireBinsFeed,
+//     cmd/shingocore/bins_feed.go), after Start;
+//   - the web layer's: www's SetupEngineListeners (www/sse.go), when the
+//     router is built.
+//
+// The bus runs subscribers in the order they subscribed, so that order is
+// behaviour. TestSubscriberCensus (subscriber_census_test.go) holds every
+// subscription and the order it is made in; TestBusOrder_ADeliveryAndACancel
+// (cmd/shingocore) holds the order they run in on a real engine.
+//
+// Handler implementations are split by functional concern into sibling
+// files, among them:
 //
 //   wiring_vendor_status.go   — fleet status → order status mapping,
 //                                waybill/staged/terminal dispatch
@@ -14,9 +29,11 @@
 //   wiring_block_completed.go — per-block completion fan-out
 //   wiring_lane_gate.go       — lane-mouth gate hold/release
 //   wiring_telemetry.go       — per-transition mission events + summary
+//   cancel_return.go          — the cancel-return notices, and their three
+//                                subscriptions
 //
-// sendToEdge (the outbound envelope helper) also lives here since it
-// is shared by the subscription handlers above.
+// sendToEdge, the envelope helper the handlers here use to reach an Edge,
+// also lives here.
 //
 // Typed-payload note: every subscription whose handler reads the event
 // payload uses eventbus.SubscribeTyped — the generic wrapper that pulls
