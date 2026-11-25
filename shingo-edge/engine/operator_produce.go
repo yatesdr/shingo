@@ -34,16 +34,18 @@ import (
 // (the REQUEST list): the swap's fetch names it, so Core lifts that carrier
 // to finish and no other. 0 lets Core choose, oldest held first.
 func (e *Engine) RequestProduceSwap(nodeID int64, pick int64) (*NodeOrderResult, error) {
-	return e.requestProduceSwapPick(nil, nodeID, protocol.EpisodeTriggerOperator, pick)
+	return e.requestProduceSwapPick(nodeID, protocol.EpisodeTriggerOperator, pick)
 }
 
-// requestProduceSwapFor is the automatic produce swap, on a door call's guard
-// reads (the sweep's, shared with its CanAcceptOrders; nil reads afresh).
-func (e *Engine) requestProduceSwapFor(g *guardReads, nodeID int64, trigger string) (*NodeOrderResult, error) {
-	return e.requestProduceSwapPick(g, nodeID, trigger, 0)
+// requestProduceSwapFor is the automatic produce swap, on the rows the level
+// sweep holds (the node, its runtime row and the claim it resolved, which
+// loadActiveNode would read again) and its gate's guard reads (P5). Pinned by
+// TestLevelSweep_WhatTheAsksMint.
+func (e *Engine) requestProduceSwapFor(g *guardReads, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, trigger string) (*NodeOrderResult, error) {
+	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true, reads: g})
 }
 
-func (e *Engine) requestProduceSwapPick(g *guardReads, nodeID int64, trigger string, pick int64) (*NodeOrderResult, error) {
+func (e *Engine) requestProduceSwapPick(nodeID int64, trigger string, pick int64) (*NodeOrderResult, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -51,7 +53,7 @@ func (e *Engine) requestProduceSwapPick(g *guardReads, nodeID int64, trigger str
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true, pick: pick, reads: g})
+	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true, pick: pick})
 }
 
 // produceAsk is how the two buttons onto a produce line differ. Everything else

@@ -336,8 +336,17 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	}
 	// One door call's guard reads, shared by the participant gate and the
 	// request's guards (decision 48).
+	//
+	// THE GATE AND THE ASK TAKE THE ROWS THIS PASS HOLDS (P5): the node, its
+	// runtime row and the claim, which each used to read again by id, two reads
+	// apiece. Same rows, same scans: the walk's node list and runtime read use
+	// GetProcessNode's and GetProcessNodeRuntime's columns, and the claim set
+	// resolves by loadActiveNode's precedence. Nothing this pass writes reaches
+	// them first: an ask writes its own node's runtime row and orders on its own
+	// row, and the evaluators' stamp is on this claim already. Pinned by
+	// TestLevelSweep_WhatTheAsksMint.
 	g := newGuardReads(node)
-	if canAccept, reason := e.canAcceptOrdersIn(g, node.ID); !canAccept {
+	if canAccept, reason := e.canAcceptOrdersWith(g, node, runtime, claim); !canAccept {
 		e.debugFn("demand_sweep: node %s below its level but not accepting orders: %s", node.Name, reason)
 		return
 	}
@@ -347,9 +356,9 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	var askErr error
 	switch claim.Role {
 	case protocol.ClaimRoleConsume:
-		_, askErr = e.requestNodeMaterialIn(g, node.ID, 1, protocol.EpisodeTriggerAutoreorder)
+		_, askErr = e.requestNodeFromClaim(g, node, runtime, claim, 1, protocol.EpisodeTriggerAutoreorder)
 	case protocol.ClaimRoleProduce:
-		_, askErr = e.requestProduceSwapFor(g, node.ID, protocol.EpisodeTriggerAutoreorder)
+		_, askErr = e.requestProduceSwapFor(g, node, runtime, claim, protocol.EpisodeTriggerAutoreorder)
 	}
 	if askErr != nil {
 		// Not an error state. The guards downstream refuse for good reasons and

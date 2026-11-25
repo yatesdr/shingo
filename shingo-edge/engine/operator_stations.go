@@ -60,13 +60,10 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 	return e.requestNodeMaterialFor(nodeID, quantity, protocol.EpisodeTriggerOperator)
 }
 
+// requestNodeMaterialFor reads the node, its runtime row and its claim
+// (loadActiveNode) and asks. The level sweep, which holds those rows, asks
+// requestNodeFromClaim with them and its gate's guard reads (P5).
 func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger string) (*NodeOrderResult, error) {
-	return e.requestNodeMaterialIn(nil, nodeID, quantity, trigger)
-}
-
-// requestNodeMaterialIn is requestNodeMaterialFor on a door call's guard reads
-// (the sweep's, shared with its CanAcceptOrders; nil reads afresh).
-func (e *Engine) requestNodeMaterialIn(g *guardReads, nodeID int64, quantity int64, trigger string) (*NodeOrderResult, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -78,7 +75,7 @@ func (e *Engine) requestNodeMaterialIn(g *guardReads, nodeID int64, quantity int
 		quantity = 1
 	}
 
-	return e.requestNodeFromClaim(g, node, runtime, claim, quantity, trigger)
+	return e.requestNodeFromClaim(nil, node, runtime, claim, quantity, trigger)
 }
 
 // cellRead is one bins-table read of a claim's cell (claimOccupancy).
@@ -467,8 +464,8 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	return e.canAcceptOrdersIn(nil, nodeID)
 }
 
-// canAcceptOrdersIn is CanAcceptOrders on a door call's guard reads (the
-// sweep's, which its request then shares; nil reads afresh).
+// canAcceptOrdersIn is CanAcceptOrders on a door call's guard reads (nil reads
+// afresh). The level sweep, which holds the rows, asks canAcceptOrdersWith.
 func (e *Engine) canAcceptOrdersIn(g *guardReads, nodeID int64) (bool, string) {
 	// The changeover first, regardless of runtime state: the one changeover
 	// gate (changeoverHolds) with no claim in hand. It holds the positions the
@@ -482,24 +479,58 @@ func (e *Engine) canAcceptOrdersIn(g *guardReads, nodeID int64) (bool, string) {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err == nil {
 		g = readsFor(g, node)
-		if co := g.changeover(e); co != nil {
-			if hold, reason := e.changeoverHolds(g, co, node, nil); hold {
-				return false, reason
-			}
-		}
-		// A window/position of a Core-owned loader uses the multi-order queue even
-		// without a per-style manual_swap claim (Core-owned loader refactor): mirror
-		// the claim-based shortcut below so a synth-claim loader node isn't held to
-		// the serial single-order constraint.
-		if l, lerr := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
-			return true, ""
+		if ok, reason, decided := e.admitsByNode(g, node); decided {
+			return ok, reason
 		}
 	}
 	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil || runtime == nil {
 		return true, "" // no runtime state = available
 	}
+	return e.admitsByRuntime(runtime, e.claimAtNode(node))
+}
 
+// canAcceptOrdersWith is canAcceptOrdersIn on the rows the level sweep already
+// holds (P5): the node, its runtime row and the claim the sweep resolved, the
+// rows canAcceptOrdersIn would read again, in the same order of questions. The
+// claim stands in for claimAtNode's: a node a Core loader names is admitted
+// before the claim is asked (admitsByNode), and at any other node claimAtNode
+// is the stored claim the sweep resolved, by the same precedence
+// (store.ActiveStyleFirst). Pinned by TestLevelSweep_WhatTheAsksMint.
+func (e *Engine) canAcceptOrdersWith(g *guardReads, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (bool, string) {
+	g = readsFor(g, node)
+	if ok, reason, decided := e.admitsByNode(g, node); decided {
+		return ok, reason
+	}
+	if runtime == nil {
+		return true, "" // no runtime state = available
+	}
+	return e.admitsByRuntime(runtime, claim)
+}
+
+// admitsByNode is the gate's first half, on the node row: the changeover gate,
+// then a Core-owned loader's window or position. It returns the verdict, its
+// reason, and whether it decided; when neither answers (false) the runtime row
+// is asked next.
+func (e *Engine) admitsByNode(g *guardReads, node *processes.Node) (bool, string, bool) {
+	if co := g.changeover(e); co != nil {
+		if hold, reason := e.changeoverHolds(g, co, node, nil); hold {
+			return false, reason, true
+		}
+	}
+	// A window/position of a Core-owned loader uses the multi-order queue even
+	// without a per-style manual_swap claim (Core-owned loader refactor): mirror
+	// the claim-based shortcut in admitsByRuntime so a synth-claim loader node
+	// isn't held to the serial single-order constraint.
+	if l, lerr := e.loaders().LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
+		return true, "", true
+	}
+	return false, "", false
+}
+
+// admitsByRuntime is the gate's second half, on the runtime row and the node's
+// configured claim: the serial order constraint.
+func (e *Engine) admitsByRuntime(runtime *processes.RuntimeState, claim *processes.NodeClaim) (bool, string) {
 	// manual_swap nodes use a multi-order queue — skip the serial order constraint.
 	//
 	// SwapMode IS CONFIGURATION, so it is read from the node's configured claim
@@ -507,9 +538,10 @@ func (e *Engine) canAcceptOrdersIn(g *guardReads, nodeID int64) (bool, string) {
 	// eighteen paths and can be stale, dangling, or nil, and none of those states
 	// says anything about how this window swaps; a node whose claim row was
 	// deleted would silently lose its multi-order queue and start refusing the
-	// operator's second tap. claimAtNode answers the configuration question from
-	// the style the process is running, or from the node's Core loader.
-	if claim := e.claimAtNode(node); claim.IsLoaderNode() {
+	// operator's second tap. claim answers the configuration question:
+	// claimAtNode's, from the style the process is running or the node's Core
+	// loader (canAcceptOrdersWith says why the sweep's claim is the same).
+	if claim.IsLoaderNode() {
 		return true, ""
 	}
 
