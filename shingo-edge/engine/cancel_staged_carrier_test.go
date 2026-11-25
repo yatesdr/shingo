@@ -141,3 +141,47 @@ func TestCancelledAtItsStagingWait_LeavesAKeepStagedSpare(t *testing.T) {
 		t.Errorf("a cancelled supply's carrier on the keep-staged spot read as stranded (%+v)", p)
 	}
 }
+
+// TestCancelledAtItsStagingWait_TheFloorSendsTheCarrierBack: the cancel's
+// send-back is one goroutine and one read. When it never ran (the Edge
+// stopped first) or its read could not decide (the bins copy not current),
+// the carrier stood on staging and nothing asked again (docket B13). The
+// demand reconciler's pass is the floor under it: from the rows (the order,
+// its steps, its history's staged to cancelled), one move takes the carrier
+// back to where it was fetched from, and the next pass sends nothing more.
+func TestCancelledAtItsStagingWait_TheFloorSendsTheCarrierBack(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, _, _, _ := seedChangeoverScenario(t, db)
+	eng := testEngine(t, db)
+	id := seedSupplyStagedThenCancelled(t, db, nodeID, "CO-NODE", "SRC-LOADER", "STG-1")
+	// The Edge writes a history row for each status it applies; the seed's
+	// writes are bare, so the cancel's is written here.
+	testutil.MustNoErr(t, db.InsertOrderHistory(id, string(protocol.StatusStaged), string(protocol.StatusCancelled), ""),
+		"the cancel's history row")
+	coreNeverAnswers(t, eng)
+	holdActableBins(t, eng, protocol.NodeBinsRow{Node: "STG-1", Occupied: true, PayloadCode: "PART-NEW"})
+	movesOff := func() int {
+		t.Helper()
+		all, err := db.ListActiveOrders()
+		testutil.MustNoErr(t, err, "orders")
+		var n int
+		for _, o := range all {
+			if o.OrderType == orders.TypeMove && o.SourceNode == "STG-1" {
+				n++
+				if o.DeliveryNode != "SRC-LOADER" || o.PayloadCode != "PART-NEW" {
+					t.Errorf("move goes %s->%s carrying %q, want ->SRC-LOADER carrying PART-NEW",
+						o.SourceNode, o.DeliveryNode, o.PayloadCode)
+				}
+			}
+		}
+		return n
+	}
+	for pass := 1; pass <= 2; pass++ {
+		eng.reconcileDemand()
+		if n := movesOff(); n != 1 {
+			t.Fatalf("after %d reconciler pass(es): %d moves off STG-1, want 1: the carrier the cancel left goes back once",
+				pass, n)
+		}
+	}
+}
