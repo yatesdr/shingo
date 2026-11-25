@@ -312,7 +312,7 @@ const BUGS = [
                 cellText === page.pd('M')().NO_PARTNER, 'the cell does not name the choice']);
             // AND ITS GLYPH IS ONE SLOT: the row's mode menu draws its
             // Sequential A/B as the shape it runs; POS_A9, still paired, two.
-            const slots = n => (String((page.pd('optionsFor')(n, 'mode').find(o => o.value === 'sequential') || {}).icon || '')
+            const slots = n => (String((page.pd('optionsFor')(n, 'mode').find(o => o.value === page.S.model.cells[n].mode) || {}).icon || '')
                 .match(/class="slot"/g) || []).length;
             out.push(['the mode menu\'s Sequential A/B glyph: POS_A7 ' + slots('POS_A7') + ' slot(s), POS_A9 ' + slots('POS_A9'),
                 slots('POS_A7') === 1 && slots('POS_A9') === 2, 'the one-node row does not draw one slot']);
