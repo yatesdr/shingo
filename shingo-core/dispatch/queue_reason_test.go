@@ -499,3 +499,45 @@ func TestLegFailedDemandDetail(t *testing.T) {
 		t.Errorf("no failed leg: %q, want the bare %q", got, reshuffleLegFailedDetail)
 	}
 }
+
+// TestRestartRow_NamesTheLegThatEndedTheChapter pins the words a dig's demand
+// is restarted with, picked as chapterStoppedShort picks them, when the chapter
+// end closed the dig because a leg was cancelled without the chapter-end marker
+// (a person ending one leg, a fleet stop): they name that leg and its reason,
+// whether the chapter end then cancelled siblings under the marker or had none
+// left to cancel (final brief 1c: the restart row names what happened). A
+// failed leg is named as failed, and a stale plan keeps its words.
+func TestRestartRow_NamesTheLegThatEndedTheChapter(t *testing.T) {
+	t.Parallel()
+	words := func(children []*orders.Order) string {
+		if chapterEndedInFailure(children) {
+			return legFailedDemandDetail(children)
+		}
+		return reshuffleDissolveDetail
+	}
+	done := &orders.Order{ID: 4100, Status: StatusConfirmed}
+	byPerson := &orders.Order{ID: 4103, Status: StatusCancelled, ErrorDetail: "cancelled by admin"}
+	named := "reshuffle dissolved: dig leg 4103 was cancelled (cancelled by admin); the demand re-plans"
+	for _, c := range []struct {
+		name     string
+		children []*orders.Order
+		want     string
+	}{
+		{"its siblings cancelled under the marker", []*orders.Order{done, {ID: 4101, Status: StatusConfirmed},
+			{ID: 4102, Status: StatusCancelled, ErrorDetail: reshuffleLegFailedDetail}, byPerson}, named},
+		{"no sibling left to cancel", []*orders.Order{done, byPerson}, named},
+		{"a fleet stop", []*orders.Order{done, {ID: 4104, Status: StatusCancelled,
+			ErrorDetail: "fleet order stopped — RDS error 60009: Cannot find path to new block target [PLN_05]"}},
+			"reshuffle dissolved: dig leg 4104 was cancelled (RDS error 60009: Cannot find path to new block " +
+				"target [PLN_05]); the demand re-plans"},
+		{"a failed leg", []*orders.Order{done, {ID: 4105, Status: StatusFailed, ErrorDetail: "fleet fault"},
+			{ID: 4106, Status: StatusCancelled, ErrorDetail: reshuffleLegFailedDetail}},
+			"reshuffle dissolved: dig leg 4105 failed (fleet fault); the demand re-plans"},
+		{"a stale plan", []*orders.Order{done, {ID: 4107, Status: StatusCancelled, ErrorDetail: reshuffleDissolveDetail}},
+			reshuffleDissolveDetail},
+	} {
+		if got := words(c.children); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
