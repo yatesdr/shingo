@@ -576,3 +576,89 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 		}
 	}
 }
+
+// The part change on a one-node line fed off its homes (final brief 2e, lane
+// f-home): the old part's home and the new part's home stand on one
+// dedicated-positions loader with a free buffer, and the changeover's one leg
+// lifts the line's old cart, sets it down at the old part's home, fetches the
+// new part's full from its home and sets it on the line. With the old part's
+// home bare, the old cart lands there. With it holding the old part's spare
+// full, the old cart should go to the free buffer and the spare stay put.
+//
+// THE SPARE CASE FAILS at 7a7d9a25 and is skipped unless SHINGO_KNOWN_RED=1
+// (lane f-home's notes): nothing asks about the leg's drop at the old part's
+// home. Core reads the leg's delivery as the line (its last stop), so the
+// loader park never sees the home; the final-drop gate asks the line; the
+// home is neither storage nor a drop the Edge declares exclusive. The leg is
+// sent to set the old cart down on the occupied home, and the landing evicts
+// the spare's record to _TRANSIT.
+func TestScenario_SequentialLine_PartChangeThroughItsHomes(t *testing.T) {
+	t.Parallel()
+	for _, hc := range []struct {
+		name string
+		bare bool
+	}{{"the old part's home bare", true}, {"the old part's home holding its spare", false}} {
+		t.Run(hc.name, func(t *testing.T) {
+			if !hc.bare && os.Getenv("SHINGO_KNOWN_RED") == "" {
+				t.Skip("final brief 2e (lane f-home) red pin, red until a part change's drop at an occupied home " +
+					"goes elsewhere; run with SHINGO_KNOWN_RED=1")
+			}
+			t.Parallel()
+			c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential,
+				plain: true, bareSpot: true, home: true, bareHomeA: hc.bare, buffers: 1})
+			before := c.lastID()
+			co, err := c.edge.Engine.StartProcessChangeover(c.processID, c.styleB, "ksr", "")
+			if err != nil {
+				c.dump("START")
+				t.Fatalf("START refused: %v", err)
+			}
+			c.tick()
+			var leg domain.Order
+			for _, o := range c.newRows(before) {
+				if o.OrderType == protocol.OrderTypeComplex && o.ProcessNodeID != nil && *o.ProcessNodeID == c.nodeID {
+					leg = o
+				}
+			}
+			if leg.ID == 0 {
+				task, err := c.edge.DB.GetChangeoverNodeTaskByNode(co.ID, c.nodeID)
+				mustNil(t, err, "the line's task")
+				c.dump("no leg")
+				t.Fatalf("the changeover made no leg for the one-node line: its task is a %s at %s",
+					task.Situation, task.State)
+			}
+			defer func() { c.coreRoute("at the end", c.rows()...) }()
+			c.eventually("the leg with the fleet", func() bool { return c.coreOf(leg).VendorOrderID != "" })
+			c.coreRoute("the leg dispatched", leg)
+			c.drive(c.coreOf(leg), "RUNNING", "WAITING")
+			c.eventually("the leg waits at the line", func() bool {
+				return c.edgeRow(leg.ID).Status == protocol.StatusStaged
+			})
+			if _, err := c.edge.Engine.ReleaseChangeoverWaitForNode(c.processID, c.nodeID,
+				edgeengine.ReleaseDisposition{Mode: edgeengine.DispositionCaptureLineside, CalledBy: "ksr-operator"}); err != nil {
+				c.dump("release")
+				t.Fatalf("the release at the line was refused: %v", err)
+			}
+			l := c.pastItsWait("the leg", leg)
+			c.coreRoute("the leg released", leg)
+			c.drive(l, "RUNNING", "FINISHED")
+			c.driveUntil("the leg done", func() bool {
+				if c.edgeRow(leg.ID).Status == protocol.StatusDelivered {
+					mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(leg.ID, 1), "confirm the leg")
+				}
+				return protocol.IsTerminal(c.edgeRow(leg.ID).Status) && protocol.IsTerminal(c.coreOf(leg).Status)
+			})
+			c.lineHolds("after the leg", "KSR-HOME-B-FULL")
+			want := ksrHomeA
+			if !hc.bare {
+				want = "KSR-BUF-1"
+				if at := c.binAt("KSR-HOME-A-FULL"); at != ksrHomeA {
+					t.Errorf("the old part's spare is at %q after the leg, want it still on %s", at, ksrHomeA)
+				}
+			}
+			if at := c.binAt("KSR-LINE-BIN"); at != want {
+				c.dump("the old cart")
+				t.Errorf("the old cart is at %q after the leg, want %s", at, want)
+			}
+		})
+	}
+}
