@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -920,5 +921,68 @@ func TestApiOrders_AbortPausesThePositionsAutoReorder(t *testing.T) {
 	}
 	if rt.ReorderHold != domain.ReorderHoldPaused {
 		t.Errorf("after a person's abort the position holds %q, want paused", rt.ReorderHold)
+	}
+}
+
+// TestApiOrders_ACancelAsksCoreAndAnswersAsTheAsksDo: the Orders page's Cancel
+// of an order whose status is Core's versioned word asks Core and waits up to
+// engine.AskWait (final brief 5d), answering as the asks do: 200 when Core's
+// word ends it cancelled inside the wait, 409 with Core's sentence when Core
+// refuses, 202 pending with "Cancel sent; Core has not answered yet" when Core
+// says nothing, the order still live and its cancel out.
+func TestApiOrders_ACancelAsksCoreAndAnswersAsTheAsksDo(t *testing.T) {
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
+	mgr := h.engine.OrderManager()
+	const sentence = "The cart was set down at DELIVERY. CONFIRM it at the station."
+	for _, tc := range []struct {
+		name   string
+		answer func(uuid, env string)
+		status int
+		key    string
+		want   string
+	}{
+		{"Core's word cancels it", func(uuid, env string) {
+			if err := mgr.ApplyCoreWord(uuid, orders.CoreWord{Status: orders.StatusCancelled, Version: 3}); err != nil {
+				t.Errorf("Core's word: %v", err)
+			}
+		}, http.StatusOK, "status", "ok"},
+		{"Core refuses it", func(uuid, env string) { mgr.RefuseCancel(env, uuid, sentence) },
+			http.StatusConflict, "error", sentence},
+		{"Core says nothing", nil, http.StatusAccepted, "notice", orders.CancelPendingNotice},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			id := seedOrder(t, db, orders.TypeRetrieve, orders.StatusInTransit)
+			if _, err := db.DB.Exec(`UPDATE orders SET core_version = 2 WHERE id = ?`, id); err != nil {
+				t.Fatalf("Core's version: %v", err)
+			}
+			if tc.answer != nil {
+				go func() {
+					for deadline := time.Now().Add(engine.AskWait); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+						o, err := db.GetOrder(id)
+						if err != nil || !o.CancelSent {
+							continue
+						}
+						in, err := domain.DecodeCancelIntent(o.CancelIntent)
+						if err == nil && in != nil {
+							tc.answer(o.UUID, in.Env)
+							return
+						}
+					}
+				}()
+			}
+			resp := doRequest(t, router, "POST", "/api/orders/"+itoa(id)+"/cancel", nil, nil)
+			assertStatus(t, resp, tc.status)
+			assertJSONPath(t, resp, tc.key, tc.want)
+			stored, err := db.GetOrder(id)
+			if err != nil {
+				t.Fatalf("read the order: %v", err)
+			}
+			if pending := tc.status == http.StatusAccepted; pending != stored.CancelSent {
+				t.Errorf("after the answer the row reads cancel sent %v, want %v", stored.CancelSent, pending)
+			}
+		})
 	}
 }

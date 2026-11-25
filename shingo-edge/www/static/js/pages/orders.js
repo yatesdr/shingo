@@ -104,11 +104,17 @@ async function templateOf(code) {
 // The operator's word is Cancel (the owner, 2026-11-25): the button, this
 // dialog and its toast. The dialog's own buttons name the choice, since a plain
 // Cancel beside "Cancel this order?" would read as the order's cancel.
+//
+// The cancel asks Core (www apiCancelOrder): cancelled when Core has done it
+// within the wait; Core's sentence, as the error, when it cannot; or pending
+// with "Cancel sent; Core has not answered yet", and the row then says
+// "Cancel sent" until Core's word ends it.
 async function cancelOrder(orderID) {
     if (!await confirm('Cancel this order?', { ok: 'Cancel order', cancel: 'Keep order' })) return;
     try {
-        await api.post('/api/orders/' + orderID + '/cancel', {});
-        toast('Order cancelled', 'success');
+        const res = await api.post('/api/orders/' + orderID + '/cancel', {});
+        if (res && res.pending) toast(res.notice, 'info');
+        else toast('Order cancelled', 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e.message, 'error'); }
 }

@@ -112,13 +112,21 @@ func (p *doorPin) sent() []map[string]any {
 	return out
 }
 
-// cancelOf is one order.cancel as the Edge sends it today: no actor for a
-// person's door, protocol.CancelActorEdge for the Edge's own rule.
+// cancelOf is one order.cancel as the Edge sent it before a cancel asked: no
+// actor for a person's door, protocol.CancelActorEdge for the Edge's own rule.
 func cancelOf(uuid, reason, actor string) map[string]any {
 	m := map[string]any{"order_uuid": uuid, "reason": reason}
 	if actor != "" {
 		m["actor"] = actor
 	}
+	return m
+}
+
+// askOf is one order.cancel that asks Core (protocol.OrderCancel.Intent): the
+// station has not ended its row and waits for Core's word.
+func askOf(uuid, reason, actor string) map[string]any {
+	m := cancelOf(uuid, reason, actor)
+	m["intent"] = true
 	return m
 }
 
@@ -263,11 +271,14 @@ func TestCancelDoorPin_Abandon(t *testing.T) {
 }
 
 // TestCancelDoorPin_OrdersPage: the Orders page's Cancel (www apiCancelOrder:
-// Manager.CancelOrderByPerson, its one call) of an order with a robot on it.
-// Its own work is the reorder hold's: a pause on the position, so the sweep
-// does not ask again a minute after a person said stop. Today the order ends
-// at the tap, its completion clears the position's order slot, and the pause
-// is written at the tap; Core's word moves nothing on the ended row.
+// Manager.CancelOrderByPerson) of an order with a robot on it. Its own work is
+// the reorder hold's: a pause on the position, so the sweep does not ask again
+// a minute after a person said stop. The cancel asks Core (final brief 5g):
+// after the tap the row keeps Core's status and reads cancel sent, and nothing
+// else has moved (no row, no pause, the position's order slot still the
+// order's). Core's word ends it: its row, the completion's slot clear, and the
+// person's pause written then; no "Core cancelled" toast. Until 2026-11-25 the
+// order ended at the tap with its pause, and Core's word moved nothing.
 func TestCancelDoorPin_OrdersPage(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -289,14 +300,14 @@ func TestCancelDoorPin_OrdersPage(t *testing.T) {
 
 	testutil.MustNoErr(t, eng.orderMgr.CancelOrderByPerson(id), "the person's cancel")
 
-	expectLines(t, "the tile after the tap", p.tile(nodeID, "TEST-NODE"))
-	p.expectSent("the tap", cancelOf(o.UUID, "cancelled by operator", ""))
-	expectLines(t, "the rows at the tap", p.historySince(id, before), "in_transit->cancelled: cancelled by operator")
+	expectLines(t, "the tile after the tap", p.tile(nodeID, "TEST-NODE"), fmt.Sprintf("%d in_transit cancel_sent=true", id))
+	p.expectSent("the tap", askOf(o.UUID, "cancelled by operator", ""))
+	expectLines(t, "the rows at the tap", p.historySince(id, before))
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read the runtime row")
-	if rt.ActiveOrderID != nil || rt.ReorderHold != domain.ReorderHoldPaused || rt.ReorderHoldNote != note {
-		t.Errorf("after the tap the position holds order %v, %q %q; want no order, paused %q", rt.ActiveOrderID,
-			rt.ReorderHold, rt.ReorderHoldNote, note)
+	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != id || rt.ReorderHold != "" {
+		t.Errorf("after the tap the position holds order %v, %q %q; want the order still, and no pause yet",
+			rt.ActiveOrderID, rt.ReorderHold, rt.ReorderHoldNote)
 	}
 
 	p.coreCancels(id, "cancelled by operator", protocol.StatusInTransit)
@@ -307,8 +318,9 @@ func TestCancelDoorPin_OrdersPage(t *testing.T) {
 	expectLines(t, "the toasts", p.toasts)
 	rt, err = db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read the runtime row")
-	if rt.ReorderHold != domain.ReorderHoldPaused || rt.ReorderHoldNote != note {
-		t.Errorf("at the end the position holds %q %q, want paused %q", rt.ReorderHold, rt.ReorderHoldNote, note)
+	if rt.ActiveOrderID != nil || rt.ReorderHold != domain.ReorderHoldPaused || rt.ReorderHoldNote != note {
+		t.Errorf("at the end the position holds order %v, %q %q; want no order, paused %q", rt.ActiveOrderID,
+			rt.ReorderHold, rt.ReorderHoldNote, note)
 	}
 }
 

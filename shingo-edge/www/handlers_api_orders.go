@@ -422,15 +422,39 @@ func (h *Handlers) apiSubmitOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
 }
 
+// apiCancelOrder is the Orders page's Cancel (orders.Manager.CancelOrderByPerson).
+// For an order whose status is Core's versioned word the cancel is asked of
+// Core, and the tap waits up to engine.AskWait for the answer, as the asks do:
+// 200 when the order ended cancelled; 409 with Core's sentence when it cannot
+// cancel (the cart is set down, the order had ended); 202 with pending and
+// "Cancel sent; Core has not answered yet" when Core has not answered, the row
+// then reading "Cancel sent" until it does. The wait holds no lock. Pinned by
+// TestApiOrders_ACancelAsksCoreAndAnswersAsTheAsksDo.
 func (h *Handlers) apiCancelOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := parseID(r, "orderID")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid order ID")
 		return
 	}
-	if err := h.engine.OrderManager().CancelOrderByPerson(orderID); err != nil {
+	mgr := h.engine.OrderManager()
+	if err := mgr.CancelOrderByPerson(orderID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
+	ans, err := mgr.AwaitCancel(orderID, engine.AskWait)
+	switch {
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	case ans.Cancelled:
+		writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
+	case ans.Pending:
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Trigger", "refreshOrders")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "pending", "pending": true, "notice": ans.Sentence(orderID)})
+	default:
+		writeError(w, http.StatusConflict, ans.Sentence(orderID))
+	}
 }

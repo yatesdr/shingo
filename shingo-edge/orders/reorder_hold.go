@@ -47,13 +47,17 @@ func (m *Manager) holdReorderAt(order *orders.Order, kind domain.ReorderHold, no
 }
 
 // CancelOrderByPerson is the Orders page's cancel, the HMI cancel door: the
-// order's cancel (CancelOrder), then a pause on its position's auto-reorder, so
-// the sweep does not ask again a minute after a person said stop. A cancel the
-// door refuses (an ended order, a delivered one: ErrDelivered) pauses
-// nothing. The Edge's own cancels (a changeover's start or cancel, a
-// send-back's) go through CancelOrderWithReason and pause nothing.
+// one door asked by a person (AskCancel, domain.CancelByPerson), and a pause
+// on its position's auto-reorder, so the sweep does not ask again a minute
+// after a person said stop. For an order whose status is Core's versioned
+// word the pause is written when Core's word ends it (coreEnded), not at the
+// tap: a cancel Core refuses leaves no pause naming a cancel that did not
+// happen. An order ended here at the tap (no versioned word) is paused here.
+// A cancel the door refuses (an ended order, a delivered one: ErrDelivered)
+// pauses nothing. The Edge's own cancels (a changeover's start or cancel, a
+// send-back's) pause nothing.
 func (m *Manager) CancelOrderByPerson(orderID int64) error {
-	if err := m.CancelOrder(orderID); err != nil {
+	if err := m.AskCancel(orderID, CancelAsk{By: domain.CancelByPerson}); err != nil {
 		return err
 	}
 	order, err := m.db.GetOrder(orderID)
@@ -61,7 +65,9 @@ func (m *Manager) CancelOrderByPerson(orderID int64) error {
 		log.Printf("orders: auto-reorder hold for order %d: read the cancelled order: %v", orderID, err)
 		return nil
 	}
-	m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(orderID))
+	if order.Status == StatusCancelled {
+		m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(orderID))
+	}
 	return nil
 }
 
