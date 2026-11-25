@@ -684,6 +684,27 @@ func LaneForNode(db *sql.DB, nodeID int64) (*Node, error) {
 	return parent, nil
 }
 
+// LaneOf is LaneForNode for a node the caller already holds: the same walk from
+// n's own ParentID, so one read (the parent's) where LaneForNode makes two, and
+// none for a node with no parent. n must be a whole row as the doors read it
+// (Get, GetByName, GetByDotName, ListChildren: every scan of SelectCols), never a
+// node built by hand, which carries no ParentID and would read as no lane.
+// LaneForNode keeps its own two reads, so the agreement pin
+// (TestLaneOf_AgreesWithLaneForNode, dot_names_test.go) compares two walks.
+func LaneOf(db *sql.DB, n *Node) (*Node, error) {
+	if n.ParentID == nil {
+		return nil, nil
+	}
+	parent, err := Get(db, *n.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	if parent.NodeTypeCode != protocol.NodeClassLANE {
+		return nil, nil
+	}
+	return parent, nil
+}
+
 // GroupOf returns the node group nodeID is a member of: its nearest NGRP
 // ancestor, so a lane slot's is its lane's group. nil when no ancestor is one.
 // The node itself is not asked: a group is not a member of itself.

@@ -178,6 +178,12 @@ func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
 	return nodes.LaneForNode(db.DB, nodeID)
 }
 
+// LaneOf is LaneForNode for a node the caller holds, read whole by a node door:
+// one read, the parent's (nodes.LaneOf).
+func (db *DB) LaneOf(n *nodes.Node) (*nodes.Node, error) {
+	return nodes.LaneOf(db.DB, n)
+}
+
 // GroupOf returns the node group nodeID is a member of (its nearest NGRP
 // ancestor; a lane slot's is its lane's group), or nil when it is in none.
 func (db *DB) GroupOf(nodeID int64) (*nodes.Node, error) {

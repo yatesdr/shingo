@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
@@ -177,5 +178,64 @@ func TestListPhysicalChildren_AgreesWithListChildren(t *testing.T) {
 	}
 	if empty, err := nodes.ListPhysicalChildren(sdb, nil); err != nil || len(empty) != 0 {
 		t.Errorf("no parents: %v, %v; want empty", empty, err)
+	}
+}
+
+// TestLaneOf_AgreesWithLaneForNode pins the node-in-hand lane walk to the by-id
+// one: for every node of the fixture, LaneOf over the node as Get reads it
+// answers what LaneForNode answers for its id, the same lane or none. The
+// fixture has the slots of two lanes, the lanes (each a group's child), a flat
+// child of a group, a group, a parentless node, a child of an untyped node and a
+// child of a slot. The want column states which lane each node stands in, so a
+// fixture that stops building what it says fails here rather than agreeing
+// vacuously.
+func TestLaneOf_AgreesWithLaneForNode(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+	laneType, err := nodes.GetTypeByCode(sdb, protocol.NodeClassLANE)
+	testutil.MustNoErr(t, err, "LANE type")
+	mk := func(name string, parent, typeID *int64) *nodes.Node {
+		t.Helper()
+		n := &nodes.Node{Name: name, Enabled: true, IsSynthetic: typeID != nil, ParentID: parent, NodeTypeID: typeID}
+		testutil.MustNoErr(t, nodes.Create(sdb, n), "create "+name)
+		return n
+	}
+	grp := testdb.MarkedGroup(t, db, "LOF-GRP")
+	lane := mk("LOF-LANE", grp, &laneType.ID)
+	s1 := mk("LOF-S1", &lane.ID, nil)
+	s2 := mk("LOF-S2", &lane.ID, nil)
+	lane2 := mk("LOF-LANE2", testdb.MarkedGroup(t, db, "LOF-GRP2"), &laneType.ID)
+	s3 := mk("LOF-S3", &lane2.ID, nil)
+	flat := mk("LOF-FLAT", grp, nil)
+	root := mk("LOF-ROOT", nil, nil)
+	under := mk("LOF-UNDER", &root.ID, nil)
+	nested := mk("LOF-NESTED", &s1.ID, nil)
+	group, err := nodes.Get(sdb, *grp)
+	testutil.MustNoErr(t, err, "read the group")
+
+	cases := []struct {
+		n    *nodes.Node
+		want *nodes.Node // nil: in no lane
+	}{
+		{s1, lane}, {s2, lane}, {s3, lane2},
+		{lane, nil}, {lane2, nil}, {group, nil}, {flat, nil}, {root, nil}, {under, nil}, {nested, nil},
+	}
+	for _, c := range cases {
+		byID, err := nodes.LaneForNode(sdb, c.n.ID)
+		testutil.MustNoErr(t, err, "LaneForNode "+c.n.Name)
+		held, err := nodes.Get(sdb, c.n.ID)
+		testutil.MustNoErr(t, err, "read "+c.n.Name)
+		inHand, err := nodes.LaneOf(sdb, held)
+		testutil.MustNoErr(t, err, "LaneOf "+c.n.Name)
+		if !reflect.DeepEqual(byID, inHand) {
+			t.Errorf("%s: LaneForNode = %+v, LaneOf = %+v", c.n.Name, byID, inHand)
+		}
+		switch {
+		case c.want == nil && inHand != nil:
+			t.Errorf("%s stands in lane %d %q, want none", c.n.Name, inHand.ID, inHand.Name)
+		case c.want != nil && (inHand == nil || inHand.ID != c.want.ID):
+			t.Errorf("%s stands in %+v, want lane %d %q", c.n.Name, inHand, c.want.ID, c.want.Name)
+		}
 	}
 }
