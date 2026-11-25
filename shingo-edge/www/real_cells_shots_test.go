@@ -497,12 +497,15 @@ func seedRealCell(t *testing.T, c realCell, opts seedOpts, mount func(mux *http.
 			CoreNodeName: lane, Role: domain.RoutingRoleStaging, Enabled: true, Sequence: 100 + i})
 		must(t, err, "offered lane "+lane)
 	}
+	// A node in two roles is one node of Core's list.
 	var routingNodes []protocol.NodeInfo
 	for i, r := range opts.routing {
 		r.ProcessID, r.Enabled, r.Sequence = sc.processID, true, 200+i
 		_, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, r)
 		must(t, err, "routing "+r.CoreNodeName)
-		routingNodes = append(routingNodes, protocol.NodeInfo{Name: r.CoreNodeName})
+		if !slices.ContainsFunc(routingNodes, func(n protocol.NodeInfo) bool { return n.Name == r.CoreNodeName }) {
+			routingNodes = append(routingNodes, protocol.NodeInfo{Name: r.CoreNodeName})
+		}
 	}
 	if len(opts.parts) > 0 {
 		must(t, db.ReplaceProcessPayloads(sc.processID, opts.parts), "the part set")

@@ -150,6 +150,123 @@ func TestStationToastShots(t *testing.T) {
 	}
 }
 
+// TestStationTileCancelShots — the station's tile for a position whose inbound
+// order has this station's cancel out and unanswered, at the kiosk's 1280x800
+// (brief G D, DOCKET R146c): its pill should read "Cancel sent"
+// (operator-render.js appendETAPills). The page is the real one on the seeded
+// plant (scenefixtures A, Press A1), as TestStationToastShots draws it, with
+// the same stand-in event stream. Its first position gets an order on its way
+// that Core has told at a version, and the one cancel door asks Core for it;
+// no Core answers, so the cancel stays sent.
+//
+//	edge-tile-cancel-sent-after-1280.png
+//
+// Run:
+//
+//	cd shingo-edge && TOAST_SHOTS_OUT=<dir> go test -tags shots -count=1 \
+//	    -run '^TestStationTileCancelShots$' -v ./www/
+func TestStationTileCancelShots(t *testing.T) {
+	t.Parallel()
+	out := os.Getenv("TOAST_SHOTS_OUT")
+	if out == "" {
+		t.Skip("TOAST_SHOTS_OUT not set")
+	}
+	chrome := chromeBinary()
+	if chrome == "" {
+		t.Fatal("no Chrome binary: set COMPOSER_SHOTS_CHROME")
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", out, err)
+	}
+
+	db := testdb.Open(t)
+	seeded := testdb.SeedPlant(t, db, scenefixtures.A(), "Press A1")
+	var station int64
+	for _, id := range seeded.Stations {
+		if station == 0 || id < station {
+			station = id
+		}
+	}
+	nodes, err := db.ListProcessNodesByStation(station)
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("the station's positions: %v (%d)", err, len(nodes))
+	}
+	pos := nodes[0]
+	cfg := config.Defaults()
+	cfg.StationUID = "shots.tile"
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	eng.SetPayloadBinTypes(nil)
+	eng.Start()
+	t.Cleanup(eng.Stop)
+
+	id, err := db.CreateOrder("5a1f0c2e-0000-4000-8000-000000000021", orders.TypeRetrieve, &pos.ID, false, 1,
+		pos.CoreNodeName, "", "SYN-MARKET-1", protocol.Height{}, false, "SYN-PART-A", "", "")
+	if err != nil {
+		t.Fatalf("create the order: %v", err)
+	}
+	if _, err := db.DB.Exec(`UPDATE orders SET status = ?, core_version = 1 WHERE id = ?`,
+		string(protocol.StatusInTransit), id); err != nil {
+		t.Fatalf("the order on its way, at Core's word: %v", err)
+	}
+	if err := eng.OrderManager().AskCancel(id, orders.CancelAsk{}); err != nil {
+		t.Fatalf("ask Core for the cancel: %v", err)
+	}
+	if o, err := db.GetOrder(id); err != nil || !o.CancelSent {
+		t.Fatalf("the order's cancel is not out: %v", err)
+	}
+
+	router := shotsRouter(t, eng)
+	srv := shotsServer(t, router, func(mux *http.ServeMux) {
+		mux.HandleFunc("/__shots/tile-driver.js", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			_, _ = w.Write([]byte(tileShotDriver))
+		})
+		mux.HandleFunc("/operator/station/", func(w http.ResponseWriter, r *http.Request) {
+			plain := r.Clone(r.Context())
+			plain.Header.Del("Accept-Encoding")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, plain)
+			page := rec.Body.String()
+			if !strings.Contains(page, "</body>") {
+				t.Errorf("the station page has no </body> to put the driver before:\n%.400s", page)
+			}
+			page = strings.Replace(page, "</body>", `<script src="/__shots/tile-driver.js"></script></body>`, 1)
+			for k, v := range rec.Header() {
+				if k != "Content-Length" && k != "Etag" {
+					w.Header()[k] = v
+				}
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write([]byte(page))
+		})
+	})
+
+	u := fmt.Sprintf("%s/operator/station/%d", srv.URL, station)
+	target := filepath.Join(out, "edge-tile-cancel-sent-after-1280.png")
+	_ = os.Remove(target)
+	shotChrome(t, chrome, out, u, "--screenshot="+target)
+	info, err := os.Stat(target)
+	if err != nil || info.Size() < 10_000 {
+		t.Fatalf("%s missing or blank: %v", target, err)
+	}
+	dom := shotChrome(t, chrome, out, u, "--dump-dom")
+	if !strings.Contains(dom, `data-shot-done="tile"`) {
+		t.Errorf("the driver did not finish (no data-shot-done)")
+	}
+	if !strings.Contains(dom, `os-node-eta-pill">Cancel sent<`) {
+		t.Errorf("%s's tile has no \"Cancel sent\" pill", pos.CoreNodeName)
+	}
+	t.Logf("wrote %s (%d bytes); %s's tile pills: %d \"Cancel sent\"", target, info.Size(), pos.CoreNodeName,
+		strings.Count(dom, `os-node-eta-pill">Cancel sent<`))
+}
+
+// tileShotDriver is TestStationTileCancelShots's: the stand-in stream, then
+// the page marked done once the board has drawn (1.5 s of virtual time).
+const tileShotDriver = shotStream + `(function () {
+  setTimeout(function () { document.body.setAttribute('data-shot-done', 'tile'); }, 1500);
+})();
+`
+
 // TestOrdersCancelShots — the Edge's Orders page (/orders) at 1280x800, for the
 // final brief's no cancel on a delivered order (1e) and the word Cancel (its
 // Part 3), taken before and after the change by the same command. Two orders
