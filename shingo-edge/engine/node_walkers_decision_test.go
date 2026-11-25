@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -318,6 +319,167 @@ func TestLevelSweep_ParkedSideIsNotSkipped(t *testing.T) {
 	eng.sweepProcessLevels(proc)
 
 	assertSet(t, "nodes asked for", askedNodes(t, db, f), []string{"B"})
+}
+
+// TestLevelSweep_WhatTheAsksMint pins what the sweep's asks write, beyond which
+// nodes asked (the ladder above): every order a pass mints as its row carries
+// it, the runtime pointers the asks set, the episodes they open, and the
+// sweep's own account of each breached node, over two passes of the ladder
+// (every place empty: the asks downgrade to a delivery), of two breached lines
+// with a carrier on them (the swaps), and of a breached node a changeover holds
+// back at the gate. The gate and the request read the node, its runtime and its
+// claim for themselves, after the sweep had read the same rows; whatever
+// carries the sweep's rows into them instead must leave this output byte for
+// byte as it is.
+func TestLevelSweep_WhatTheAsksMint(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	f := seedWalkerProcess(t, db, "MINT", levelSweepLadder("MINT"))
+	sw := seedWalkerProcess(t, db, "SWAP", []walkerNode{
+		{Suffix: "CON", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-PART-A", Capacity: 40, ReorderPoint: 25, AutoReorder: true, Remaining: 0},
+		{Suffix: "PROD", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-PART-B", Capacity: 30, AutoReorder: true, Remaining: 30},
+	})
+	co := seedWalkerProcess(t, db, "HELD", []walkerNode{
+		{Suffix: "ASK", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot,
+			PayloadCode: "SYN-PART-A", Capacity: 40, ReorderPoint: 25, AutoReorder: true, Remaining: 0},
+	})
+	eng := testEngine(t, db)
+	bridgeCore(t, eng, headOccupancyStub(t, false).URL)
+	holdPlaces(t, eng, occupiedAt(sw.Names["CON"], sw.Names["PROD"]))
+	// HELD changes over to a style whose claim at its one node is another
+	// part's: a swap task there, which the participant gate holds.
+	to, err := db.CreateStyle("HELD-STYLE-B", "", co.ProcessID)
+	testutil.MustNoErr(t, err, "create the changeover's style")
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{StyleID: to, CoreNodeName: co.Names["ASK"],
+		Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "SYN-PART-Z",
+		UOPCapacity: 40, ReorderPoint: 25, AutoReorder: domain.Ptr(true), InboundSource: "SYN_MARKET",
+		OutboundDestination: "SYN_MARKET", InboundStaging: "HELD_STG_IN", OutboundStaging: "HELD_STG_OUT"})
+	testutil.MustNoErr(t, err, "the changeover style's claim")
+	openAB(t, eng, co.ProcessID, co.StyleID, to, map[string]string{co.Names["ASK"]: string(SituationSwap)})
+
+	var got []string
+	account := func(format string, args ...any) {
+		if line := fmt.Sprintf(format, args...); strings.HasPrefix(line, "demand_sweep:") {
+			got = append(got, line)
+		}
+	}
+	eng.logFn, eng.debugFn = account, account
+	for pass := 1; pass <= 2; pass++ {
+		got = append(got, fmt.Sprintf("pass %d", pass))
+		eng.sweepCellLevels()
+	}
+	got = append(got, mintedRows(t, db, f, sw, co)...)
+
+	want := []string{
+		`pass 1`,
+		`demand_sweep: node HELD_ASK below its level but not accepting orders: changeover in progress`,
+		`demand_sweep: node MINT_PARKED role=consume remaining=0 — below its level with nothing in flight; asking`,
+		`demand_sweep: node MINT_ASK role=consume remaining=0 — below its level with nothing in flight; asking`,
+		`demand_sweep: node MINT_PRODFULL role=produce remaining=30 — below its level with nothing in flight; asking`,
+		`demand_sweep: node SWAP_CON role=consume remaining=0 — below its level with nothing in flight; asking`,
+		`demand_sweep: node SWAP_PROD role=produce remaining=30 — below its level with nothing in flight; asking`,
+		`pass 2`,
+		`demand_sweep: node HELD_ASK below its level but not accepting orders: changeover in progress`,
+		`demand_sweep: node MINT_PARKED below its level, but order 1 (move, submitted) already points here`,
+		`demand_sweep: node MINT_ASK below its level, but order 2 (move, submitted) already points here`,
+		`demand_sweep: node MINT_PRODFULL below its level, but order 3 (retrieve, submitted) already points here`,
+		`demand_sweep: node SWAP_CON below its level, but order 4 (complex, submitted) already points here`,
+		`demand_sweep: node SWAP_PROD below its level, but order 5 (complex, submitted) already points here`,
+		`order 1 at MINT_PARKED: move submitted deliver=MINT_PARKED stage= source=SYN_MARKET qty=1 part=SYN-PART-A confirm=true empty=false sibling=false steps=`,
+		`order 2 at MINT_ASK: move submitted deliver=MINT_ASK stage= source=SYN_MARKET qty=1 part=SYN-PART-A confirm=true empty=false sibling=false steps=`,
+		`order 3 at MINT_PRODFULL: retrieve submitted deliver=MINT_PRODFULL stage= source=SYN_MARKET qty=1 part=SYN-PART-B confirm=true empty=true sibling=false steps=`,
+		`order 4 at SWAP_CON: complex submitted deliver=SYN_MARKET stage= source= qty=1 part=SYN-PART-A confirm=false empty=false sibling=false steps=[{"action":"pickup","node":"SYN_MARKET"},{"action":"dropoff","node":"SWAP_STG_IN","exclusive_slot":true},{"action":"wait","node":"SWAP_CON","wait_kind":"station","purpose":"swap"},{"action":"pickup","node":"SWAP_CON"},{"action":"dropoff","node":"SWAP_STG_OUT","exclusive_slot":true},{"action":"pickup","node":"SWAP_STG_IN"},{"action":"dropoff","node":"SWAP_CON"},{"action":"pickup","node":"SWAP_STG_OUT"},{"action":"dropoff","node":"SYN_MARKET"}]`,
+		`order 5 at SWAP_PROD: complex submitted deliver=SYN_MARKET stage= source= qty=1 part=SYN-PART-B confirm=false empty=false sibling=false steps=[{"action":"pickup","node":"SYN_MARKET","empty":true},{"action":"dropoff","node":"SWAP_STG_IN","exclusive_slot":true},{"action":"wait","node":"SWAP_PROD","wait_kind":"station","purpose":"swap"},{"action":"pickup","node":"SWAP_PROD"},{"action":"dropoff","node":"SWAP_STG_OUT","exclusive_slot":true},{"action":"pickup","node":"SWAP_STG_IN"},{"action":"dropoff","node":"SWAP_PROD"},{"action":"pickup","node":"SWAP_STG_OUT"},{"action":"dropoff","node":"SYN_MARKET"}]`,
+		`runtime MINT_ASK: active=2 staged=-`,
+		`runtime MINT_PARKED: active=1 staged=-`,
+		`runtime MINT_PRODFULL: active=3 staged=-`,
+		`runtime SWAP_CON: active=4 staged=-`,
+		`runtime SWAP_PROD: active=5 staged=-`,
+		`episode cell|MINT-PROC|SYN-PART-A|consume: cell consume trigger=autoreorder ref=claim:5 process=MINT-PROC node=MINT_PARKED part=SYN-PART-A opened=0 level=25 expected=1 discretionary=false`,
+		`episode cell|MINT-PROC|SYN-PART-B|produce: cell produce trigger=autoreorder ref=claim:9 process=MINT-PROC node=MINT_PRODFULL part=SYN-PART-B opened=30 level=30 expected=1 discretionary=false`,
+		`episode cell|SWAP-PROC|SYN-PART-A|consume: cell consume trigger=autoreorder ref=claim:10 process=SWAP-PROC node=SWAP_CON part=SYN-PART-A opened=0 level=25 expected=1 discretionary=false`,
+		`episode cell|SWAP-PROC|SYN-PART-B|produce: cell produce trigger=autoreorder ref=claim:11 process=SWAP-PROC node=SWAP_PROD part=SYN-PART-B opened=30 level=30 expected=1 discretionary=false`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the sweep's asks wrote:\n%s\n\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// mintedRows renders what the asks wrote, in a fixed order: each order (by id),
+// each runtime row's order pointers that are set (by node), each open episode
+// (by key). Nothing random or clock-made is rendered: no uuid, no origin id, no
+// time.
+func mintedRows(t *testing.T, db *store.DB, fs ...*walkerFixture) []string {
+	t.Helper()
+	name := map[int64]string{}
+	var ids []int64
+	for _, f := range fs {
+		for suffix, id := range f.NodeIDs {
+			name[id] = f.Prefix + "_" + suffix
+			ids = append(ids, id)
+		}
+	}
+	var out []string
+	rows, err := db.DB.Query(`SELECT id, process_node_id, order_type, status, delivery_node, staging_node, source_node,
+		quantity, payload_code, auto_confirm, retrieve_empty, steps_json, sibling_order_id
+		FROM orders ORDER BY id`)
+	testutil.MustNoErr(t, err, "read the orders")
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id, qty                                int64
+			node, sibling                          sql.NullInt64
+			typ, status, deliver, stage, src, part string
+			confirm, empty                         bool
+			steps                                  string
+		)
+		testutil.MustNoErr(t, rows.Scan(&id, &node, &typ, &status, &deliver, &stage, &src, &qty, &part, &confirm,
+			&empty, &steps, &sibling), "scan an order")
+		out = append(out, fmt.Sprintf("order %d at %s: %s %s deliver=%s stage=%s source=%s qty=%d part=%s confirm=%t empty=%t sibling=%v steps=%s",
+			id, name[node.Int64], typ, status, deliver, stage, src, qty, part, confirm, empty, sibling.Valid, steps))
+	}
+	testutil.MustNoErr(t, rows.Err(), "iterate the orders")
+
+	rts, err := db.ProcessNodeRuntimes(ids)
+	testutil.MustNoErr(t, err, "read the runtime rows")
+	var pointers []string
+	for id, rt := range rts {
+		if rt.ActiveOrderID == nil && rt.StagedOrderID == nil {
+			continue
+		}
+		pointers = append(pointers, fmt.Sprintf("runtime %s: active=%s staged=%s", name[id], orderRef(rt.ActiveOrderID), orderRef(rt.StagedOrderID)))
+	}
+	sort.Strings(pointers)
+	out = append(out, pointers...)
+
+	eps, err := db.DB.Query(`SELECT episode_key, kind, direction, trigger_kind, trigger_ref, process_id, core_node_name,
+		payload_code, opened_total, reorder_point, expected_orders, discretionary
+		FROM demand_origins_open ORDER BY episode_key`)
+	testutil.MustNoErr(t, err, "read the open episodes")
+	defer eps.Close()
+	for eps.Next() {
+		var (
+			key, kind, dir, trig, ref, proc, node, part string
+			opened, reorder                             int
+			expected                                    sql.NullInt64
+			discretionary                               bool
+		)
+		testutil.MustNoErr(t, eps.Scan(&key, &kind, &dir, &trig, &ref, &proc, &node, &part, &opened, &reorder,
+			&expected, &discretionary), "scan an episode")
+		out = append(out, fmt.Sprintf("episode %s: %s %s trigger=%s ref=%s process=%s node=%s part=%s opened=%d level=%d expected=%v discretionary=%t",
+			key, kind, dir, trig, ref, proc, node, part, opened, reorder, expected.Int64, discretionary))
+	}
+	testutil.MustNoErr(t, eps.Err(), "iterate the open episodes")
+	return out
+}
+
+func orderRef(id *int64) string {
+	if id == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%d", *id)
 }
 
 // ── WALKER 2: THE PARKED-TICKS MONITOR ────────────────────────────────────
