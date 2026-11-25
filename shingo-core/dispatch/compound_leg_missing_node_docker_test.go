@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +64,22 @@ func legWithNodeNames(t *testing.T, db *store.DB, prefix, sourceNode, deliveryNo
 	return parent, child
 }
 
+// engineReDrive plays the engine's part after a leg the advance could not build:
+// the leg's end went through the lifecycle's failure door (the emitter heard it,
+// which a bare store write never was), and the engine's failure subscriber then
+// closes the chapter and re-drives the parent (engine/wiring.go). This package
+// has no engine, so the test makes the two calls the subscriber makes.
+func engineReDrive(t *testing.T, d *Dispatcher, emitter *mockEmitter, parent, leg *orders.Order) {
+	t.Helper()
+	if !slices.ContainsFunc(emitter.failed, func(f emitFailed) bool { return f.orderID == leg.ID }) {
+		t.Errorf("leg %d's failure was never emitted: its end reached no subscriber (emitted %v)",
+			leg.ID, emitter.failed)
+	}
+	if d.HandleChildOrderFailure(parent.ID, leg.ID) {
+		testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "the engine's re-drive")
+	}
+}
+
 // TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage is
 // compound.go's first node read.
 //
@@ -77,7 +94,7 @@ func TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage(t *test
 	db := testDB(t)
 	_, lineNode, _ := testdb.SetupTestData(t, db)
 
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, child := legWithNodeNames(t, db, "LEGSRC", "SHUF-NOBODY-CONFIGURED", lineNode.Name)
 
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "advance the compound")
@@ -99,6 +116,8 @@ func TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage(t *test
 				after.ErrorDetail, want)
 		}
 	}
+
+	engineReDrive(t, d, emitter, parent, child)
 
 	// AND THE DEMAND ENDS WITH IT, which is the correct outcome and worth pinning
 	// alongside the wait-not-fail tests rather than apart from them: a real fault
@@ -127,7 +146,7 @@ func TestCompoundLeg_DeliveryNodeDoesNotExist_TerminalWithTheConfigMessage(t *te
 	db := testDB(t)
 	storageNode, _, _ := testdb.SetupTestData(t, db)
 
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, child := legWithNodeNames(t, db, "LEGDST", storageNode.Name, "LINE-NOBODY-CONFIGURED")
 
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "advance the compound")
@@ -152,6 +171,7 @@ func TestCompoundLeg_DeliveryNodeDoesNotExist_TerminalWithTheConfigMessage(t *te
 			after.ErrorDetail)
 	}
 
+	engineReDrive(t, d, emitter, parent, child)
 	parentAfter, err := db.GetOrder(parent.ID)
 	testutil.MustNoErr(t, err, "read the parent back")
 	if !protocol.IsTerminal(parentAfter.Status) {

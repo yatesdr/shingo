@@ -351,9 +351,9 @@ func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.
 
 	// Futility accounting. Placed here so every write that goes through
 	// transition() feeds the detector without a per-caller hook. It is NOT
-	// every status write, and never was: dispatch/compound.go fails orders with
-	// a direct db.FailOrderAtomic, OrderService.FailAtomic does the same, the
-	// orders.Create INSERT births a status outright, and the .golangci.yml
+	// every status write, and never was: OrderService.FailAtomic terminalizes an
+	// order with a direct store write, the orders.Create INSERT births a status
+	// outright, and the .golangci.yml
 	// exclusions.rules carveouts name the rest (see transitions.md, "What
 	// bypasses transition()"). Writes on those paths are invisible here.
 	s.noteFutility(ord, from, to, ev)

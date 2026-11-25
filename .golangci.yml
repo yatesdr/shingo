@@ -99,8 +99,6 @@ linters:
       forbid:
         - pattern: 'db\.UpdateOrderStatus'
           msg: "Direct UpdateOrderStatus calls bypass the state machine. Use dispatch.LifecycleService typed methods (CancelOrder, ConfirmReceipt, Release, Acknowledge, Park, Dispatch, MarkInTransit, MarkStaged, MarkDelivered, MarkFaulted, MarkFaultedRecovered, Fail, FailWithRef, Skip, BeginReshuffle, CompleteCompound, ResumeCompound, Restart). See docs/order-state-machine/transitions.md."
-        - pattern: 'db\.FailOrderAtomic'
-          msg: "Direct FailOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.Fail."
         # Reservation-sourcing bypass guard. Bin claims must go through the
         # reserve→claim→confirm sequence (BinManifestService.ClaimForDispatch),
         # which holds a revocable reservation across the decide→do gap; a bare
@@ -670,28 +668,10 @@ linters:
       - path: "shingo-core/dispatch/lifecycle_service\\.go"
         linters:
           - forbidigo
-      # 3. Child-intake validation failures in compound order creation
-      #    (missing source/dest node) — failure is the intended initial
-      #    state, not a transition. SCOPED to the state-machine message
-      #    (was whole-file): compound.go is one of the two files Stage 4
-      #    re-homed OrderType reads OUT of, so it must stay under the Stage-5
-      #    OrderType guard — a whole-file forbidigo exemption would leave a
-      #    future order.OrderType dispatch read uncaught in exactly the file we
-      #    refactored. It trips forbidigo only via 3 FailOrderAtomic calls, so
-      #    excusing just that message keeps the OrderType/claim/slot guards live.
-      - path: "shingo-core/dispatch/compound\\.go"
-        text: "bypass the state machine"
-        linters:
-          - forbidigo
-      # 4. OrderService.FailAtomic, the handler-layer passthrough to
-      #    db.FailOrderAtomic. Scoped to that guard's message: the
-      #    UpdateStatus and ClaimBin passthroughs are gone, so a new
-      #    db.UpdateOrderStatus or db.ClaimBin call in this file is caught.
-      #    Removable when FailAtomic goes.
-      - path: "shingo-core/service/order_service\\.go"
-        text: "Direct FailOrderAtomic calls bypass the state machine"
-        linters:
-          - forbidigo
+      # 3 and 4 are gone with the db.FailOrderAtomic guard (docket B1): its
+      #    last callers were compound.go's four leg arms, which end a leg
+      #    through LifecycleService.Fail now, and OrderService.FailAtomic
+      #    calls TerminalizeOrder. compound.go is under every guard again.
       # 5. Store-level implementations themselves.
       - path: "shingo-core/store/orders\\.go"
         linters:

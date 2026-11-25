@@ -78,11 +78,11 @@ machine's validation.
    and writes the creation `order_history` row in the same transaction
    (`IssueOrder` opens one for an order issued alone; a dig's legs and the
    home clear's ride their compound's).
-3. **The bare terminal write** — `store.DB.TerminalizeOrder`, through
-   `FailOrderAtomic`: a compound leg's config fault (`dispatch/compound.go`, four
-   sites), the node-group force-fail (`service.OrderService.FailAtomic`), and the
-   boot retirement of reshuffle-restore orders (`RetireReshuffleRestoreOrders`).
-   No action fires.
+3. **The bare terminal write** — `store.DB.TerminalizeOrder`: the node-group
+   force-fail (`service.OrderService.FailAtomic`) and the boot retirement of
+   reshuffle-restore orders (`RetireReshuffleRestoreOrders`). No action fires. A
+   compound leg that cannot be built was the third, until it took
+   `LifecycleService.Fail` (docket B1).
 4. **Migrations** — the legacy `completed`→`confirmed` rename and v148's
    `sourcing`→`queued`.
 

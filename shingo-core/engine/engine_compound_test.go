@@ -4,6 +4,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -843,6 +845,12 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	}
 
 	// The re-planned parent may already be pending, dispatched or on its robot.
+	// Its chapter closes on the engine's re-drive of the failed leg, off the
+	// goroutine that ended it (study round 5, section 2, point 2), so wait for
+	// it to leave reshuffling before reading it.
+	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
+		return testdb.RequireOrder(t, db, "skip-reshuffle-1").Status != dispatch.StatusReshuffling
+	})
 	order = testdb.RequireOrder(t, db, "skip-reshuffle-1")
 	switch {
 	case order.Status == dispatch.StatusConfirmed:
@@ -857,6 +865,13 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	if blockerBin.NodeID == nil || *blockerBin.NodeID != sc.ShuffleSlots[0].ID || blockerBin.ClaimedBy != nil {
 		t.Errorf("blocker at node=%s claimed_by=%v, want %s and unclaimed",
 			blockerBin.NodeName, blockerBin.ClaimedBy, sc.ShuffleSlots[0].Name)
+	}
+	// Child 2's turn came on child 1's delivery, before its confirm: the leg that
+	// set its bin down is finished, not cancelled with the chapter.
+	child1, err = db.GetOrder(child1.ID)
+	testutil.MustNoErr(t, err, "reload child 1")
+	if child1.Status != dispatch.StatusConfirmed {
+		t.Errorf("child 1 is %q (%q), want confirmed: it delivered its blocker", child1.Status, child1.ErrorDetail)
 	}
 }
 
@@ -874,26 +889,20 @@ func blankNodeName(t *testing.T, db *store.DB, nodeID int64) {
 //
 // Scenario: a lane three deep with a bin on every slot, the wanted bin
 // deepest, and the middle slot with no name (blankNodeName). The buried bin
-// is requested and the first unbury is driven to its landing. The bound is
-// three re-plans: the engine is stopped there and the rows are read.
+// is requested and the first unbury is driven to its landing.
 //
-// THIS PINS TODAY'S BEHAVIOUR, WHICH IS THE BUG: the order plans the same dig
-// again and again and never ends. The middle unbury copies its pickup from the
-// slot's name, so it is written with none; its turn fails it with a store write
-// that emits no event (advanceCompound's empty-source arm), and the advance
-// goes on to the retrieve behind it. Admission refuses that one, because the
-// nameless slot's bin still stands in front of it, no order is coming for that
-// bin, and the dig dissolves. The parent goes back to `pending`, its acquire
-// runs at once and plans the same dig, with the nameless slot as its first
-// blocker. Each turn writes two more legs and sends no robot, and the parent's
-// own row says the plan went stale.
+// The middle unbury copies its pickup from the slot's name, so it is written
+// with none, and no re-plan can give it one. Its turn ends it through the
+// failure door with the slot named by id, the retrieve behind it is cancelled
+// and never sent, and the order fails with that sentence once the first unbury
+// has set its bin down (study round 5, section 2).
 //
-// A `queued` row in the parent's history is allowed and none was seen
-// (2026-11-25): a re-plan that met the lane still held would park until the
-// next pass, and the loop would go on from there.
-//
-// The fix (study round 5, section 2) turns this test over: the order fails,
-// its sentence names the slot, and no leg is written after the first plan.
+// Before B1's fix this order planned the same dig again and again with no
+// timer (pinned 2026-11-25, 6 of 6: pending and reshuffling alternating, three
+// legs and then two a re-plan, no robot sent after the first), its own row
+// saying the plan went stale: the nameless leg was ended by a store write that
+// told nobody, and the advance went on to the retrieve, which admission refused
+// behind the nameless slot's bin.
 func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -925,52 +934,30 @@ func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 			legs[2].SourceNode, sc.Slots[2].Name)
 	}
 	driveLegRunToFinish(t, db, sim, legs[0].ID, legs[0].VendorOrderID)
+	// The order's end is the engine's to reach, on whichever goroutine closes
+	// the chapter; its lane goes just after its status.
+	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
+		return testdb.RequireOrder(t, db, "noname-dig-1").Status.IsTerminal() &&
+			!eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID)
+	})
 
-	// THE BOUND: three re-plans (two legs each), or the parent ending. The
-	// limit covers one periodic pass, for a re-plan that parked.
-	const replans = 3
-	deadline := time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(legsByID(t, db, parent.ID)) >= 3+2*replans ||
-			testdb.RequireOrder(t, db, "noname-dig-1").Status.IsTerminal() {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	sentence := dplan.ConfigFailureID("name of source node", nameless.ID)
+	if got := testdb.RequireOrder(t, db, "noname-dig-1"); got.Status != dispatch.StatusFailed || got.ErrorDetail != sentence {
+		t.Errorf("the order is %q (%q), want failed with %q", got.Status, got.ErrorDetail, sentence)
 	}
-	eng.Stop() // what is running finishes; t.Cleanup's second Stop is a no-op
-
-	// The parent's status sequence: never an end, and a `reshuffling` a plan.
 	history, err := db.ListOrderHistory(parent.ID)
-	testutil.MustNoErr(t, err, "read the parent's history")
+	testutil.MustNoErr(t, err, "read the order's history")
 	var sequence []protocol.Status
-	plans := 0
-	for i, h := range history {
+	for _, h := range history {
 		sequence = append(sequence, h.Status)
-		switch h.Status {
-		case dispatch.StatusReshuffling:
-			plans++
-		case dispatch.StatusPending:
-			if i > 0 && h.Detail != dispatch.ReshuffleDissolveDetail {
-				t.Errorf("the parent went back to pending with %q, want the stale-plan sentence %q",
-					h.Detail, dispatch.ReshuffleDissolveDetail)
-			}
-		case dispatch.StatusQueued:
-		default:
-			t.Errorf("the parent's history holds %q (%q); today it never leaves pending, queued and "+
-				"reshuffling", h.Status, h.Detail)
-		}
 	}
-	t.Logf("parent status sequence: %v", sequence)
-	if plans < 1+replans {
-		t.Fatalf("the parent was planned %d time(s) in the bound, want at least %d: today it re-plans "+
-			"the same dig with nothing between turns (sequence %v)", plans, 1+replans, sequence)
+	if want := []protocol.Status{dispatch.StatusPending, dispatch.StatusReshuffling, dispatch.StatusFailed}; !slices.Equal(sequence, want) {
+		t.Errorf("the order's status sequence is %v, want %v: one plan, and no re-plan", sequence, want)
 	}
 
-	// The child count: three legs for the first plan, two for every plan after.
 	legs = legsByID(t, db, parent.ID)
-	t.Logf("children: %d over %d plans", len(legs), plans)
-	if want := 3 + 2*(plans-1); len(legs) != want {
-		t.Fatalf("%d legs over %d plans, want %d (3, then 2 a re-plan)", len(legs), plans, want)
+	if len(legs) != 3 {
+		t.Fatalf("the order has %d legs, want the first plan's 3", len(legs))
 	}
 	wantEnd := func(leg *orders.Order, status protocol.Status, detail string) {
 		t.Helper()
@@ -980,17 +967,18 @@ func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 		}
 	}
 	wantEnd(legs[0], dispatch.StatusConfirmed, "")
-	wantEnd(legs[1], dispatch.StatusFailed, "missing source node")
-	wantEnd(legs[2], dispatch.StatusCancelled, dispatch.ReshuffleDissolveDetail)
-	for i := 3; i < len(legs); i += 2 {
-		unbury, retrieve := legs[i], legs[i+1]
-		if unbury.SourceNode != "" || unbury.VendorOrderID != "" || retrieve.VendorOrderID != "" {
-			t.Errorf("re-plan legs %d and %d: unbury source=%q vendor=%q, retrieve vendor=%q; want the "+
-				"nameless slot's unbury first and no robot sent for either", unbury.ID, retrieve.ID,
-				unbury.SourceNode, unbury.VendorOrderID, retrieve.VendorOrderID)
-		}
-		wantEnd(unbury, dispatch.StatusFailed, "missing source node")
-		wantEnd(retrieve, dispatch.StatusCancelled, dispatch.ReshuffleDissolveDetail)
+	wantEnd(legs[1], dispatch.StatusFailed, sentence)
+	wantEnd(legs[2], dispatch.StatusCancelled, dispatch.ReshuffleLegFailedDetail)
+	if legs[1].VendorOrderID != "" || legs[2].VendorOrderID != "" {
+		t.Errorf("a robot was sent after the nameless leg: leg 2 vendor=%q, leg 3 vendor=%q",
+			legs[1].VendorOrderID, legs[2].VendorOrderID)
+	}
+	// The engine heard the nameless leg's end: its failure subscriber writes the
+	// audit row a bare store write never had.
+	entries, err := db.ListEntityAudit("order", legs[1].ID)
+	testutil.MustNoErr(t, err, "read the nameless leg's audit rows")
+	if !slices.ContainsFunc(entries, func(e *audit.Entry) bool { return e.Action == "failed" }) {
+		t.Errorf("the nameless leg has no failed audit row: its end reached no subscriber")
 	}
 
 	// The floor: the first blocker was carried out once, and nothing else moved.
@@ -1003,6 +991,69 @@ func TestCompound_DigThroughANamelessSlotInALane(t *testing.T) {
 	testdb.AssertBinAtNode(t, db, sc.Blockers[1].ID, nameless.ID)
 	testdb.AssertBinUnclaimed(t, db, sc.Blockers[1].ID)
 	testdb.AssertBinAtNode(t, db, sc.TargetBin.ID, sc.Slots[2].ID)
+	testdb.AssertBinUnclaimed(t, db, sc.TargetBin.ID)
+}
+
+// --- Test: a dig whose first move is through a nameless slot, from the intake (docket B1) ---
+//
+// The same fault on the dig's first leg: the lane two deep, the front slot with
+// no name, the wanted bin behind it. The request's acquire plans the dig and
+// advances it inside the scanner's lock (the intake runs in Scanner.Door), so
+// the leg is ended through the failure door, and the door's subscribers run,
+// under scanMu. Run with -tags docker,lockcheck, this is the lock-context check
+// study round 5 asks for before B1's fix: a subscriber that took a lock out of
+// order, or the scan lock again, fails it.
+//
+// Expected: no robot is sent, the order fails naming the slot by id, nothing
+// moved, and the lane is let go.
+func TestCompound_ANamelessFrontSlotFailsTheOrderAtItsFirstMove(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "NONAME1"})
+	nameless := sc.Slots[0]
+	blankNodeName(t, db, nameless.ID)
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID:    "noname-front-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
+		return testdb.RequireOrder(t, db, "noname-front-1").Status.IsTerminal() &&
+			!eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID)
+	})
+
+	sentence := dplan.ConfigFailureID("name of source node", nameless.ID)
+	parent := testdb.RequireOrder(t, db, "noname-front-1")
+	if parent.Status != dispatch.StatusFailed || parent.ErrorDetail != sentence {
+		t.Errorf("the order is %q (%q), want failed with %q", parent.Status, parent.ErrorDetail, sentence)
+	}
+	legs := legsByID(t, db, parent.ID)
+	if len(legs) != 2 {
+		t.Fatalf("the order has %d legs, want the one plan's 2", len(legs))
+	}
+	for _, leg := range legs {
+		if leg.VendorOrderID != "" {
+			t.Errorf("leg %d was sent (%s): no robot may move for a dig that cannot finish", leg.ID, leg.VendorOrderID)
+		}
+	}
+	if legs[0].Status != dispatch.StatusFailed || legs[0].ErrorDetail != sentence {
+		t.Errorf("the front leg is %q (%q), want failed with %q", legs[0].Status, legs[0].ErrorDetail, sentence)
+	}
+	if legs[1].Status != dispatch.StatusCancelled || legs[1].ErrorDetail != dispatch.ReshuffleLegFailedDetail {
+		t.Errorf("the retrieve leg is %q (%q), want cancelled with %q", legs[1].Status, legs[1].ErrorDetail,
+			dispatch.ReshuffleLegFailedDetail)
+	}
+	testdb.AssertBinAtNode(t, db, sc.Blockers[0].ID, nameless.ID)
+	testdb.AssertBinUnclaimed(t, db, sc.Blockers[0].ID)
+	testdb.AssertBinAtNode(t, db, sc.TargetBin.ID, sc.Slots[1].ID)
 	testdb.AssertBinUnclaimed(t, db, sc.TargetBin.ID)
 }
 

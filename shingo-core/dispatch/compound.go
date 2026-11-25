@@ -916,11 +916,19 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	// fails with ErrNoDwellSlot when its pickup is not in a lane or the lane has no
 	// usable slot. That is the same geometry fault this arm was catching, named
 	// properly — see the dispatch call at the end of this function.
+	//
+	// A MISSING PICKUP is still a fault, and which kind is read off the leg's
+	// slot (emptyPickupDetail). Like the three arms below, it ends the leg
+	// through the failure door and sends nothing after it.
 	if next.SourceNode == "" {
-		if err := d.db.FailOrderAtomic(next.ID, "missing source node"); err != nil {
-			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, err)
+		detail, err := d.emptyPickupDetail(next)
+		if err != nil {
+			log.Printf("dispatch: compound %d child %d — has no pickup, and its bin's slot could not be read: "+
+				"%v (holding the child)", parentOrderID, next.ID, err)
+			d.setQueueReason(next, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+			return nil
 		}
-		return d.advanceCompound(parentOrderID, dispatched)
+		return d.failLegThatCannotBeBuilt(parentOrderID, next, detail)
 	}
 
 	// THE SAME THREE-WAY SPLIT the reshuffle planners make (read_vs_missing.go),
@@ -940,10 +948,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		return nil
 	}
 	if err != nil || sourceNode == nil {
-		if dbErr := d.db.FailOrderAtomic(next.ID, dplan.ConfigFailure("source node", next.SourceNode)); dbErr != nil {
-			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
-		}
-		return d.advanceCompound(parentOrderID, dispatched)
+		return d.failLegThatCannotBeBuilt(parentOrderID, next, dplan.ConfigFailure("source node", next.SourceNode))
 	}
 
 	// THE DESTINATION READ IS SKIPPED WHEN THERE IS NO DESTINATION YET. A
@@ -963,10 +968,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 			return nil
 		}
 		if err != nil || destNode == nil {
-			if dbErr := d.db.FailOrderAtomic(next.ID, dplan.ConfigFailure("delivery node", next.DeliveryNode)); dbErr != nil {
-				log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
-			}
-			return d.advanceCompound(parentOrderID, dispatched)
+			return d.failLegThatCannotBeBuilt(parentOrderID, next, dplan.ConfigFailure("delivery node", next.DeliveryNode))
 		}
 	}
 	destName := ""
@@ -1178,10 +1180,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		// split exists to avoid — so it takes the config-fault disposition every
 		// other unresolvable node on this path takes, naming the lane.
 		if errors.Is(err, ErrNoDwellSlot) {
-			if dbErr := d.db.FailOrderAtomic(next.ID, dplan.ConfigFailure("dwell slot", next.SourceNode)); dbErr != nil {
-				log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
-			}
-			return d.advanceCompound(parentOrderID, dispatched)
+			return d.failLegThatCannotBeBuilt(parentOrderID, next, dplan.ConfigFailure("dwell slot", next.SourceNode))
 		}
 		var swf *StatusWriteFailed
 		if errors.As(err, &swf) {
@@ -1222,6 +1221,61 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		return d.advanceCompound(parentOrderID, dispatched)
 	}
 	return nil
+}
+
+// failLegThatCannotBeBuilt ends a leg the advance cannot build, through the
+// lifecycle's failure door, and sends nothing after it (study round 5, section 2,
+// points 1 and 2). The door's event reaches the engine's failure subscriber,
+// which closes the rest of the chapter (HandleChildOrderFailure) and re-drives
+// the parent off this goroutine; the chapter's end then fails the demand on a
+// config failure (chapterStoppedShort) or returns it to be re-planned (gate 1).
+//
+// It was a bare store write followed by an advance to the next leg: no event,
+// so no audit row, no station notice and no sibling closed, and the leg behind
+// it was handed to the fleet (docket B1, TestCompound_DigThroughANamelessSlotInALane).
+func (d *Dispatcher) failLegThatCannotBeBuilt(parentOrderID int64, leg *orders.Order, detail string) error {
+	code := protocol.TermInvalidNode
+	if !dplan.IsConfigFailure(detail) {
+		code = protocol.TermMissingSource
+	}
+	if err := d.lifecycle.Fail(leg, leg.Requester(), string(code), detail); err != nil {
+		log.Printf("dispatch: compound %d: fail leg %d (%s): %v", parentOrderID, leg.ID, detail, err)
+	}
+	return nil
+}
+
+// emptyPickupDetail is the sentence a leg with no pickup ends with, and the
+// question is whether a re-plan could build it.
+//
+// A dig leg copies its pickup from its slot's name (legNeed), so a leg with
+// none was written from a slot with no name, and every re-plan copies the same
+// blank: that is a configuration fault, named by the slot's id because a blank
+// is not findable (dplan.ConfigFailureID). A leg row that lost its pickup while
+// its slot has a name is a damaged row a re-plan writes afresh, so it keeps the
+// congestion reading, "missing source node", and gate 1
+// (TestCompound_AdvanceSkipsFailedChild_PrematureCompletion). An error is a read
+// that did not answer; the caller holds the leg.
+func (d *Dispatcher) emptyPickupDetail(leg *orders.Order) (string, error) {
+	const damaged = "missing source node"
+	binID, err := leg.OnlyBin()
+	if err != nil || binID == nil {
+		return damaged, nil
+	}
+	bin, err := d.db.GetBin(*binID)
+	if readFailed(err) {
+		return "", err
+	}
+	if err != nil || bin == nil || bin.NodeID == nil {
+		return damaged, nil
+	}
+	slot, err := d.db.GetNode(*bin.NodeID)
+	if readFailed(err) {
+		return "", err
+	}
+	if err != nil || slot == nil || slot.Name != "" {
+		return damaged, nil
+	}
+	return dplan.ConfigFailureID("name of source node", slot.ID), nil
 }
 
 // legHand is what a dig leg takes at its handover: the bin it moves, claimed
@@ -2278,9 +2332,15 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	// robot that faulted mid-carry cannot set anything down, so its bin takes the
 	// stranded-transit path it always has. Unreadable cancels nothing, like the
 	// reads above; the reconciliation sweep re-drives the chapter.
+	//
+	// NOR ONE THAT HAS SET ITS BIN DOWN. A leg delivered and not yet confirmed
+	// is finishing; its confirm re-drives the chapter. It is live and its bin is
+	// no longer in transit, so splitLiftedLegs would cancel it, and the advance
+	// a delivery fires can reach a leg the failure door ends
+	// (failLegThatCannotBeBuilt), so the delivered sibling is right here.
 	var live []*orders.Order
 	for _, child := range children {
-		if child.ID != childOrderID && !protocol.IsTerminal(child.Status) {
+		if child.ID != childOrderID && !protocol.IsTerminal(child.Status) && !IsPostDelivery(child.Status) {
 			live = append(live, child)
 		}
 	}
@@ -2349,10 +2409,10 @@ func (d *Dispatcher) CancelOrderWithCascade(order *orders.Order, stationID, reas
 	d.cancelCompoundChildren(order, stationID, reason, cause, heldLanes)
 }
 
-// cancelCompoundChildren cancels all non-terminal children of a compound order.
-// Unlike HandleChildOrderFailure (which only cancels pre-dispatch children),
-// this method also cancels in-flight children (dispatched, in_transit, staged)
-// and their fleet orders. Called when an operator cancels a compound parent directly.
+// cancelCompoundChildren cancels the non-terminal children of a compound order
+// whose parent has ended, in flight or not, with their fleet orders, keeping
+// only a leg carrying its bin (splitLiftedLegs). Called when an operator
+// cancels a compound parent directly.
 //
 // heldLanes IS TAKEN BY THE CALLER, and that is not a style choice. This used to
 // read it here — `heldLanes := d.digLanesHeld(parent.ID)` as its first line —
