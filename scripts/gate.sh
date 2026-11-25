@@ -1330,17 +1330,52 @@ SHARED_PG_MARK="$ROOT/.gate/docker-pg.$$"
 # parent never sees, and $$ is the gate's pid in both. PG_IMAGE is a floating
 # tag: the gate run's identity (gate_identity, scripts/gate-timing.sh) records
 # the image id it named, and pg_up's docker run line, at each run.
+#
+# ON A HOST PORT PG_UP PICKS, ABOVE THE PORTS LINUX HANDS A CLIENT (docket
+# G23). Docker Desktop opens a published port inside WSL once, when the
+# container starts, by listening on the same number there. If a socket that is
+# not listening holds the number at that instant, the listen fails ("failed to
+# expose port ... address already in use" in Docker Desktop's log), nothing
+# retries it, and every dial from WSL is refused for the container's life,
+# while Windows still reaches the server (lane pg's readings, 2026-11-24). A
+# docker step leaves thousands of its own client ports in TIME-WAIT, and with
+# `-p 127.0.0.1::5432` the number was docker's, from Windows' dynamic range
+# (49152-65535), most of which Linux also hands to clients
+# (ip_local_port_range, 32768-60999 on WSL). MEASURED 2026-11-24 with every
+# number 49152-60999 held in WSL that way: docker's pick was refused in 6 of 6
+# starts, pg_up's own in 0 of 6. The binding's shape protects nothing (those
+# six were this same 127.0.0.1 binding); the number does.
+#
+# So the port is one of 61000-65535, from a random first pick, and a start
+# that fails on it moves 257 on (past a Windows exclusion block of 100), eight
+# picks in all: another gate's server may have the number, or a Windows
+# process, since Windows does hand out ports up there. Either way docker fails
+# the start and leaves the container, created, and it is removed before the
+# next pick, because its name is the next run's. A run that left no container
+# did not fail on its port (docker down, no image) and is not repeated. Pinned
+# by scripts/check-gate-exec.sh (section 4), which on WSL also reads the
+# client range. Do not hand the port back to docker, or lower the range into
+# the client range; the rule can go if Docker Desktop comes to retry that
+# listen.
 PG_IMAGE="postgres:16-alpine"
 pg_up() {
-  local name=$1 port deadline
-  docker run -d --name "$name" \
-      -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
-      -e PGDATA=/var/lib/postgresql/data/pgdata \
-      --tmpfs /var/lib/postgresql/data:rw,size=4g \
-      -p 127.0.0.1::5432 \
-      "$PG_IMAGE" \
-      -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
-      -c max_connections=500 -c shared_buffers=256MB >/dev/null 2>&1 || return 1
+  local name=$1 port="" deadline first try
+  first=$(( RANDOM % 4536 ))
+  for try in 0 1 2 3 4 5 6 7; do
+    port=$(( 61000 + (first + try * 257) % 4536 ))
+    docker run -d --name "$name" \
+        -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
+        -e PGDATA=/var/lib/postgresql/data/pgdata \
+        --tmpfs /var/lib/postgresql/data:rw,size=4g \
+        -p "127.0.0.1:$port:5432" \
+        "$PG_IMAGE" \
+        -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+        -c max_connections=500 -c shared_buffers=256MB >/dev/null 2>&1 && break
+    port=""
+    docker container inspect "$name" >/dev/null 2>&1 || return 1
+    docker rm -f "$name" >/dev/null 2>&1
+  done
+  [ -n "$port" ] || return 1
 
   deadline=$(( $(date +%s) + 60 ))
   until docker exec "$name" pg_isready -U test -q 2>/dev/null; do
@@ -1348,8 +1383,6 @@ pg_up() {
     sleep 0.5
   done
 
-  port="$(docker port "$name" 5432/tcp 2>/dev/null | head -1 | sed 's/.*://')"
-  [ -z "$port" ] && return 1
   echo "127.0.0.1:$port"
 }
 
