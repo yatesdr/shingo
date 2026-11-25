@@ -51,7 +51,7 @@ type kscCore struct {
 	eng *coreengine.Engine
 	sim *simulator.SimulatorBackend
 	// doors is the door bodies Core's router serves and its ask server
-	// answers through (registerAsks).
+	// answers through (testharness.NewCore).
 	doors *www.Doors
 }
 

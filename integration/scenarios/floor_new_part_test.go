@@ -4,7 +4,7 @@
 // the changeover to that style. Then the same submit again, answered as a
 // repeat with nothing new written.
 //
-// Core is the real engine behind its real ask server (registerAsks), with the
+// Core is the real engine behind its real ask server (testharness.NewCore), with the
 // catalog read the part.create door answers with and the memo drop after a
 // payload write wired as cmd/shingocore wires them. The ask and its answer
 // travel the Bus.

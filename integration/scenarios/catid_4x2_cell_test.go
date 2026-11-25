@@ -48,11 +48,10 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/router"
 
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	corepayloads "shingocore/store/payloads"
+	coreharness "shingocore/testharness"
 
 	edgeconfig "shingoedge/config"
 	"shingoedge/domain"
@@ -740,35 +739,25 @@ func (c *w6Cell) restart(label string) {
 
 // wireBus routes the Edge and Core to each other, as ksrCell does: Core's
 // order handlers, the Edge's register, its draws (bin_uop_delta), its
-// production ticks, its claims and Core's asks.
+// production ticks, its claims and Core's asks. Each call takes a Core
+// composition of its own, as the table it replaced was built anew: NewCore's,
+// less the redirect, every other subject (its Edge also sends demand origins,
+// never routed here) and every hook (the rig pushes the bins itself).
 func (c *w6Cell) wireBus() {
 	t, coreDB := c.t, c.core.eng.DB()
-	h := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", c.core.eng.Dispatcher())
-	in := protocol.NewIngestor(nil)
-	r := router.New[string]()
-	router.Register(r, protocol.TypeOrderRequest, h.HandleOrderRequest)
-	router.Register(r, protocol.TypeComplexOrderRequest, h.HandleComplexOrderRequest)
-	router.Register(r, protocol.TypeOrderCancel, h.HandleOrderCancel)
-	router.Register(r, protocol.TypeOrderReceipt, h.HandleOrderReceipt)
-	router.Register(r, protocol.TypeOrderRelease, h.HandleOrderRelease)
-	router.Register(r, protocol.TypeOrderIngest, h.HandleOrderIngest)
-	data := coremessaging.NewCoreDataService(coreDB, h, service.EpochAnnounce{Topic: "shingo.dispatch", CoreStation: "core"})
-	subjects := router.NewSubject()
-	router.RegisterSubject(subjects, protocol.SubjectEdgeRegister, data.HandleEdgeRegister)
-	router.RegisterSubject(subjects, protocol.SubjectBinUOPDelta, data.HandleBinUOPDelta)
-	router.RegisterSubject(subjects, protocol.SubjectProductionTicks, data.HandleProductionTicks)
-	router.RegisterSubject(subjects, protocol.SubjectPlantClaims, data.HandlePlantClaims)
-	router.Register(r, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { subjects.Dispatch(env, p) })
+	coreSide := coreharness.NewCore(t, c.core.eng, c.core.doors,
+		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
+			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.TypeOrderIngest,
+			protocol.SubjectEdgeRegister, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks,
+			protocol.SubjectPlantClaims, protocol.SubjectEdgeAsk),
+		coreharness.HooksOnly())
 	if c.askKinds == nil {
-		c.askKinds = registerAsks(subjects, coreDB, c.core.doors, h)
-	} else {
-		registerAsks(subjects, coreDB, c.core.doors, h)
+		c.askKinds = coreSide.AskKinds
 	}
-	in.Dispatch = func(env *protocol.Envelope) { r.Dispatch(env, env.Type) }
-	c.coreIn = in
+	c.coreIn = coreSide.Ingestor
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: c.edge.DB, EdgeIngestor: c.edge.Ingestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: in},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
 	c.push = harness.StartBinsPush(t, coreDB, c.edge.Engine)
 	c.bus.SetBinsPush(c.push)
