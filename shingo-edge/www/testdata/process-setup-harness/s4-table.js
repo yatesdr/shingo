@@ -310,6 +310,12 @@ const BUGS = [
             const cellText = String(page.pd('columnCell')('POS_A7', 'partner')).replace(/<[^>]*>/g, '');
             out.push(['POS_A7\'s partner cell reads ' + JSON.stringify(cellText),
                 cellText === page.pd('M')().NO_PARTNER, 'the cell does not name the choice']);
+            // AND ITS GLYPH IS ONE SLOT: the row's mode menu draws its
+            // Sequential A/B as the shape it runs; POS_A9, still paired, two.
+            const slots = n => (String((page.pd('optionsFor')(n, 'mode').find(o => o.value === 'sequential') || {}).icon || '')
+                .match(/class="slot"/g) || []).length;
+            out.push(['the mode menu\'s Sequential A/B glyph: POS_A7 ' + slots('POS_A7') + ' slot(s), POS_A9 ' + slots('POS_A9'),
+                slots('POS_A7') === 1 && slots('POS_A9') === 2, 'the one-node row does not draw one slot']);
             T.pickChip(page, 'POS_A9', 'mode', page.S.model.cells.POS_A5.mode);
             await page.settle();
             out.push(['POS_A9 given a swap with no partner: POS_A9 names ' + (names('POS_A9') || 'none') + ' · POS_A10 names ' + (names('POS_A10') || 'none'),

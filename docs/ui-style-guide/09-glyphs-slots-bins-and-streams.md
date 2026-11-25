@@ -10,7 +10,7 @@ is never in the sprite. If you are tempted to add one to `shared/icons.svg`, the
 thing you have is not a glyph.
 
 Source: `shingo-edge/www/static/operator-station/composer-glyphs.js` —
-`glyph(mode, size, {rest})` returns an inline SVG string and is the **only**
+`glyph(mode, size, {rest, one})` returns an inline SVG string and is the **only**
 renderer; its classes are `composer-glyphs.css`. The two files are the
 geometry's source of truth and are not edited per surface: they read `--os-*`
 names with literal fallbacks, and each surface that loads them declares those
@@ -55,6 +55,7 @@ square.
 | `two_robot` | one press slot; white bin straight up into it on Robot 1, grey bin straight out to the right on Robot 2 |
 | `single_robot` | three slots on an equilateral triangle — press (grey bin in it), park (white bin in it), empty park — and three Robot 1 legs round it |
 | `sequential` | A holds the bin the line pulls from; B is where Robot 1 works — new bin up into B from below, empty out of B to the right |
+| `sequential`, `{one}` | a position with no partner, a one-node line: B's slot alone, centred — new bin up into it from below, empty out of it to the right, both Robot 1 |
 
 Any other mode draws the empty glyph: a dashed rounded square in `--sub-3`, with
 the mode's name reading beside it. That is why a retired mode needs no hidden
@@ -65,7 +66,10 @@ option anywhere — an unrecognised mode still draws, as nothing in particular.
 The desktop Processes page draws the glyph at 22 px: on the positions table's
 mode chip and in its picker (`rest` on the modes not chosen), in the
 free-position mode menu, and in a *Found in your flows* row's shape under
-Settings › Operator setup.
+Settings › Operator setup. A Sequential A/B position with no partner draws the
+one-slot variant (`{one: true}`) where the glyph is its own shape: its row's mode
+menu and its card on Setup's First style; a menu offering the mode draws the
+two slots.
 
 **Never below 16 px, never recoloured, never animated.** Below 16 the chevron
 pairs merge and the glyph stops being countable, which is the one property it

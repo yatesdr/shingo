@@ -1134,8 +1134,11 @@ function firstPositionHTML(n, rows) {
     const part = d.parts[n];
     const roleSeg = '<div class="pd-seg">' + FIRST_ROLES.map(r => '<button class="' + (e.role === r[0] ? 'on' : '') +
         '" data-act="fs-role" data-role="' + r[0] + '">' + esc(r[1]) + '</button>').join('') + '</div>';
+    // The position's own Sequential A/B with no partner draws its card's
+    // one-slot glyph: the shape it runs is one node (final brief 2b).
+    const one = e.mode === 'sequential' && !firstValue(S.model, n, FIRST_PICKS[0]);
     const cards = order.map(m => '<button class="pd-fsmode' + (e.mode === m ? ' on' : '') + '" data-act="fs-mode" data-mode="' + esc(m) + '">' +
-        gl(m, 26, {}) + '<span><b>' + esc(labels[m]) + '</b><small>' + esc(MODE_WORDS[m]) + '</small></span></button>').join('');
+        gl(m, 26, { one: one && m === 'sequential' }) + '<span><b>' + esc(labels[m]) + '</b><small>' + esc(MODE_WORDS[m]) + '</small></span></button>').join('');
     // A STAGING PICK ONLY WHERE THE SWAP READS IT. flowspec marks staging
     // `used` on Index Swap and Sequential A/B for a tool change, which holds
     // the incoming carrier there (changeover_tooling.go); their steady swap
@@ -3990,8 +3993,11 @@ function optionsFor(node, kind) {
             }));
         case 'mode': {
             const labels = M().modeLabels();
+            // The row's own Sequential A/B with no partner draws the one-slot
+            // glyph: the shape it runs is one node (final brief 2b).
+            const one = c.mode === 'sequential' && !c.paired;
             return Object.keys(labels).map(m => ({
-                value: m, label: labels[m], icon: gl(m, 22, { rest: c.mode !== m }), on: c.mode === m,
+                value: m, label: labels[m], icon: gl(m, 22, { rest: c.mode !== m, one: one && m === 'sequential' }), on: c.mode === m,
                 action: { type: 'setMode', node: node, mode: m },
             }));
         }

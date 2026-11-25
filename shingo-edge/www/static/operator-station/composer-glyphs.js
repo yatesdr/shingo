@@ -1,6 +1,6 @@
 // composer-glyphs.js — swap-mode glyphs for the Flow Composer (station HMI). Slots, bins and streams, 2026-09-10.
 // Design sheet: hmi-flow-composer-design-2026-09-02/glyphs/swap-mode-glyphs.html · styles: composer-glyphs.css
-// glyph(mode, size, {rest}) -> one inline <svg viewBox="0 0 28 28">
+// glyph(mode, size, {rest, one}) -> one inline <svg viewBox="0 0 28 28">; one: Sequential A/B's one-slot variant, a position with no partner
 const svg=(g,size,rest)=>`<svg class="gl${rest?' rest':''}" viewBox="0 0 28 28" width="${size}" height="${size}" aria-hidden="true">${g}</svg>`;
 const ang=(a,b)=>Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI;
 function glyph(mode,size,o){o=o||{};
@@ -36,6 +36,12 @@ function glyph(mode,size,o){o=o||{};
     g+=move([Lx+0.5*c,Y-0.866*c],[14-0.5*c,T+0.866*c],'r1');            // park → press: new bin in
     g+=move([14+0.5*c,T+0.866*c],[Rx-0.5*c,Y-0.866*c],'r1');            // press → other park: old bin out
     g+=move([Rx-hS,Y],[Lx+hS,Y],'r1');                                   // back across for the next one
+  } else if(mode==='sequential' && o.one){
+    // A one-node line (o.one, final brief 2b): B's slot alone, no A to pull from — the new bin up into it from below, the empty out to the right, both Robot 1 as on the A/B glyph
+    const T=9.5, X=14-(G+B)/2, Yb=T+hS+G+hB;                              // the slot centred as two_robot's: slot+gap+bin centres on 14
+    g+=press(X-7,X+7)+slot(X,T);
+    g+=bin(X,Yb,false)+move([X,T+hS+G],[X,T+hS],'r1');                    // Robot 1: new bin up into it
+    g+=move([X+hS,T],[X+hS+G,T],'r1')+bin(X+hS+G+hB,T,true);             // Robot 1: empty out of it
   } else if(mode==='sequential'){
     // A holds the bin the line is pulling from; B is where Robot 1 works — empty out to the right, new bin up from below
     const T=9.5, Bx=13.25, Ax=Bx-hS-G-hS, Yb=T+hS+G+hB;                   // 4.75, 13.25, 20.8 — whole row centres on 14

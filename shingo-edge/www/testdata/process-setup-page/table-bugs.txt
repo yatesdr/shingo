@@ -63,6 +63,7 @@ ok   the old back is named by no position, and the new back is no row
 ## Partner cleared · no partner, or a swap with none, unpairs both rows of a Sequential A/B pair
 ok   POS_A7 set to no partner: POS_A7 names none · POS_A8 names none
 ok   POS_A7's partner cell reads "No partner (one node)"
+ok   the mode menu's Sequential A/B glyph: POS_A7 1 slot(s), POS_A9 2
 ok   POS_A9 given a swap with no partner: POS_A9 names none · POS_A10 names none
 
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
