@@ -11,12 +11,6 @@ func AssignPayload(db *sql.DB, nodeID, payloadID int64) error {
 	return err
 }
 
-// UnassignPayload removes a payload assignment from a node.
-func UnassignPayload(db *sql.DB, nodeID, payloadID int64) error {
-	_, err := db.Exec(`DELETE FROM node_payloads WHERE node_id=$1 AND payload_id=$2`, nodeID, payloadID)
-	return err
-}
-
 // SetPayloads replaces all payload template assignments for a node.
 func SetPayloads(db *sql.DB, nodeID int64, payloadIDs []int64) error {
 	tx, err := db.Begin()

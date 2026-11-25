@@ -1018,8 +1018,9 @@ func TestPayloadAssignments(t *testing.T) {
 		t.Errorf("node_payloads count after assigns = %d, want 2", got)
 	}
 
-	// nodes.UnassignPayload.
-	testutil.MustNoErr(t, nodes.UnassignPayload(sdb, n.ID, pl1ID), "nodes.UnassignPayload")
+	// A payload leaves a node the way the node's edit takes it off: the node's
+	// set is replaced (SetPayloads, the product's door).
+	testutil.MustNoErr(t, nodes.SetPayloads(sdb, n.ID, []int64{pl2ID}), "nodes.SetPayloads without pl1")
 	if got := countNodePayloads(t, sdb, n.ID); got != 1 {
 		t.Errorf("node_payloads count after unassign = %d, want 1", got)
 	}

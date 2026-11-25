@@ -1,7 +1,7 @@
 package store
 
 // Stage 2D delegate file: node_payloads junction writes live in store/nodes/
-// (AssignPayload/UnassignPayload/SetPayloads), while the cross-aggregate
+// (AssignPayload/SetPayloads), while the cross-aggregate
 // queries that return *payloads.Payload or *nodes.Node stay here as composition methods.
 
 import (
@@ -14,10 +14,6 @@ import (
 
 func (db *DB) AssignPayloadToNode(nodeID, payloadID int64) error {
 	return nodes.AssignPayload(db.DB, nodeID, payloadID)
-}
-
-func (db *DB) UnassignPayloadFromNode(nodeID, payloadID int64) error {
-	return nodes.UnassignPayload(db.DB, nodeID, payloadID)
 }
 
 // ListNodesForPayload returns all nodes that have the given payload assigned.
