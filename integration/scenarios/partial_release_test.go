@@ -128,11 +128,8 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 	if err := coreDB.CreateOrder(order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	// CreateOrder may set initial status; force staged + claimed_by so
-	// the release path's WHERE guard matches.
-	if err := coreDB.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "scenario setup"); err != nil {
-		t.Fatalf("force staged: %v", err)
-	}
+	// CreateOrder writes the order's status as given, so the row is born
+	// staged; claimed_by, the release path's other guard, comes next.
 	// Reserve→claim→confirm: a bare ClaimBin fails the demoted-CAS seatbelt
 	// (needs a pending reservation for this order+bin).
 	coreharness.ClaimBinForTest(t, coreDB, bin.ID, order.ID)
