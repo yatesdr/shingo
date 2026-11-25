@@ -10,12 +10,15 @@ package testharness
 //     buildProtocolRouter and buildAskServer make, and core.go's functions of
 //     the same names, as text; and coreRoutes against routers.go's routed
 //     types and subjects;
-//   - the composition: every statement of main between eng.Start() and
-//     www.NewRouter that names a part of it (the handler, the data service,
-//     the ask server, the tables, the ingestor, a hook on the engine), and
-//     NewCore's, through its option checks.
+//   - the composition: every statement of main after eng.Start() that names a
+//     part of it (the handler, the data service, the doors, the ask server,
+//     the tables, the ingestor, a hook on the engine), up to and with the web
+//     layer's router, and NewCore's, through its option checks and the
+//     helpers it calls in core.go.
 // A statement on one side and not the other fails, unless mainOnly or
-// harnessOnly says why, with what to change.
+// harnessOnly says why, with what to change; and so do the statements both
+// make coming in another order (the order is the program: the bins feed's
+// subscriptions before the screens', TestSubscriberCensus).
 
 import (
 	"bytes"
@@ -38,7 +41,6 @@ var mainOnly = map[string]string{
 	"coreHandler.StaleEdgeThreshold =":                       "the stale-edge pass is not run (coreHandler.Start)",
 	"coreHandler.Start()":                                    "the stale-edge pass: a loop on a wall-clock ticker",
 	"defer coreHandler.Stop()":                               "coreHandler.Start's pair",
-	"doors := www.NewDoors(eng)":                             "the caller built its web layer with its doors and hands them in",
 	"subjectRouter, err := buildSubjectRouter(":              "NewCore's takes the cell's routes (harnessOnly)",
 	"coreDataService.StartHeartbeatMaintenance()":            "a 24-hour loop with no stop of its own: a test would leak it",
 	"ingestor.DebugLog =":                                    "no debug log",
@@ -125,6 +127,9 @@ func TestNewCore_MakesWhatMainMakes(t *testing.T) {
 		if !slices.ContainsFunc(coreStmts, func(s string) bool { return strings.HasPrefix(s, start) }) {
 			diffs = append(diffs, fmt.Sprintf("harnessOnly lists %q and NewCore makes no such statement: remove the row", start))
 		}
+	}
+	if d := orderDiff(mainStmts, coreStmts); d != "" {
+		diffs = append(diffs, d)
 	}
 	if len(mainStmts) == 0 || len(coreStmts) == 0 {
 		t.Fatalf("read %d of main's statements and %d of NewCore's: a guard that reads nothing compares nothing", len(mainStmts), len(coreStmts))
@@ -246,8 +251,8 @@ func coreRouteNames(t *testing.T, g goFile) []string {
 	return nil
 }
 
-// mainComposition is every statement of main's body after eng.Start() and
-// before the router is built that names a part of the composition, but the
+// mainComposition is every statement of main's body after eng.Start() that
+// names a part of the composition, up to and with the router's build, but the
 // error checks.
 func mainComposition(t *testing.T, g goFile) []string {
 	t.Helper()
@@ -255,15 +260,15 @@ func mainComposition(t *testing.T, g goFile) []string {
 	in := false
 	for _, st := range g.fn(t, "main").Body.List {
 		s := g.text(st)
-		switch {
-		case s == "eng.Start()":
+		if s == "eng.Start()" {
 			in = true
 			continue
-		case strings.HasPrefix(s, "handler, stopWeb, err := www.NewRouter("):
-			return out
 		}
 		if in && !errCheck(st) && names(s) {
 			out = append(out, s)
+		}
+		if in && strings.HasPrefix(s, "handler, stopWeb, err := www.NewRouter(") {
+			return out
 		}
 	}
 	t.Fatal("main.go: no eng.Start() followed by the router's build")
@@ -271,7 +276,9 @@ func mainComposition(t *testing.T, g goFile) []string {
 }
 
 // newCoreStatements is NewCore's statements, through its option checks (an
-// if on the options is read as its body), but the error checks.
+// if on the options is read as its body) and the helpers it calls in core.go
+// (a call that is a statement of its own is read as the helper's body), but
+// the error checks.
 func newCoreStatements(t *testing.T, g goFile) []string {
 	t.Helper()
 	var out []string
@@ -282,6 +289,10 @@ func newCoreStatements(t *testing.T, g goFile) []string {
 				walk(ifs.Body.List)
 				continue
 			}
+			if fd := g.helperCall(st); fd != nil {
+				walk(fd.Body.List)
+				continue
+			}
 			if s := g.text(st); !errCheck(st) && names(s) {
 				out = append(out, s)
 			}
@@ -289,6 +300,56 @@ func newCoreStatements(t *testing.T, g goFile) []string {
 	}
 	walk(g.fn(t, "NewCore").Body.List)
 	return out
+}
+
+// helperCall is the func of this file a statement calls, when the statement is
+// that call alone; nil otherwise.
+func (g goFile) helperCall(st ast.Stmt) *ast.FuncDecl {
+	es, ok := st.(*ast.ExprStmt)
+	if !ok {
+		return nil
+	}
+	call, ok := es.X.(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	id, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	for _, d := range g.file.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == id.Name && fd.Body != nil {
+			return fd
+		}
+	}
+	return nil
+}
+
+// orderDiff is "" when the statements main and NewCore both make come in the
+// same order on both sides, else the first that does not, with what to change.
+func orderDiff(mainStmts, coreStmts []string) string {
+	var inMain, inCore []string
+	for _, s := range mainStmts {
+		if slices.Contains(coreStmts, s) {
+			inMain = append(inMain, s)
+		}
+	}
+	for _, s := range coreStmts {
+		if slices.Contains(mainStmts, s) {
+			inCore = append(inCore, s)
+		}
+	}
+	for i := range inMain {
+		if i >= len(inCore) || inMain[i] != inCore[i] {
+			got := "nothing"
+			if i < len(inCore) {
+				got = inCore[i]
+			}
+			return fmt.Sprintf("main makes\n    %s\n  where NewCore makes\n    %s\n  NewCore makes their statements in another order: "+
+				"move it in NewCore (core.go) to main's place, for main's order is the bus's (TestSubscriberCensus)", inMain[i], got)
+		}
+	}
+	return ""
 }
 
 func optionCheck(cond string) bool {

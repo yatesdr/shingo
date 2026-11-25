@@ -739,18 +739,23 @@ func (c *w6Cell) restart(label string) {
 
 // wireBus routes the Edge and Core to each other, as ksrCell does: Core's
 // order handlers, the Edge's register, its draws (bin_uop_delta), its
-// production ticks, its claims and Core's asks. Each call takes a Core
-// composition of its own, as the table it replaced was built anew: NewCore's,
-// less the redirect, every other subject (its Edge also sends demand origins,
-// never routed here) and every hook (the rig pushes the bins itself).
+// production ticks, its claims and Core's asks. Core is composed on the first
+// call and kept, as a plant's Core runs on while its Edge restarts (a cell
+// whose ksrCell composed it, counted, keeps that one): NewCore's, less the
+// redirect, every other subject (its Edge also sends demand origins, never
+// routed here) and every hook (the rig pushes the bins itself). Each call
+// takes a new Bus for the Edge it has now.
 func (c *w6Cell) wireBus() {
 	t, coreDB := c.t, c.core.eng.DB()
-	coreSide := coreharness.NewCore(t, c.core.eng, c.core.doors,
-		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
-			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.TypeOrderIngest,
-			protocol.SubjectEdgeRegister, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks,
-			protocol.SubjectPlantClaims, protocol.SubjectEdgeAsk),
-		coreharness.HooksOnly())
+	if c.side == nil {
+		c.side = coreharness.NewCore(t, c.core.eng,
+			coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
+				protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.TypeOrderIngest,
+				protocol.SubjectEdgeRegister, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks,
+				protocol.SubjectPlantClaims, protocol.SubjectEdgeAsk),
+			coreharness.HooksOnly())
+	}
+	coreSide := c.side
 	if c.askKinds == nil {
 		c.askKinds = coreSide.AskKinds
 	}

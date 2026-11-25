@@ -27,7 +27,6 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/debuglog"
 	"shingo/protocol/router"
 
 	coreconfig "shingocore/config"
@@ -37,7 +36,6 @@ import (
 	corestore "shingocore/store"
 	coreorders "shingocore/store/orders"
 	coreharness "shingocore/testharness"
-	"shingocore/www"
 
 	edgeengine "shingoedge/engine"
 	edgeharness "shingoedge/testharness"
@@ -137,18 +135,10 @@ func startFeedCore(t *testing.T, verified bool) *feedCore {
 		c.uuids[o.name] = order.EdgeUUID
 	}
 
-	// Core's web layer, as main builds it after the rest: its doors are what
-	// the ask server answers through.
-	dbg, err := debuglog.New(64, nil)
-	mustNil(t, err, "debuglog")
-	doors := www.NewDoors(eng)
-	_, stopWeb, err := www.NewRouter(eng, doors, dbg)
-	mustNil(t, err, "core router")
-	t.Cleanup(stopWeb)
 	// Core's tables as main builds them, less what this cell leaves out: every
 	// type and subject but the heartbeat, and every hook. The topic and its
 	// reader are the Kafka client's in main, so the cell sets them itself.
-	c.side = coreharness.NewCore(t, eng, doors, coreharness.RoutesOnly(protocol.SubjectEdgeHeartbeat), coreharness.HooksOnly())
+	c.side = coreharness.NewCore(t, eng, coreharness.RoutesOnly(protocol.SubjectEdgeHeartbeat), coreharness.HooksOnly())
 	if verified {
 		c.side.Data.SetEphemeralTopic(func() string { return feedTopic })
 		eng.SetRobotPositionsPublisher(c.topic.Publish)

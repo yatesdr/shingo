@@ -3,13 +3,16 @@ package testharness
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"slices"
 	"sort"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/debuglog"
 	"shingo/protocol/router"
 	"shingocore/asks"
+	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/messaging"
 	"shingocore/messaging/middleware"
@@ -17,31 +20,36 @@ import (
 	"shingocore/www"
 )
 
-// Core is Core's messaging side composed around a running engine as the plant
-// binary composes it (cmd/shingocore/main.go, routers.go): the order handler,
-// the data service with the hooks main sets on it and on the engine, the ask
-// server over the doors, the subject and protocol tables, and an ingestor that
-// routes through them. A harness Bus delivers the Edge's envelopes into
-// Ingestor. The twin of shingoedge/testharness.NewEdge.
+// Core is Core's messaging side and web layer composed around a running engine
+// as the plant binary composes them (cmd/shingocore/main.go, routers.go): the
+// order handler, the data service with the hooks main sets on it and on the
+// engine, the door bodies and the ask server over them, the subject and
+// protocol tables, an ingestor that routes through them, and last the web
+// layer's router over the same doors. A harness Bus delivers the Edge's
+// envelopes into Ingestor. The twin of shingoedge/testharness.NewEdge.
 //
 // What a cell leaves out of a plant's composition it says with options
 // (RoutesOnly, HooksOnly, NoInboxDedup, NoExpiredAnswers). NewCore's
-// statements are main's own but four that differ on purpose (harnessOnly in
-// core_guard_test.go); TestNewCore_MakesWhatMainMakes reads main.go,
-// routers.go and this file and fails when they part, naming what to change.
+// statements are main's own, in main's order, but four that differ on purpose
+// (harnessOnly in core_guard_test.go); TestNewCore_MakesWhatMainMakes reads
+// main.go, routers.go and this file and fails when they part or come in
+// another order, naming what to change.
 //
 // Not made here, as NewEdge leaves out its own: the Kafka client and what
 // rides it (the ingestor's subscribe, the robot feed's topic and reader), the
 // stale-edge pass and the heartbeat maintenance loops, the debug log (mainOnly
-// gives each its reason); the outbox drainer (the Bus pumps the outbox); and
-// what main starts on the engine after Start and before this (the scan probe,
-// the after-queue watch, the futility detector).
+// gives each its reason); the outbox drainer (the Bus pumps the outbox); the
+// HTTP server (Web is the handler it would serve); and what main starts on the
+// engine after Start and before this (the scan probe, the after-queue watch,
+// the futility detector).
 type Core struct {
 	Engine   *engine.Engine
 	Handler  *messaging.CoreHandler
 	Data     *messaging.CoreDataService
+	Doors    *www.Doors
 	AskKinds []string
 	Ingestor *protocol.Ingestor
+	Web      http.Handler
 }
 
 // Hook is one of the calls main makes to tie the engine and the data service
@@ -112,25 +120,75 @@ func NoInboxDedup() CoreOption { return func(o *coreOptions) { o.noDedup = true 
 // NoExpiredAnswers leaves the ingestor's answer to an expired ask unset.
 func NoExpiredAnswers() CoreOption { return func(o *coreOptions) { o.noOnExp = true } }
 
-// NewCore composes Core's messaging side around eng, which the caller has
-// started, and doors, the door bodies the caller's web layer was built with
-// (www.NewDoors, www.NewRouter), in main's order.
-//
-// The bins feed (HookBinsFeed) is subscribed here, after the web layer the
-// caller built; main subscribes it before (TestSubscriberCensus). So in a cell
-// that turns it on, the screens' subscribers run before the feed's for one
-// event, where in a plant the feed's run first
-// (TestBusOrder_ADeliveryAndACancel). Every cell leaves it out today.
-func NewCore(t testing.TB, eng *engine.Engine, doors *www.Doors, opts ...CoreOption) *Core {
+// NewCore composes Core's messaging side and web layer around eng, which the
+// caller has started, in main's order: so the bus's three sets subscribe as a
+// plant's do, the engine's at Start, then the bins feed (HookBinsFeed), then
+// the screens' when the router is built (TestSubscriberCensus;
+// TestBusOrder_ADeliveryAndACancel runs them on a real engine). Call it once
+// for an engine, as main composes once: a second call makes a second set of
+// each. The web layer stops when t ends.
+func NewCore(t testing.TB, eng *engine.Engine, opts ...CoreOption) *Core {
 	t.Helper()
 	o := newCoreOptions(t, opts)
 	db, cfg := eng.DB(), eng.AppConfig()
+	dbg, err := debuglog.New(64, nil)
+	if err != nil {
+		t.Fatalf("testharness.NewCore: debug log: %v", err)
+	}
 
 	coreHandler := messaging.NewCoreHandler(db, nil, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
 	coreDataService := messaging.NewCoreDataService(db, coreHandler, service.EpochAnnounce{
 		Topic:       cfg.Messaging.DispatchTopic,
 		CoreStation: cfg.Messaging.StationID,
 	})
+	setHooks(eng, coreDataService, cfg, o)
+
+	doors := www.NewDoors(eng)
+	askServer, err := buildAskServer(db, coreHandler.ReplyAnswer, doors)
+	if err != nil {
+		t.Fatalf("testharness.NewCore: %v", err)
+	}
+	if o.on(HookAskKinds) {
+		coreDataService.SetAskKinds(askServer.Kinds)
+	}
+	subjectRouter := buildSubjectRouter(coreDataService, askServer, o)
+	if o.on(HookCellTick) {
+		coreDataService.SetCellTickEmitter(eng.EmitCellTick)
+	}
+	if o.on(HookBinCount) {
+		coreDataService.SetBinCountEmitter(eng.EmitBinRowChanged)
+	}
+
+	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
+	if !o.noOnExp {
+		ingestor.OnExpired = askServer.AnswerExpired
+	}
+	if cfg.Messaging.SigningKey != "" {
+		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
+		log.Printf("shingocore: envelope signing enabled")
+	}
+	var dedup router.Middleware
+	if !o.noDedup {
+		dedup = middleware.NewInboxDedup(db, nil)
+	}
+	protoRouter := buildProtocolRouter(coreHandler, subjectRouter, dedup, nil, o)
+	ingestor.Dispatch = func(env *protocol.Envelope) {
+		protoRouter.Dispatch(env, env.Type)
+	}
+
+	handler, stopWeb, err := www.NewRouter(eng, doors, dbg)
+	if err != nil {
+		t.Fatalf("testharness.NewCore: build router: %v", err)
+	}
+	t.Cleanup(stopWeb)
+	return &Core{Engine: eng, Handler: coreHandler, Data: coreDataService, Doors: doors, AskKinds: askServer.Kinds(),
+		Ingestor: ingestor, Web: handler}
+}
+
+// setHooks is main's hooks between the data service and the doors, each
+// behind the cell's options: the guard reads it as NewCore's own statements,
+// in place of the call.
+func setHooks(eng *engine.Engine, coreDataService *messaging.CoreDataService, cfg *config.Config, o coreOptions) {
 	if o.on(HookThresholdMonitor) {
 		coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
 	}
@@ -179,39 +237,6 @@ func NewCore(t testing.TB, eng *engine.Engine, doors *www.Doors, opts ...CoreOpt
 			Ended:   coreDataService.BinsOrderEnded,
 		})
 	}
-
-	askServer, err := buildAskServer(db, coreHandler.ReplyAnswer, doors)
-	if err != nil {
-		t.Fatalf("testharness.NewCore: %v", err)
-	}
-	if o.on(HookAskKinds) {
-		coreDataService.SetAskKinds(askServer.Kinds)
-	}
-	subjectRouter := buildSubjectRouter(coreDataService, askServer, o)
-	if o.on(HookCellTick) {
-		coreDataService.SetCellTickEmitter(eng.EmitCellTick)
-	}
-	if o.on(HookBinCount) {
-		coreDataService.SetBinCountEmitter(eng.EmitBinRowChanged)
-	}
-
-	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
-	if !o.noOnExp {
-		ingestor.OnExpired = askServer.AnswerExpired
-	}
-	if cfg.Messaging.SigningKey != "" {
-		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
-		log.Printf("shingocore: envelope signing enabled")
-	}
-	var dedup router.Middleware
-	if !o.noDedup {
-		dedup = middleware.NewInboxDedup(db, nil)
-	}
-	protoRouter := buildProtocolRouter(coreHandler, subjectRouter, dedup, nil, o)
-	ingestor.Dispatch = func(env *protocol.Envelope) {
-		protoRouter.Dispatch(env, env.Type)
-	}
-	return &Core{Engine: eng, Handler: coreHandler, Data: coreDataService, AskKinds: askServer.Kinds(), Ingestor: ingestor}
 }
 
 // newCoreOptions applies opts, and fails a route RoutesOnly names that Core

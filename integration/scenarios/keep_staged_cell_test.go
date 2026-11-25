@@ -21,7 +21,6 @@ import (
 	"shingo/integration/harness"
 	"shingo/protocol"
 
-	"shingo/protocol/debuglog"
 	coreconfig "shingocore/config"
 	coreengine "shingocore/engine"
 	"shingocore/fleet/simulator"
@@ -30,7 +29,6 @@ import (
 	coreorders "shingocore/store/orders"
 	corepayloads "shingocore/store/payloads"
 	coreharness "shingocore/testharness"
-	"shingocore/www"
 
 	"shingoedge/domain"
 	"shingoedge/store/processes"
@@ -50,9 +48,6 @@ const (
 type kscCore struct {
 	eng *coreengine.Engine
 	sim *simulator.SimulatorBackend
-	// doors is the door bodies Core's router serves and its ask server
-	// answers through (testharness.NewCore).
-	doors *www.Doors
 }
 
 func startKeepStagedCore(t *testing.T) kscCore {
@@ -67,13 +62,7 @@ func startKeepStagedCore(t *testing.T) kscCore {
 	eng.Start()
 	harness.RecorderFor(t).CoreStarted()
 	t.Cleanup(eng.Stop)
-	dbg, err := debuglog.New(64, nil)
-	mustNil(t, err, "debuglog")
-	doors := www.NewDoors(eng)
-	_, stop, err := www.NewRouter(eng, doors, dbg)
-	mustNil(t, err, "core router")
-	t.Cleanup(stop)
-	return kscCore{eng: eng, sim: sim, doors: doors}
+	return kscCore{eng: eng, sim: sim}
 }
 
 func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
@@ -166,7 +155,7 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	// Core's tables as main builds them, less what this cell leaves out: every
 	// subject but the asks (its Edge also sends demand origins, never routed
 	// here) and every hook (the rig pushes the bins itself).
-	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
 			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.SubjectEdgeAsk),
 		coreharness.HooksOnly())

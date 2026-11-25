@@ -28,14 +28,12 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/debuglog"
 
 	coreconfig "shingocore/config"
 	coreengine "shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	coreharness "shingocore/testharness"
-	"shingocore/www"
 
 	edgeorders "shingoedge/orders"
 	edgeharness "shingoedge/testharness"
@@ -88,18 +86,10 @@ func TestRefusalLoop_TheStationHoldsQueuedInsideEachCreate(t *testing.T) {
 	coreharness.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "CWR-BIN")
 
 	edge := edgeharness.NewEdge(t, cwrStation)
-	// Core's web layer, as main builds it after the rest: its doors are what
-	// the ask server answers through.
-	dbg, err := debuglog.New(64, nil)
-	mustNil(t, err, "debuglog")
-	doors := www.NewDoors(eng)
-	_, stopWeb, err := www.NewRouter(eng, doors, dbg)
-	mustNil(t, err, "core router")
-	t.Cleanup(stopWeb)
 	// Core's tables as main builds them, less what this cell leaves out: every
 	// data subject, the complex request, the redirect, the release and the
 	// ingest, and every hook.
-	coreSide := coreharness.NewCore(t, eng, doors,
+	coreSide := coreharness.NewCore(t, eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt),
 		coreharness.HooksOnly())
 	bus := harness.NewBus(t,

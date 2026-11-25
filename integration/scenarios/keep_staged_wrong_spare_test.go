@@ -103,7 +103,7 @@ func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 	// Core's tables as main builds them, less what this cell leaves out: every
 	// subject but the asks (its Edge also sends a demand origin, never routed
 	// here) and every hook (the rig pushes the bins itself).
-	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
 			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.SubjectEdgeAsk),
 		coreharness.HooksOnly())

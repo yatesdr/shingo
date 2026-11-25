@@ -68,7 +68,7 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 	// out: every subject but the asks (its Edge also sends a demand origin,
 	// never routed here), the release, the redirect and the ingest, and every
 	// hook but the change door and the catalog row the floor part answers with.
-	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
 			protocol.TypeOrderReceipt, protocol.SubjectEdgeAsk),
 		coreharness.HooksOnly(coreharness.HookFeedsChanged, coreharness.HookCatalogRow))

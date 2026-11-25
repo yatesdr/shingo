@@ -9,7 +9,6 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/debuglog"
 
 	coreconfig "shingocore/config"
 	"shingocore/dispatch"
@@ -22,7 +21,6 @@ import (
 	coreorders "shingocore/store/orders"
 	corepayloads "shingocore/store/payloads"
 	coreharness "shingocore/testharness"
-	"shingocore/www"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
@@ -199,18 +197,10 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	eng.Start()
 	t.Cleanup(eng.Stop)
 
-	// Core's web layer, as main builds it after the rest: its doors are what
-	// the ask server answers through.
-	dbg, err := debuglog.New(64, nil)
-	mustNil(t, err, "debuglog")
-	doors := www.NewDoors(eng)
-	_, stopWeb, err := www.NewRouter(eng, doors, dbg)
-	mustNil(t, err, "core router")
-	t.Cleanup(stopWeb)
 	// Core's tables as main builds them, less what this cell leaves out: every
 	// subject but the claims (its Edge also sends a demand origin, never routed
 	// here), the plain request, the redirect and the ingest, and every hook.
-	coreSide := coreharness.NewCore(t, eng, doors,
+	coreSide := coreharness.NewCore(t, eng,
 		coreharness.RoutesOnly(protocol.SubjectPlantClaims, protocol.TypeComplexOrderRequest, protocol.TypeOrderRelease,
 			protocol.TypeOrderCancel, protocol.TypeOrderReceipt),
 		coreharness.HooksOnly())

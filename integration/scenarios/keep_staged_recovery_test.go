@@ -36,7 +36,6 @@ import (
 	"shingo/integration/harness"
 	"shingo/protocol"
 	"shingo/protocol/clock"
-	"shingo/protocol/debuglog"
 
 	coreconfig "shingocore/config"
 	"shingocore/dispatch"
@@ -47,7 +46,6 @@ import (
 	corepayloads "shingocore/store/payloads"
 	coreplantclaims "shingocore/store/plantclaims"
 	coreharness "shingocore/testharness"
-	"shingocore/www"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
@@ -110,8 +108,11 @@ const (
 // market, so "a B bin" is a bin of B's carrier type and "B's source" is B's
 // market.
 type ksrCell struct {
-	t         *testing.T
-	core      kscCore
+	t    *testing.T
+	core kscCore
+	// side is Core's composition around core's engine (testharness.NewCore),
+	// made once: a plant's Core runs on while its Edge restarts.
+	side      *coreharness.Core
 	edge      *edgeharness.Edge
 	bus       *harness.Bus
 	kick      *kickTicker
@@ -156,8 +157,8 @@ type ksrDig struct {
 }
 
 // startKsrCoreOnDeck is startKeepStagedCore with a fleet that lists robots and
-// their decks (deckFleet): the real engine, router and simulator, and a robot
-// report the scenario sets.
+// their decks (deckFleet): the real engine and simulator, and a robot report
+// the scenario sets. The router comes with Core's composition (NewCore).
 func startKsrCoreOnDeck(t *testing.T, fl *deckFleet) kscCore {
 	t.Helper()
 	db := coreharness.OpenDB(t)
@@ -170,13 +171,7 @@ func startKsrCoreOnDeck(t *testing.T, fl *deckFleet) kscCore {
 	eng.Start()
 	harness.RecorderFor(t).CoreStarted()
 	t.Cleanup(eng.Stop)
-	dbg, err := debuglog.New(64, nil)
-	mustNil(t, err, "debuglog")
-	doors := www.NewDoors(eng)
-	_, stop, err := www.NewRouter(eng, doors, dbg)
-	mustNil(t, err, "core router")
-	t.Cleanup(stop)
-	return kscCore{eng: eng, sim: fl.SimulatorBackend, doors: doors}
+	return kscCore{eng: eng, sim: fl.SimulatorBackend}
 }
 
 type ksrOpts struct {
@@ -217,6 +212,9 @@ type ksrOpts struct {
 	// inbound staging of every mode, and a two-robot or single-robot supply
 	// stages its carrier there.
 	bareSpot bool
+	// counted: the Edge's draws, its production ticks and its claims reach
+	// Core over the wire, as the CATID cell routes them (w6Cell.wireBus).
+	counted bool
 	// dropB: style B claims nothing at the line, so a changeover to B drops
 	// it (its bin goes and nothing replaces it), and A's claim marks the line
 	// for a tool change, so the cutover waits for the line to be clear.
@@ -486,12 +484,16 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		protocol.SubjectEdgeRegister,
 		protocol.SubjectEdgeAsk,
 	}
-	if o.buriedB || o.mirror {
+	if o.buriedB || o.mirror || o.counted {
 		// The Edge's claims reach Core's mirror as in the plant: the publisher's
 		// report over the wire. The cancel-return policy reads that mirror.
 		routes = append(routes, protocol.SubjectPlantClaims)
 	}
-	coreSide := coreharness.NewCore(t, c.core.eng, c.core.doors, coreharness.RoutesOnly(routes...), coreharness.HooksOnly())
+	if o.counted {
+		routes = append(routes, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks)
+	}
+	coreSide := coreharness.NewCore(t, c.core.eng, coreharness.RoutesOnly(routes...), coreharness.HooksOnly())
+	c.side = coreSide
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},

@@ -97,7 +97,7 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 	// subject but the asks (its Edge also sends a demand origin, never routed
 	// here), the release and the ingest, and every hook (the rig pushes the
 	// bins itself).
-	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
 			protocol.TypeOrderReceipt, protocol.SubjectEdgeAsk),
 		coreharness.HooksOnly())

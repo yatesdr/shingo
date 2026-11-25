@@ -203,7 +203,7 @@ func newSppCell(t *testing.T) *sppCell {
 	// Core's tables as main builds them, less what this cell leaves out: every
 	// data subject, the complex request, the redirect and the ingest, and every
 	// hook.
-	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt,
 			protocol.TypeOrderRelease),
 		coreharness.HooksOnly())
