@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // A ReleaseCache keeps the boot binaries BuildRelease makes across processes,
@@ -397,7 +398,22 @@ func writeRenamed(path string, fill func(io.Writer) error) (err error) {
 
 // copyHashing copies src to a new executable file at dst and returns the
 // sha256 of the bytes written.
+//
+// NO FORK WHILE dst IS OPEN. The read side of syscall.ForkLock is held from
+// the open to the close, and os/exec forks under the write side
+// (syscall.forkExec), so this process starts no child in between. A child
+// forked while the handle was open kept it until its own exec, and Linux
+// refuses to run a file that is open for writing ("text file busy"):
+// BootRelease failed that way in 2 of 10 Linux-side docker steps on
+// 2026-11-24, both times on a binary this function had just copied, beside
+// the other vintages' forks. Pinned by
+// TestReleaseCache_AServedBinaryRunsAtOnce, red 20 of 20 runs without the
+// lock. Do not trade the lock for a retry of the run: that leaves the handle
+// where it was. EXPIRY: when Instance.BootRelease is gone (nothing then runs
+// what this writes).
 func copyHashing(dst string, src io.Reader) (string, error) {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 	if err != nil {
 		return "", err
