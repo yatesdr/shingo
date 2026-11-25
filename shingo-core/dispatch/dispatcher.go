@@ -1404,22 +1404,25 @@ func (d *Dispatcher) setDownSentence(order *orders.Order) string {
 		strings.Join(where, " and "), d.plantTime(at))
 }
 
-// endedSentence is an ended order's refusal sentence: how it ended, when, and
-// Core's reason, from the ending's history row (the order's own row when there
-// is none).
+// endedSentence is an ended order's refusal sentence: how it ended and when,
+// the time from the ending's history row (the order's own row when there is
+// none).
+//
+// NOT CORE'S REASON (brief G D, DOCKET R146a). The ending's detail, e.g.
+// "receipt: auto_confirm_timeout, count: 0", is history words, not a
+// sentence for the person who pressed Cancel; it stays where it was written,
+// on that history row (the order page's history, the detail read's History)
+// and the order's error_detail. Pinned by
+// TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs's ended rows.
 func (d *Dispatcher) endedSentence(order *orders.Order) string {
-	at, why := order.UpdatedAt, order.ErrorDetail
+	at := order.UpdatedAt
 	if order.CompletedAt != nil {
 		at = *order.CompletedAt
 	}
 	if h, err := d.db.LatestOrderHistoryForStatus(order.ID, order.Status); err == nil && h != nil {
-		at, why = h.CreatedAt, h.Detail
+		at = h.CreatedAt
 	}
-	s := fmt.Sprintf("Not cancelled: the order had already ended, %s on %s", order.Status, d.plantTime(at))
-	if why != "" {
-		s += " (" + why + ")"
-	}
-	return s + "."
+	return fmt.Sprintf("Not cancelled: the order had already ended, %s on %s.", order.Status, d.plantTime(at))
 }
 
 // plantTime writes a time for a person at the plant: its date and clock in the

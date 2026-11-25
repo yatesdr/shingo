@@ -1523,9 +1523,11 @@ func TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs(t *testing.T) {
 		return refusal("line-1", protocol.CancelRefusedSetDown, "Not cancelled: its cart was set down at LINE1-IN on Nov 25 at "+
 			clock+" CST. Confirm it at the station.")
 	}
-	ended := func(status, why string) line {
+	// The ending's detail is not in the sentence (brief G D, R146a): it stays
+	// on the ending's history row, which each row's ending writes.
+	ended := func(status string) line {
 		return refusal("line-1", protocol.CancelRefusedEnded, "Not cancelled: the order had already ended, "+status+
-			" on Nov 25 at 08:35 CST ("+why+").")
+			" on Nov 25 at 08:35 CST.")
 	}
 	type answer struct {
 		told  []line          // what the station is told, in order
@@ -1538,6 +1540,9 @@ func TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs(t *testing.T) {
 		station    string // who sends the cancel; "" is the order's own station
 		asking     answer // final brief 5b
 		notAsking  answer // today's door, 1f
+		// kept is an ended order's detail, which its ending's history row
+		// keeps and the refusal's sentence leaves out (R146a).
+		kept string
 	}{
 		{row: "not found",
 			asking:    answer{told: []line{notFound("line-1")}},
@@ -1561,14 +1566,14 @@ func TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs(t *testing.T) {
 			asking:    answer{after: StatusCancelled},
 			notAsking: answer{after: StatusCancelled}},
 		{row: "ended confirmed", shape: "confirmed",
-			asking:    answer{told: []line{ended("confirmed", "receipt: confirmed, count: 1")}, after: StatusConfirmed},
-			notAsking: answer{told: []line{reply}, after: StatusConfirmed}},
+			asking:    answer{told: []line{ended("confirmed")}, after: StatusConfirmed},
+			notAsking: answer{told: []line{reply}, after: StatusConfirmed}, kept: "receipt: confirmed, count: 1"},
 		{row: "ended failed", shape: "failed",
-			asking:    answer{told: []line{ended("failed", "the fleet failed the order")}, after: StatusFailed},
-			notAsking: answer{told: []line{reply}, after: StatusFailed}},
+			asking:    answer{told: []line{ended("failed")}, after: StatusFailed},
+			notAsking: answer{told: []line{reply}, after: StatusFailed}, kept: "the fleet failed the order"},
 		{row: "ended skipped", shape: "skipped",
-			asking:    answer{told: []line{ended("skipped", "no bins at any pickup node")}, after: StatusSkipped},
-			notAsking: answer{told: []line{reply}, after: StatusSkipped}},
+			asking:    answer{told: []line{ended("skipped")}, after: StatusSkipped},
+			notAsking: answer{told: []line{reply}, after: StatusSkipped}, kept: "no bins at any pickup node"},
 		{row: "trip unreadable", shape: "unreadable",
 			asking:    answer{told: []line{tell(2)}, after: StatusCancelled, stops: 1, from: StatusDispatched},
 			notAsking: answer{told: []line{tell(2), reply}, after: StatusCancelled, stops: 1, from: StatusDispatched}},
@@ -1635,6 +1640,13 @@ func TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs(t *testing.T) {
 				}
 				if n := len(historyOf(t, r, before.ID)); n != history {
 					t.Errorf("history rows %d -> %d: an answer that ends nothing writes nothing", history, n)
+				}
+				if c.kept != "" {
+					h, err := r.db.LatestOrderHistoryForStatus(before.ID, before.Status)
+					testutil.MustNoErr(t, err, "the ending's history row")
+					if h == nil || h.Detail != c.kept {
+						t.Errorf("the ending's history row reads %+v, want its detail %q kept there", h, c.kept)
+					}
 				}
 			})
 		}

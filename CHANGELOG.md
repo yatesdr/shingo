@@ -53,6 +53,7 @@ Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either ord
 - With Core or Kafka unreachable a cancel stays "Cancel sent" until Core answers, and goes again when the Edge reconnects; the robot does what Core last told it either way. A changeover's CANCEL still ends the changeover and puts the style back at once, and its orders read "Cancel sent"
 - The Orders page's Cancel answers within 2 s: "Order cancelled", Core's sentence, or "Cancel sent; Core has not answered yet". A person's cancel pauses the position's auto-reorder when Core has cancelled the order, so a cancel Core refuses pauses nothing
 - A script that cancels an Edge order at /api/orders/{id}/abort still works for this release; the address is /api/orders/{id}/cancel, and /abort goes in the next
+- Core's "Not cancelled" for an order that had already ended says how and when it ended, and no longer the history words after it, such as "(receipt: auto_confirm_timeout, count: 0)"; they stay in the order's history on Core's order page
 
 ## v0.19.0 — 2026-11-22
 
