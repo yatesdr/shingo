@@ -832,14 +832,11 @@ step_test() {
   # With the wrapper off (GATE_EXEC=off): FAIL-SAFE, any path in the diff that is
   # not Go under a module (diff_go_only) reruns everything. A flake cached green
   # re-rolls at `full`.
-  # Reuse that is safe from those holes is the wrapper's (on in a WSL mirror,
-  # scripts/gate-reuse.sh), not Go's cache.
   local count="-count=1" how=""
   if [ "${GATE_TIER:-}" = dev ]; then
-    # Under the -exec wrapper Go's test cache is off whatever the diff, so the
-    # dev tier runs -count=1 too (and its argv is push's: reuse keys on argv).
-    if [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ] && [ -n "${GATETIME_REUSE:-}" ]; then how="-count=1 under the -exec wrapper (GATETIME_REUSE=$GATETIME_REUSE)"
-    elif [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ]; then how="-count=1: the record-only -exec wrapper turns Go's test cache off"
+    # Under the record-only -exec wrapper (scripts/gate-timing.sh) Go's test
+    # cache is off whatever the diff, so the dev tier runs -count=1 too.
+    if [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ]; then how="-count=1: the record-only -exec wrapper turns Go's test cache off"
     elif diff_go_only; then count=""; else how="-count=1: the diff has non-Go files"; fi
   fi
   # One background job per module; collect failures when the last lands. The
@@ -1741,11 +1738,6 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # gate_timing_check / gate_timing_status: the timing flag a `gatetime run`
 # holds (shared/scripts/gatetime), which every heavy mode below honours.
 . "$ROOT/scripts/gate-timing.sh"
-# reuse_setup / reuse_summary / reuse_audit / reuse_explain: test-result reuse,
-# ON in a WSL mirror unless GATE_REUSE=off, never on the Windows side, elsewhere
-# only with GATE_REUSE=on (dev and push serve, cert audits; a full miss says what
-# in the key moved; shared/scripts/gatetime/reuse).
-. "$ROOT/scripts/gate-reuse.sh"
 # mirror_prelock / mirror_route / mirror_on_exit: which side a heavy mode runs
 # on, and the mirror on WSL's ext4 that the Linux side runs it in.
 . "$ROOT/scripts/gate-mirror.sh"
@@ -1851,7 +1843,6 @@ gate_failed_logs() {
     lint|simvet) echo "$ROOT/.gate/fan-$1.out" ;;
     race) echo "$ROOT/.gate/race.log" ;;
     sim) echo "$ROOT/.gate/sim.log" ;;
-    reuse-audit) [ -n "${GATETIME_REUSE_LOG:-}" ] && echo "$GATETIME_REUSE_LOG" ;;
   esac
 }
 
@@ -1982,8 +1973,6 @@ case "${1:-all}" in
   vet|modbuild|lint|scripts|test|race|sim|simvet|docker|full|all)
     gatetime_prepare "${1:-all}"
     gatetime_exec_prepare "${1:-all}" || exit 1
-    # Reuse rides on that wrapper and its identity (where it is on: gate-reuse.sh).
-    reuse_setup
     # Test-set records, off unless GATE_TESTSET=on (scripts/gate-testsets.sh).
     testset_setup "${1:-all}" || exit 1 ;;
 esac
@@ -2106,9 +2095,6 @@ gate_sentence() {
   [ "${GATE_TIER:-}" = push ] && out="$out race: CI (the docker-race shards and the sim job)."
   [ "${GATE_TIER:-}" = dev ] && out="$out Not run here: the docker suites (compiled by lint), the sim-only tests (compiled), race — \`full\` and CI run them."
   out="$out$(gate_exec_sentence)"
-  local r
-  r="$(reuse_summary)"
-  [ -n "$r" ] && out="$out ${r^}."
   # Which side ran it, why, and the tree it gated (scripts/gate-mirror.sh): set
   # only where there are two sides (from Windows, and in a mirror).
   [ -n "$gate_side_note" ] && out="$out Ran $gate_side_note."
@@ -2217,9 +2203,6 @@ case "${1:-all}" in
       gate_docker=skipped
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
-    # Cert, where reuse is on: a binary push would have served whose fresh run did
-    # not pass fails the certification (scripts/gate-reuse.sh).
-    reuse_audit || fail_step reuse-audit
     ;;
   all)
     # THE BARE GATE IS THE DEV TIER: fmt first (cheapest, and the only check that
@@ -2253,10 +2236,6 @@ esac
 # GATE_TESTSET=on: this side's verdicts recorded for this tree, and held
 # against the other side's when they are there (scripts/gate-testsets.sh).
 testset_finish || fail_step testsets
-
-# A reuse gate that served nothing on the tree the store's last run had says
-# what in the key moved; its tree becomes the store's last (gate-reuse.sh).
-reuse_explain
 
 # The run's wall, marked when it failed: a red run is not a measurement. fmt
 # is the pre-push hook's step and is left out. The selection line first, then

@@ -115,10 +115,10 @@ gatetime_prepare() {
   local ext bin
   ext="$(go env GOEXE 2>/dev/null | tr -d '\r')"
   bin="gatetime-$$$ext"
-  # -buildvcs=false: the binary's sha256 is in the identity and in every reuse
-  # key, so it is built from its source alone; go's VCS stamp would move it
-  # with any edit anywhere in the tree and with every commit (pinned by
-  # scripts/check-gate-exec.sh).
+  # -buildvcs=false: the binary's sha256 is in the gate run's identity
+  # (gate_identity, below), so it is built from its source alone; go's VCS
+  # stamp would move it with any edit anywhere in the tree and with every
+  # commit (pinned by scripts/check-gate-exec.sh).
   if ( cd "$ROOT/shared" && go build -buildvcs=false -o "$ROOT/.gate/$bin" ./scripts/gatetime ) >"$GATE_SEL_DIR/build.log" 2>&1; then
     GATETIME_BIN="$(cd "$ROOT/.gate" && { pwd -W 2>/dev/null || pwd; })/$bin"
     GATETIME_OWN="$ROOT/.gate/$bin"
@@ -155,8 +155,6 @@ gate_selection_fields() {
   if [ -n "$d" ] && [ "$ROOT/.gate/unit.summary" -nt "$d/start" ]; then
     reused="$(sed -n 's/^cached: \([0-9]*\) of .*/\1/p' "$ROOT/.gate/unit.summary" | head -1)"
   fi
-  # Where reuse is on, the binaries the wrapper served (scripts/gate-reuse.sh).
-  [ -n "${REUSE_MODE:-}" ] && reused="$(reuse_counts | cut -d' ' -f1)"
   printf 'tier=%s docker=%s modules=%s p=%s guards=%s reused=%s' \
     "$GATE_TIER" "$docker" "$modules" "$p" "${guards:--}" "${reused:-0}"
 }

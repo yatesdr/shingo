@@ -18,8 +18,8 @@
 #      the sentence names the Linux side and the worktree's tree id; the gate
 #      ran nested under the caller's lock, with the Linux side's env sourced
 #   2. a no-change sync and a one-file change keep the other files' mtimes
-#      and the mirror's own .gate (steps log, reuse store), and a deletion
-#      propagates
+#      and the mirror's own .gate (its steps log, each run's kept logs), and a
+#      deletion propagates
 #   3. a file changed in the mirror by hand is refused, named, kept; nothing ran
 #   4. a mirror whose tree is not the one named is red before any step
 #   5. an uncommitted failing assertion reaches the mirror and runs red (G11)
@@ -154,12 +154,7 @@ tree_of() {
   rm -f "$idx"; cp "$real" "$idx"
   GIT_INDEX_FILE="$idx" git -C "$1" add -A && GIT_INDEX_FILE="$idx" git -C "$1" write-tree
 }
-# The nested gates do not inherit the caller's reuse switches: this pins the
-# mirror, not reuse (scripts/check-reuse-wiring.sh does), and on GitHub
-# (GITHUB_ACTIONS=true) the sentence gained "Reuse: off on GitHub." before "Ran
-# on the Linux side", which the sentence checks below did not expect (red on
-# GitHub at 14efcd43, green everywhere else).
-gate() { (cd "$W" && env -u GITHUB_ACTIONS -u GATE_REUSE -u GATETIME_REUSE bash scripts/gate.sh "$@" 2>&1); }
+gate() { (cd "$W" && bash scripts/gate.sh "$@" 2>&1); }
 mtime() { stat -c %Y "$1" 2>/dev/null || date -r "$1" +%s; }
 synced() { git -C "$M" rev-parse -q --verify refs/gate-mirror/synced 2>/dev/null; }
 
@@ -190,9 +185,9 @@ git -C "$M" ls-files -s tools/run.sh 2>/dev/null | grep -q '^100755 ' || fail "t
 [ "$(cd "$M" 2>/dev/null && tree_of "$M")" = "$want" ] || fail "the mirror's tree is not the worktree's"
 
 # ── 2. mtimes and deletions: a no-change sync, then a change and a deletion ─
-# The mirror's own .gate (steps log, reuse store) is no part of the tree and
-# no sync may wipe it.
-mkdir -p "$M/.gate/reuse" && echo kept >"$M/.gate/reuse/keep"
+# The mirror's own .gate (its steps log, each run's kept logs) is no part of
+# the tree and no sync may wipe it.
+mkdir -p "$M/.gate" && echo kept >"$M/.gate/keep"
 touch -d '@1000000000' "$M/docs/a.md" "$M/protocol/go.mod" 2>/dev/null
 before="$(mtime "$M/docs/a.md")"
 out="$(gate simvet)"; rc=$?
@@ -206,7 +201,7 @@ grep -q '// changed' "$M/protocol/p.go" 2>/dev/null || fail "a one-file change d
 [ "$(mtime "$M/protocol/go.mod")" = "$before" ] || fail "a one-file change rewrote an unchanged file"
 [ -e "$M/docs/a.md" ] && fail "a file deleted in the worktree stayed in the mirror"
 [ "$(git -C "$M" status --porcelain 2>/dev/null)" = "$(w status --porcelain)" ] || fail "after a deletion the status differs"
-[ -e "$M/.gate/reuse/keep" ] || fail "a sync wiped the mirror's .gate (its steps log and reuse store live there)"
+[ -e "$M/.gate/keep" ] || fail "a sync wiped the mirror's .gate (its steps log and each run's kept logs live there)"
 # An unstaged edit, then staged: the mirror's index entry moves under a file
 # that already differed from it (found by the first real sync after a commit).
 w add protocol/p.go
@@ -431,8 +426,7 @@ EOF
     shift
     mkdir -p "$d"
     rm -f "$W/.gate/mirror/inner.pid"
-    ( cd "$W" && GATE_FIXTURE_WAIT="$d" exec env "$@" -u GITHUB_ACTIONS -u GATE_REUSE -u GATETIME_REUSE \
-        bash scripts/gate.sh test protocol ) >"$d.out" 2>&1 &
+    ( cd "$W" && GATE_FIXTURE_WAIT="$d" exec env "$@" bash scripts/gate.sh test protocol ) >"$d.out" 2>&1 &
     CALLER=$!
     INNER=""
     wait_until 60 test -e "$d/started" || { fail "case 13: the mirror's waiting test never started: $(tail -5 "$d.out")"; return 1; }
@@ -596,7 +590,7 @@ echo "$out" | grep -q 'Linux side and GitHub only' && fail "the Linux side's run
 case "${OSTYPE:-}" in
   msys*|cygwin*) ;;   # a gate with no mirror there would cross to the real WSL
   *)
-    out="$(cd "$W" && env -u GATE_LINUX_EXEC -u GATE_REUSE GITHUB_ACTIONS=true bash scripts/gate.sh scripts 2>&1)"; rc=$?
+    out="$(cd "$W" && env -u GATE_LINUX_EXEC GITHUB_ACTIONS=true bash scripts/gate.sh scripts 2>&1)"; rc=$?
     { [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   fixture-tooling-pin' && ! echo "$out" | grep -q 'Linux side and GitHub only'; } \
       || fail "a gate off Windows with no mirror (GitHub's guards job) did not run the gate-tooling pin (exit $rc): $out" ;;
 esac
