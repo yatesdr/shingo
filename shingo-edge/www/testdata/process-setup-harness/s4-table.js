@@ -328,11 +328,14 @@ const BUGS = [
         // whose source is one node offers "No staging (waits at the source)"
         // first on its inbound staging pick, which stores the source; a
         // staging equal to the source reads back as that choice, on the pick
-        // and on the row; a group source is offered none. Changing the
-        // source later leaves the staging naming the old node, and the row
-        // then reads that node. The fixture's POS_A3 and POS_A4 are 2-Robot
-        // Swaps from GRP_A (a group), POS_A3 staging at STG_1; SRC_1 is one
-        // node.
+        // and on the row; a group source is offered none. IT FOLLOWS THE
+        // SOURCE (brief H H2): a source changed later carries the staging to
+        // a new one-node source and clears it for a group; a staging picked
+        // as another node, or one that is a stop (a keep-staged spot), stays.
+        // The picture's card says the robot waits at the source and draws no
+        // Inbound staging card for it. The fixture's POS_A3 and POS_A4 are
+        // 2-Robot Swaps from GRP_A (a group), POS_A3 staging at STG_1, POS_A4
+        // at STG_2; SRC_1 and SRC_2 are one node each.
         title: 'No staging · a 2-Robot Swap from one node may wait at its source instead of staging',
         run: async page => {
             const apply = page.pd('apply'), optionsFor = page.pd('optionsFor');
@@ -365,12 +368,39 @@ const BUGS = [
                 'the row names the node, not the choice']);
             out.push(['SRC_1 is not offered twice', optionsFor('POS_A3', 'col:staging:staging').filter(o => o.value === 'SRC_1').length === 1,
                 JSON.stringify(optionsFor('POS_A3', 'col:staging:staging').map(o => o.value))]);
-            apply({ type: 'setSource', node: 'POS_A3', source: 'GRP_A' });
+            const svg = () => String((page.byId('pd-svg') || {}).innerHTML || '');
+            const pic = () => svg().replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+            out.push(['the picture\'s POS_A3 card reads "Robot 1 waits at SRC_1"', pic().indexOf('Robot 1 waits at SRC_1') >= 0,
+                (/Robot 1 \S+ at SRC_1/.exec(pic()) || ['no such line'])[0]]);
+            out.push(['and no Inbound staging card is drawn for SRC_1', svg().indexOf('data-staging="SRC_1"') < 0,
+                'SRC_1 is drawn as a staging card']);
+            out.push(['POS_A4\'s card, staging at STG_2, still reads "Robot 1 stages at STG_2"',
+                pic().indexOf('Robot 1 stages at STG_2') >= 0, (/Robot 1 \S+ at STG_2/.exec(pic()) || ['no such line'])[0]]);
+            const now = n => page.S.model.cells[n].staging;
+            const row = n => JSON.stringify(now(n)) + ', the row reads ' + JSON.stringify(cellText(n));
+            apply({ type: 'setSource', node: 'POS_A3', source: 'SRC_2' });
             await page.settle();
-            out.push(['the source moved to GRP_A: the staging is left at ' + JSON.stringify(page.S.model.cells.POS_A3.staging) +
-                ' and the row reads ' + JSON.stringify(cellText('POS_A3')),
-                page.S.model.cells.POS_A3.staging === 'SRC_1' && cellText('POS_A3').indexOf(short) < 0,
-                'the row still reads the choice']);
+            out.push(['the source moved to SRC_2, one node: the staging follows, ' + row('POS_A3'),
+                now('POS_A3') === 'SRC_2' && cellText('POS_A3').indexOf(short) >= 0, 'it is left at the old node']);
+            T.pickChip(page, 'POS_A3', 'source', 'GRP_A');
+            await page.settle();
+            out.push(['the source moved to GRP_A, a group: the staging is cleared, ' + row('POS_A3'),
+                now('POS_A3') === '' && !choice('POS_A3'), 'a group is no place to wait']);
+            T.pickChip(page, 'POS_A4', 'source', 'SRC_1');
+            await page.settle();
+            out.push(['POS_A4\'s staging, picked as STG_2, stays when its source moves to SRC_1: ' + row('POS_A4'),
+                now('POS_A4') === 'STG_2', 'it moved']);
+            // With a keep-staged spot the robot fetches from the spot: a
+            // staging at the source is a stop there, not a wait.
+            T.pickChip(page, 'POS_A3', 'source', 'SRC_1');
+            await page.settle();
+            apply([{ type: 'setStaging', node: 'POS_A3', staging: 'SRC_1' },
+                { type: 'setAdvanced', node: 'POS_A3', advanced: { keep_staged_node: 'STG_3' } }]);
+            await page.settle();
+            T.pickChip(page, 'POS_A3', 'source', 'GRP_A');
+            await page.settle();
+            out.push(['with a keep-staged spot, POS_A3\'s staging at SRC_1 stays when its source moves to GRP_A: ' + row('POS_A3'),
+                now('POS_A3') === 'SRC_1', 'it moved']);
             return out;
         },
     },

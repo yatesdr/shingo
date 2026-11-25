@@ -268,6 +268,9 @@ ok   from a group, no such choice
   from SRC_1, Inbound staging offers: SRC_1=No staging (waits at the source) SRC_1 · STG_1=STG_1 · STG_2=STG_2 · STG_3=STG_3
 ok   from SRC_1, the choice comes first and stores SRC_1, which is not listed again
 ok   picked, the draft stages at its source and the pick reads "No staging (waits at the source)"
+BUG  the source moved to SRC_2, one node: the staging follows and the pick reads "SRC_1": staging="SRC_1"
+BUG  the source moved to GRP_A, a group: the staging is cleared and the pick reads "SRC_1": staging="SRC_1"
+ok   a staging picked as STG_1 stays when the source moves to SRC_1
 
 ## Setup › Change… (Edit process): Save writes only what moved, through Settings' doors
   the sheet: "Edit process" · boxes hold positions 16, source 2, staging 3, destination 2 · name "Press A" · screens "Operator screens each set on Settings Screen A · Unloader A "

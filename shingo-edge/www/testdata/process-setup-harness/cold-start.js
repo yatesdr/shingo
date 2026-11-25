@@ -966,10 +966,15 @@ async function bugNothingBelow() {
 // node (SRC_1) is offered "No staging (waits at the source)" first on its
 // Inbound staging pick, its node beside it and not listed again; picked, the
 // draft's staging is the source and the pick reads as the choice. From the
-// group GRP_A it is offered none. The mode is found by its card's name.
+// group GRP_A it is offered none. IT FOLLOWS THE SOURCE (brief H H2): to
+// SRC_2, one node, added to the Inbound box here; cleared for GRP_A; a
+// staging picked as STG_1 stays. The mode is found by its card's name.
 async function pinFirstStyleNoStaging() {
     L.push('', '## Setup › First style on Press A: a 2-Robot Swap with no staging');
-    const page = await T.openPage(pressA(NO_FLOW, NOT_RUN));
+    const page = await T.openPage(pressA(c => {
+        NO_FLOW(c);
+        c.routing.push({ core_node_name: 'SRC_2', role: 'source', sequence: 3 });
+    }, NOT_RUN));
     page.click('root', { act: 'setup-style' });
     await page.settle();
     const labels = page.pd('M')().modeLabels();
@@ -1000,9 +1005,24 @@ async function pinFirstStyleNoStaging() {
     if (!fromOne.some(r => r.indexOf(word) >= 0)) return;
     T.pickerRow(page, 'pd-pop', 'SRC_1');
     await page.settle();
-    const cell = page.S.model.cells[page.S.firstStyle.cur] || {};
+    const now = () => (page.S.model.cells[page.S.firstStyle.cur] || {}).staging || '';
     check('picked, the draft stages at its source and the pick reads ' + JSON.stringify(shown('staging')),
-        cell.staging === 'SRC_1' && shown('staging') === word, 'staging=' + JSON.stringify(cell.staging || ''));
+        now() === 'SRC_1' && shown('staging') === word, 'staging=' + JSON.stringify(now()));
+    const pick = async (key, v) => {
+        page.click('root', { act: 'fs-pick', pick: key });
+        await page.settle();
+        T.pickerRow(page, 'pd-pop', v);
+        await page.settle();
+    };
+    await pick('source', 'SRC_2');
+    check('the source moved to SRC_2, one node: the staging follows and the pick reads ' + JSON.stringify(shown('staging')),
+        now() === 'SRC_2' && shown('staging') === word, 'staging=' + JSON.stringify(now()));
+    await pick('source', 'GRP_A');
+    check('the source moved to GRP_A, a group: the staging is cleared and the pick reads ' + JSON.stringify(shown('staging')),
+        now() === '' && shown('staging') === 'pick one', 'staging=' + JSON.stringify(now()));
+    await pick('staging', 'STG_1');
+    await pick('source', 'SRC_1');
+    check('a staging picked as STG_1 stays when the source moves to SRC_1', now() === 'STG_1', 'staging=' + JSON.stringify(now()));
 }
 
 async function run(t) {

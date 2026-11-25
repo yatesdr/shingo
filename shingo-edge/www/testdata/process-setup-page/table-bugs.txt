@@ -74,7 +74,13 @@ ok   picked: POS_A3 stores inbound staging "SRC_1"
 ok   the pick reads back as the choice
 ok   the row reads "InboundNo staging", all of the choice and its node in the title
 ok   SRC_1 is not offered twice
-ok   the source moved to GRP_A: the staging is left at "SRC_1" and the row reads "InboundSRC_1"
+BUG  the picture's POS_A3 card reads "Robot 1 waits at SRC_1": Robot 1 stages at SRC_1
+BUG  and no Inbound staging card is drawn for SRC_1: SRC_1 is drawn as a staging card
+ok   POS_A4's card, staging at STG_2, still reads "Robot 1 stages at STG_2"
+BUG  the source moved to SRC_2, one node: the staging follows, "SRC_1", the row reads "InboundSRC_1": it is left at the old node
+BUG  the source moved to GRP_A, a group: the staging is cleared, "SRC_1", the row reads "InboundSRC_1": a group is no place to wait
+ok   POS_A4's staging, picked as STG_2, stays when its source moves to SRC_1: "STG_2", the row reads "InboundSTG_2"
+ok   with a keep-staged spot, POS_A3's staging at SRC_1 stays when its source moves to GRP_A: "SRC_1", the row reads "InboundSRC_1"
 
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
 ok   a position with no swap mode: "1 to fix POS_A11 · how does it swap? — Pick its swap mode on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) No unsaved changes"
