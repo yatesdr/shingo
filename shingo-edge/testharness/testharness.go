@@ -105,8 +105,11 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	// log "no handler registered" if a scenario produces one; scenarios
 	// that need them can RegisterSubject on the router directly.
 	subjectRouter := router.NewSubject()
+	// The node list as a plant applies it (cmd/shingoedge/main.go): the nodes
+	// with the loaders, bin-type families, payload bin types and scene the
+	// reply carries, and its digest held.
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		eng.SetCoreNodes(resp.Nodes, resp.PlantWide)
+		eng.ApplyNodeList(resp)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
 		eng.HandleBinPickedUpMessage(*bp)
