@@ -487,7 +487,9 @@ func assertParentFailedOnConfig(t *testing.T, r twiceRig, parent, failed *orders
 // Recorded: the delivery's advance cancels leg 1 with the leg-failed marker,
 // the fleet is asked to stop its finished job, the engine's confirm loses its
 // compare-and-swap, and the marker's re-drive returns the parent to pending
-// with the bare leg-failed sentence, though no leg failed.
+// naming leg 2 as the leg that was cancelled (final brief 1c: the restart row
+// names what happened; it read the bare leg-failed sentence, though no leg
+// failed).
 func TestDeliveredLeg_ChapterEnd(t *testing.T) {
 	t.Parallel()
 	r := newTwiceRig(t)
@@ -528,7 +530,8 @@ func TestDeliveredLeg_ChapterEnd(t *testing.T) {
 	if r.d.laneLock.IsLocked(lane.ID) {
 		t.Errorf("lane %s is still held after the chapter closed", lane.Name)
 	}
-	assertRestarted(t, r, parent.ID, reshuffleLegFailedDetail)
+	assertRestarted(t, r, parent.ID, fmt.Sprintf(
+		"reshuffle dissolved: dig leg %d was cancelled (cancelled by test-operator); the demand re-plans", leg2.ID))
 }
 
 // TestDeliveredLeg_ParentCancel: the parent's cancel cascade

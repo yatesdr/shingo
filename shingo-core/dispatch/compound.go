@@ -343,13 +343,17 @@ func closingChapter(children, open []*orders.Order) []*orders.Order {
 }
 
 // chapterEndedInFailure reports whether the chapter that just closed closed
-// because a LEG FAILED rather than because its plan went stale.
+// because a LEG ended it (it failed, or it was cancelled without the chapter-end
+// marker) rather than because its plan went stale.
 //
 // It picks the words the demand is re-queued with, and nothing else. Both
 // endings leave the demand in identical shape — that is why they share one path
 // — so this must not be allowed to become a second decision point. It reads the
 // boundary child itself: the newest child that ended a chapter is the one that
-// ended THIS chapter.
+// ended THIS chapter. With no such child the chapter end was reached by a leg
+// cancelled without the marker (a person ending one leg, a fleet stop) and had
+// nothing left to cancel under it, a leg that kept its bin among the rest; that
+// is a leg's ending too (TestRestartRow_NamesTheLegThatEndedTheChapter).
 func chapterEndedInFailure(children []*orders.Order) bool {
 	var newest *orders.Order
 	for _, c := range children {
@@ -361,7 +365,7 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 		}
 	}
 	if newest == nil {
-		return false
+		return true
 	}
 	// ONLY THE STALE-PLAN MARKER GETS THE STALE-PLAN WORDS. Everything else that
 	// ends a chapter — a failed leg, a swept one, a leg cancelled under gate 1's
@@ -381,20 +385,32 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 // IsChapterEndCancel matches it exactly, and so does soakstat's count. This row
 // is a history line read by people, not matched by anything.
 //
-// The leg named is the newest FAILED child. A sibling cancelled by the cascade
-// carries the marker and says nothing new; a swept leg's reason went to the
-// recovery ledger (reconciliation_service.go). No failed leg → the bare sentence.
+// The leg named is the newest child whose own end closed a chapter: one that
+// FAILED (not on configuration), or one CANCELLED without a chapter-end marker
+// (a person ending one leg, a fleet stop: the chapter end's way in), named
+// "was cancelled". A chapter's legs are issued after the chapter before it
+// closed, so the newest such child is this chapter's. A sibling cancelled by
+// the chapter's close carries the marker and says nothing new; a swept leg's
+// reason went to the recovery ledger (reconciliation_service.go). None → the
+// bare sentence (TestLegFailedDemandDetail,
+// TestRestartRow_NamesTheLegThatEndedTheChapter).
 func legFailedDemandDetail(children []*orders.Order) string {
 	var dead *orders.Order
 	for _, c := range children {
-		if c.Status == StatusFailed && !dplan.IsConfigFailure(c.ErrorDetail) && (dead == nil || c.ID > dead.ID) {
+		ended := (c.Status == StatusFailed && !dplan.IsConfigFailure(c.ErrorDetail)) ||
+			(c.Status == StatusCancelled && !IsChapterEndCancel(c.ErrorDetail))
+		if ended && (dead == nil || c.ID > dead.ID) {
 			dead = c
 		}
 	}
 	if dead == nil {
 		return reshuffleLegFailedDetail
 	}
-	return fmt.Sprintf("reshuffle dissolved: dig leg %d failed%s; the demand re-plans", dead.ID, deadLegWhy(dead))
+	verb := "failed"
+	if dead.Status == StatusCancelled {
+		verb = "was cancelled"
+	}
+	return fmt.Sprintf("reshuffle dissolved: dig leg %d %s%s; the demand re-plans", dead.ID, verb, deadLegWhy(dead))
 }
 
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
