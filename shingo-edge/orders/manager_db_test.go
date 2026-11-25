@@ -1838,8 +1838,10 @@ func TestAskCancel_TheOneDoor(t *testing.T) {
 	plain = testutil.Must(t, plain, err, "CreateOrder")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(plain, string(StatusInTransit)), "in transit")
 	testutil.MustNoErr(t, mgr.AskCancel(plain, CancelAsk{Reason: "changeover cancelled"}), "ask a row with no version")
-	if o, _ := db.GetOrder(plain); o.Status != StatusCancelled || o.CancelIntent != "" {
-		t.Errorf("a row with no versioned word reads %s %q after the door, want cancelled at the tap", o.Status, o.CancelIntent)
+	po, err := db.GetOrder(plain)
+	po = testutil.Must(t, po, err, "GetOrder")
+	if po.Status != StatusCancelled || po.CancelIntent != "" {
+		t.Errorf("a row with no versioned word reads %s %q after the door, want cancelled at the tap", po.Status, po.CancelIntent)
 	}
 	msgs, err := db.ListPendingOutbox(100)
 	msgs = testutil.Must(t, msgs, err, "ListPendingOutbox")
