@@ -253,14 +253,18 @@ func (e *Engine) finishParkedTrips(parks []parkedBin, rows map[string]protocol.N
 		// ONE MOVE PER CARRIER, NOT PER MESSAGE ABOUT IT. A carrier a live move
 		// already takes off the park is on its way: a redelivered order.cancelled
 		// names it again, and a second move would send a second robot for it.
+		// Read under the line's lock, with the create: the cancel's one-shot and
+		// the reconciler's floor (returnCarriersLeftWaiting) can both send the
+		// same carrier back at once, and one of them must see the other's move.
+		mu := e.primeNodeLock(&processes.NodeClaim{CoreNodeName: p.line})
+		mu.Lock()
 		if live, err := e.db.LiveMoveOffNode(p.park); err != nil || live {
+			mu.Unlock()
 			if err != nil {
 				e.logFn("cancel: %s: read the moves off %s: %v (sending none)", p.line, p.park, err)
 			}
 			continue
 		}
-		mu := e.primeNodeLock(&processes.NodeClaim{CoreNodeName: p.line})
-		mu.Lock()
 		nodeID := p.nodeID
 		_, err := e.orderMgr.CreateMoveOrderCarrying(&nodeID, p.park, p.dest, row.PayloadCode, origin)
 		mu.Unlock()
@@ -339,9 +343,9 @@ func (e *Engine) clearStrandedPark(node *processes.Node, claim *processes.NodeCl
 // the order was cancelled while staged at the station wait that follows its own
 // drop at staging (waitingAtStage), so the carrier is down on that node, and
 // nothing will collect it — the order that would have is the one cancelled. A
-// two-robot supply cancelled at its wait is the case (SPR 2026-10-14: CARRIER-0026
-// with 350 of 76682 left on SLN_001, which then blocked the next swap's
-// dropoff). ok is false for any other order or moment.
+// two-robot supply cancelled at its wait is the case: at a plant on 2026-10-14
+// a partial carrier left on its line's staging node blocked the next swap's
+// dropoff. ok is false for any other order or moment.
 func (e *Engine) carrierLeftWaiting(changed OrderStatusChangedEvent) (parkedBin, bool) {
 	if changed.NewStatus != string(protocol.StatusCancelled) || changed.OldStatus != string(protocol.StatusStaged) {
 		return parkedBin{}, false
@@ -397,8 +401,9 @@ func (e *Engine) carrierLeftWaitingBy(orderID int64, versionedOnly bool) (parked
 //
 // OFF THE CANCELLING GOROUTINE. A status change is handled on the goroutine
 // that made it, and a changeover cancel aborts its orders under the cells'
-// locks; the move takes the line's prime lock and asks Core first, so it runs
-// after the cancel has let go, as the changeover cancel's own park does.
+// locks; the move takes the line's prime lock and reads the bins copy first,
+// so it runs after the cancel has let go, as the changeover cancel's own park
+// does. One try: the floor under it is returnCarriersLeftWaiting.
 func (e *Engine) returnCarrierLeftWaiting(changed OrderStatusChangedEvent) {
 	p, ok := e.carrierLeftWaiting(changed)
 	if !ok {
@@ -410,4 +415,36 @@ func (e *Engine) returnCarrierLeftWaiting(changed OrderStatusChangedEvent) {
 func (e *Engine) sendCarrierBack(p parkedBin) {
 	_, rows := e.readSpotsAnd(nil, []string{p.park})
 	e.finishParkedTrips([]parkedBin{p}, rows, ordermgr.NoDemand())
+}
+
+// returnCarriersLeftWaiting is the floor under the cancel's one-shot send-back
+// (returnCarrierLeftWaiting, onCancelledMessage), run by each demand reconciler
+// pass: from the rows, every carrier a cancel left at staging that no order of
+// its line has followed (store CancelledAtAWaitWithNothingSince) is sent back by
+// the same move, so one the one-shot never ran for (the Edge stopped first) or
+// could not decide (the bins copy not current) still goes (docket B13;
+// TestCancelledAtItsStagingWait_TheFloorSendsTheCarrierBack). The move is an
+// order of the line, so the next pass finds nothing to do.
+//
+// ITS BOUND. The rows do not name the carrier (a leg's bin_id is written at its
+// delivery, which a supply cancelled at staging never had), so a carrier set
+// down there by hand after the cancel, with no order of the line since, goes
+// back too, as the one-shot would have sent it at the cancel. And a cancel
+// followed by any order of the line before this pass is left to that order's
+// line, as it was before the floor.
+func (e *Engine) returnCarriersLeftWaiting() {
+	ids, err := e.db.CancelledAtAWaitWithNothingSince()
+	if err != nil {
+		e.logFn("cancel: read the carriers cancels left at staging: %v", err)
+		return
+	}
+	for _, id := range ids {
+		o, err := e.db.GetOrder(id)
+		if err != nil || o == nil {
+			continue
+		}
+		if p, ok := e.carrierLeftWaitingBy(id, o.CoreVersion > 0); ok {
+			e.sendCarrierBack(p)
+		}
+	}
 }

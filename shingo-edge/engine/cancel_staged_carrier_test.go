@@ -17,9 +17,10 @@ import (
 // A two-robot supply fetches the new carrier, sets it down on staging, waits
 // there for the release, and only then takes it on to the line. Cancelled at
 // that wait — from Core's admin page or anywhere — it left the carrier standing
-// on staging, outside every pool and blocking the next swap's dropoff (SPR
-// 2026-10-14: CARRIER-0026, 350 of 76682, on SLN_001). The cancel now sends it
-// back to where it was fetched from, by the changeover cancel's own plain move.
+// on staging, outside every pool and blocking the next swap's dropoff (a plant,
+// 2026-10-14: a partial carrier on its line's staging node). The cancel now
+// sends it back to where it was fetched from, by the changeover cancel's own
+// plain move, and the demand reconciler's pass is the floor under that one try.
 
 func twoRobotSupplySteps(source, stage, line string) []protocol.ComplexOrderStep {
 	drop := buildStep("dropoff", stage)
@@ -35,19 +36,19 @@ func twoRobotSupplySteps(source, stage, line string) []protocol.ComplexOrderStep
 
 func TestWaitingAtStage(t *testing.T) {
 	t.Parallel()
-	stage, dest, ord, ok := waitingAtStage(twoRobotSupplySteps("SMN_015", "SLN_001", "ALN_001"), "ALN_001")
-	if !ok || stage != "SLN_001" || dest != "SMN_015" || ord != 0 {
-		t.Errorf("two-robot supply = (%q, %q, %d, %v), want (SLN_001, SMN_015, 0, true)", stage, dest, ord, ok)
+	stage, dest, ord, ok := waitingAtStage(twoRobotSupplySteps("SRC-1", "STG-1", "LINE-1"), "LINE-1")
+	if !ok || stage != "STG-1" || dest != "SRC-1" || ord != 0 {
+		t.Errorf("two-robot supply = (%q, %q, %d, %v), want (STG-1, SRC-1, 0, true)", stage, dest, ord, ok)
 	}
 	// A stage order ends at staging and waits for another order: stagedTrip's,
 	// not this.
-	drop := buildStep("dropoff", "SLN_001")
+	drop := buildStep("dropoff", "STG-1")
 	drop.ExclusiveSlot = true
-	if _, _, _, ok := waitingAtStage([]protocol.ComplexOrderStep{buildStep("pickup", "SMN_015"), drop}, "ALN_001"); ok {
+	if _, _, _, ok := waitingAtStage([]protocol.ComplexOrderStep{buildStep("pickup", "SRC-1"), drop}, "LINE-1"); ok {
 		t.Error("a stage order with no wait after its drop read as a carrier waiting at staging")
 	}
 	// The line's own bin parked on its way out is the park's, not this.
-	if _, _, _, ok := waitingAtStage(twoRobotSupplySteps("ALN_001", "SLN_001", "SMN_015"), "ALN_001"); ok {
+	if _, _, _, ok := waitingAtStage(twoRobotSupplySteps("LINE-1", "STG-1", "SRC-1"), "LINE-1"); ok {
 		t.Error("a carrier lifted off the line read as an incoming carrier waiting at staging")
 	}
 }

@@ -330,3 +330,9 @@ func (db *DB) NoteCoreVersion(id, version int64) error {
 func (db *DB) LiveMoveOffNode(node string) (bool, error) {
 	return orders.LiveMoveOffNode(db.DB, node)
 }
+
+// CancelledAtAWaitWithNothingSince lists the cancels at a station wait whose
+// carrier may still be owed a send-back (orders.CancelledAtAWaitWithNothingSince).
+func (db *DB) CancelledAtAWaitWithNothingSince() ([]int64, error) {
+	return orders.CancelledAtAWaitWithNothingSince(db.DB)
+}

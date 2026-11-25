@@ -78,9 +78,13 @@ func (e *Engine) runDemandReconciler() {
 // second half correct. sweepCellLevels refreshes below_reorder_since from the
 // live count; reconcileDemandEpisodes reads that column to decide what to
 // close. Run the other way round, every close would be deciding on a flag one
-// period stale.
+// period stale. Between idle-cancel and the levels, the floor under the
+// cancel's carrier send-back (returnCarriersLeftWaiting): a carrier a cancel
+// left on staging goes before the level sweep can order the line's next swap,
+// whose drop it would block.
 func (e *Engine) reconcileDemand() {
 	e.idleCancelLines()
+	e.returnCarriersLeftWaiting()
 	e.sweepCellLevels()
 	e.reconcileDemandEpisodes()
 }
