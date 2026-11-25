@@ -8,6 +8,7 @@ package scenarios
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -422,4 +423,49 @@ func (c *ksrCell) pickupAt(o *coreorders.Order, node string) bool {
 		}
 	}
 	return false
+}
+
+// The owner's case (final brief 2e; one-node study 7.3): "that full bin would
+// be going to same place b is picking from to deliver to the line". The line's
+// outbound destination is its inbound source, A's market, so the removal
+// (Order A) takes the line's bin back where the backfill (Order B) fetches the
+// next one. On a paired A/B side and on a one-node line, a consume line's
+// steady-state swap should run to the end, confirmed at both ends with one bin
+// on the line: with a slot of the market free, and with none, where B's pick is
+// the only lift that would free one.
+//
+// WITH NO SLOT FREE IT WEDGES at 37146992, on both shapes, and is skipped unless
+// SHINGO_KNOWN_RED=1 (lane f-abrun's notes, 2e, have the trace and the red
+// output). B is made only at A's release at the line (ensureSequentialBackfill),
+// and Core never pairs the two: B goes out with no sibling uuid
+// (Manager.CreateComplexOrder), so A is a solo order and the vacated-slot rule
+// has no partner's lift to credit; A's own earlier pickup is at the line, not in
+// the market. So A waits queued at Core on the market's capacity and is never
+// sent to the line: no robot comes, the station's RELEASE is refused, and B is
+// never made. Only a bin leaving the market by another door frees it.
+func TestScenario_SequentialLine_SwapsThroughItsOwnMarket(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []struct {
+		name string
+		pair bool
+	}{{"a paired A/B side", true}, {"a one-node line", false}} {
+		for _, free := range []int{1, 0} {
+			t.Run(fmt.Sprintf("%s, %d slot free", shape.name, free), func(t *testing.T) {
+				if free == 0 && os.Getenv("SHINGO_KNOWN_RED") == "" {
+					t.Skip("final brief 2e red pin, red until a sequential removal into a full market " +
+						"can be freed by its backfill's pick; run with SHINGO_KNOWN_RED=1")
+				}
+				t.Parallel()
+				c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential,
+					plain: true, bareSpot: true, pair: shape.pair, loopA: true, freeA: free})
+				mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+				c.settle()
+				removal := c.seqRemoval("the request", seqDoors[0].press)
+				c.seqAtTheLine("the request", removal)
+				backfill := c.seqRelease("the request", removal)
+				c.seqLand("the request", removal, backfill)
+				c.seqConfirm("the request", removal, backfill)
+			})
+		}
+	}
 }

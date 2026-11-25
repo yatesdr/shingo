@@ -219,6 +219,12 @@ type ksrOpts struct {
 	// it (its bin goes and nothing replaces it), and A's claim marks the line
 	// for a tool change, so the cutover waits for the line to be clear.
 	dropB bool
+	// loopA: A's outbound destination is A's market, the place its inbound
+	// source fetches from, so a swap's removal takes the line's bin back where
+	// the refill comes from; and the market holds an A bin on every slot but
+	// freeA of them.
+	loopA bool
+	freeA int
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -317,7 +323,11 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		// own: the swap indexes it forward and refills the deck behind it.
 		stock("KSR-A-DECK", ksrPartA, c.typeA, deck)
 	}
-	for i := 0; i < 4 && !o.dryA; i++ {
+	stockedA := 4
+	if o.loopA {
+		stockedA = len(slotsA) - o.freeA
+	}
+	for i := 0; i < stockedA && !o.dryA; i++ {
 		stock(fmt.Sprintf("KSR-A%d", i+1), ksrPartA, c.typeA, slotsA[i])
 	}
 	if o.buriedB {
@@ -424,6 +434,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 			}
 			if o.dropB && pos == ksrLine {
 				in.ChangeoverEvacNodes = domain.Ptr([]string{ksrLine})
+			}
+			if o.loopA && s.style == c.styleA {
+				in.OutboundDestination = ksrMktA
 			}
 			if !o.plain {
 				// The spot is the keep-staged node. On the two staging modes it is
