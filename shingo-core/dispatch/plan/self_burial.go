@@ -31,12 +31,19 @@ import (
 // (same parent, strictly shallower depth). Tiers directly under a group are not
 // a lane the store resolve can set aside, and are not asked.
 func (p *Planner) OwnPickupLane(dropNode string, laterPickups []string) int64 {
-	drop, err := p.db.GetNodeByDotName(dropNode)
+	return p.ownPickupLaneOver(p.db, dropNode, laterPickups)
+}
+
+// ownPickupLaneOver is OwnPickupLane with the drop and the later pickups read by name
+// through r: the store, or the replay walk's one read of its steps (walkNodes).
+// The lane itself is the store's read by id.
+func (p *Planner) ownPickupLaneOver(r stepReader, dropNode string, laterPickups []string) int64 {
+	drop, err := r.GetNodeByDotName(dropNode)
 	if err != nil || drop == nil || drop.ParentID == nil || drop.Depth == nil {
 		return 0
 	}
 	for _, name := range laterPickups {
-		pk, err := p.db.GetNodeByDotName(name)
+		pk, err := r.GetNodeByDotName(name)
 		if err != nil || pk == nil || pk.ParentID == nil || pk.Depth == nil || *pk.ParentID != *drop.ParentID {
 			continue
 		}
@@ -86,8 +93,10 @@ type groupDrop struct {
 // the same lane, and nothing asked again: order 266 (packed, b6880b5d) left with
 // its drop at LSD_006 in front of its own empty at LSD_009, the gate refused it
 // at the mark, and it stood there for the rest of the run. Asked here, every
-// later pickup is a slot. The reads are the walk's own, moved: one per drop and
-// one per later pickup, plus the lane's when a wall is found.
+// later pickup is a slot. The reads are the walk's own, moved: a drop and its later
+// pickups by name, and when a wall is found the lane by id and the group by name; on
+// replay a name the steps named is answered from the walk's one read (walkNodes)
+// and a slot the walk has just chosen is read from the store.
 //
 // ── EVERY LATER PICKUP, NOT THE ONE IT WALLED (C2c ruling 1) ─────────────
 //
@@ -97,16 +106,17 @@ type groupDrop struct {
 // is now asked before the algorithm, of all of them at once.
 //
 // Reports whether any step moved; a group with nowhere else is the resolver's
-// capacity error.
-func (p *Planner) unwallOwnPickups(steps []Step, drops []groupDrop, asker domain.DigAsker) (bool, error) {
+// capacity error. r reads the drops, their groups and the later pickups by name:
+// the store at intake, the replay walk's one read of its steps on replay.
+func (p *Planner) unwallOwnPickups(r stepReader, steps []Step, drops []groupDrop, asker domain.DigAsker) (bool, error) {
 	moved := false
 	for _, gd := range drops {
 		later := LaterPickups(steps, gd.i)
-		lane := p.OwnPickupLane(steps[gd.i].Node, later)
+		lane := p.ownPickupLaneOver(r, steps[gd.i].Node, later)
 		if lane == 0 {
 			continue
 		}
-		g, err := p.db.GetNodeByDotName(gd.group)
+		g, err := r.GetNodeByDotName(gd.group)
 		if err != nil || g == nil {
 			return moved, fmt.Errorf("step %d: cannot resolve group %s: %v", gd.i, gd.group, err)
 		}

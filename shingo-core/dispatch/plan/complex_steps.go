@@ -206,7 +206,7 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, need Need) ([]
 			return nil, fmt.Errorf("step %d: unknown step action: %s", i, step.Action)
 		}
 	}
-	if _, err := p.unwallOwnPickups(resolved, drops, asker); err != nil {
+	if _, err := p.unwallOwnPickups(p.db, resolved, drops, asker); err != nil {
 		return nil, err
 	}
 	return resolved, nil
@@ -231,6 +231,9 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, need Need) ([]
 func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, changed bool, err error) {
 	payloadCode, asker := need.PayloadCode, need.Asker
 	defer observe(p.db, "complex-steps-replay")()
+	// The walk's one read of the nodes its steps name (walkNodes), for the walk
+	// and its helpers below; dropped when it returns.
+	w := readWalkNodes(p.db, steps)
 	newSteps = make([]Step, 0, len(steps))
 	var drops []groupDrop
 	for i, step := range steps {
@@ -256,7 +259,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 			newSteps = append(newSteps, step)
 			continue
 		}
-		node, lookupErr := p.db.GetNodeByDotName(step.Node)
+		node, lookupErr := w.GetNodeByDotName(step.Node)
 		if lookupErr != nil || node == nil {
 			// Node vanished from Core — unrecoverable. Fall through to
 			// the original step; the claim path will surface a usable
@@ -284,15 +287,15 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 				func(j int) bool { return steps[j].Action == protocol.ActionPickup },
 				func(j int) bool { return steps[j].Empty })
 		}
-		newName, group, resolveErr := p.StepNode(ps, stepOrderPayload,
+		newName, group, resolveErr := p.stepNodeOver(w, ps, stepOrderPayload,
 			Need{Asker: asker, ProcessNode: need.ProcessNode, SetDownNode: NextDropoffStep(steps, i)},
-			p.BinTypeBeforeStep(steps, i))
+			p.binTypeBeforeStepOver(w, steps, i))
 		// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), on replay as
 		// at intake, asked once every step has its slot (unwallOwnPickups).
 		if resolveErr == nil && step.Action == protocol.ActionDropoff && group != "" {
 			drops = append(drops, groupDrop{i: len(newSteps), group: group,
 				payload: StepPayload(ps, stepOrderPayload),
-				stated: binresolver.BinTypeFrom(p.BinTypeBeforeStep(steps, i),
+				stated: binresolver.BinTypeFrom(p.binTypeBeforeStepOver(w, steps, i),
 					"complex step: no preceding pickup resolved to exactly one carrier")})
 		}
 		var vacate *Vacate
@@ -328,7 +331,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 			Vacate:        vacate,
 			Anchor:        step.Anchor})
 	}
-	moved, err := p.unwallOwnPickups(newSteps, drops, asker)
+	moved, err := p.unwallOwnPickups(w, newSteps, drops, asker)
 	if err != nil {
 		return steps, false, err
 	}
@@ -404,12 +407,18 @@ func DropPayload(i int, stepPayload, orderPayload string, isPickup, pickupEmpty 
 // the iterations that happen to re-resolve and stale on the ones that do not.
 // The lists are a handful of steps long, so the scan costs nothing.
 func (p *Planner) BinTypeBeforeStep(steps []Step, i int) *int64 {
+	return p.binTypeBeforeStepOver(p.db, steps, i)
+}
+
+// binTypeBeforeStepOver is BinTypeBeforeStep with the pickup's node read through
+// r: the store, or the replay walk's one read of its steps (walkNodes).
+func (p *Planner) binTypeBeforeStepOver(r stepReader, steps []Step, i int) *int64 {
 	defer observe(p.db, "bin-type-before-step")()
 	for j := i - 1; j >= 0; j-- {
 		if steps[j].Action != protocol.ActionPickup || steps[j].Node == "" {
 			continue
 		}
-		return BinTypeAtNode(p.db, steps[j].Node)
+		return BinTypeAtNode(r, steps[j].Node)
 	}
 	return nil
 }
@@ -472,6 +481,13 @@ func BinAtNode(db stepReader, nodeName string) *bins.Bin {
 // it is read.
 func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 	leg Need, carrierTypeID *int64) (string, string, error) {
+	return p.stepNodeOver(p.db, step, orderPayload, leg, carrierTypeID)
+}
+
+// stepNodeOver is StepNode with the step's node read through r: the store, or
+// the replay walk's one read of its steps (walkNodes).
+func (p *Planner) stepNodeOver(r stepReader, step protocol.ComplexOrderStep, orderPayload string,
+	leg Need, carrierTypeID *int64) (string, string, error) {
 	defer observe(p.db, "step-node")()
 	asker := leg.Asker
 	payloadCode := StepPayload(step, orderPayload)
@@ -485,7 +501,7 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 		return b.NodeName, "", nil
 	}
 	if step.Node != "" {
-		node, err := p.db.GetNodeByDotName(step.Node)
+		node, err := r.GetNodeByDotName(step.Node)
 		if err != nil {
 			return "", "", fmt.Errorf("node %q not found", step.Node)
 		}
