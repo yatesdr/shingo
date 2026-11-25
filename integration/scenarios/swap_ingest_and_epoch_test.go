@@ -23,10 +23,8 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
 
 	"shingocore/dispatch"
-	coremessaging "shingocore/messaging"
 	"shingocore/service"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
@@ -72,15 +70,12 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 		t.Fatalf("create core bin: %v", err)
 	}
 
+	// Main's tables over the bare dispatcher (no engine), routing the ingest
+	// alone, with no inbox dedup.
 	backend := coreharness.NewTrackingBackend()
 	dispatcher := dispatch.NewDispatcher(coreDB, backend, &noopEmitter{}, "core", "shingo.dispatch", nil)
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", dispatcher)
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) {
-		coreRouter.Dispatch(env, env.Type)
-	}
+	core := coreharness.NewTables(t, coreDB, dispatcher,
+		coreharness.RoutesOnly(protocol.TypeOrderIngest), coreharness.NoInboxDedup())
 
 	// ── Edge: full engine + a swap-mode produce node matching Core's node ──
 	edge := edgeharness.NewEdge(t, stationID)
@@ -130,7 +125,7 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: core.Ingestor},
 	)
 
 	// Drain any startup envelopes so we pump only what finalize emits.
