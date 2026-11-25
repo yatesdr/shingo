@@ -44,11 +44,6 @@ var orderStatusWriters = []struct {
 		why:             "The terminal chokepoint's raw status write. The `AND status <> ALL($4)` arm refuses to terminalize a row already in a terminal status — a dropped arm double-terminalizes and writes a second terminal history row. (TerminalizeOrder delegates here.)",
 	},
 	{
-		file: "../orders/orders.go", fn: "func UpdateStatus(",
-		mustStatusGuard: "WHERE id=$3",
-		why:             "The id-scoped write. Wait-ends bookkeeping (waitEndsSQL) rides along; the id WHERE is the whole guard — a dropped WHERE would re-stamp every order.",
-	},
-	{
 		file: "../orders/orders.go", fn: "func UpdateStatusFromWithReasonTx(",
 		mustStatusGuard: "AND status=$4 AND asked_vendor_order_id=''",
 		why:             "The CAS write transition() rides on. The AND status=$4 arm is the compare-and-swap itself; without it every transition is a blind overwrite and the resurrect incident (stale scanner wrote queued→sourcing over a cancel) is re-opened. The ask arm refuses a row Core is asking the fleet for: only the fleet's answer or an ending moves it.",

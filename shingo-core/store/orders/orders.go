@@ -389,36 +389,6 @@ func GetNextChild(db *sql.DB, parentOrderID int64) (*Order, error) {
 	return ScanOrder(row)
 }
 
-// UpdateStatus transitions an order to a NON-terminal status and records it in
-// history. Terminal statuses are refused: they MUST go through TerminalizeOrder
-// (via lifecycle.transition), which sets the status AND releases the order's
-// claims + reservations atomically. A raw terminal write here would leave those
-// holds behind and brick the bin via uq_reservations_bin_active — the leak this
-// guard closes. Test fixtures that need to seed a terminal state use
-// testdb.SeedOrderStatus (a raw write); production has no terminal caller.
-func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
-	if protocol.IsTerminal(protocol.Status(status)) {
-		return fmt.Errorf("UpdateStatus: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", status, id)
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	errDetail := ""
-	if status == "failed" || status == "cancelled" {
-		errDetail = detail
-	}
-	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$4`+waitEndsSQL(status)+` WHERE id=$3`,
-		status, errDetail, id, clock.Now().UTC()); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, $2, $3, $4)`, id, status, detail, clock.Now().UTC()); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // annotateEpisodeRow writes a cause onto the row that opened the order's current
 // passage through `status` (the latest row in it), for a status that is not a
 // park: the cause annotates that passage rather than opening one. An order with
@@ -467,23 +437,25 @@ func waitEndsSQL(to string) string {
 	return `, queue_reason='', queue_code=NULL, queue_cause=NULL`
 }
 
-// UpdateStatusFrom is the compare-and-swap form of UpdateStatus: the row moves
-// only if its status in the DB is STILL `from`. Returns false (and no error)
-// when the order has already moved on — a concurrent writer got there first and
-// this write is refused rather than applied on top.
+// UpdateStatusFrom is the compare-and-swap status write: the row moves only if
+// its status in the DB is STILL `from`. Returns false (and no error) when the
+// order has already moved on — a concurrent writer got there first and this
+// write is refused rather than applied on top.
 //
-// Why the CAS exists. UpdateStatus writes by id alone, so a caller holding a
-// stale *orders.Order overwrites whatever landed since it loaded. Terminal
-// statuses have no outgoing edges in protocol.validTransitions, which makes
-// them absorbing against SEQUENTIAL writers only — the guard in
-// lifecycle.transition validates against the caller's own snapshot. CI #497:
+// Why the CAS exists. A write by id alone (the deleted UpdateStatus) let a
+// caller holding a stale *orders.Order overwrite whatever landed since it
+// loaded. Terminal statuses have no outgoing edges in
+// protocol.validTransitions, which makes them absorbing against SEQUENTIAL
+// writers only — the guard in lifecycle.transition validates against the
+// caller's own snapshot. CI #497:
 // an in-flight fulfillment tick loaded order 1 as `queued`, the recovery op
 // cancelled it, and the tick's queued→sourcing write (legal against its stale
 // snapshot) resurrected the cancelled order. The CAS makes terminal states
 // absorbing against concurrent writers too.
 //
-// Same terminal-write refusal as UpdateStatus — terminal transitions go
-// through TerminalizeOrder, which also releases claims + reservations.
+// It refuses a terminal status: terminal transitions go through
+// TerminalizeOrder, which also releases claims + reservations
+// (TestUpdateStatusFrom_RefusesTerminal).
 func UpdateStatusFrom(db *sql.DB, id int64, from, to, detail string) (bool, error) {
 	_, moved, err := UpdateStatusFromWithReason(db, id, from, to, detail, "", "", nil)
 	return moved, err
@@ -584,9 +556,8 @@ func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, 
 	if protocol.IsTerminal(protocol.Status(to)) {
 		return Told{}, false, fmt.Errorf("UpdateStatusFrom: refusing raw terminal write to %q (id=%d) — route terminal transitions through TerminalizeOrder", to, id)
 	}
-	// error_detail is cleared exactly as UpdateStatus does on this path: its
-	// failed/cancelled branch is unreachable here because both are terminal
-	// and refused above.
+	// error_detail is cleared: a failed or cancelled write, the statuses that
+	// keep one, never reaches here, because both are terminal and refused above.
 	told, err := ScanTold(tx.QueryRow(`UPDATE orders SET status=$1, error_detail='', updated_at=$3, version=version+1,
 		robot_id=COALESCE(NULLIF($5, ''), robot_id)`+waitEndsSQL(to)+`
 		WHERE id=$2 AND status=$4 AND asked_vendor_order_id=''`+ToldReturning,
@@ -1147,7 +1118,7 @@ func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
 }
 
 // Complete marks an order as completed (timestamp only; status transitions
-// happen via UpdateStatus).
+// happen via UpdateStatusFromWithReason and TerminalizeOrder).
 func Complete(db *sql.DB, id int64) error {
 	tx, err := db.Begin()
 	if err != nil {

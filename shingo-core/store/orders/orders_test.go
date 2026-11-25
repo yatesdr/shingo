@@ -175,7 +175,7 @@ func TestOrderCRUD(t *testing.T) {
 	}
 
 	// -> dispatched by the fleet's yes naming rds-123 (also writes history).
-	// UpdateStatus writes the status alone, and a `dispatched` row names its job
+	// A status write sets the status alone, and a `dispatched` row names its job
 	// (orders_dispatched_names_its_job).
 	fleetYes(t, db, o.ID, protocol.StatusPending, "rds-123", "sent to RDS")
 	got2, err := orders.Get(db, o.ID)
@@ -233,16 +233,19 @@ func TestOrderCRUD(t *testing.T) {
 	}
 }
 
-// -------- UpdateStatus refuses terminal writes (the guard) -----------------
+// -------- UpdateStatusFrom refuses terminal writes (the guard) -------------
 
-// TestUpdateStatus_RefusesTerminal pins the guard: a raw UpdateStatus to any
-// terminal status is refused, because terminal transitions must go through
+// TestUpdateStatusFrom_RefusesTerminal pins the guard: a raw status write to
+// any terminal status is refused, because terminal transitions must go through
 // TerminalizeOrder (which ALSO releases claims + reservations atomically). A raw
 // terminal write here would leave them behind and brick the bin — the leak the
-// guard closes. (Was TestUpdateStatus_PreservesErrorDetailOnTerminal, which
+// guard closes. The write's from is the row's own status, so only the guard
+// can refuse it. (Was TestUpdateStatus_PreservesErrorDetailOnTerminal, which
 // pinned the leak-enabling behavior; error_detail on terminals is now covered by
-// TerminalizeOrder.)
-func TestUpdateStatus_RefusesTerminal(t *testing.T) {
+// TerminalizeOrder. Then it was TestUpdateStatus_RefusesTerminal, on the
+// id-only writer D27 deleted with its last caller; the CAS writer has the
+// guard.)
+func TestUpdateStatusFrom_RefusesTerminal(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
@@ -251,12 +254,12 @@ func TestUpdateStatus_RefusesTerminal(t *testing.T) {
 	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 
 	for _, term := range []string{"failed", "cancelled", "skipped", "confirmed"} {
-		if err := orders.UpdateStatus(db, o.ID, term, "should be refused"); err == nil {
-			t.Errorf("UpdateStatus(%q): want error (terminals must go through TerminalizeOrder), got nil", term)
+		if _, err := orders.UpdateStatusFrom(db, o.ID, "pending", term, "should be refused"); err == nil {
+			t.Errorf("UpdateStatusFrom(%q): want error (terminals must go through TerminalizeOrder), got nil", term)
 		}
 		got, _ := orders.Get(db, o.ID)
 		if got.Status != "pending" {
-			t.Errorf("after refused UpdateStatus(%q), status = %q, want pending (the write must not apply)", term, got.Status)
+			t.Errorf("after refused UpdateStatusFrom(%q), status = %q, want pending (the write must not apply)", term, got.Status)
 		}
 	}
 }
@@ -289,7 +292,7 @@ func TestOrders_ADispatchedRowNamesItsJob(t *testing.T) {
 	}
 }
 
-// -------- History: append via UpdateStatus, list oldest-first -------------
+// -------- History: append via the status writes, list oldest-first --------
 
 func TestHistory_AppendAndList(t *testing.T) {
 	t.Parallel()
@@ -309,18 +312,19 @@ func TestHistory_AppendAndList(t *testing.T) {
 		{"pending", "order created"},
 		{"dispatched", "sent to RDS"},
 		{"in_transit", "robot moving"},
-		{"delivered", "arrived at line"}, // non-terminal; UpdateStatus refuses terminals now
+		{"delivered", "arrived at line"}, // non-terminal; the status writes refuse terminals
 	}
-	for _, e := range events[1:] {
+	for i, e := range events[1:] {
 		if e.status == "dispatched" {
 			// The fleet's yes writes `dispatched` with its job and its history row;
-			// UpdateStatus writes the status alone, which the rule refuses
+			// a status write sets the status alone, which the rule refuses
 			// (orders_dispatched_names_its_job).
 			fleetYes(t, db, o.ID, protocol.StatusPending, "sg-uuid-history", e.detail)
 			continue
 		}
-		if err := orders.UpdateStatus(db, o.ID, e.status, e.detail); err != nil {
-			t.Fatalf("UpdateStatus %s: %v", e.status, err)
+		// events[i] is the status before e: each write is the CAS from it.
+		if moved, err := orders.UpdateStatusFrom(db, o.ID, events[i].status, e.status, e.detail); err != nil || !moved {
+			t.Fatalf("UpdateStatusFrom %s: moved=%v err=%v", e.status, moved, err)
 		}
 	}
 
@@ -584,8 +588,8 @@ func TestChildOrders(t *testing.T) {
 		t.Errorf("GetNextChild = %d, want %d", next.ID, children[0].ID)
 	}
 
-	// Advance: mark c1 confirmed (seed the terminal state directly — UpdateStatus
-	// now refuses terminals), next pending is c2.
+	// Advance: mark c1 confirmed (seed the terminal state directly — the status
+	// writes refuse terminals), next pending is c2.
 	testdb.SeedOrderStatus(t, d, children[0].ID, "confirmed", "done")
 	next2, _ := orders.GetNextChild(db, parent.ID)
 	if next2.ID != children[1].ID {

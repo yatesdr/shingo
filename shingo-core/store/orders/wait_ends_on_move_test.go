@@ -74,16 +74,25 @@ func TestWaitEndsWhenTheOrderMoves(t *testing.T) {
 		t.Errorf("the wait's code left the history: %v", episodeCodes(t, db, o.ID))
 	}
 
-	// A station wait on a staged robot, released: staged→in_transit ends it too,
-	// through the non-CAS writer. (SPR 6903 read "Waiting for partner robot"
-	// mid-unload.)
-	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, string(protocol.StatusStaged), "at the station"), "→staged")
+	// A station wait on a staged robot, released: staged→in_transit ends it too.
+	// (SPR 6903 read "Waiting for partner robot" mid-unload.) The id-only writer
+	// this half pinned went with its last caller (D27); the CAS writer carries
+	// the same waitEndsSQL.
+	moved, err = orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusInTransit), string(protocol.StatusStaged), "at the station")
+	testutil.MustNoErr(t, err, "→staged")
+	if !moved {
+		t.Fatal("in_transit→staged was refused")
+	}
 	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
 		"Waiting for partner robot", string(protocol.QueueWaitingForPartner), "station-wait"), "station wait")
 	if r, _, _ := wait("staged"); r == "" {
 		t.Fatal("setup: the staged order holds no wait")
 	}
-	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, string(protocol.StatusInTransit), "released"), "staged→in_transit")
+	moved, err = orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusStaged), string(protocol.StatusInTransit), "released")
+	testutil.MustNoErr(t, err, "staged→in_transit")
+	if !moved {
+		t.Fatal("staged→in_transit was refused")
+	}
 	if r, c, k := wait("in_transit"); r != "" || c != "" || k != "" {
 		t.Errorf("released order still carries its station wait: reason=%q code=%q cause=%q", r, c, k)
 	}
@@ -104,7 +113,11 @@ func TestF1Pin_AWaitIndexAdvanceEndsTheWaitItLeft(t *testing.T) {
 
 	o := newPendingOrder("uuid-f1-wait-index")
 	testutil.MustNoErr(t, orders.Create(db, o), "create")
-	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, string(protocol.StatusStaged), "at the station"), "→staged")
+	moved, err := orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusPending), string(protocol.StatusStaged), "at the station")
+	testutil.MustNoErr(t, err, "→staged")
+	if !moved {
+		t.Fatal("pending→staged was refused")
+	}
 	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
 		"Waiting for partner robot", string(protocol.QueueWaitingForPartner), "station-wait"), "the station wait")
 

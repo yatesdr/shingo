@@ -2793,3 +2793,12 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: `shingo-core/messaging/bins_epoch_push_census_test.go:28`
 - verified at: the commit that adds this row
+
+### STALE — `TestUpdateStatus_RefusesTerminal`
+- test: `TestUpdateStatus_RefusesTerminal` · pkg `shingocore/store/orders` · run `-run '^TestUpdateStatus_RefusesTerminal$'` · `shingo-core/store/orders/orders_test.go:245` @ `6bd55616` · tags `docker`
+- code: STALE (the function it tests, `orders.UpdateStatus`, was deleted with its last caller, docket D27; the test moved onto the CAS writer, which carries the same guard, and was renamed)
+- assertion map: every assertion kept → `TestUpdateStatusFrom_RefusesTerminal` (`shingo-core/store/orders/orders_test.go:248`): each of failed, cancelled, skipped and confirmed is refused with an error, and the row stays pending; the write is from the row's own status, so only the guard can refuse it
+- mutation: both CAS functions' terminal checks off (`if protocol.IsTerminal(protocol.Status(to))` → `if false && ...` in `UpdateStatusFromWithReason` and `UpdateStatusFromWithReasonTx`, `store/orders/orders.go`) · survivor red: `orders_test.go:257: UpdateStatusFrom("failed"): want error (terminals must go through TerminalizeOrder), got nil` (`gate-fast/lanes-B/rig3/runs/20261125T035602Z-83148.log`)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/store/orders/orders.go` (`UpdateStatusFrom`'s doc names the new test); the new test's doc says the old one is gone
+- verified at: the commit that adds this row

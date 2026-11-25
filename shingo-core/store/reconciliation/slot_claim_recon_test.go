@@ -40,7 +40,7 @@ func TestReleaseOrphanedClaims_ReleasesSlotClaims(t *testing.T) {
 	}
 	// Mark terminal WITHOUT releasing the slot (the leak the sweep heals) — a raw
 	// write is the point here: it simulates a terminal status that slipped past
-	// the atomic TerminalizeOrder (which orders.UpdateStatus now refuses outright).
+	// the atomic TerminalizeOrder (which the store's status writes refuse outright).
 	if _, err := sdb.Exec(`UPDATE orders SET status='failed', error_detail='leaked-claim test', updated_at=NOW() WHERE id=$1`, order.ID); err != nil {
 		t.Fatalf("mark failed: %v", err)
 	}
