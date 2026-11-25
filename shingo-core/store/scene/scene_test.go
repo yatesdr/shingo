@@ -95,8 +95,10 @@ func TestCoverage_ScenePoint_ListFiltersAndDelete(t *testing.T) {
 			t.Errorf("unexpected area %q", p.AreaName)
 		}
 	}
-	if err := scene.DeleteByArea(db.DB, "AREA-A"); err != nil {
-		t.Fatalf("DeleteByArea: %v", err)
+	// An area is cleared the way scene sync sweeps a stale one: replaced with
+	// nothing (scenesync's reconcile, ReplaceAreaScene).
+	if err := scene.ReplaceArea(db.DB, "AREA-A", nil, nil); err != nil {
+		t.Fatalf("ReplaceArea with nothing: %v", err)
 	}
 	remaining, _ := scene.List(db.DB)
 	if len(remaining) != 2 {

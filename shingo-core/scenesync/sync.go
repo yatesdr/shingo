@@ -26,7 +26,6 @@ import (
 // Store is the narrow persistence surface scene sync requires.
 // *store.DB satisfies it structurally.
 type Store interface {
-	DeleteScenePointsByArea(areaName string) error
 	UpsertScenePoint(sp *scene.Point) error
 	// ReplaceAreaScene swaps one area's points and edges in ONE transaction.
 	//

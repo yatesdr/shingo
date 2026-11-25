@@ -60,18 +60,6 @@ func (f *fakeStore) key(areaName, instanceName string) string {
 	return areaName + "/" + instanceName
 }
 
-func (f *fakeStore) DeleteScenePointsByArea(areaName string) error {
-	if f.errDelete != nil {
-		return f.errDelete
-	}
-	for k, sp := range f.points {
-		if sp.AreaName == areaName {
-			delete(f.points, k)
-		}
-	}
-	return nil
-}
-
 func (f *fakeStore) UpsertScenePoint(sp *scene.Point) error {
 	if f.errUpsert != nil {
 		return f.errUpsert

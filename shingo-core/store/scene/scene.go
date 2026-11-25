@@ -188,12 +188,6 @@ func ListByArea(db *sql.DB, areaName string) ([]*Point, error) {
 	return scanPoints(rows)
 }
 
-// DeleteByArea removes every scene point in a given area.
-func DeleteByArea(db *sql.DB, areaName string) error {
-	_, err := db.Exec(`DELETE FROM scene_points WHERE area_name=$1`, areaName)
-	return err
-}
-
 // ── scene edges (drivable path segments, synced from advanced curves) ──
 
 // Edge is the scene-edge entity; the struct lives in shingocore/domain
