@@ -834,7 +834,9 @@ func TestStations_AssignListUnassign(t *testing.T) {
 		t.Errorf("nodes.ListStationsForNode = %v, want [line-1 line-2]", list)
 	}
 
-	testutil.MustNoErr(t, nodes.UnassignStation(sdb, n.ID, "line-1"), "nodes.UnassignStation")
+	// A station leaves a node the way the node's edit takes it off: the node's
+	// set is replaced (SetStations, the product's door).
+	testutil.MustNoErr(t, nodes.SetStations(sdb, n.ID, []string{"line-2"}), "nodes.SetStations without line-1")
 	list2, err := nodes.ListStationsForNode(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.ListStationsForNode after unassign: %v", err)
@@ -970,7 +972,7 @@ func TestGetEffectiveStationsModes(t *testing.T) {
 
 	// Mode inherit: delete the child's own assignment, then inherit walks
 	// up to parent-line.
-	testutil.MustNoErr(t, nodes.UnassignStation(sdb, child.ID, "child-line"), "nodes.UnassignStation child")
+	testutil.MustNoErr(t, nodes.SetStations(sdb, child.ID, nil), "nodes.SetStations child to none")
 	testutil.MustNoErr(t, nodes.DeleteProperty(sdb, child.ID, "station_mode"), "nodes.DeleteProperty station_mode")
 	got, err = nodes.GetEffectiveStations(sdb, child.ID)
 	if err != nil {

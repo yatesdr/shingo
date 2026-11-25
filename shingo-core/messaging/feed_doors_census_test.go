@@ -111,7 +111,6 @@ var feedSites = map[string]string{
 	"store/nodes:RetireEmptyCarrierNodes":  "",
 	"store/nodes:SetParent":                "",
 	"store/nodes:SetStations":              "",
-	"store/nodes:UnassignStation":          "",
 	"store/nodes:Update":                   "",
 	"store/nodes:UpsertLevel":              "",
 	// Payloads, their carrier types, manifest lines and parts' cat ids: the

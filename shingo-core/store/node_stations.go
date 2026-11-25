@@ -11,10 +11,6 @@ func (db *DB) AssignNodeToStation(nodeID int64, stationID string) error {
 	return nodes.AssignStation(db.DB, nodeID, stationID)
 }
 
-func (db *DB) UnassignNodeFromStation(nodeID int64, stationID string) error {
-	return nodes.UnassignStation(db.DB, nodeID, stationID)
-}
-
 func (db *DB) ListStationsForNode(nodeID int64) ([]string, error) {
 	return nodes.ListStationsForNode(db.DB, nodeID)
 }

@@ -13,12 +13,6 @@ func AssignStation(db *sql.DB, nodeID int64, stationID string) error {
 	return err
 }
 
-// UnassignStation removes a station ID from a node.
-func UnassignStation(db *sql.DB, nodeID int64, stationID string) error {
-	_, err := db.Exec(`DELETE FROM node_stations WHERE node_id=$1 AND station_uid=$2`, nodeID, stationID)
-	return err
-}
-
 // ListStationsForNode returns the directly-assigned stations for a node.
 func ListStationsForNode(db *sql.DB, nodeID int64) ([]string, error) {
 	rows, err := db.Query(`SELECT station_uid FROM node_stations WHERE node_id=$1 ORDER BY station_uid`, nodeID)
