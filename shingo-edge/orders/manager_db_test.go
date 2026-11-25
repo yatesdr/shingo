@@ -2,8 +2,8 @@ package orders
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1441,13 +1441,11 @@ func TestAbortOrder_RejectsTerminal(t *testing.T) {
 // it (the owner's ruling of 2026-11-25, final brief 1e). A delivered order's cart
 // is set down. Every abort door refuses it, in the words a plant person reads
 // on the Orders page's toast (it is delivered: confirm it), and nothing changes:
-// the row stays delivered and no order.cancel is queued. RED at 37146992, where
-// the abort guarded only an order that had ended.
+// the row stays delivered and no order.cancel is queued. The refusal is
+// ErrDelivered, which the changeover CANCEL reads. RED at 37146992, where the
+// abort guarded only an order that had ended.
 func TestAbortOrder_RefusesADeliveredOrder(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("final brief 1e red pin, red until the abort refuses a delivered order; run with SHINGO_KNOWN_RED=1")
-	}
 	for _, door := range []struct {
 		name  string
 		abort func(m *Manager, id int64) error
@@ -1468,6 +1466,9 @@ func TestAbortOrder_RefusesADeliveredOrder(t *testing.T) {
 			err = door.abort(mgr, oid)
 			if err == nil {
 				t.Fatal("the abort of a delivered order was taken, want it refused")
+			}
+			if !errors.Is(err, ErrDelivered) {
+				t.Errorf("the refusal %v is not ErrDelivered, which its callers read", err)
 			}
 			if words := err.Error(); !strings.Contains(words, "delivered") || !strings.Contains(words, "Confirm it") {
 				t.Errorf("the refusal says %q, want that the order is delivered and to confirm it", words)

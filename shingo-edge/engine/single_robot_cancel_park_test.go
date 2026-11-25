@@ -197,15 +197,16 @@ func TestSingleRobotCancel_StageNotYetFlownMovesNothing(t *testing.T) {
 // minted auto-confirmed, so the Edge confirms it as Core's delivered lands; it
 // reads delivered for longer only when Core's delivered facts land late, or an
 // Edge restart drops them (orders coreDelivered), and then until Core's sweep
-// confirms it. A cancel in that window, characterised at 37146992 before the
-// abort refused a delivered order: the cancel aborts the leg as it aborts a
-// live one (taskLeftOnStaging), sending its order.cancel with the operator's
-// default reason and ending its row cancelled, so the Orders page offers it
-// nothing. It counts the leg's park and stage by the status it read before the
-// abort answered, so a bin Core reports on outbound staging is sent on to the
-// outbound destination, though the leg had already taken the line's bin there
-// itself. Nothing moves when staging is empty. The style stays the outgoing
-// one and the changeover ends cancelled.
+// confirms it. A cancel in that window leaves the leg as it is: the abort
+// refuses a delivered order (orders.ErrDelivered), so the cancel sends nothing
+// for it and the leg keeps its Confirm, and it counts no park for a leg it did
+// not abort (taskLeftOnStaging), so a bin Core reports on outbound staging is
+// not moved for it. The style stays the outgoing one and the changeover ends
+// cancelled; the leg's confirm, when it comes, changes nothing at the line (no
+// changeover is open to complete). Until 2026-11-25 (characterised at
+// 37146992) the cancel aborted the leg as a live one, with the operator's
+// default reason, and counted its park by the status it read before the abort
+// answered, sending a bin on outbound staging on to the outbound destination.
 func TestSingleRobotCancel_ADeliveredLeg(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -235,11 +236,11 @@ func TestSingleRobotCancel_ADeliveredLeg(t *testing.T) {
 			}
 			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 			fx.holdRows(t, rows)
-			uuid := orderRow(t, fx.db, leg).UUID
+			before := orderHistory(t, fx.db, leg)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 
-			// What it sends.
+			// What it sends: nothing for the delivered leg.
 			msgs, err := fx.db.ListUnsentOutboxByType([]string{protocol.TypeOrderCancel})
 			testutil.MustNoErr(t, err, "read the outbox")
 			var sent []string
@@ -250,31 +251,61 @@ func TestSingleRobotCancel_ADeliveredLeg(t *testing.T) {
 				testutil.MustNoErr(t, env.DecodePayload(&cancel), "decode an order.cancel")
 				sent = append(sent, cancel.OrderUUID+" "+cancel.Reason)
 			}
-			expectRows(t, "the order.cancel rows queued", sent, []string{uuid + " aborted by operator"})
+			expectRows(t, "the order.cancel rows queued", sent, nil)
 
-			// What the operator sees: the leg's row, and the changeover.
-			if o := orderRow(t, fx.db, leg); o.Status != protocol.StatusCancelled {
-				t.Errorf("the delivered leg reads %s after the cancel, want cancelled", o.Status)
+			// What the operator sees: the leg still delivered, so the Orders page
+			// offers its Confirm, and the changeover cancelled.
+			if o := orderRow(t, fx.db, leg); o.Status != protocol.StatusDelivered {
+				t.Errorf("the delivered leg reads %s after the cancel, want delivered: its abort is refused", o.Status)
 			}
-			if h := orderHistory(t, fx.db, leg); len(h) == 0 || h[len(h)-1] != "delivered->cancelled: aborted by operator" {
-				t.Errorf("the leg's history %q, want it to end delivered->cancelled with the operator's default reason", h)
-			}
+			expectRows(t, "the leg's history", orderHistory(t, fx.db, leg), before)
 			co, err := fx.db.GetProcessChangeoverByID(coID)
 			testutil.MustNoErr(t, err, "read the changeover")
 			if co.State != domain.ChangeoverCancelled {
 				t.Errorf("the changeover reads %s, want cancelled", co.State)
 			}
 
-			// What it counts, and where the bin on outbound staging ends.
-			moves := parkMoves(t, fx, out)
-			if !c.onPark {
-				if len(moves) != 0 {
-					t.Errorf("moves off %s = %+v, want none: nothing stands there", out, moves)
-				}
-				return
+			// What it counts, and where the bin on outbound staging ends: no park
+			// for a leg the cancel did not abort, so nothing is moved for it.
+			if moves := parkMoves(t, fx, out); len(moves) != 0 {
+				t.Errorf("moves off %s = %+v, want none: the delivered leg's park is not counted", out, moves)
 			}
-			if len(moves) != 1 || moves[0].DeliveryNode != "KSCO-DEST" || moves[0].PayloadCode != "PART-OTHER" {
-				t.Errorf("moves off %s = %+v, want one to KSCO-DEST carrying PART-OTHER: the leg's park counted", out, moves)
+
+			// The leg's confirm, as its auto-confirm makes it once Core's
+			// delivered facts land: the line stays as the cancel left it.
+			proc, err := fx.db.GetProcess(fx.processID)
+			testutil.MustNoErr(t, err, "read the process")
+			rt, err := fx.db.GetProcessNodeRuntime(fx.nodeIDs["L1"])
+			testutil.MustNoErr(t, err, "read the line's runtime")
+			live, err := fx.db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "read the live orders")
+			testutil.MustNoErr(t, fx.eng.OrderManager().ConfirmDelivery(leg, 1), "the leg's confirm")
+			if o := orderRow(t, fx.db, leg); o.Status != protocol.StatusConfirmed {
+				t.Errorf("the leg reads %s after its confirm, want confirmed", o.Status)
+			}
+			after, err := fx.db.GetProcess(fx.processID)
+			testutil.MustNoErr(t, err, "read the process")
+			if styleOf(after.ActiveStyleID) != styleOf(proc.ActiveStyleID) || after.TargetStyleID != nil {
+				t.Errorf("after the leg's confirm the process runs style %s, target %s; want %s, none",
+					styleOf(after.ActiveStyleID), styleOf(after.TargetStyleID), styleOf(proc.ActiveStyleID))
+			}
+			rtAfter, err := fx.db.GetProcessNodeRuntime(fx.nodeIDs["L1"])
+			testutil.MustNoErr(t, err, "read the line's runtime")
+			if styleOf(rtAfter.ActiveClaimID) != styleOf(rt.ActiveClaimID) {
+				t.Errorf("after the leg's confirm the line points at claim %s, want %s as the cancel left it",
+					styleOf(rtAfter.ActiveClaimID), styleOf(rt.ActiveClaimID))
+			}
+			liveAfter, err := fx.db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "read the live orders")
+			had := map[int64]bool{}
+			for _, o := range live {
+				had[o.ID] = true
+			}
+			for _, o := range liveAfter {
+				if !had[o.ID] {
+					t.Errorf("the leg's confirm made order %d (%s %s->%s), want nothing new", o.ID, o.OrderType,
+						o.SourceNode, o.DeliveryNode)
+				}
 			}
 		})
 	}

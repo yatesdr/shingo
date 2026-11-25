@@ -48,9 +48,10 @@ func (m *Manager) holdReorderAt(order *orders.Order, kind domain.ReorderHold, no
 
 // AbortOrderByPerson is the Orders page's abort, the HMI abort door: the
 // order's cancel (AbortOrder), then a pause on its position's auto-reorder, so
-// the sweep does not ask again a minute after a person said stop. The Edge's
-// own aborts (a changeover's start or cancel, a send-back's) go through
-// AbortOrderWithReason and pause nothing.
+// the sweep does not ask again a minute after a person said stop. A cancel the
+// abort refuses (an ended order, a delivered one: ErrDelivered) pauses
+// nothing. The Edge's own aborts (a changeover's start or cancel, a
+// send-back's) go through AbortOrderWithReason and pause nothing.
 func (m *Manager) AbortOrderByPerson(orderID int64) error {
 	if err := m.AbortOrder(orderID); err != nil {
 		return err

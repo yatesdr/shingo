@@ -833,6 +833,28 @@ func TestApiOrders_AbortOrder_AlreadyTerminal(t *testing.T) {
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
+// TestApiOrders_AbortOrder_Delivered: the Orders page's cancel of a delivered
+// order is refused (final brief 1e), with the words its toast shows ("Error: "
+// and the refusal), and the order stays delivered for its Confirm.
+func TestApiOrders_AbortOrder_Delivered(t *testing.T) {
+	t.Parallel()
+	h, router := newApiOrdersRouter(t)
+	db := dbOf(h)
+
+	orderID := seedOrder(t, db, orders.TypeRetrieve, orders.StatusDelivered)
+
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/abort", nil, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+	assertJSONPath(t, resp, "error", "order "+itoa(orderID)+" is "+orders.ErrDelivered.Error())
+	stored, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("read the order: %v", err)
+	}
+	if stored.Status != orders.StatusDelivered {
+		t.Errorf("status after the refused abort: got %q, want delivered", stored.Status)
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Smoke check — json.RawMessage sanity for body decoding.
 // The handlers_api_orders.go file uses stdlib json.Decoder. This test

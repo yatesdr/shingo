@@ -3,6 +3,7 @@ package orders
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -222,9 +223,17 @@ func (m *Manager) SetOrderETA(uuid, eta string) error {
 	return m.db.UpdateOrderETA(order.ID, eta)
 }
 
-// AbortOrder cancels a non-terminal order and enqueues a cancel message.
-// The cancel message is enqueued BEFORE the local transition so that Core
-// is guaranteed to receive the cancellation — preventing a robot from
+// ErrDelivered is the abort's refusal of an order that reads delivered: its
+// cart is set down, so a cancel has nothing left to stop, and the person
+// confirms the order instead. The owner's ruling of 2026-11-25 (final brief
+// 1e): no cancel on a delivered order or past it. Callers read it with
+// errors.Is; its words are what the Orders page's toast shows, after "order N
+// is". Pinned by TestAbortOrder_RefusesADeliveredOrder.
+var ErrDelivered = errors.New("delivered: its cart is already set down. Confirm it instead of cancelling")
+
+// AbortOrder cancels a live order that is not delivered and enqueues a cancel
+// message. The cancel message is enqueued BEFORE the local transition so that
+// Core is guaranteed to receive the cancellation — preventing a robot from
 // continuing to execute a cancelled order on the floor.
 func (m *Manager) AbortOrder(orderID int64) error {
 	return m.AbortOrderWithReason(orderID, "aborted by operator")
@@ -248,7 +257,8 @@ func (m *Manager) AbortOrderAsEdge(orderID int64, reason string) error {
 }
 
 // abortOrder is the one cancel door: the cancel queued first, then the row
-// ended (AbortOrderWithReason's doc).
+// ended (AbortOrderWithReason's doc). It refuses an order that has ended, and
+// one that reads delivered (ErrDelivered), sending nothing.
 func (m *Manager) abortOrder(orderID int64, reason, actor string) error {
 	m.DebugLog.Log("abort: id=%d reason=%q", orderID, reason)
 	order, err := m.db.GetOrder(orderID)
@@ -257,6 +267,9 @@ func (m *Manager) abortOrder(orderID int64, reason, actor string) error {
 	}
 	if IsTerminal(order.Status) {
 		return fmt.Errorf("order is already in terminal state: %s", order.Status)
+	}
+	if order.Status == StatusDelivered {
+		return fmt.Errorf("order %d is %w", order.ID, ErrDelivered)
 	}
 
 	// Build and enqueue cancel message BEFORE transitioning locally.

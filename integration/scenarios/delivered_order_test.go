@@ -4,6 +4,7 @@ package scenarios
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
+	edgeorders "shingoedge/orders"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 	edgeuop "shingoedge/uop"
@@ -41,6 +43,9 @@ import (
 // and whether anything says what happened. The orc and the owner rule on it; a
 // change that fails one of these changes the behaviour it records, and the
 // test is re-read against that ruling, never loosened to pass.
+//
+// TestDeliveredOrder_WireCancel records its ruling since 2026-11-25 (final
+// brief 1e and 1f); its doc says what changed.
 //
 // The cell is the keep-staged recovery cell (newKsrCell) on a consume line in
 // two_robot with no staged spare: Core's engine on the fleet simulator, the
@@ -482,25 +487,39 @@ func TestDeliveredOrder_SwapPeer(t *testing.T) {
 }
 
 // TestDeliveredOrder_WireCancel: the wire cancel (dispatch HandleOrderCancel)
-// of a line delivery waiting on its receipt. The line is bare; REQUEST makes
-// one plain delivery to it (bare_line_fill_test.go's door), minted with
-// auto_confirm false (neither the claim nor the station sets it); the fleet
-// carries it and sets the bin down. The operator then taps Abort on the Orders
-// page (www apiCancelOrder: Manager.AbortOrderByPerson, the one call it
-// makes), which the page draws for any order not ended, delivered included
-// (orders-body.html).
+// of a line delivery waiting on its receipt, and the Orders page's cancel of
+// it. The line is bare; REQUEST makes one plain delivery to it
+// (bare_line_fill_test.go's door), minted with auto_confirm false (neither the
+// claim nor the station sets it); the fleet carries it and sets the bin down.
+//
+// The Orders page's cancel (www apiCancelOrder: Manager.AbortOrderByPerson, the
+// one call it makes) refuses the delivered order (final brief 1e, the owner's
+// ruling of 2026-11-25: no cancel on a delivered order or past it): it answers
+// orders.ErrDelivered, sends nothing and pauses nothing; the order stays
+// delivered on both sides, its job finished, and the tile still lists it, so
+// the board draws its CONFIRM. The page no longer offers its cancel on a
+// delivered row (orders-body.html).
+//
+// The wire door is not changed (final brief 1f), and a cancel still reaches it
+// for a delivered order from outside the page: a raw order.cancel, sent as the
+// admin Kafka Direct page sends one (www handlers_manual_message.go:
+// protocol.NewEnvelope, then the engine's SendEnvelope), stands for it here,
+// as an older Edge's abort would. It writes no Edge row.
 //
 // A plain order never reaches the parent's cascade (compound.go
 // cancelCompoundChildren lists no children); the wire cancel of a dig parent
 // does, and that is brief C's TestDeliveredLeg_ParentCancel, not repeated.
 //
-// Recorded today: the Edge ends its row and sends the cancel; Core cancels the
-// delivered order (its only status screen is an order already cancelled),
-// asks the fleet to stop the finished job and tells the station three times;
-// the bin stays on the line, unclaimed, still the seat's bin with its count,
-// and Core's sourcing predicate refuses it; the tile no longer lists the
-// order, so the board draws no CONFIRM for it, and shows the pause the abort
-// puts on the position.
+// Recorded: Core cancels the delivered order with the cancel's reason (its only
+// status screen is an order already cancelled), asks the fleet to stop the
+// finished job and tells the station three times; the bin stays on the line,
+// unclaimed, still the seat's bin with its count, and Core's sourcing predicate
+// refuses it. The Edge's row ends with Core's cancel, one row, which the Edge
+// announces (the station's toast) and which pauses the position as Core's; the
+// tile no longer lists the order, so the board draws no CONFIRM for it. Until
+// 2026-11-25 the record came through the page's Abort, which the page drew on
+// a delivered row and which ended the Edge's row itself before Core heard: one
+// row with the abort's reason, nothing announced, the person's pause.
 func TestDeliveredOrder_WireCancel(t *testing.T) {
 	t.Parallel()
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, plain: true})
@@ -544,11 +563,15 @@ func TestDeliveredOrder_WireCancel(t *testing.T) {
 			c.vendorState(co.VendorOrderID), preSeat, *cart)
 	}
 
-	// The Orders page's Abort: the Edge ends its row and queues the cancel.
+	// The Orders page's cancel: refused. Nothing is sent and nothing paused.
 	m := r.mark()
-	mustNil(t, c.edge.Engine.OrderManager().AbortOrderByPerson(d.ID), "the Orders page's Abort")
-	if s := c.edgeRow(d.ID).Status; s != protocol.StatusCancelled {
-		t.Errorf("after the Abort the Edge's row is %q, before Core has heard; want cancelled", s)
+	err := c.edge.Engine.OrderManager().AbortOrderByPerson(d.ID)
+	t.Logf("record: the Orders page's cancel answered %v", err)
+	if !errors.Is(err, edgeorders.ErrDelivered) {
+		t.Errorf("the Orders page's cancel of the delivered order answered %v, want orders.ErrDelivered", err)
+	}
+	if s := c.edgeRow(d.ID).Status; s != protocol.StatusDelivered {
+		t.Errorf("after the refused cancel the Edge's row is %q, want delivered", s)
 	}
 	pending, err := c.edge.DB.ListPendingOutbox(100)
 	mustNil(t, err, "the Edge's outbox")
@@ -561,9 +584,33 @@ func TestDeliveredOrder_WireCancel(t *testing.T) {
 			sent = append(sent, fmt.Sprintf("%s reason=%q", env.Type, body.Reason))
 		}
 	}
-	t.Logf("record: the Edge queued %v", sent)
-	if !slices.Equal(sent, []string{protocol.TypeOrderCancel + ` reason="aborted by operator"`}) {
-		t.Errorf("the Edge queued %v about the order, want one order.cancel \"aborted by operator\"", sent)
+	if len(sent) != 0 {
+		t.Errorf("the Edge queued %v about the order after the refused cancel, want nothing", sent)
+	}
+	c.settle()
+	refused := r.tile()
+	t.Logf("after the refusal: tile %s", refused)
+	if co := c.coreOf(d); co.Status != protocol.StatusDelivered || c.vendorState(co.VendorOrderID) != "FINISHED" {
+		t.Errorf("after the refused cancel Core's order is %q, its job %q; want delivered and FINISHED", co.Status,
+			c.vendorState(co.VendorOrderID))
+	}
+	if told := r.toldSince(m, d.UUID); len(told) != 0 {
+		t.Errorf("after the refused cancel the station was told %v, want nothing", told)
+	}
+	if !refused.lists(d.ID, protocol.StatusDelivered) || strings.Contains(refused.AutoReorderNote, "cancelled order") {
+		t.Errorf("the tile after the refused cancel: %s; want the order still drawn delivered (its CONFIRM) and no "+
+			"pause", refused)
+	}
+
+	// A raw order.cancel, as Kafka Direct sends one: the wire door.
+	m = r.mark()
+	env, err := protocol.NewEnvelope(protocol.TypeOrderCancel,
+		protocol.Address{Role: protocol.RoleEdge, Station: c.edge.Engine.AppConfig().StationID()},
+		protocol.Address{Role: protocol.RoleCore}, &protocol.OrderCancel{OrderUUID: d.UUID, Reason: dloRawReason})
+	mustNil(t, err, "build the raw order.cancel")
+	mustNil(t, c.edge.Engine.SendEnvelope(env), "send the raw order.cancel")
+	if s := c.edgeRow(d.ID).Status; s != protocol.StatusDelivered {
+		t.Errorf("the raw order.cancel wrote the Edge's row %q before Core heard, want it delivered", s)
 	}
 	c.settle()
 
@@ -572,9 +619,9 @@ func TestDeliveredOrder_WireCancel(t *testing.T) {
 	steps, code := r.ended(co.ID)
 	t.Logf("record: %s %d %s (%q) completed=%v last=%v code=%q", co.OrderType, co.ID, co.Status, co.ErrorDetail,
 		co.CompletedAt != nil, steps, code)
-	if co.Status != protocol.StatusCancelled || co.ErrorDetail != "aborted by operator" || co.CompletedAt != nil {
-		t.Errorf("Core's order is %q (%q) completed=%v, want cancelled \"aborted by operator\"", co.Status,
-			co.ErrorDetail, co.CompletedAt != nil)
+	if co.Status != protocol.StatusCancelled || co.ErrorDetail != dloRawReason || co.CompletedAt != nil {
+		t.Errorf("Core's order is %q (%q) completed=%v, want cancelled %q", co.Status, co.ErrorDetail,
+			co.CompletedAt != nil, dloRawReason)
 	}
 	if !slices.Equal(steps, []protocol.Status{protocol.StatusDelivered, protocol.StatusCancelled}) ||
 		code != string(protocol.TermOperatorCancelled) {
@@ -618,18 +665,27 @@ func TestDeliveredOrder_WireCancel(t *testing.T) {
 	// The Edge's row, the announcement and the line's tile.
 	ending := r.edgeEnding(d.ID)
 	t.Logf("record: the Edge's row from its cancel: %v", ending)
-	if len(ending) != 1 || c.edgeRow(d.ID).Status != protocol.StatusCancelled {
-		t.Errorf("the Edge's row from its cancel: %v, want the abort's one row and nothing after it", ending)
+	if len(ending) != 1 || ending[0] != fmt.Sprintf("%s %q", protocol.StatusCancelled, dloRawReason) ||
+		c.edgeRow(d.ID).Status != protocol.StatusCancelled {
+		t.Errorf("the Edge's row from its cancel: %v, want Core's one row, cancelled %q, and nothing after it",
+			ending, dloRawReason)
 	}
-	if a := r.announcedSince(m); len(a) != 0 {
-		t.Errorf("the Edge announced %+v, want nothing: its own abort is not toasted", a)
+	announced := r.announcedSince(m)
+	t.Logf("record: the Edge announced %+v", announced)
+	if len(announced) != 1 || announced[0].OrderID != d.ID || announced[0].Reason != dloRawReason {
+		t.Errorf("the Edge announced %+v, want Core's cancel of the order, once, with its reason: a live row "+
+			"Core cancels is the station's toast", announced)
 	}
 	post := r.tile()
 	postSeat, postCount := post.seat()
 	t.Logf("after: tile %s", post)
 	if len(post.Orders) != 0 || postSeat != preSeat || postCount != preCount || preSeat != b.ID ||
-		!strings.Contains(post.AutoReorderNote, "a person cancelled order") {
+		!strings.Contains(post.AutoReorderNote, "Core cancelled order") {
 		t.Errorf("the tile after: %s; want no order drawn, the seat still bin %d at %d (it was bin %d at %d), and "+
-			"the position paused by the abort", post, b.ID, preCount, preSeat, preCount)
+			"the position paused by Core's cancel", post, b.ID, preCount, preSeat, preCount)
 	}
 }
+
+// dloRawReason is the reason the raw order.cancel carries: what a person types
+// on the Kafka Direct page.
+const dloRawReason = "sent from Kafka Direct"

@@ -40,6 +40,8 @@ Deploy: no migration; Core and Edges in either order.
 - An order the Edge cannot queue for Core is no longer left on the screens as pending and never sent: the request that made it reports that it failed
 - A cancel that reaches Core in the moment it sends the order to the robots now stops the robot's job too, whichever way it came (a station's cancel or a cancelled changeover, Terminate on Core's order page, or an order cancelled while it moves bins out of a lane to reach its cart); the order used to read cancelled while the fleet kept the job, and a robot could start it
 - A keep-staged spot's spare is ordered as soon as the line is free when the Edge was busy with that line at the moment the spare should have been ordered (a request, a SEND BACK, a settings save, the Edge's once-a-minute check), and a RESUME tap at such a moment takes effect then; both used to wait up to a minute, and the tap did nothing. A changeover start or cancel still leaves its own spots to the next moment the spot is decided: after a cancel, the landing of the spare's return
+- An order whose cart is already at the line (delivered) can no longer be cancelled at the Edge: confirm it instead. A cancel pressed on it is refused, says so, and sends nothing to Core
+- Cancelling a changeover no longer cancels a leg that has already set its cart down (delivered): that leg is confirmed as usual, and no robot is sent to move a bin for it
 
 ## v0.19.0 — 2026-11-22
 
