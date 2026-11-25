@@ -80,7 +80,7 @@ func TestLaneGate_ADeeperStoreReChosenOutOfTheLaneReleasesTheShallowerDweller(t 
 	// allocator reconciles its slot rows against the plan: the old slot goes.
 	moved := []resolvedStep{{Action: protocol.ActionDropoff, Node: elsewhere.Name, Group: grp.Name, ExclusiveSlot: true}}
 	d.persistWidenedPlan(deep, moved)
-	if _, err := d.allocator.reserveComplexSlots(deep, moved); err != nil {
+	if _, err := d.allocator.reserveComplexSlots(deep, moved, d.db); err != nil {
 		t.Fatalf("reconcile the deeper store's slots: %v", err)
 	}
 

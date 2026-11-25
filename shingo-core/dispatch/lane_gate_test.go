@@ -274,7 +274,7 @@ func TestLaneGate_ResolveHoldsRefusesAPlanThatRevisitsALaneItLeaves(t *testing.T
 			{Action: protocol.ActionDropoff, Node: ghostS1.Name},
 			{Action: protocol.ActionPickup, Node: line.Name},
 			{Action: protocol.ActionDropoff, Node: line.Name},
-		})
+		}, nil)
 		var revisit *LaneRevisitError
 		if !errors.As(err, &revisit) {
 			t.Fatalf("a plan that picks from lane %d, later drops BACK into it, and finishes somewhere "+
@@ -296,7 +296,7 @@ func TestLaneGate_ResolveHoldsRefusesAPlanThatRevisitsALaneItLeaves(t *testing.T
 		err := d.refuseLaneRevisit([]resolvedStep{
 			{Action: protocol.ActionPickup, Node: ghostS0.Name},
 			{Action: protocol.ActionDropoff, Node: ghostS1.Name},
-		})
+		}, nil)
 		if err != nil {
 			t.Fatalf("an in-lane move was refused (%v). Its final destination IS the lane, so the "+
 				"whole-visit hold is exactly right and the DeliveryNode arm releases it at the drop.", err)
@@ -312,7 +312,7 @@ func TestLaneGate_ResolveHoldsRefusesAPlanThatRevisitsALaneItLeaves(t *testing.T
 			{Action: protocol.ActionDropoff, Node: ghostS1.Name},
 			{Action: protocol.ActionPickup, Node: ghostS1.Name},
 			{Action: protocol.ActionDropoff, Node: line.Name},
-		})
+		}, nil)
 		if err != nil {
 			t.Fatalf("a relay was refused (%v). Its bin is parked in the lane between visits, claimed, "+
 				"which is the state the claim walk reads — the tripwire must not fire on it.", err)

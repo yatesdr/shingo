@@ -360,8 +360,9 @@ func TestCarrierKeys_AnAppendNamesItsStepByPlanPosition(t *testing.T) {
 // append cost what they cost before the carrier keys (measured at d5b9fac7:
 // 21, 60 and 6), less the sealed create's second payload read, plus one on a
 // create for the fleet's yes's own transaction, less the node re-reads its
-// lane questions no longer make (LaneOf on the nodes in hand, 2026-11-25).
-// Keyed, a create
+// lane questions no longer make (LaneOf on the nodes in hand, 2026-11-25) and,
+// for the complex create, its walks over the plan (one read of the plan's
+// nodes, attemptNodes). Keyed, a create
 // adds the scene read (1) and an append its carts' read and the scene read
 // (2); a sealed create of a payload with a load sequence adds nothing (the
 // sequence names its lift, and the set-down sends the default). No shape adds
@@ -420,7 +421,7 @@ func TestCarrierKeys_WhatAKeyCosts(t *testing.T) {
 				testutil.MustNoErr(t, err, "the payload's load sequence")
 				return sealed("ck-cost-sequence")(t, d, db, p, backend)
 			}},
-		{"a complex create", 49, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
+		{"a complex create", 43, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
 			d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{OrderUUID: "ck-cost-complex",
 				PayloadCode: p.payload.Code, Quantity: 1, ProcessNode: p.line.Name,
 				Steps: []protocol.ComplexOrderStep{{Action: protocol.ActionPickup, Node: p.storage.Name},

@@ -290,6 +290,9 @@ type admissionSituation struct {
 	// skip names the questions THIS CALLER DOES NOT ASK TODAY. See
 	// admissionSkips — the zero value skips nothing.
 	skip admissionSkips
+	// reads answers the lane question for a caller that holds a complex
+	// attempt's read of its plan (admitPlan: attemptNodes); nil asks the store.
+	reads nodeReads
 }
 
 // admissionSkips names physical questions a caller does not ask.
@@ -691,8 +694,11 @@ func (d *Dispatcher) planNodes(steps []resolvedStep) []*nodes.Node {
 	return out
 }
 
-func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip admissionSkips) (GateVerdict, error) {
-	s := admissionSituation{order: order, skip: skip}
+func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip admissionSkips, reads nodeReads) (GateVerdict, error) {
+	if reads == nil {
+		reads = d.db
+	}
+	s := admissionSituation{order: order, skip: skip, reads: reads}
 	for _, step := range steps {
 		isSource := step.Action == protocol.ActionPickup
 		if !isSource && step.Action != protocol.ActionDropoff {
@@ -701,7 +707,7 @@ func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip a
 		if step.Node == "" {
 			continue
 		}
-		node, err := d.db.GetNodeByDotName(step.Node)
+		node, err := reads.GetNodeByDotName(step.Node)
 		if err != nil || node == nil {
 			continue
 		}
@@ -745,6 +751,15 @@ func (d *Dispatcher) admit(s admissionSituation) (GateVerdict, error) {
 // s.skip is honoured per question. A skipped question is not asked and its READ
 // IS NOT ISSUED — the plain entry path is the highest-traffic caller in the
 // system and must not start paying for two queries whose answers it discards.
+// lanesFrom is where admitLane asks a node's lane: the situation's read, or the
+// store.
+func (d *Dispatcher) lanesFrom(s admissionSituation) nodeReads {
+	if s.reads != nil {
+		return s.reads
+	}
+	return d.db
+}
+
 func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource bool) (GateVerdict, error) {
 	if node == nil {
 		return Admitted(), nil // this move does not touch a lane here
@@ -754,7 +769,7 @@ func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource 
 	// which means an unresolvable lane contributes no checks and the move is
 	// admitted — the exact fail-open shape this type exists to make unreachable.
 	// Admission resolves it itself and propagates.
-	lane, err := d.db.LaneOf(node)
+	lane, err := d.lanesFrom(s).LaneOf(node)
 	if err != nil {
 		return GateVerdict{}, fmt.Errorf("admission: resolve lane for node %d: %w", node.ID, err)
 	}

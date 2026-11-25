@@ -212,7 +212,12 @@ func (e *LaneRevisitError) Error() string {
 //
 // The tripwire stays: a plan that picks from a lane, leaves, and comes back is
 // malformed whoever holds what, and a mark does not switch it off.
-func (d *Dispatcher) refuseLaneRevisit(steps []resolvedStep) error {
+//
+// reads is the attempt's read of its plan (attemptNodes), or nil for the store.
+func (d *Dispatcher) refuseLaneRevisit(steps []resolvedStep, reads nodeReads) error {
+	if reads == nil {
+		reads = d.db
+	}
 	pickedFrom := map[int64]string{} // lane -> the node this plan picked at
 	var revisit *LaneRevisitError
 	revisitLane := int64(0)
@@ -235,14 +240,14 @@ func (d *Dispatcher) refuseLaneRevisit(steps []resolvedStep) error {
 		if step.Node == "" {
 			continue
 		}
-		node, err := d.db.GetNodeByDotName(step.Node)
+		node, err := reads.GetNodeByDotName(step.Node)
 		if err != nil || node == nil {
 			// A step whose node does not resolve is admission's problem, not the
 			// tripwire's — and it already ran. Skipping matches admitPlan's own arm
 			// on the same read, so the two walk the same steps.
 			continue
 		}
-		lane, err := d.db.LaneOf(node)
+		lane, err := reads.LaneOf(node)
 		if err != nil {
 			return err
 		}

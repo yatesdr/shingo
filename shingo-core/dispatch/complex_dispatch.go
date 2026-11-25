@@ -244,21 +244,25 @@ func (d *Dispatcher) prepareComplexHandWith(order *orders.Order, pc *pairPass, r
 		}
 		return nil, Hand{}, nil, st, phasePrepare
 	}
+	// The attempt's one read of its plan's nodes (attemptNodes), for the phases
+	// that walk the steps again: the destination's slot needs and final drop,
+	// the hand's, and the lanes verdict. Dropped with the attempt.
+	reads := readAttemptNodes(d.db, resolvedSteps)
 	if st := d.applySwapGates(order, resolvedSteps); st.done {
 		return nil, Hand{}, nil, st, phaseSwapGates
 	}
-	if st := d.reserveComplexDestination(order, resolvedSteps, pc); st.done {
+	if st := d.reserveComplexDestination(order, resolvedSteps, pc, reads); st.done {
 		return nil, Hand{}, nil, st, phaseDestination
 	}
 	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps)
 	if st.done {
 		return nil, Hand{}, nil, st, phaseSources
 	}
-	hand, st := d.handFromComplexPlan(order, plan, assigned)
+	hand, st := d.handFromComplexPlan(order, plan, assigned, reads)
 	if st.done {
 		return nil, Hand{}, nil, st, phaseHand
 	}
-	if st := d.admitComplexLanesVerdict(order, resolvedSteps); st.done {
+	if st := d.admitComplexLanesVerdict(order, resolvedSteps, reads); st.done {
 		return nil, Hand{}, nil, st, phaseLanes
 	}
 	return resolvedSteps, hand, assigned, dispatchStep{}, phaseReached
@@ -277,7 +281,7 @@ func (d *Dispatcher) prepareComplexHandWith(order *orders.Order, pc *pairPass, r
 // the plan, not holds: a refused hand leaves them naming soft-held bins, which is
 // the shape a lane-refused complex order already had, and the next pass rewrites
 // them.
-func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan, assigned []reservedPickup) (Hand, dispatchStep) {
+func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan, assigned []reservedPickup, reads nodeReads) (Hand, dispatchStep) {
 	a := d.allocator
 	steps := plan.ResolvedSteps
 	claimFailed := func(detail string) (Hand, dispatchStep) {
@@ -288,8 +292,8 @@ func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan,
 	}
 
 	var hand Hand
-	for _, sn := range a.slotNeeds(steps) {
-		node, gerr := d.db.GetNodeByDotName(sn.nodeName)
+	for _, sn := range a.slotNeedsOver(reads, steps) {
+		node, gerr := reads.GetNodeByDotName(sn.nodeName)
 		if gerr != nil || node == nil {
 			return claimFailed(fmt.Sprintf("confirm slot %s for order %d: node unresolved", sn.nodeName, order.ID))
 		}
@@ -349,12 +353,12 @@ func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan,
 // physical admission (and the dig it proposes for a buried pickup) and the
 // tripwire on a plan that revisits a lane it leaves. A coordinated order takes no
 // mouth hold: every lane is marked, and its entry is the gate's (refuseLaneRevisit).
-func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps []resolvedStep, reads nodeReads) dispatchStep {
 	// THE ADMISSION IS A READ HERE. skipsForComplexEntry declares the gate owns the
 	// entry, and every lane is marked, so admitPlan admits every lane this plan
 	// names and refuses nothing: the in-lane questions are asked at the tail
 	// append. What it can still say is that a lane could not be read.
-	if _, err := d.admitPlan(order, resolvedSteps, skipsForComplexEntry); err != nil {
+	if _, err := d.admitPlan(order, resolvedSteps, skipsForComplexEntry, reads); err != nil {
 		// FAIL CLOSED, with a cause that says so. An unreadable lane is a busy
 		// lane; an undetermined answer is Core declining, not a lane that is
 		// honestly occupied, and the two are investigated differently.
@@ -364,7 +368,7 @@ func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps
 		return dispatchStep{done: true, err: err}
 	}
 
-	hErr := d.refuseLaneRevisit(resolvedSteps)
+	hErr := d.refuseLaneRevisit(resolvedSteps, reads)
 	// ── ONE OF THESE ERRORS IS NOT A WAIT ─────────────────────────────────
 	//
 	// Everything else here fails closed into a hold, because an unreadable lane is
@@ -958,7 +962,7 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 // (capacity-blocked or incomplete reserve) or hit a reserve error; the
 // orchestrator returns st.err verbatim. Runs before the bin reserve
 // (slots-before-bins). Reads the resolved steps read-only.
-func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedSteps []resolvedStep, pc *pairPass) dispatchStep {
+func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedSteps []resolvedStep, pc *pairPass, reads nodeReads) dispatchStep {
 	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
 	// orders, but ONLY for concrete STORAGE dropoffs. The scanner dropped the
 	// gate for every complex order to unstick two-robot SUPPLY legs — which
@@ -1010,7 +1014,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// skipped it again for equalling DeliveryNode would leave it checked by
 	// nobody. The two arms have to compose on what was ASKED, not on which node
 	// it was.
-	finalChecked := isStorageDropoff(d.db, order.DeliveryNode)
+	finalChecked := isStorageDropoff(reads, order.DeliveryNode)
 	if finalChecked {
 		blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID)
 		// ── THE VACATED-SLOT RULE, IN TODAY'S WAIT BRANCH ONLY ────────────────
@@ -1167,7 +1171,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// reservations, not a hard claim. Removing the loop and its insurance together
 	// honors the rule that the slot-ordering must not be reverted without restoring
 	// a sweep for slot-wedged orders.
-	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
+	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps, reads); serr != nil {
 		// The same blank-cause gap as the bin reserve below it, one phase earlier
 		// and on an order that has not dispatched. The sibling arm (an incomplete
 		// but error-free reserve) has always written CauseComplexSlotReserve; this

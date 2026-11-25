@@ -553,9 +553,9 @@ func (d *Dispatcher) placeByContentsAtReserve(order *orders.Order, plan *Complex
 	}
 	prev := steps[f]
 	steps[f].Node, steps[f].Group, steps[f].Vacate = target, "", nil
-	if out, err := d.allocator.reserveComplexSlots(order, steps); err != nil || out != reserveComplete {
+	if out, err := d.allocator.reserveComplexSlots(order, steps, d.db); err != nil || out != reserveComplete {
 		steps[f] = prev
-		if _, rerr := d.allocator.reserveComplexSlots(order, steps); rerr != nil {
+		if _, rerr := d.allocator.reserveComplexSlots(order, steps, d.db); rerr != nil {
 			log.Printf("dispatch: order %d: restore its slot holds after a refused re-point: %v", order.ID, rerr)
 		}
 		log.Printf("dispatch: order %d: the slot reconcile refused the re-point to %s — it keeps its drop at %s: %v",

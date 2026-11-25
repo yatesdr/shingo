@@ -638,7 +638,7 @@ func TestVacatedSlot_P23_UnstampedFungibleDropStillReverts(t *testing.T) {
 	steps := []resolvedStep{vsWait("VS23-LINE"), vsPick("VS23-LINE"), {Action: protocol.ActionDropoff, Node: c1.Name, Group: grp.Name}}
 	pc := vsLift(t, db, supply, bin.ID, c1.Name)
 
-	if st := d.reserveComplexDestination(ret, steps, pc); !st.done {
+	if st := d.reserveComplexDestination(ret, steps, pc, d.db); !st.done {
 		t.Fatal("the blocked fungible drop was admitted — a free sibling exists, so today's revert must run")
 	}
 	if steps[2].Node != grp.Name || steps[2].Vacate != nil {
@@ -662,7 +662,7 @@ func TestVacatedSlot_P24_RepointedStampsDoNotCount(t *testing.T) {
 		steps := []resolvedStep{vsWait("VS24-LINE"), vsPick("VS24-LINE"),
 			{Action: protocol.ActionDropoff, Node: c1.Name, Group: grp.Name, Vacate: stamp}}
 		// No pass context: the rule no longer holds, so clause 1 falls to the revert.
-		if st := d.reserveComplexDestination(ret, steps, nil); !st.done || steps[2].Vacate != nil || steps[2].Node != grp.Name {
+		if st := d.reserveComplexDestination(ret, steps, nil, d.db); !st.done || steps[2].Vacate != nil || steps[2].Node != grp.Name {
 			t.Fatalf("done=%v drop=%s stamp=%+v, want reverted and cleared", st.done, steps[2].Node, steps[2].Vacate)
 		}
 	})
@@ -671,7 +671,7 @@ func TestVacatedSlot_P24_RepointedStampsDoNotCount(t *testing.T) {
 		testutil.MustNoErr(t, reservations.AcquireSlot(db.DB, other.ID, c1.ID, "test"), "another order holds the slot")
 		steps := []resolvedStep{vsWait("VS24-LINE"), vsPick("VS24-LINE"),
 			{Action: protocol.ActionDropoff, Node: c1.Name, Group: grp.Name, Vacate: stamp}}
-		if _, err := d.allocator.reserveComplexSlots(ret, steps); err != nil {
+		if _, err := d.allocator.reserveComplexSlots(ret, steps, d.db); err != nil {
 			t.Fatalf("reserve slots: %v", err)
 		}
 		if steps[2].Node != grp.Name || steps[2].Vacate != nil {

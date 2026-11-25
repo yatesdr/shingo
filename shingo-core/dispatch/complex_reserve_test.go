@@ -951,7 +951,7 @@ func TestSlotConflictRevertsToNGRP(t *testing.T) {
 	}
 	order := mkComplexOrder(t, db, "revert-1", "RVT-SRC", "RVT-SRC", slot.Name, bp.Code, steps)
 
-	outcome, err := d.allocator.reserveComplexSlots(order, steps)
+	outcome, err := d.allocator.reserveComplexSlots(order, steps, d.db)
 	testutil.MustNoErr(t, err, "reserve slots")
 	if outcome != reserveHolding {
 		t.Fatalf("outcome = %v, want reserveHolding (fungible slot conflict)", outcome)

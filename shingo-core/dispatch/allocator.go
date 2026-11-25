@@ -175,13 +175,19 @@ type slotNeed struct {
 // structurally, so nothing depends on a sender remembering to tag what Core can
 // already see for itself.
 func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
+	return a.slotNeedsOver(a.db, steps)
+}
+
+// slotNeedsOver is slotNeeds asking r the storage question: a complex attempt
+// hands it its read of the plan (attemptNodes).
+func (a *Allocator) slotNeedsOver(r nodeReads, steps []resolvedStep) []slotNeed {
 	var out []slotNeed
 	for i := range steps {
 		s := steps[i]
 		if s.Action != protocol.ActionDropoff || s.Node == "" {
 			continue
 		}
-		if !s.ExclusiveSlot && !isStorageDropoff(a.db, s.Node) {
+		if !s.ExclusiveSlot && !isStorageDropoff(r, s.Node) {
 			continue
 		}
 		out = append(out, slotNeed{stepIndex: i, nodeName: s.Node, group: s.Group})
@@ -666,8 +672,11 @@ func (a *Allocator) reanchorVacantPickup(order *orders.Order, plan *ComplexPlan,
 // child (the escape valve, preserved from the hard loop); a FIXED-concrete dropoff
 // holds and retries (Wait). Held slots matching no current need are released (coupled
 // if confirmed, plain if pending). reserveComplete iff every slot need is reserved.
-func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []resolvedStep) (reserveOutcome, error) {
-	needs := a.slotNeeds(resolvedSteps)
+//
+// r answers the steps' nodes: a complex attempt's read of its plan
+// (attemptNodes), or the store.
+func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []resolvedStep, r nodeReads) (reserveOutcome, error) {
+	needs := a.slotNeedsOver(r, resolvedSteps)
 
 	rows, err := a.db.ListReservationsByOrder(order.ID)
 	if err != nil {
@@ -685,7 +694,7 @@ func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []res
 			continue
 		}
 		// 2. Acquire a fresh slot reservation.
-		node, gerr := a.db.GetNodeByDotName(sn.nodeName)
+		node, gerr := r.GetNodeByDotName(sn.nodeName)
 		if gerr != nil || node == nil {
 			missing++ // node unresolvable → hold and retry
 			continue
