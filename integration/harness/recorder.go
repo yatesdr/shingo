@@ -165,6 +165,23 @@ func (r *Recorder) push(caller string, changed bool, wall time.Duration) {
 	pc.WallNS += int64(wall)
 }
 
+// feedPushes records n pushes Core's feed ran in one flush (BinsFeed), and the
+// flush's wall; a flush that ran none records nothing.
+func (r *Recorder) feedPushes(caller string, n int, wall time.Duration) {
+	if r == nil || n == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pc := r.pushes[caller]
+	if pc == nil {
+		pc = &pushCount{}
+		r.pushes[caller] = pc
+	}
+	pc.N += int64(n)
+	pc.WallNS += int64(wall)
+}
+
 // Inc adds one to the cell's counter key.
 func (r *Recorder) Inc(key string) { r.Add(key, 1) }
 

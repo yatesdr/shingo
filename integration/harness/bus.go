@@ -41,6 +41,9 @@ type Bus struct {
 
 	// bins, when set, pushes Core's bins to the Edge after every pump.
 	bins *BinsPush
+	// feed, when set, runs Core's own bins pushes after every pump
+	// (StartBinsFeed).
+	feed *BinsFeed
 
 	// rec is the cell's scenario recorder (RecordEnv), nil when it is off.
 	rec *Recorder
@@ -133,6 +136,9 @@ func NewBus(t *testing.T, edge EdgeSide, core CoreSide) *Bus {
 func (b *Bus) PumpEdgeOutbox() int {
 	b.t.Helper()
 	n := pump(b.edgeOut, b.edgePub, "edge→core")
+	if b.feed != nil {
+		b.feed.settle("pump-edge", false)
+	}
 	b.pushBins("pump-edge")
 	return n
 }
@@ -142,8 +148,16 @@ func (b *Bus) PumpEdgeOutbox() int {
 func (b *Bus) SetBinsPush(p *BinsPush) { b.bins = p }
 
 // PushBins pushes Core's bins to the Edge now: for a scenario that changed
-// Core's bins directly (a fixture write), as Core's push would follow it.
-func (b *Bus) PushBins() { b.pushBins("explicit") }
+// Core's bins directly (a fixture write), as Core's push would follow it. On
+// the real feed (StartBinsFeed) the Edge sends its watch list again and Core
+// answers it.
+func (b *Bus) PushBins() {
+	if b.feed != nil {
+		b.feed.republish()
+		return
+	}
+	b.pushBins("explicit")
+}
 
 // pushBins pushes through b's BinsPush, if it has one; caller names who asked,
 // for the recorder's count by caller.
@@ -160,15 +174,23 @@ func (b *Bus) pushBins(caller string) {
 // guard is 100 iterations).
 func (b *Bus) PumpAll() int {
 	b.t.Helper()
-	n := pumpAll(b.edgeOut, b.edgePub, b.coreOut, b.corePub, 100)
+	n := b.pumpBoth()
 	if b.rec != nil {
 		b.rec.Inc("pump_all")
 		if n == 0 {
 			b.rec.Inc("pump_all_idle")
 		}
 	}
+	if b.feed != nil {
+		n += b.feed.settle("pump-all", true)
+	}
 	b.pushBins("pump-all")
 	return n
+}
+
+// pumpBoth drains both directions until both are quiet (pumpAll).
+func (b *Bus) pumpBoth() int {
+	return pumpAll(b.edgeOut, b.edgePub, b.coreOut, b.corePub, 100)
 }
 
 // RewriteCoreToEdge hands every later Core → Edge message to f, and the

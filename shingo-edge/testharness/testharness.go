@@ -42,6 +42,7 @@ type Edge struct {
 	Engine   *engine.Engine
 	Ingestor *protocol.Ingestor
 	DB       *store.DB
+	station  string
 }
 
 // NewEdge constructs a real Edge engine + EdgeHandler + Ingestor with
@@ -58,8 +59,10 @@ type Edge struct {
 // Subsystems intentionally NOT wired (and the rationale):
 //   - Kafka client, outbox drainer: harness.Bus + pump.go substitute. The
 //     engine's direct sends ride the outbox to the Bus.
-//   - Heartbeater: emits register / heartbeat envelopes Core ignores in
-//     scenarios; adds noise without coverage.
+//   - Heartbeater's loop and boot burst: nothing is sent on a timer. Its body
+//     is wired as main.go wires it (Engine.HeartbeatBody), and a scenario
+//     sends it, and the watch list, when it chooses (Heartbeat,
+//     SendBinWatch); Core's ack comes back to Engine.OnCoreAck.
 //   - InventoryDeltaReporter: HandleBinPickedUp's flush call already
 //     guards on nil. Set explicitly via SetInventoryDeltaSink if a
 //     scenario needs delta accumulation tested.
@@ -108,6 +111,20 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 		return err
 	})
 
+	// The heartbeat as the heartbeater builds it, its Fns wired as main.go
+	// wires them, with one difference: it quotes the bins feed alone, as an
+	// Edge whose only Core feed is the bins feed. The others' values are
+	// decision inputs no scenario was written with (the node list's CoreNodes
+	// and node kinds) or carriers this harness does not route (containment,
+	// refusals, catalog); quoted, Core would send each of them.
+	hb := messaging.NewHeartbeater(nil, stationID, "testharness", "testharness", "")
+	hb.FeedsFn = func() map[string]string {
+		return map[string]string{protocol.FeedBins: eng.FeedDigests()[protocol.FeedBins]}
+	}
+	hb.OwnedFn = eng.OwnedDigests
+	hb.CoreSpeaksFeedsFn = eng.CoreSpeaksFeeds
+	eng.SetHeartbeatBodyFunc(hb.HeartbeatBody)
+
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 
 	// Mirror cmd/shingoedge/main.go's wiring for the subject handlers F'
@@ -132,6 +149,11 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
 		eng.HandleBinReturn(*br)
+	})
+	// Core's answer to the heartbeat, as main.go routes it but the plant zone's
+	// adoption (adoptPlantTimezone writes the config file main serves).
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
+		eng.OnCoreAck(ack)
 	})
 	// Core's node-bins feed, the answer to the watch list, as main.go routes it.
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinsSnapshot, func(_ *protocol.Envelope, snap *protocol.NodeBinsSnapshot) {
@@ -181,7 +203,37 @@ func NewEdge(t *testing.T, stationID string, configure ...func(*engine.Config)) 
 		Engine:   eng,
 		Ingestor: ingestor,
 		DB:       db,
+		station:  stationID,
 	}
+}
+
+// Heartbeat sends the heartbeat this Edge's heartbeater would send now
+// (Engine.HeartbeatBody) through the outbox, for a Bus to carry to Core's
+// handler; Core's ack comes back to Engine.OnCoreAck.
+func (e *Edge) Heartbeat() error {
+	env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
+		protocol.Address{Role: protocol.RoleEdge, Station: e.station}, protocol.Address{Role: protocol.RoleCore},
+		e.Engine.HeartbeatBody())
+	if err != nil {
+		return err
+	}
+	return e.Engine.SendEnvelope(env)
+}
+
+// SendBinWatch sends this Edge's bins watch list as the heartbeater's boot
+// burst does (Engine.PublishBinWatchAtBoot), through the outbox.
+func (e *Edge) SendBinWatch() error {
+	var err error
+	e.Engine.PublishBinWatchAtBoot(func(l *protocol.BinWatchList) error {
+		var env *protocol.Envelope
+		if env, err = protocol.NewDataEnvelope(protocol.SubjectBinsWatch,
+			protocol.Address{Role: protocol.RoleEdge, Station: e.station}, protocol.Address{Role: protocol.RoleCore}, l); err != nil {
+			return err
+		}
+		err = e.Engine.SendEnvelope(env)
+		return err
+	})
+	return err
 }
 
 // stockedPreflight is the changeover preflight with no Core to ask: every
