@@ -679,6 +679,14 @@ type stationOrder struct {
 	// release was sent; the order stays staged until Core says its robot moves.
 	// Absent while false.
 	ReleaseSent bool `json:"release_sent,omitempty"`
+	// CancelSent: this station's cancel of the order is out and Core has not
+	// answered (Order.CancelSent); the order keeps Core's status until Core's
+	// word ends it, and the tile's pill says "Cancel sent". Absent while false.
+	CancelSent bool `json:"cancel_sent,omitempty"`
+	// CancelRefused is Core's sentence when it answered that it cannot cancel
+	// the order (Order.CancelRefused), which the tile's pill carries. Absent
+	// while "".
+	CancelRefused string `json:"cancel_refused,omitempty"`
 }
 
 func stationOrders(orders []Order) []stationOrder {
@@ -693,7 +701,7 @@ func stationOrders(orders []Order) []stationOrder {
 			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
 			QueueReason: o.QueueReason, QueueCode: o.QueueCode, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
 			Departed: o.Departed, CreatedAt: o.CreatedAt, FaultLine: stationFaultLine(o, now),
-			RobotID: o.RobotID, ReleaseSent: o.ReleaseSent,
+			RobotID: o.RobotID, ReleaseSent: o.ReleaseSent, CancelSent: o.CancelSent, CancelRefused: o.CancelRefused,
 		}
 	}
 	return out

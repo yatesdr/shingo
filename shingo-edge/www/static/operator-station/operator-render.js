@@ -1130,6 +1130,9 @@ function createNodeButton(entry) {
 }
 
 // Renders one pill per inbound order, by its state:
+//   - this station's cancel sent       → "Cancel sent" (the order keeps
+//     Core's status until Core's word ends it)
+//   - Core refused the cancel          → "Not cancelled", Core's sentence its title
 //   - dispatched                       → the robot's name, "Dispatched" until the
 //     fleet names one (Core tells dispatched before any robot moves)
 //   - in_transit + no bin at this node → ETA countdown ("ETA: ~3 min")
@@ -1151,7 +1154,14 @@ function appendETAPills(btn, inboundOrders, binState) {
     const binAtNode = !!(binState && binState.occupied);
     const pills = [];
     inboundOrders.forEach(o => {
-        if (o.status === 'dispatched') {
+        if (o.cancel_sent) {
+            // This station's cancel is out; the order keeps Core's status
+            // until Core's word ends it (or says it cannot).
+            pills.push({ text: 'Cancel sent', overdue: false });
+        } else if (o.cancel_refused) {
+            // Core said it cannot cancel; its sentence is the pill's title.
+            pills.push({ text: 'Not cancelled', overdue: true, title: o.cancel_refused });
+        } else if (o.status === 'dispatched') {
             pills.push({ text: o.robot_id || 'Dispatched', overdue: false });
         } else if (o.status === 'staged' && o.release_sent) {
             // Released here and sent; the robot leaves when Core says so.
@@ -1174,6 +1184,7 @@ function appendETAPills(btn, inboundOrders, binState) {
         row.appendChild(el('span', {
             className: 'os-node-eta-pill' + (p.overdue ? ' overdue' : ''),
             textContent: p.text,
+            title: p.title,
         }));
     });
     btn.appendChild(row);

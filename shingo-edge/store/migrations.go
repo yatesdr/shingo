@@ -2867,6 +2867,34 @@ CREATE INDEX IF NOT EXISTS idx_auto_reorder_flips_process ON auto_reorder_flips(
 				return err == nil && n == 1
 			},
 		},
+		{
+			// v60 (2026-11-25): orders.cancel_intent, the cancel this station
+			// asked Core for and Core has not ended (domain.CancelIntent, JSON).
+			// The final brief's Part 5: a cancel of an order whose status is
+			// Core's versioned word writes it with its order.cancel, and Core's
+			// word ends the row and clears it. '' on every existing row: no
+			// cancel asked. Column-check guarded, like v59.
+			Version: 60,
+			Name:    "orders_cancel_intent",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'cancel_intent'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN cancel_intent TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders')
+					WHERE name = 'cancel_intent'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

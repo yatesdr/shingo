@@ -189,6 +189,21 @@ type Order struct {
 	// the board reads this to drop RELEASE at the tap and say the release went
 	// out. Set when the row is read.
 	ReleaseSent bool `json:"release_sent,omitempty"`
+	// CancelIntent is the cancel this station asked Core for and Core has not
+	// ended (orders.cancel_intent, CancelIntent JSON); "" when none.
+	CancelIntent string `json:"-"`
+	// CancelSent: the order is live and this station's cancel of it is out,
+	// unanswered (CancelIntent.Unanswered). The row keeps Core's status until
+	// Core's word ends it; the Orders page and the station say "Cancel sent".
+	// Set when the row is read.
+	CancelSent bool `json:"cancel_sent,omitempty"`
+	// CancelSentAt is when that cancel was asked, for the Orders page's clock;
+	// nil unless CancelSent.
+	CancelSentAt *time.Time `json:"-"`
+	// CancelRefused is Core's sentence when it answered that it cannot cancel
+	// the live order (CancelIntent.Refused); "" otherwise. Set when the row is
+	// read.
+	CancelRefused string `json:"cancel_refused,omitempty"`
 	// StagedAt is the engine's clock when this Edge last mirrored the order to
 	// staged (its robot parked); nil until then (orders.staged_at). The idle
 	// rule's hour does not start before it.

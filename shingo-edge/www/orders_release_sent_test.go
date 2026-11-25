@@ -3,6 +3,7 @@ package www
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -71,6 +72,41 @@ func TestEdgeOrders_ADeliveredOrderOffersConfirmAndNoCancel(t *testing.T) {
 	} {
 		if got := strings.Contains(html, c.action); got != c.want {
 			t.Errorf("the rows carry %s: %v, want %v\n%s", c.action, got, c.want, html)
+		}
+	}
+}
+
+// TestEdgeOrders_ACancelSentWaitsForCoreOnTheRow: a cancel this station sent
+// and Core has not answered (domain.Order.CancelSent) keeps the row at Core's
+// status, and the row says "Cancel sent" with the clock since the tap in the
+// Cancel button's place, so a second tap cannot send it again. A cancel Core
+// refused (domain.Order.CancelRefused) shows Core's sentence under the row,
+// which offers what its status allows: a delivered row its Confirm.
+func TestEdgeOrders_ACancelSentWaitsForCoreOnTheRow(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	html := renderOrdersBody(t, map[string]any{
+		"ActiveOrders": []domain.Order{
+			{ID: 41, UUID: "edge-cancel-sent", OrderType: protocol.OrderTypeRetrieve,
+				Status: protocol.StatusInTransit, DeliveryNode: "ALN_001", Quantity: 1, CancelSent: true, CancelSentAt: &at},
+			{ID: 42, UUID: "edge-cancel-refused", OrderType: protocol.OrderTypeRetrieve,
+				Status: protocol.StatusDelivered, DeliveryNode: "ALN_002", Quantity: 1,
+				CancelRefused: "the cart was set down at ALN_002"},
+		},
+		"WaitSince": map[int64]string{},
+	})
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{`data-action="cancelOrder:41"`, false},
+		{`Cancel sent · <span class="tnum" data-since="2026-11-25T12:00:00Z"></span>`, true},
+		{`data-action="cancelOrder:42"`, false},
+		{`data-action="confirmDelivery:42:1"`, true},
+		{`Not cancelled: the cart was set down at ALN_002`, true},
+	} {
+		if got := strings.Contains(html, c.text); got != c.want {
+			t.Errorf("the rows carry %s: %v, want %v\n%s", c.text, got, c.want, html)
 		}
 	}
 }

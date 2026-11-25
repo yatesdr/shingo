@@ -39,9 +39,10 @@ type CoreWordRow struct {
 // land and an older one cannot overwrite a newer. Reports whether it wrote.
 //
 // In the same statement: a status that ends the order takes its release intent
-// with it (the act's promise has no leg left), and a move to staged stamps
-// staged_at with the engine's clock (UpdateStatus's rule: the idle rule's hour
-// starts there).
+// with it (the act's promise has no leg left) and its cancel intent (the
+// cancel this station asked has its end: domain.CancelIntent), and a move to
+// staged stamps staged_at with the engine's clock (UpdateStatus's rule: the
+// idle rule's hour starts there).
 func ApplyCoreWord(db *sql.DB, id int64, w CoreWordRow) (bool, error) {
 	terminal := protocol.IsTerminal(protocol.Status(w.Status))
 	res, err := db.Exec(`UPDATE orders SET
@@ -54,6 +55,7 @@ func ApplyCoreWord(db *sql.DB, id int64, w CoreWordRow) (bool, error) {
 		fault_notice_after_s = CASE WHEN ? THEN fault_notice_after_s ELSE ? END,
 		fault_ref = CASE WHEN ? THEN fault_ref ELSE ? END,
 		release_intent = CASE WHEN ? THEN '' ELSE release_intent END,
+		cancel_intent = CASE WHEN ? THEN '' ELSE cancel_intent END,
 		staged_at = CASE WHEN ? = 'staged' AND status <> 'staged' THEN ? ELSE staged_at END,
 		core_version = ?,
 		updated_at = datetime('now')
@@ -66,7 +68,7 @@ func ApplyCoreWord(db *sql.DB, id int64, w CoreWordRow) (bool, error) {
 		w.KeepFault, faultInstant(w.FaultDeadline),
 		w.KeepFault, w.FaultNoticeAfterS,
 		w.KeepFault, w.FaultRef,
-		terminal,
+		terminal, terminal,
 		w.Status, clock.Now().UTC().Format(helpers.TimeLayout),
 		w.Version,
 		id, w.Version)

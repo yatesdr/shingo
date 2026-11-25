@@ -229,6 +229,7 @@ func fullOrder() domain.Order {
 		QueueReason: "r", QueueCode: "c", FaultSince: &at, FaultDeadline: &at, FaultNoticeAfterS: 1,
 		AuthoredBy: "a", OriginID: "o", OriginClass: "c", LaneHeld: true, StationWait: &wait, WaitKind: "k",
 		ReleaseHeld: "h", DepartedAt: &at, Departed: true, CreatedAt: at, UpdatedAt: at, RobotID: "r", ReleaseSent: true,
+		CancelSent: true, CancelRefused: "c",
 		ProcessName: "p", ProcessNodeName: "pn", StationName: "sn"}
 }
 
@@ -240,7 +241,8 @@ func fullOrder() domain.Order {
 // domain.Order stays on the Go tile for the engine and the Production page's
 // template.
 var stationOrderKeys = []string{
-	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "fault_line", "id", "lane_held", "order_type",
+	"auto_confirm", "cancel_refused", "cancel_sent", "created_at", "delivery_node", "departed", "eta", "fault_line", "id",
+	"lane_held", "order_type",
 	"payload_code", "queue_code", "queue_reason", "release_sent", "robot_id", "sibling_order_id", "source_node", "status",
 }
 

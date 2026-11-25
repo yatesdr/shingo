@@ -86,6 +86,10 @@
                 {{/* A cancelled order's bin, left on a robot's deck: Core's notice of
                      where it went (returning / returned / held). Display only. */}}
                 {{if $.BinReturns}}{{with index $.BinReturns .ID}}<div class="orders-subtext">{{.}}</div>{{end}}{{end}}
+                {{/* Core's sentence when it answered that it cannot cancel the order
+                     (domain.Order.CancelRefused): the row keeps Core's status, and
+                     offers what that status allows. */}}
+                {{with .CancelRefused}}<div class="orders-subtext orders-reason">Not cancelled: {{.}}</div>{{end}}
             </td>
             <td class="orders-time">{{formatTime .CreatedAt}}</td>
             <td class="orders-time">{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>
@@ -103,7 +107,13 @@
                 {{/* No cancel on a delivered order or past it (the owner's ruling of
                      2026-11-25): its cart is set down, the row offers its Confirm, and
                      the abort door refuses one sent anyway (orders.ErrDelivered). */}}
-                {{if and (ne .Status "delivered") (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed") (ne .Status "skipped")}}
+                {{/* A cancel this station sent and Core has not answered
+                     (domain.Order.CancelSent): the row keeps Core's status until
+                     Core's word ends it, and says so with the clock since the tap,
+                     in the Cancel button's place. */}}
+                {{if .CancelSent}}
+                    <span class="orders-subtext">Cancel sent{{with .CancelSentAt}} · <span class="tnum" data-since="{{.Format "2006-01-02T15:04:05Z07:00"}}"></span>{{end}}</span>
+                {{else if and (ne .Status "delivered") (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed") (ne .Status "skipped")}}
                     <button class="btn btn-sm btn-danger" data-action="cancelOrder:{{.ID}}">Cancel</button>
                 {{end}}
             </td>

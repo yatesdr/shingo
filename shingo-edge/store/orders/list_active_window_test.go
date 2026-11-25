@@ -97,6 +97,7 @@ CREATE TABLE orders (
     release_facts   TEXT,
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
+    cancel_intent   TEXT NOT NULL DEFAULT '',
     staged_at       TEXT,
     core_version    INTEGER NOT NULL DEFAULT 0,
     want            TEXT NOT NULL DEFAULT '',

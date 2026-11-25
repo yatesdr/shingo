@@ -45,7 +45,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.want,
 	o.waybill_id, o.robot_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.staged_at, o.core_version, o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.station_wait, o.wait_kind, COALESCE(o.release_facts, ''), o.release_intent, o.release_held, o.cancel_intent, o.staged_at, o.core_version, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -226,13 +226,14 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 			&o.WaybillID, &o.RobotID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &o.CoreVersion, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &o.CancelIntent, &stagedAt, &o.CoreVersion, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
 		readWant(&o, want)
 		o.StagedAt = helpers.ScanTimePtr(stagedAt)
 		o.ReleaseSent = o.Status == protocol.StatusStaged && release.ReleasedFromWait(o.Status, nullInt(stationWait), o.ReleaseIntent)
+		applyCancelIntent(&o)
 		o.LaneHeld = laneHeld == 1
 		o.StationWait = nullInt(stationWait)
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
@@ -276,13 +277,14 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &want,
 		&o.WaybillID, &o.RobotID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &stagedAt, &o.CoreVersion, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &stationWait, &o.WaitKind, &o.ReleaseFacts, &o.ReleaseIntent, &o.ReleaseHeld, &o.CancelIntent, &stagedAt, &o.CoreVersion, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
 	readWant(o, want)
 	o.StagedAt = helpers.ScanTimePtr(stagedAt)
 	o.ReleaseSent = o.Status == protocol.StatusStaged && release.ReleasedFromWait(o.Status, nullInt(stationWait), o.ReleaseIntent)
+	applyCancelIntent(o)
 	o.LaneHeld = laneHeld == 1
 	o.StationWait = nullInt(stationWait)
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
@@ -554,7 +556,8 @@ func AdoptAsked(db *sql.DB, id int64, processNodeID *int64, stagingNode string, 
 // They are Core's reason the order is waiting, and an ended order is not
 // waiting: left in place, a cancelled row went on reading "Waiting for a slot
 // at ...". A non-terminal write leaves them alone; the queue-reason write owns
-// them while the order lives.
+// them while the order lives. An ended row holds no cancel intent either
+// (cancel_intent, domain.CancelIntent): the cancel it asked has its end.
 //
 // STAGED STAMPS staged_at with the engine's clock, in the same statement: when
 // the robot parked, which the idle rule's hour does not start before. A leg
@@ -562,7 +565,7 @@ func AdoptAsked(db *sql.DB, id int64, processNodeID *int64, stagingNode string, 
 func UpdateStatus(db *sql.DB, id int64, newStatus string) error {
 	switch st := protocol.Status(newStatus); {
 	case protocol.IsTerminal(st):
-		_, err := db.Exec(`UPDATE orders SET status=?, queue_reason='', queue_code='', updated_at=datetime('now') WHERE id=?`,
+		_, err := db.Exec(`UPDATE orders SET status=?, queue_reason='', queue_code='', cancel_intent='', updated_at=datetime('now') WHERE id=?`,
 			newStatus, id)
 		return err
 	case st == protocol.StatusStaged:
@@ -1426,6 +1429,48 @@ func SetReleaseHeld(db *sql.DB, id int64, sentence string) error {
 	return err
 }
 
+// AskCancel writes the cancel this station asks Core for (domain.CancelIntent
+// JSON) through ex, in the transaction that queues its order.cancel, only
+// while the row reads what the door read (status at version): a word of
+// Core's that moved the row since makes it write nothing, reported false, and
+// the door answers by the row as it now stands. No status, no history row.
+// One statement.
+func AskCancel(ex Execer, id int64, intent, status string, version int64) (bool, error) {
+	res, err := ex.Exec(`UPDATE orders SET cancel_intent=?, updated_at=datetime('now')
+		WHERE id=? AND status=? AND core_version=?`, intent, id, status, version)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ResentCancel records the envelope a resend of the cancel went in, so a
+// refusal of that copy is the one that matches (RefuseCancel). One statement.
+func ResentCancel(ex Execer, id int64, env string) error {
+	_, err := ex.Exec(`UPDATE orders SET cancel_intent = json_set(cancel_intent, '$.env', ?)
+		WHERE id = ? AND cancel_intent <> ''`, env, id)
+	return err
+}
+
+// RefuseCancel writes Core's sentence onto the cancel this station asked, only
+// when the refusal answers it: the envelope it replies to (corID, the
+// cancel's envelope id) is the one the cancel last went in, and the cancel is
+// unanswered. A stale or repeated refusal matches nothing, and a refusal and
+// Core's tell commute: they write different columns. Reports whether it
+// wrote. One statement.
+func RefuseCancel(db *sql.DB, id int64, corID, sentence string) (bool, error) {
+	res, err := db.Exec(`UPDATE orders SET cancel_intent = json_set(cancel_intent, '$.refused', ?),
+		updated_at=datetime('now')
+		WHERE id = ? AND cancel_intent <> '' AND json_extract(cancel_intent, '$.env') = ?
+		  AND COALESCE(json_extract(cancel_intent, '$.refused'), '') = ''`, sentence, id, corID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ListReleaseIntentNodes returns the process nodes of every live order that
 // holds an unsent release intent: the intent worker's boot and floor sweep. A
 // sent intent lingers until Core stages the leg again or it ends, and has
@@ -1502,4 +1547,27 @@ func ListQueuedWithReasonAt(db *sql.DB, processNodeIDs []int64) ([]Order, error)
 	}
 	defer rows.Close()
 	return scanOrders(rows)
+}
+
+// applyCancelIntent sets the read fields of the cancel this station asked for
+// (domain.CancelIntent): sent while unanswered, refused with Core's sentence,
+// on a live row only (an ended row's intent was cleared with its terminal; a
+// row an older build ended keeps none). An intent that will not decode reads
+// as none and is logged: only this Edge writes the column.
+func applyCancelIntent(o *Order) {
+	if o.CancelIntent == "" || protocol.IsTerminal(o.Status) {
+		return
+	}
+	in, err := domain.DecodeCancelIntent(o.CancelIntent)
+	if err != nil {
+		log.Printf("orders: order %d has an unreadable cancel intent: %v — read as none", o.ID, err)
+		return
+	}
+	if in.Unanswered() {
+		o.CancelSent = true
+		if t := in.SentTime(); !t.IsZero() {
+			o.CancelSentAt = &t
+		}
+	}
+	o.CancelRefused = in.Refused
 }

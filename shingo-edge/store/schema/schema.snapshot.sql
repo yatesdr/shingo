@@ -467,6 +467,10 @@ CREATE TABLE orders (
     -- hold or rejection sentence the board's chip shows.
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
+    -- cancel_intent (Edge v60): the cancel this station asked Core for and
+    -- Core has not ended (domain.CancelIntent, JSON; '' = none). The row keeps
+    -- Core's status until Core's word ends it, which clears this.
+    cancel_intent   TEXT NOT NULL DEFAULT '',
     -- staged_at (Edge v54): the engine's clock when this Edge last mirrored the
     -- order to staged (a robot parked). NULL until then. The idle rule's hour
     -- does not start before it (engine/idle_cancel.go).
