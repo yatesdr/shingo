@@ -14,14 +14,14 @@
 # reading the worktree's own copy through /mnt/c: one wsl.exe crossing a gate.
 #
 # WHERE A GATE RUNS (mirror_route). On Windows, a heavy mode (every mode but
-# fmt, scope, order, cachescope, identity and lock-status) runs on the Linux
-# side when `scripts/gate-linux-setup.sh --check` says it is set up, and on the
-# Windows side, as before, when it does not; the sentence says which, and why.
+# fmt, scope, order, cachescope and lock-status) runs on the Linux side when
+# `scripts/gate-linux-setup.sh --check` says it is set up, and on the Windows
+# side, as before, when it does not; the sentence says which, and why.
 #   GATE_SIDE=windows   the Windows side, as before this file existed
 #   GATE_SIDE=linux     the Linux side, or FAILED (no fallback)
 # The light modes stay on the caller's side: fmt is the pre-push hook's and
-# must never wait, and a sync needs the gate lock; scope, order, cachescope,
-# identity and lock-status only read, and describe the side they run on.
+# must never wait, and a sync needs the gate lock; scope, order, cachescope and
+# lock-status only read, and describe the side they run on.
 # Off Windows (CI, the houseserver, a shell inside WSL) nothing here applies.
 #
 # THE MIRROR IS THE WORKING TREE. Its content is the tree `git add -A` would
@@ -460,8 +460,10 @@ mirror_bundle() {
 # and SHINGO_* settings (paths that name a file on this side in C:/ form, for
 # wslpath there).
 mirror_write_spec() {
-  # An empty array among the GATE_* names (GATE_EXEC_ARGS) reads as unset to
-  # ${ref@a} under set -u; the option is this function's alone.
+  # Under set -u, ${ref@a} of a GATE_* or SHINGO_* name that is an empty array
+  # fails as unset. None is one today (GATE_EXEC_ARGS was, until the record-only
+  # wrapper went); the option, this function's alone, keeps a future one from
+  # breaking the sync.
   local -
   set +u
   local v val src lock timing
@@ -488,7 +490,7 @@ mirror_write_spec() {
       esac
       val="$_mw_ref"
       case "$v" in
-        GATE_STEPS_LOG|GATE_DOCKER_ORDER_LOG|GATE_MANIFEST_DIR|GATE_TEST_LOG_DIR|GATE_TESTSET_DIR)
+        GATE_STEPS_LOG|GATE_DOCKER_ORDER_LOG|GATE_TESTSET_DIR)
           [ -n "$val" ] && _mirror_wpath val "$val" ;;
       esac
       printf 'export %s=%q\n' "$v" "$val"
@@ -670,7 +672,7 @@ mirror_linux_run() {
   git update-ref -d refs/gate-mirror/syncing
   # 9. The gate.
   local v
-  for v in GATE_STEPS_LOG GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_TEST_LOG_DIR GATE_TESTSET_DIR; do
+  for v in GATE_STEPS_LOG GATE_DOCKER_ORDER_LOG GATE_TESTSET_DIR; do
     [ -n "${!v:-}" ] && export "$v=$(_mirror_lpath "${!v}")"
   done
   export GATE_MIRROR_TREE="$MS_TREE" GATE_MIRROR_SOURCE="$MS_SOURCE"

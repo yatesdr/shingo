@@ -13,9 +13,8 @@
 # the holder. The timed run's own gate passes: gatetime hands its command the
 # flag's token in GATE_TIMING_TOKEN. A flag whose heartbeat is older than
 # GATE_TIMING_STALE seconds (120) belongs to a run that died, or to a machine
-# that slept; the gate says so and goes on. fmt, scope, order, cachescope,
-# identity and lock-status never look: they are cheap, and the pre-push hook
-# runs fmt.
+# that slept; the gate says so and goes on. fmt, scope, order, cachescope and
+# lock-status never look: they are cheap, and the pre-push hook runs fmt.
 
 gate_timing_dir() {
   if [ -n "${GATE_TIMING_DIR:-}" ]; then
@@ -80,11 +79,13 @@ gate_timing_status() {
 # guards the scripts step's guards that ran, as step_scripts wrote them;
 # reused the packages Go's test cache served (the dev tier's cached unit step,
 # read from a unit.summary this run wrote), else 0. The `total` line carries
-# stamps after its five fields: exec (gate_exec_stamp, below), then
-# `gatetime stamp`'s ac, samples, standby, load, foreign30. Readers:
-# `gatetime compare` (shared/scripts/gatetime), which refuses unequal
-# selections and stamped loads and prints each run's exec; docker_order reads fields 1-5 only (scripts/check-docker-order.sh
-# pins that the extra fields change nothing).
+# the load stamps after its five fields (`gatetime stamp`): ac, samples,
+# standby, load, foreign30. Readers: `gatetime compare`
+# (shared/scripts/gatetime), which refuses unequal selections and stamped
+# loads; docker_order reads fields 1-5 only (scripts/check-docker-order.sh
+# pins that the extra fields change nothing). A total line written while the
+# gate ran its tests under the record-only -exec wrapper carries an exec=
+# stamp before them, which compare prints and never compares.
 #
 # PER RUN, NOT PER WORKTREE. The steps write what the selection line reads
 # into GATE_SEL_DIR (.gate/selection.<pid>), and each run builds its own
@@ -98,27 +99,26 @@ GATETIME_BIN="${GATETIME_BIN:-}"
 GATE_SEL_DIR=""
 GATETIME_OWN=""
 
-# gatetime_prepare <mode> — once per heavy run, before any step. Builds
-# gatetime when the steps log takes stamps, the mode's tests run under the
-# wrapper, or GATE_TESTSET=on records through it (gate-testsets.sh). A build
-# that fails costs the stamps (they read `unread`), and a mode whose tests need
-# the wrapper fails in gatetime_exec_prepare; lint and modbuild report the
-# compile error.
+# gatetime_prepare — once per heavy run, before any step. Builds gatetime
+# when the steps log takes stamps or GATE_TESTSET=on records through it
+# (gate-testsets.sh). A build that fails costs the stamps (they read
+# `unread`) and fails a GATE_TESTSET=on run in testset_setup; lint and
+# modbuild report the compile error.
 gatetime_prepare() {
   GATE_SEL_DIR="$ROOT/.gate/selection.$$"
   mkdir -p "$GATE_SEL_DIR" && rm -f "$GATE_SEL_DIR/docker.p" "$GATE_SEL_DIR/scripts.ran"
   : >"$GATE_SEL_DIR/start"
-  [ -n "$STEPS_LOG" ] || gate_exec_wanted "${1:-}" || [ "${GATE_TESTSET:-}" = on ] || return 0
+  [ -n "$STEPS_LOG" ] || [ "${GATE_TESTSET:-}" = on ] || return 0
   if [ -n "$GATETIME_BIN" ] && [ -x "$GATETIME_BIN" ]; then return 0; fi
   # binaries a killed gate left behind
   find "$ROOT/.gate" -maxdepth 1 -name 'gatetime-[0-9]*' -mmin +240 -exec rm -f {} + 2>/dev/null
   local ext bin
   ext="$(go env GOEXE 2>/dev/null | tr -d '\r')"
   bin="gatetime-$$$ext"
-  # -buildvcs=false: the binary's sha256 is in the gate run's identity
-  # (gate_identity, below), so it is built from its source alone; go's VCS
-  # stamp would move it with any edit anywhere in the tree and with every
-  # commit (pinned by scripts/check-gate-exec.sh).
+  # -buildvcs=false: built from its source alone, so the binary should not
+  # change with every edit and commit in the tree (go's VCS stamp); gatetime
+  # reads no build info of its own. Since 14efcd43, when its sha256 was in the
+  # record-only wrapper's run identity.
   if ( cd "$ROOT/shared" && go build -buildvcs=false -o "$ROOT/.gate/$bin" ./scripts/gatetime ) >"$GATE_SEL_DIR/build.log" 2>&1; then
     GATETIME_BIN="$(cd "$ROOT/.gate" && { pwd -W 2>/dev/null || pwd; })/$bin"
     GATETIME_OWN="$ROOT/.gate/$bin"
@@ -159,95 +159,9 @@ gate_selection_fields() {
     "$GATE_TIER" "$docker" "$modules" "$p" "${guards:--}" "${reused:-0}"
 }
 
-# gate_total_stamps — the total line's load stamps: exec first (whether the
-# run's Go tests ran under the wrapper, below), then gatetime stamp's.
+# gate_total_stamps — the total line's load stamps.
 gate_total_stamps() {
   local s=""
   [ -n "$GATETIME_BIN" ] && s="$("$GATETIME_BIN" stamp -since "$GATE_T0" 2>/dev/null | tr -d '\r')"
-  printf 'exec=%s %s' "$(gate_exec_stamp)" "${s:-ac=unread samples=0 standby=unread load=unmeasured}"
-}
-
-# ── The wrapper, record only, and the gate run's identity ──────────────────
-#
-# The Go test steps that run natively (unit, docker, and push's sim without
-# -race) run every test binary through `go test -count=1 -exec '<gatetime>'
-# exec`, which writes one manifest per binary into GATETIME_MANIFESTS
-# (shared/scripts/gatetime/exec.go says what a manifest holds and what it
-# cannot see). Record only: it reuses nothing and changes no verdict and no
-# output. -exec turns Go's test cache off, so the dev tier's unit step is
-# -count=1 under it. GATE_EXEC=off runs the steps without it (the A/B of its
-# cost), and the gate sentence says so. Race, and cert's -race sim, run in WSL
-# and stay unwrapped.
-#
-# One manifest directory per gate run, GATE_MANIFEST_DIR/<run>-<pid> (default
-# .gate/manifests), the newest GATE_MANIFEST_KEEP (20) kept. Beside the
-# manifests, `identity`: what a test verdict depends on that no manifest
-# shows (gate_identity), whose sha256 every manifest carries.
-
-GATE_EXEC_ARGS=()
-
-# gate_exec_wanted <mode> — whether this mode runs Go tests natively.
-gate_exec_wanted() {
-  [ "${GATE_EXEC:-on}" != off ] || return 1
-  case "$1" in test|docker|full|all) return 0 ;; esac
-  return 1
-}
-
-# gatetime_exec_prepare <mode> — after gatetime_prepare, once per run.
-gatetime_exec_prepare() {
-  unset GATETIME_MANIFESTS GATETIME_IDENTITY
-  gate_exec_wanted "$1" || return 0
-  if [ -z "$GATETIME_BIN" ]; then
-    echo "gate: FAILED — shared/scripts/gatetime did not build, and the Go test steps run under it (GATE_EXEC=off runs them without it)"
-    return 1
-  fi
-  local base="${GATE_MANIFEST_DIR:-$ROOT/.gate/manifests}" dir old d
-  dir="$base/${GATE_RUN//:/}-$$"
-  mkdir -p "$dir" || return 1
-  gate_identity >"$dir/identity"
-  GATETIME_MANIFESTS="$(cd "$dir" && { pwd -W 2>/dev/null || pwd; })"
-  GATETIME_IDENTITY="$GATETIME_MANIFESTS/identity"
-  export GATETIME_MANIFESTS GATETIME_IDENTITY
-  GATE_EXEC_ARGS=(-exec "'$GATETIME_BIN' exec")
-  old="$(find "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort | head -n -"${GATE_MANIFEST_KEEP:-20}")"
-  for d in $old; do
-    case "$d" in "$base"/*) rm -rf -- "$d" ;; esac
-  done
-  return 0
-}
-
-# gate_identity — the gate run's external identity, one key=value a line:
-# the Postgres image pg_up starts (its id, or why there is none: docker
-# down), pg_up's docker run line, the go, node, git and bash a test or its
-# children run, gatetime's own sha256, and the sha256 of scripts/gate.sh and
-# of every file it sources, read from its own `. "$ROOT/scripts/..."` lines.
-# G14: before this nothing recorded which image a gate ran on.
-gate_identity() {
-  local img f
-  img="$(timeout 20 docker image inspect --format '{{.Id}}' "$PG_IMAGE" 2>/dev/null | tr -d '\r')" || img=""
-  echo "pg_image=$PG_IMAGE ${img:-unavailable (docker image inspect failed)}"
-  echo "pg_up=$(declare -f pg_up | grep -m1 'docker run' | sed 's/^[[:space:]]*//')"
-  echo "go=$(go version 2>&1 | tr -d '\r')"
-  echo "node=$(node --version 2>&1 | tr -d '\r')"
-  echo "git=$(git --version 2>&1 | tr -d '\r')"
-  echo "bash=$BASH_VERSION"
-  echo "gatetime=$( { [ -n "$GATETIME_BIN" ] && sha256sum <"$GATETIME_BIN" | cut -d' ' -f1; } || echo unbuilt)"
-  for f in scripts/gate.sh $(sed -n 's#^\. "\$ROOT/\(scripts/[^"]*\)"$#\1#p' "$ROOT/scripts/gate.sh"); do
-    echo "script=$f $(sha256sum <"$ROOT/$f" 2>/dev/null | cut -d' ' -f1)"
-  done
-}
-
-# gate_exec_stamp — the total line's first stamp: on when this run's Go test
-# steps ran under the wrapper, off when GATE_EXEC=off kept them out, - when
-# the mode runs none.
-gate_exec_stamp() {
-  if [ "${#GATE_EXEC_ARGS[@]}" -gt 0 ]; then echo on
-  elif [ "${GATE_EXEC:-on}" = off ] && case "$GATE_MODE" in test|docker|full|all) true ;; *) false ;; esac; then echo off
-  else echo -; fi
-}
-
-# gate_exec_sentence — what the gate sentence adds when the wrapper was off.
-gate_exec_sentence() {
-  [ "$(gate_exec_stamp)" = off ] && printf ' Test binaries ran without the gatetime wrapper (GATE_EXEC=off).'
-  return 0
+  printf '%s' "${s:-ac=unread samples=0 standby=unread load=unmeasured}"
 }

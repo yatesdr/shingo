@@ -70,13 +70,13 @@ fail() { echo "  FAIL gate-mirror: $*"; fails=$((fails + 1)); }
 # tier too: an inherited GATE_TIER is exported already, so a fixture gate that
 # set it without exporting it would still hand it on, and case 17 would pass.
 unset GATE_SIDE GATE_LOCK_HELD GATE_NO_LOCK GATE_IN_MIRROR GATE_MIRROR_TREE GATE_MIRROR_SOURCE \
-      GATE_TIMING_TOKEN GATE_LINUX_SETUP GATETIME_BIN GATETIME_MANIFESTS GATETIME_IDENTITY \
-      GATE_MODULES GATE_TEST_LOG_DIR GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_RUN_KEPT GATE_TIER
+      GATE_TIMING_TOKEN GATE_LINUX_SETUP GATETIME_BIN \
+      GATE_MODULES GATE_DOCKER_ORDER_LOG GATE_RUN_KEPT GATE_TIER
 export GATE_LINUX_EXEC=local
 export GATE_MIRROR_ROOT="$TMP/mirrors"
 export GATE_LINUX_ENV="$TMP/env.sh"
 export GATE_LOCK_DIR="$TMP/gate.lock" GATE_TIMING_DIR="$TMP/gate.timing-free"
-export GATE_STEPS_LOG= GATE_EXEC=off
+export GATE_STEPS_LOG=
 # Case 17: where the fixture's tier_test.go writes the tier its binary read.
 export GATE_FIXTURE_TIER="$TMP/tier"
 export GATE_LOCK_HEARTBEAT=1 GATE_LOCK_STALE=4 GATE_LOCK_POLL=0.3 GATE_LOCK_REPORT=1 GATE_LOCK_TIMEOUT=20
