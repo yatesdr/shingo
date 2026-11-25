@@ -896,8 +896,9 @@ zones:
   # owner's same-place shape, final brief 2e). Eight positions and six carriers,
   # so a removal always finds a free one. With none free it would wait at Core for
   # the slot its own backfill's pick would empty, and the backfill is made only at
-  # the removal's release: TestScenario_SequentialLine_SwapsThroughItsOwnMarket,
-  # a known red. Flat (positions, no lanes): no wait points, nothing buried.
+  # the removal's release. That wait is the mode's rule, not a fault (the owner,
+  # 2026-11-25): TestScenario_SequentialLine_SwapsThroughItsOwnMarket pins it and
+  # its sentence. Flat (positions, no lanes): no wait points, nothing buried.
   - name: SYN_1N_MARKET
     retrieve_algorithm: FIFO
     store_algorithm: LKND
