@@ -3,8 +3,13 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"shingocore/internal/testdb"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -284,6 +289,122 @@ func TestTerminateOrder_MissingOrder(t *testing.T) {
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("err = %v, want 'not found'", err)
 	}
+}
+
+// TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob: an order the
+// UI terminate ends naming a fleet job has had a stop sent to the fleet for that
+// job, when the handover's yes lands between the terminate's read of the order
+// and its ending. The wire door's twin is
+// dispatch.TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob.
+//
+// A person's bin move is acquired at its door and handed to the fleet. Inside
+// the create, a transaction of the test's own takes the move's row, so the yes
+// waits for it. TerminateOrder is started: it reads the order (no fleet job yet)
+// and its ending, through CancelOrderWithCascade and
+// LifecycleService.CancelOrder, waits behind the yes. The test lets the row go;
+// the yes commits, and the ending lands on a `dispatched` row.
+//
+// RED AT a63768f5 (docket B20): CancelOrder decides the stop from the copy
+// TerminateOrder read. Skipped unless SHINGO_KNOWN_RED is set; the fix removes
+// the skip.
+func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
+			"run with SHINGO_KNOWN_RED=1")
+	}
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-TERM-BEFORE-YES")
+	backend := testdb.NewTrackingBackend()
+	eng := newTestEngine(t, db, backend)
+	const uuid = "TERMINATE-read-before-yes"
+
+	// waiting returns once n of this database's sessions wait on a lock: the
+	// fact each step below waits for.
+	waiting := func(n int) error {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			var got int
+			if err := db.DB.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity
+				WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&got); err != nil {
+				return err
+			}
+			if got == n {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%d session(s) wait on a lock, want %d", got, n)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	queued := make(chan error, 1)
+	terminated := make(chan error, 1)
+	var once sync.Once
+	backend.SetOnCreate(func() {
+		once.Do(func() {
+			// Inside the create: the hand has committed and the yes is next.
+			o, err := db.GetOrderByUUID(uuid)
+			if err != nil {
+				queued <- fmt.Errorf("find the move: %w", err)
+				return
+			}
+			hold, err := db.DB.Begin()
+			if err != nil {
+				queued <- fmt.Errorf("begin the hold: %w", err)
+				return
+			}
+			if _, err := hold.Exec(`SELECT 1 FROM orders WHERE id=$1 FOR UPDATE`, o.ID); err != nil {
+				queued <- errors.Join(fmt.Errorf("take the move's row: %w", err), hold.Rollback())
+				return
+			}
+			go func() {
+				err := waiting(1) // the yes waits for the row
+				if err == nil {
+					go func() { terminated <- eng.TerminateOrder(o.ID, "operator-x") }()
+					err = waiting(2) // the terminate has read the order, and its ending waits behind the yes
+				}
+				if cerr := hold.Commit(); err == nil {
+					err = cerr
+				}
+				queued <- err
+			}()
+		})
+	})
+
+	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
+		SourceNodeID: storageNode.ID, DestNodeID: lineNode.ID,
+		StationID: "term-before-yes", EdgeUUID: uuid, Desc: "terminated while the fleet takes it"})
+	// Either answer is right: the terminate lands beside the move's own re-read.
+	t.Logf("the move answered %+v, %v", res, err)
+	testutil.MustNoErr(t, <-queued, "queue the yes and the terminate's ending behind the held row")
+	select {
+	case err := <-terminated:
+		testutil.MustNoErr(t, err, "TerminateOrder")
+	case <-time.After(10 * time.Second):
+		t.Fatal("TerminateOrder never returned (fixture broken)")
+	}
+	creates := backend.CreateRequests()
+	if len(creates) != 1 {
+		t.Fatalf("expected exactly one create, got %d (fixture broken)", len(creates))
+	}
+	job := creates[0].OrderID
+
+	after, err := db.GetOrderByUUID(uuid)
+	testutil.MustNoErr(t, err, "reload the move")
+	if after.Status != dispatch.StatusCancelled || after.VendorOrderID != job {
+		t.Fatalf("the move reads %s naming fleet job %q, want cancelled naming %q: the yes did not land "+
+			"ahead of the terminate's ending (fixture broken)", after.Status, after.VendorOrderID, job)
+	}
+	if slices.Contains(backend.CancelRequests(), job) {
+		return
+	}
+	t.Errorf("order %d ended cancelled naming fleet job %s, and no stop was sent to the fleet for it "+
+		"(stops sent: %v). TerminateOrder read the order before the yes and ended it after: the UI "+
+		"terminate must reach the stop through the cancel door, which stops the job its ending finds "+
+		"on the row", after.ID, job, backend.CancelRequests())
 }
 
 // ── failOrderAndEmit (indirect) ─────────────────────────────────────
