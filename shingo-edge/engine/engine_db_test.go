@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"shingoedge/plc"
 	"strings"
@@ -308,6 +309,29 @@ func TestEngine_HooksAreSetAndReadOnTwoGoroutines(t *testing.T) {
 			}()
 			wg.Wait()
 		})
+	}
+}
+
+// TestEngine_TheDeltaSinkIsStoredAsTheHooksAre pins docket D31's ninth field
+// of the class, not fixed with the eight above: main.go sets inventoryDelta
+// (SetInventoryDeltaSink, the UOP mutator) after Start, while goroutines Start
+// began (the PLC poll, the lineside reporter, the event handlers) may read it.
+// Its fix rewrites about 61 reader lines in 16 files of this package, 9 test
+// lines and uop's archtest patterns, which key on the text
+// "inventoryDelta.<Method>(" and would pass on nothing after a rename. Skipped
+// unless SHINGO_KNOWN_RED is set; set, it should fail at the field's type.
+func TestEngine_TheDeltaSinkIsStoredAsTheHooksAre(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("docket D31 red pin: inventoryDelta, the ninth hook field, is plain until its readers move; " +
+			"run with SHINGO_KNOWN_RED=1")
+	}
+	f, ok := reflect.TypeOf((*Engine)(nil)).Elem().FieldByName("inventoryDelta")
+	if !ok {
+		t.Fatal("Engine has no field inventoryDelta: this pin lost its input; name the field that replaced it")
+	}
+	if f.Type.PkgPath() != "sync/atomic" {
+		t.Errorf("Engine.inventoryDelta is a plain %s: store it in a sync/atomic type, as the hooks above are; "+
+			"main.go sets it after Start, while Start's goroutines may read it", f.Type)
 	}
 }
 
