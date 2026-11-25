@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/messaging"
@@ -325,36 +326,52 @@ func TestCancelDoorPin_OrdersPage(t *testing.T) {
 }
 
 // TestCancelDoorPin_IdleRule: the idle rule sends back a swap pair parked at
-// a line silent for its hour (idle_cancel.go, CancelOrderAsEdge): off at the
-// position first, then each leg's cancel with the rule's reason and the
-// Edge's actor. Its own work in the next pass: nothing, the pair is gone.
-// Today both legs end at the tap; Core's word moves nothing on the ended rows.
+// a line silent for its hour (idle_cancel.go): off at the position first, then
+// each leg's cancel with the rule's reason and the Edge's actor, asking Core
+// (final brief 5g). After the pass the legs keep Core's status (staged) and
+// read cancel sent, and the next pass sends nothing (parkedLeg skips a leg
+// whose cancel is sent). Core's word ends each leg; no toast. Until 2026-11-25
+// both legs ended at the pass, and Core's word moved nothing.
 func TestCancelDoorPin_IdleRule(t *testing.T) {
 	t.Parallel()
 	l := newIdleLine(t, 61*time.Minute)
 	p := newDoorPin(t, l.db, l.eng)
+	clk := clock.NewManual(time.Now())
+	l.eng.reconcileClock = clk
 	ids := l.addLegs(t, parked, parked)
 	p.version(ids...)
 	p.drain()
-	var want []map[string]any
+	var want, tile []string
+	var sent []map[string]any
 	for _, id := range ids {
-		want = append(want, cancelOf(p.row(id).UUID, protocol.CancelReasonLineIdle, protocol.CancelActorEdge))
+		sent = append(sent, askOf(p.row(id).UUID, protocol.CancelReasonLineIdle, protocol.CancelActorEdge))
+		tile = append(tile, fmt.Sprintf("%d staged cancel_sent=true", id))
 	}
+	sort.Strings(tile)
 
 	l.eng.reconcileDemand()
 
-	expectLines(t, "the tile after the pass", p.tile(l.nodeID, "ALN_IDLE"))
-	p.expectSent("the pass", want...)
+	expectLines(t, "the tile after the pass", p.tile(l.nodeID, "ALN_IDLE"), tile...)
+	p.expectSent("the pass", sent...)
 	for _, id := range ids {
-		expectLines(t, fmt.Sprintf("leg %d's rows at the pass", id), p.history(id),
-			"staged->cancelled: "+protocol.CancelReasonLineIdle)
+		expectLines(t, fmt.Sprintf("leg %d's rows at the pass", id), p.history(id), want...)
 	}
 	if got := l.hold(t); got != domain.ReorderHoldOff {
 		t.Errorf("the position holds %q after the pass, want off", got)
 	}
+	rt, err := l.db.GetProcessNodeRuntime(l.nodeID)
+	testutil.MustNoErr(t, err, "the runtime row")
+	offAt := rt.ReorderHoldAt
 	p.drain()
+	clk.Advance(2 * time.Minute)
 	l.eng.reconcileDemand()
 	p.expectSent("the next pass")
+	rt, err = l.db.GetProcessNodeRuntime(l.nodeID)
+	testutil.MustNoErr(t, err, "the runtime row")
+	if !rt.ReorderHoldAt.Equal(offAt) {
+		t.Errorf("the next pass wrote the off again at %v (first %v): it read the legs whose cancel is sent as parked",
+			rt.ReorderHoldAt, offAt)
+	}
 
 	for _, id := range ids {
 		p.coreCancels(id, protocol.CancelReasonLineIdle, protocol.StatusStaged)
@@ -362,6 +379,9 @@ func TestCancelDoorPin_IdleRule(t *testing.T) {
 			"staged->cancelled: "+protocol.CancelReasonLineIdle)
 	}
 	expectLines(t, "the toasts", p.toasts)
+	if got := l.hold(t); got != domain.ReorderHoldOff {
+		t.Errorf("the position holds %q at the end, want off", got)
+	}
 	if got := countOrders(t, l.db); got != 2 {
 		t.Errorf("orders at the end = %d, want the two legs: nothing asked again at an off position", got)
 	}

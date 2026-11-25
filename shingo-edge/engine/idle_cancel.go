@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/counters"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -52,10 +53,13 @@ import (
 //
 // WITHIN A PASS it runs first (reconcileDemand), and for each group writes off
 // at its position before it cancels: the level pass after it reads the off and
-// asks for nothing, and the keep-staged keeper after it sees the cancels. The
-// cancels go through CancelOrderAsEdge, the door every Edge cancel takes,
-// with protocol.CancelReasonLineIdle and protocol.CancelActorEdge, so Core
-// files them as the Edge's and not a person's; the cancel never expires.
+// asks for nothing. The cancels go through the one cancel door
+// (orders.Manager.AskCancel), with protocol.CancelReasonLineIdle and
+// protocol.CancelActorEdge, so Core files them as the Edge's and not a
+// person's; the cancel never expires. A leg whose cancel asks Core stays as
+// Core holds it until Core's word ends it, so the keep-staged keeper later in
+// the pass reads it still there, and decides again when that word lands (the
+// completion's kick); the next pass does not send it back twice (parkedLeg).
 //
 // A PART AFTER A STOP ENDS AN OFF. The rule's own off (domain.IsIdleOff, by
 // its note) was written at a line that had counted nothing for its hour, so
@@ -262,7 +266,7 @@ func (e *Engine) sendBackParked(processID int64, node *processes.Node, g parkedG
 	}
 	e.noteSentBack(processID)
 	for _, id := range g.orderIDs {
-		if err := e.orderMgr.CancelOrderAsEdge(id, protocol.CancelReasonLineIdle); err != nil {
+		if err := e.orderMgr.AskCancel(id, ordermgr.CancelAsk{Reason: protocol.CancelReasonLineIdle, Actor: protocol.CancelActorEdge}); err != nil {
 			e.logFn("idle-cancel: node %s: cancel order %d: %v", node.Name, id, err)
 			continue
 		}
@@ -364,9 +368,14 @@ func stagedAt(o *storeorders.Order) time.Time {
 // placed, staged by the boot reconcile, whose snapshot names no wait, after an
 // outage longer than the notice's 10 minutes. That leg may be at Core's lane
 // wait or past it, so it waits for a person.
+//
+// A LEG WHOSE CANCEL IS SENT is not parked: the rule (or a person) has asked
+// Core to send it back, and the row keeps Core's status until Core's word ends
+// it (orders.Manager.AskCancel). Read as parked, every pass until then would
+// write the off and log "sent back" again. Pinned by TestCancelDoorPin_IdleRule.
 func parkedLeg(o *storeorders.Order) bool {
 	return o != nil && o.Status == protocol.StatusStaged && o.WaitKind == protocol.WaitKindStation &&
-		!o.LaneHeld && o.AuthoredBy == storeorders.AuthoredByEdge && o.ReleaseIntent == ""
+		!o.LaneHeld && o.AuthoredBy == storeorders.AuthoredByEdge && o.ReleaseIntent == "" && !o.CancelSent
 }
 
 // latest is the later of two times; a zero time is earlier than any.
