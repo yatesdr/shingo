@@ -429,3 +429,77 @@ func TestSwapPeerPin_LegsWithNoProcessNode_EveryTerminalIsADeath(t *testing.T) {
 		}
 	}
 }
+
+// TestSwapPeerTerminal_EvacDies_ASupplyThatSetItsBinDownIsSurfaced: the evac
+// dies after the supply has set its bin on the line (final brief 1d). The
+// supply's half is done, so it is left to its CONFIRM rather than cancelled,
+// and the half-swap is surfaced (swap_half_completed). In the landed half the
+// supply still reads in_transit, its bin on the line and its claim released:
+// the bins are asked, not the status. A supply whose bin has not been set
+// down, not lifted or carried, is cancelled as before.
+func TestSwapPeerTerminal_EvacDies_ASupplyThatSetItsBinDownIsSurfaced(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, prefix string
+		status       protocol.Status
+		at           string // where the supply's bin stands: "line", "transit" or "pickup"
+		claimed      bool
+		surfaced     bool
+	}{
+		{"delivered", "SPSD-DLV", protocol.StatusDelivered, "line", false, true},
+		{"landed, still in_transit", "SPSD-LND", protocol.StatusInTransit, "line", false, true},
+		{"carrying its bin", "SPSD-CAR", protocol.StatusInTransit, "transit", true, false},
+		{"not lifted", "SPSD-NOT", protocol.StatusInTransit, "pickup", true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDBShared(t)
+			_, lineNode, bp := testdb.SetupTestData(t, db)
+			pickup := &nodes.Node{Name: c.prefix + "-SRC", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(pickup), "create the supply's pickup")
+			out := &nodes.Node{Name: c.prefix + "-OUT", Enabled: true}
+			testutil.MustNoErr(t, db.CreateNode(out), "create the evac's drop")
+			transit, err := db.GetNodeByDotName("_TRANSIT")
+			testutil.MustNoErr(t, err, "resolve _TRANSIT")
+			d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+			supply := mkSwapLegWithSteps(t, db, c.prefix+"-sup", c.prefix+"-evac", c.status, lineNode.Name,
+				lineNode.Name, bp.Code, []resolvedStep{
+					{Action: protocol.ActionPickup, Node: pickup.Name},
+					{Action: protocol.ActionDropoff, Node: lineNode.Name},
+				})
+			at := map[string]*nodes.Node{"line": lineNode, "transit": transit, "pickup": pickup}[c.at]
+			bin := testdb.CreateBinAtNode(t, db, bp.Code, at.ID, c.prefix+"-BIN")
+			testdb.SeedCartRow(t, db, supply.ID, bin.ID, 0, 1)
+			if c.claimed {
+				testdb.ClaimBinForTest(t, db, bin.ID, supply.ID)
+			}
+			evac := mkSwapLeg(t, db, c.prefix+"-evac", c.prefix+"-sup", StatusCancelled, lineNode.Name, out.Name, bp.Code)
+
+			d.HandleSwapPeerTerminal(evac.ID, SwapTerminalCancelled)
+
+			got, err := db.GetOrder(supply.ID)
+			testutil.MustNoErr(t, err, "reload the supply")
+			var cancels int
+			for _, e := range emitter.cancelled {
+				if e.orderID == supply.ID {
+					cancels++
+				}
+			}
+			t.Logf("record: supply %d %s (%q), cancels emitted %d, half-swap audited %v", got.ID, got.Status,
+				got.ErrorDetail, cancels, hasSwapHalfAudit(t, db, got.ID))
+			if c.surfaced {
+				if got.Status != c.status || cancels != 0 || !hasSwapHalfAudit(t, db, got.ID) {
+					t.Errorf("supply is %q (%q), %d cancel(s) emitted, half-swap audited %v; want it left %q for "+
+						"its CONFIRM, nothing cancelled, the half-swap audited", got.Status, got.ErrorDetail, cancels,
+						hasSwapHalfAudit(t, db, got.ID), c.status)
+				}
+				return
+			}
+			if got.Status != StatusCancelled || hasSwapHalfAudit(t, db, got.ID) {
+				t.Errorf("supply is %q (%q), half-swap audited %v; want it cancelled as before, no half-swap",
+					got.Status, got.ErrorDetail, hasSwapHalfAudit(t, db, got.ID))
+			}
+		})
+	}
+}
