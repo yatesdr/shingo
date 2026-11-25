@@ -131,11 +131,10 @@ var feedSites = map[string]string{
 	"store/registry:Enroll":         "",
 	"store/registry:SetDisplayName": "",
 	// The scene.
-	"store/scene:DeleteByArea":      "",
-	"store/scene:DeleteEdgesByArea": "",
-	"store/scene:ReplaceArea":       "",
-	"store/scene:Upsert":            "",
-	"store/scene:UpsertEdge":        "",
+	"store/scene:DeleteByArea": "",
+	"store/scene:ReplaceArea":  "",
+	"store/scene:Upsert":       "",
+	"store/scene:UpsertEdge":   "",
 
 	// A slot's claim (nodes.claimed_by): no feed reads it.
 	"store/internal/helpers:PlaceBinTx":                 "a slot's claim (nodes.claimed_by), which no feed reads",

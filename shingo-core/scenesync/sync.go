@@ -28,7 +28,6 @@ import (
 type Store interface {
 	DeleteScenePointsByArea(areaName string) error
 	UpsertScenePoint(sp *scene.Point) error
-	DeleteSceneEdgesByArea(areaName string) error
 	// ReplaceAreaScene swaps one area's points and edges in ONE transaction.
 	//
 	// The per-area delete-then-insert used to run as loose autocommit

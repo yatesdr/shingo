@@ -259,12 +259,6 @@ func ListEdges(db *sql.DB) ([]*Edge, error) {
 	return edges, rows.Err()
 }
 
-// DeleteEdgesByArea removes every scene edge in a given area.
-func DeleteEdgesByArea(db *sql.DB, areaName string) error {
-	_, err := db.Exec(`DELETE FROM scene_edges WHERE area_name=$1`, areaName)
-	return err
-}
-
 // ReplaceArea swaps one area's entire scene — points AND edges — inside one
 // transaction, so a concurrent reader sees the whole old set or the whole new
 // set and never a gap.

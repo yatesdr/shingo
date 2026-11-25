@@ -83,18 +83,6 @@ func (f *fakeStore) UpsertScenePoint(sp *scene.Point) error {
 	return nil
 }
 
-func (f *fakeStore) DeleteSceneEdgesByArea(areaName string) error {
-	if f.errDelete != nil {
-		return f.errDelete
-	}
-	for k, se := range f.edges {
-		if se.AreaName == areaName {
-			delete(f.edges, k)
-		}
-	}
-	return nil
-}
-
 func (f *fakeStore) UpsertSceneEdge(se *scene.Edge) error {
 	if f.errUpsert != nil {
 		return f.errUpsert

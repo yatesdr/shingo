@@ -62,10 +62,6 @@ func (db *DB) ListSceneEdges() ([]*scene.Edge, error) {
 	return scene.ListEdges(db.DB)
 }
 
-func (db *DB) DeleteSceneEdgesByArea(areaName string) error {
-	return scene.DeleteEdgesByArea(db.DB, areaName)
-}
-
 // ReplaceAreaScene swaps one area's points and edges atomically. See
 // scene.ReplaceArea for why the transaction is load-bearing.
 func (db *DB) ReplaceAreaScene(areaName string, points []*scene.Point, edges []*scene.Edge) error {
