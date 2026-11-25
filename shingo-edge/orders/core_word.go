@@ -36,11 +36,14 @@ import (
 // lifecycle_service.go and manager_status.go.
 //
 // AN ORDER THAT HAS ENDED. A terminal Core told is final: Core does not move an
-// ended order. A terminal this Edge wrote itself — the operator's abort, the
-// operator's confirm — is the operator's word, which Core may not have yet. A
+// ended order. A terminal this Edge wrote itself — the operator's confirm, or a
+// cancel of an order no versioned word of Core's had reached (a cancel of one
+// whose status is Core's word asks Core, and Core's word ends the row:
+// Manager.AskCancel) — is the operator's word, which Core may not have yet. A
 // newer word of Core's that the order is live keeps the row as the operator left
 // it: on a cancelled row the cancel is sent again (the first may be lost); on a
-// confirmed row a `delivered` is held.
+// confirmed row a `delivered` is held. A live row whose cancel is out and
+// unanswered has it sent again on a reconcile's word (resendAskedCancel).
 
 // CoreWord is one word of Core's about an order: its status at its version, and
 // the facts that ride it.

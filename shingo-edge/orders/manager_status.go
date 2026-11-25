@@ -149,9 +149,11 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// and the press heard nothing.
 		//
 		// "Did not ask for" is read off the status BEFORE the mirror moves it:
-		// CancelOrderWithReason transitions this order to cancelled before Core
-		// can echo the cancel, so an operator's own abort arrives here already
-		// terminal and is not toasted back at them.
+		// this arm sees only an order with no versioned word of Core's, whose
+		// cancel the one door (AskCancel) ends here before Core can echo it, so
+		// an operator's own cancel arrives here already terminal and is not
+		// toasted back at them. A versioned order's ends are the applier's
+		// (core_word.go coreEnded), which reads the cancel this station asked.
 		//
 		// ONE TOAST PER DEAD SWAP. A swap's partner is cancelled because its
 		// sibling died, and that cancel lands here just after the sibling's

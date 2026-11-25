@@ -42,8 +42,10 @@ type EventEmitter interface {
 	// row's sentence.
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string)
 	// EmitOrderCancelledByCore says Core cancelled an order that was still live
-	// here, with Core's reason (Manager.HandleDispatchReply). Not emitted for a
-	// cancel this station sent: that order is terminal before Core's echo lands.
+	// here, with Core's reason (Manager.HandleDispatchReply, coreEnded). Not
+	// emitted for a cancel this station sent: an order with no versioned word is
+	// terminal here before Core's echo lands, and Core's word on a row carrying
+	// the cancel it asked is the station's cancel ended (coreEnded).
 	EmitOrderCancelledByCore(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
 	// EmitOrderTouched says an order's fields were written and no scoped event

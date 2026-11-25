@@ -1,27 +1,27 @@
-// Two races between a terminal the operator writes at the Edge and a terminal
-// Core writes on its own, pinned end to end as they behave today.
+// Two races between an end the operator asks for at the Edge and an end Core
+// writes on its own, pinned end to end.
 //
-//  1. Abort against Core's own confirm. The operator aborts an order the Edge
-//     still reads before delivered, though Core has it delivered and its notice
-//     has not arrived: the Edge writes cancelled and queues order.cancel.
-//     Before Core takes the cancel, its stuck-delivered sweep confirms the
-//     order. The cancel then lands on a terminal order and changes nothing, and
-//     Core's delivered and confirmed notices land on a cancelled Edge row and
-//     change nothing (the delivered one has the cancel sent again). That
-//     window is all the race has left: since 2026-11-25 (final brief 1e) the
-//     Edge refuses the abort of a row it reads delivered, which the minutes
-//     before the sweep used to give it.
-//  2. Confirm against Core's own cancel. Core cancels a delivered order; before
-//     its order.cancelled reaches the Edge, the operator confirms there: the Edge
-//     writes confirmed and queues its receipt. Core refuses the receipt on a
-//     cancelled order, and the order.cancelled lands on a confirmed Edge row and
-//     changes nothing.
-//
-// Both end with the two sides disagreeing about how the order ended. These are
-// known pairs and they stay as they are until abort and confirm become intents
-// the Edge asks Core for rather than terminals it writes itself. Until then a
-// change to how Core tells the Edge an order's status must leave both pairs
-// where these tests find them.
+//  1. Cancel against Core's own confirm: CLOSED (final brief 5g). The operator
+//     cancels an order the Edge still reads before delivered, though Core has
+//     it delivered and its notice has not arrived. The cancel asks Core and the
+//     Edge keeps Core's status; Core's stuck-delivered sweep confirms the order
+//     before the cancel lands, so Core refuses it (cancel_refused_ended), and
+//     Core's delivered and confirmed end the Edge's row. Both sides read
+//     confirmed. Until 2026-11-25 the Edge wrote cancelled at the tap and the
+//     two sides disagreed. The Edge refuses the cancel of a row it reads
+//     delivered (final brief 1e).
+//  2. Confirm against Core's own cancel: KNOWN, kept as it is. Core cancels a
+//     delivered order; before its order.cancelled reaches the Edge, the
+//     operator confirms there: the Edge writes confirmed and queues its
+//     receipt (a confirm is the Edge's, final brief Part 5: CONFIRM IS NOT
+//     TOUCHED). Core refuses the receipt on a cancelled order, and the
+//     order.cancelled lands on a confirmed Edge row and changes nothing. Both
+//     end disagreeing. Its ways in are what is left of Core cancelling a
+//     delivered order: the race of final brief 1g (a landing between Core's
+//     read of the trip and its compare-and-swap), a cancel from an older Edge
+//     (it does not ask, and Core follows it, 1f), and a raw order.cancel sent
+//     as the Kafka Direct page sends one. A change to how Core tells the Edge
+//     an order's status must leave this pair where its test finds it.
 //
 // Each race is made deterministic by holding one direction of the Bus at a
 // time: a held side's outbox reads empty to the pump, so nothing it queued is
@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,8 @@ type sppMsg struct {
 	Reason      string `json:"reason"`
 	ReceiptType string `json:"receipt_type"`
 	FinalCount  int64  `json:"final_count"`
+	Intent      bool   `json:"intent"`
+	ErrorCode   string `json:"error_code"`
 }
 
 func sppDecode(t *testing.T, raw []byte) sppMsg {
@@ -393,27 +396,26 @@ var sppDeliveryOrders = []struct {
 	{"the Edge's message first", false},
 }
 
-// TestStatusPairPin_AbortVsCoreAutoConfirm pins the abort that loses to Core's
-// own confirm, in the window it has left. The robot sets the bin down and Core
-// reads delivered, but its notice is held, so the Edge still reads in_transit;
-// the operator aborts there (Manager.CancelOrder: the Edge writes cancelled and
-// queues order.cancel). Before the cancel reaches Core, Core's stuck-delivered
-// sweep confirms the order through lifecycle ConfirmReceipt and queues
-// order.update confirmed. The cancel lands on a terminal order: CancelOrder
-// returns without a write, and the dispatcher still answers order.cancelled.
-// No message of Core's moves the Edge's cancelled row: its delivered is a newer
-// live word on a row this Edge cancelled, which sends the cancel again (orders
-// resendCancel), and that copy lands on the confirmed order too;
-// ApplyCoreStatus's confirmed arm returns on a terminal row; and a cancelled
-// reply on a cancelled row is idempotent.
+// TestStatusPairPin_AbortVsCoreAutoConfirm pins the cancel that meets Core's
+// own confirm, in the window it has left: closed since the cancel asks Core
+// (final brief 5g). The robot sets the bin down and Core reads delivered, but
+// its notice is held, so the Edge still reads in_transit; the operator cancels
+// there (Manager.CancelOrder: the cancel asks, OrderCancel.Intent, and the row
+// keeps Core's status with its cancel sent). Before the cancel reaches Core,
+// Core's stuck-delivered sweep confirms the order through lifecycle
+// ConfirmReceipt and queues order.update confirmed. The cancel lands on an
+// order that has ended and Core answers it cannot (order.error
+// cancel_refused_ended, with its sentence), cancelling nothing and sending no
+// order.cancelled. Core's delivered and confirmed end the Edge's row, which
+// never ended on its own; a refusal that lands after the end writes nothing.
 //
-// End: Core confirmed, the Edge cancelled. A known pair, kept as it is until
-// abort and confirm become intents.
+// End: both sides confirmed. Until 2026-11-25 the Edge wrote cancelled at the
+// tap and the two sides disagreed: Core confirmed, the Edge cancelled, the
+// cancel sent twice (S3t's resend) and answered twice with order.cancelled.
 //
-// The abort of a row the Edge reads delivered is refused since 2026-11-25
+// The cancel of a row the Edge reads delivered is refused at the Edge's door
 // (final brief 1e: orders.ErrDelivered), so the first case asserts that, and
-// that the sweep's confirm then leaves both sides confirmed. Until then this
-// race was pinned on that abort, with the minutes before the sweep as its window.
+// that the sweep's confirm then leaves both sides confirmed.
 func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 	t.Parallel()
 	t.Run("the Edge reads delivered: the abort is refused", func(t *testing.T) {
@@ -460,14 +462,15 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 				t.Fatalf("with Core's delivered held the Edge reads %q, want in_transit", s)
 			}
 
-			// The operator aborts. The Edge writes cancelled and holds the cancel.
+			// The operator cancels. The cancel asks; the Edge keeps Core's status.
 			c.edgeOut.hold(true)
-			mustNil(t, c.edge.Engine.OrderManager().CancelOrder(o.ID), "abort")
-			if s := c.edgeRow(o.ID).Status; s != protocol.StatusCancelled {
-				t.Fatalf("after the abort the Edge reads %q, want cancelled", s)
+			mustNil(t, c.edge.Engine.OrderManager().CancelOrder(o.ID), "the cancel")
+			if row := c.edgeRow(o.ID); row.Status != protocol.StatusInTransit || !row.CancelSent {
+				t.Fatalf("after the cancel the Edge reads %q (cancel sent %v), want in_transit with its cancel sent",
+					row.Status, row.CancelSent)
 			}
-			if p := c.edgeOut.pending(o.UUID); len(p) != 1 || p[0].Type != protocol.TypeOrderCancel {
-				t.Fatalf("after the abort the Edge holds %v, want one order.cancel", p)
+			if p := c.edgeOut.pending(o.UUID); len(p) != 1 || p[0].Type != protocol.TypeOrderCancel || !p[0].Intent {
+				t.Fatalf("after the cancel the Edge holds %v, want one order.cancel that asks", p)
 			}
 
 			// Core, not yet told, confirms the order on its own.
@@ -485,66 +488,61 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 			}
 
 			if order.coreFirst {
-				// Core's delivered and confirmed notices reach the Edge's
-				// cancelled row. The delivered one is a newer live word on a row
-				// this Edge cancelled, so the cancel is queued again.
+				// Core's delivered and confirmed reach the Edge's live row and end
+				// it, confirmed; the cancel is sent once, not again.
 				c.coreOut.hold(false)
 				c.settle()
-				if s := c.edgeRow(o.ID).Status; s != protocol.StatusCancelled {
-					t.Fatalf("Core's notices moved the Edge's cancelled row to %q", s)
+				if s := c.edgeRow(o.ID).Status; s != protocol.StatusConfirmed {
+					t.Fatalf("Core's notices left the Edge's row %q, want confirmed", s)
 				}
-				if p := c.edgeOut.pending(o.UUID); len(p) != 2 || p[1].Type != protocol.TypeOrderCancel {
-					t.Fatalf("after Core's notices the Edge holds %v, want its order.cancel and the copy Core's "+
-						"delivered sends again", p)
+				if p := c.edgeOut.pending(o.UUID); len(p) != 1 {
+					t.Fatalf("after Core's notices the Edge holds %v, want its one order.cancel", p)
 				}
-				// Then the Edge's cancels reach Core's confirmed order.
+				// Then the Edge's cancel reaches Core's confirmed order.
 				c.edgeOut.hold(false)
 				c.settle()
 			} else {
-				// The Edge's cancel reaches Core's confirmed order.
+				// The Edge's cancel reaches Core's confirmed order, which it refuses.
 				c.edgeOut.hold(false)
 				c.settle()
 				if s := c.coreRow(o.UUID).Status; s != protocol.StatusConfirmed {
 					t.Fatalf("the Edge's cancel moved Core's confirmed order to %q", s)
 				}
-				// Then Core's notices and its reply to the cancel reach the Edge,
-				// whose cancel goes again on the delivered one, and lands as the
-				// first did.
+				// Then Core's notices and its refusal reach the Edge.
 				c.coreOut.hold(false)
 				c.settle()
 			}
 
-			// The end: the two sides disagree, and stay that way.
+			// The end: the two sides agree.
 			co = c.coreRow(o.UUID)
 			if co.Status != protocol.StatusConfirmed || co.CompletedAt == nil {
 				t.Errorf("end: Core reads %q (completed %v), want confirmed and completed", co.Status, co.CompletedAt != nil)
 			}
 			if h := c.coreHistory(co.ID); sppHas(h, protocol.StatusCancelled) {
-				t.Errorf("end: Core's history %v has a cancelled row, want none: the cancel lands on a terminal order", h)
+				t.Errorf("end: Core's history %v has a cancelled row, want none: the cancel is refused", h)
 			}
-			if s := c.edgeRow(o.ID).Status; s != protocol.StatusCancelled {
-				t.Errorf("end: the Edge reads %q, want cancelled", s)
+			if row := c.edgeRow(o.ID); row.Status != protocol.StatusConfirmed || row.CancelIntent != "" {
+				t.Errorf("end: the Edge reads %q with cancel_intent %q, want confirmed and the cancel cleared", row.Status,
+					row.CancelIntent)
 			}
-			if h := c.edgeHistory(o.ID); sppHas(h, protocol.StatusConfirmed) {
-				t.Errorf("end: the Edge's history %v has a confirmed row, want none", h)
+			if h := c.edgeHistory(o.ID); sppHas(h, protocol.StatusCancelled) {
+				t.Errorf("end: the Edge's history %v has a cancelled row, want none", h)
 			}
 
 			// What crossed the Bus about the order once the robot set the bin down.
 			edgeSent := c.edgeOut.forOrder(o.UUID)
 			t.Logf("record: the Edge sent %+v", edgeSent)
-			if len(edgeSent) != 2 || edgeSent[0].Type != protocol.TypeOrderCancel || edgeSent[0].Reason != "cancelled by operator" ||
-				edgeSent[1].Type != protocol.TypeOrderCancel || edgeSent[1].Reason != "cancelled by operator" {
-				t.Errorf("the Edge sent %+v, want two order.cancel \"cancelled by operator\": the abort's, and the copy "+
-					"Core's delivered on the cancelled row sends again", edgeSent)
+			if len(edgeSent) != 1 || edgeSent[0].Type != protocol.TypeOrderCancel || edgeSent[0].Reason != "cancelled by operator" ||
+				!edgeSent[0].Intent {
+				t.Errorf("the Edge sent %+v, want one order.cancel \"cancelled by operator\" that asks", edgeSent)
 			}
 			coreSent := c.coreOut.forOrder(o.UUID)
 			t.Logf("record: Core sent %+v", coreSent)
 			if !slices.Equal(sppKinds(coreSent), []string{protocol.TypeOrderDelivered + " ", protocol.TypeOrderUpdate + " delivered",
-				protocol.TypeOrderUpdate + " confirmed", protocol.TypeOrderCancelled + " cancelled by operator",
-				protocol.TypeOrderCancelled + " cancelled by operator"}) {
-				t.Errorf("Core sent %+v, want its delivered notice, order.update confirmed, then order.cancelled "+
-					"\"cancelled by operator\" for each cancel (the dispatcher's answer, sent though its order reads "+
-					"confirmed)", coreSent)
+				protocol.TypeOrderUpdate + " confirmed", protocol.TypeOrderError + " "}) ||
+				coreSent[3].ErrorCode != protocol.CancelRefusedEnded || !strings.HasPrefix(coreSent[3].Detail, "Not cancelled:") {
+				t.Errorf("Core sent %+v, want its delivered notice, order.update confirmed, then one order.error %s with "+
+					"its sentence, and no order.cancelled", coreSent, protocol.CancelRefusedEnded)
 			}
 			if p := c.edgeOut.pending(o.UUID); len(p) != 0 {
 				t.Errorf("end: the Edge still holds %v", p)
@@ -567,8 +565,9 @@ func TestStatusPairPin_AbortVsCoreAutoConfirm(t *testing.T) {
 // answers nothing. Core's cancelled, told and announced, lands on the Edge's
 // confirmed row and does not move it.
 //
-// End: Core cancelled, the Edge confirmed. A known pair, kept as it is until
-// abort and confirm become intents.
+// End: Core cancelled, the Edge confirmed. A known pair, kept as it is: a
+// confirm is the Edge's (final brief Part 5), and its ways in are named in the
+// file's header.
 func TestStatusPairPin_ConfirmVsCoreCancel(t *testing.T) {
 	t.Parallel()
 	for _, order := range sppDeliveryOrders {

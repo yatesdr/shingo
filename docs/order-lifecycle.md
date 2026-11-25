@@ -113,7 +113,7 @@ derived, not hand-maintained): **confirmed, failed, cancelled, skipped**.
 | `confirmed` | shared | **yes** | `ConfirmReceipt`, `CompleteCompound` | operator confirm (`ConfirmDelivery`), or `ApplyCoreStatus` force (Core-side confirm) | yes (receipt Edge→Core) | disappears (done) |
 | `faulted` | shared | no | `MarkFaulted` (RDS FAILED, grace period) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | amber left-edge border on the orders list |
 | `failed` | shared | **yes** | `Fail` | `ReplyError` (`order.error`) | yes (`order.error`) | stays visible (retry/ack) |
-| `cancelled` | shared | **yes** | `CancelOrder` | operator abort + `ReplyCancelled` | yes (both directions) | disappears |
+| `cancelled` | shared | **yes** | `CancelOrder` | Core's word (`order.update` cancelled) for an order Core has told; the cancel door (`AskCancel`) asks and ends nothing itself, except an order no word of Core's has reached, which it ends at the tap | yes (both directions) | disappears |
 | `reshuffling` | shared | no | `BeginReshuffle` | snapshot arm only | snapshot at reconnect | Core filter chip; HMI mostly n/a |
 | `skipped` | shared | **yes** | `Skip` (no source bins) | `HandleSkipped` (`order.skipped`) | yes (`order.skipped`) | "Auto-skipped" chip, not an alarm |
 
@@ -662,7 +662,7 @@ reconcile.
 **Edge → Core:**
 
 - Order submission (the envelope in Edge's outbox).
-- `order.cancel` (operator abort), `order.redirect` (delivery-node change),
+- `order.cancel` (a cancel; it asks, `OrderCancel.Intent`, for an order Core has told), `order.redirect` (delivery-node change),
   `order.release` (release-from-staging), and the delivery receipt
   (`order.receipt`, confirmed with final count).
 

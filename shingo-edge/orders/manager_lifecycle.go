@@ -242,34 +242,35 @@ var ErrDelivered = errors.New("delivered: its cart is already set down. Confirm 
 // text an older Edge sends classifies as this does.
 const operatorCancelReason = "cancelled by operator"
 
-// CancelOrder cancels a live order that is not delivered and enqueues a cancel
-// message. The cancel message is enqueued BEFORE the local transition so that
-// Core is guaranteed to receive the cancellation — preventing a robot from
-// continuing to execute a cancelled order on the floor.
+// CancelOrder cancels a live order that is not delivered, with a person's
+// reason, through the one cancel door (AskCancel): for an order whose status
+// is Core's versioned word it asks Core, and the row ends by Core's word.
 func (m *Manager) CancelOrder(orderID int64) error {
-	return m.CancelOrderWithReason(orderID, operatorCancelReason)
+	return m.AskCancel(orderID, CancelAsk{})
 }
 
 // CancelOrderWithReason is CancelOrder with a caller-chosen cancel reason. The
 // reason travels in the OrderCancel envelope and Core keys behavior on it —
 // protocol.CancelReasonAcceptHalfSwap tells Core's swap-peer arm to leave the
 // partner leg alone (the accepted half-swap) where any other reason cascades
-// the cancel. It is also the local transition detail, so the HMI shows it.
+// the cancel. It is also the row's end detail, so the HMI shows it.
 func (m *Manager) CancelOrderWithReason(orderID int64, reason string) error {
-	return m.cancelOrder(orderID, reason, "")
+	return m.AskCancel(orderID, CancelAsk{Reason: reason})
 }
 
 // CancelOrderAsEdge is CancelOrderWithReason for a cancel the Edge decided
-// itself, not a person at it (engine/idle_cancel.go): the cancel carries
-// protocol.CancelActorEdge, so Core files it abandoned rather than an
-// operator's. An older Core ignores the field.
+// itself, not a person at it: the cancel carries protocol.CancelActorEdge, so
+// Core files it abandoned rather than an operator's. An older Core ignores
+// the field.
 func (m *Manager) CancelOrderAsEdge(orderID int64, reason string) error {
-	return m.cancelOrder(orderID, reason, protocol.CancelActorEdge)
+	return m.AskCancel(orderID, CancelAsk{Reason: reason, Actor: protocol.CancelActorEdge})
 }
 
-// cancelOrder is the one cancel door: the cancel queued first, then the row
-// ended (CancelOrderWithReason's doc). It refuses an order that has ended, and
-// one that reads delivered (ErrDelivered), sending nothing.
+// cancelOrder is the one door's body for an order with no versioned word of
+// Core's (AskCancel): the cancel queued first, so Core is sure to hear it and
+// no robot goes on working an order ended here, then the row ended at the
+// tap. It refuses an order that has ended, and one that reads delivered
+// (ErrDelivered), sending nothing.
 func (m *Manager) cancelOrder(orderID int64, reason, actor string) error {
 	m.DebugLog.Log("cancel: id=%d reason=%q", orderID, reason)
 	order, err := m.db.GetOrder(orderID)

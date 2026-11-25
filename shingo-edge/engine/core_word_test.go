@@ -537,13 +537,16 @@ func TestCoreWord_CoresEndToastsAndHoldsOnceAtTheLiveToTerminalEdge(t *testing.T
 	})
 }
 
-// TestCoreWord_AnOperatorsCancelCoreStillHoldsLiveIsSentAgain: the operator
-// aborts and the row ends cancelled. A newer word of Core's that the order is
-// live means Core has not acted on the cancel (it may be lost): the row stays
-// cancelled and the cancel goes again, with the abort's reason. A reconcile
-// says the same at the version already applied, so it sends again too; a live
-// tell at that version does not. Core's cancelled ends it: nothing more, no
-// toast, no hold.
+// TestCoreWord_AnOperatorsCancelCoreStillHoldsLiveIsSentAgain: the operator's
+// cancel of a row whose status is Core's word asks Core (final brief 5f): the
+// row stays live with its cancel sent. A newer live word of Core's is the
+// cancel's ordinary crossing (the cancel is still ahead on the outbox, which
+// never expires or dead-letters it): it moves the row and sends nothing. A
+// reconcile that finds Core holding the order live once the cancel is older
+// than an ask's life sends it again, with its reason, asking. Core's
+// cancelled ends it: no toast, no hold. Until 2026-11-25 the row ended at the
+// tap, and S3t kept the ended row and sent the cancel again on any newer live
+// word (resendCancel, now only for a row ended at the tap).
 func TestCoreWord_AnOperatorsCancelCoreStillHoldsLiveIsSentAgain(t *testing.T) {
 	t.Parallel()
 	r := newWordRig(t)
@@ -552,44 +555,80 @@ func TestCoreWord_AnOperatorsCancelCoreStillHoldsLiveIsSentAgain(t *testing.T) {
 	id := r.leg(uuid, protocol.StatusDispatched)
 	r.live(uuid, protocol.StatusInTransit, 2)
 
-	testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, reason), "the operator's abort")
-	r.expect("the abort", "status in_transit->cancelled", "completed")
-	expectCancels(t, "the abort", r.cancels(), uuid, reason, 1)
+	testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, reason), "the operator's cancel")
+	if o := r.at("the cancel", id, protocol.StatusInTransit, 2); !o.CancelSent {
+		t.Errorf("after the cancel the row reads cancel sent %v, want sent", o.CancelSent)
+	}
+	r.expect("the cancel", "touched")
+	expectCancels(t, "the cancel", r.cancels(), uuid, reason, 1)
+	if c := r.cancels()[0]; !c.Intent {
+		t.Errorf("the cancel %+v does not ask", c)
+	}
 
 	r.update(protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusInTransit), Version: 3, RobotID: "AMB-2"})
-	if o := r.at("in_transit v3", id, protocol.StatusCancelled, 3); o.RobotID != "" {
-		t.Errorf("Core's word on the cancelled row wrote robot %q", o.RobotID)
+	if o := r.at("in_transit v3", id, protocol.StatusInTransit, 3); o.RobotID != "AMB-2" || !o.CancelSent {
+		t.Errorf("Core's live word left robot %q, cancel sent %v; want AMB-2 and the cancel still out", o.RobotID, o.CancelSent)
 	}
-	r.expect("in_transit v3")
-	expectCancels(t, "in_transit v3", r.cancels(), uuid, reason, 2)
+	r.expect("in_transit v3", "touched")
+	expectCancels(t, "in_transit v3", r.cancels(), uuid, reason, 1)
 
 	r.update(protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusInTransit), Version: 3})
-	r.at("a repeated in_transit v3", id, protocol.StatusCancelled, 3)
-	expectCancels(t, "a repeated in_transit v3", r.cancels(), uuid, reason, 2)
+	r.at("a repeated in_transit v3", id, protocol.StatusInTransit, 3)
+	expectCancels(t, "a repeated in_transit v3", r.cancels(), uuid, reason, 1)
 
 	r.snapshot(protocol.OrderStatusSnapshot{OrderUUID: uuid, Status: string(protocol.StatusInTransit), Version: 3})
-	r.at("the reconcile at v3", id, protocol.StatusCancelled, 3)
+	expectCancels(t, "a reconcile while the cancel is young", r.cancels(), uuid, reason, 1)
+	// The cancel went out before an outage: older than an ask's whole life.
+	_, err := r.db.DB.Exec(`UPDATE orders SET cancel_intent = json_set(cancel_intent, '$.sent_at', '2026-11-25T12:00:00Z') WHERE id = ?`, id)
+	testutil.MustNoErr(t, err, "age the cancel")
+	r.snapshot(protocol.OrderStatusSnapshot{OrderUUID: uuid, Status: string(protocol.StatusInTransit), Version: 3})
+	r.at("the reconcile at v3", id, protocol.StatusInTransit, 3)
 	r.expect("the reconcile at v3")
-	expectCancels(t, "the reconcile at v3", r.cancels(), uuid, reason, 3)
+	expectCancels(t, "the reconcile at v3", r.cancels(), uuid, reason, 2)
+	if c := r.cancels()[1]; !c.Intent {
+		t.Errorf("the copy %+v does not ask", c)
+	}
 
 	r.update(protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusInTransit), Version: 2})
-	expectCancels(t, "an older in_transit v2", r.cancels(), uuid, reason, 3)
+	expectCancels(t, "an older in_transit v2", r.cancels(), uuid, reason, 2)
 
 	r.update(protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusCancelled), Version: 4, Detail: reason})
 	r.h.HandleOrderCancelled(wire, &protocol.OrderCancelled{OrderUUID: uuid, Reason: reason})
 	r.at("Core's cancelled v4", id, protocol.StatusCancelled, 4)
-	r.expect("Core's cancelled v4")
-	expectCancels(t, "Core's cancelled v4", r.cancels(), uuid, reason, 3)
+	r.expect("Core's cancelled v4", "status in_transit->cancelled", "completed")
+	expectCancels(t, "Core's cancelled v4", r.cancels(), uuid, reason, 2)
 	if len(r.toasts) != 0 {
 		t.Errorf("toasts %q on the operator's own cancel, want none", r.toasts)
 	}
 	if got := r.hold(); got != domain.ReorderHoldNone {
-		t.Errorf("the position holds %q, want none: the abort holds nothing and Core's echo is not an end", got)
+		t.Errorf("the position holds %q, want none: the door holds nothing for a cancel no person asked", got)
 	}
 	expectRows(t, "history", r.history(id), []string{
 		"dispatched->in_transit: core: in_transit (version 2)",
 		"in_transit->cancelled: " + reason,
 	})
+}
+
+// TestCoreWord_ACancelEndedAtTheTapIsSentAgainOnALiveWord: a cancel of an
+// order no versioned word of Core's had reached ends the row at the tap (the
+// one door's old body). Core's first versioned word that the order is live
+// finds the row ended: the row stays cancelled and the cancel goes again
+// with the reason the row ended on (S3t's arm, resendCancel, kept one release
+// for rows ended at the tap).
+func TestCoreWord_ACancelEndedAtTheTapIsSentAgainOnALiveWord(t *testing.T) {
+	t.Parallel()
+	r := newWordRig(t)
+	const uuid = "tap-ended-leg"
+	reason := protocol.CancelReasonAcceptHalfSwap
+	id := r.leg(uuid, protocol.StatusDispatched)
+
+	testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, reason), "the cancel of an unversioned row")
+	r.at("the cancel", id, protocol.StatusCancelled, 0)
+	expectCancels(t, "the cancel", r.cancels(), uuid, reason, 1)
+
+	r.update(protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusInTransit), Version: 1})
+	r.at("Core's first word", id, protocol.StatusCancelled, 1)
+	expectCancels(t, "Core's first word", r.cancels(), uuid, reason, 2)
 }
 
 // TestCoreWord_AnOperatorsConfirmHoldsCoresDelivered: the operator confirms a
@@ -862,18 +901,24 @@ func TestCoreWord_AVersionedProjectionGoesThroughTheApplier(t *testing.T) {
 		const uuid = "projected-cancelled-leg"
 		id := r.leg(uuid, protocol.StatusDispatched)
 		r.live(uuid, protocol.StatusInTransit, 3)
-		testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, "cancelled by operator"), "the operator's abort")
+		// The cancel asks Core (final brief 5f) and the row stays live; it went
+		// out before an outage, older than an ask's whole life.
+		testutil.MustNoErr(t, r.eng.OrderManager().CancelOrderWithReason(id, "cancelled by operator"), "the operator's cancel")
+		_, err := r.db.DB.Exec(`UPDATE orders SET cancel_intent = json_set(cancel_intent, '$.sent_at', '2026-11-25T12:00:00Z') WHERE id = ?`, id)
+		testutil.MustNoErr(t, err, "age the cancel")
 		r.events = nil
-		ended, before := r.row(id), r.history(id)
+		asked, before := r.row(id), r.history(id)
 
-		_, err := r.eng.ApplyOrderProjection(projection(uuid, protocol.StatusInTransit, 3))
+		_, err = r.eng.ApplyOrderProjection(projection(uuid, protocol.StatusInTransit, 3))
 		testutil.MustNoErr(t, err, "a pushed projection at v3")
 		expectCancels(t, "a pushed projection at v3", r.cancels(), uuid, "cancelled by operator", 1)
 
 		r.eng.HandleUnlistedOrders([]protocol.OrderProjection{projection(uuid, protocol.StatusInTransit, 3)})
-		if after := r.row(id); !reflect.DeepEqual(after, ended) {
-			t.Errorf("the Unlisted projection changed the cancelled row: status %s at %d, quantity %d, payload %q; want %s at %d, %d, %q",
-				after.Status, after.CoreVersion, after.Quantity, after.PayloadCode, ended.Status, ended.CoreVersion, ended.Quantity, ended.PayloadCode)
+		if after := r.row(id); after.Status != asked.Status || after.CoreVersion != asked.CoreVersion ||
+			after.Quantity != asked.Quantity || after.PayloadCode != asked.PayloadCode || !after.CancelSent {
+			t.Errorf("the Unlisted projection changed the asked row: status %s at %d, quantity %d, payload %q, cancel sent %v; want %s at %d, %d, %q, sent",
+				after.Status, after.CoreVersion, after.Quantity, after.PayloadCode, after.CancelSent,
+				asked.Status, asked.CoreVersion, asked.Quantity, asked.PayloadCode)
 		}
 		r.expect("the Unlisted projection")
 		expectRows(t, "history", r.history(id), before)

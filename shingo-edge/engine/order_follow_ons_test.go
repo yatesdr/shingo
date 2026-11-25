@@ -320,9 +320,10 @@ func expectNoCarrierBack(t *testing.T, db *store.DB, step string) {
 // supply cancelled at its station wait after its drop at staging left its
 // carrier there. With a Core that versions its orders the carrier goes back
 // on Core's order.cancelled that says the order was staged, once: not on the
-// status that ended the row (Core's cancelled tell, or the operator's own
-// abort, whose event declines a versioned order), and not on the cancel
-// reply to the station's own request, which carries no previous status. An
+// status that ended the row (Core's cancelled tell, which ends the operator's
+// own cancel too since it asks Core; the event declines a versioned order),
+// and not on the cancel reply to the station's own request, which carries no
+// previous status. An
 // older Core's cancel (version 0) sends it back from the status event.
 func TestFollowOns_CoresCancelledNoticeSendsTheWaitingCarrierBackOnce(t *testing.T) {
 	t.Parallel()
@@ -383,9 +384,17 @@ func TestFollowOns_CoresCancelledNoticeSendsTheWaitingCarrierBackOnce(t *testing
 		eng, h, nodeID, id := fixture(t, 3)
 		trail := trailOf(eng, map[int64]string{id: "supply"})
 
-		testutil.MustNoErr(t, eng.orderMgr.CancelOrderWithReason(id, "cancelled by operator"), "the operator's abort")
-		trail.expect(t, "the abort", "supply staged->cancelled", "supply completed")
-		expectNoCarrierBack(t, eng.db, "the operator's abort")
+		// The operator's cancel asks Core (final brief 5g): no status, only the
+		// boards told the row changed, nothing sent back at the tap.
+		testutil.MustNoErr(t, eng.orderMgr.CancelOrderWithReason(id, "cancelled by operator"), "the operator's cancel")
+		trail.expect(t, "the cancel", "supply touched")
+		expectNoCarrierBack(t, eng.db, "the operator's cancel")
+
+		// Core's word ends the row; its status event declines a versioned order.
+		h.HandleOrderUpdate(wire, &protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusCancelled),
+			Version: 4, Detail: "cancelled by operator"})
+		trail.expect(t, "Core's cancelled", "supply staged->cancelled", "supply completed")
+		expectNoCarrierBack(t, eng.db, "Core's cancelled")
 
 		// Core's reply to the station's own cancel carries no previous status.
 		notice(h, "")
@@ -398,8 +407,8 @@ func TestFollowOns_CoresCancelledNoticeSendsTheWaitingCarrierBackOnce(t *testing
 		notice(h, protocol.StatusStaged)
 		trail.expect(t, "order.cancelled from staged")
 		expectOneCarrierBack(t, eng.db, nodeID)
-		if o := orderRow(t, eng.db, id); o.Status != protocol.StatusCancelled || o.CoreVersion != 3 {
-			t.Errorf("after the notice the supply reads %s at %d, want cancelled at 3", o.Status, o.CoreVersion)
+		if o := orderRow(t, eng.db, id); o.Status != protocol.StatusCancelled || o.CoreVersion != 4 {
+			t.Errorf("after the notice the supply reads %s at %d, want cancelled at 4", o.Status, o.CoreVersion)
 		}
 	})
 

@@ -194,10 +194,13 @@ var mustArrive = []MustArrive{
 		Late: "the release echoes the wait it was pressed for (OrderRelease.StationWait), so a copy for a wait already passed is a no-op",
 	},
 	// A cancel. It fell to 10 minutes, and one dropped after a longer outage
-	// left the Edge's row cancelled (the Edge ends it itself,
-	// orders.Manager.AbortOrderWithReason) and Core's live: robots parked that
-	// nothing on the Edge ever asks about again, since its status sync lists
-	// only live rows. The Edge stamps the exp at enqueue and Core only reads
+	// left the Edge's row cancelled (the Edge ended it itself, before Core
+	// heard) and Core's live: robots parked that nothing on the Edge ever asks
+	// about again, since its status sync lists only live rows. Since 2026-11-25
+	// a cancel that asks (OrderCancel.Intent) keeps the row live until Core's
+	// word, so the reconcile sees it and sends it again (shingo-edge orders
+	// resendAskedCancel); a cancel of an order Core had not told yet still ends
+	// the row at the tap. The Edge stamps the exp at enqueue and Core only reads
 	// it, so this is the Edge's release: an older Core reads no exp as never
 	// expiring (IsExpiredHeader).
 	{
