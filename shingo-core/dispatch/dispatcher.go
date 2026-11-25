@@ -205,7 +205,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 // before its apply is pending, for the scanner's next pass. Another station's
 // order under the uuid is not this one: that request goes on to its refusal, as
 // before. One read on idx_orders_uuid per request. Pinned by
-// TestRunTwice_OrderRequest.
+// TestRunTwice_OrderRequest and TestRunTwice_ComplexRequest.
 func (d *Dispatcher) requestHeld(env *protocol.Envelope, orderUUID, what string) bool {
 	if orderUUID == "" {
 		return false

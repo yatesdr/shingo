@@ -34,6 +34,11 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
 	stationID := env.Src.Station
 	d.dbg("complex order request: station=%s uuid=%s steps=%d", stationID, p.OrderUUID, len(p.Steps))
+	// A repeat of a request Core holds for this station answers nothing, as the
+	// plain door's does (Dispatcher.requestHeld; TestRunTwice_ComplexRequest).
+	if d.requestHeld(env, p.OrderUUID, "complex order request") {
+		return
+	}
 
 	if len(p.Steps) == 0 {
 		d.refuseComplexIntake(env, p, "invalid_steps", "complex order requires at least one step")
@@ -259,10 +264,12 @@ func complexNeed(stationID string, p *protocol.ComplexOrderRequest, steps []reso
 // this refusal as its reason. A partner that arrives later, or is digging its own
 // bin out, finds the record on its next pass (coordinatedPairLegs).
 //
-// A ROW UNDER THIS UUID MEANS IT WAS NOT REFUSED. A resend of a request Core
-// already took fails its create on the duplicate uuid and lands here, but the
-// leg it names was accepted; failing its partner over a duplicate would kill a
-// live pair. Neither the record nor the partner is touched then.
+// A ROW UNDER THIS UUID MEANS IT WAS NOT REFUSED. A resend from the station
+// whose order it is returns before any of this (Dispatcher.requestHeld); a
+// request naming a uuid another station's order holds fails its create on the
+// duplicate uuid and lands here, but the leg under that uuid was accepted, and
+// failing its partner over a duplicate would kill a live pair. Neither the
+// record nor the partner is touched then.
 func (d *Dispatcher) refuseComplexIntake(env *protocol.Envelope, p *protocol.ComplexOrderRequest, code, detail string) {
 	d.sendError(env, p.OrderUUID, code, detail)
 	if p.SiblingOrderUUID == "" {

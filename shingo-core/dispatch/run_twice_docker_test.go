@@ -333,7 +333,6 @@ func TestRunTwice_ComplexRequest(t *testing.T) {
 				{Action: protocol.ActionDropoff, Node: line.Name},
 			}}
 	}
-	const until = "a complex request under the same station and uuid is the same order (the handler returns)"
 
 	t.Run("the station is told on a first run", func(t *testing.T) {
 		t.Parallel()
@@ -347,7 +346,6 @@ func TestRunTwice_ComplexRequest(t *testing.T) {
 
 	t.Run("run, cut, run again", func(t *testing.T) {
 		t.Parallel()
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-cx-cut")
 		r.e.cut = func(event string, _ int64) {
 			if event == "received" {
@@ -369,7 +367,6 @@ func TestRunTwice_ComplexRequest(t *testing.T) {
 
 	t.Run("run, finish, run again", func(t *testing.T) {
 		t.Parallel()
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-cx-finish")
 		r.d.HandleComplexOrderRequest(env, req)
 		mark := outboxMark(t, r.db)
