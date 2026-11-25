@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"shingocore/material"
 	"shingocore/notify"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -596,7 +598,8 @@ func (e *Engine) polledRobotStatus(vehicleID string) (fleet.RobotStatus, bool) {
 //     stranded-bin placement gate, which refuses it. One line at boot is how a
 //     half-finished config gets finished;
 //   - the claim legs where Core picks that name a member of a node group
-//     (reportMemberLegs).
+//     (reportMemberLegs);
+//   - the nodes with no name (reportNamelessNodes).
 func (e *Engine) reportSetups() {
 	if names, err := e.db.NodesAcceptingNothing(); err != nil {
 		e.dbg("engine: audit nodes accepting no bin type: %v", err)
@@ -605,6 +608,46 @@ func (e *Engine) reportSetups() {
 			"assigned, so their config accepts nothing: %s", len(names), strings.Join(names, ", "))
 	}
 	e.reportMemberLegs()
+	e.reportNamelessNodes()
+}
+
+// reportNamelessNodes names, at start, every node with no name (docket B2,
+// nodes.NameIsBlank): by id, with its parent and the bins standing on it. The
+// store refuses to write one now, so a row like that was saved before the
+// guard or by hand, and no order can name it. It changes nothing: no rename,
+// no delete. Read in Core's start-up log, at the first deploy of the guard, to
+// confirm a plant has none. Pinned by TestBootReport_NamesANodeWithNoName.
+func (e *Engine) reportNamelessNodes() {
+	all, err := e.db.ListNodes()
+	if err != nil {
+		e.dbg("engine: audit nodes with no name: %v", err)
+		return
+	}
+	var said []string
+	for _, n := range all {
+		if !nodes.NameIsBlank(n.Name) {
+			continue
+		}
+		parent := "no parent"
+		if n.ParentID != nil {
+			parent = fmt.Sprintf("parent %d %q", *n.ParentID, n.ParentName)
+		}
+		standing := "no bins"
+		if bs, err := e.db.ListBinsByNode(n.ID); err != nil {
+			standing = fmt.Sprintf("bins unread: %v", err)
+		} else if len(bs) > 0 {
+			labels := make([]string, len(bs))
+			for i, b := range bs {
+				labels[i] = b.Label
+			}
+			standing = "bins " + strings.Join(labels, ", ")
+		}
+		said = append(said, fmt.Sprintf("node %d (%s; %s)", n.ID, parent, standing))
+	}
+	if len(said) > 0 {
+		e.logFn("engine: %d node(s) have no name, so no order can name one; Core changes nothing: %s",
+			len(said), strings.Join(said, "; "))
+	}
 }
 
 // reportMemberLegs logs, at start, every claim leg where Core picks (inbound
