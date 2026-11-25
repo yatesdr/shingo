@@ -1020,15 +1020,19 @@ func legsByID(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 // --- Test: a dig's last leg names a node that is not there (docket B1, pin 3) ---
 //
 // Scenario: a two-leg dig (unbury the blocker, retrieve the target). While the
-// unbury is out, the target's slot is renamed, so the retrieve leg names a node
-// that no longer resolves. The unbury is driven to its landing.
+// unbury is out, the line's node is renamed, so the retrieve leg names a
+// delivery node that no longer resolves. The unbury is driven to its landing.
+// (Not the target's slot: a lane's re-drive finds a held leg by its node's
+// name, ListHeldLegParentsInLane, so a leg whose pickup was renamed is reached
+// only at the unbury's landing, after the carry this pin is about.)
 //
 // Expected, and the rule that must hold through B1's fix: a leg that can never
 // be built fails the order with the leg's own sentence, and a person can read
 // which node to fix on the order itself. The blocker lies at its shuffle slot.
 //
-// Only the end state is asserted. Today the order is failed and its lane let go
-// while the unbury is still carrying its bin; when that happens is the fix's.
+// AND THE ORDER WAITS FOR THE UNBURY (study round 5, section 2, point 3): the
+// retrieve is refused once the unbury has left the lane with its bin, and the
+// order is failed, and its lane let go, only once the unbury has set it down.
 func TestCompound_UnknownNodeOnTheLastLeg_FailsTheOrderWithTheLegsSentence(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -1051,14 +1055,36 @@ func TestCompound_UnknownNodeOnTheLastLeg_FailsTheOrderWithTheLegsSentence(t *te
 		t.Fatalf("fixture: want two legs with only the first sent, got %d", len(legs))
 	}
 
-	// The retrieve leg was written from the slot's old name.
-	oldName := sc.Slots[1].Name
-	slot, err := db.GetNode(sc.Slots[1].ID)
-	testutil.MustNoErr(t, err, "read the target's slot")
-	slot.Name = oldName + "-RENAMED"
-	testutil.MustNoErr(t, db.UpdateNode(slot), "rename the target's slot under the open dig")
+	// The retrieve leg was written with the line's old name.
+	oldName := sc.LineNode.Name
+	line, err := db.GetNode(sc.LineNode.ID)
+	testutil.MustNoErr(t, err, "read the line's node")
+	line.Name = oldName + "-RENAMED"
+	testutil.MustNoErr(t, db.UpdateNode(line), "rename the line's node under the open dig")
 
-	driveLegRunToFinish(t, db, sim, legs[0].ID, legs[0].VendorOrderID)
+	// The unbury lifts and is released from its dwell: it is carrying, and the
+	// retrieve's turn comes and fails on the renamed slot.
+	unbury := legs[0]
+	sim.DriveState(unbury.VendorOrderID, "RUNNING")
+	for _, b := range sim.BlocksForOrder(unbury.VendorOrderID) {
+		if b.Action == protocol.ActionPickup {
+			sim.CompleteBlock(unbury.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0)
+			break
+		}
+	}
+	sim.DriveState(unbury.VendorOrderID, "WAITING")
+	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
+		return legsByID(t, db, parent.ID)[1].Status == dispatch.StatusFailed
+	})
+	if got := testdb.RequireOrder(t, db, "renamed-dig-1"); got.Status != dispatch.StatusReshuffling {
+		t.Errorf("the order is %q (%q) with the unbury still carrying its bin, want reshuffling until "+
+			"it sets it down", got.Status, got.ErrorDetail)
+	}
+	if !eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID) {
+		t.Errorf("lane %s was let go with the unbury still carrying its bin", sc.Lane.Name)
+	}
+
+	sim.DriveState(unbury.VendorOrderID, "FINISHED")
 	// The order's end is the engine's to reach, on whichever goroutine closes
 	// the chapter; its lane goes just after its status.
 	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
@@ -1067,7 +1093,7 @@ func TestCompound_UnknownNodeOnTheLastLeg_FailsTheOrderWithTheLegsSentence(t *te
 	})
 
 	legs = legsByID(t, db, parent.ID)
-	sentence := dplan.ConfigFailure("source node", oldName)
+	sentence := dplan.ConfigFailure("delivery node", oldName)
 	if legs[1].Status != dispatch.StatusFailed || legs[1].ErrorDetail != sentence || legs[1].VendorOrderID != "" {
 		t.Fatalf("the retrieve leg is %q (%q) vendor=%q, want failed with %q and never sent",
 			legs[1].Status, legs[1].ErrorDetail, legs[1].VendorOrderID, sentence)
