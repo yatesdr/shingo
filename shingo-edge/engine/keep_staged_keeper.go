@@ -18,15 +18,16 @@ import (
 // keep-staged line, idle ones included, so a spot is topped up without anyone
 // pressing anything; and the end of any order of the line, a pickup at the spot,
 // or the spot's row changing in the bins copy, at once instead of at the next
-// sweep. A REQUEST does not: it asks only for the line, taking the spare when
-// one stands and the market's carrier when none does (requestClaim), so
-// cancelling what a REQUEST made leaves nothing of the spot's behind (SPR
-// ALN_011, 2026-10-08: a refill created with each request outlived the
-// request's cancel and took the carrier it freed).
+// sweep, unless the cell's lock is held then (keepSpot skips that pass). A
+// REQUEST does not: it asks only for the line, taking the spare when one stands
+// and the market's carrier when none does (requestClaim), so cancelling what a
+// REQUEST made leaves nothing of the spot's behind (a plant's line, 2026-10-08:
+// a refill created with each request outlived the request's cancel and took the
+// carrier it freed).
 //
 // It replaced a floor that ran only while a swap waited at Core and assumed that
 // swap would lift a spare. A swap planned before the spot was kept never does:
-// it stages its own carrier ON the spot. At SPR ALN_011 (2026-10-08) the floor
+// it stages its own carrier ON the spot. At that line (2026-10-08) the floor
 // sent the bin standing there back to a source the swap's own carrier held and
 // queued two refills behind both, and re-created all three on each of five
 // cancels. The keeper reads the legs' steps instead of assuming them, orders
@@ -38,11 +39,14 @@ import (
 
 // keepSpot runs the keeper for one keep-staged line.
 //
-// TRY, NEVER WAIT. A held lock is a request, a changeover start or cancel, or a
-// save deciding this cell now, and its decision covers the spot. The order-end
-// kick runs inside the completion cascade, which events deliver synchronously:
-// a changeover start aborting under the lock reaches here on its own goroutine.
-// The miss is logged; the next decision point re-asks.
+// TRY, NEVER WAIT. A held lock is another door deciding this cell now (a
+// request, a changeover start or cancel, a save, among others), and its
+// decision may not cover the spot: a REQUEST orders nothing for it (above), and
+// a holder that read the bins copy before its change decided from the old one.
+// The order-end kick runs inside the completion cascade, which events deliver
+// synchronously: a changeover start aborting under the lock reaches here on its
+// own goroutine. The miss is logged; the next decision point re-asks, at the
+// latest the next level sweep (demandReconcileInterval, 60 s).
 //
 // Every run records the line as keeping the spot (keptSpotLines), so the spot's
 // row changing in the bins copy runs it again (keepSpotsOnBinsChange).
@@ -207,8 +211,9 @@ func spotPause(rows []domain.Order, c *processes.NodeClaim, resumed *time.Time) 
 }
 
 // ResumeKeepStaged is the board's RESUME on a line whose keep-staged keeper a
-// cancel paused: it stamps the line's resume and runs the keeper at once, so the
-// spot is refilled without a REQUEST and without anything sent to the line.
+// cancel paused: it stamps the line's resume and runs the keeper at once (a
+// pass the cell's held lock turns away waits for the next decision point), so
+// the spot is refilled without a REQUEST and without anything sent to the line.
 func (e *Engine) ResumeKeepStaged(nodeID int64) error {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil || node == nil {

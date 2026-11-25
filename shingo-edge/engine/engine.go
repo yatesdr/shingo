@@ -142,7 +142,7 @@ type Engine struct {
 	// catidMon tracks each press's live WarLink CATID_01 (part identity),
 	// debounced. guardCatidMismatch reads it to block outgoing-style relief
 	// when the live part diverges from the active style's expected_catid (A5,
-	// Hopkinsville 2026-07-23). Nil until Start() (and in test fixtures that
+	// a plant, 2026-07-23). Nil until Start() (and in test fixtures that
 	// build Engine directly) — the guard nil-checks and stays inert.
 	catidMon *catidMonitor
 	// tickMonitor is catidMon for the poll's tick attribution, which runs on
@@ -674,17 +674,18 @@ func (e *Engine) StartedAt() time.Time {
 	return e.startedAt
 }
 
-// SubscribersWired returns true once setupKafkaSubscribers has run
-// successfully — meaning Edge is hooked up to receive inbound Kafka
-// messages (orders, demand, stale notifications). Pre-wire (or if
-// Kafka never connected) returns false; /status surfaces this so
-// operators can see the deaf-but-running mode.
+// SubscribersWired returns true once setupKafkaSubscribers has run to its
+// end, whether or not its Subscribe succeeded: a failed Subscribe is logged
+// and the wiring goes on (cmd/shingoedge main.go), so true says the wiring
+// ran, not that inbound Kafka messages (orders, demand, stale notifications)
+// arrive. Pre-wire (Connect has not succeeded) it returns false; /status
+// surfaces this so operators can see the deaf-but-running mode.
 func (e *Engine) SubscribersWired() bool {
 	return e.subscribersWired.Load()
 }
 
-// MarkSubscribersWired is called by setupKafkaSubscribers when it
-// finishes successfully.
+// MarkSubscribersWired is called by setupKafkaSubscribers at its end, after
+// its Subscribe whether that succeeded or not.
 func (e *Engine) MarkSubscribersWired() {
 	e.subscribersWired.Store(true)
 }
@@ -747,8 +748,8 @@ func (e *Engine) ProductionTickLag() (pending, oldestAgeMS int64, err error) {
 //
 // This is the field that answers "is Kafka reachable". KafkaConnected reports
 // only that a writer object exists — on Edge that is true from the first
-// Connect until shutdown, because Connect performs no I/O. During the
-// Springfield outage of 2026-08-21 KafkaConnected read true throughout.
+// Connect until shutdown, because Connect performs no I/O. During a
+// plant's outage of 2026-08-21 KafkaConnected read true throughout.
 func (e *Engine) KafkaLastPublish() (bool, time.Time, bool) {
 	fn := loaded(&e.kafkaLastPublishFn)
 	if fn == nil {
@@ -873,8 +874,8 @@ func (e *Engine) Inbound(fn func()) {
 // sendNoCartStretches writes every open no-cart stretch as its one no_bin row
 // at Stop (sendNoBinEpisode, actor edge:shutdown), after the PLC poll has
 // stopped, so no stroke joins it afterwards (D6). A stretch lives in memory
-// until a write ends it; a restart used to lose it whole (two SPR deploys lost
-// 1,262 and 970 strokes so). The row goes to the outbox, which drains after
+// until a write ends it; a restart used to lose it whole (two deploys at a
+// plant lost 1,262 and 970 strokes so). The row goes to the outbox, which drains after
 // the restart. Best effort: a node that cannot be read or a write that fails
 // is logged. Pinned by TestShutdown_AnOpenNoCartStretchIsWritten.
 func (e *Engine) sendNoCartStretches() {
