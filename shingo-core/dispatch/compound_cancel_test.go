@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	dplan "shingocore/dispatch/plan"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
@@ -258,6 +259,65 @@ func TestGate1_AChapterWhoseLastLegFailedDoesNotHauntTheNextOne(t *testing.T) {
 	if digWasDissolved([]*orders.Order{dead, fresh}) {
 		t.Error("the second chapter finished cleanly and still read as a chapter that stopped short. " +
 			"That is the loop: re-queue, re-plan, dissolve, forever")
+	}
+}
+
+// TestCompoundGenerations_ALaterLegOfTheSamePlanReadsAsTheNextChapter is the
+// first of the two readings of the chapter split that docket B1 rests on (study
+// round 5, section 2, pin 1). The split knows a chapter by its newest ended leg
+// and nothing else, so a leg of the SAME plan behind a failed one is read as the
+// chapter after it: one confirmed leg, nothing failed, a chapter that finished.
+//
+// That is why no leg may be handed to the fleet once a leg of its chapter has
+// failed: the split cannot tell the two apart afterwards. On hand-made rows off
+// a lane this state ended the parent `confirmed` over a failed leg.
+func TestCompoundGenerations_ALaterLegOfTheSamePlanReadsAsTheNextChapter(t *testing.T) {
+	t.Parallel()
+
+	// One plan, three legs. The middle one was failed with no pickup and the
+	// advance went on to the third, which ran.
+	first := &orders.Order{ID: 20, Sequence: 1, Status: StatusConfirmed}
+	failed := &orders.Order{ID: 21, Sequence: 2, Status: StatusFailed, ErrorDetail: "missing source node"}
+	behind := &orders.Order{ID: 22, Sequence: 3, Status: StatusConfirmed}
+	legs := []*orders.Order{first, failed, behind}
+
+	open, superseded := compoundGenerations(legs)
+	if !superseded || len(open) != 1 || open[0].ID != behind.ID {
+		t.Fatalf("open chapter = %v (superseded=%v), want just leg %d: the failed leg is the boundary "+
+			"and the leg behind it stands alone above it", idsOf(open), superseded, behind.ID)
+	}
+	if digWasDissolved(legs) {
+		t.Error("the plan reads as a chapter that stopped short; today it reads as one that finished")
+	}
+	if configFailedLeg(open) != nil {
+		t.Error("\"missing source node\" read as a config failure; today it is not spelled as one")
+	}
+}
+
+// TestCompoundGenerations_ALaterMarkerHidesAConfigFailedLeg is the second
+// reading (pin 1): a leg that failed on configuration does not end its chapter,
+// so that the config carve-out finds it in the open set, but a sibling
+// cancelled behind it under a chapter-end marker closes everything at or below
+// its own id, the config-failed leg with it. The open set is then empty, the
+// carve-out reads nothing, and the demand goes back to be re-planned.
+func TestCompoundGenerations_ALaterMarkerHidesAConfigFailedLeg(t *testing.T) {
+	t.Parallel()
+
+	unbuildable := &orders.Order{ID: 30, Sequence: 1, Status: StatusFailed,
+		ErrorDetail: dplan.ConfigFailure("source node", "SLOT-NOBODY-CONFIGURED")}
+	behind := &orders.Order{ID: 31, Sequence: 2, Status: StatusCancelled, ErrorDetail: ReshuffleDissolveDetail}
+	chapter := []*orders.Order{unbuildable, behind}
+
+	open, superseded := compoundGenerations(chapter)
+	if !superseded || len(open) != 0 {
+		t.Fatalf("open chapter = %v (superseded=%v), want none: the marker on leg %d closes leg %d too",
+			idsOf(open), superseded, behind.ID, unbuildable.ID)
+	}
+	if !digWasDissolved(chapter) {
+		t.Error("the chapter does not read as dissolved; today it does, and the demand re-plans")
+	}
+	if got := configFailedLeg(open); got != nil {
+		t.Errorf("the carve-out found leg %d in the open set; today the marker hides it", got.ID)
 	}
 }
 

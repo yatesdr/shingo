@@ -3,13 +3,17 @@
 package engine
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
+	dplan "shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -1011,6 +1015,197 @@ func legsByID(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 	testutil.MustNoErr(t, err, "list the legs")
 	sort.Slice(legs, func(i, j int) bool { return legs[i].ID < legs[j].ID })
 	return legs
+}
+
+// --- Test: a dig's last leg names a node that is not there (docket B1, pin 3) ---
+//
+// Scenario: a two-leg dig (unbury the blocker, retrieve the target). While the
+// unbury is out, the target's slot is renamed, so the retrieve leg names a node
+// that no longer resolves. The unbury is driven to its landing.
+//
+// Expected, and the rule that must hold through B1's fix: a leg that can never
+// be built fails the order with the leg's own sentence, and a person can read
+// which node to fix on the order itself. The blocker lies at its shuffle slot.
+//
+// Only the end state is asserted. Today the order is failed and its lane let go
+// while the unbury is still carrying its bin; when that happens is the fix's.
+func TestCompound_UnknownNodeOnTheLastLeg_FailsTheOrderWithTheLegsSentence(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "RENAMED"})
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID:    "renamed-dig-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+	parent := testdb.RequireOrderStatus(t, db, "renamed-dig-1", dispatch.StatusReshuffling)
+	legs := legsByID(t, db, parent.ID)
+	if len(legs) != 2 || legs[0].VendorOrderID == "" || legs[1].VendorOrderID != "" {
+		t.Fatalf("fixture: want two legs with only the first sent, got %d", len(legs))
+	}
+
+	// The retrieve leg was written from the slot's old name.
+	oldName := sc.Slots[1].Name
+	slot, err := db.GetNode(sc.Slots[1].ID)
+	testutil.MustNoErr(t, err, "read the target's slot")
+	slot.Name = oldName + "-RENAMED"
+	testutil.MustNoErr(t, db.UpdateNode(slot), "rename the target's slot under the open dig")
+
+	driveLegRunToFinish(t, db, sim, legs[0].ID, legs[0].VendorOrderID)
+	// The order's end is the engine's to reach, on whichever goroutine closes
+	// the chapter; its lane goes just after its status.
+	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
+		return testdb.RequireOrder(t, db, "renamed-dig-1").Status.IsTerminal() &&
+			!eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID)
+	})
+
+	legs = legsByID(t, db, parent.ID)
+	sentence := dplan.ConfigFailure("source node", oldName)
+	if legs[1].Status != dispatch.StatusFailed || legs[1].ErrorDetail != sentence || legs[1].VendorOrderID != "" {
+		t.Fatalf("the retrieve leg is %q (%q) vendor=%q, want failed with %q and never sent",
+			legs[1].Status, legs[1].ErrorDetail, legs[1].VendorOrderID, sentence)
+	}
+	if legs[0].Status != dispatch.StatusConfirmed {
+		t.Errorf("the unbury leg is %q (%q), want confirmed: it had its bin up and set it down",
+			legs[0].Status, legs[0].ErrorDetail)
+	}
+	parent = testdb.RequireOrder(t, db, "renamed-dig-1")
+	if parent.Status != dispatch.StatusFailed || parent.ErrorDetail != sentence {
+		t.Errorf("the order is %q (%q), want failed with the leg's own sentence %q",
+			parent.Status, parent.ErrorDetail, sentence)
+	}
+	if len(legsByID(t, db, parent.ID)) != 2 {
+		t.Errorf("the order has %d legs, want the first plan's 2 and no re-plan", len(legsByID(t, db, parent.ID)))
+	}
+	if eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID) {
+		t.Errorf("lane %s is still held by an order that has ended", sc.Lane.Name)
+	}
+	blocker := testdb.RequireBin(t, db, sc.Blockers[0].ID)
+	if blocker.NodeID == nil || *blocker.NodeID != sc.ShuffleSlots[0].ID || blocker.ClaimedBy != nil {
+		t.Errorf("the blocker is at %q claimed_by=%v, want %s and unclaimed",
+			blocker.NodeName, blocker.ClaimedBy, sc.ShuffleSlots[0].Name)
+	}
+	testdb.AssertBinAtNode(t, db, sc.TargetBin.ID, sc.Slots[1].ID)
+	testdb.AssertBinUnclaimed(t, db, sc.TargetBin.ID)
+}
+
+// --- Test: the fleet fails a leg while a sibling carries its bin (docket B1, pin 4) ---
+//
+// Scenario: a two-leg dig. The unbury lifts the blocker and leaves the lane
+// with it, which lets the retrieve go out behind it. The fleet then fails the
+// retrieve (FAILED, and the grace expiring) with the unbury still carrying.
+//
+// Expected, and what B1's fix must not change (gate 1): the carrying leg is
+// not cancelled and sets its bin down; the order is not failed. It goes back to
+// be planned, saying which leg failed, and its own acquire sends it for the
+// bin, which nothing stands in front of any more.
+func TestCompound_FleetFailsALegWithASiblingCarrying_TheOrderReplans(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "CARRY"})
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID:    "carry-dig-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+	parent := testdb.RequireOrderStatus(t, db, "carry-dig-1", dispatch.StatusReshuffling)
+	legs := legsByID(t, db, parent.ID)
+	if len(legs) != 2 || legs[0].VendorOrderID == "" {
+		t.Fatalf("fixture: want two legs with the first sent, got %d", len(legs))
+	}
+	unbury := legs[0]
+
+	// The unbury lifts and is released from its dwell: it is carrying.
+	sim.DriveState(unbury.VendorOrderID, "RUNNING")
+	for _, b := range sim.BlocksForOrder(unbury.VendorOrderID) {
+		if b.Action == protocol.ActionPickup {
+			sim.CompleteBlock(unbury.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0)
+			break
+		}
+	}
+	sim.DriveState(unbury.VendorOrderID, "WAITING")
+	if at := binNodeName(t, db, sc.Blockers[0].ID); at != domain.TransitNodeName {
+		t.Fatalf("fixture: the blocker is at %q, want it on the unbury's robot", at)
+	}
+
+	// The retrieve went out behind it; the fleet fails it.
+	retrieve := legsByID(t, db, parent.ID)[1]
+	if retrieve.VendorOrderID == "" {
+		t.Fatalf("fixture: the retrieve leg was not sent behind the carrying unbury (%q, %q)",
+			retrieve.Status, retrieve.QueueCause)
+	}
+	sim.DriveState(retrieve.VendorOrderID, "RUNNING")
+	sim.DriveState(retrieve.VendorOrderID, "FAILED")
+	eng.handleGraceExpired(GraceExpiredEvent{OrderID: retrieve.ID, VendorOrderID: retrieve.VendorOrderID})
+
+	legs = legsByID(t, db, parent.ID)
+	if legs[1].Status != dispatch.StatusFailed {
+		t.Fatalf("the retrieve leg is %q, want failed by the grace expiry", legs[1].Status)
+	}
+	if legs[0].Status.IsTerminal() {
+		t.Fatalf("the carrying leg is %q (%q): a robot holds its bin, and no door cancels it",
+			legs[0].Status, legs[0].ErrorDetail)
+	}
+	if got := testdb.RequireOrder(t, db, "carry-dig-1"); got.Status != dispatch.StatusReshuffling {
+		t.Fatalf("the order is %q with a leg still carrying, want reshuffling until it lands", got.Status)
+	}
+
+	// The carrier lands; the chapter closes and the order is planned again, on
+	// whichever goroutine reaches the chapter's end first.
+	sim.DriveState(unbury.VendorOrderID, "FINISHED")
+	testutil.AssertEventually(t, 5*time.Millisecond, 30*time.Second, func() bool {
+		o := testdb.RequireOrder(t, db, "carry-dig-1")
+		return o.VendorOrderID != "" || o.Status.IsTerminal()
+	})
+
+	legs = legsByID(t, db, parent.ID)
+	if legs[0].Status != dispatch.StatusConfirmed {
+		t.Errorf("the carrying leg ended %q (%q), want confirmed", legs[0].Status, legs[0].ErrorDetail)
+	}
+	blocker := testdb.RequireBin(t, db, sc.Blockers[0].ID)
+	if blocker.NodeID == nil || *blocker.NodeID != sc.ShuffleSlots[0].ID {
+		t.Errorf("the blocker is at %q, want %s", blocker.NodeName, sc.ShuffleSlots[0].Name)
+	}
+	history, err := db.ListOrderHistory(parent.ID)
+	testutil.MustNoErr(t, err, "read the order's history")
+	var sequence []protocol.Status
+	restarted, sentAfter := "", false
+	for i, h := range history {
+		sequence = append(sequence, h.Status)
+		switch {
+		case i > 0 && h.Status == dispatch.StatusPending:
+			restarted = h.Detail
+		case restarted != "" && h.Status == dispatch.StatusDispatched:
+			sentAfter = true
+		}
+	}
+	t.Logf("order status sequence: %v; restarted with %q", sequence, restarted)
+	wantRestart := fmt.Sprintf("reshuffle dissolved: dig leg %d failed", legs[1].ID)
+	if !strings.HasPrefix(restarted, wantRestart) {
+		t.Errorf("the order went back to pending with %q, want a sentence starting %q", restarted, wantRestart)
+	}
+	parent = testdb.RequireOrder(t, db, "carry-dig-1")
+	if !sentAfter || parent.Status.IsTerminal() || parent.VendorOrderID == "" {
+		t.Errorf("the order is %q (%q) vendor=%q after %v, want it sent for the bin the dig uncovered",
+			parent.Status, parent.ErrorDetail, parent.VendorOrderID, sequence)
+	}
+	if len(legs) != 2 {
+		t.Errorf("the order has %d legs, want 2: the lane is clear and no second dig was needed", len(legs))
+	}
 }
 
 // --- Test: Lane lock contention — second reshuffle blocked (TC-52) ---
