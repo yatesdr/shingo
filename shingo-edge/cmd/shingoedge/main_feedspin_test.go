@@ -6,6 +6,8 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -96,6 +98,59 @@ func TestBootWiring_TheHooksAWebHandlerCallsAreSetBeforeTheBurst(t *testing.T) {
 			t.Errorf("%s is step %d of setupKafkaSubscribers, after hb.Start (step %d): move it above hb.Start, "+
 				"or its web handler finds it unset for the whole boot burst", hook, i, start)
 		}
+	}
+}
+
+// TestBootWiring_TheWarningPrintsOnlyWhenConnectFails: main's boot WARNING
+// that the Edge runs deaf sits in the kafka-connect-retry goroutine's
+// `if err := msgClient.Connect(); err != nil` branch and nowhere else, and the
+// line before the wiring says the writer was built. Connect builds the writer
+// and contacts no broker (messaging Client.Connect), so the old condition,
+// IsConnected() before any Connect, held on every boot: the warning printed on
+// every healthy one, and "kafka connect succeeded" printed with the broker
+// down (docket D31). A source pin: main itself cannot be run here.
+func TestBootWiring_TheWarningPrintsOnlyWhenConnectFails(t *testing.T) {
+	t.Parallel()
+	body := mainFunc(t, "main")
+	var connectFailed *ast.BlockStmt
+	ast.Inspect(body, func(n ast.Node) bool {
+		ifs, ok := n.(*ast.IfStmt)
+		if !ok || ifs.Init == nil || types.ExprString(ifs.Cond) != "err != nil" {
+			return true
+		}
+		if as, ok := ifs.Init.(*ast.AssignStmt); ok && len(as.Rhs) == 1 {
+			if call, ok := as.Rhs[0].(*ast.CallExpr); ok && types.ExprString(call.Fun) == "msgClient.Connect" {
+				connectFailed = ifs.Body
+			}
+		}
+		return true
+	})
+	if connectFailed == nil {
+		t.Fatal("main has no `if err := msgClient.Connect(); err != nil` branch: this pin lost its input")
+	}
+	// mentions counts the string literals under n that contain s.
+	mentions := func(n ast.Node, s string) int {
+		count := 0
+		ast.Inspect(n, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if v, err := strconv.Unquote(lit.Value); err == nil && strings.Contains(v, s) {
+					count++
+				}
+			}
+			return true
+		})
+		return count
+	}
+	const warning = "WARNING messaging not connected at boot"
+	if all, there := mentions(body, warning), mentions(connectFailed, warning); all != 1 || there != 1 {
+		t.Errorf("main logs %q %d times, %d of them in the Connect-failed branch: want once, there", warning, all, there)
+	}
+	if n := mentions(body, "kafka connect succeeded"); n != 0 {
+		t.Errorf("main still logs \"kafka connect succeeded\" (%d): Connect builds a writer and contacts no broker; "+
+			"say \"kafka writer built\"", n)
+	}
+	if n := mentions(body, "kafka writer built"); n != 1 {
+		t.Errorf("main logs \"kafka writer built\" %d times, want once, before the wiring", n)
 	}
 }
 
