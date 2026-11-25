@@ -1,10 +1,16 @@
 package schemadump
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -208,6 +214,82 @@ func TestReleaseCache_RebuildFailsWhenTheEntryDiffers(t *testing.T) {
 	assertBinary(t, f.bin, f.fresh)
 	if sum, miss := manifestSum(f.manifest, f.key); miss != "" || sum != f.freshSum {
 		t.Fatalf("the entry after: sum %s, miss %q; want the fresh build's", sum, miss)
+	}
+}
+
+// TestReleaseCache_AServedBinaryRunsAtOnce pins what obtain owes BootRelease:
+// the binary it leaves at dst can be run the moment obtain returns, whatever
+// else this process is starting. Eight workers each take a runnable entry
+// from the cache and run their copy straight away, 100 times each: the shape
+// of the convergence test's parallel vintages (BuildRelease, then
+// BootRelease), where every worker's fork lands beside the others' copies.
+//
+// LINUX ONLY (scripts/gate-os-tests.txt names it). Linux refuses to run a
+// file that any process holds open for writing (ETXTBSY, "text file busy"),
+// and a child forked while a copy's handle is open holds that handle until
+// its own exec. The entry here is a /bin/sh script, which that rule covers as
+// it does a binary.
+func TestReleaseCache_AServedBinaryRunsAtOnce(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux only: refusing to run a file that is open for writing (ETXTBSY) is Linux's rule, and the entry this test runs is a /bin/sh script")
+	}
+	t.Parallel()
+	f := newCacheFixture(t, "")
+	script := []byte("#!/bin/sh\nexit 0\n")
+	src := filepath.Join(t.TempDir(), "runnable")
+	if err := os.WriteFile(src, script, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.c.store(f.name, f.key, src, sha256Hex(script)); err != nil {
+		t.Fatalf("store the runnable entry: %v", err)
+	}
+	notBuilt := func() error { return errors.New("the planted entry was not served, and this test builds nothing") }
+
+	const workers, rounds = 8, 100
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		first error
+	)
+	failed := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return first != nil
+	}
+	fail := func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if first == nil {
+			first = err
+		}
+	}
+	for w := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := 0; r < rounds && !failed(); r++ {
+				dst := filepath.Join(filepath.Dir(f.dst), fmt.Sprintf("boot-%d-%d", w, r))
+				source, _, err := f.c.obtain(f.name, f.key, dst, notBuilt)
+				if err != nil || source != "cached" {
+					fail(fmt.Errorf("worker %d, round %d: obtain gave source %q, err %v; want the planted entry served", w, r, source, err))
+					return
+				}
+				if err := exec.Command(dst).Run(); err != nil {
+					fail(fmt.Errorf("worker %d, round %d: run the binary obtain had just served: %w", w, r, err))
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	switch {
+	case first == nil:
+	case errors.Is(first, syscall.ETXTBSY):
+		t.Fatalf("%v\n\nA child this process forked while copyHashing had the file open for writing still held that "+
+			"handle when the file was run. Hold syscall.ForkLock.RLock() from the open of dst to its close "+
+			"(copyHashing, release_cache.go), so that no fork lands in between; retrying the run would only hide it.", first)
+	default:
+		t.Fatal(first)
 	}
 }
 

@@ -32,6 +32,11 @@ while read -r pkg test side _; do
   case "$pkg" in ''|'#'*) continue ;; esac
   n=$((n + 1))
   dir="${pkg#shingo/}"
+  # Core's and the Edge's module paths are not their directories.
+  case "$dir" in
+    shingocore/*) dir="shingo-core/${dir#shingocore/}" ;;
+    shingoedge/*) dir="shingo-edge/${dir#shingoedge/}" ;;
+  esac
   grep -qs "^func $test(" "$dir"/*_test.go \
     || fail "gate-os-tests.txt names $pkg $test ($side), and $dir has no func $test: take its line out with the test"
 done <"$LIST"
