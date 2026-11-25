@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
 )
@@ -162,3 +163,48 @@ func (db *DB) RecordAppendedLift(o *orders.Order, binID int64, pick int) error {
 // (helpers.StepNodeSQL, the twin of domain.StepNode): for readers outside the
 // store that read an order's rows as nodes.
 func StepNodeSQL(o, i string) string { return helpers.StepNodeSQL(o, i) }
+
+// OrderTrips is where each order's bin is on its trip (domain.Trip): the one
+// question a door asks before it ends a live order. A row answers it when it
+// reads delivered or later or carries no cart (Order.TripFromRow); the rest are
+// asked of the bins in one statement whatever their number
+// (helpers.OrderTripSQL), and none when every row answers. Every order given has
+// an answer; one the statement does not find reads not lifted. Carried wins
+// over set down, so a door may still stop a robot holding a bin the order
+// claims.
+func (db *DB) OrderTrips(list []*orders.Order) (map[int64]domain.Trip, error) {
+	trips := make(map[int64]domain.Trip, len(list))
+	var ask []int64
+	for _, o := range list {
+		t, ok := o.TripFromRow()
+		trips[o.ID] = t
+		if !ok {
+			ask = append(ask, o.ID)
+		}
+	}
+	if len(ask) == 0 {
+		return trips, nil
+	}
+	rows, err := db.Query(helpers.OrderTripSQL, ask)
+	if err != nil {
+		return nil, fmt.Errorf("where the bins of orders %v are: %w", ask, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var carried, setDown bool
+		if err := rows.Scan(&id, &carried, &setDown); err != nil {
+			return nil, fmt.Errorf("where the bins of orders %v are: scan: %w", ask, err)
+		}
+		switch {
+		case carried:
+			trips[id] = domain.TripCarried
+		case setDown:
+			trips[id] = domain.TripSetDown
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("where the bins of orders %v are: %w", ask, err)
+	}
+	return trips, nil
+}
