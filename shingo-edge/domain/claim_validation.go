@@ -755,13 +755,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// blank partner over a switch column), so the save says in one line what
 	// the blank means and saves. The composer shows it through the preview
 	// (engine's flowWarnings); TestValidateNodeClaim_SequentialWithNoPartnerSaves.
-	if in.SwapMode == protocol.SwapModeSequential && in.PairedCoreNode == "" && in.CoreNodeName != "" {
-		out = append(out, FieldError{
-			Field:    "paired_core_node",
-			Message:  in.CoreNodeName + " has no partner: one node, empty from each lift until the next bin is set down",
-			Severity: SeverityWarning,
-		})
-	}
+	out = append(out, noPartnerWarning(in)...)
 
 	// ── membership: a WARNING, never a refusal ──────────────────────────
 	//
@@ -784,6 +778,20 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	}
 
 	return out
+}
+
+// noPartnerWarning is ValidateNodeClaim's one line on a Sequential A/B claim
+// with no partner, a one-node line: a warning, never a refusal (final brief
+// 2b, point 3). None for any other claim.
+func noPartnerWarning(in NodeClaimInput) []FieldError {
+	if in.SwapMode != protocol.SwapModeSequential || in.PairedCoreNode != "" || in.CoreNodeName == "" {
+		return nil
+	}
+	return []FieldError{{
+		Field:    "paired_core_node",
+		Message:  in.CoreNodeName + " has no partner: one node, empty from each lift until the next bin is set down",
+		Severity: SeverityWarning,
+	}}
 }
 
 // SavedPairs is the claim's paired and second paired positions as the save
