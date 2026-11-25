@@ -6,8 +6,13 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"shingo/protocol"
+	"shingoedge/config"
 	"shingoedge/domain"
+	"shingoedge/engine"
+	"shingoedge/internal/testdb"
 	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
 )
@@ -594,6 +599,49 @@ func TestApiConfig_SyncPayloadCatalog(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/payload-catalog/sync", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
+}
+
+// TestApiConfig_SyncBeforeTheSyncsAreWired: until main.go wires the
+// heartbeater's two syncs (cmd/shingoedge setupKafkaSubscribers, once messaging
+// connects; never, on an Edge with no broker configured), both Sync doors
+// refuse 503 with the Edge's sentence for a hook not wired and ask nothing.
+// Once wired, each answers ok and asks once. They used to answer ok and send
+// nothing (docket D31). A real engine, never started: the stub above always
+// answers as wired.
+func TestApiConfig_SyncBeforeTheSyncsAreWired(t *testing.T) {
+	t.Parallel()
+	cfg := config.Defaults()
+	cfg.StationUID = "sync.edge"
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: testdb.Open(t), LogFunc: func(string, ...any) {}})
+	h := &Handlers{engine: eng, orchestration: eng, sessions: newSessionStore(""), eventHub: NewEventHub(),
+		stationViews: newStationViewGroup()}
+	r := chi.NewRouter()
+	r.Post("/api/core-nodes/sync", h.apiSyncCoreNodes)
+	r.Post("/api/payload-catalog/sync", h.apiSyncPayloadCatalog)
+	for _, door := range []struct {
+		path, refused string
+		wire          func(func())
+	}{
+		{"/api/core-nodes/sync", "the heartbeater is not running (messaging not connected yet): no node list request sent",
+			eng.SetNodeSyncFunc},
+		{"/api/payload-catalog/sync", "the heartbeater is not running (messaging not connected yet): no catalog request sent",
+			eng.SetCatalogSyncFunc},
+	} {
+		t.Run(door.path, func(t *testing.T) {
+			resp := doRequest(t, r, "POST", door.path, nil, nil)
+			assertStatus(t, resp, http.StatusServiceUnavailable)
+			assertJSONPath(t, resp, "error", door.refused)
+
+			asked := 0
+			door.wire(func() { asked++ })
+			resp = doRequest(t, r, "POST", door.path, nil, nil)
+			assertStatus(t, resp, http.StatusOK)
+			assertJSONPath(t, resp, "status", "ok")
+			if asked != 1 {
+				t.Errorf("wired: the door asked the heartbeater %d times, want 1", asked)
+			}
+		})
+	}
 }
 
 func TestApiConfig_TestKafka_EmptyBroker(t *testing.T) {
