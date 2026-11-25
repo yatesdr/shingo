@@ -555,12 +555,21 @@ func (c *ksrCell) coreRoute(label string, ords ...domain.Order) {
 // no-wait leg off a loader spot read as a return there), B ran circular and the
 // line was left bare (TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched).
 //
-// THE CASES WITH NO BUFFER FREE STILL FAIL, on both shapes, and are skipped
+// WITH ONE HOME AND NO BUFFER FREE IT WAITS, on both shapes, and that is the
+// mode's rule, as a full market's wait is (B22 and the owner's "this isnt a code
+// problem", R159; brief H): A is made first and carries the line's cart to the
+// home, which holds the full B comes for; B is made only at A's release, so A
+// has no partner whose lift empties the home, and A waits queued at Core,
+// loader-park-no-slot, with its sentence on Core's row and the station's, and
+// no robot comes. With an empty standing in the buffer, a person moving it out
+// lets A go to the buffer and the swap runs to its end. With no buffer at all
+// the sentence names only the home, which holds the full B comes for. Before
+// brief H these four cells were skipped reds.
+//
+// THE TWO-HOMES CASE WITH NO BUFFER STILL FAILS, on both shapes, and is skipped
 // unless SHINGO_KNOWN_RED=1 (lane f-home's notes have the trace and the red
-// output): A waits queued at Core, loader-park-no-slot, and is never sent: the
-// home holds the full, A has no sibling whose lift clears it, and the bare
-// second home is never offered (Core's sentence names it all the same). RELEASE
-// is refused and B is never made.
+// output): A waits the same way, and the bare second home is never offered
+// (Core's sentence names it all the same).
 func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 	t.Parallel()
 	for _, shape := range []struct {
@@ -571,12 +580,14 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 			name                      string
 			extraHomes, buffers, held int
 			red                       bool
+			// waits is the spots the removal's wait sentence names when it waits.
+			waits string
 		}{
-			{"one home, a free buffer", 0, 1, 0, false},
-			{"one home, its buffer holding an empty", 0, 1, 1, true},
-			{"one home, no buffer", 0, 0, 0, true},
-			{"two homes, the second bare, no buffer", 1, 0, 0, true},
-			{"two homes, the second bare, a free buffer", 1, 1, 0, false},
+			{"one home, a free buffer", 0, 1, 0, false, ""},
+			{"one home, its buffer holding an empty", 0, 1, 1, false, ksrHomeA + ", KSR-BUF-1"},
+			{"one home, no buffer", 0, 0, 0, false, ksrHomeA},
+			{"two homes, the second bare, no buffer", 1, 0, 0, true, ""},
+			{"two homes, the second bare, a free buffer", 1, 1, 0, false, ""},
 		} {
 			t.Run(shape.name+", "+lc.name, func(t *testing.T) {
 				if lc.red && os.Getenv("SHINGO_KNOWN_RED") == "" {
@@ -593,6 +604,40 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 				c.settle()
 				removal := c.seqRemoval("the request", seqDoors[0].press)
 				defer func() { c.coreRoute("at the end", c.rows()...) }()
+				if lc.waits != "" {
+					// The wait and its sentence, held over the cell's passes.
+					sentence := "Waiting for a slot at " + ksrHomeA + " — empty one of " + lc.waits + " and it goes"
+					waiting := func() bool {
+						co, row := c.coreOf(removal), c.edgeRow(removal.ID)
+						return co.Status == protocol.StatusQueued && co.QueueCause == "loader-park-no-slot" &&
+							co.QueueReason == sentence && co.VendorOrderID == "" &&
+							row.Status == protocol.StatusQueued && row.QueueReason == sentence &&
+							row.QueueCode == string(protocol.QueueWaitingForSlot)
+					}
+					c.eventually("the removal waits for a spot of the loader, with its sentence", waiting)
+					for i := 0; i < 5; i++ {
+						c.tick()
+					}
+					if !waiting() {
+						co, row := c.coreOf(removal), c.edgeRow(removal.ID)
+						c.dump("still waiting")
+						t.Fatalf("five passes on, Core reads %s cause=%q reason=%q vendor=%q and the Edge %s "+
+							"reason=%q code=%q; want both queued on %q, no robot", co.Status, co.QueueCause,
+							co.QueueReason, co.VendorOrderID, row.Status, row.QueueReason, row.QueueCode, sentence)
+					}
+					if lc.held == 0 {
+						return
+					}
+					// A person moves the buffer's empty out: the removal goes there.
+					in := c.binsAt("KSR-BUF-1")
+					if len(in) != 1 {
+						c.dump("no empty to move")
+						t.Fatalf("KSR-BUF-1 holds %d bins, want the empty a person moves off it", len(in))
+					}
+					out, err := c.core.eng.DB().GetNodeByName(ksrOutStg)
+					mustNil(t, err, "the node a person moves the empty to")
+					c.moveByHand(in[0], out.ID, "a person moves the empty out of the buffer")
+				}
 				c.seqAtTheLine("the request", removal)
 				backfill := c.seqRelease("the request", removal)
 				c.tick()
