@@ -92,7 +92,27 @@ type Client struct {
 	attemptEphemeral func(brokers []string, timeout time.Duration, topic string) error
 	ephemeralRetry   time.Duration
 	ephemeralClock   clock.Clock
+
+	// inHand is held shared by a read loop from the moment it takes a message
+	// until that message's offset is committed (readLoop). Close takes it whole
+	// once the stop channel is closed, so Close returns with no message in
+	// hand: the handler finished with the engine and the database still up
+	// (docket B11). Never taken under mu.
+	inHand sync.RWMutex
+	// closeWait is the longest Close waits for a message in hand
+	// (closeWaitLimit); a field so a test can wedge a handler without waiting
+	// that long. Set once, in NewClient.
+	closeWait time.Duration
 }
+
+// closeWaitLimit is the longest Close waits for the message in hand. A safety
+// net, as the engine's stop limit is (engine.engineStopDrainLimit, 30 s): a
+// handler is one message's work, so a wait this long means it is wedged, and
+// the stop goes on and closes under it. It fits the service's stop timeout
+// with the engine's: systemd's 90 s default, of which the web server takes up
+// to 5 s and the engine up to 30 s. Pinned by
+// TestClose_AWedgedHandlerHoldsCloseNoLongerThanItsLimit.
+const closeWaitLimit = 30 * time.Second
 
 type kafkaState struct {
 	readers map[string]kafkaReader
@@ -122,6 +142,7 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 		attemptEphemeral: attemptEphemeral,
 		ephemeralRetry:   ephemeralRetryEvery,
 		ephemeralClock:   clock.Real(),
+		closeWait:        closeWaitLimit,
 	}
 }
 
@@ -289,7 +310,10 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 	for {
 		// Fetch, handle, then commit. ReadMessage committed before returning,
 		// so a crash inside the handler lost the message; now the offset moves
-		// only after the handler has run, and a crash redelivers it once.
+		// only after the handler has run, and a crash delivers it again. For
+		// the seven order-channel types that is not a second chance: the inbox
+		// dedup wrote its row before the handler ran and drops the redelivery
+		// (middleware.NewInboxDedup; docket B11, the crash half, still open).
 		msg, err := reader.FetchMessage(context.Background())
 		if err != nil {
 			select {
@@ -332,6 +356,17 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 			continue
 		}
 
+		// The message is in hand until its offset is committed: Close waits
+		// for it (inHand). One taken after the stop is left alone, neither
+		// handled nor committed, so the next reader is given it and handles
+		// it whole.
+		c.inHand.RLock()
+		select {
+		case <-stop:
+			c.inHand.RUnlock()
+			return
+		default:
+		}
 		// Reset backoff on successful read.
 		bo.Reset()
 		c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
@@ -351,6 +386,7 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 		if err := reader.CommitMessages(context.Background(), msg); err != nil {
 			log.Printf("kafka commit error: topic=%s offset=%d: %v", topic, msg.Offset, err)
 		}
+		c.inHand.RUnlock()
 	}
 }
 
@@ -471,14 +507,25 @@ func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {
 	return nil
 }
 
+// Close stops the read loops, waits for the message in hand, then closes the
+// readers and the writer (docket B11). A read loop that holds a message when
+// the stop comes finishes it: its handler runs and its offset is committed
+// before Close returns, so a stop no longer cuts a handler in half and the
+// redelivery is not dropped as a duplicate. A message taken after the stop is
+// left for the next reader. A handler still running at closeWait is closed
+// under, with a log line. Pinned by
+// TestCoreHandler_AnOrderCutInHalfIsCreatedOnceAfterRedelivery.
 func (c *Client) Close() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.closeOnce.Do(func() {
 		close(c.stopChan)
 	})
+	c.mu.Unlock()
 
+	c.waitForMessageInHand()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.kafka != nil {
 		for _, r := range c.kafka.readers {
 			r.Close()
@@ -488,5 +535,24 @@ func (c *Client) Close() {
 		}
 		c.kafka.ephemeral.close()
 		c.kafka = nil
+	}
+}
+
+// waitForMessageInHand returns once no read loop holds a message, or at
+// closeWait. Called with the stop channel closed and mu not held: a loop takes
+// mu to replace a failed reader, and a handler may read the client.
+func (c *Client) waitForMessageInHand() {
+	idle := make(chan struct{})
+	go func() {
+		c.inHand.Lock()
+		defer c.inHand.Unlock()
+		close(idle) // no read loop holds a message
+	}()
+	timer := time.NewTimer(c.closeWait)
+	defer timer.Stop()
+	select {
+	case <-idle:
+	case <-timer.C:
+		log.Printf("messaging: close: a message was still being handled after %s; closing under it", c.closeWait)
 	}
 }

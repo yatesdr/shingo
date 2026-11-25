@@ -399,7 +399,6 @@ func main() {
 	} else {
 		log.Printf("shingocore: messaging connected (kafka)")
 	}
-	defer msgClient.Close()
 
 	// ── Engine ──────────────────────────────────────────────────────────
 	eng := engine.New(engine.Config{
@@ -412,7 +411,16 @@ func main() {
 	})
 
 	eng.Start()
-	defer eng.Stop()
+	// THE CONSUMER CLOSES BEFORE THE ENGINE STOPS (docket B11). Close waits for
+	// the message in hand, so a stop finishes it with the engine and the
+	// database still up and commits its offset; closed after them, the stop cut
+	// the handler and the redelivery was dropped as a duplicate. Deferred here,
+	// it runs after the defers below and before db.Close above. Pinned by
+	// TestShutdown_TheConsumerClosesBeforeTheEngineStops.
+	defer func() {
+		msgClient.Close()
+		eng.Stop()
+	}()
 	eng.StartScanProbe(watch.Loop("the scan pass"))
 	eng.WatchAfterQueue(watch.Loop("the after-emit queue"))
 	go watch.Run(watchStop)

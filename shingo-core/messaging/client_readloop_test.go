@@ -149,3 +149,48 @@ func TestReadLoop_HandlerPanicIsRecoveredAndTheLoopMovesOn(t *testing.T) {
 		t.Errorf("readLoop call order = %v, want %v", got, want)
 	}
 }
+
+// TestClose_AWedgedHandlerHoldsCloseNoLongerThanItsLimit: Close waits for the
+// message in hand (docket B11, pinned by
+// TestCoreHandler_AnOrderCutInHalfIsCreatedOnceAfterRedelivery), and only so
+// long. A handler that never returns would otherwise hold Core's shutdown
+// until the service manager killed it; at closeWait Close goes on and closes
+// under the handler.
+func TestClose_AWedgedHandlerHoldsCloseNoLongerThanItsLimit(t *testing.T) {
+	t.Parallel()
+	r := newOrderRecordingReader(kafka.Message{Topic: "shingo.orders", Value: []byte("wedged")})
+	c := NewClient(&config.MessagingConfig{})
+	c.closeWait = 50 * time.Millisecond
+	inHandler, unwedge, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		c.readLoop("shingo.orders", r, func(string, []byte) {
+			close(inHandler)
+			<-unwedge
+		})
+		close(done)
+	}()
+	select {
+	case <-inHandler:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readLoop never handed the message to its handler")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		c.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close still waited on a wedged handler 5 s into a 50 ms limit")
+	}
+
+	close(unwedge)
+	close(r.release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readLoop did not exit once its handler returned")
+	}
+}

@@ -19,6 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration; Core only.
 
 - At shutdown Core's engine lets the work it tracks finish before the database closes, drops what is still queued, and stops waiting for it after 30 s
+- At shutdown Core finishes the station message it is handling (an order, cancel, release, receipt or ingest) before its engine stops, waiting up to 30 s; the stop used to cut it, and after the restart Core ignored it as already seen, so an order sent as Core restarted could be lost. A crash at that moment still can
 
 ## v0.19.0 — 2026-11-22
 
