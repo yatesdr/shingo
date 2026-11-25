@@ -43,7 +43,6 @@ import (
 
 	coredomain "shingocore/domain"
 	corematerial "shingocore/material"
-	coremessaging "shingocore/messaging"
 	coreservice "shingocore/service"
 	"shingocore/store/audit"
 	corebins "shingocore/store/bins"
@@ -80,7 +79,7 @@ const (
 // one cycle draws 1 kit.
 func TestUOP_OwnersExample_StoresPartsReadsUOP(t *testing.T) {
 	t.Parallel()
-	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobot, plain: true, counted: true, rigPush: true})
+	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobot, plain: true, counted: true})
 	c.runningCell("setup")
 	w := &w6Cell{ksrCell: c}
 	w.wireBus()
@@ -93,18 +92,13 @@ func TestUOP_OwnersExample_StoresPartsReadsUOP(t *testing.T) {
 	templates := c.core.eng.PayloadService()
 
 	// The catalog feed, routed as the two composition roots route it: the
-	// Edge's heartbeat to Core's HandleEdgeHeartbeat, Core's catalog to the
-	// Edge's ApplyCatalog, and the payload service's writes to the same data
-	// service's change door (cmd/shingocore wires SetFeedsChangedFunc to it).
-	// wireBus routes neither subject, so each side's ingestor takes those two
-	// first and hands every other envelope on as before.
-	feed := coremessaging.NewCoreDataService(coreDB,
-		coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", c.core.eng.Dispatcher()),
-		coreservice.EpochAnnounce{Topic: "shingo.dispatch", CoreStation: "core"})
-	c.core.eng.SetFeedsChangedFunc(feed.FeedsChanged)
-	toCore := router.NewSubject()
-	router.RegisterSubject(toCore, protocol.SubjectEdgeHeartbeat, feed.HandleEdgeHeartbeat)
-	routeFirst(w.coreIn, toCore)
+	// Edge's heartbeat to Core's HandleEdgeHeartbeat (the cell's Core routes it
+	// for the bins feed), Core's catalog to the Edge's ApplyCatalog, and the
+	// payload service's writes to the same data service's change door
+	// (cmd/shingocore wires SetFeedsChangedFunc to it). The harness Edge routes
+	// no catalog, so its ingestor takes that one first and hands every other
+	// envelope on as before.
+	c.core.eng.SetFeedsChangedFunc(c.side.Data.FeedsChanged)
 	toEdge := router.NewSubject()
 	router.RegisterSubject(toEdge, protocol.SubjectCatalogPayloadsResponse,
 		func(_ *protocol.Envelope, r *protocol.CatalogPayloadsResponse) { c.edge.Engine.ApplyCatalog(r) })
@@ -476,10 +470,11 @@ func (u *uopCell) freeStoreroomSlot() *int64 {
 // and asks for no feed this Edge is not routed for.
 func (u *uopCell) catalogBeat(label, code string, ok func(*catalog.CatalogEntry) bool) {
 	u.t.Helper()
-	held := u.edge.Engine.FeedDigests()[protocol.FeedCatalog]
+	// The Edge's heartbeat, quoting the catalog it holds beside the bins feed.
+	body := u.edge.Engine.HeartbeatBody()
+	body.Feeds[protocol.FeedCatalog] = u.edge.Engine.FeedDigests()[protocol.FeedCatalog]
 	env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat,
-		protocol.Address{Role: protocol.RoleEdge, Station: "edge.test"}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.EdgeHeartbeat{StationID: "edge.test", Feeds: map[string]string{protocol.FeedCatalog: held}})
+		protocol.Address{Role: protocol.RoleEdge, Station: "edge.test"}, protocol.Address{Role: protocol.RoleCore}, body)
 	mustNil(u.t, err, label+": the heartbeat")
 	raw, err := env.Encode()
 	mustNil(u.t, err, label+": encode the heartbeat")

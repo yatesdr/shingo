@@ -112,10 +112,7 @@ type ksrCell struct {
 	core kscCore
 	// side is Core's composition around core's engine (testharness.NewCore),
 	// made once: a plant's Core runs on while its Edge restarts.
-	side *coreharness.Core
-	// rigPush: the Edge's bins come from the rig's push (harness.BinsPush),
-	// not Core's own feed (ksrOpts.rigPush).
-	rigPush   bool
+	side      *coreharness.Core
 	edge      *edgeharness.Edge
 	bus       *harness.Bus
 	kick      *kickTicker
@@ -218,11 +215,6 @@ type ksrOpts struct {
 	// counted: the Edge's draws, its production ticks and its claims reach
 	// Core over the wire, as the CATID cell routes them (w6Cell.wireBus).
 	counted bool
-	// rigPush: the Edge's bins come from the rig's push, not Core's own feed:
-	// for a cell that routes the Edge's heartbeat to a data service of its own
-	// (uop_ratio's catalog feed), which would answer the feed's heartbeat with
-	// another Core's ack.
-	rigPush bool
 	// dropB: style B claims nothing at the line, so a changeover to B drops
 	// it (its bin goes and nothing replaces it), and A's claim marks the line
 	// for a tool change, so the cutover waits for the line to be clear.
@@ -480,8 +472,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	// Core's tables as main builds them, less what this cell leaves out: the
 	// redirect, every subject but these (its Edge also sends demand origins,
 	// never routed here) and every hook but the bins feed's (FeedHooks: the
-	// Edge's bins come on Core's own feed, unless the cell keeps the rig's
-	// push).
+	// Edge's bins come on Core's own feed).
 	routes := []string{
 		protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt,
 		protocol.TypeOrderRelease,
@@ -502,25 +493,14 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	if o.counted {
 		routes = append(routes, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks)
 	}
-	hooks := coreharness.FeedHooks
-	if c.rigPush = o.rigPush; c.rigPush {
-		hooks = nil
-	} else {
-		routes = append(routes, protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat)
-	}
-	coreSide := coreharness.NewCore(t, c.core.eng, coreharness.RoutesOnly(routes...), coreharness.HooksOnly(hooks...))
+	routes = append(routes, protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat)
+	coreSide := coreharness.NewCore(t, c.core.eng, coreharness.RoutesOnly(routes...), coreharness.HooksOnly(coreharness.FeedHooks...))
 	c.side = coreSide
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
-	if c.rigPush {
-		push := harness.StartBinsPush(t, coreDB, edge.Engine)
-		c.bus.SetBinsPush(push)
-		push.AnswerAsks(coreSide.AskKinds)
-	} else {
-		harness.StartBinsFeed(t, c.bus, coreSide.Data, edge)
-	}
+	harness.StartBinsFeed(t, c.bus, coreSide.Data, edge)
 	c.registerEdge()
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),

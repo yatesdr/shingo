@@ -481,10 +481,8 @@ type w6Cell struct {
 	plc      *w6WarLink
 	tickers  *w6Tickers
 	sink     *edgeuop.Mutator
-	push     *harness.BinsPush
 	shipper  *edgemessaging.TickShipper
 	coreIn   *protocol.Ingestor
-	askKinds []string
 	nodes    [5]int64
 	run, alt int64
 	counter  int64 // the load station's counter, 0 when the cell has none
@@ -707,8 +705,7 @@ func (c *w6Cell) restart(label string) {
 // redirect, every other subject (its Edge also sends demand origins, never
 // routed here) and every hook but the bins feed's (FeedHooks). Each call
 // takes a new Bus for the Edge it has now, on Core's real bins feed: a
-// restarted Edge sends its watch list and heartbeat as a booted one does. A
-// ksrCell kept on the rig's push (rigPush) keeps it here.
+// restarted Edge sends its watch list and heartbeat as a booted one does.
 func (c *w6Cell) wireBus() {
 	t, coreDB := c.t, c.core.eng.DB()
 	if c.side == nil {
@@ -720,21 +717,12 @@ func (c *w6Cell) wireBus() {
 			coreharness.HooksOnly(coreharness.FeedHooks...))
 	}
 	coreSide := c.side
-	if c.askKinds == nil {
-		c.askKinds = coreSide.AskKinds
-	}
 	c.coreIn = coreSide.Ingestor
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: c.edge.DB, EdgeIngestor: c.edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
-	if c.rigPush {
-		c.push = harness.StartBinsPush(t, coreDB, c.edge.Engine)
-		c.bus.SetBinsPush(c.push)
-		c.push.AnswerAsks(c.askKinds)
-	} else {
-		harness.StartBinsFeed(t, c.bus, coreSide.Data, c.edge)
-	}
+	harness.StartBinsFeed(t, c.bus, coreSide.Data, c.edge)
 	c.registerEdge()
 	c.settle()
 }
