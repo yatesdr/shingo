@@ -16,8 +16,10 @@ package engine
 //   - the web layer's: SetupEngineListeners, from www.NewRouter, last.
 //
 // The census reads two things with go/ast from every non-test file of the
-// module (build tags ignored): each function's subscriptions in source order,
-// and where each such function is called. Together they are the order the
+// module (build tags ignored) but the test harness's (testharness/: a rig's
+// copy of main's composition, held to main by TestNewCore_MakesWhatMainMakes):
+// each function's subscriptions in source order, and where each such function
+// is called. Together they are the order the
 // subscriptions are made in, so a subscription that is added, removed or moved,
 // and a call that moves, fails here and says what to change.
 //
@@ -404,7 +406,7 @@ func walkCoreBus(t *testing.T) *busWalk {
 			return err
 		}
 		if d.IsDir() {
-			if n := d.Name(); path != root && (n == "node_modules" || n == "testdata" || n == "vendor" || strings.HasPrefix(n, ".")) {
+			if n := d.Name(); path != root && (n == "node_modules" || n == "testdata" || n == "vendor" || n == "testharness" || strings.HasPrefix(n, ".")) {
 				return filepath.SkipDir
 			}
 			return nil
