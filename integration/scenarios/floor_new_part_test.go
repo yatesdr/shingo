@@ -65,13 +65,16 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 	empty := &corebins.Bin{BinTypeID: carrier.ID, Label: "SYN-FNP-EMPTY", NodeID: &at[empties].ID, Status: "available"}
 	mustNil(t, coreDB.CreateBin(empty), "an empty carrier at the source")
 	// Core's tables and hooks as main builds them, less what this cell leaves
-	// out: every subject but the asks (its Edge also sends a demand origin,
-	// never routed here), the release, the redirect and the ingest, and every
-	// hook but the change door and the catalog row the floor part answers with.
+	// out: every subject but the asks, the watch list and the heartbeat (its
+	// Edge also sends a demand origin, never routed here), the release, the
+	// redirect and the ingest, and every hook but the bins feed's (FeedHooks:
+	// the Edge's bins come on Core's own feed), the change door and the catalog
+	// row the floor part answers with.
 	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
-			protocol.TypeOrderReceipt, protocol.SubjectEdgeAsk),
-		coreharness.HooksOnly(coreharness.HookFeedsChanged, coreharness.HookCatalogRow))
+			protocol.TypeOrderReceipt, protocol.SubjectEdgeAsk, protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat),
+		coreharness.HooksOnly(append([]coreharness.Hook{coreharness.HookFeedsChanged, coreharness.HookCatalogRow},
+			coreharness.FeedHooks...)...))
 
 	// ── Edge: one produce line running SYN-FNP-RUN, HMI setup on, its recipe named ──
 	edge := edgeharness.NewEdge(t, edgeStation)
@@ -133,14 +136,12 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 	}
 	edge.Engine.ApplyNodeList(&protocol.NodeListResponse{Family: family, PayloadBinTypes: rule})
 
-	// ── the Bus, and Core's ask server named on the Edge's ack ──
+	// ── the Bus, and Core's real bins feed, whose ack names Core's asks ──
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
-	push := harness.StartBinsPush(t, coreDB, edge.Engine)
-	bus.SetBinsPush(push)
-	push.AnswerAsks(coreSide.AskKinds)
+	harness.StartBinsFeed(t, bus, coreSide.Data, edge)
 	settle := func() {
 		for i := 0; i < 40; i++ {
 			if bus.PumpAll() == 0 {
