@@ -1,11 +1,25 @@
 package messaging
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"regexp"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	kafkago "github.com/segmentio/kafka-go"
+	metadataAPI "github.com/segmentio/kafka-go/protocol/metadata"
+	produceAPI "github.com/segmentio/kafka-go/protocol/produce"
 
 	"shingo/protocol"
+	"shingoedge/config"
 )
 
 // TestHeartbeater_NodeListRequestQuotesTheCachedSceneRevision pins the Edge
@@ -96,6 +110,123 @@ func TestHeartbeater_BinWatchRidesTheBootBurst(t *testing.T) {
 	h.SendBinWatch()
 	if called != 1 {
 		t.Errorf("BinWatchFn called %d times, want 1", called)
+	}
+}
+
+// fakeBroker stands under a Client's writer as its kafka-go transport. Down, it
+// refuses every round trip, as an unreachable broker fails a publish at its
+// first, the metadata request. Up, it answers the metadata and takes every
+// produce, keeping the subject of each envelope it carried.
+type fakeBroker struct {
+	up       atomic.Bool
+	refused  atomic.Int64
+	mu       sync.Mutex
+	subjects []string
+}
+
+func (b *fakeBroker) RoundTrip(_ context.Context, _ net.Addr, req kafkago.Request) (kafkago.Response, error) {
+	if !b.up.Load() {
+		b.refused.Add(1)
+		return nil, errors.New("fake broker: connection refused")
+	}
+	switch r := req.(type) {
+	case *metadataAPI.Request:
+		res := &metadataAPI.Response{}
+		for _, name := range r.TopicNames {
+			res.Topics = append(res.Topics, metadataAPI.ResponseTopic{Name: name, Partitions: []metadataAPI.ResponsePartition{{}}})
+		}
+		return res, nil
+	case *produceAPI.Request:
+		res := &produceAPI.Response{}
+		for _, topic := range r.Topics {
+			rt := produceAPI.ResponseTopic{Topic: topic.Topic}
+			for _, p := range topic.Partitions {
+				for {
+					rec, err := p.RecordSet.Records.ReadRecord()
+					if err != nil {
+						break
+					}
+					raw, _ := io.ReadAll(rec.Value)
+					var env struct {
+						P struct {
+							Subject string `json:"subject"`
+						} `json:"p"`
+					}
+					_ = json.Unmarshal(raw, &env)
+					b.mu.Lock()
+					b.subjects = append(b.subjects, env.P.Subject)
+					b.mu.Unlock()
+				}
+				rt.Partitions = append(rt.Partitions, produceAPI.ResponsePartition{Partition: p.Partition})
+			}
+			res.Topics = append(res.Topics, rt)
+		}
+		return res, nil
+	}
+	return nil, fmt.Errorf("fake broker: no answer for %T", req)
+}
+
+// took is how many envelopes of each subject the broker took.
+func (b *fakeBroker) took() map[string]int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := map[string]int{}
+	for _, s := range b.subjects {
+		n[s]++
+	}
+	return n
+}
+
+// TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers is docket B14:
+// an Edge whose broker is down when it boots sends its boot burst (register,
+// node list and catalog requests) when the broker answers again, once. The
+// burst goes out only at Start and on a Kafka reconnect; the loop sends
+// heartbeats, and the node list and catalog only to a Core that does not
+// answer feeds. So a register refused at boot was never sent again, and Core,
+// which asks for one only from a station it does not know, kept the Edge's
+// previous run (the plant incident at main.go's reconnect hook).
+//
+// A real Heartbeater on a real Client, over a fake broker: one try a send (a
+// sender with its stop closed, so a refusal costs no 2+4+8 s backoff), a 5 ms
+// interval, and a Core that answers feeds, so the loop re-asks nothing.
+func TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers(t *testing.T) {
+	t.Parallel()
+	broker := &fakeBroker{}
+	c := NewClient(func() config.MessagingConfig { return config.MessagingConfig{} })
+	c.kafkaW = &kafkago.Writer{Addr: kafkago.TCP("broker.test:9092"), Transport: broker, Balancer: &kafkago.Hash{},
+		RequiredAcks: kafkago.RequireOne, BatchTimeout: time.Millisecond}
+	t.Cleanup(c.Close)
+	h := NewHeartbeater(c, "edge.b14", "v-test", "inst-1", "shingo.orders")
+	oneTry := make(chan struct{})
+	close(oneTry)
+	h.sender = NewDataSender(c, "shingo.orders", oneTry)
+	h.interval = 5 * time.Millisecond
+	h.CoreSpeaksFeedsFn = func() bool { return true }
+
+	h.Start()
+	t.Cleanup(h.Stop)
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); !cond(); time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("waited 10 s for %s", what)
+			}
+		}
+	}
+	// The burst's four sends and two of the loop's heartbeats, refused.
+	waitFor("six refused sends", func() bool { return broker.refused.Load() >= 6 })
+	if n := len(broker.took()); n != 0 {
+		t.Fatalf("the broker took %d subjects while down", n)
+	}
+
+	broker.up.Store(true)
+	waitFor("six heartbeats taken", func() bool { return broker.took()[protocol.SubjectEdgeHeartbeat] >= 6 })
+	took := broker.took()
+	for _, s := range []string{protocol.SubjectEdgeRegister, protocol.SubjectNodeListRequest, protocol.SubjectCatalogPayloadsRequest} {
+		if took[s] != 1 {
+			t.Errorf("after the broker came back it took %d %s, want 1: the boot burst it refused goes out "+
+				"with the loop's first heartbeat that gets out, once", took[s], s)
+		}
 	}
 }
 

@@ -101,6 +101,51 @@ func TestBootWiring_TheHooksAWebHandlerCallsAreSetBeforeTheBurst(t *testing.T) {
 	}
 }
 
+// TestBootWiring_ABootThatMetNoBrokerOwesItsReconcile (docket B14): the boot's
+// order reconcile runs once, after the burst, and the first ack after a boot
+// is not a gap (engine TestOnCoreAck_GapReconciles), so a reconcile the broker
+// refused was not run again. setupKafkaSubscribers hands it to the heartbeater
+// before hb.Start, to run after the burst the loop sends once the broker
+// answers (hb.AfterOwedBurst = eng.StartupReconcile), and a boot reconcile
+// that fails marks the boot owed (hb.OweBoot in its error branch). The
+// heartbeater's half is run in messaging
+// TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers; this half is
+// main's, which no test runs.
+func TestBootWiring_ABootThatMetNoBrokerOwesItsReconcile(t *testing.T) {
+	t.Parallel()
+	body := mainFunc(t, "setupKafkaSubscribers")
+	handed, start, owed := -1, -1, false
+	for i, st := range body.List {
+		switch st := st.(type) {
+		case *ast.AssignStmt:
+			if len(st.Lhs) == 1 && len(st.Rhs) == 1 && types.ExprString(st.Lhs[0]) == "hb.AfterOwedBurst" &&
+				types.ExprString(st.Rhs[0]) == "eng.StartupReconcile" {
+				handed = i
+			}
+		case *ast.ExprStmt:
+			if call, ok := st.X.(*ast.CallExpr); ok && types.ExprString(call.Fun) == "hb.Start" {
+				start = i
+			}
+		case *ast.IfStmt:
+			if as, ok := st.Init.(*ast.AssignStmt); ok && len(as.Rhs) == 1 {
+				if call, ok := as.Rhs[0].(*ast.CallExpr); ok && types.ExprString(call.Fun) == "eng.StartupReconcile" {
+					owed = allCalls(st.Body)["hb.OweBoot"]
+				}
+			}
+		}
+	}
+	if start < 0 {
+		t.Fatal("setupKafkaSubscribers no longer calls hb.Start: this pin lost its input")
+	}
+	if handed < 0 || handed > start {
+		t.Errorf("hb.AfterOwedBurst = eng.StartupReconcile is statement %d, hb.Start %d: hand the heartbeater the "+
+			"boot reconcile before Start, or a boot the broker refused never reconciles", handed, start)
+	}
+	if !owed {
+		t.Error("the boot reconcile's error branch does not call hb.OweBoot: a reconcile the broker refused is not run again")
+	}
+}
+
 // TestBootWiring_TheWarningPrintsOnlyWhenConnectFails: main's boot WARNING
 // that the Edge runs deaf sits in the kafka-connect-retry goroutine's
 // `if err := msgClient.Connect(); err != nil` branch and nowhere else, and the
