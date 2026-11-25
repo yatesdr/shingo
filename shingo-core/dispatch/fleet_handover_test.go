@@ -430,6 +430,69 @@ func lockWaiters(db *store.DB, n int) error {
 	}
 }
 
+// TestHandover_ACancelEndingBeforeTheYesStopsTheFleetJob is the two pins above
+// in the mirror order: the cancel door reads the order and ends it while the
+// fleet is creating the job, so its ending lands before the handover's yes. No
+// live fleet job is left: the yes finds no row, and the handover's own arm for an
+// order that ended during its create (handoverToFleet, 3b) stops the job and
+// closes the ask.
+//
+// GREEN AT a63768f5 (docket B20), committed before the fix as behaviour the fix
+// must not move: in this order the ending's row names no job (the yes never
+// landed), so the stop is arm 3b's.
+func TestHandover_ACancelEndingBeforeTheYesStopsTheFleetJob(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	o := &orders.Order{
+		EdgeUUID: "HANDOVER-cancel-ends-before-yes", StationUID: "line-1",
+		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
+		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	hand, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "load the dispatcher's copy")
+	src, err := db.GetNodeByDotName(sd.StorageNode.Name)
+	testutil.MustNoErr(t, err, "resolve source")
+	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
+	testutil.MustNoErr(t, err, "resolve dest")
+
+	// Inside the create: the hand has committed, the fleet holds the job and the
+	// yes is next. The whole cancel door runs here: its read (`queued`, the ask
+	// open, no fleet job) and its ending.
+	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"}}
+	backend.SetOnCreate(func() {
+		d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: o.EdgeUUID, Reason: "aborted by operator"})
+	})
+
+	if _, err := d.dispatchToFleetCore(hand, src, dst, Hand{}); err == nil {
+		t.Fatal("the handover answered a yes for an order the cancel ended during its create")
+	}
+	if len(backend.CreateRequests()) != 1 {
+		t.Fatalf("expected exactly one create, got %d (fixture broken)", len(backend.CreateRequests()))
+	}
+	job := backend.CreateRequests()[0].OrderID
+
+	after, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if after.Status != StatusCancelled {
+		t.Fatalf("the row reads %s, want cancelled: the cancel's ending did not land during the create "+
+			"(fixture broken)", after.Status)
+	}
+	if !slices.Contains(backend.CancelRequests(), job) {
+		t.Errorf("order %d ended cancelled while the fleet created job %s, and no stop was sent for it "+
+			"(stops sent: %v): the job is live at the fleet under an order Core has ended",
+			o.ID, job, backend.CancelRequests())
+	}
+	if after.VendorOrderID != "" || after.AskedVendorOrderID != "" {
+		t.Errorf("the ended row names job %q and ask %q, want neither: the yes must not land on an ended "+
+			"order, and the ask closes once the fleet has taken the stop", after.VendorOrderID, after.AskedVendorOrderID)
+	}
+}
+
 // TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob is the rule of the
 // pins above for the parent-cancel cascade (cancelCompoundChildren), which lists
 // a compound's legs once and then ends them one by one: a leg whose yes lands
