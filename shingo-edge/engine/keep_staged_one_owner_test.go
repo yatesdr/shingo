@@ -295,6 +295,104 @@ func TestKeepStagedOneOwner_TheCopyCatchingUpIsADecisionPoint(t *testing.T) {
 	})
 }
 
+// runTurnedAway runs, once the cell is free, the keeper passes a held cell lock
+// turned away, as the Edge's own background work would. Docket B6: at this tree
+// nothing does; a pass turned away is logged and dropped, and the next level
+// sweep, up to a minute on, asks again.
+func runTurnedAway(eng *Engine) {}
+
+// A CHANGEOVER'S OWN DECISION IS ITS SPOTS' UNTIL THE KEEPER'S NEXT. A start and
+// a cancel hold their lines' cells for their whole body, and the orders they
+// cancel end on their own goroutine, so the keeper's pass at each end is turned
+// away. The passes on a spot their decision covers are theirs to drop: run the
+// moment they let go, such a pass orders the refill they leave to the keeper
+// (docket B6, R77: a refill the cancel then withdrew, and one ahead of the flown
+// return's landing). A pass turned away on a spot they do not decide is run
+// once the cell is free, whoever held it: here a second process's line on the
+// same cell, whose order to the line the start cancels.
+func TestKeepStagedOneOwner_AChangeoverDropsOnlyThePassesOnItsSpots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a start", func(t *testing.T) {
+		t.Parallel()
+		c := pinCase{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobot, read: readBare, queuedRef: true}
+		fx := c.seed(t)
+		withCascade(fx)
+		// The second process's line: a process_node row of its own on cell L1,
+		// keeping SPOT2 (bare) for a part of its own, with its order to the line
+		// still to be dispatched.
+		p2, err := fx.db.CreateProcess("KSCO-P2", "", "", "", false)
+		testutil.MustNoErr(t, err, "second process")
+		n2, err := fx.db.CreateProcessNode(processes.NodeInput{ProcessID: p2, CoreNodeName: "L1", Code: "L1-P2",
+			Name: "L1-P2", Sequence: 1, Enabled: true})
+		testutil.MustNoErr(t, err, "the second process's node on the cell")
+		_, err = fx.db.EnsureProcessNodeRuntime(n2)
+		testutil.MustNoErr(t, err, "its runtime")
+		s2, err := fx.db.CreateStyle("KSCO-P2-S", "", p2)
+		testutil.MustNoErr(t, err, "its style")
+		c2, err := fx.db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{StyleID: s2,
+			CoreNodeName: "L1", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot,
+			PayloadCode: "PART-X", UOPCapacity: 40, InboundSource: "SRC-X", InboundStaging: "STAGE-X",
+			OutboundDestination: "KSCO-DEST"})
+		testutil.MustNoErr(t, err, "its claim")
+		_, err = fx.db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node='SPOT2' WHERE id=?`, c2)
+		testutil.MustNoErr(t, err, "its keep-staged spot")
+		testutil.MustNoErr(t, fx.db.SetProcessNodeRuntime(n2, &c2, 30), "its runtime claim")
+		testutil.MustNoErr(t, fx.db.SetActiveStyle(p2, &s2), "its active style")
+		fx.places = append(fx.places, "SPOT2", "SRC-X", "STAGE-X")
+		fx.holdRows(t, map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}})
+		other, err := fx.eng.orderMgr.CreateRetrieveOrder(orders.RetrieveSpec{Process: &n2, Quantity: 1,
+			Delivery: "L1", Source: "SRC-X", Payload: "PART-X", Origin: orders.NoDemand()})
+		testutil.MustNoErr(t, err, "its order to the line")
+		queueKeeperRefill(t, fx)
+
+		startKSChangeover(t, fx)
+		if o, err := fx.db.GetOrder(other.ID); err != nil || o.Status != orders.StatusCancelled {
+			t.Fatalf("fixture: the second process's order to the line reads %+v (%v), want cancelled by the start", o, err)
+		}
+		runTurnedAway(fx.eng)
+		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 0 {
+			t.Fatalf("refills = %+v once the start let go, want none: the start decides %s, and the pass it turned "+
+				"away there waits for the keeper's next", refills, pinSpot)
+		}
+		if refills, _ := liveSpot(t, fx, "SPOT2"); len(refills) != 1 || refills[0].PayloadCode != "PART-X" {
+			t.Fatalf("refills to SPOT2 once the start let go = %+v, want the second line's one: the pass the start "+
+				"turned away on a spot it does not decide was never run again", refills)
+		}
+		fx.eng.sweepCellLevels()
+		if refills, _ := liveSpot(t, fx, pinSpot); len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" {
+			t.Fatalf("refills after the sweep = %+v, want the keeper's one for PART-NEW", refills)
+		}
+	})
+
+	// The F5 shape (TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying):
+	// the staying style's spare is leaving on a flown return when the cancel
+	// aborts the legs, so a pass run as the cancel lets go would order the
+	// staying part at once, ahead of the keeper's next decision point.
+	t.Run("a cancel", func(t *testing.T) {
+		t.Parallel()
+		fx := seedLanding(t, protocol.ClaimRoleConsume, map[string]protocol.NodeBinInfo{
+			"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": {Occupied: true, PayloadCode: "PART-OLD"}})
+		startKSChangeover(t, fx)
+		_, returns := liveSpot(t, fx, "SPOT")
+		if len(returns) != 1 || len(changeoverLegs(t, fx)) == 0 {
+			t.Fatalf("fixture: the start made %d returns and %d legs, want 1 and some", len(returns), len(changeoverLegs(t, fx)))
+		}
+		testutil.MustNoErr(t, fx.db.UpdateOrderStatus(returns[0].ID, string(protocol.StatusInTransit)), "the return flies")
+
+		testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
+		runTurnedAway(fx.eng)
+		if refills, _ := liveSpot(t, fx, "SPOT"); len(refills) != 0 {
+			t.Fatalf("refills = %+v once the cancel let go, want none: the cancel decides the spot, and the passes "+
+				"its legs' ends were turned away with wait for the keeper's next", refills)
+		}
+		fx.eng.sweepCellLevels()
+		if refills, _ := liveSpot(t, fx, "SPOT"); len(refills) != 1 || refills[0].PayloadCode != "PART-OLD" {
+			t.Fatalf("refills after the sweep = %+v, want the keeper's one for PART-OLD", refills)
+		}
+	})
+}
+
 // A START THAT ABORTS THE KEEPER'S QUEUED REFILL LEAVES IT ARMED. The start's
 // legs are written in the abort's own second, so they cannot re-arm the
 // keeper; the start writes the resume stamp, as REQUEST does

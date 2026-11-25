@@ -164,6 +164,43 @@ func TestKeepStagedKeeper_ResumeRefillsWithoutASwap(t *testing.T) {
 	}
 }
 
+// A RESUME tap that meets the cell being decided (here a holder on another
+// goroutine, as a REQUEST, a SEND BACK or a save holds it) answers ok and takes
+// effect once the cell is free: the tap's pass is turned away and run then
+// (runTurnedAway). Docket B6: the tap's pass was logged and dropped, so it did
+// nothing, and only the next level sweep, up to a minute on, refilled the spot.
+func TestKeepStagedKeeper_AResumeThatMeetsTheCellDecidedRunsOnceItIsFree(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := keeperCell(t)
+	endedRefill(t, eng, db, nodeID, protocol.StatusCancelled)
+	// A RESUME in the cancel's own second is not after it (SQLite stamps to the
+	// second), as in TestKeepStagedKeeper_ResumeRefillsWithoutASwap.
+	_, err := db.DB.Exec(`UPDATE orders SET updated_at = datetime('now', '-5 seconds') WHERE delivery_node = ?`, ksSpot)
+	testutil.MustNoErr(t, err, "backdate the cancel")
+	mu := eng.primeNodeLock(keeperClaimByID(t, db, nodeID))
+	held, release, gone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(gone)
+		mu.Lock()
+		close(held)
+		<-release
+		mu.Unlock()
+	}()
+	<-held
+	testutil.MustNoErr(t, eng.ResumeKeepStaged(nodeID), "resume")
+	if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+		close(release)
+		t.Fatalf("refills = %d while another goroutine holds the cell, want 0 yet", got.refills)
+	}
+	close(release)
+	<-gone
+	runTurnedAway(eng)
+	if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
+		t.Fatalf("refills = %d once the cell was free, want the tap's 1: the RESUME the held lock turned away "+
+			"was never run again", got.refills)
+	}
+}
+
 // End to end: a cancelled refill is not re-created by any sweep and the board
 // says so; REQUEST re-arms it. The REQUEST orders nothing for the spot itself:
 // its swap, with the spot bare, fetches from the market and stages on the spot,
