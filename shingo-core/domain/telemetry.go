@@ -716,7 +716,7 @@ var coreCancelPrefixes = []string{
 
 // cancelCodeOrigin is the origin of a coded cancel. Every cancel writer that
 // sets a code sets one of these three: operator_cancelled (the Edge door
-// Dispatcher.HandleOrderCancel, the UI door engine.TerminateOrder, carried-bin
+// Dispatcher.HandleOrderCancel, the UI door engine.CancelOrder, carried-bin
 // recovery's supersede, and the compound children each cascades to),
 // peer_terminal (dispatch/swap_peer.go), and abandoned (the Edge door, for the
 // Edge's own idle send-back: OrderCancel.Actor = CancelActorEdge). Any other

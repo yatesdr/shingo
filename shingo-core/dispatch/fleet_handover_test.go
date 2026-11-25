@@ -227,7 +227,7 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 // with no fleet job. The dispatcher's hand commits, the fleet takes the create
 // and the yes writes `dispatched` with the vendor id. Then the cancel goes on
 // from the copy it read, through CancelOrderWithCascade, the door that
-// HandleOrderCancel and engine.TerminateOrder each call with the order they
+// HandleOrderCancel and engine.CancelOrder each call with the order they
 // loaded. No lock stands between a door's read and that call.
 //
 // RED AT 93bd3cd6 AND a63768f5 (docket B20). LifecycleService.CancelOrder
@@ -490,7 +490,7 @@ func TestHandover_ACancelEndingBeforeTheYesStopsTheFleetJob(t *testing.T) {
 // A leg of a compound parent is handed to the fleet. Inside its create, a
 // transaction of the test's own takes the leg's row and the yes waits for it.
 // The parent's cancel is started through CancelOrderWithCascade, the door
-// HandleOrderCancel and engine.TerminateOrder share: it ends the parent, lists
+// HandleOrderCancel and engine.CancelOrder share: it ends the parent, lists
 // the legs (this one `queued`, its ask open, no fleet job) and its ending of the
 // leg waits behind the yes. The test lets the row go; the yes commits, and the
 // leg's ending lands on a `dispatched` row.

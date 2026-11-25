@@ -278,8 +278,8 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 		// ended here, and only this write sees the job. Stopped now, before the
 		// actions fire the cancelled event, as the copy's job was. Pinned by
 		// TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob (the wire door),
-		// TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob (the UI
-		// terminate) and TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob
+		// TestCancelOrder_ACancelReadBeforeTheYesStopsTheFleetJob (the UI
+		// cancel) and TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob
 		// (the parent's cascade).
 		if err == nil && to == StatusCancelled && job != "" && job != ord.VendorOrderID {
 			s.stopFleetJob(job)

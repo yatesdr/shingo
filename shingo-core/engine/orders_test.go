@@ -22,7 +22,7 @@ import (
 // orders_test.go — coverage for orders.go.
 //
 // Covers CreateBinMove (success + same-source/dest, missing nodes,
-// fleet failure), TerminateOrder (success + terminal-status guard +
+// fleet failure), CancelOrder (success + terminal-status guard +
 // missing-order error), and failOrderAndEmit (asserted via the indirect
 // behavior contract: fleet failure inside CreateBinMove leaves
 // the order in failed/dispatch error state and emits an EventOrderFailed).
@@ -199,12 +199,12 @@ func TestCreateBinMove_FleetRefusalQueues(t *testing.T) {
 	}
 }
 
-// ── TerminateOrder ──────────────────────────────────────────────────
+// ── CancelOrder ─────────────────────────────────────────────────────
 
-// TestTerminateOrder_CancelsActiveOrder makes a real order and then
+// TestCancelOrder_CancelsActiveOrder makes a real order and then
 // cancels it — verifies status flip to cancelled, audit, and emitted
 // EventOrderCancelled.
-func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
+func TestCancelOrder_CancelsActiveOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
@@ -227,7 +227,7 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 		cancelled <- evt.Payload.(OrderCancelledEvent)
 	}, EventOrderCancelled)
 
-	testutil.MustNoErr(t, eng.TerminateOrder(res.OrderID, "operator-x"), "TerminateOrder")
+	testutil.MustNoErr(t, eng.CancelOrder(res.OrderID, "operator-x"), "CancelOrder")
 
 	got, err := db.GetOrder(res.OrderID)
 	if err != nil {
@@ -253,7 +253,7 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 	}
 }
 
-func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
+func TestCancelOrder_RejectsTerminalStatus(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	testdb.SetupTestData(t, db)
@@ -267,7 +267,7 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	err := eng.TerminateOrder(order.ID, "op")
+	err := eng.CancelOrder(order.ID, "op")
 	if err == nil {
 		t.Fatal("expected error for terminal status")
 	}
@@ -276,12 +276,12 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 	}
 }
 
-func TestTerminateOrder_MissingOrder(t *testing.T) {
+func TestCancelOrder_MissingOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
-	err := eng.TerminateOrder(7777777, "op")
+	err := eng.CancelOrder(7777777, "op")
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
@@ -290,23 +290,23 @@ func TestTerminateOrder_MissingOrder(t *testing.T) {
 	}
 }
 
-// TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob: an order the
-// UI terminate ends naming a fleet job has had a stop sent to the fleet for that
-// job, when the handover's yes lands between the terminate's read of the order
-// and its ending. The wire door's twin is
+// TestCancelOrder_ACancelReadBeforeTheYesStopsTheFleetJob: an order the UI
+// cancel ends naming a fleet job has had a stop sent to the fleet for that job,
+// when the handover's yes lands between the cancel's read of the order and its
+// ending. The wire door's twin is
 // dispatch.TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob.
 //
 // A person's bin move is acquired at its door and handed to the fleet. Inside
 // the create, a transaction of the test's own takes the move's row, so the yes
-// waits for it. TerminateOrder is started: it reads the order (no fleet job yet)
+// waits for it. CancelOrder is started: it reads the order (no fleet job yet)
 // and its ending, through CancelOrderWithCascade and
 // LifecycleService.CancelOrder, waits behind the yes. The test lets the row go;
 // the yes commits, and the ending lands on a `dispatched` row.
 //
 // RED AT a63768f5 (docket B20): CancelOrder decided the stop from the copy
-// TerminateOrder read. Green since the ending stops the job it finds on the
+// CancelOrder read. Green since the ending stops the job it finds on the
 // row.
-func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
+func TestCancelOrder_ACancelReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := testdb.SetupTestData(t, db)
@@ -336,7 +336,7 @@ func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T)
 	}
 
 	queued := make(chan error, 1)
-	terminated := make(chan error, 1)
+	cancelled := make(chan error, 1)
 	var once sync.Once
 	backend.SetOnCreate(func() {
 		once.Do(func() {
@@ -358,8 +358,8 @@ func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T)
 			go func() {
 				err := waiting(1) // the yes waits for the row
 				if err == nil {
-					go func() { terminated <- eng.TerminateOrder(o.ID, "operator-x") }()
-					err = waiting(2) // the terminate has read the order, and its ending waits behind the yes
+					go func() { cancelled <- eng.CancelOrder(o.ID, "operator-x") }()
+					err = waiting(2) // the cancel has read the order, and its ending waits behind the yes
 				}
 				if cerr := hold.Commit(); err == nil {
 					err = cerr
@@ -372,14 +372,14 @@ func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T)
 	res, err := eng.CreateBinMove(BinMoveRequest{Selection: BinSelectionAuto,
 		SourceNodeID: storageNode.ID, DestNodeID: lineNode.ID,
 		StationID: "term-before-yes", EdgeUUID: uuid, Desc: "terminated while the fleet takes it"})
-	// Either answer is right: the terminate lands beside the move's own re-read.
+	// Either answer is right: the cancel lands beside the move's own re-read.
 	t.Logf("the move answered %+v, %v", res, err)
-	testutil.MustNoErr(t, <-queued, "queue the yes and the terminate's ending behind the held row")
+	testutil.MustNoErr(t, <-queued, "queue the yes and the cancel's ending behind the held row")
 	select {
-	case err := <-terminated:
-		testutil.MustNoErr(t, err, "TerminateOrder")
+	case err := <-cancelled:
+		testutil.MustNoErr(t, err, "CancelOrder")
 	case <-time.After(10 * time.Second):
-		t.Fatal("TerminateOrder never returned (fixture broken)")
+		t.Fatal("CancelOrder never returned (fixture broken)")
 	}
 	creates := backend.CreateRequests()
 	if len(creates) != 1 {
@@ -391,14 +391,14 @@ func TestTerminateOrder_ATerminateReadBeforeTheYesStopsTheFleetJob(t *testing.T)
 	testutil.MustNoErr(t, err, "reload the move")
 	if after.Status != dispatch.StatusCancelled || after.VendorOrderID != job {
 		t.Fatalf("the move reads %s naming fleet job %q, want cancelled naming %q: the yes did not land "+
-			"ahead of the terminate's ending (fixture broken)", after.Status, after.VendorOrderID, job)
+			"ahead of the cancel's ending (fixture broken)", after.Status, after.VendorOrderID, job)
 	}
 	if slices.Contains(backend.CancelRequests(), job) {
 		return
 	}
 	t.Errorf("order %d ended cancelled naming fleet job %s, and no stop was sent to the fleet for it "+
-		"(stops sent: %v). TerminateOrder read the order before the yes and ended it after: the UI "+
-		"terminate must reach the stop through the cancel door, which stops the job its ending finds "+
+		"(stops sent: %v). CancelOrder read the order before the yes and ended it after: the UI "+
+		"cancel must reach the stop through the cancel door, which stops the job its ending finds "+
 		"on the row", after.ID, job, backend.CancelRequests())
 }
 

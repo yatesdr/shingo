@@ -512,7 +512,7 @@ func assertParentFailedOnConfig(t *testing.T, r twiceRig, parent, failed *orders
 // (chapterStoppedShort), reached when a leg was cancelled without the
 // chapter-end marker. One blocker: leg 1 lifts and is released, and the
 // release's wake sends leg 2 behind it. A person then ends leg 2 from the
-// orders page (engine.TerminateOrder's cascade; a fleet stop is the same kind
+// orders page (engine.CancelOrder's cascade; a fleet stop is the same kind
 // of cancel), which re-drives nothing (no marker). Leg 1 delivers, and its own
 // advance is the chapter end.
 //
@@ -569,7 +569,7 @@ func TestDeliveredLeg_ChapterEnd(t *testing.T) {
 // TestDeliveredLeg_ParentCancel: the parent's cancel cascade
 // (cancelCompoundChildren), through the wire door (HandleOrderCancel: an Edge's
 // cancel, the changeover start's cancel of a digging order). The operator's
-// Terminate on the orders page is the same cascade (engine.TerminateOrder ->
+// Cancel Order on the orders page is the same cascade (engine.CancelOrder ->
 // CancelOrderWithCascade); its post-delivery guard reads the parent, which is
 // reshuffling. The cancel lands while leg 1 is delivered and not confirmed.
 //

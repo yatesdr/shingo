@@ -506,7 +506,7 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/orders?open="+strconv.FormatInt(id, 10), http.StatusMovedPermanently)
 }
 
-func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiCancelOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderID int64 `json:"order_id"`
 	}
@@ -515,7 +515,7 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actor := h.getUsername(r)
-	if err := h.orchestration.TerminateOrder(req.OrderID, actor); err != nil {
+	if err := h.orchestration.CancelOrder(req.OrderID, actor); err != nil {
 		// An order that already finished (ended, or its cart set down) is a
 		// refusal, not a fault: 409, with its sentence.
 		status := http.StatusInternalServerError
@@ -578,7 +578,7 @@ func orderNotes(entries []*domain.AuditEntry) []orderNote {
 
 // apiReissueTerminate re-sends the fleet terminate for an order Core ended that
 // the fleet still runs — the order page's Re-send Terminate, offered when
-// can_reissue_terminate. Same guards and group as /orders/terminate. Reached
+// can_reissue_terminate. Same guards and group as /orders/cancel. Reached
 // through the recovery service (it is a recovery verb), not by widening
 // EngineOrchestration (TestEngineOrchestrationWidth).
 func (h *Handlers) apiReissueTerminate(w http.ResponseWriter, r *http.Request) {
@@ -599,7 +599,7 @@ func (h *Handlers) apiReissueTerminate(w http.ResponseWriter, r *http.Request) {
 // the mechanism that should have done it is wedged.
 //
 // SAME GUARDS AS ITS NEIGHBOURS, deliberately — it sits in the protected group
-// beside /orders/terminate and /robots/force-complete, which are the comparable
+// beside /orders/cancel and /robots/force-complete, which are the comparable
 // "an engineer has decided" verbs. It is not a new privilege class, and the
 // actor is recorded because a hard release of a STATION-owned wait overrides a
 // cell that may still be occupied.

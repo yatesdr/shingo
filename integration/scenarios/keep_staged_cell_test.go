@@ -257,7 +257,7 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 		if protocol.IsTerminal(c.Status) {
 			continue // a leg's cancel takes its sibling with it
 		}
-		mustNil(t, core.eng.TerminateOrder(c.ID, "scenario"), "recall "+o.UUID)
+		mustNil(t, core.eng.CancelOrder(c.ID, "scenario"), "recall "+o.UUID)
 	}
 	settle()
 	for _, o := range callOrders {

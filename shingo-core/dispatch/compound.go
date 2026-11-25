@@ -2464,14 +2464,15 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 
 // CancelOrderWithCascade is THE cancel door. Both entry points that cancel an
 // order on somebody's instruction go through it: the Edge/wire cancel
-// (HandleOrderCancel) and the web-UI cancel (engine.TerminateOrder).
+// (HandleOrderCancel) and the web-UI cancel (engine.CancelOrder).
 //
 // ── WHY IT IS ONE DOOR AND NOT TWO CALLS ──────────────────────────────────
 //
-// engine.TerminateOrder called lifecycle.CancelOrder and stopped. No cascade, no
-// lane release, no wake. Cancelling a dig parent from the operations page
-// therefore left its legs RUNNING — with live vendor orders, claimed bins, and a
-// lane still held by a parent that no longer exists. The wire door had gotten
+// The web-UI door (then engine.TerminateOrder) called lifecycle.CancelOrder and
+// stopped. No cascade, no lane release, no wake. Cancelling a dig parent from
+// the operations page therefore left its legs RUNNING — with live vendor
+// orders, claimed bins, and a lane still held by a parent that no longer
+// exists. The wire door had gotten
 // the cascade (deliberately unconditional, see HandleOrderCancel); the UI door
 // was never given it, and the two doors are indistinguishable from the operator's
 // side.

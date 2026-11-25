@@ -748,10 +748,10 @@ Orders page's **Cancel**, its dialog (**Cancel order** / **Keep order**) and its
 word is the fleet's own command: the RDS explorer, the Test Orders page's terminate command, and Core's **Re-send
 Terminate** with its note **Terminate re-sent**, which re-send the fleet's terminate for an order Core has
 already ended. A delivered order is not cancelled, its cart being set down: it is confirmed, and the Edge refuses
-a cancel of it (`orders.ErrDelivered`). Code names, routes and data-actions keep their old words for now
-(`AbortOrder`, `/api/orders/{id}/abort`, `abortOrder`; `TerminateOrder`, `/api/orders/terminate`,
-`terminateOrder`). An older Edge sends `aborted by operator`, which Core classifies as a person's cancel, as it
-does the new text.
+a cancel of it (`orders.ErrDelivered`). Core's code names, route and data-action say cancel too
+(`Engine.CancelOrder`, `/api/orders/cancel`, `cancelOrder`); the Edge's keep their old words for now
+(`AbortOrder`, `/api/orders/{id}/abort`, `abortOrder`). An older Edge sends `aborted by operator`, which Core
+classifies as a person's cancel, as it does the new text.
 
 ### State words
 

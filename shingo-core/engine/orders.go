@@ -46,18 +46,18 @@ var ErrNodeNotFound = errors.New("node not found")
 //
 // It is the engine's thin door onto Dispatcher.HardReleaseStagedOrder, which is
 // where the reasoning and the audit live. Same shape and same protected route
-// group as TerminateOrder: an engineer has decided, and the row records who.
+// group as CancelOrder: an engineer has decided, and the row records who.
 func (e *Engine) HardReleaseOrder(orderID int64, actor string) error {
 	return e.dispatcher.HardReleaseStagedOrder(orderID, actor)
 }
 
-// OrderFinishedError is TerminateOrder's refusal of an order with nothing left
+// OrderFinishedError is CancelOrder's refusal of an order with nothing left
 // to stop: it has ended (Status is terminal), or its cart is set down where
 // the order takes it (SetDown: delivered, or landed and still in_transit,
 // store.DB.OrderTrips). It is a refusal, not a fault, so a door answers 409
-// with its sentence (www apiTerminateOrder; pinned by
-// TestPinOrders_TerminateFailureAnswers and
-// TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown).
+// with its sentence (www apiCancelOrder; pinned by
+// TestPinOrders_CancelFailureAnswers and
+// TestPinOrders_CancelRefusesAnOrderWhoseCartIsSetDown).
 type OrderFinishedError struct {
 	Status  protocol.Status
 	SetDown bool
@@ -70,8 +70,10 @@ func (e *OrderFinishedError) Error() string {
 	return fmt.Sprintf("cannot cancel this order: it has already ended (%s)", e.Status)
 }
 
-// TerminateOrder cancels an order, unclaims any payloads, and emits a cancellation event.
-func (e *Engine) TerminateOrder(orderID int64, actor string) error {
+// CancelOrder is Core's Orders page cancel (www apiCancelOrder, POST
+// /api/orders/cancel): it cancels an order, unclaims any payloads, and emits a
+// cancellation event.
+func (e *Engine) CancelOrder(orderID int64, actor string) error {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("order not found")

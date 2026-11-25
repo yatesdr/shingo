@@ -74,24 +74,24 @@ function refreshVisibleManifest() {
   if (_orderModalID != null) openOrderModal(_orderModalID);
 }
 
-async function terminateOrder(id, el) {
-  // id arrives as a string from data-action="terminateOrder:<id>" colon-arg
+async function cancelOrder(id, el) {
+  // id arrives as a string from data-action="cancelOrder:<id>" colon-arg
   // dispatch; the Go handler decodes order_id as int64 and rejects string
   // JSON values with "invalid request".
   var oid = parseInt(id, 10);
   if (!await uiConfirm('Cancel order #' + oid + '? This cannot be undone.', CANCEL_ORDER_CHOICE)) return;
-  orderControlPost('/api/orders/terminate', {order_id: oid}, el);
+  orderControlPost('/api/orders/cancel', {order_id: oid}, el);
 }
 
 // CANCEL_ORDER_CHOICE is the cancel dialog's two buttons. The operator's word
 // is Cancel (the owner, 2026-11-25: one word for Terminate and Abort), so the
 // dialog's own plain Cancel beside "Cancel order #N?" would read as the
 // order's cancel; its buttons name the choice instead. The functions, the
-// routes and the data-actions keep the word terminate for now.
+// route and the data-actions say cancel too.
 var CANCEL_ORDER_CHOICE = { ok: 'Cancel order', cancel: 'Keep order' };
 
 // cancelOrderFromRow is the operator-facing cancel action surfaced on
-// the orders list table. Backed by the same /api/orders/terminate
+// the orders list table. Backed by the same /api/orders/cancel
 // endpoint as the pop-up's Cancel Order: the same code path. The row's click
 // handler (openOrderModal) is suppressed implicitly because delegateActions
 // dispatches to the nearest [data-action] ancestor and stops there.
@@ -100,7 +100,7 @@ async function cancelOrderFromRow(id, el) {
   if (!await uiConfirm('Cancel order #' + oid + '? Any robot working on it is stopped, and its claimed bins are released.', CANCEL_ORDER_CHOICE)) return;
   // From a list row there is no manifest to re-render, so fall back to the
   // reload the list has always done.
-  apiPost('/api/orders/terminate', {order_id: oid})
+  apiPost('/api/orders/cancel', {order_id: oid})
     .then(function() { location.reload(); })
     .catch(function(e) {
       console.error('cancelOrderFromRow', oid, e);
@@ -634,10 +634,11 @@ function buildManifest(data, opts) {
     out += '<div class="manifest-controls">';
     out += '<div class="ctl-msg text-muted text-sm"></div>';
     out += '<div class="flex gap-1 items-center flex-wrap">';
-    // can_cancel comes from the server (www.canCancelStatus), the same gate
-    // engine.TerminateOrder applies — never re-derived from a status list here.
+    // can_cancel comes from the server (www.canCancelStatus), the status half
+    // of the gate engine.CancelOrder applies — never re-derived from a status
+    // list here.
     if (data.can_cancel) {
-      out += '<button class="btn btn-danger btn-sm" data-action="terminateOrder:' + o.id + '">Cancel Order</button>';
+      out += '<button class="btn btn-danger btn-sm" data-action="cancelOrder:' + o.id + '">Cancel Order</button>';
     }
     // Hard release (W3), beside Cancel Order because it is the same class of verb:
     // an engineer overriding the machinery. can_hard_release comes from the
@@ -1138,6 +1139,7 @@ function searchOrders() {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
+    cancelOrder,
     closeManualOrderModal,
     closeOrderModal,
     forceConfirmDelivered,
@@ -1150,6 +1152,5 @@ delegateActions(document.body, {
     setOrderPriority,
     stagedSourceChanged,
     submitManualOrder,
-    switchManualOrderTab,
-    terminateOrder
+    switchManualOrderTab
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

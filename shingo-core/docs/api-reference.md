@@ -316,13 +316,13 @@ Base URL: `http://<host>:8083`
 | Method | Path | Handler | Auth |
 |---|---|---|---|
 | `GET` | `/api/orders` | `apiListOrders` | public |
+| `POST` | `/api/orders/cancel` | `apiCancelOrder` | login |
 | `GET` | `/api/orders/detail` | `apiGetOrder` | public |
 | `GET` | `/api/orders/enriched` | `apiGetOrderEnriched` | public |
 | `POST` | `/api/orders/hard-release` | `apiHardReleaseOrder` | login |
 | `POST` | `/api/orders/priority` | `apiSetOrderPriority` | login |
 | `POST` | `/api/orders/reissue-terminate` | `apiReissueTerminate` | login |
 | `POST` | `/api/orders/spot` | `apiManualOrderSubmit` | login |
-| `POST` | `/api/orders/terminate` | `apiTerminateOrder` | login |
 
 ### `/api/outbox`
 

@@ -128,12 +128,15 @@ func (h *Handlers) parseJSON(w http.ResponseWriter, r *http.Request, dst any) bo
 	return true
 }
 
-// canCancelStatus reports whether a cancel/terminate control should render
-// for an order in this status. It is engine.TerminateOrder's own rejection
-// gate, so a button can only appear where the handler would actually accept
-// it. Exposed to templates as {{canCancel}} and to the enriched-order API as
-// `can_cancel`, so the server-rendered list rows and the client-rendered
-// manifest agree by construction.
+// canCancelStatus reports whether a cancel control should render for an order
+// in this status. It is the status half of engine.CancelOrder's refusal
+// (OrderFinishedError), so a button should appear only where the handler
+// accepts it. The other half is not a status: a cart set down while its order
+// still reads in_transit (the landing, before the delivered write) is refused
+// too, so for that moment the button shows and the press answers 409. Exposed
+// to templates as {{canCancel}} and to the enriched-order API as `can_cancel`,
+// so the server-rendered list rows and the client-rendered manifest agree by
+// construction.
 //
 // This replaced hand-listed status denylists that had drifted from the
 // engine: the list view missed "skipped" (terminal, so Cancel was a dead

@@ -15,7 +15,7 @@ import (
 // order, recover-faulted-order, reissue-terminate).
 //
 // Two dependencies on purpose: engine is the orchestration surface
-// (Events bus, dispatcher, fleet adapter, TerminateOrder, slot
+// (Events bus, dispatcher, fleet adapter, CancelOrder, slot
 // classification helpers); db is the narrower DB surface declared in
 // recovery_store.go. The two fields point at the same underlying state
 // at construction time — keeping them explicit makes the DB dependency
@@ -197,7 +197,7 @@ func (s *RecoveryService) CancelStuckOrder(orderID int64, actor string) error {
 	if order.Status.IsTerminal() {
 		return fmt.Errorf("order %d is already terminal", orderID)
 	}
-	if err := e.TerminateOrder(orderID, actor); err != nil {
+	if err := e.CancelOrder(orderID, actor); err != nil {
 		return err
 	}
 	s.db.RecordRecoveryAction("cancel_stuck_order", "order", orderID, fmt.Sprintf("cancelled stuck order in status %s", order.Status), actor)

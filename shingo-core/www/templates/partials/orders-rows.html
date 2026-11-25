@@ -70,9 +70,11 @@
   <td class="orders-time" data-sort-value="{{.CreatedAt}}">{{formatTimeSeconds .CreatedAt}}</td>
   {{if $.Authenticated}}
   <td class="orders-actions">
-    {{/* canCancel is engine.TerminateOrder's own gate
+    {{/* canCancel is the status half of engine.CancelOrder's gate
         (dispatch.IsPostDelivery || protocol.IsTerminal), so the
-        button can only render where the handler would accept it.
+        button should render only where the handler accepts it
+        (canCancelStatus says when it does not: a cart set down
+        before its order reads delivered).
         This replaced a hand-listed status denylist that had
         drifted: it missed "skipped" (terminal — the button was
         dead) and guarded "completed", which is not a protocol

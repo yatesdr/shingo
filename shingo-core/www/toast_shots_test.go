@@ -272,7 +272,7 @@ const orderControlsShotDriver = `<script>(function () {
   var shot = new URLSearchParams(location.search).get('shot');
   setTimeout(function () {
     if (shot === 'prompt') {
-      var btn = document.querySelector('.manifest-controls [data-action^="terminateOrder:"]');
+      var btn = document.querySelector('.manifest-controls [data-action^="cancelOrder:"]');
       if (btn) btn.click();
     }
     setTimeout(function () { document.body.setAttribute('data-shot-done', shot); }, 300);

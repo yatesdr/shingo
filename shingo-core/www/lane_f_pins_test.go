@@ -199,26 +199,26 @@ func TestPinTestOrders_ComplexSubmitWithNoRowAnswersFailure(t *testing.T) {
 	}
 }
 
-// TestPinOrders_TerminateFailureAnswers: the Orders row Cancel posts
-// /api/orders/terminate (orders.js:85-93) and only console.errors a failure.
-// The server answers the failure; it is the row that hides it. An unknown order
-// is a 500 with the reason; a finished one (delivered, confirmed or terminal) is
-// a refusal, not a fault: 409, its sentence saying the cart is set down or the
-// order has ended, with the word cancel (final brief Part 3 addition; it read
-// "cannot terminate order in status ..."). It was a 500 (proof runs on
-// 8aa5bf8c, order 158).
-func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
+// TestPinOrders_CancelFailureAnswers: the Orders row Cancel posts
+// /api/orders/cancel (orders.js cancelOrderFromRow) and toasts the server's
+// answer to a failure (lane F; it used to console.error it and show nothing).
+// The server answers the failure. An unknown order is a 500 with the reason; a
+// finished one (delivered, confirmed or terminal) is a refusal, not a fault:
+// 409, its sentence saying the cart is set down or the order has ended, with
+// the word cancel (final brief Part 3 addition; it read "cannot terminate order
+// in status ..."). It was a 500 (proof runs on 8aa5bf8c, order 158).
+func TestPinOrders_CancelFailureAnswers(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 
-	rec := postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": 999999})
+	rec := postJSON(t, h.apiCancelOrder, "/api/orders/cancel", map[string]any{"order_id": 999999})
 	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "{\"error\":\"order not found\"}\n" {
 		t.Errorf("unknown order = %d %q, want 500 order not found", rec.Code, rec.Body.String())
 	}
 
 	for _, status := range []protocol.Status{protocol.StatusDelivered, protocol.StatusConfirmed, protocol.StatusFailed} {
 		done := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = status })
-		rec = postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": done.ID})
+		rec = postJSON(t, h.apiCancelOrder, "/api/orders/cancel", map[string]any{"order_id": done.ID})
 		var resp struct {
 			Error string `json:"error"`
 		}
@@ -233,13 +233,14 @@ func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
 	}
 }
 
-// TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown: Terminate's refusal
-// is keyed on where the order's cart is (final brief 1e), not on its status
-// alone. An order that has set its cart down at its drop, its claim released,
-// still reads in_transit until its delivered write lands (the landed half), and
-// is refused like a delivered one: 409, nothing written. An order whose robot
-// is carrying its cart is still cancelled: a person can stop a carrying robot.
-func TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown(t *testing.T) {
+// TestPinOrders_CancelRefusesAnOrderWhoseCartIsSetDown: the Orders page
+// cancel's refusal is keyed on where the order's cart is (final brief 1e), not
+// on its status alone. An order that has set its cart down at its drop, its
+// claim released, still reads in_transit until its delivered write lands (the
+// landed half), and is refused like a delivered one: 409, nothing written. An
+// order whose robot is carrying its cart is still cancelled: a person can stop
+// a carrying robot.
+func TestPinOrders_CancelRefusesAnOrderWhoseCartIsSetDown(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -259,7 +260,7 @@ func TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown(t *testing.T) {
 	}
 
 	landed := order("term-landed", sd.LineNode, false)
-	rec := postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": landed.ID})
+	rec := postJSON(t, h.apiCancelOrder, "/api/orders/cancel", map[string]any{"order_id": landed.ID})
 	var resp struct {
 		Error string `json:"error"`
 	}
@@ -273,7 +274,7 @@ func TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown(t *testing.T) {
 	}
 
 	carried := order("term-carried", transit, true)
-	rec = postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": carried.ID})
+	rec = postJSON(t, h.apiCancelOrder, "/api/orders/cancel", map[string]any{"order_id": carried.ID})
 	after, err = db.GetOrder(carried.ID)
 	testutil.MustNoErr(t, err, "reload the carried order")
 	if rec.Code != http.StatusOK || after.Status != protocol.StatusCancelled {

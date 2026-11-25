@@ -114,7 +114,7 @@ func TestBinMove_ACoreBornMoveSendsItsStationNothing(t *testing.T) {
 		t.Fatalf("the bin move was born unaware=%t projecting to %q; Build writes every Core-born row unaware, and a person's move projects to nobody",
 			o.StationUnaware, o.ProjectsToStationUID)
 	}
-	testutil.MustNoErr(t, eng.TerminateOrder(res.OrderID, "test"), "cancel the move")
+	testutil.MustNoErr(t, eng.CancelOrder(res.OrderID, "test"), "cancel the move")
 	if n := outboxTo(t, db, "b2-quiet"); n != 0 {
 		t.Errorf("%d message(s) queued for the move's station, want 0: it has no row to apply them to", n)
 	}

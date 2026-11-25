@@ -547,7 +547,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 				r.Post("/robots/device-config/pull", h.apiRobotDeviceConfigPull)
 
 				// Orders
-				r.Post("/orders/terminate", h.apiTerminateOrder)
+				r.Post("/orders/cancel", h.apiCancelOrder)
 				r.Post("/orders/hard-release", h.apiHardReleaseOrder)
 				r.Post("/orders/reissue-terminate", h.apiReissueTerminate)
 				r.Post("/orders/priority", h.apiSetOrderPriority)

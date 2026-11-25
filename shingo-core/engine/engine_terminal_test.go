@@ -110,18 +110,16 @@ func TestCancelDeliveredOrder_NoReturnCreated(t *testing.T) {
 	t.Logf("final: bin=%d node=%v claimed=%v", binID, bin.NodeID, bin.ClaimedBy)
 }
 
-// --- TC-39: TerminateOrder rejects terminal statuses ---
-// Scenario: Admin clicks Terminate on a confirmed/completed order. The API must reject
-// this because the bin is already at its destination and the order is final.
+// --- TC-39: CancelOrder rejects terminal statuses ---
+// Scenario: Admin clicks Cancel Order on a confirmed/completed order. The API must
+// reject this because the bin is already at its destination and the order is final.
 //
-// Bug: TerminateOrder (orders.go:76) has no status guard. It unclaims bins, overwrites
-// status to "cancelled", and emits EventOrderCancelled — which triggers
-// maybeCreateReturnOrder. The return order claims the bin with the wrong source node,
-// permanently locking it at lineside.
-//
-// This is the root enabler for the TC-38 incident. If TerminateOrder rejected terminal
-// statuses, the spurious return order and receipt-on-cancelled bugs wouldn't trigger.
-func TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle(t *testing.T) {
+// The bug this pinned: the UI door (then TerminateOrder) had no status guard. It
+// unclaimed bins, overwrote status to "cancelled", and emitted EventOrderCancelled,
+// which triggered maybeCreateReturnOrder; the return order claimed the bin with the
+// wrong source node, permanently locking it at lineside. It was the root enabler for
+// the TC-38 incident. The guard is CancelOrder's refusal (OrderFinishedError).
+func TestCancelOrder_RejectsConfirmedStatus_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := testdb.SetupTestData(t, db)
@@ -157,31 +155,31 @@ func TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle(t *testing.T) {
 	order = testdb.RequireOrderStatus(t, db, "tc39-1", dispatch.StatusConfirmed)
 
 	bin, _ := db.GetBin(binID)
-	t.Logf("pre-terminate: order=%d status=%s bin=%d node=%v claimed=%v",
+	t.Logf("pre-cancel: order=%d status=%s bin=%d node=%v claimed=%v",
 		order.ID, order.Status, binID, bin.NodeID, bin.ClaimedBy)
 
-	// Try to terminate the confirmed/completed order via TerminateOrder (web UI path).
-	// BUG C: This should be rejected, but currently it succeeds.
-	err = eng.TerminateOrder(order.ID, "admin")
+	// Try to cancel the confirmed/completed order via CancelOrder (web UI path).
+	// BUG C, when it accepted: it must be refused.
+	err = eng.CancelOrder(order.ID, "admin")
 	if err == nil {
-		t.Errorf("BUG C: TerminateOrder accepted order %d in status %q — should reject terminal statuses",
+		t.Errorf("BUG C: CancelOrder accepted order %d in status %q — should reject terminal statuses",
 			order.ID, order.Status)
 
 		// Verify the damage: check for spurious return order
 		returnOrders, _ := db.ListOrdersByBin(binID, 10)
 		for _, o := range returnOrders {
 			if o.PayloadDesc == "auto_return" {
-				t.Errorf("BUG C (cascade): auto_return order %d created after terminating confirmed order",
+				t.Errorf("BUG C (cascade): auto_return order %d created after cancelling confirmed order",
 					o.ID)
 			}
 		}
 
 		bin, _ = db.GetBin(binID)
 		if bin.ClaimedBy != nil {
-			t.Errorf("BUG C (cascade): bin %d claimed_by = %d after terminating confirmed order",
+			t.Errorf("BUG C (cascade): bin %d claimed_by = %d after cancelling confirmed order",
 				binID, *bin.ClaimedBy)
 		}
 	} else {
-		t.Logf("correct: TerminateOrder rejected terminal status %q: %v", order.Status, err)
+		t.Logf("correct: CancelOrder rejected terminal status %q: %v", order.Status, err)
 	}
 }
