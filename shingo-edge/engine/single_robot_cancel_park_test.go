@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"testing"
 
 	"shingo/protocol"
@@ -189,6 +190,93 @@ func TestSingleRobotCancel_StageNotYetFlownMovesNothing(t *testing.T) {
 	testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 	if moves := parkMoves(t, fx, "SPOT"); len(moves) != 0 {
 		t.Fatalf("moves off inbound staging = %+v, want none", moves)
+	}
+}
+
+// THE CANCEL MEETING A DELIVERED LEG (final brief 1e). A changeover leg is
+// minted auto-confirmed, so the Edge confirms it as Core's delivered lands; it
+// reads delivered for longer only when Core's delivered facts land late, or an
+// Edge restart drops them (orders coreDelivered), and then until Core's sweep
+// confirms it. A cancel in that window, characterised at 37146992 before the
+// abort refused a delivered order: the cancel aborts the leg as it aborts a
+// live one (taskLeftOnStaging), sending its order.cancel with the operator's
+// default reason and ending its row cancelled, so the Orders page offers it
+// nothing. It counts the leg's park and stage by the status it read before the
+// abort answered, so a bin Core reports on outbound staging is sent on to the
+// outbound destination, though the leg had already taken the line's bin there
+// itself. Nothing moves when staging is empty. The style stays the outgoing
+// one and the changeover ends cancelled.
+func TestSingleRobotCancel_ADeliveredLeg(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		onPark bool // Core reports a bin on outbound staging
+	}{
+		{"the leg's trip finished", false},
+		{"a bin stands on outbound staging", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			const out = "KSCO-OUT-L1"
+			fx := seedKeepStagedChangeover(t,
+				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},
+				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}})
+			coID := startKSChangeover(t, fx)
+			leg := singleRobotLegOf(t, fx, coID)
+			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(leg, string(protocol.StatusDelivered)), "the leg delivered")
+			// What Core reports once the leg has delivered: the incoming bin on
+			// the line, the line's old bin at the outbound destination, staging
+			// empty but for the case's bin.
+			rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-NEW"},
+				"KSCO-DEST": {Occupied: true, PayloadCode: "PART-OLD"}}
+			if c.onPark {
+				rows[out] = protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}
+			}
+			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
+			fx.holdRows(t, rows)
+			uuid := orderRow(t, fx.db, leg).UUID
+
+			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
+
+			// What it sends.
+			msgs, err := fx.db.ListUnsentOutboxByType([]string{protocol.TypeOrderCancel})
+			testutil.MustNoErr(t, err, "read the outbox")
+			var sent []string
+			for _, m := range msgs {
+				var env protocol.Envelope
+				testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode an outbox envelope")
+				var cancel protocol.OrderCancel
+				testutil.MustNoErr(t, env.DecodePayload(&cancel), "decode an order.cancel")
+				sent = append(sent, cancel.OrderUUID+" "+cancel.Reason)
+			}
+			expectRows(t, "the order.cancel rows queued", sent, []string{uuid + " aborted by operator"})
+
+			// What the operator sees: the leg's row, and the changeover.
+			if o := orderRow(t, fx.db, leg); o.Status != protocol.StatusCancelled {
+				t.Errorf("the delivered leg reads %s after the cancel, want cancelled", o.Status)
+			}
+			if h := orderHistory(t, fx.db, leg); len(h) == 0 || h[len(h)-1] != "delivered->cancelled: aborted by operator" {
+				t.Errorf("the leg's history %q, want it to end delivered->cancelled with the operator's default reason", h)
+			}
+			co, err := fx.db.GetProcessChangeoverByID(coID)
+			testutil.MustNoErr(t, err, "read the changeover")
+			if co.State != domain.ChangeoverCancelled {
+				t.Errorf("the changeover reads %s, want cancelled", co.State)
+			}
+
+			// What it counts, and where the bin on outbound staging ends.
+			moves := parkMoves(t, fx, out)
+			if !c.onPark {
+				if len(moves) != 0 {
+					t.Errorf("moves off %s = %+v, want none: nothing stands there", out, moves)
+				}
+				return
+			}
+			if len(moves) != 1 || moves[0].DeliveryNode != "KSCO-DEST" || moves[0].PayloadCode != "PART-OTHER" {
+				t.Errorf("moves off %s = %+v, want one to KSCO-DEST carrying PART-OTHER: the leg's park counted", out, moves)
+			}
+		})
 	}
 }
 
