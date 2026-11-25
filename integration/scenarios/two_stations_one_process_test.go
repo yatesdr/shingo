@@ -14,6 +14,7 @@ package scenarios
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"slices"
 	"strings"
 	"sync"
@@ -79,9 +80,6 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		mustNil(t, c.Close(), "return a Core connection")
 	}
 
-	svc := coremessaging.NewCoreDataService(coreDB,
-		coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", nil), service.EpochAnnounce{})
-
 	twins := make([]*twinEdge, 2)
 	for i, uid := range []string{"edge.twin-a", "edge.twin-b"} {
 		_, err := coreDB.EnrollEdge(uid, "")
@@ -124,24 +122,23 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		var mu sync.Mutex
 		reports := map[string][]time.Duration{} // station → when Core received each of its reports
 
-		coreSubjects := router.NewSubject()
-		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeHeartbeat, svc.HandleEdgeHeartbeat)
-		// The ack carries the bins watch digest, and an Edge re-sends a list
-		// Core does not hold under the same guard: Core takes it, as
-		// cmd/shingocore buildSubjectRouter routes it.
-		router.RegisterSubject(coreSubjects, protocol.SubjectBinsWatch, svc.HandleBinWatch)
-		router.RegisterSubject(coreSubjects, protocol.SubjectPlantClaims, func(env *protocol.Envelope, r *protocol.PlantClaimsReport) {
-			if r.ProcessID == process {
-				mu.Lock()
-				reports[env.Src.Station] = append(reports[env.Src.Station], time.Since(start))
-				mu.Unlock()
-			}
-			svc.HandlePlantClaims(env, r)
-		})
-		coreRouter := router.New[string]()
-		router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { coreSubjects.Dispatch(env, p) })
-		coreIngestor := protocol.NewIngestor(nil)
-		coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+		// Core: main's tables with no engine, routing the heartbeat and the
+		// claims report, each report of the process timed on the way in. The
+		// ack carries the bins watch digest, and an Edge re-sends a list Core
+		// does not hold under the same guard: Core takes it too.
+		core := coreharness.NewTables(t, coreDB, nil,
+			coreharness.RoutesOnly(protocol.SubjectEdgeHeartbeat, protocol.SubjectBinsWatch, protocol.SubjectPlantClaims),
+			coreharness.Tap(func(env *protocol.Envelope, _ string) {
+				var data protocol.Data
+				mustNil(t, env.DecodePayload(&data), "decode a claims report's envelope")
+				var r protocol.PlantClaimsReport
+				mustNil(t, json.Unmarshal(data.Body, &r), "decode a claims report")
+				if r.ProcessID == process {
+					mu.Lock()
+					reports[env.Src.Station] = append(reports[env.Src.Station], time.Since(start))
+					mu.Unlock()
+				}
+			}, protocol.SubjectPlantClaims))
 
 		// One Edge-side door for both: the ack goes to the station it names.
 		edgeSubjects := router.NewSubject()
@@ -161,7 +158,7 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		for _, x := range twins {
 			buses[x.uid] = harness.NewBus(t,
 				harness.EdgeSide{EdgeStore: x.db, EdgeIngestor: edgeIngestor},
-				harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor})
+				harness.CoreSide{CoreStore: coreDB, CoreIngestor: core.Ingestor})
 		}
 		// beat is one heartbeat from x and everything it sets moving: Core's
 		// ack, the Edge's reconcile, the report it sends, until both sides are
@@ -182,10 +179,10 @@ func TestScenario_TwoStationsOneProcess_EachSendsOnce(t *testing.T) {
 		}
 		bothFlagged := func(when string) {
 			for _, x := range twins {
-				if !slices.ContainsFunc(svc.EdgeFeedFlags(x.uid), func(f string) bool {
+				if !slices.ContainsFunc(core.Data.EdgeFeedFlags(x.uid), func(f string) bool {
 					return strings.Contains(f, "process "+process+" reported by both")
 				}) {
-					t.Errorf("%s: Core's flags for %s are %v, want the process reported by both", when, x.uid, svc.EdgeFeedFlags(x.uid))
+					t.Errorf("%s: Core's flags for %s are %v, want the process reported by both", when, x.uid, core.Data.EdgeFeedFlags(x.uid))
 				}
 			}
 		}
