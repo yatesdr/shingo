@@ -303,10 +303,11 @@ func (r *timedRun) quotable() string {
 	return ""
 }
 
-// execStamp is the gate's exec stamp (whether its Go tests ran under the
-// record-only wrapper) from its last total line, or "" for a gate that wrote
-// none. It is the treatment an A/B of the wrapper compares, so it is shown,
-// never required equal.
+// execStamp is the exec stamp on a gate's last total line, or "" for a gate
+// that wrote none. A gate wrote one (on, off or -) only while it ran its Go
+// tests under the record-only -exec wrapper, which the gate no longer has; it
+// was the treatment an A/B of the wrapper compared, so it is shown for such
+// a run, never required equal.
 func (r *timedRun) execStamp() string {
 	for i := len(r.totals) - 1; i >= 0; i-- {
 		for _, kv := range strings.Fields(r.totals[i])[1:] {

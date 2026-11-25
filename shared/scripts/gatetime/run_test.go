@@ -12,6 +12,25 @@ import (
 	"time"
 )
 
+// TestMain lets this test binary stand in for gatetime itself: with
+// GATETIME_TEST_AS_MAIN=1 it runs main's dispatch on its arguments, so a test
+// can run it as `gatetime run` (TestRun_PlantedEndToEnd) or as `gatetime host`
+// (TestHostMachine_ReadsAndPlantsThroughTheReader) without building gatetime
+// first.
+func TestMain(m *testing.M) {
+	if os.Getenv("GATETIME_TEST_AS_MAIN") == "1" {
+		if len(os.Args) < 2 {
+			os.Exit(usage())
+		}
+		run, ok := commands[os.Args[1]]
+		if !ok {
+			os.Exit(usage())
+		}
+		os.Exit(run(os.Args[2:]))
+	}
+	os.Exit(m.Run())
+}
+
 // samplesEvery builds n samples `every` apart starting at t0 from per-interval
 // loads in cores: host, job, vm. The first sample is the zero point.
 func samplesEvery(t0 time.Time, every time.Duration, loads [][3]float64) []sample {
