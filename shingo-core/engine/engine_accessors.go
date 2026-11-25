@@ -3,7 +3,6 @@ package engine
 import (
 	"shingocore/config"
 	"shingocore/dispatch"
-	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/messaging"
 	"shingocore/notify"
@@ -81,7 +80,6 @@ func (e *Engine) FootprintService() *service.FootprintService       { return e.f
 func (e *Engine) DeviceConfigService() *service.DeviceConfigService { return e.deviceConfigService }
 func (e *Engine) HeartbeatService() *service.HeartbeatService       { return e.heartbeatService }
 func (e *Engine) EventBus() *EventBus                               { return e.Events }
-func (e *Engine) EtaCache() *eta.Cache                              { return e.etaCache }
 func (e *Engine) Notifier() *notify.Notifier                        { return e.notifier }
 
 // KanbanKeeper returns the level keeper, for a test to drive its tick.

@@ -478,7 +478,7 @@ older one — and every other event is queued in order
 |---|---|
 | `connected` | `{build, ts}`, sent once on connect. A changed `build` across a reconnect means Core restarted, and the page reloads. |
 | `heartbeat` | `{build, ts}`, every 30 s. |
-| `order-update` | `{type, order_id, …}`. One event name, several shapes, discriminated by `type`: `received`; `dispatched` (+`vendor_order_id`); `status_changed` (+`new_status`); `eta_update` (+`eta`); `completed`; `failed` (+`detail`); `cancelled` (+`reason`); `faulted` (+`detail`); `recovered` (+`robot_id`); `skipped` (+`detail`). The order key is `order_id`, not `id`. |
+| `order-update` | `{type, order_id, …}`. One event name, several shapes, discriminated by `type`: `received`; `dispatched` (+`vendor_order_id`); `status_changed` (+`new_status`); `completed`; `failed` (+`detail`); `cancelled` (+`reason`); `faulted` (+`detail`); `recovered` (+`robot_id`); `skipped` (+`detail`). The order key is `order_id`, not `id`. |
 | `mission-event` | `{order_id, vendor_order_id, old_state, new_state, robot_id}`, plus `blocks` / `errors` from the fleet snapshot and `robot_x`, `robot_y`, `robot_station`, `robot_battery` when the robot is known. |
 | `bin-update` | `{node_id, action, bin_id, actor, detail}`. A robot lifting a bin sends `{node_id, action: "lifted", bin_id}`, with the node it left. There is no `payload-update`. |
 | `bin-row` | `{bin_id}`, when what the Bins page shows for a bin changed and no `bin-update` says so: a station's count tick, or a station door's write. The Bins page repaints that bin's row. |

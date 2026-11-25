@@ -158,7 +158,7 @@ var coreBusSites = []busSite{
 	{"www/sse.go:SetupEngineListeners", []string{
 		"EventOrderReceived h.Broadcast",
 		"EventOrderDispatched h.Broadcast",
-		"EventOrderStatusChanged eta.Stamp",                // the order-update frame
+		"EventOrderStatusChanged h.broadcastStatusChanged", // the order-update frame
 		"EventOrderStatusChanged eng.GetCachedRobotStatus", // the mission-event frame
 		"EventOrderCompleted h.Broadcast",
 		"EventOrderFailed h.Broadcast",

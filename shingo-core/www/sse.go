@@ -12,7 +12,6 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/eventbus"
 	"shingo/protocol/lockcheck"
-	"shingocore/dispatch/eta"
 	"shingocore/engine"
 	"shingocore/internal/lockorder"
 )
@@ -251,6 +250,15 @@ func sseJSON(v any) string {
 	return string(data)
 }
 
+// broadcastStatusChanged sends an order's status change as an order-update
+// frame. It is a method, not a closure, so that engine's TestSubscriberCensus
+// can tell it from the mission-event subscriber to the same event, whose
+// closure makes every call this one makes.
+func (h *EventHub) broadcastStatusChanged(evt eventbus.TypedEvent[engine.EventType, engine.OrderStatusChangedEvent]) {
+	ev := evt.Payload
+	h.Broadcast("order-update", sseJSON(map[string]any{"type": "status_changed", "order_id": ev.OrderID, "new_status": ev.NewStatus}))
+}
+
 // SetupEngineListeners wires engine events to SSE broadcasts.
 //
 // Payload-carrying handlers use eventbus.SubscribeTyped, which binds the
@@ -271,20 +279,7 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "dispatched", "order_id": ev.OrderID, "vendor_order_id": ev.VendorOrderID}))
 	}, engine.EventOrderDispatched)
 
-	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderStatusChangedEvent]) {
-		ev := evt.Payload
-		payload := map[string]any{"type": "status_changed", "order_id": ev.OrderID, "new_status": ev.NewStatus}
-		h.Broadcast("order-update", sseJSON(payload))
-		if ev.NewStatus == "in_transit" {
-			go func(orderID int64) {
-				if order, err := eng.DB().GetOrder(orderID); err == nil && order != nil && string(order.Status) == "in_transit" {
-					if etaStr := eta.Stamp(eng.EtaCache(), order.SourceNode, order.DeliveryNode); etaStr != "" {
-						h.Broadcast("order-update", sseJSON(map[string]any{"type": "eta_update", "order_id": orderID, "eta": etaStr}))
-					}
-				}
-			}(ev.OrderID)
-		}
-	}, engine.EventOrderStatusChanged)
+	eventbus.SubscribeTyped(eng.Events, h.broadcastStatusChanged, engine.EventOrderStatusChanged)
 
 	// Mission telemetry live updates (separate event name from order-update)
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderStatusChangedEvent]) {
