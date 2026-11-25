@@ -26,11 +26,14 @@ type Node struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 	// DisplayName is the name a PERSON reads, editable on the Nodes page.
-	// The node's own Name is NOT editable from shingo, ever: it is the
-	// fleet's identity - scenesync matches the fleet's location set against
-	// nodes by name, and a physical node whose name the current scene does
-	// not carry is DELETED on the next sync, stranding every claim, order
-	// and loader config that keyed on it. So the cosmetic rename rides a
+	// The node's own Name is the fleet's identity and should not be edited
+	// from shingo: the Nodes page sends it back unchanged, though
+	// /nodes/update writes whatever name a request sends. Scene sync matches
+	// the fleet's location set against nodes by name: a renamed top-level
+	// physical node is DELETED on the next sync, stranding every claim, order
+	// and loader config that keyed on it, and a renamed node in a group or
+	// lane is kept while the sync adds a second node under the fleet's name
+	// (scenesync.SyncFleetNodes). So the cosmetic rename rides a
 	// column of its own: empty (the default) means "render Name as always",
 	// and setting it changes what screens say without touching what the
 	// fleet knows.

@@ -142,10 +142,11 @@
       <input type="hidden" name="parent_id" id="nf-parent-id">
       <!-- THE DISPLAY NAME, and why it is not the node's name field: the
            node's name is the FLEET's identity - scene sync matches the
-           fleet's location set against nodes by name and DELETES a physical
-           node whose name the scene does not carry - so a renamed node
-           survives exactly one sync before it (and every claim, order and
-           loader config keyed on it) is stranded. This label is the column
+           fleet's location set against nodes by name, so a renamed
+           top-level node is DELETED at the next sync (and every claim,
+           order and loader config keyed on it is stranded), and a renamed
+           node in a group or lane gets a second node beside it under the
+           fleet's name (scenesync.SyncFleetNodes). This label is the column
            built to be edited: empty means the node renders its fleet name,
            and nothing about identity moves when it changes. -->
       <div class="form-group mb-1">

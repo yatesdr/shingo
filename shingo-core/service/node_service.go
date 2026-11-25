@@ -180,8 +180,10 @@ func (s *NodeService) UpdateNode(n *nodes.Node) error {
 //
 // THE NAME IS NOT THE THING BEING EDITED, and the audit says so: the node's
 // own Name is the fleet's identity (scenesync matches the fleet's location
-// set by name and deletes a physical node the scene does not carry - the
-// whole reason this is a column and not an edit of Name), so the record
+// set by name: a renamed top-level physical node is deleted at the next
+// sync, and a renamed node in a group or lane gets a second node beside it
+// under the fleet's name, scenesync.SyncFleetNodes - the whole reason this
+// is a column and not an edit of Name), so the record
 // names the display rename and BOTH names, because the useful question an
 // auditor asks later is "which fleet location does this label belong to".
 // Trimmed to 120 chars: a display label longer than that is a sentence,
