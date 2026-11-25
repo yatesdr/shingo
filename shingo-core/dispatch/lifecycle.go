@@ -197,9 +197,8 @@ var actionMap = map[transitionKey][]Action{
 
 	// Failure paths notify engine wiring via the EventBus failure event.
 	// Delivered → Failed covers the rare post-delivery failure (crash
-	// recovery, late detection of bad delivery) — the auto-return guard
-	// at engine/wiring.go:153 prevents an unwanted return order for a bin
-	// that already reached its destination.
+	// recovery, late detection of bad delivery). No return order follows a
+	// failure (engine/wiring.go: a failed order's bin is not returned).
 	{from: StatusPending, to: StatusFailed}:      {fireFailed},
 	{from: StatusSourcing, to: StatusFailed}:     {fireFailed},
 	{from: StatusQueued, to: StatusFailed}:       {fireFailed},
@@ -219,9 +218,11 @@ var actionMap = map[transitionKey][]Action{
 }
 
 // transition is the shared driver. Validates (from, to) against
-// protocol.validTransitions, persists the new status (atomically for
-// terminal states, plain UpdateOrderStatus otherwise), then fires
-// actionMap actions.
+// protocol.validTransitions, persists the new status (a terminal one through
+// TerminalizeOrderWithReason, a compare-and-swap on "still live" that also
+// releases the order's holds; any other through UpdateOrderStatusFromWithReason,
+// a compare-and-swap on the status this caller loaded), then fires actionMap
+// actions.
 //
 // Returns IllegalTransition if the transition is not allowed.
 // Returns the store error if persistence fails (status unchanged).
@@ -244,7 +245,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 
 	// One chokepoint: every terminal target releases the order's claims +
 	// reservations atomically via TerminalizeOrder; non-terminal targets are a
-	// plain status write. Keying on IsTerminal (derived from validTransitions)
+	// status write that compares and swaps on `from`. Keying on IsTerminal (derived from validTransitions)
 	// means a future terminal status can't silently skip release the way the
 	// success terminal 'confirmed' used to on the old status switch.
 	// THE STATION IS TOLD BY THE WRITE ITSELF: each store write below queues the
@@ -762,8 +763,8 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 // Distinct method (not parameterized CompleteCompound) because the two
 // have different downstream semantics: CompleteCompound terminates the
 // parent (lane unlock + EmitOrderCompleted); ResumeCompound hands the
-// parent back into the dispatch pipeline. AdvanceCompoundOrder routes
-// by OrderType to pick the right one.
+// parent back into the dispatch pipeline. AdvanceCompoundOrder's chapter end
+// picks between them on IsCoordinated (a gate-staged parent takes neither).
 func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
 	return s.Restart(ord, "reshuffle complete; parent back to pending for its acquire")
 }
@@ -780,9 +781,11 @@ func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
 // about to be asked, which is the same lie a blank row tells, told the other way
 // round. If the acquire parks the parent again, it writes the real reason.
 //
-// IT CLEARS BEFORE THE TRANSITION. The transition runs the acquire on this
-// goroutine; if it parks the parent, the wait it writes is the parent's real
-// reason. Clearing afterwards erased it.
+// IT CLEARS BEFORE THE TRANSITION. The transition's action hands the acquire to
+// the engine's after queue (engine/wiring.go, the EventOrderResumed subscriber),
+// which can run it as soon as the transition returns; if it parks the parent,
+// the wait it writes is the parent's real reason, and a clear made after the
+// transition could land on top of it.
 func (s *LifecycleService) Restart(ord *orders.Order, reason string) error {
 	if err := s.db.SetOrderQueueDetail(ord.ID, "", "", ""); err != nil {
 		// Best-effort, like every other queue-detail write: a stale sentence is

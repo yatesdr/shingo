@@ -12,13 +12,13 @@ import (
 )
 
 // TestAdvanceCompound_RefusesASecondDispatchOfOneChild pins EXACTLY-ONCE as a
-// property in its own right, separate from the serialization it currently rides
-// on.
+// property in its own right, separate from the serialization it rode on, which
+// is gone (advanceCompound's head).
 //
-// AdvanceCompoundOrder's sibling-in-flight guard carries two properties fused
+// AdvanceCompoundOrder's sibling-in-flight guard carried two properties fused
 // into one condition: "exactly one dispatch per child", which is load-bearing,
-// and "one child at a time", which is being removed. The comment on that guard
-// says as much — fireCompleted fires on BOTH (*, Delivered) and (Delivered,
+// and "one child at a time", which has been removed. The comment that replaced
+// the guard says as much — fireCompleted fires on BOTH (*, Delivered) and (Delivered,
 // Confirmed), so the function re-enters across one sibling's lifecycle, and the
 // createCompound→advanceCompound path used to add a second entry milliseconds
 // after creation. The 2026-05-27 incident was one robot's worth of work
@@ -30,9 +30,8 @@ import (
 //
 // THE FIXTURE IS THE CRASH WINDOW. A child that is still `pending` but already
 // carries a VendorOrderID is what a crash between the fleet call and the status
-// write leaves behind. It is also the only way to reach the guard while the
-// sibling loop is still in place, which is the honest way to test a
-// belt-and-braces guard: construct the state it exists for.
+// write leaves behind. It was also the only way to reach the guard while the
+// sibling loop was in place: construct the state the guard exists for.
 func TestAdvanceCompound_RefusesASecondDispatchOfOneChild(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

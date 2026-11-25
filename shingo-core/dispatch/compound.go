@@ -398,10 +398,15 @@ func legFailedDemandDetail(children []*orders.Order) string {
 }
 
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
-// All children and bin claims are created in a single transaction. The parent
-// is transitioned into StatusReshuffling via lifecycle.BeginReshuffle, so the
-// caller must pass a parent in a status that has Reshuffling as a legal next
-// state (Pending, Queued). It is the ONLY compound-creation path.
+// The children are written in one transaction (writeCompoundChildren), each
+// holding no bin claim: a leg's bin is held by the parent's lane, and the leg
+// claims it in its hand at dispatch (legNeed). The parent then moves into
+// StatusReshuffling via lifecycle.BeginReshuffle, but for a gate-staged parent,
+// which keeps `staged`, and a live parent the transition refuses (already
+// reshuffling, or a requester in transit), which keeps its status and its dig
+// (createCompoundOrder). It is the one creation path for a dig's compound; a
+// home clear issues its parent and legs through doors of its own (clear_home.go:
+// IssueClearTx, then issueClearSpot or issueClearTrade).
 //
 // THE CHILDREN ARE WRITTEN BEFORE THE PARENT MOVES, and the order is
 // load-bearing. BeginReshuffle used to run first, so a refused claim left the
@@ -417,10 +422,13 @@ func legFailedDemandDetail(children []*orders.Order) string {
 // one. Interrupted here, the parent is still queued and re-plannable; the old
 // order left it reshuffling and childless, which nothing recovers.
 //
-// The parent must NOT be moved back out of reshuffling as a repair instead:
-// {Reshuffling → Pending} fires fireResumed, which runs the parent's acquire
-// synchronously, and the scanner is where this refusal is discovered on the
-// replay path — it holds a non-reentrant scanMu, so the "repair" would deadlock.
+// The parent should not be moved back out of reshuffling as a repair instead.
+// The reason this gave was a deadlock: {Reshuffling → Pending} fires
+// fireResumed, whose acquire ran in line, and the scanner, where this refusal
+// is discovered on the replay path, holds a non-reentrant scanMu. The engine
+// now runs that acquire on its after queue (engine/wiring.go, the
+// EventOrderResumed subscriber; engine/after.go), so that reason is gone; the
+// rule was not re-argued when this was corrected.
 //
 // A PARENT THAT HAS ENDED GETS NO DIG. The caller planned from a row it read
 // earlier, and a cancel can land in between. The write reads the parent under a
@@ -603,11 +611,16 @@ func reshuffleBeginDetail(plan *ReshufflePlan) string {
 // package, to serve callers that do not ship.
 //
 // The fixtures drive CreateCompoundOrder from a live status now, which is what
-// production does. THERE IS ONE COMPOUND-CREATION PATH: every compound in the
-// system, test or not, writes its children and then moves its parent through
-// BeginReshuffle. Uniformity applied to creation — a second door is a second
-// place for the two halves to get out of order, which is exactly the ordering
-// this function's neighbour spends fifteen lines explaining.
+// production does. ONE DOOR FOR A DIG'S COMPOUND: every dig writes its children
+// and then moves its parent through BeginReshuffle, but a gate-staged parent,
+// which keeps its status (createCompoundOrder). A home clear is the other
+// compound, issued through doors of its own (clear_home.go: IssueClearTx
+// writes the parent, moved by transitionTx, and the partial's move on the
+// caller's transaction; issueClearSpot or issueClearTrade the empty's moves on
+// theirs). Uniformity
+// applied to creation — a second door is a second place for the two halves to
+// get out of order, which is exactly the ordering this function's neighbour
+// spends fifteen lines explaining.
 
 // writeCompoundChildren issues the compound's legs from the plan on one
 // transaction, with the dig's lane when lanes is set (store.OpenCompoundTx).
@@ -834,7 +847,8 @@ func (d *Dispatcher) failDisplacedForCart(displaced []store.DisplacedForCart) {
 	}
 }
 
-// AdvanceCompoundOrder dispatches the next pending child order in a compound sequence.
+// AdvanceCompoundOrder dispatches the next child of a compound not yet handed to
+// the fleet (GetNextChildOrder: orders.AwaitingFleetSQL, not `pending`).
 func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	return d.advanceCompound(parentOrderID, nil)
 }
@@ -880,7 +894,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		return err
 	}
 	if err != nil {
-		// sql.ErrNoRows — no more PENDING children. Everything from here is the
+		// sql.ErrNoRows — no child still awaits the fleet. Everything from here is the
 		// chapter-close half of this function and lives in
 		// advanceCompoundChapterEnd: it shares no local with the dispatch half
 		// below and reads only parentOrderID.
@@ -1119,8 +1133,8 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 
 	// EXACTLY-ONCE, per child, independent of any serialization.
 	//
-	// This is the property the sibling-in-flight guard above has been carrying
-	// as a side effect, and it is the load-bearing half of that guard.
+	// This is the property the sibling-in-flight guard (gone: this function's
+	// head) carried as a side effect, and it was the load-bearing half of it.
 	// fireCompleted fires on BOTH (*, Delivered) and (Delivered, Confirmed), so
 	// AdvanceCompoundOrder re-enters across one sibling's lifecycle; the
 	// createCompound→advanceCompound path used to add a second entry within
@@ -1132,10 +1146,10 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	// depend on what any sibling is doing. Re-reading it here rather than
 	// trusting `next` closes the window between GetNextChildOrder and this line.
 	//
-	// Deliberately belt-and-braces for now: the sibling loop still serializes, so
-	// this guard should never fire, and nothing about the plant's behaviour
-	// changes today. It is stated separately so that when the serialization half
-	// is removed, exactly-once does not go with it.
+	// The sibling loop that serialized children is gone (this function's head),
+	// so this re-read is what exactly-once stands on: a re-entry that finds the
+	// child already handed to the fleet returns
+	// (TestAdvanceCompound_RefusesASecondDispatchOfOneChild).
 	if fresh, rErr := d.db.GetOrder(next.ID); rErr != nil {
 		log.Printf("dispatch: re-read child %d before dispatch: %v", next.ID, rErr)
 		return rErr // fail closed: an unverifiable child is not dispatched
@@ -1449,9 +1463,9 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// coordinated one through its own replay. Either way the new plan contains
 	// the blocker that made the old one stale, which is the whole point.
 	//
-	// Reshuffling → Queued for BOTH kinds here, unlike the success arm below
-	// that splits them. A dissolved dig is not a completed one: a plain parent
-	// has NOT been retrieved, so Confirmed would be a lie.
+	// Reshuffling → Pending (lifecycle.Restart) for BOTH kinds here, unlike the
+	// success arm below that splits them. A dissolved dig is not a completed one:
+	// a plain parent has NOT been retrieved, so Confirmed would be a lie.
 	// ── ONE ARM FOR EVERY WAY A CHAPTER STOPS SHORT (GATE 1, §R.91) ──────
 	//
 	// There were two arms here and they had opposite outcomes: a DISSOLVED
@@ -1581,15 +1595,16 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// signal (IsCoordinated == parent carries a step plan), not OrderType:
 	//   - coordinated parent (a complex order carries StepsJSON): a buried-bin
 	//     reshuffle whose parent still owes its original pickup. ResumeCompound
-	//     transitions Reshuffling → Queued so the scanner re-resolves that
+	//     moves it Reshuffling → Pending, and its one acquire re-resolves that
 	//     pickup against the now-accessible slot. Do NOT call CompleteOrder —
 	//     the parent hasn't finished, it's resuming.
 	//   - plain parent (simple-retrieve compounds, restock compounds for the
 	//     dual-mode reshuffle — no step plan): CompleteCompound transitions
 	//     Reshuffling → Confirmed and fires fireCompleted.
 	//
-	// Sequencing dependency on fulfillment.RunOnce being synchronous
-	// — see lifecycle.go's {Reshuffling, Queued} actionMap entry.
+	// That acquire is the engine's, on its after queue (engine/wiring.go, the
+	// EventOrderResumed subscriber), not this goroutine's; lifecycle.go's
+	// actionMap has no {Reshuffling, Queued} entry.
 	//
 	// Lane-lock handling (v7 Step 4.5), now a two-way split:
 	//   - COORDINATED parent (a complex order's dig — always expose mode):
@@ -1957,7 +1972,7 @@ func (d *Dispatcher) blockersSpokenFor(blockers []reshuffleBlocker) (bool, error
 // before the claim stops counting as "a robot is on its way".
 //
 // IT IS UP AGAINST A MEASURED PLANT NUMBER AND THE READER SHOULD KNOW IT. R.30's
-// Springfield fact-find measured mid-order JackUnload waits at p50 91s and max
+// fact-find at a plant measured mid-order JackUnload waits at p50 91s and max
 // 959s, so a robot genuinely on the job can legitimately sit here longer than
 // this window. That is the accepted cost, and it is bounded on purpose: the only
 // thing this decides is WAIT versus RE-PLAN. Judging a live claimant stalled
@@ -2098,14 +2113,15 @@ func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) 
 // unchanged here. Everything a new "abandoned" status would encode is derivable
 // from rows that exist.
 //
-// IT DOES NOT TRANSITION THE PARENT, and that is a hard constraint rather than a
-// simplification. The parent's way back into the acquiring set is
-// {Reshuffling → Pending}, which fires fireResumed → the parent's SYNCHRONOUS
-// acquire on the fulfillment scanner. This function is reachable from inside that
-// scanner: tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
-// AdvanceCompoundOrder, all under a non-reentrant scanMu. Transitioning here
-// would self-deadlock the process on the first leg of a freshly planned dig. So
-// the cancels land and their events fire SYNCHRONOUSLY, still under scanMu
+// IT DOES NOT TRANSITION THE PARENT. The parent's way back into the acquiring
+// set is {Reshuffling → Pending}, which fires fireResumed, and this function is
+// reachable from inside the fulfillment scanner: tryFulfill →
+// PlanBuriedReshuffle → CreateCompoundOrder → AdvanceCompoundOrder, all under a
+// non-reentrant scanMu. The reason this gave was a self-deadlock: the parent's
+// acquire ran in line, under that scanMu. The engine now runs it on its after
+// queue (engine/wiring.go, the EventOrderResumed subscriber; engine/after.go),
+// so that reason is gone; the constraint was not re-argued when this was
+// corrected. The cancels land and their events fire SYNCHRONOUSLY, still under scanMu
 // (eventbus.Bus.Emit calls every subscriber in line). Everything a cancel
 // handler does inline therefore runs under the scanner's lock; the parent's
 // routing is the handler's one hop off it — it spawns the advance, and the
@@ -2125,9 +2141,14 @@ func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) 
 // the stranded sweep for its whole two-hour window). Dispatched is never
 // preempted (v4 §2.6), so the dissolve keeps that leg: it stays a set-down leg,
 // the dwell places it, the chapter stays open until it lands, and the lane stays
-// held because the robot is still in it. When it lands the chapter-end arm
-// (advanceCompoundChapterEnd → chapterStoppedShort) returns the parent and
-// releases the lane, as it does for any chapter that stopped short.
+// held because the robot is still in it. When it lands, the chapter end
+// (advanceCompoundChapterEnd → chapterStoppedShort) should return the parent
+// and release the lane, as for any chapter that stopped short. It does when
+// this dissolve cancelled a leg issued after the carrier, so the chapter's
+// boundary (compoundGenerations) sits above it; a carrier issued after every
+// leg the dissolve ended stays in the open set when it lands, and the chapter
+// end takes the completion fork instead (study round 5, cinder-oriole's
+// section 2).
 //
 // ONE DISSOLVE IS ONE DECISION. The first cancel's event starts
 // `go AdvanceCompoundOrder(parent)` in the engine, which can reach this function
@@ -2263,7 +2284,9 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 }
 
 // HandleChildOrderFailure closes the chapter a failed leg belonged to. It
-// cancels every remaining non-terminal child; the parent's disposition is
+// cancels the remaining live children but a leg carrying its bin and one
+// delivered and not yet confirmed (splitLiftedLegs, below), and leaves a home
+// clear's legs to clearLegFailed; the parent's disposition is
 // AdvanceCompoundOrder's. Uses lifecycle.CancelOrder so fleet orders are
 // cancelled and bins unclaimed — same approach as cancelCompoundChildren.
 //
@@ -2285,11 +2308,14 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 // work failing fails the demand.
 //
 // AND THE DISPOSITION MOVED RATHER THAN CHANGING PLACES. This function cancels;
-// AdvanceCompoundOrder's chapter-closed arm decides. That split is forced, not
-// stylistic: {Reshuffling → Queued} fires the SYNCHRONOUS fulfillment scanner,
-// and dissolveCompound is reachable from inside that scanner under a
-// non-reentrant scanMu — the same constraint dissolveCompound's own header
-// states. The cancels land here, their events fire, and a later goroutine
+// AdvanceCompoundOrder's chapter-closed arm decides. The reason this gave for
+// the split was a deadlock: the parent's way back, {Reshuffling → Pending},
+// fires fireResumed, whose acquire ran in line, and dissolveCompound is
+// reachable from inside the scanner under a non-reentrant scanMu (its own
+// header). The engine now runs that acquire on its after queue
+// (engine/wiring.go, the EventOrderResumed subscriber), so the split is no
+// longer forced by it; it was not re-argued when this was corrected. The
+// cancels land here, their events fire, and a later goroutine
 // disposes of the parent. It is also why the cancels carry
 // reshuffleLegFailedDetail rather than a per-sibling sentence: the engine's
 // cancelled-child arm keys the re-drive on that marker, so a bespoke string

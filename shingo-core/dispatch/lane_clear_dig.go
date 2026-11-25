@@ -579,10 +579,10 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 	// folder arm below documents does not exist here: there is no moment where a
 	// parent row exists without legs, because the parent existed already.
 	//
-	// AND IT COMES BACK THROUGH `queued`. The requester carries StepsJSON, so
+	// AND IT COMES BACK THROUGH `pending`. The requester carries StepsJSON, so
 	// IsCoordinated is true of it and the compound-completion arm routes it to
-	// ResumeCompound — Reshuffling → Queued — rather than confirming it. Its own
-	// work is still owed and the scanner re-resolves it against the corridor the
+	// ResumeCompound — Reshuffling → Pending — rather than confirming it. Its own
+	// work is still owed and its one acquire re-resolves it against the corridor the
 	// dig just opened. No new status edge: both transitions already exist.
 	//
 	// THE LANE IS TAKEN IN THE REQUESTER'S HAND, with the legs (digLaneTake).

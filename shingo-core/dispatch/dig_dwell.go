@@ -98,9 +98,11 @@ var ErrNoDwellSlot = errors.New("lane has no slot for a dig leg to dwell in")
 //
 // ── ONE DECLARED DERIVATION, NOT AN INFERENCE FROM RESIDUE ────────────────
 //
-// It reads like residue and is not, because the population has exactly one
-// writer. writeCompoundChildren is the only thing that creates a compound child,
-// and it writes a delivery node for every step type EXCEPT an unbury — whose
+// It reads like residue and is not, because one writer makes the population.
+// Two things create compound children, a dig (writeCompoundChildren) and a home
+// clear (clear_home.go's issue doors), and a clear's legs always name their
+// delivery (clearLeg); writeCompoundChildren writes a delivery node for every step type
+// EXCEPT an unbury — whose
 // ToNode planUnbury now deliberately leaves nil, because the choice has moved.
 // So "a child with no destination" is not a state to be inferred from; it is the
 // state that writer creates on purpose, and the assertion dual is enforced where
@@ -627,7 +629,7 @@ func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.
 	// different mutexes, and between findShuffleSlots returning a slot and
 	// bindDwellTail writing delivery_node there is a window in which that slot
 	// still reads free to everybody. That window is the 2026-07-13 specimen with a
-	// different clock on it — two digs picked SMN_008/SMN_009 three seconds apart,
+	// different clock on it — two digs picked two neighbouring slots three seconds apart,
 	// a blocker landed on a blocker, EvictStaleGhostBinsTx threw a bin to _TRANSIT and
 	// two bins were orphaned.
 	//
