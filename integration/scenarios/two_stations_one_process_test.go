@@ -26,8 +26,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/router"
 
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	coreharness "shingocore/testharness"
 
 	"shingoedge/config"
@@ -262,9 +260,6 @@ func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
 		mustNil(t, c.Close(), "return a Core connection")
 	}
 
-	svc := coremessaging.NewCoreDataService(coreDB,
-		coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", nil), service.EpochAnnounce{})
-
 	type ownedEdge struct {
 		twinEdge
 		catalog func() ([]protocol.CellCatalogEntry, error)
@@ -332,27 +327,12 @@ func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
 			mu.Unlock()
 		}
 
-		// Core: what a boot and its heartbeats send, as cmd/shingocore
-		// buildSubjectRouter routes it, each family's carrier counted.
-		coreSubjects := router.NewSubject()
-		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeRegister, svc.HandleEdgeRegister)
-		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeHeartbeat, svc.HandleEdgeHeartbeat)
-		router.RegisterSubject(coreSubjects, protocol.SubjectPlantClaims, func(env *protocol.Envelope, r *protocol.PlantClaimsReport) {
-			counted(env, protocol.SubjectPlantClaims)
-			svc.HandlePlantClaims(env, r)
-		})
-		router.RegisterSubject(coreSubjects, protocol.SubjectBinsWatch, func(env *protocol.Envelope, l *protocol.BinWatchList) {
-			counted(env, protocol.SubjectBinsWatch)
-			svc.HandleBinWatch(env, l)
-		})
-		router.RegisterSubject(coreSubjects, protocol.SubjectEdgeCells, func(env *protocol.Envelope, c *protocol.CellCatalog) {
-			counted(env, protocol.SubjectEdgeCells)
-			svc.HandleEdgeCells(env, c)
-		})
-		coreRouter := router.New[string]()
-		router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { coreSubjects.Dispatch(env, p) })
-		coreIngestor := protocol.NewIngestor(nil)
-		coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+		// Core: main's tables with no engine, routing what a boot and its
+		// heartbeats send, each family's carrier counted on the way in.
+		core := coreharness.NewTables(t, coreDB, nil,
+			coreharness.RoutesOnly(protocol.SubjectEdgeRegister, protocol.SubjectEdgeHeartbeat, protocol.SubjectPlantClaims,
+				protocol.SubjectBinsWatch, protocol.SubjectEdgeCells),
+			coreharness.Tap(counted, protocol.SubjectPlantClaims, protocol.SubjectBinsWatch, protocol.SubjectEdgeCells))
 
 		// One Edge-side door for both: the ack goes to the station it names.
 		edgeSubjects := router.NewSubject()
@@ -373,7 +353,7 @@ func TestScenario_TwoEdges_EveryOwnedFamilyConverges(t *testing.T) {
 		for _, x := range edges {
 			buses[x.uid] = harness.NewBus(t,
 				harness.EdgeSide{EdgeStore: x.db, EdgeIngestor: edgeIngestor},
-				harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor})
+				harness.CoreSide{CoreStore: coreDB, CoreIngestor: core.Ingestor})
 		}
 		// send is one message from x and everything it sets moving, until both
 		// sides are quiet.
