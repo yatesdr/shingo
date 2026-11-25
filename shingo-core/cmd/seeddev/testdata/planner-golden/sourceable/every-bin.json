@@ -804,6 +804,46 @@
       "sourceable_sql": false
     },
     {
+      "bin": "L1N-A-01",
+      "payload": "PART-1N-A",
+      "node": "SMN_1N_001",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L1N-A-02",
+      "payload": "PART-1N-A",
+      "node": "SMN_1N_002",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L1N-AT-LINE",
+      "payload": "PART-1N-A",
+      "node": "ALN_1N_01",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L1N-B-01",
+      "payload": "PART-1N-B",
+      "node": "SMN_1N_003",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L1N-B-02",
+      "payload": "PART-1N-B",
+      "node": "SMN_1N_004",
+      "sourceable_sql": true
+    },
+    {
+      "bin": "L1N-MT-01",
+      "node": "SMN_1N_005",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "L1N-MT-02",
+      "node": "SMN_1N_006",
+      "sourceable_sql": false
+    },
+    {
       "bin": "L2-AT-P10",
       "payload": "PART-W",
       "node": "PRS_010",

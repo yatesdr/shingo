@@ -31,6 +31,9 @@ edge edge1.line1
   process P5-PRESS-4 on edge1.line1
   process P5-PRESS-5 on edge1.line1
   process P5-UNLOAD-CELL on edge1.line1
+  process LINE-1N on edge1.line1
+  process L1N-LOAD-A on edge1.line1
+  process L1N-LOAD-B on edge1.line1
   style PRESS-1-RUN of PRESS-1
   style PRESS-1-ALT of PRESS-1
   style PRESS-1-MOVED of PRESS-1
@@ -86,6 +89,10 @@ edge edge1.line1
   style P5-5-TOTES of P5-PRESS-5
   style P5-5-32 of P5-PRESS-5
   style P5-UNLOAD-RUN of P5-UNLOAD-CELL
+  style L1N-A of LINE-1N
+  style L1N-B of LINE-1N
+  style L1N-LOAD-A-RUN of L1N-LOAD-A
+  style L1N-LOAD-B-RUN of L1N-LOAD-B
   claim PLN_001 PRESS-1-RUN operator=
   claim PLN_001 PRESS-1-ALT operator=
   claim PLN_001 PRESS-1-R3 operator=
@@ -198,6 +205,10 @@ edge edge1.line1
   claim ULN_508 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
   claim ULN_509 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
   claim ULN_510 P5-UNLOAD-RUN operator=P5-UNLOAD-OPS
+  claim ALN_1N_01 L1N-A operator=LINE-1N-OPS
+  claim ALN_1N_01 L1N-B operator=LINE-1N-OPS
+  claim PLK_1N_01 L1N-LOAD-A-RUN operator=L1N-LOAD-A-OPS
+  claim PLK_1N_02 L1N-LOAD-B-RUN operator=L1N-LOAD-B-OPS
   point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-RUN
   point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-ALT
   point PRESS-1 PRESS-1_COUNTER PLN_001 style=PRESS-1-R3
@@ -236,6 +247,9 @@ edge edge1.line1
   cell P5-PRESS-4 P5-PRESS-4-OPS
   cell P5-PRESS-5 P5-PRESS-5-OPS
   cell P5-UNLOAD-CELL P5-UNLOAD-OPS
+  cell LINE-1N LINE-1N-OPS
+  cell L1N-LOAD-A L1N-LOAD-A-OPS
+  cell L1N-LOAD-B L1N-LOAD-B-OPS
   operator PRESS-1-OPS
   operator PRESS-2-OPS
   operator WELD-1-OPS
@@ -268,7 +282,10 @@ edge edge1.line1
   operator P5-PRESS-4-OPS
   operator P5-PRESS-5-OPS
   operator P5-UNLOAD-OPS
-  core bin_types=8 payloads=29 zones=13 stations=95 bins=211 demands=13 kanbans=4 loader_settings=2
+  operator LINE-1N-OPS
+  operator L1N-LOAD-A-OPS
+  operator L1N-LOAD-B-OPS
+  core bin_types=9 payloads=31 zones=14 stations=98 bins=218 demands=15 kanbans=4 loader_settings=2
 
 edge edge2.line1
   view station edge2.line1
@@ -304,4 +321,4 @@ edge edge2.line1
   operator SMN-10-OPS
   operator SMN-10X-OPS
   operator DRAIN-10-OPS
-  core bin_types=8 payloads=29 zones=13 stations=95 bins=211 demands=13 kanbans=4 loader_settings=2
+  core bin_types=9 payloads=31 zones=14 stations=98 bins=218 demands=15 kanbans=4 loader_settings=2
