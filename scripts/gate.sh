@@ -1358,7 +1358,7 @@ pg_up() {
         -c max_connections=500 -c shared_buffers=256MB >/dev/null 2>&1 && break
     port=""
     docker container inspect "$name" >/dev/null 2>&1 || return 1
-    docker rm -f "$name" >/dev/null 2>&1
+    docker rm -fv "$name" >/dev/null 2>&1
   done
   [ -n "$port" ] || return 1
   img="$(docker container inspect --format '{{.Image}}' "$name" 2>/dev/null | tr -d '\r')"
@@ -1391,7 +1391,7 @@ start_shared_pg() {
 
 stop_shared_pg() {
   [ -e "$SHARED_PG_MARK" ] || return 0
-  docker rm -f "$sharedPG" >/dev/null 2>&1
+  docker rm -fv "$sharedPG" >/dev/null 2>&1
   rm -f "$SHARED_PG_MARK"
 }
 
@@ -1404,7 +1404,7 @@ RACE_PG="shingo-gate-race-$$"
 RACE_PG_MARK="$ROOT/.gate/race-pg.$$"
 stop_race_pg() {
   [ -e "$RACE_PG_MARK" ] || return 0
-  docker rm -f "$RACE_PG" >/dev/null 2>&1
+  docker rm -fv "$RACE_PG" >/dev/null 2>&1
   rm -f "$RACE_PG_MARK"
 }
 
