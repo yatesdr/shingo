@@ -705,8 +705,10 @@ func (c *w6Cell) restart(label string) {
 // call and kept, as a plant's Core runs on while its Edge restarts (a cell
 // whose ksrCell composed it, counted, keeps that one): NewCore's, less the
 // redirect, every other subject (its Edge also sends demand origins, never
-// routed here) and every hook (the rig pushes the bins itself). Each call
-// takes a new Bus for the Edge it has now.
+// routed here) and every hook but the bins feed's (FeedHooks). Each call
+// takes a new Bus for the Edge it has now, on Core's real bins feed: a
+// restarted Edge sends its watch list and heartbeat as a booted one does. A
+// ksrCell kept on the rig's push (rigPush) keeps it here.
 func (c *w6Cell) wireBus() {
 	t, coreDB := c.t, c.core.eng.DB()
 	if c.side == nil {
@@ -714,8 +716,8 @@ func (c *w6Cell) wireBus() {
 			coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
 				protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.TypeOrderIngest,
 				protocol.SubjectEdgeRegister, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks,
-				protocol.SubjectPlantClaims, protocol.SubjectEdgeAsk),
-			coreharness.HooksOnly())
+				protocol.SubjectPlantClaims, protocol.SubjectEdgeAsk, protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat),
+			coreharness.HooksOnly(coreharness.FeedHooks...))
 	}
 	coreSide := c.side
 	if c.askKinds == nil {
@@ -726,9 +728,13 @@ func (c *w6Cell) wireBus() {
 		harness.EdgeSide{EdgeStore: c.edge.DB, EdgeIngestor: c.edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
-	c.push = harness.StartBinsPush(t, coreDB, c.edge.Engine)
-	c.bus.SetBinsPush(c.push)
-	c.push.AnswerAsks(c.askKinds)
+	if c.rigPush {
+		c.push = harness.StartBinsPush(t, coreDB, c.edge.Engine)
+		c.bus.SetBinsPush(c.push)
+		c.push.AnswerAsks(c.askKinds)
+	} else {
+		harness.StartBinsFeed(t, c.bus, coreSide.Data, c.edge)
+	}
 	c.registerEdge()
 	c.settle()
 }
