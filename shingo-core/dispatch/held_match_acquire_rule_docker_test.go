@@ -100,13 +100,15 @@ func TestReserveReconcile_AStockPickupKeepsNoHeldEmpty(t *testing.T) {
 // empty on a lane's child), a bin row whose bin stands nowhere, a bin row whose
 // bin does not exist and a slot row whose node does not exist, every field it
 // answers is what the doors answer one row at a time: the bin by id (GetBin),
-// then the bin's node or the slot's by id (GetNode). The want column names each
-// row's node, so a fixture that stops building what it says fails here rather
-// than agreeing vacuously.
+// then the bin's node or the slot's by id (GetNode). It is asked twice: of rows
+// as written here, and of an order's rows as the store lists them
+// (ListReservationsByOrder), which the reconcile is handed. The want column
+// names each row's node, so a fixture that stops building what it says fails
+// here rather than agreeing vacuously.
 func TestResolveHeldReservations_AgreesWithTheRowsOneAtATime(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	_, _, bp := testdb.SetupTestData(t, db)
+	_, lineNode, bp := testdb.SetupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	mk := func(name string, parent *int64) *nodes.Node {
 		t.Helper()
@@ -120,10 +122,54 @@ func TestResolveHeldReservations_AgreesWithTheRowsOneAtATime(t *testing.T) {
 	fullBin := testdb.CreateBinAtNode(t, db, bp.Code, full.ID, "RH-FULL-BIN")
 	emptyBin := testdb.CreateBinAtNode(t, db, "", empty.ID, "RH-EMPTY-BIN")
 	nowhere := testdb.CreateBinAtNode(t, db, bp.Code, full.ID, "RH-NOWHERE-BIN")
+	order := mkComplexOrder(t, db, "rh-listed", full.Name, lineNode.Name, slotA.Name, bp.Code, []resolvedStep{
+		{Action: protocol.ActionPickup, Node: full.Name},
+		{Action: protocol.ActionDropoff, Node: slotA.Name},
+	})
+	testutil.MustNoErr(t, db.ReserveSlot(slotA.ID, order.ID), "reserve slot A")
+	testutil.MustNoErr(t, db.ReserveSlot(slotB.ID, order.ID), "reserve slot B")
+	testutil.MustNoErr(t, db.ConfirmSlotReservation(slotB.ID, order.ID), "confirm slot B")
+	for _, b := range []int64{fullBin.ID, emptyBin.ID, nowhere.ID} {
+		testdb.ReserveBin(t, db, order.ID, b)
+	}
 	_, err := db.Exec(`UPDATE bins SET node_id = NULL WHERE id = $1`, nowhere.ID)
 	testutil.MustNoErr(t, err, "stand a bin nowhere")
+	nodeName := func(id int64) string {
+		if n, err := db.GetNode(id); err == nil && n != nil {
+			return n.Name
+		}
+		return ""
+	}
+	check := func(label string, rows []reservations.Reservation, wantNode []string) {
+		t.Helper()
+		got := d.allocator.resolveHeldReservations(rows)
+		if len(got) != len(rows) || len(rows) != len(wantNode) {
+			t.Fatalf("%s: %d holds for %d rows, %d named", label, len(got), len(rows), len(wantNode))
+		}
+		for i, r := range rows {
+			want := heldReservation{kind: r.Kind, confirmed: r.State == reservations.StateConfirmed}
+			if r.Kind == reservations.KindSlot {
+				want.nodeID, want.nodeName = r.NodeID, nodeName(r.NodeID)
+			} else {
+				want.binID = r.BinID
+				if b, err := db.GetBin(r.BinID); err == nil && b != nil {
+					want.empty = b.PayloadCode == ""
+					if b.NodeID != nil {
+						want.nodeID, want.nodeName = *b.NodeID, nodeName(*b.NodeID)
+					}
+				}
+			}
+			if *got[i] != want {
+				t.Errorf("%s, row %d (%+v): resolveHeldReservations = %+v, one row at a time %+v", label, i, r, *got[i], want)
+			}
+			if got[i].nodeName != wantNode[i] {
+				t.Errorf("%s, row %d (%+v): node %q, want %q", label, i, r, got[i].nodeName, wantNode[i])
+			}
+		}
+	}
+
 	const gone = int64(1) << 40 // no bin and no node has this id
-	rows := []reservations.Reservation{
+	check("rows as written", []reservations.Reservation{
 		{Kind: reservations.KindSlot, NodeID: slotA.ID, State: reservations.StatePending},
 		{Kind: reservations.KindSlot, NodeID: slotB.ID, State: reservations.StateConfirmed},
 		{Kind: reservations.KindBin, BinID: fullBin.ID, State: reservations.StatePending},
@@ -131,36 +177,9 @@ func TestResolveHeldReservations_AgreesWithTheRowsOneAtATime(t *testing.T) {
 		{Kind: reservations.KindBin, BinID: nowhere.ID, State: reservations.StatePending},
 		{Kind: reservations.KindBin, BinID: gone, State: reservations.StatePending},
 		{Kind: reservations.KindSlot, NodeID: gone, State: reservations.StatePending},
-	}
-	wantNode := []string{slotA.Name, slotB.Name, full.Name, empty.Name, "", "", ""}
-	nodeName := func(id int64) string {
-		if n, err := db.GetNode(id); err == nil && n != nil {
-			return n.Name
-		}
-		return ""
-	}
-	got := d.allocator.resolveHeldReservations(rows)
-	if len(got) != len(rows) {
-		t.Fatalf("%d holds for %d rows", len(got), len(rows))
-	}
-	for i, r := range rows {
-		want := heldReservation{kind: r.Kind, confirmed: r.State == reservations.StateConfirmed}
-		if r.Kind == reservations.KindSlot {
-			want.nodeID, want.nodeName = r.NodeID, nodeName(r.NodeID)
-		} else {
-			want.binID = r.BinID
-			if b, err := db.GetBin(r.BinID); err == nil && b != nil {
-				want.empty = b.PayloadCode == ""
-				if b.NodeID != nil {
-					want.nodeID, want.nodeName = *b.NodeID, nodeName(*b.NodeID)
-				}
-			}
-		}
-		if *got[i] != want {
-			t.Errorf("row %d (%+v): resolveHeldReservations = %+v, one row at a time %+v", i, r, *got[i], want)
-		}
-		if got[i].nodeName != wantNode[i] {
-			t.Errorf("row %d (%+v): node %q, want %q", i, r, got[i].nodeName, wantNode[i])
-		}
-	}
+	}, []string{slotA.Name, slotB.Name, full.Name, empty.Name, "", "", ""})
+
+	listed, err := db.ListReservationsByOrder(order.ID)
+	testutil.MustNoErr(t, err, "list the order's reservations")
+	check("rows as listed", listed, []string{slotA.Name, slotB.Name, full.Name, empty.Name, ""})
 }
