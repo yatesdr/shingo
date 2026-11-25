@@ -21,6 +21,7 @@ package scenarios
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	"shingo/protocol"
 
 	"shingocore/plantspec"
+	corebins "shingocore/store/bins"
 	coreorders "shingocore/store/orders"
 
 	"shingoedge/domain"
@@ -195,5 +197,169 @@ func TestScenario_TwoRobotLine_ThroughItsHome_SavesAndBuildsItsLegs(t *testing.T
 		if got := c.coreStops(co); !slices.Equal(got, l.want) {
 			t.Errorf("Core stores the %s as %v, want %v", l.name, got, l.want)
 		}
+	}
+}
+
+// homeLineStaged presses REQUEST on the line (its cart part-used, 30 of 40)
+// and brings both robots to their waits: the supply at the home's full, the
+// evac at the line's cart. It checks the plans Core stores are A0's.
+func (c *ksrCell) homeLineStaged(label string) (supply, evac domain.Order) {
+	c.t.Helper()
+	mustNil(c.t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+	c.settle()
+	before := c.lastID()
+	c.operatorRequest()
+	c.tick()
+	supply, evac = c.pairLegs(label, before)
+	c.eventually(label+": both legs with the fleet", func() bool {
+		return c.coreOf(supply).VendorOrderID != "" && c.coreOf(evac).VendorOrderID != ""
+	})
+	wantSupply := []string{"wait(" + ksrHomeA + ")", "pickup(" + ksrHomeA + ")", "dropoff(" + ksrLine + ")"}
+	wantEvac := []string{"wait(" + ksrLine + ")", "pickup(" + ksrLine + ")", "dropoff(" + ksrHomeA + ")"}
+	for _, l := range []struct {
+		name string
+		o    domain.Order
+		want []string
+	}{{"supply", supply, wantSupply}, {"evac", evac, wantEvac}} {
+		co := c.coreOf(l.o)
+		c.t.Logf("%s: Core's %s, order %d: %s -> %s status=%s cause=%q: %v", label, l.name, co.ID, co.SourceNode,
+			co.DeliveryNode, co.Status, co.QueueCause, c.coreStops(co))
+		if got := c.coreStops(co); !slices.Equal(got, l.want) {
+			c.t.Errorf("%s: Core stores the %s as %v, want %v", label, l.name, got, l.want)
+		}
+	}
+	c.drive(c.coreOf(supply), "RUNNING", "WAITING")
+	c.drive(c.coreOf(evac), "RUNNING", "WAITING")
+	c.eventually(label+": both legs staged at the Edge", func() bool {
+		return c.edgeRow(supply.ID).Status == protocol.StatusStaged && c.edgeRow(evac.ID).Status == protocol.StatusStaged
+	})
+	return supply, evac
+}
+
+// fleetBlocks is what Core has sent the fleet for the order: its blocks as
+// action(location), and whether the order is complete.
+func (c *ksrCell) fleetBlocks(o domain.Order) (blocks []string, complete bool) {
+	c.t.Helper()
+	v := c.core.sim.GetOrder(c.coreOf(o).VendorOrderID)
+	if v == nil {
+		return nil, false
+	}
+	for _, b := range v.Blocks {
+		blocks = append(blocks, b.Action+"("+b.Location+")")
+	}
+	return blocks, v.Complete
+}
+
+// labels is the bins' labels, sorted.
+func labels(bs []*corebins.Bin) []string {
+	var out []string
+	for _, b := range bs {
+		out = append(out, b.Label)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// loseRelease takes the order's release off the Edge's outbox before it is
+// sent: the release never reaches Core, as a message lost on the way.
+func (c *ksrCell) loseRelease(o domain.Order) {
+	c.t.Helper()
+	msgs, err := c.edge.DB.ListPendingOutbox(1000)
+	mustNil(c.t, err, "the Edge's outbox")
+	for _, m := range msgs {
+		if m.MsgType != protocol.TypeOrderRelease {
+			continue
+		}
+		var env protocol.Envelope
+		mustNil(c.t, json.Unmarshal(m.Payload, &env), "a release envelope")
+		var rel protocol.OrderRelease
+		mustNil(c.t, env.DecodePayload(&rel), "a release")
+		if rel.OrderUUID == o.UUID {
+			mustNil(c.t, c.edge.DB.AckOutbox(m.ID), "lose the release")
+			return
+		}
+	}
+	c.t.Fatalf("no release of order %d on the Edge's outbox to lose", o.ID)
+}
+
+// sentDropAt reports whether Core has sent the fleet a set-down at node for
+// the order.
+func (c *ksrCell) sentDropAt(o domain.Order, node string) bool {
+	c.t.Helper()
+	blocks, _ := c.fleetBlocks(o)
+	return slices.Contains(blocks, protocol.ActionDropoff+"("+node+")")
+}
+
+// The brief's A2, the missing hold: a cart is not sent to set down on a spot
+// until the cart standing there has been lifted. On the line through its home,
+// the old cart's drop is the home, where the full stands until the supply lifts
+// it. Two ways the lift does not happen: the supply's release never reaches
+// Core, and the supply's robot stands faulted at the home (released, never
+// lifting). In both the evac should not be sent to set the old cart down on
+// the home while the full stands on it.
+//
+// RED at 9c282051 in both, and skipped unless SHINGO_KNOWN_RED=1 (lane g-line's
+// notes have the red output): the park reads the home clear because the
+// sibling's plan picks up there (loader_place.go homeClearForReturn), the
+// release hold keys on a stamp or a staged sibling's grant (vacate_hold.go
+// vacateHoldsAtRelease), and this line has neither, so the evac's release
+// appends pickup(L) dropoff(H) at once, whatever the supply has done.
+func TestScenario_TwoRobotLine_ThroughItsHome_HoldsTheOldCartOffTheFull(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		lost bool
+	}{{"the supply's release does not reach Core", true}, {"the supply's robot stands faulted at the home", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if os.Getenv("SHINGO_KNOWN_RED") == "" {
+				t.Skip("brief G A2 red pin, red until Core holds a set-down on a spot until the cart standing " +
+					"there is lifted; run with SHINGO_KNOWN_RED=1")
+			}
+			t.Parallel()
+			c := newKsrCell(t, homeLine(0, 0))
+			supply, evac := c.homeLineStaged("the request")
+			defer func() { c.coreRoute("at the end", c.rows()...) }()
+			mustNil(t, c.edge.Engine.ReleaseStagedOrders(c.nodeID, edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}),
+				"RELEASE")
+			if tc.lost {
+				c.loseRelease(supply)
+			}
+			c.settle()
+			for i := 0; i < 3; i++ {
+				c.tick()
+			}
+			for _, l := range []struct {
+				name string
+				o    domain.Order
+			}{{"supply", supply}, {"evac", evac}} {
+				blocks, complete := c.fleetBlocks(l.o)
+				co := c.coreOf(l.o)
+				t.Logf("after RELEASE the %s's vendor order holds %v (complete=%v); Core %s cause=%q; Edge row %s",
+					l.name, blocks, complete, co.Status, co.QueueCause, c.edgeRow(l.o.ID).Status)
+			}
+			check := func(when string) {
+				t.Helper()
+				if c.binAt("KSR-HOME-A-FULL") == ksrHomeA && c.sentDropAt(evac, ksrHomeA) {
+					blocks, _ := c.fleetBlocks(evac)
+					t.Errorf("%s: the evac is sent to set the old cart down on %s while the full stands on it "+
+						"(its vendor order holds %v)", when, ksrHomeA, blocks)
+				}
+			}
+			check("after RELEASE")
+			// The evac's robot lifts the line's cart, if it was let go; the
+			// supply's does not lift.
+			if c.pickupAt(c.coreOf(evac), ksrLine) {
+				t.Logf("the evac lifted the old cart off the line; %s holds %v", ksrHomeA, labels(c.binsAt(ksrHomeA)))
+				check("after the evac's lift")
+			}
+			if c.sentDropAt(evac, ksrHomeA) {
+				// What follows on the floor: the robot carrying the old cart
+				// arrives at the home and sets it down.
+				c.drive(c.coreOf(evac), "RUNNING", "FINISHED")
+				c.settle()
+				t.Logf("the evac set the old cart down: %s holds %v; the full is at %q; the old cart at %q",
+					ksrHomeA, labels(c.binsAt(ksrHomeA)), c.binAt("KSR-HOME-A-FULL"), c.binAt("KSR-LINE-BIN"))
+			}
+		})
 	}
 }
