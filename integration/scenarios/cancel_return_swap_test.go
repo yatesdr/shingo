@@ -9,21 +9,20 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
+	"shingo/protocol/debuglog"
 
 	coreconfig "shingocore/config"
 	"shingocore/dispatch"
 	coreengine "shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	corestore "shingocore/store"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
 	corepayloads "shingocore/store/payloads"
 	coreharness "shingocore/testharness"
+	"shingocore/www"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
@@ -200,22 +199,21 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	eng.Start()
 	t.Cleanup(eng.Stop)
 
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
-	dataSvc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{
-		Topic: cfg.Messaging.DispatchTopic, CoreStation: cfg.Messaging.StationID,
-	})
-	subjects := router.NewSubject()
-	router.RegisterSubject(subjects, protocol.SubjectPlantClaims, dataSvc.HandlePlantClaims)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-		subjects.Dispatch(env, p)
-	})
-	router.Register(coreRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
-	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
-	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	coreIngestor := protocol.NewIngestor(nil)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	// Core's web layer, as main builds it after the rest: its doors are what
+	// the ask server answers through.
+	dbg, err := debuglog.New(64, nil)
+	mustNil(t, err, "debuglog")
+	doors := www.NewDoors(eng)
+	_, stopWeb, err := www.NewRouter(eng, doors, dbg)
+	mustNil(t, err, "core router")
+	t.Cleanup(stopWeb)
+	// Core's tables as main builds them, less what this cell leaves out: every
+	// subject but the claims (its Edge also sends a demand origin, never routed
+	// here), the plain request, the redirect and the ingest, and every hook.
+	coreSide := coreharness.NewCore(t, eng, doors,
+		coreharness.RoutesOnly(protocol.SubjectPlantClaims, protocol.TypeComplexOrderRequest, protocol.TypeOrderRelease,
+			protocol.TypeOrderCancel, protocol.TypeOrderReceipt),
+		coreharness.HooksOnly())
 
 	// ── Edge: a consume line changing over from OLD to NEW, two_robot ──
 	edge := edgeharness.NewEdge(t, stationID)
@@ -264,7 +262,7 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
 
 	// The Edge's claims reach Core's mirror the way they do in the plant: the
