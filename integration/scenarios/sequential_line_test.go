@@ -568,6 +568,14 @@ func (c *ksrCell) coreRoute(label string, ords ...domain.Order) {
 // lets A go to the buffer and the swap runs to its end. With no buffer at all
 // the sentence names only the home, which holds the full B comes for. Before
 // brief H these four cells were skipped reds.
+//
+// cost: 10 leaves, two shapes by five loader layouts, each its own Core, Edge
+// and databases with the loader's homes and buffers, driven through a whole
+// Sequential cycle (removal, release, backfill, both confirms) or held five
+// passes on its wait. Where the line's cart lands and what Core and the station
+// both say while it waits is choreography across Core and Edge, which neither
+// module's own tests can drive; the park's own answers are pinned cheaper in
+// dispatch (TestLoaderPark_TheBriefsRows).
 func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 	t.Parallel()
 	for _, shape := range []struct {
