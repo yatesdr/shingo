@@ -110,6 +110,65 @@ func TestEngine_UptimeAndStop(t *testing.T) {
 	}
 }
 
+// heldLink is the robot feed's link with a Stop held until let go: the feed's
+// loop closes its link as it leaves at Stop, so the loop is held there.
+type heldLink struct {
+	fakeEphemeralLink
+	stopping, release chan struct{}
+	said, gone        sync.Once
+}
+
+func (l *heldLink) Stop() {
+	l.said.Do(func() { close(l.stopping) })
+	<-l.release
+	l.fakeEphemeralLink.Stop()
+}
+
+// letGo releases the held Stop; any number of calls.
+func (l *heldLink) letGo() { l.gone.Do(func() { close(l.release) }) }
+
+// TestEngineStop_WaitsForTheLoopsStartLaunched: Stop returns only once the
+// goroutines Start launched have left. The robot feed's loop is held where it
+// leaves, closing the feed's link as a stop does, and Stop must not return
+// while it is. Docket B5: Stop closed the stop channel, joined the PLC poll,
+// wrote the no-cart stretches and returned, waiting for no other loop.
+func TestEngineStop_WaitsForTheLoopsStartLaunched(t *testing.T) {
+	t.Parallel()
+	const topic = "shingo.ephemeral.test"
+	eng := New(Config{AppConfig: &config.Config{StationUID: "edge.a",
+		Messaging: config.MessagingConfig{EphemeralTopic: topic}}, DB: testEngineDB(t)})
+	link := &heldLink{stopping: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(link.letGo)
+	eng.SetEphemeralLink(link)
+	eng.Start()
+	eng.OfferEphemeralTopic(topic)
+	eventually(t, "the feed's link opened", func() bool {
+		starts, _, _ := link.state()
+		return len(starts) == 1
+	})
+	stopped := make(chan struct{})
+	go func() {
+		eng.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-link.stopping:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the robot feed's loop did not close its link at Stop")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while the robot feed's loop was still closing its link")
+	case <-time.After(100 * time.Millisecond):
+	}
+	link.letGo()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return once the loop had left")
+	}
+}
+
 // ── Core node sync ──────────────────────────────────────────────────
 
 func TestEngine_SetCoreNodesEmitsEvent(t *testing.T) {
