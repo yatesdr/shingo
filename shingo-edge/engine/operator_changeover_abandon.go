@@ -30,7 +30,10 @@ var ErrPartnerInFlight = domain.ErrPartnerInFlight
 //     cleared with no new material — the half the operator chose to keep.
 //
 // Either way the node task lands NodeTaskAbandoned (terminal) with an
-// operator-facing skip note, and the changeover completion gate re-runs.
+// operator-facing skip note, and the changeover completion gate re-runs. The
+// supply's cancel asks Core (orders.Manager.AskCancel): the supply keeps
+// Core's status until Core's word ends it, whose completion pokes the cutover
+// again and leaves ABANDON's note (handleOrphanedTaskOrderCompleted).
 func (e *Engine) AbandonChangeoverSupply(processID, processNodeID int64, acceptHalf bool, calledBy string) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
@@ -75,7 +78,7 @@ func (e *Engine) AbandonChangeoverSupply(processID, processNodeID int64, acceptH
 		if acceptHalf {
 			reason = protocol.CancelReasonAcceptHalfSwap
 		}
-		if err := e.orderMgr.CancelOrderWithReason(supply.ID, reason); err != nil {
+		if err := e.orderMgr.AskCancel(supply.ID, orders.CancelAsk{Reason: reason}); err != nil {
 			return fmt.Errorf("cancel supply order %d: %w", supply.ID, err)
 		}
 	}

@@ -218,9 +218,12 @@ func expectLines(t *testing.T, step string, got []string, want ...string) {
 
 // TestCancelDoorPin_Abandon: ABANDON of a changeover supply parked for lack of
 // material (AbandonChangeoverSupply, plain). The supply's cancel goes with its
-// ordinary reason, the task lands abandoned with ABANDON's note, and the
-// cutover is poked. Today the supply ends at the tap, before Core hears, and
-// Core's word moves nothing on the ended row.
+// ordinary reason and asks Core (final brief 5g); the task lands abandoned
+// with ABANDON's note and the cutover is poked. After the tap the supply keeps
+// Core's status and reads cancel sent, and its tile lists it so. Core's word
+// ends it, and its completion leaves ABANDON's note (the orphan handler). The
+// evac is Core's to cancel. Until 2026-11-25 the supply ended at the tap,
+// before Core heard, and Core's word moved nothing.
 func TestCancelDoorPin_Abandon(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -244,17 +247,19 @@ func TestCancelDoorPin_Abandon(t *testing.T) {
 
 	testutil.MustNoErr(t, eng.AbandonChangeoverSupply(processID, nodeID, false, "test-operator"), "abandon")
 
-	// After the tap: the supply has ended, and its tile lists the evac alone.
-	expectLines(t, "the tile after the tap", p.tile(nodeID, "P3-NODE"), fmt.Sprintf("%d queued", evacID))
-	p.expectSent("the tap", cancelOf(supply.UUID, reason, ""))
-	expectLines(t, "the supply's rows at the tap", p.historySince(supplyID, before), "queued->cancelled: "+reason)
+	// After the tap: the supply is Core's to end, and says its cancel is out.
+	tile := []string{fmt.Sprintf("%d queued", evacID), fmt.Sprintf("%d queued cancel_sent=true", supplyID)}
+	sort.Strings(tile)
+	expectLines(t, "the tile after the tap", p.tile(nodeID, "P3-NODE"), tile...)
+	p.expectSent("the tap", askOf(supply.UUID, reason, ""))
+	expectLines(t, "the supply's rows at the tap", p.historySince(supplyID, before))
 	tk, err := db.GetChangeoverNodeTaskByNode(task.ProcessChangeoverID, nodeID)
 	testutil.MustNoErr(t, err, "read the task")
 	if tk.State != domain.NodeTaskAbandoned || tk.SkipNote != note {
 		t.Errorf("the task after the tap reads %s %q, want abandoned %q", tk.State, tk.SkipNote, note)
 	}
 
-	// Core's end: its word lands on the ended row and moves nothing.
+	// Core's end: its word ends the supply, and the note stays ABANDON's.
 	p.coreCancels(supplyID, reason, protocol.StatusQueued)
 	if s := p.row(supplyID).Status; s != orders.StatusCancelled {
 		t.Errorf("after Core's word the supply reads %s, want cancelled", s)

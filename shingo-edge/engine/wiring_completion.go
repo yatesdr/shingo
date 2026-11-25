@@ -833,6 +833,17 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 		newState = domain.NodeTaskError
 		note = ""
 	}
+	// ABANDON'S OWN SUPPLY, ENDED: the task is already abandoned, with the
+	// note ABANDON wrote for this order (AbandonChangeoverSupply). Its cancel
+	// asks Core, so Core's word ends the supply after ABANDON has stamped the
+	// task; the note stays ABANDON's, as it did when the supply ended inside
+	// ABANDON's call and ABANDON wrote last. Any other order of the task (the
+	// evac Core cancels with it) is stamped as before. Pinned by
+	// TestCancelDoorPin_Abandon.
+	if task.State == domain.NodeTaskAbandoned && order.Status == orders.StatusCancelled &&
+		task.NextMaterialOrderID != nil && *task.NextMaterialOrderID == order.ID {
+		note = ""
+	}
 	if err := e.db.UpdateChangeoverNodeTaskState(task.ID, newState); err != nil {
 		log.Printf("orphan: update task %d to %s: %v", task.ID, newState, err)
 		return
