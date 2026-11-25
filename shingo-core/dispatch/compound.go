@@ -298,17 +298,48 @@ func digWasDissolved(children []*orders.Order) bool {
 	return superseded && len(open) == 0
 }
 
-// configFailedLeg returns the first leg in the open chapter that failed on
+// configFailedLeg returns the first leg of chapter that failed on
 // CONFIGURATION, or nil. It is the one carve-out from gate 1: everything else a
 // leg can die of is congestion and the demand re-plans, but a node nobody
-// configured is a person's to fix and the demand has to say so and stop.
-func configFailedLeg(open []*orders.Order) *orders.Order {
-	for _, c := range open {
+// configured is a person's to fix and the demand has to say so and stop. The
+// disposition hands it the chapter that closed (closingChapter).
+func configFailedLeg(chapter []*orders.Order) *orders.Order {
+	for _, c := range chapter {
 		if c.Status == StatusFailed && dplan.IsConfigFailure(c.ErrorDetail) {
 			return c
 		}
 	}
 	return nil
+}
+
+// closingChapter is the chapter a disposition closes: the legs of the dig's
+// newest plan. The config carve-out reads it rather than the open set, because
+// a sibling cancelled behind a config-failed leg under a chapter-end marker puts
+// that leg in the closed half of the split (compoundGenerations), and the
+// demand then re-planned a dig no re-plan can build (study round 5, section 2).
+//
+// A plan's legs are numbered from 1 (planUnbury) and issued together in that
+// order (issueLegsTx), and a re-plan is issued after the chapter it replaces has
+// closed, so by id the newest plan starts at the newest leg numbered 1.
+// Children with no leg numbered 1 are no planner's: they are read as the open
+// set, as before.
+func closingChapter(children, open []*orders.Order) []*orders.Order {
+	var start *orders.Order
+	for _, c := range children {
+		if c.Sequence == 1 && (start == nil || c.ID > start.ID) {
+			start = c
+		}
+	}
+	if start == nil {
+		return open
+	}
+	var chapter []*orders.Order
+	for _, c := range children {
+		if c.ID >= start.ID {
+			chapter = append(chapter, c)
+		}
+	}
+	return chapter
 }
 
 // chapterEndedInFailure reports whether the chapter that just closed closed
@@ -2532,23 +2563,17 @@ func (d *Dispatcher) chapterStoppedShort(
 	hasFailedOrCancelled, allTerminal bool,
 	heldLanes []int64,
 ) {
-	// A CONFIG FAULT STILL FAILS THE DEMAND (§R.45). endsItsChapter leaves
-	// such a leg in the open set precisely so it arrives here: there is no
-	// next chapter to open, because nothing a re-plan can do invents a node
-	// somebody did not configure. The message is already an instruction —
-	// "config failure: source node X does not exist" — and it travels up so
-	// the demand's own detail says what to go and add.
-	if broken := configFailedLeg(openChildren); broken != nil {
-		log.Printf("dispatch: compound order %d has a leg that cannot be built (%s) — failing "+
-			"the demand; this is a person's to fix, not congestion", parentOrderID, broken.ErrorDetail)
-		if parent != nil {
-			if err := d.lifecycle.Fail(parent, parent.Requester(), "reshuffle_error", broken.ErrorDetail); err != nil {
-				log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
-			}
-		}
-		d.unlockLaneForCompound(parentOrderID, heldLanes)
-		return
-	}
+	// A CONFIG FAULT STILL FAILS THE DEMAND (§R.45): there is no next chapter
+	// to open, because nothing a re-plan can do invents a node somebody did not
+	// configure. The message is already an instruction — "config failure:
+	// source node X does not exist" — and it travels up so the demand's own
+	// detail says what to go and add. The failure itself is below the wait.
+	//
+	// IT READS THE CHAPTER THAT CLOSED, NOT THE OPEN SET. A sibling cancelled
+	// behind the broken leg under a chapter-end marker closes that leg in the
+	// split, and reading the open set re-planned a dig no re-plan can build
+	// (TestCompoundGenerations_ALaterMarkerHidesAConfigFailedLeg).
+	broken := configFailedLeg(closingChapter(children, openChildren))
 
 	// CLOSE THE REST OF THE CHAPTER. A dissolve has already cancelled its
 	// legs and this loop finds nothing. A FAILED leg does not reach it either:
@@ -2557,7 +2582,9 @@ func (d *Dispatcher) chapterStoppedShort(
 	// HandleChildOrderFailure's to close. What reaches it is a leg cancelled
 	// WITHOUT the chapter-end marker (an operator or the fleet ending one leg),
 	// and its live siblings are what this cancels. The marker is what re-drives
-	// us when they land (IsChapterEndCancel).
+	// us when they land (IsChapterEndCancel). A leg failed on configuration
+	// ends no chapter, so it is in openChildren, and it does not reach the loop
+	// either: it never did, and the wait below is all its siblings get here.
 	//
 	// EXCEPT A LEG CARRYING ITS BIN (splitLiftedLegs): it sets the bin down, and
 	// the !allTerminal wait below holds the chapter open until it lands.
@@ -2569,7 +2596,7 @@ func (d *Dispatcher) chapterStoppedShort(
 	// TERMINAL; the demand no longer does, so nothing reaches across. The
 	// old arm failed the parent and the unwind went with it — one dig leg
 	// breaking down took the other robot's order out too.
-	if parent != nil && hasFailedOrCancelled {
+	if parent != nil && hasFailedOrCancelled && broken == nil {
 		log.Printf("dispatch: compound order %d lost a leg — closing the rest of the chapter; "+
 			"the demand re-plans (gate 1: a dig failure is congestion)", parentOrderID)
 		var live []*orders.Order
@@ -2601,6 +2628,20 @@ func (d *Dispatcher) chapterStoppedShort(
 	if !allTerminal {
 		d.dbg("dispatch: compound %d has stopped short but still has a leg in flight — "+
 			"waiting for it to land", parentOrderID)
+		return
+	}
+	// THE CONFIG FAULT FAILS THE DEMAND HERE, BELOW THE WAIT: failing the
+	// demand releases its lane, and a leg still carrying its bin is inside it
+	// (TestCompound_UnknownNodeOnTheLastLeg_FailsTheOrderWithTheLegsSentence).
+	if broken != nil {
+		log.Printf("dispatch: compound order %d has a leg that cannot be built (%s) — failing "+
+			"the demand; this is a person's to fix, not congestion", parentOrderID, broken.ErrorDetail)
+		if parent != nil {
+			if err := d.lifecycle.Fail(parent, parent.Requester(), "reshuffle_error", broken.ErrorDetail); err != nil {
+				log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
+			}
+		}
+		d.unlockLaneForCompound(parentOrderID, heldLanes)
 		return
 	}
 	// SEALEDNESS IS NOT CONSULTED, and that is a statement rather than an

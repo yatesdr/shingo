@@ -296,10 +296,13 @@ func TestCompoundGenerations_ALaterLegOfTheSamePlanReadsAsTheNextChapter(t *test
 
 // TestCompoundGenerations_ALaterMarkerHidesAConfigFailedLeg is the second
 // reading (pin 1): a leg that failed on configuration does not end its chapter,
-// so that the config carve-out finds it in the open set, but a sibling
-// cancelled behind it under a chapter-end marker closes everything at or below
-// its own id, the config-failed leg with it. The open set is then empty, the
-// carve-out reads nothing, and the demand goes back to be re-planned.
+// but a sibling cancelled behind it under a chapter-end marker closes
+// everything at or below its own id, the config-failed leg with it. The open
+// set is then empty and the split reads the chapter as dissolved.
+//
+// So the config carve-out does not read the split: it reads the chapter that
+// closed (closingChapter), and finds the leg there. When it read the open set,
+// the demand went back to be re-planned for a dig no re-plan can build (B1).
 func TestCompoundGenerations_ALaterMarkerHidesAConfigFailedLeg(t *testing.T) {
 	t.Parallel()
 
@@ -314,10 +317,17 @@ func TestCompoundGenerations_ALaterMarkerHidesAConfigFailedLeg(t *testing.T) {
 			idsOf(open), superseded, behind.ID, unbuildable.ID)
 	}
 	if !digWasDissolved(chapter) {
-		t.Error("the chapter does not read as dissolved; today it does, and the demand re-plans")
+		t.Error("the chapter does not read as dissolved; the split closes it under the marker")
 	}
 	if got := configFailedLeg(open); got != nil {
-		t.Errorf("the carve-out found leg %d in the open set; today the marker hides it", got.ID)
+		t.Errorf("the open set holds leg %d; the marker closes it in the split", got.ID)
+	}
+	switch got := configFailedLeg(closingChapter(chapter, open)); {
+	case got == nil:
+		t.Errorf("the carve-out finds no config-failed leg in the chapter that closed, want leg %d: "+
+			"the demand must fail on it, not re-plan", unbuildable.ID)
+	case got.ID != unbuildable.ID:
+		t.Errorf("the carve-out finds leg %d in the chapter that closed, want leg %d", got.ID, unbuildable.ID)
 	}
 }
 

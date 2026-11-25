@@ -26,6 +26,7 @@ Deploy: no migration; Core and Edges in either order.
 - Core refuses to save a node, group or lane with no name or a name of only spaces, from any door: a request made by hand to the node form or the group and lane editor is answered with the reason and saves nothing, and a robot-map sync does not make a node for a fleet location with no name, and says so in its log. No order can name a node with no name
 - A node save that leaves out the node's name, type or parent keeps them, as it keeps the zone; it used to blank the name and clear the type and the parent, taking a lane slot out of its lane. The Nodes page always sends all three, so its own saves are as before
 - Core's start-up log names any node with no name, by id, with its parent and the bins standing on it, and changes nothing; a plant with none prints nothing
+- An order that has to move bins out of a lane to reach its cart, where one of the moves names a slot that no longer exists, now fails saying which slot wherever that move falls, and frees the lane only after a robot still carrying a bin out of it has set the bin down; it used to plan the moves again, or free the lane under the robot
 
 ## v0.19.0 — 2026-11-22
 
