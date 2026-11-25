@@ -19,6 +19,7 @@ binary is built from has changed since the last tag, the section opens with
 Deploy: no migration; Core and Edges in either order.
 
 - An Edge's Refresh nodes, Refresh catalog, Sync Nodes and Sync catalog buttons ask Core from the start of a boot (while the Edge was still sending its start-up messages, 70 s or more with Kafka down, they answered ok and asked for nothing), and say nothing was sent while the Edge's messaging is not set up yet, as on an Edge with no Kafka broker configured
+- With Kafka down, the same four buttons answer at once that nothing was sent ("Kafka did not take it"); they used to wait about 14 s and then say ok. The Processes page's Sync from Core now says the catalog sync was requested, not that the catalog was synced: the catalog arrives with Core's answer
 - An Edge's boot log no longer says "WARNING messaging not connected at boot" on every start: it says so, with the reason, only when messaging cannot be set up (no Kafka broker configured), and "kafka connect succeeded", which printed with Kafka down, now reads "kafka writer built"
 - An Edge that starts while Kafka is unreachable registers with Core and asks it for its orders once Kafka answers, within a minute; it used to stay on Core's Edges page as its previous run, and miss order changes whose message was lost, until it was restarted, its Messaging settings were saved, or Core marked it stale after 15 min of silence
 - At shutdown Core's engine lets the work it tracks finish before the database closes, drops what is still queued, and stops waiting for it after 30 s

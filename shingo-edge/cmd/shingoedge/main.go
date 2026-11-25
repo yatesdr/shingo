@@ -419,13 +419,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return nil
 	})
 
-	// The two Sync buttons ask through these. Set before Start, whose boot
-	// burst sends on this goroutine at three tries a message: set after it,
-	// both answered ok and asked nothing for the whole burst, 70 s and more
-	// with the broker down (docket D31). PIN:
+	// The two Sync buttons ask through these: one send a press, answered ok
+	// only when Kafka took it (docket R72; the burst and the loop keep their
+	// tries). Set before Start, whose boot burst sends on this goroutine at
+	// three tries a message: set after it, both answered ok and asked nothing
+	// for the whole burst, 70 s and more with the broker down (docket D31). PIN:
 	// TestBootWiring_TheHooksAWebHandlerCallsAreSetBeforeTheBurst.
-	eng.SetNodeSyncFunc(hb.RequestNodeSync)
-	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+	eng.SetNodeSyncFunc(hb.RequestNodeSyncOnce)
+	eng.SetCatalogSyncFunc(hb.RequestCatalogSyncOnce)
 
 	hb.Start()
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime

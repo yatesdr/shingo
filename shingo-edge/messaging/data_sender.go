@@ -17,6 +17,14 @@ func NewDataSender(client *Client, topic string, stopCh <-chan struct{}) *DataSe
 	return &DataSender{client: client, topic: topic, stopCh: stopCh}
 }
 
+// PublishOnce publishes env once, with no retry, and returns that publish's
+// error: for a send someone waits on and is told about at once, a Sync press
+// (Heartbeater.RequestNodeSyncOnce). PublishEnvelope's tries are for the sends
+// nobody waits on.
+func (s *DataSender) PublishOnce(env *protocol.Envelope) error {
+	return s.client.PublishEnvelope(s.topic, env)
+}
+
 func (s *DataSender) PublishEnvelope(env *protocol.Envelope, label string) error {
 	var err error
 	backoff := 2 * time.Second

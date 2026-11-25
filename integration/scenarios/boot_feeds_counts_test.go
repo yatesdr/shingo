@@ -155,10 +155,14 @@ func TestScenario_OneEdgeBootAgainstAFeedsCore_NodeListAndCatalogCounts(t *testi
 		eng.SetSendFunc(enqueue)
 		// As cmd/shingoedge main.go wires them: the engine's two resyncs are
 		// the heartbeater's requests.
-		eng.SetNodeSyncFunc(func() {
+		eng.SetNodeSyncFunc(func() error {
 			send(protocol.SubjectNodeListRequest, &protocol.NodeListRequest{SceneRevision: eng.SceneRevision()})
+			return nil
 		})
-		eng.SetCatalogSyncFunc(func() { send(protocol.SubjectCatalogPayloadsRequest, &protocol.CatalogPayloadsRequest{}) })
+		eng.SetCatalogSyncFunc(func() error {
+			send(protocol.SubjectCatalogPayloadsRequest, &protocol.CatalogPayloadsRequest{})
+			return nil
+		})
 
 		mu.Lock()
 		n = bootCount{}

@@ -624,7 +624,7 @@ func TestApiConfig_SyncBeforeTheSyncsAreWired(t *testing.T) {
 	r.Post("/api/payload-catalog/sync", h.apiSyncPayloadCatalog)
 	for _, door := range []struct {
 		path, refused string
-		wire          func(func())
+		wire          func(func() error)
 	}{
 		{"/api/core-nodes/sync", "the heartbeater is not running (messaging not connected yet): no node list request sent",
 			eng.SetNodeSyncFunc},
@@ -637,7 +637,7 @@ func TestApiConfig_SyncBeforeTheSyncsAreWired(t *testing.T) {
 			assertJSONPath(t, resp, "error", door.refused)
 
 			asked := 0
-			door.wire(func() { asked++ })
+			door.wire(func() error { asked++; return nil })
 			resp = doRequest(t, r, "POST", door.path, nil, nil)
 			assertStatus(t, resp, http.StatusOK)
 			assertJSONPath(t, resp, "status", "ok")

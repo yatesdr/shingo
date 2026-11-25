@@ -9563,18 +9563,20 @@ function openDeleteProcess() {
 async function syncCatalog() {
     S.settingsError = '';
     S.settingsNotice = '';
-    // The sync only asks the Edge to ask Core. apiSyncPayloadCatalog answers
-    // ok once the Edge's messaging is wired, and refuses 503 before (no broker
-    // configured, or the first moments of a boot) with its sentence, "the
+    // The sync only asks the Edge to ask Core: the catalog comes later, with
+    // Core's answer. apiSyncPayloadCatalog answers ok once Kafka took the ask,
+    // and refuses 503 with its sentence otherwise: before the Edge's messaging
+    // is wired (no broker configured, or the first moments of a boot), "the
     // heartbeater is not running (messaging not connected yet): no catalog
-    // request sent". What else can fail here is this Edge: no answer, a
-    // lapsed session, a panic. The door's sentence says which; "(0). Core may
-    // be unreachable" named the wrong machine.
+    // request sent", and with Kafka down, "Kafka did not take it (...): no
+    // catalog request sent". What else can fail here is this Edge: no answer,
+    // a lapsed session, a panic. The door's sentence says which; "(0). Core
+    // may be unreachable" named the wrong machine.
     const res = await send('POST', '/api/payload-catalog/sync', null, NO_NOTICE);
     if (!res.ok) {
         S.settingsError = said(res, 'The catalog sync failed: ') + (res.shown ? '' : '.');
     } else {
-        S.settingsNotice = 'Catalog synced from Core.';
+        S.settingsNotice = 'Catalog sync requested from Core.';
     }
     drawSettings();
 }

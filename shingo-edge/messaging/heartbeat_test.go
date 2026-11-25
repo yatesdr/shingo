@@ -283,8 +283,8 @@ func TestHeartbeater_ASyncPressSendsOnceAndAnswersWhetherKafkaTookIt(t *testing.
 			cfg := config.Defaults()
 			cfg.StationUID = "edge.r72"
 			eng := engine.New(engine.Config{AppConfig: cfg, DB: testdb.Open(t), LogFunc: func(string, ...any) {}})
-			eng.SetNodeSyncFunc(h.RequestNodeSync)
-			eng.SetCatalogSyncFunc(h.RequestCatalogSync)
+			eng.SetNodeSyncFunc(h.RequestNodeSyncOnce)
+			eng.SetCatalogSyncFunc(h.RequestCatalogSyncOnce)
 
 			// Kafka down: the answer, or a second try, whichever comes first.
 			answer := make(chan error, 1)

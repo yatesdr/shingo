@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"runtime/debug"
@@ -221,14 +222,50 @@ func (h *Heartbeater) sendNodeListRequest() {
 	}
 }
 
-// RequestNodeSync sends a node list request to core on demand.
+// RequestNodeSync sends a node list request to core with the sender's tries:
+// the resyncs Core's own messages ask for (cmd/shingoedge buildInboundRouter).
+// A Sync button asks through RequestNodeSyncOnce.
 func (h *Heartbeater) RequestNodeSync() {
 	h.sendNodeListRequest()
 }
 
-// RequestCatalogSync sends a payload catalog request to core on demand.
+// RequestCatalogSync sends a payload catalog request to core with the
+// sender's tries, as RequestNodeSync does a node list request.
 func (h *Heartbeater) RequestCatalogSync() {
 	h.sendCatalogRequest()
+}
+
+// RequestNodeSyncOnce sends one node list request, with no retry, and says
+// whether Kafka took it: the node Sync buttons' ask (main.go hands it to the
+// engine's SetNodeSyncFunc), whose press is answered at once, ok only when the
+// ask was sent (docket R72). The boot burst, the loop and RequestNodeSync keep
+// the sender's tries. PIN:
+// TestHeartbeater_ASyncPressSendsOnceAndAnswersWhetherKafkaTookIt.
+func (h *Heartbeater) RequestNodeSyncOnce() error {
+	return h.askOnce(protocol.SubjectNodeListRequest, h.nodeListRequest())
+}
+
+// RequestCatalogSyncOnce sends one payload catalog request, as
+// RequestNodeSyncOnce does a node list request: the catalog Sync buttons' ask.
+func (h *Heartbeater) RequestCatalogSyncOnce() error {
+	return h.askOnce(protocol.SubjectCatalogPayloadsRequest, &protocol.CatalogPayloadsRequest{})
+}
+
+// askOnce sends one request to Core with one publish, and returns why it did
+// not go, in the words a Sync door shows before "no ... sent".
+func (h *Heartbeater) askOnce(subject string, body any) error {
+	env, err := protocol.NewDataEnvelope(subject,
+		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID}, protocol.Address{Role: protocol.RoleCore}, body)
+	if err != nil {
+		return fmt.Errorf("the request could not be built (%w)", err)
+	}
+	if err := h.sender.PublishOnce(env); err != nil {
+		log.Printf("heartbeater: %s on a Sync press not sent: %v", subject, err)
+		return fmt.Errorf("Kafka did not take it (%w)", err)
+	}
+	log.Printf("heartbeater: sent %s on a Sync press (station=%s)", subject, h.stationID)
+	h.DebugLog.Log("%s sent on a Sync press station=%s", subject, h.stationID)
+	return nil
 }
 
 func (h *Heartbeater) sendCatalogRequest() {

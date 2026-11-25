@@ -46,21 +46,25 @@ func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiSyncCoreNodes(w http.ResponseWriter, r *http.Request) {
 	if err := h.orchestration.RequestNodeSync(); err != nil {
-		writeSyncNotSent(w, "node list request")
+		writeSyncNotSent(w, "node list request", err)
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// writeSyncNotSent refuses a Sync the engine had no heartbeater to ask
-// through: until main.go wires the two syncs (cmd/shingoedge
+// writeSyncNotSent refuses a Sync whose ask was not sent, with the engine's
+// reason and then what was not sent. Either the engine had no heartbeater to
+// ask through, until main.go wires the two syncs (cmd/shingoedge
 // setupKafkaSubscribers, once messaging connects; never, on an Edge with no
-// broker configured). Both doors used to answer ok there and send nothing.
-// The words are the debug page's for its heartbeat in the same window
-// (apiSendManualMessage). PIN: TestApiConfig_SyncBeforeTheSyncsAreWired.
-func writeSyncNotSent(w http.ResponseWriter, what string) {
-	writeError(w, http.StatusServiceUnavailable,
-		"the heartbeater is not running (messaging not connected yet): no "+what+" sent")
+// broker configured): "the heartbeater is not running (messaging not connected
+// yet)", the debug page's words for its heartbeat in the same window
+// (apiSendManualMessage). Or Kafka did not take the one send a press makes:
+// "Kafka did not take it (...)" (docket R72). Both doors used to answer ok in
+// each case, the second after the sender's three tries. PINS:
+// TestApiConfig_SyncBeforeTheSyncsAreWired, and messaging
+// TestHeartbeater_ASyncPressSendsOnceAndAnswersWhetherKafkaTookIt.
+func writeSyncNotSent(w http.ResponseWriter, what string, err error) {
+	writeError(w, http.StatusServiceUnavailable, err.Error()+": no "+what+" sent")
 }
 
 func (h *Handlers) apiListPayloadCatalog(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +78,7 @@ func (h *Handlers) apiListPayloadCatalog(w http.ResponseWriter, r *http.Request)
 
 func (h *Handlers) apiSyncPayloadCatalog(w http.ResponseWriter, r *http.Request) {
 	if err := h.orchestration.RequestCatalogSync(); err != nil {
-		writeSyncNotSent(w, "catalog request")
+		writeSyncNotSent(w, "catalog request", err)
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})

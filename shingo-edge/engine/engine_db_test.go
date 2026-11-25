@@ -275,7 +275,7 @@ func TestEngine_RequestNodeSync(t *testing.T) {
 	}
 
 	called := 0
-	eng.SetNodeSyncFunc(func() { called++ })
+	eng.SetNodeSyncFunc(func() error { called++; return nil })
 	testutil.MustNoErr(t, eng.RequestNodeSync(), "RequestNodeSync")
 	testutil.MustNoErr(t, eng.RequestNodeSync(), "RequestNodeSync")
 	if called != 2 {
@@ -291,7 +291,7 @@ func TestEngine_RequestCatalogSync(t *testing.T) {
 	}
 
 	called := 0
-	eng.SetCatalogSyncFunc(func() { called++ })
+	eng.SetCatalogSyncFunc(func() error { called++; return nil })
 	testutil.MustNoErr(t, eng.RequestCatalogSync(), "RequestCatalogSync")
 	if called != 1 {
 		t.Errorf("catalogSyncFn called %d times, want 1", called)
@@ -372,10 +372,10 @@ func TestEngine_HooksAreSetAndReadOnTwoGoroutines(t *testing.T) {
 			func(e *Engine) { e.SetKafkaReconnectFunc(func() error { return nil }) },
 			func(e *Engine) { _ = e.ReconnectKafka() }},
 		{"nodeSyncFn",
-			func(e *Engine) { e.SetNodeSyncFunc(func() {}) },
+			func(e *Engine) { e.SetNodeSyncFunc(func() error { return nil }) },
 			func(e *Engine) { e.RequestNodeSync() }},
 		{"catalogSyncFn",
-			func(e *Engine) { e.SetCatalogSyncFunc(func() {}) },
+			func(e *Engine) { e.SetCatalogSyncFunc(func() error { return nil }) },
 			func(e *Engine) { e.RequestCatalogSync() }},
 		{"sendFn",
 			func(e *Engine) { e.SetSendFunc(func(*protocol.Envelope) error { return nil }) },
@@ -625,8 +625,8 @@ func TestCoreSyncService_StartupReconcileAsksOnlyForOrders(t *testing.T) {
 	eng := newCoverageEngine(t)
 	nodeSyncCalls := 0
 	catalogSyncCalls := 0
-	eng.SetNodeSyncFunc(func() { nodeSyncCalls++ })
-	eng.SetCatalogSyncFunc(func() { catalogSyncCalls++ })
+	eng.SetNodeSyncFunc(func() error { nodeSyncCalls++; return nil })
+	eng.SetCatalogSyncFunc(func() error { catalogSyncCalls++; return nil })
 	// No sendFn configured → RequestOrderStatusSync returns error.
 	err := eng.coreSync.StartupReconcile()
 	if err == nil || !strings.Contains(err.Error(), "send function not configured") {

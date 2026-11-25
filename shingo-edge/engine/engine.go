@@ -255,9 +255,10 @@ type Engine struct {
 	// on the kafka-connect-retry goroutine while a web handler, the
 	// heartbeater or one of the engine's own loops may read it, so each is an
 	// atomic.Pointer, set with Store and read through loaded. PIN:
-	// TestEngine_HooksAreSetAndReadOnTwoGoroutines.
-	nodeSyncFn    atomic.Pointer[func()]
-	catalogSyncFn atomic.Pointer[func()]
+	// TestEngine_HooksAreSetAndReadOnTwoGoroutines. The two syncs are the Sync
+	// buttons' asks, and each says whether its ask was sent (docket R72).
+	nodeSyncFn    atomic.Pointer[func() error]
+	catalogSyncFn atomic.Pointer[func() error]
 	sendFn        atomic.Pointer[func(*protocol.Envelope) error]
 	kafkaReconnFn atomic.Pointer[func() error]
 	// heartbeatBodyFn builds the heartbeat as this Edge's heartbeater sends it
@@ -1075,31 +1076,33 @@ func loaded[F any](p *atomic.Pointer[F]) F {
 	return none
 }
 
-// SetNodeSyncFunc sets the function to call when a node sync is requested.
-func (e *Engine) SetNodeSyncFunc(fn func()) {
+// SetNodeSyncFunc sets the ask a node Sync press makes: one send, and nil only
+// when it was sent (main.go wires messaging Heartbeater.RequestNodeSyncOnce).
+func (e *Engine) SetNodeSyncFunc(fn func() error) {
 	e.nodeSyncFn.Store(&fn)
 }
 
 // errSyncNotWired is what RequestNodeSync and RequestCatalogSync return while
 // main.go has not wired the heartbeater's syncs (setupKafkaSubscribers, once
-// messaging connects): nothing was asked. The Sync doors answer it 503 (www
-// handlers_catalog.go).
-var errSyncNotWired = errors.New("sync not wired: messaging not connected yet")
+// messaging connects): nothing was asked. The Sync doors answer it 503 with
+// its words and what was not sent (www handlers_catalog.go writeSyncNotSent).
+var errSyncNotWired = errors.New("the heartbeater is not running (messaging not connected yet)")
 
-// RequestNodeSync hands a node list request to the heartbeater, or returns
-// errSyncNotWired when none is wired. A send that fails after the
-// heartbeater's own tries is logged there, not returned.
+// RequestNodeSync hands a node list request to the heartbeater and returns
+// whether it was sent: errSyncNotWired when none is wired, else the hook's
+// answer, given after its one send (docket R72). PIN:
+// messaging TestHeartbeater_ASyncPressSendsOnceAndAnswersWhetherKafkaTookIt.
 func (e *Engine) RequestNodeSync() error {
 	fn := loaded(&e.nodeSyncFn)
 	if fn == nil {
 		return errSyncNotWired
 	}
-	fn()
-	return nil
+	return fn()
 }
 
-// SetCatalogSyncFunc sets the function to call when a payload catalog sync is requested.
-func (e *Engine) SetCatalogSyncFunc(fn func()) {
+// SetCatalogSyncFunc sets the ask a catalog Sync press makes, as
+// SetNodeSyncFunc does the node list's (Heartbeater.RequestCatalogSyncOnce).
+func (e *Engine) SetCatalogSyncFunc(fn func() error) {
 	e.catalogSyncFn.Store(&fn)
 }
 
@@ -1111,15 +1114,14 @@ func (e *Engine) SetPlantClaimsFunc(fn func(processID int64)) {
 	e.plantClaimsFn.Store(&fn)
 }
 
-// RequestCatalogSync hands a payload catalog request to the heartbeater, as
-// RequestNodeSync does a node list request.
+// RequestCatalogSync hands a payload catalog request to the heartbeater and
+// returns whether it was sent, as RequestNodeSync does a node list request.
 func (e *Engine) RequestCatalogSync() error {
 	fn := loaded(&e.catalogSyncFn)
 	if fn == nil {
 		return errSyncNotWired
 	}
-	fn()
-	return nil
+	return fn()
 }
 
 // SetHeartbeatBodyFunc sets the builder of this Edge's heartbeat: the

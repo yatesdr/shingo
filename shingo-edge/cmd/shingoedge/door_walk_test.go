@@ -522,9 +522,11 @@ process.stdout.write(JSON.stringify(out));
 
 type nopHeartbeater struct{}
 
-func (nopHeartbeater) SendRegister()       {}
-func (nopHeartbeater) RequestNodeSync()    {}
-func (nopHeartbeater) RequestCatalogSync() {}
+func (nopHeartbeater) SendRegister()                 {}
+func (nopHeartbeater) RequestNodeSync()              {}
+func (nopHeartbeater) RequestCatalogSync()           {}
+func (nopHeartbeater) RequestNodeSyncOnce() error    { return nil }
+func (nopHeartbeater) RequestCatalogSyncOnce() error { return nil }
 
 func newWalk(t *testing.T) *walk {
 	t.Helper()
@@ -623,8 +625,8 @@ func newWalk(t *testing.T) *walk {
 	// The heartbeater's two syncs, wired as setupKafkaSubscribers wires them:
 	// unwired, the two Sync doors refuse 503.
 	hb := nopHeartbeater{}
-	eng.SetNodeSyncFunc(hb.RequestNodeSync)
-	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+	eng.SetNodeSyncFunc(hb.RequestNodeSyncOnce)
+	eng.SetCatalogSyncFunc(hb.RequestCatalogSyncOnce)
 	w.inbound = buildInboundRouter(eng, messaging.NewEdgeHandler(eng.OrderManager()), hb, func(string, ...any) {})
 	w.stations = []int64{w.pressStation, w.loaderSt}
 
