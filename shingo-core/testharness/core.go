@@ -17,6 +17,7 @@ import (
 	"shingocore/messaging"
 	"shingocore/messaging/middleware"
 	"shingocore/service"
+	"shingocore/store"
 	"shingocore/www"
 )
 
@@ -41,7 +42,7 @@ import (
 // gives each its reason); the outbox drainer (the Bus pumps the outbox); the
 // HTTP server (Web is the handler it would serve); and what main starts on the
 // engine after Start and before this (the scan probe, the after-queue watch,
-// the futility detector).
+// the futility detector). A cell whose Core runs no engine takes NewTables.
 type Core struct {
 	Engine   *engine.Engine
 	Handler  *messaging.CoreHandler
@@ -89,6 +90,13 @@ type coreOptions struct {
 	hooks   map[Hook]bool   // nil: every hook main sets
 	noDedup bool
 	noOnExp bool
+	taps    []tap
+}
+
+// tap is one Tap: what to call, for which data subjects.
+type tap struct {
+	see      func(env *protocol.Envelope, subject string)
+	subjects []string
 }
 
 func (o coreOptions) routed(name string) bool { return o.routes == nil || o.routes[name] }
@@ -126,6 +134,17 @@ func NoInboxDedup() CoreOption { return func(o *coreOptions) { o.noDedup = true 
 // NoExpiredAnswers leaves the ingestor's answer to an expired ask unset.
 func NoExpiredAnswers() CoreOption { return func(o *coreOptions) { o.noOnExp = true } }
 
+// Tap calls see with each message of the named data subjects as it reaches
+// Core's handler for it, just before the handler runs, so a cell counts or
+// times what reaches a door. It is a middleware on the subject table (a
+// registration of the cell's own would part from routers.go's), so the handler
+// is given the message as it would be, and see runs whether its body then
+// decodes or not. A subject the cell's Core does not route fails the test: its
+// see could never run, and a count of nothing reads as nothing sent.
+func Tap(see func(env *protocol.Envelope, subject string), subjects ...string) CoreOption {
+	return func(o *coreOptions) { o.taps = append(o.taps, tap{see: see, subjects: subjects}) }
+}
+
 // NewCore composes Core's messaging side and web layer around eng, which the
 // caller has started, in main's order: so the bus's three sets subscribe as a
 // plant's do, the engine's at Start, then the bins feed (HookBinsFeed), then
@@ -158,6 +177,7 @@ func NewCore(t testing.TB, eng *engine.Engine, opts ...CoreOption) *Core {
 		coreDataService.SetAskKinds(askServer.Kinds)
 	}
 	subjectRouter := buildSubjectRouter(coreDataService, askServer, o)
+	tapSubjects(t, subjectRouter, o)
 	if o.on(HookCellTick) {
 		coreDataService.SetCellTickEmitter(eng.EmitCellTick)
 	}
@@ -245,6 +265,56 @@ func setHooks(eng *engine.Engine, coreDataService *messaging.CoreDataService, cf
 	}
 }
 
+// Tables is Core's messaging side with no engine under it, for a cell whose
+// Core runs none: the data service, and main's tables over it and the order
+// handler behind an ingestor. A harness Bus delivers the Edge's envelopes into
+// Ingestor.
+type Tables struct {
+	Data     *messaging.CoreDataService
+	Ingestor *protocol.Ingestor
+}
+
+// NewTables composes Core's tables over db and d, the order handler's
+// dispatcher (nil for a cell that routes no order type), as NewCore composes
+// them around an engine, less what needs one: every hook, the doors and the ask
+// server that answers through them (so an ask that arrives expired is dropped
+// unanswered), and the web layer. The tables are NewCore's builders, which
+// TestNewCore_MakesWhatMainMakes holds to routers.go, and the same guard holds
+// the rest of NewTables to NewCore (coreOnly says why for each statement left
+// out). The config is Core's defaults: station core on shingo.dispatch, no
+// signing.
+//
+// A cell names its routes with RoutesOnly, edge.ask not among them (no ask
+// server), and names no hook. NoInboxDedup and Tap are NewCore's.
+func NewTables(t testing.TB, db *store.DB, d messaging.Dispatcher, opts ...CoreOption) *Tables {
+	t.Helper()
+	o := newCoreOptions(t, opts)
+	if o.routes == nil || o.routes[protocol.SubjectEdgeAsk] || len(o.hooks) > 0 {
+		t.Fatal("testharness.NewTables: name the cell's routes with RoutesOnly, edge.ask not among them, and no hook: " +
+			"the ask server and every hook need an engine's (NewCore)")
+	}
+	cfg := config.Defaults()
+
+	coreHandler := messaging.NewCoreHandler(db, nil, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, d)
+	coreDataService := messaging.NewCoreDataService(db, coreHandler, service.EpochAnnounce{
+		Topic:       cfg.Messaging.DispatchTopic,
+		CoreStation: cfg.Messaging.StationID,
+	})
+	subjectRouter := buildSubjectRouter(coreDataService, nil, o)
+	tapSubjects(t, subjectRouter, o)
+
+	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
+	var dedup router.Middleware
+	if !o.noDedup {
+		dedup = middleware.NewInboxDedup(db, nil)
+	}
+	protoRouter := buildProtocolRouter(coreHandler, subjectRouter, dedup, nil, o)
+	ingestor.Dispatch = func(env *protocol.Envelope) {
+		protoRouter.Dispatch(env, env.Type)
+	}
+	return &Tables{Data: coreDataService, Ingestor: ingestor}
+}
+
 // newCoreOptions applies opts, and fails a route RoutesOnly names that Core
 // does not route.
 func newCoreOptions(t testing.TB, opts []CoreOption) coreOptions {
@@ -259,6 +329,24 @@ func newCoreOptions(t testing.TB, opts []CoreOption) coreOptions {
 		}
 	}
 	return o
+}
+
+// tapSubjects puts the cell's taps on the subject table r, each just before
+// its subject's handler, and fails a tap of a subject r does not route.
+func tapSubjects(t testing.TB, r *router.SubjectRouter, o coreOptions) {
+	t.Helper()
+	for _, tp := range o.taps {
+		for _, s := range tp.subjects {
+			if !r.Has(s) {
+				t.Fatalf("testharness.Tap: %q is not a data subject this cell's Core routes", s)
+			}
+		}
+		see := tp.see
+		r.UseFor(func(env *protocol.Envelope, key any, next func()) {
+			see(env, key.(string))
+			next()
+		}, tp.subjects...)
+	}
 }
 
 // coreRoutes is every order-channel type and data subject main's tables route

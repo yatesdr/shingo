@@ -14,11 +14,13 @@ package testharness
 //     part of it (the handler, the data service, the doors, the ask server,
 //     the tables, the ingestor, a hook on the engine), up to and with the web
 //     layer's router, and NewCore's, through its option checks and the
-//     helpers it calls in core.go.
+//     helpers it calls in core.go;
+//   - NewTables's statements, read as NewCore's are, against NewCore's.
 // A statement on one side and not the other fails, unless mainOnly or
-// harnessOnly says why, with what to change; and so do the statements both
-// make coming in another order (the order is the program: the bins feed's
-// subscriptions before the screens', TestSubscriberCensus).
+// harnessOnly (coreOnly or tablesOnly) says why, with what to change; and so
+// do the statements both make coming in another order (the order is the
+// program: the bins feed's subscriptions before the screens',
+// TestSubscriberCensus).
 
 import (
 	"bytes"
@@ -58,6 +60,30 @@ var harnessOnly = map[string]string{
 	"subjectRouter := buildSubjectRouter(coreDataService, askServer, o)":            "main's, with the cell's routes",
 	"protoRouter := buildProtocolRouter(coreHandler, subjectRouter, dedup, nil, o)": "main's, with the cell's routes and dedup option, and no debug log",
 	"return &Core{": "the harness's result",
+}
+
+// coreOnly are NewCore's statements NewTables does not make, with no engine
+// under it: a statement's start -> why.
+var coreOnly = map[string]string{
+	"coreHandler := messaging.NewCoreHandler(db, nil, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())": "over the engine's dispatcher (tablesOnly has NewTables's line)",
+	"coreDataService.Set": "a hook: each ties the data service to the engine, its config or the ask server",
+	"eng.":                "a hook on the engine",
+	"if sm := eng.":       "a hook on the engine",
+	"doors :=":            "the doors are the engine's",
+	"askServer, err :=":   "the ask server answers through the doors",
+	"subjectRouter := buildSubjectRouter(coreDataService, askServer, o)": "routes edge.ask to the ask server (tablesOnly has NewTables's line)",
+	"ingestor.OnExpired =":                    "no ask server to answer an expired ask",
+	"if cfg.Messaging.SigningKey":             "Core's default config signs nothing",
+	"handler, stopWeb, err := www.NewRouter(": "the web layer is the engine's",
+	"return &Core{":                           "NewCore's result",
+}
+
+// tablesOnly are NewTables's statements NewCore does not make: a statement's
+// start -> why.
+var tablesOnly = map[string]string{
+	"coreHandler := messaging.NewCoreHandler(db, nil, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, d)": "NewCore's, over the cell's dispatcher (or none)",
+	"subjectRouter := buildSubjectRouter(coreDataService, nil, o)":                                              "NewCore's, with no ask server",
+	"return &Tables{": "NewTables's result",
 }
 
 // compositionNames are what makes a statement of main's part of the
@@ -103,7 +129,8 @@ func TestNewCore_MakesWhatMainMakes(t *testing.T) {
 	}
 
 	mainStmts := mainComposition(t, mainFile)
-	coreStmts := newCoreStatements(t, harness)
+	coreStmts := statementsOf(t, harness, "NewCore")
+	tableStmts := statementsOf(t, harness, "NewTables")
 	for _, s := range mainStmts {
 		if slices.Contains(coreStmts, s) || reason(mainOnly, s) != "" {
 			continue
@@ -117,29 +144,61 @@ func TestNewCore_MakesWhatMainMakes(t *testing.T) {
 		}
 		diffs = append(diffs, fmt.Sprintf("NewCore makes\n    %s\n  and main does not: remove it, or list it in harnessOnly with why", s))
 	}
-	// A listed reason whose statement is gone is a stale list.
-	for start := range mainOnly {
-		if !slices.ContainsFunc(mainStmts, func(s string) bool { return strings.HasPrefix(s, start) }) {
-			diffs = append(diffs, fmt.Sprintf("mainOnly lists %q and main makes no such statement: remove the row", start))
-		}
-	}
-	for start := range harnessOnly {
-		if !slices.ContainsFunc(coreStmts, func(s string) bool { return strings.HasPrefix(s, start) }) {
-			diffs = append(diffs, fmt.Sprintf("harnessOnly lists %q and NewCore makes no such statement: remove the row", start))
-		}
-	}
-	if d := orderDiff(mainStmts, coreStmts); d != "" {
+	diffs = append(diffs, staleRows("mainOnly", mainOnly, "main", mainStmts)...)
+	diffs = append(diffs, staleRows("harnessOnly", harnessOnly, "NewCore", coreStmts)...)
+	if d := orderDiff("main", "NewCore", mainStmts, coreStmts, "for main's order is the bus's (TestSubscriberCensus)"); d != "" {
 		diffs = append(diffs, d)
 	}
-	if len(mainStmts) == 0 || len(coreStmts) == 0 {
-		t.Fatalf("read %d of main's statements and %d of NewCore's: a guard that reads nothing compares nothing", len(mainStmts), len(coreStmts))
+	diffs = append(diffs, tablesDiffs(coreStmts, tableStmts)...)
+	if len(mainStmts) == 0 || len(coreStmts) == 0 || len(tableStmts) == 0 {
+		t.Fatalf("read %d of main's statements, %d of NewCore's and %d of NewTables's: a guard that reads nothing compares nothing",
+			len(mainStmts), len(coreStmts), len(tableStmts))
 	}
 	sort.Strings(diffs)
 	if len(diffs) > 0 {
-		t.Fatalf("testharness.NewCore and the plant binary's composition have parted:\n\n%s", strings.Join(diffs, "\n\n"))
+		t.Fatalf("testharness.NewCore or NewTables and the plant binary's composition have parted:\n\n%s", strings.Join(diffs, "\n\n"))
 	}
 	t.Logf("%d of main's statements, %d made by NewCore, %d main only; %d NewCore only",
 		len(mainStmts), len(mainStmts)-countReasons(mainStmts, mainOnly), countReasons(mainStmts, mainOnly), countReasons(coreStmts, harnessOnly))
+	t.Logf("%d of NewCore's statements, %d made by NewTables, %d NewCore only; %d NewTables only",
+		len(coreStmts), len(coreStmts)-countReasons(coreStmts, coreOnly), countReasons(coreStmts, coreOnly), countReasons(tableStmts, tablesOnly))
+}
+
+// tablesDiffs is NewTables against NewCore, as the test holds NewCore against
+// main: a statement one makes and the other does not, unless coreOnly or
+// tablesOnly says why; a listed row whose statement is gone; and the
+// statements both make in another order.
+func tablesDiffs(coreStmts, tableStmts []string) []string {
+	var diffs []string
+	for _, s := range coreStmts {
+		if !slices.Contains(tableStmts, s) && reason(coreOnly, s) == "" {
+			diffs = append(diffs, fmt.Sprintf("NewCore makes\n    %s\n  and NewTables does not: make it in NewTables (core.go), "+
+				"or list it in coreOnly with why a Core with no engine does not", s))
+		}
+	}
+	for _, s := range tableStmts {
+		if !slices.Contains(coreStmts, s) && reason(tablesOnly, s) == "" {
+			diffs = append(diffs, fmt.Sprintf("NewTables makes\n    %s\n  and NewCore does not: make it as NewCore makes it, or list it in tablesOnly with why", s))
+		}
+	}
+	diffs = append(diffs, staleRows("coreOnly", coreOnly, "NewCore", coreStmts)...)
+	diffs = append(diffs, staleRows("tablesOnly", tablesOnly, "NewTables", tableStmts)...)
+	if d := orderDiff("NewCore", "NewTables", coreStmts, tableStmts, "for NewCore's order is main's"); d != "" {
+		diffs = append(diffs, d)
+	}
+	return diffs
+}
+
+// staleRows are the rows of list whose statement maker no longer makes: a
+// listed reason whose statement is gone is a stale list.
+func staleRows(list string, rows map[string]string, maker string, stmts []string) []string {
+	var out []string
+	for start := range rows {
+		if !slices.ContainsFunc(stmts, func(s string) bool { return strings.HasPrefix(s, start) }) {
+			out = append(out, fmt.Sprintf("%s lists %q and %s makes no such statement: remove the row", list, start, maker))
+		}
+	}
+	return out
 }
 
 type goFile struct {
@@ -275,11 +334,11 @@ func mainComposition(t *testing.T, g goFile) []string {
 	return nil
 }
 
-// newCoreStatements is NewCore's statements, through its option checks (an
-// if on the options is read as its body) and the helpers it calls in core.go
-// (a call that is a statement of its own is read as the helper's body), but
-// the error checks.
-func newCoreStatements(t *testing.T, g goFile) []string {
+// statementsOf is the statements of fn (NewCore, NewTables) that name a part
+// of the composition, through its option checks (an if on the options is read
+// as its body) and the helpers it calls in core.go (a call that is a statement
+// of its own is read as the helper's body), but the error checks.
+func statementsOf(t *testing.T, g goFile, fn string) []string {
 	t.Helper()
 	var out []string
 	var walk func(list []ast.Stmt)
@@ -298,7 +357,7 @@ func newCoreStatements(t *testing.T, g goFile) []string {
 			}
 		}
 	}
-	walk(g.fn(t, "NewCore").Body.List)
+	walk(g.fn(t, fn).Body.List)
 	return out
 }
 
@@ -325,28 +384,29 @@ func (g goFile) helperCall(st ast.Stmt) *ast.FuncDecl {
 	return nil
 }
 
-// orderDiff is "" when the statements main and NewCore both make come in the
-// same order on both sides, else the first that does not, with what to change.
-func orderDiff(mainStmts, coreStmts []string) string {
-	var inMain, inCore []string
-	for _, s := range mainStmts {
-		if slices.Contains(coreStmts, s) {
-			inMain = append(inMain, s)
+// orderDiff is "" when the statements ref and its copy both make come in the
+// same order on both sides, else the first that does not, with what to change
+// and why the order matters.
+func orderDiff(refName, copyName string, refStmts, copyStmts []string, why string) string {
+	var inRef, inCopy []string
+	for _, s := range refStmts {
+		if slices.Contains(copyStmts, s) {
+			inRef = append(inRef, s)
 		}
 	}
-	for _, s := range coreStmts {
-		if slices.Contains(mainStmts, s) {
-			inCore = append(inCore, s)
+	for _, s := range copyStmts {
+		if slices.Contains(refStmts, s) {
+			inCopy = append(inCopy, s)
 		}
 	}
-	for i := range inMain {
-		if i >= len(inCore) || inMain[i] != inCore[i] {
+	for i := range inRef {
+		if i >= len(inCopy) || inRef[i] != inCopy[i] {
 			got := "nothing"
-			if i < len(inCore) {
-				got = inCore[i]
+			if i < len(inCopy) {
+				got = inCopy[i]
 			}
-			return fmt.Sprintf("main makes\n    %s\n  where NewCore makes\n    %s\n  NewCore makes their statements in another order: "+
-				"move it in NewCore (core.go) to main's place, for main's order is the bus's (TestSubscriberCensus)", inMain[i], got)
+			return fmt.Sprintf("%s makes\n    %s\n  where %s makes\n    %s\n  %s makes their statements in another order: "+
+				"move it in %s (core.go) to %s's place, %s", refName, inRef[i], copyName, got, copyName, copyName, refName, why)
 		}
 	}
 	return ""
