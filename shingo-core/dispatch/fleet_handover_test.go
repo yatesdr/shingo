@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"os"
 	"testing"
 
 	"shingo/protocol"
@@ -212,6 +213,97 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 	if cancels[0] != backend.CreateRequests()[0].OrderID {
 		t.Errorf("cancelled %q, want the order just created (%q)", cancels[0], backend.CreateRequests()[0].OrderID)
 	}
+}
+
+// TestHandover_ACancelReadBeforeTheYesStopsTheFleetJob: an order that ends
+// naming a fleet job has had a stop sent to the fleet for that job.
+//
+// TWO CALLERS, ONE ORDER, as in TestHandover_CASLoserNeverCallsTheFleet: the
+// cancel door and a dispatcher each read the order while it rests `queued`,
+// with no fleet job. The dispatcher's hand commits, the fleet takes the create
+// and the yes writes `dispatched` with the vendor id. Then the cancel goes on
+// from the copy it read, through CancelOrderWithCascade, the door that
+// HandleOrderCancel and engine.TerminateOrder each call with the order they
+// loaded. No lock stands between a door's read and that call.
+//
+// RED AT 93bd3cd6 (docket B20). LifecycleService.CancelOrder decides whether to
+// stop the fleet job from the vendor id on the copy in its hand, which names
+// none, and its ending is a compare-and-swap on "still live"
+// (store.TerminalizeOrderWithReason), which a `dispatched` row passes. The yes
+// was written, so the handover's arm for an order that ended during its create
+// does not run either. The row ends `cancelled` naming a job nobody stopped.
+//
+// It was seen on GitHub in 3 of 8 runs of the integration scenario
+// TestScenario_KeepStagedRecovery_AfterCancelledChangeover, two_robot, moment b
+// (Integration run 45497000123 attempts 1 and 2, run 45498975575 attempt 4,
+// 2026-11-24): "leg 1's vendor order reads "CREATED" at the fleet, want
+// STOPPED". There the copy was HandleOrderCancel's own read, made while a
+// fulfillment scan was handing the pair to the fleet.
+//
+// Skipped unless SHINGO_KNOWN_RED is set, so no gate runs it: the fix is
+// product work in the cancel path and waits for its ruling. The fix removes
+// the skip.
+func TestHandover_ACancelReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
+			"run with SHINGO_KNOWN_RED=1")
+	}
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	o := &orders.Order{
+		EdgeUUID: "HANDOVER-cancel-before-yes", StationUID: "line-1",
+		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
+		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+
+	// The cancel door's read (HandleOrderCancel's first statement), then the
+	// dispatcher's: each sees `queued` and no fleet job.
+	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"}}
+	cancelCopy, ok := d.getOwnedOrder(env, o.EdgeUUID)
+	if !ok {
+		t.Fatal("the cancel door could not read the order (fixture broken)")
+	}
+	hand, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "load the dispatcher's copy")
+
+	src, err := db.GetNodeByDotName(sd.StorageNode.Name)
+	testutil.MustNoErr(t, err, "resolve source")
+	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
+	testutil.MustNoErr(t, err, "resolve dest")
+
+	// The hand, the create and the yes.
+	if _, err := d.dispatchToFleetCore(hand, src, dst, Hand{}); err != nil {
+		t.Fatalf("the dispatcher should have handed the order to the fleet: %v", err)
+	}
+	if len(backend.CreateRequests()) != 1 {
+		t.Fatalf("expected exactly one create, got %d (fixture broken)", len(backend.CreateRequests()))
+	}
+	job := backend.CreateRequests()[0].OrderID
+
+	// The rest of HandleOrderCancel, from the copy it read before the yes.
+	d.CancelOrderWithCascade(cancelCopy, "line-1", "aborted by operator",
+		CancelCause{Code: protocol.TermOperatorCancelled})
+
+	after, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if after.Status != StatusCancelled || after.VendorOrderID != job {
+		t.Fatalf("the row reads %s naming fleet job %q, want cancelled naming %q: this pin is about an "+
+			"ending that lands on a row the yes has named (fixture broken)", after.Status, after.VendorOrderID, job)
+	}
+	for _, stopped := range backend.CancelRequests() {
+		if stopped == job {
+			return
+		}
+	}
+	t.Errorf("order %d ended cancelled naming fleet job %s, and no stop was sent to the fleet for it "+
+		"(stops sent: %v). The job is live at the fleet under an order Core has ended: the cancel must "+
+		"stop the job its ending finds on the row, not only the one its caller's copy named",
+		o.ID, job, backend.CancelRequests())
 }
 
 // TestHandover_RequestShapesUnchanged is the pin a careless extraction breaks.
