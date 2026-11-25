@@ -66,7 +66,6 @@ door shingo-edge/store DB.DeleteStyleNodeClaim UNAUDITED: 13 test reference(s), 
 door shingo-edge/store DB.GetClaimBelowReorderSince UNAUDITED: 9 test reference(s), no product caller, at the rule's start
 door shingo-edge/store DB.GetSupplyRefusal UNAUDITED: 20 test reference(s), no product caller, at the rule's start
 door shingo-edge/store DB.ListUnsentOutboxByType UNAUDITED: 13 test reference(s), no product caller, at the rule's start
-door shingo-edge/store DB.RestoreProcessNode UNAUDITED: no caller at all at the rule's start
 door shingo-edge/store DB.SetProcessNodeActiveBinID UNAUDITED: 72 test reference(s), no product caller, at the rule's start
 door shingo-edge/store DB.SetProcessNodeCountFenced UNAUDITED: no caller at all at the rule's start
 door shingo-edge/store DB.SetProcessNodeRuntime UNAUDITED: 136 test reference(s), no product caller, at the rule's start

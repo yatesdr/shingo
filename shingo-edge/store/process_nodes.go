@@ -73,8 +73,3 @@ func (db *DB) SetProcessNodeCurtain(id int64, enabled bool, plcName, tagName str
 func (db *DB) DeleteProcessNode(id int64) error {
 	return processes.DeleteNode(db.DB, id)
 }
-
-// RestoreProcessNode un-retires a process_node row.
-func (db *DB) RestoreProcessNode(id int64) error {
-	return processes.RestoreNode(db.DB, id)
-}

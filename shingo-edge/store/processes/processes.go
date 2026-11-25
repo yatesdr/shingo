@@ -249,7 +249,7 @@ func Delete(db *sql.DB, id int64) error {
 		{`DELETE FROM node_lineside_bucket WHERE node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
 		// operator_station_id is cleared because the station row itself goes in
 		// the next statement: a retired node pointing at a deleted station is a
-		// dangling id that RestoreNode would hand back.
+		// dangling id.
 		{`UPDATE process_nodes SET deleted_at = datetime('now'), updated_at = datetime('now'), operator_station_id = NULL
 			WHERE process_id=? AND deleted_at IS NULL`, id},
 		{`DELETE FROM operator_stations WHERE process_id=?`, id},
@@ -725,18 +725,6 @@ func DeleteNode(db *sql.DB, id int64) error {
 	}
 	BumpNodeGeneration()
 	return nil
-}
-
-// RestoreNode un-retires a process_node. The runtime state row is NOT restored
-// — it is rebuilt from live state by EnsureNodeRuntime, and inventing one here
-// would assert a bin position nobody has observed.
-func RestoreNode(db *sql.DB, id int64) error {
-	_, err := db.Exec(`UPDATE process_nodes SET deleted_at = NULL, updated_at = datetime('now')
-		WHERE id=? AND deleted_at IS NOT NULL`, id)
-	if err == nil {
-		BumpNodeGeneration()
-	}
-	return err
 }
 
 func nextNodeSequence(db *sql.DB, processID int64) (int, error) {
