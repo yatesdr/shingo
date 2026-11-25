@@ -3,6 +3,7 @@ package orders
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1433,6 +1434,57 @@ func TestAbortOrder_RejectsTerminal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "terminal") {
 		t.Errorf("error should mention terminal state: %v", err)
+	}
+}
+
+// TestAbortOrder_RefusesADeliveredOrder: no cancel on a delivered order, or past
+// it (the owner's ruling of 2026-11-25, final brief 1e). A delivered order's cart
+// is set down. Every abort door refuses it, in the words a plant person reads
+// on the Orders page's toast (it is delivered: confirm it), and nothing changes:
+// the row stays delivered and no order.cancel is queued. RED at 37146992, where
+// the abort guarded only an order that had ended.
+func TestAbortOrder_RefusesADeliveredOrder(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("final brief 1e red pin, red until the abort refuses a delivered order; run with SHINGO_KNOWN_RED=1")
+	}
+	for _, door := range []struct {
+		name  string
+		abort func(m *Manager, id int64) error
+	}{
+		{"AbortOrder", func(m *Manager, id int64) error { return m.AbortOrder(id) }},
+		{"AbortOrderWithReason", func(m *Manager, id int64) error { return m.AbortOrderWithReason(id, "changeover cancelled") }},
+		{"AbortOrderAsEdge", func(m *Manager, id int64) error { return m.AbortOrderAsEdge(id, protocol.CancelReasonLineIdle) }},
+		{"AbortOrderByPerson", func(m *Manager, id int64) error { return m.AbortOrderByPerson(id) }},
+	} {
+		t.Run(door.name, func(t *testing.T) {
+			t.Parallel()
+			db := testManagerDB(t)
+			mgr := NewManager(db, testEmitter{}, "edge")
+			oid, err := db.CreateOrder("uuid-abrt-d", TypeRetrieve, nil, false, 1, "X", "", "", protocol.Height{}, false, "", "", "")
+			oid = testutil.Must(t, oid, err, "CreateOrder")
+			testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusDelivered)), "delivered")
+
+			err = door.abort(mgr, oid)
+			if err == nil {
+				t.Fatal("the abort of a delivered order was taken, want it refused")
+			}
+			if words := err.Error(); !strings.Contains(words, "delivered") || !strings.Contains(words, "Confirm it") {
+				t.Errorf("the refusal says %q, want that the order is delivered and to confirm it", words)
+			}
+			o, err := db.GetOrder(oid)
+			o = testutil.Must(t, o, err, "GetOrder")
+			if o.Status != StatusDelivered {
+				t.Errorf("after the refusal the row reads %q, want delivered", o.Status)
+			}
+			msgs, err := db.ListPendingOutbox(100)
+			msgs = testutil.Must(t, msgs, err, "ListPendingOutbox")
+			for _, m := range msgs {
+				if m.MsgType == protocol.TypeOrderCancel {
+					t.Errorf("an order.cancel was queued for the refused abort")
+				}
+			}
+		})
 	}
 }
 
