@@ -136,12 +136,19 @@ import (
 //     was deciding whether this leg needed a SIBLING to clear the line first. A
 //     self-contained leg clears it itself, so false was the right answer. That
 //     arm is DELETED — dispatch only ever parked the robot, so it was gating a
-//     moment where no bin could move — and legPlacesLineBin now has exactly one
-//     production reader, the next row.
+//     moment where no bin could move — and legPlacesLineBin was left with one
+//     production reader, the next row, until the loader park's (below).
 //   - allocator.go's moot-disposition arm excludes a leg from "the work is void" with
 //     !legPlacesLineBin, so a self-contained leg is not excluded and a moot
 //     disposition SKIPS it terminally, where a two_robot supply leg in the same
 //     physical situation parks on waiting_for_material.
+//
+// A third reader since brief H: the loader park's Pattern A
+// (loader_place.go placeForDedicatedLoader) leaves a no-wait leg that fills its
+// line to Pattern B rather than setting its drop back on the home it lifts from.
+// A self-contained leg answers false there too, and is still kept out by Pattern
+// A's wait test: every self-contained builder leg carries a station wait
+// (TestLoaderPark_EveryBuilderLeg's single_robot, tooling and part-change rows).
 //
 // THAT SECOND ONE LOOKS LIKE A DEFECT AND IS NOT, because of what it takes to
 // reach the arm. Every self-contained row has a NON-RELAY pickup at the process

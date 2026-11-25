@@ -98,10 +98,17 @@ import (
 // home just found occupied; the caller queues the order rather than dispatching
 // it there (see placeForLoader).
 func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep, pc *pairPass) (waitHome string) {
-	// Pattern A: SourceNode is a home position and the plan holds no wait, read
-	// as a return lifted at its home. No builder's leg is one: the legs it takes
-	// are supplies with no wait lifted at a home, whose drop it moves onto that
-	// home (B23; TestLoaderPark_EveryBuilderLeg's backfill and stage rows).
+	// Pattern A: SourceNode is a home position, the plan holds no wait and the leg
+	// does not set its cart down at its own process node (legPlacesLineBin), read
+	// as a return lifted at its home. No builder's leg is one. A leg that fills its
+	// line is a supply and is left to Pattern B, so the Sequential backfill and a
+	// staged delivery off a home go to the line (B23, brief H;
+	// TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched). The legs
+	// it still takes are supplies with no wait lifted at a home that set down off
+	// the line, whose drop it moves onto that home: a part change's stage leg, which
+	// has no step at the line, and a no-wait leg off a home sent with no process
+	// node, which no step builder sends (TestLoaderPark_EveryBuilderLeg's stage
+	// and pn=none rows).
 	// Pattern B: the last drop (DeliveryNode, or its anchor) is a home position:
 	// a return, or a supply to the home.
 	// Both fall back to the same buffer/vacated/wait logic (placeForLoader). They
@@ -118,7 +125,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// below — Pattern B was unreachable for every such order even when its
 	// DeliveryNode WAS a home. tryPlaceFromHomeSource reports whether it took
 	// ownership; "false" means "not mine", never "done".
-	if order.SourceNode != "" && !hasWaitStep(steps) {
+	if order.SourceNode != "" && !hasWaitStep(steps) && !legPlacesLineBin(steps, order.ProcessNode) {
 		if owned, wait := d.tryPlaceFromHomeSource(order, steps, pc); owned {
 			return wait
 		}
@@ -786,19 +793,23 @@ func orderDeliversTo(steps []resolvedStep, node string) bool {
 }
 
 // hasWaitStep reports whether any step in a resolved step list is a wait action.
-// Pattern A (placeForDedicatedLoader) reads "no wait" as "a return lifted at a
-// home", and legReturnsToHome reads it that way for an order that names no
-// process node.
+// Pattern A (placeForDedicatedLoader) reads "no wait", on a leg that does not
+// set its cart down at its own process node, as "a return lifted at a home",
+// and legReturnsToHome reads it that way for an order that names no process
+// node.
 //
 // KNOWN FALSE PROXY — deliberately still here. A wait step is a proxy for leg
 // role, not the role itself. What it catches, read from every leg the Edge's
 // builders write (TestLoaderPark_EveryBuilderLeg, 2026-11-25): no builder writes
 // a return lifted at a home with no wait. The no-wait legs that lift at a home
 // are all supplies (the Sequential backfill, a part change's stage, a staged
-// delivery whose staging is a home), and Pattern A sets each back down on the
-// home it lifts from (B23). So its misroute is not "biased to buffer", as this
-// comment said; legReturnsToHome's is, with no process node (the pn=none
-// two-robot returns through their home land in a buffer, same test).
+// delivery whose staging is a home). Those that set down at their line, with
+// their process node, Pattern A leaves to Pattern B (legPlacesLineBin, brief H);
+// the rest it sets back down on the home it lifts from: the stage, which has no
+// step at the line, and any of them sent with no process node (B23's class,
+// same test). So its misroute is not "biased to buffer", as this comment once
+// said; legReturnsToHome's is, with no process node (the pn=none two-robot
+// returns through their home land in a buffer, same test).
 //
 // Replacing it with the role predicates in swap_leg_role.go was planned and
 // FALSIFIED as specified (Amendment 1 §A1.5; EXEC-LOG-cobalt-kestrel-2284.md,

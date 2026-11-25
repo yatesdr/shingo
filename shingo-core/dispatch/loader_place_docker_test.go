@@ -4,7 +4,6 @@ package dispatch
 
 import (
 	"encoding/json"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -234,17 +233,14 @@ func TestPlaceForDedicatedLoader_SupplyFromHome_Untouched(t *testing.T) {
 // dropoff line (the Edge's BuildSequentialBackfillSteps), made at its removal's
 // release, holding the home's full. Pattern A must not reroute it either.
 //
-// IT DOES, and the pin skips unless SHINGO_KNOWN_RED=1 (final brief 2e, lane
-// f-home). The wait step is Pattern A's only guard (hasWaitStep), so this leg
-// is read as a return from the home: nothing is in flight there, and its drop
-// at the line is moved onto the home it lifts from. The order runs circular and
-// the line never gets its cart (TestScenario_SequentialLine_SwapsThroughItsOwnHome,
-// end to end).
+// Red from final brief 2e (lane f-home) until brief H: the wait step was
+// Pattern A's only guard (hasWaitStep), so this leg read as a return from the
+// home, nothing was in flight there, and its drop at the line was moved onto the
+// home it lifts from; the order ran circular and the line never got its cart
+// (TestScenario_SequentialLine_SwapsThroughItsOwnHome, end to end). Pattern A
+// now also asks legPlacesLineBin, and a leg that sets its cart down at its own
+// process node is a supply.
 func TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched(t *testing.T) {
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("final brief 2e (lane f-home) red pin, red until a supply leg with no wait is left alone by " +
-			"Pattern A; run with SHINGO_KNOWN_RED=1")
-	}
 	t.Parallel()
 	db := testDB(t)
 	home, _, _, _ := parkFixture(t, db)

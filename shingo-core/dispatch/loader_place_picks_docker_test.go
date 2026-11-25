@@ -844,8 +844,8 @@ var parkBuilderPins = map[string]string{
 	"home-fed/sequential/changeover/A pn=none":                 "sent drops=OUT,LINE",
 	"home-fed/sequential/steady/A pn=LINE":                     "sent drops=OUT",
 	"home-fed/sequential/steady/A pn=none":                     "sent drops=OUT",
-	"home-fed/sequential/steady/backfill pn=LINE":              "sent drops=HOME", // B23: set back down on the home it lifts from
-	"home-fed/sequential/steady/backfill pn=none":              "sent drops=HOME", // B23: set back down on the home it lifts from
+	"home-fed/sequential/steady/backfill pn=LINE":              "sent drops=LINE", // moved by brief H H1 (a): B23 closed, a leg that fills its line is left to go there
+	"home-fed/sequential/steady/backfill pn=none":              "sent drops=HOME", // B23's class, kept: with no process node (no builder sends one) legPlacesLineBin cannot read it
 	"home-fed/single_robot/changeover/B pn=LINE":               "sent drops=STAGE,OSTAGE,LINE,OUT",
 	"home-fed/single_robot/changeover/B pn=none":               "sent drops=STAGE,OSTAGE,LINE,OUT",
 	"home-fed/single_robot/steady/A pn=LINE":                   "sent drops=STAGE,OSTAGE,LINE,OUT",
@@ -904,16 +904,16 @@ var parkBuilderPins = map[string]string{
 
 	"home-staging/any/changeover/drop-release pn=LINE":             "sent drops=BUF",
 	"home-staging/any/changeover/drop-release pn=none":             "sent drops=BUF",
-	"home-staging/any/changeover/staged-deliver pn=LINE":           "sent drops=HOME-B",    // B23's class: a supply with no wait, set back down where it lifts
-	"home-staging/any/changeover/staged-deliver pn=none":           "sent drops=HOME-B",    // B23's class: a supply with no wait, set back down where it lifts
+	"home-staging/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",      // moved by brief H H1 (a): B23's class closed, a leg that fills its line is left to go there
+	"home-staging/any/changeover/staged-deliver pn=none":           "sent drops=HOME-B",    // B23's class, kept: with no process node (no builder sends one) legPlacesLineBin cannot read it
 	"home-staging/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
 	"home-staging/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
 	"home-staging/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
 	"home-staging/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
 	"home-staging/sequential/steady/A pn=LINE":                     "sent drops=BUF",
 	"home-staging/sequential/steady/A pn=none":                     "sent drops=BUF",
-	"home-staging/sequential/steady/backfill pn=LINE":              "sent drops=HOME",            // B23: set back down on the home it lifts from
-	"home-staging/sequential/steady/backfill pn=none":              "sent drops=HOME",            // B23: set back down on the home it lifts from
+	"home-staging/sequential/steady/backfill pn=LINE":              "sent drops=LINE",            // moved by brief H H1 (a): B23 closed, a leg that fills its line is left to go there
+	"home-staging/sequential/steady/backfill pn=none":              "sent drops=HOME",            // B23's class, kept: with no process node (no builder sends one) legPlacesLineBin cannot read it
 	"home-staging/single_robot/changeover/B pn=LINE":               "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
 	"home-staging/single_robot/changeover/B pn=none":               "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
 	"home-staging/single_robot/steady/A pn=LINE":                   "sent drops=OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
@@ -947,8 +947,8 @@ var parkBuilderPins = map[string]string{
 	"staged/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
 	"staged/sequential/steady/A pn=LINE":                     "sent drops=BUF",
 	"staged/sequential/steady/A pn=none":                     "sent drops=BUF",
-	"staged/sequential/steady/backfill pn=LINE":              "sent drops=HOME",                  // B23: set back down on the home it lifts from
-	"staged/sequential/steady/backfill pn=none":              "sent drops=HOME",                  // B23: set back down on the home it lifts from
+	"staged/sequential/steady/backfill pn=LINE":              "sent drops=LINE",                  // moved by brief H H1 (a): B23 closed, a leg that fills its line is left to go there
+	"staged/sequential/steady/backfill pn=none":              "sent drops=HOME",                  // B23's class, kept: with no process node (no builder sends one) legPlacesLineBin cannot read it
 	"staged/single_robot/changeover/B pn=LINE":               "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
 	"staged/single_robot/changeover/B pn=none":               "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
 	"staged/single_robot/steady/A pn=LINE":                   "sent drops=STAGE,OSTAGE,LINE,BUF", // its own earlier lift empties HOME; the gate reads it occupied
@@ -1070,7 +1070,7 @@ var parkBriefRows = []parkRow{
 			w.clear(t, db, "LINE")
 			w.put(t, db, "BUF", "", "pv-removed-empty", 0)
 		},
-		want: []string{"sent drops=HOME"}},
+		want: []string{"sent drops=LINE"}}, // brief H H1 (a): was HOME, set back down on the home it lifts from
 	{name: "Part change through two homes, the old home bare",
 		legs:  []string{"staged/sequential/changeover/A"},
 		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.clear(t, db, "HOME") },

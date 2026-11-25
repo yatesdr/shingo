@@ -523,12 +523,14 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 	// order. Core decides where the plan's LAST set-down lands when it is a
 	// dedicated-loader member: its home if clear, else a free buffer, else a member
 	// a partner empties. It also moves that set-down onto the home an order lifts
-	// at when the plan holds no wait (Pattern A), which takes a supply from a home
-	// with no wait, the Sequential backfill, and sets it back down on that home
-	// (B23, TestLoaderPark_EveryBuilderLeg). A set-down before the last is asked
-	// nothing (B24, the same test). The park moves the drop in the plan this pass
-	// sends and in the stored one (repoint), so the create carries it. An order
-	// that lifts and sets down at no dedicated-loader member is left untouched.
+	// at when the plan holds no wait and the leg does not set its cart down at its
+	// own process node (Pattern A), which takes a part change's stage off a home
+	// and sets it back down there; the Sequential backfill, which fills its line,
+	// is left to go to the line (B23, brief H; TestLoaderPark_EveryBuilderLeg's
+	// stage and backfill rows). A set-down before the last is asked nothing (B24,
+	// the same test). The park moves the drop in the plan this pass sends and in
+	// the stored one (repoint), so the create carries it. An order that lifts and
+	// sets down at no dedicated-loader member is left untouched.
 	//
 	// When neither can take the bin and the only destination left is the home just
 	// found unavailable, the order WAITS here rather than being dispatched onto it.

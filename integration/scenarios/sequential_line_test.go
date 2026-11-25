@@ -548,20 +548,19 @@ func (c *ksrCell) coreRoute(label string, ords ...domain.Order) {
 // the steady-state swap should run to the end: confirmed at both ends, the
 // home's full on the line and the old cart on a spot of the loader.
 //
-// IT FAILS IN EVERY CASE at 7a7d9a25, on both shapes, and is skipped unless
-// SHINGO_KNOWN_RED=1 (lane f-home's notes have the trace and the red output):
-//   - With a buffer free, A's drop moves off the occupied home to the buffer and
-//     A goes; B, made at A's release, lifts the home's full, and the loader
-//     park's Pattern A moves B's drop from the line onto the home it lifts from
-//     (a no-wait leg off a loader spot reads as a return there; nothing is in
-//     flight to it). B runs circular, both confirm, the line is left bare and
-//     the empty stands in the buffer, where nothing loads it
-//     (TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched).
-//   - With no buffer free, A waits queued at Core, loader-park-no-slot, and is
-//     never sent: the home holds the full, A has no sibling whose lift clears
-//     it, and the bare second home is never offered (Core's sentence names it
-//     all the same). RELEASE is refused and B is never made. A spot of the
-//     loader emptying by another door frees A, and B then runs circular.
+// With a buffer free it runs to the end, on both shapes: A's drop moves off the
+// occupied home to the buffer and A goes; B, made at A's release, lifts the
+// home's full and sets it on the line. Red at 7a7d9a25 until brief H: the loader
+// park's Pattern A moved B's drop from the line onto the home it lifts from (a
+// no-wait leg off a loader spot read as a return there), B ran circular and the
+// line was left bare (TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched).
+//
+// THE CASES WITH NO BUFFER FREE STILL FAIL, on both shapes, and are skipped
+// unless SHINGO_KNOWN_RED=1 (lane f-home's notes have the trace and the red
+// output): A waits queued at Core, loader-park-no-slot, and is never sent: the
+// home holds the full, A has no sibling whose lift clears it, and the bare
+// second home is never offered (Core's sentence names it all the same). RELEASE
+// is refused and B is never made.
 func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 	t.Parallel()
 	for _, shape := range []struct {
@@ -571,17 +570,18 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 		for _, lc := range []struct {
 			name                      string
 			extraHomes, buffers, held int
+			red                       bool
 		}{
-			{"one home, a free buffer", 0, 1, 0},
-			{"one home, its buffer holding an empty", 0, 1, 1},
-			{"one home, no buffer", 0, 0, 0},
-			{"two homes, the second bare, no buffer", 1, 0, 0},
-			{"two homes, the second bare, a free buffer", 1, 1, 0},
+			{"one home, a free buffer", 0, 1, 0, false},
+			{"one home, its buffer holding an empty", 0, 1, 1, true},
+			{"one home, no buffer", 0, 0, 0, true},
+			{"two homes, the second bare, no buffer", 1, 0, 0, true},
+			{"two homes, the second bare, a free buffer", 1, 1, 0, false},
 		} {
 			t.Run(shape.name+", "+lc.name, func(t *testing.T) {
-				if os.Getenv("SHINGO_KNOWN_RED") == "" {
+				if lc.red && os.Getenv("SHINGO_KNOWN_RED") == "" {
 					t.Skip("final brief 2e (lane f-home) red pin, red until a sequential swap through its own home " +
-						"brings the line its cart; run with SHINGO_KNOWN_RED=1")
+						"with no buffer free brings the line its cart; run with SHINGO_KNOWN_RED=1")
 				}
 				t.Parallel()
 				c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential,

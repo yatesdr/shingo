@@ -365,8 +365,10 @@ func TestCarrierKeys_AnAppendNamesItsStepByPlanPosition(t *testing.T) {
 // nodes, attemptNodes) and its replay walk's (one read of its steps' nodes,
 // walkNodes: 43 -> 42), its sources' find asking that read of the plan for the
 // pickup's node (42 -> 41), and its commit's walks (the splice, the nodes it
-// enters and the seam assertion) asking it too, through the hand (41 -> 35).
-// Keyed, a create
+// enters and the seam assertion) asking it too, through the hand (41 -> 35),
+// and the loader park no longer asking a leg that sets its cart down at its own
+// line whether it lifts at a loader's home (Pattern A's node and member reads,
+// brief H H1: 35 -> 33). Keyed, a create
 // adds the scene read (1) and an append its carts' read and the scene read
 // (2); a sealed create of a payload with a load sequence adds nothing (the
 // sequence names its lift, and the set-down sends the default). No shape adds
@@ -425,7 +427,7 @@ func TestCarrierKeys_WhatAKeyCosts(t *testing.T) {
 				testutil.MustNoErr(t, err, "the payload's load sequence")
 				return sealed("ck-cost-sequence")(t, d, db, p, backend)
 			}},
-		{"a complex create", 35, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
+		{"a complex create", 33, 1, func(t *testing.T, d *Dispatcher, db *store.DB, p ckPlant, _ fleet.Backend) func() {
 			d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{OrderUUID: "ck-cost-complex",
 				PayloadCode: p.payload.Code, Quantity: 1, ProcessNode: p.line.Name,
 				Steps: []protocol.ComplexOrderStep{{Action: protocol.ActionPickup, Node: p.storage.Name},
