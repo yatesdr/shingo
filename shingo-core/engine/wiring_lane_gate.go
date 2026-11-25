@@ -14,6 +14,7 @@ package engine
 
 import (
 	"shingo/protocol/eventbus"
+	"shingocore/dispatch"
 )
 
 // wireLaneGateHandlers registers the release evaluator on every event that can
@@ -26,10 +27,11 @@ func (e *Engine) wireLaneGateHandlers() {
 	if e.dispatcher == nil {
 		return
 	}
-	// gate is one event's gate work: every GROUP the event touched evaluated
-	// ONCE, and the held compound legs of every lane it touched re-driven (C2c
-	// ruling 4: "evaluated once per group per event"; the dispatcher owns the
-	// keys, GateKeysForNode and GroupIDForLane).
+	// gateKeys is one event's gate work over its keys: every GROUP the event
+	// touched evaluated ONCE, and the held compound legs of every lane it touched
+	// re-driven (C2c ruling 4: "evaluated once per group per event"; the
+	// dispatcher owns the keys: GroupIDForLane and GateKeysForNode one at a time
+	// through gate below, GateKeysForOrder for a terminal order in one read).
 	//
 	// It used to be two closures and two passes: the lane's own evaluation (and
 	// its held legs), then the DWELLER's half — the group fan-out over every lane
@@ -41,7 +43,7 @@ func (e *Engine) wireLaneGateHandlers() {
 	//
 	// Nothing here decides anything, so a duplicate is harmless and a miss costs
 	// only latency until the 60-second floor.
-	gate := func(lanes []int64, nodeIDs ...int64) {
+	gateKeys := func(lanes, nodeKeys []dispatch.GateKey) {
 		done, redriven := map[int64]bool{}, map[int64]bool{}
 		pass := func(groupID int64) {
 			if groupID != 0 && !done[groupID] {
@@ -68,18 +70,35 @@ func (e *Engine) wireLaneGateHandlers() {
 				e.dispatcher.RedriveHeldCompoundLegs(laneID)
 			}
 		}
-		for _, laneID := range lanes {
-			if laneID == 0 {
+		for _, k := range lanes {
+			if k.Lane == 0 {
 				continue
 			}
-			pass(e.dispatcher.GroupIDForLane(laneID))
-			redrive(laneID)
+			pass(k.Group)
+			redrive(k.Lane)
 		}
+		for _, k := range nodeKeys {
+			pass(k.Group)
+			redrive(k.Lane)
+		}
+	}
+	// gate keys an event's lanes (GroupIDForLane) and nodes (GateKeysForNode) one
+	// at a time, then runs the keys. The keys are the tree's shape, which no pass
+	// moves, so reading them before the first pass answers what reading each
+	// between passes did.
+	gate := func(lanes []int64, nodeIDs ...int64) {
+		laneKeys := make([]dispatch.GateKey, 0, len(lanes))
+		for _, laneID := range lanes {
+			if laneID != 0 {
+				laneKeys = append(laneKeys, dispatch.GateKey{Lane: laneID, Group: e.dispatcher.GroupIDForLane(laneID)})
+			}
+		}
+		nodeKeys := make([]dispatch.GateKey, 0, len(nodeIDs))
 		for _, nodeID := range nodeIDs {
 			laneID, groupID := e.dispatcher.GateKeysForNode(nodeID)
-			pass(groupID)
-			redrive(laneID)
+			nodeKeys = append(nodeKeys, dispatch.GateKey{Lane: laneID, Group: groupID})
 		}
+		gateKeys(laneKeys, nodeKeys)
 	}
 
 	// PLACEMENT — the primary release signal. A store's dropoff block reaching
@@ -128,7 +147,7 @@ func (e *Engine) wireLaneGateHandlers() {
 	// frees that slot for a dweller without anything physically moving. Nothing
 	// else in this set fires for that.
 	terminal := func(orderID int64) {
-		gate(e.dispatcher.LaneIDsForOrder(orderID), e.dispatcher.NodeIDsForOrder(orderID)...)
+		gateKeys(e.dispatcher.GateKeysForOrder(orderID))
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		terminal(evt.Payload.OrderID)
