@@ -84,9 +84,9 @@ const (
 	// UPDATE where the status write was three statements), and the yes writes
 	// `dispatched`, its history and its tell in a transaction of its own, where
 	// the vendor id was one bare statement (+BEGIN, +COMMIT).
-	// 52 since the lane questions ask LaneOf of the nodes the pass holds: nine
-	// node reads by id that only read again a node in hand (2026-11-25).
-	parkedPass = 52
+	// 50 since the lane questions ask LaneOf of the nodes the pass holds: node
+	// reads by id that only read again a node in hand (2026-11-25).
+	parkedPass = 50
 	// cancelReturnDoor is the cancel-return's store of a window's cancelled push into
 	// K, Z45 short: the position's loader, the door's one read, Z45's three.
 	cancelReturnDoor = 5

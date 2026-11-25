@@ -1623,7 +1623,7 @@ func (d *Dispatcher) laneOfStep(name string) (*nodes.Node, error) {
 	if err != nil || node == nil {
 		return nil, nil
 	}
-	return d.db.LaneForNode(node.ID)
+	return d.db.LaneOf(node)
 }
 
 // rebindWaitLane re-points the lane wait the order is parked AT, so the wait and

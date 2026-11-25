@@ -302,7 +302,7 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64, from sp
 			inside = 0 // somewhere we cannot classify is somewhere else
 			continue   // not a Core node we can classify; the claim path surfaces it
 		}
-		lane, err := d.db.LaneForNode(node.ID)
+		lane, err := d.db.LaneOf(node)
 		if err != nil {
 			return nil, laneGateTarget{}, false, fmt.Errorf("splice: resolve lane for %q: %w", s.Node, err)
 		}
@@ -554,7 +554,7 @@ func (d *Dispatcher) assertEachWaitGatesItsEntryFrom(steps []resolvedStep, from 
 		if err != nil || node == nil {
 			return fmt.Errorf("splice: step after the wait (%q) does not resolve: %v", next.Node, err)
 		}
-		lane, err := d.db.LaneForNode(node.ID)
+		lane, err := d.db.LaneOf(node)
 		if err != nil {
 			return fmt.Errorf("splice: resolve lane for %q: %w", next.Node, err)
 		}
@@ -594,7 +594,7 @@ func (d *Dispatcher) assertWaitGatesAnAppend(steps []resolvedStep, i int) error 
 			"dwell — but its own node %q does not resolve (%v), and a wait naming no real place is one "+
 			"no evaluator and no floor can find", i, s.Node, err)
 	}
-	lane, err := d.db.LaneForNode(at.ID)
+	lane, err := d.db.LaneOf(at)
 	if err != nil {
 		return fmt.Errorf("splice: resolve lane for the dwell position %q: %w", s.Node, err)
 	}
@@ -619,7 +619,7 @@ func (d *Dispatcher) assertWaitGatesAnAppend(steps []resolvedStep, i int) error 
 		return fmt.Errorf("splice: the pickup before the outbound wait at step %d (%q) does not resolve: %v",
 			i, prev.Node, err)
 	}
-	fromLane, err := d.db.LaneForNode(from.ID)
+	fromLane, err := d.db.LaneOf(from)
 	if err != nil {
 		return fmt.Errorf("splice: resolve lane for %q: %w", prev.Node, err)
 	}

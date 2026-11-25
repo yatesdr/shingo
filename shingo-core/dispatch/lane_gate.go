@@ -242,7 +242,7 @@ func (d *Dispatcher) refuseLaneRevisit(steps []resolvedStep) error {
 			// on the same read, so the two walk the same steps.
 			continue
 		}
-		lane, err := d.db.LaneForNode(node.ID)
+		lane, err := d.db.LaneOf(node)
 		if err != nil {
 			return err
 		}
@@ -421,7 +421,7 @@ func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error 
 	if node == nil {
 		return nil
 	}
-	lane, err := d.db.LaneForNode(node.ID)
+	lane, err := d.db.LaneOf(node)
 	if err != nil {
 		return err
 	}
@@ -1013,7 +1013,7 @@ func (d *Dispatcher) HandleTransitForLaneGate(orderID, fromNodeID int64) {
 // next firing is the 60-second floor. Same reasoning, same shape, as the dig
 // lock's release (unlockLaneForCompound).
 func (d *Dispatcher) releaseOccupancyOnExit(orderID int64, node *nodes.Node) {
-	lane, err := d.db.LaneForNode(node.ID)
+	lane, err := d.db.LaneOf(node)
 	if err != nil || lane == nil {
 		return
 	}

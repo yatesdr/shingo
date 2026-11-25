@@ -590,7 +590,7 @@ func (d *Dispatcher) hardReleasePhysicalVerdict(order *orders.Order, steps []res
 	if err != nil || node == nil {
 		return "", fmt.Errorf("entry node %q does not resolve", entry.Node)
 	}
-	lane, err := d.db.LaneForNode(node.ID)
+	lane, err := d.db.LaneOf(node)
 	if err != nil {
 		return "", err
 	}
