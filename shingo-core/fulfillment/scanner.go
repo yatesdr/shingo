@@ -41,7 +41,8 @@ type Scanner struct {
 	claimer    Claimer
 	sendToEdge func(msgType, stationID string, payload any) error
 	// failFn fails an order in the DB AND emits EventOrderFailed so the
-	// standard handler chain (audit, return order, edge notification) fires.
+	// standard handler chain fires (engine/wiring.go's failed subscribers; no
+	// return order is made).
 	// Wired at construction to engine.failOrderAndEmit. Without this, the
 	// scanner's structural-error path silently terminates orders with no
 	// audit trail, no Edge notification, and no bin recovery.
@@ -462,7 +463,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 		if err := s.dispatcher.DispatchPreparedComplex(order); err != nil {
 			// Debug, not info: this fires on every transient hold — a swap leg
 			// waiting on its sibling, a finder pool with no bin yet — and the
-			// scanner retries on the next tick. Springfield emitted ~4,000/day
+			// scanner retries on the next tick. One plant emitted ~4,000/day
 			// of it into the default logger, the same ~25k/day stream that
 			// carries the TERMINAL "engine: order N failed:" line, burying the
 			// signal at roughly 800:1.
@@ -641,7 +642,7 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 		return false
 	case dispatch.OutcomeStructural:
 		// Terminal (permanent/config). Route through failFn so the standard
-		// EventOrderFailed chain fires (audit, return order, edge notification).
+		// EventOrderFailed chain fires (engine/wiring.go; no return order is made).
 		// A nil failFn in production is a wiring mistake — log loudly, don't mask.
 		if s.failFn != nil {
 			s.failFn(order.ID, "structural", res.Err.Error())
