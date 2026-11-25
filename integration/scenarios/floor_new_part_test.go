@@ -20,15 +20,14 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
 
-	coremessaging "shingocore/messaging"
 	coreservice "shingocore/service"
 	corestore "shingocore/store"
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
 	corepayloads "shingocore/store/payloads"
+	coreharness "shingocore/testharness"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
@@ -65,10 +64,14 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 	mustNil(t, coreDB.ConfirmBinManifest(lineBin.ID, ""), "the line's confirm")
 	empty := &corebins.Bin{BinTypeID: carrier.ID, Label: "SYN-FNP-EMPTY", NodeID: &at[empties].ID, Status: "available"}
 	mustNil(t, coreDB.CreateBin(empty), "an empty carrier at the source")
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", core.eng.Dispatcher())
-	coreData := coremessaging.NewCoreDataService(coreDB, coreHandler, coreservice.EpochAnnounce{})
-	core.eng.SetFeedsChangedFunc(coreData.FeedsChanged)
-	core.eng.SetCatalogRowFunc(coreData.CatalogRow)
+	// Core's tables and hooks as main builds them, less what this cell leaves
+	// out: every subject but the asks (its Edge also sends a demand origin,
+	// never routed here), the release, the redirect and the ingest, and every
+	// hook but the change door and the catalog row the floor part answers with.
+	coreSide := coreharness.NewCore(t, core.eng, core.doors,
+		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
+			protocol.TypeOrderReceipt, protocol.SubjectEdgeAsk),
+		coreharness.HooksOnly(coreharness.HookFeedsChanged, coreharness.HookCatalogRow))
 
 	// ── Edge: one produce line running SYN-FNP-RUN, HMI setup on, its recipe named ──
 	edge := edgeharness.NewEdge(t, edgeStation)
@@ -131,21 +134,13 @@ func TestScenario_FloorNewPart_SubmitMintStartChangeover(t *testing.T) {
 	edge.Engine.ApplyNodeList(&protocol.NodeListResponse{Family: family, PayloadBinTypes: rule})
 
 	// ── the Bus, and Core's ask server named on the Edge's ack ──
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
-	router.Register(coreRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
-	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	askKinds := registerAsks(dataSubjects(coreRouter), coreDB, core.doors, coreHandler)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
 	push := harness.StartBinsPush(t, coreDB, edge.Engine)
 	bus.SetBinsPush(push)
-	push.AnswerAsks(askKinds)
+	push.AnswerAsks(coreSide.AskKinds)
 	settle := func() {
 		for i := 0; i < 40; i++ {
 			if bus.PumpAll() == 0 {

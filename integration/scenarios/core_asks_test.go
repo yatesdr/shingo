@@ -30,14 +30,3 @@ func registerAsks(subjects *router.SubjectRouter, coreDB *corestore.DB, doors *w
 	router.RegisterSubject(subjects, protocol.SubjectEdgeAsk, s.Handle)
 	return s.Kinds()
 }
-
-// dataSubjects routes TypeData on a scenario's Core router to a subject
-// router and returns it, for a scenario that routes no data subject of its
-// own yet.
-func dataSubjects(r *router.Router[string]) *router.SubjectRouter {
-	subjects := router.NewSubject()
-	router.Register(r, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-		subjects.Dispatch(env, p)
-	})
-	return subjects
-}
