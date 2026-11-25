@@ -1,12 +1,17 @@
 package orders
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
+	"shingoedge/store"
+	storemsg "shingoedge/store/messaging"
 	"shingoedge/store/orders"
 )
 
@@ -109,6 +114,9 @@ func (m *Manager) ApplyCoreUpdate(p *protocol.OrderUpdate) error {
 func (m *Manager) applyCoreWord(order *orders.Order, w CoreWord) error {
 	if IsTerminal(order.Status) {
 		return m.coreWordOnEnded(order, w)
+	}
+	if w.Reconcile && !IsTerminal(w.Status) {
+		m.resendAskedCancel(order, w) // at any version: the newer word may never come
 	}
 	if w.Version <= order.CoreVersion {
 		if w.Version == order.CoreVersion && w.Status != order.Status {
@@ -365,4 +373,86 @@ func (m *Manager) EndCancelCoreDoesNotHold(corID, uuid string) bool {
 		m.holdReorderAt(order, domain.ReorderHoldPaused, personCancelledNote(order.ID))
 	}
 	return true
+}
+
+// RefuseCancel is Core's "cannot" to the cancel this station asked: an
+// order.error with protocol.CancelRefusedSetDown (the cart is set down) or
+// protocol.CancelRefusedEnded (the order had already ended), its Detail the
+// sentence a person reads, its CorID the cancel's envelope. It writes only the
+// sentence onto the cancel, and only when the refusal answers the cancel sent
+// last and unanswered (orders.RefuseCancel): no status, no history row. The
+// row keeps Core's status, which Core's own word moves (a set-down cart's
+// delivered, an ended order's terminal), and offers what that status allows.
+// It reports whether the answer was the cancel's. Pinned by
+// TestCoreWord_ARefusalWritesOnlyTheSentence.
+func (m *Manager) RefuseCancel(corID, uuid, sentence string) bool {
+	if corID == "" {
+		return false
+	}
+	order, err := m.db.GetOrderByUUID(uuid)
+	if err != nil || order == nil {
+		return false
+	}
+	wrote, err := orders.RefuseCancel(m.db.DB, order.ID, corID, sentence)
+	if err != nil {
+		log.Printf("orders: write Core's refusal of the cancel of order %d: %v", order.ID, err)
+		return true
+	}
+	if !wrote {
+		m.DebugLog.Log("cancel refusal ignored: id=%d uuid=%s answers envelope %s, not the cancel sent", order.ID, order.UUID, corID)
+		return true
+	}
+	m.DebugLog.Log("cancel refused: id=%d uuid=%s: %s", order.ID, order.UUID, sentence)
+	m.emitter.EmitOrderTouched(order.ID, order.UUID, order.ProcessNodeID)
+	return true
+}
+
+// cancelResendAfter is how old an unanswered cancel must be before a
+// reconcile that finds Core still holding the order live sends it again: a
+// cancel younger than an ask's whole life (protocol.AskTTL, and the slack the
+// ask pair keeps past it) may still be on its way, and Core decides a copy as
+// it decided the first.
+const cancelResendAfter = protocol.AskTTL + 10*time.Second
+
+// resendAskedCancel sends again the cancel this station asked and Core has not
+// answered, on a reconcile's word (the boot or gap snapshot, an unlisted
+// projection) that says Core holds the order live: the first copy, or its
+// answer, may be lost (the cancel never expires, but a tell expires and a
+// refusal can be dead-lettered). The copy carries the reason AND the actor the
+// cancel had (S3t's resend on an ended row drops the actor, resendCancel), and
+// asks as the first did; the cancel's envelope moves to it, so Core's refusal
+// of the copy is the one that matches. Pinned by
+// TestCoreWord_AReconcileSendsAnUnansweredCancelAgain.
+func (m *Manager) resendAskedCancel(order *orders.Order, w CoreWord) {
+	asked := askedCancel(order)
+	if asked == nil {
+		return
+	}
+	if sent := asked.SentTime(); !sent.IsZero() && clock.Now().Sub(sent) < cancelResendAfter {
+		return
+	}
+	env, err := m.sender.build(protocol.TypeOrderCancel, &protocol.OrderCancel{
+		OrderUUID: order.UUID, Reason: asked.Reason, Actor: asked.Actor, Intent: true,
+	})
+	if err != nil {
+		log.Printf("orders: re-send the asked cancel of order %d: %v", order.ID, err)
+		return
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		log.Printf("orders: re-send the asked cancel of order %d: %v", order.ID, err)
+		return
+	}
+	if err := m.db.InTx(func(tx *sql.Tx) error {
+		if _, err := store.EnqueueOutboxIn(tx, data, env.Type); err != nil {
+			return err
+		}
+		return orders.ResentCancel(tx, order.ID, env.ID)
+	}); err != nil {
+		log.Printf("orders: re-send the asked cancel of order %d: %v", order.ID, err)
+		return
+	}
+	storemsg.NotifyEnqueued()
+	log.Printf("orders: order %d's cancel is unanswered and Core still holds it %s (version %d); the cancel is sent again",
+		order.ID, w.Status, w.Version)
 }

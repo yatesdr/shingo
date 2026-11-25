@@ -995,3 +995,125 @@ func TestCoreWord_ANotFoundToTheCancelEndsTheRow(t *testing.T) {
 		t.Errorf("the position holds %q %q, want the person's pause", rt.ReorderHold, rt.ReorderHoldNote)
 	}
 }
+
+// TestCoreWord_ARefusalWritesOnlyTheSentence: Core's "cannot" to the cancel
+// this station asked (order.error cancel_refused_set_down or
+// cancel_refused_ended, its CorID the cancel's envelope) writes Core's sentence
+// onto the cancel and nothing else: the status stays Core's, no history row,
+// no toast, no hold; Core's own word then moves the row. A refusal of another
+// envelope, or a second one, changes nothing; neither fails the order, which
+// an order.error with another code does on a row with no versioned word.
+func TestCoreWord_ARefusalWritesOnlyTheSentence(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{protocol.CancelRefusedSetDown, protocol.CancelRefusedEnded} {
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			r := newWordRig(t)
+			id := r.leg("refused-leg", protocol.StatusInTransit)
+			r.live("refused-leg", protocol.StatusInTransit, 2)
+			r.askCancelByHand(id, domain.CancelByPerson, "env-1")
+			before := len(r.history(id))
+			const sentence = "The cart was set down at TEST-NODE. CONFIRM it at the station."
+
+			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-0"}, &protocol.OrderError{OrderUUID: "refused-leg",
+				ErrorCode: code, Detail: "stale"})
+			if o := r.row(id); o.CancelRefused != "" || !o.CancelSent {
+				t.Errorf("a refusal of another envelope: the row reads sent=%v refused=%q, want it still sent", o.CancelSent, o.CancelRefused)
+			}
+			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, &protocol.OrderError{OrderUUID: "refused-leg",
+				ErrorCode: code, Detail: sentence})
+			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, &protocol.OrderError{OrderUUID: "refused-leg",
+				ErrorCode: code, Detail: "a second answer"})
+
+			o := r.at("the refusal", id, protocol.StatusInTransit, 2)
+			if o.CancelSent || o.CancelRefused != sentence {
+				t.Errorf("after the refusal the row reads sent=%v refused=%q, want refused %q", o.CancelSent, o.CancelRefused, sentence)
+			}
+			if h := r.history(id); len(h) != before {
+				t.Errorf("the refusal wrote history %q, want none", h[before:])
+			}
+			r.update(protocol.OrderUpdate{OrderUUID: "refused-leg", Status: string(protocol.StatusDelivered), Version: 3})
+			if o := r.at("Core's delivered", id, protocol.StatusDelivered, 3); o.CancelRefused != sentence {
+				t.Errorf("after Core's delivered the row reads refused %q, want Core's sentence still", o.CancelRefused)
+			}
+			if len(r.toasts) != 0 {
+				t.Errorf("toasts %q, want none", r.toasts)
+			}
+			rt, err := r.db.GetProcessNodeRuntime(r.nodeID)
+			testutil.MustNoErr(t, err, "the runtime row")
+			if rt.ReorderHold != "" {
+				t.Errorf("the position holds %q after a refused cancel, want nothing: no pause names a cancel that did not happen", rt.ReorderHold)
+			}
+		})
+	}
+}
+
+// TestCoreWord_AReconcileSendsAnUnansweredCancelAgain: a reconcile's word (the
+// boot or gap snapshot) that finds Core holding live an order whose asked
+// cancel is unanswered and older than an ask's life sends the cancel again,
+// with its reason and its actor and asking as the first did; the cancel's
+// envelope moves to the copy. A live tell, a young cancel, a refused one and a
+// row with none send nothing.
+func TestCoreWord_AReconcileSendsAnUnansweredCancelAgain(t *testing.T) {
+	t.Parallel()
+	young := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, tc := range []struct {
+		name      string
+		sentAt    string
+		refused   bool
+		asked     bool
+		reconcile bool
+		want      int
+	}{
+		{name: "a reconcile, an old unanswered cancel", asked: true, reconcile: true, want: 1},
+		{name: "a live tell", asked: true},
+		{name: "a young cancel", asked: true, sentAt: young, reconcile: true},
+		{name: "a refused cancel", asked: true, refused: true, reconcile: true},
+		{name: "no cancel asked", reconcile: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newWordRig(t)
+			id := r.leg("resend-leg", protocol.StatusStaged)
+			r.live("resend-leg", protocol.StatusStaged, 2)
+			if tc.asked {
+				in := domain.CancelIntent{Reason: protocol.CancelReasonLineIdle, Actor: protocol.CancelActorEdge, Env: "env-1",
+					SentAt: "2026-11-25T12:00:00Z"}
+				if tc.sentAt != "" {
+					in.SentAt = tc.sentAt
+				}
+				if tc.refused {
+					in.Refused = "set down"
+				}
+				raw, err := in.Encode()
+				testutil.MustNoErr(t, err, "encode")
+				_, err = r.db.DB.Exec(`UPDATE orders SET cancel_intent = ? WHERE id = ?`, raw, id)
+				testutil.MustNoErr(t, err, "write the cancel")
+			}
+
+			if tc.reconcile {
+				r.snapshot(protocol.OrderStatusSnapshot{OrderUUID: "resend-leg", Status: string(protocol.StatusStaged), Version: 2})
+			} else {
+				r.update(protocol.OrderUpdate{OrderUUID: "resend-leg", Status: string(protocol.StatusStaged), Version: 3})
+			}
+
+			envs := r.queued(protocol.TypeOrderCancel)
+			if len(envs) != tc.want {
+				t.Fatalf("queued %d order.cancel, want %d", len(envs), tc.want)
+			}
+			if tc.want == 0 {
+				return
+			}
+			var c protocol.OrderCancel
+			testutil.MustNoErr(t, envs[0].DecodePayload(&c), "decode the copy")
+			if c.Reason != protocol.CancelReasonLineIdle || c.Actor != protocol.CancelActorEdge || !c.Intent {
+				t.Errorf("the copy is %+v, want the line idle reason, the Edge's actor, asking", c)
+			}
+			in, err := domain.DecodeCancelIntent(r.row(id).CancelIntent)
+			testutil.MustNoErr(t, err, "decode the cancel")
+			if in == nil || in.Env != envs[0].ID || in.SentAt != "2026-11-25T12:00:00Z" {
+				t.Errorf("the cancel after the copy is %+v, want its envelope the copy's %s and its clock the tap's", in, envs[0].ID)
+			}
+		})
+	}
+}

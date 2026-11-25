@@ -239,6 +239,15 @@ func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.Order
 		return
 	}
 
+	// Core cannot cancel the order this station asked it to (its cart is set
+	// down, or the order had already ended): the sentence is written onto the
+	// cancel, and only that (orders RefuseCancel). Core's own word moves the
+	// row. Sent only to a cancel that asked, so no older Edge gets the codes.
+	if (p.ErrorCode == protocol.CancelRefusedSetDown || p.ErrorCode == protocol.CancelRefusedEnded) && env != nil {
+		h.orderMgr.RefuseCancel(env.CorID, p.OrderUUID, p.Detail)
+		return
+	}
+
 	// Core holds no such order: its answer to a cancel this station asked (the
 	// reply's CorID is the cancel's envelope) ends the row here, since no word
 	// of Core's will (orders EndCancelCoreDoesNotHold). Any other not_found
