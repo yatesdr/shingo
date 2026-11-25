@@ -1255,10 +1255,6 @@ func (db *DB) SetCompoundOpen(parentOrderID int64, open bool) error {
 	return orders.SetCompoundOpen(db.DB, parentOrderID, open)
 }
 
-func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
-	return orders.UpdateStatus(db.DB, id, status, detail)
-}
-
 // UpdateOrderStatusFromWithReason is the CAS status write plus the typed
 // reason for the history row (migration 55). The →queued row is the important
 // caller: orders.queue_code is overwritten in place, so the history row is the
