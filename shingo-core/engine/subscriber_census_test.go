@@ -42,6 +42,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -235,8 +236,9 @@ func TestSubscriberCensus(t *testing.T) {
 	}
 	for key, n := range subscribeCallsNotOnTheBus {
 		if w.notBus[key] != n {
-			diffs = append(diffs, fmt.Sprintf("%s: the census names %d Kafka subscribe call(s) there, the tree has %d: "+
-				"correct subscribeCallsNotOnTheBus", key, n, w.notBus[key]))
+			diffs = append(diffs, fmt.Sprintf("%s: the census names %d Kafka subscribe call(s) there, the tree has %d. "+
+				"Core should read the orders topic on one reader: read TestCoreReadsTheOrdersTopicOnOneReader "+
+				"before correcting subscribeCallsNotOnTheBus", key, n, w.notBus[key]))
 		}
 	}
 	sort.Strings(diffs)
@@ -280,6 +282,85 @@ func TestSubscriberCensus(t *testing.T) {
 	for _, ev := range events {
 		t.Logf("  %-28s %s", ev, strings.Join(perEvent[ev], ", "))
 	}
+}
+
+// coreKafkaReads is each way Core's source comes to read a Kafka topic, by
+// "<site> <what>" (kafkaRead), with how many there. Together they are one
+// reader of the orders topic: main subscribes it once, a subscribe starts one
+// read loop, and the loop handles one message to its end before it fetches the
+// next (messaging Client.readLoop).
+var coreKafkaReads = map[string]int{
+	"cmd/shingocore/main.go:main subscribe cfg.Messaging.OrdersTopic": 1, // the ingestor, at boot
+	"messaging/client.go:restoreSubscriptions subscribe topic":        1, // each topic's handler, once, after a late connect (Subscribe made no reader before it)
+	"messaging/client.go:Reconfigure subscribe topic":                 1, // each topic's handler, once, after Close stopped the old loops
+	"messaging/client.go:Subscribe go readLoop":                       1, // one read loop a subscribe
+	"messaging/client.go:Subscribe kafka.NewReader":                   1, // that loop's reader
+	"messaging/client.go:readLoop kafka.NewReader":                    1, // the same loop's, in place of its own after a read error
+	"messaging/ephemeral.go:newEphemeralReader kafka.NewReader":       1, // the ephemeral topic's (the robot feed), no group
+}
+
+// TestCoreReadsTheOrdersTopicOnOneReader pins that Core reads the orders topic
+// on one reader: coreKafkaReads against the tree, both ways. It is a census of
+// the source, so it cannot see a reader the running process starts twice from
+// one site (Subscribe does not refuse a topic it already reads), nor a
+// re-configure's new reader starting while a handler past Close's limit still
+// runs (messaging Client.Close).
+//
+// The inbox dedup (middleware.NewInboxDedup, docket B11) and the delta apply
+// (uop readBinScope, docket B18) both stand on it. Red by mutation, 2026-11-25:
+// a second msgClient.Subscribe of the orders topic in main, and a second go
+// c.readLoop in Subscribe, each fail here.
+func TestCoreReadsTheOrdersTopicOnOneReader(t *testing.T) {
+	t.Parallel()
+	w := walkCoreBus(t)
+	if len(w.kafkaReads) == 0 {
+		t.Fatal("the walk found no Kafka read at all, not even main's subscribe: a census that reads nothing reports nothing")
+	}
+	var diffs []string
+	for key, n := range coreKafkaReads {
+		if got := w.kafkaReads[key]; got != n {
+			diffs = append(diffs, fmt.Sprintf("%s: the census has %d, the tree %d", key, n, got))
+		}
+	}
+	for key, got := range w.kafkaReads {
+		if _, ok := coreKafkaReads[key]; !ok {
+			diffs = append(diffs, fmt.Sprintf("%s: in the tree (%d), not in the census", key, got))
+		}
+	}
+	sort.Strings(diffs)
+	if len(diffs) > 0 {
+		t.Fatalf("Core should read the orders topic on one reader, one message at a time, and the source now reads "+
+			"Kafka another way:\n  %s\n\n"+
+			"Two designs stand on one reader. The inbox dedup reads its row before the handler and writes it after "+
+			"(middleware.NewInboxDedup, docket B11), so two readers given one envelope would both run its handler; "+
+			"the delta apply reads its cursor before the bin lock (uop readBinScope, docket B18, the skipped case of "+
+			"TestRelease_ADeltaWaitingBehindAFencedRelease). A second reader of the orders topic needs both changed "+
+			"first: the dedup claims the envelope before its handler, and the apply reads its cursor after the lock. "+
+			"Another topic's reader, or a reader moved, takes its line in coreKafkaReads with what it reads.",
+			strings.Join(diffs, "\n  "))
+	}
+}
+
+// kafkaRead names n when it is a way to read a Kafka topic: "subscribe
+// <topic>" for a call named Subscribe with two arguments (the Kafka clients'
+// Subscribe takes a topic and a handler, the bus's one handler), "go
+// readLoop" for a go statement that starts a read loop, "kafka.NewReader" for
+// a reader made. "" otherwise.
+func kafkaRead(n ast.Node) string {
+	switch n := n.(type) {
+	case *ast.GoStmt:
+		if busCallee(n.Call.Fun) == "readLoop" {
+			return "go readLoop"
+		}
+	case *ast.CallExpr:
+		if busCallee(n.Fun) == "Subscribe" && len(n.Args) == 2 {
+			return "subscribe " + types.ExprString(n.Args[0])
+		}
+		if types.ExprString(n.Fun) == "kafka.NewReader" {
+			return "kafka.NewReader"
+		}
+	}
+	return ""
 }
 
 // compareBusSite compares one function's census rows with the tree's, in
@@ -389,11 +470,31 @@ type busWalk struct {
 	notBus map[string]int      // "<site> <callee>" -> the Kafka subscribe calls there
 	// subscribers is each function that subscribes, by name -> its sites.
 	subscribers map[string][]string
+	// kafkaReads is each way the source comes to read a Kafka topic, by
+	// "<site> <what>" (kafkaRead) -> how many there.
+	kafkaReads map[string]int
 }
 
-// walkCoreBus reads every non-test Go file of the module.
+// coreBusWalk is the walk the census tests share: each reads the same tree,
+// and a walk parses every file of the module. Nothing writes to it once made.
+var coreBusWalk struct {
+	once sync.Once
+	w    *busWalk
+	err  error
+}
+
+// walkCoreBus is the module's walk (readCoreBus), made once a test binary.
 func walkCoreBus(t *testing.T) *busWalk {
 	t.Helper()
+	coreBusWalk.once.Do(func() { coreBusWalk.w, coreBusWalk.err = readCoreBus() })
+	if coreBusWalk.err != nil {
+		t.Fatal(coreBusWalk.err)
+	}
+	return coreBusWalk.w
+}
+
+// readCoreBus reads every non-test Go file of the module.
+func readCoreBus() (*busWalk, error) {
 	const root = ".."
 	type fn struct {
 		site string
@@ -430,10 +531,11 @@ func walkCoreBus(t *testing.T) *busWalk {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("read shingo-core's source: %v", err)
+		return nil, fmt.Errorf("read shingo-core's source: %w", err)
 	}
 
-	w := &busWalk{sites: map[string][]busRow{}, notBus: map[string]int{}, subscribers: map[string][]string{}}
+	w := &busWalk{sites: map[string][]busRow{}, notBus: map[string]int{}, subscribers: map[string][]string{},
+		kafkaReads: map[string]int{}}
 	// First the functions that subscribe, so that the second pass knows a call
 	// of one when it meets it.
 	for _, f := range fns {
@@ -451,11 +553,14 @@ func walkCoreBus(t *testing.T) *busWalk {
 		}
 	}
 	if len(w.subscribers) == 0 {
-		t.Fatalf("the walk of %d functions found no subscription: a census that reads nothing reports nothing", len(fns))
+		return nil, fmt.Errorf("the walk of %d functions found no subscription: a census that reads nothing reports nothing", len(fns))
 	}
 	for _, f := range fns {
 		var rows []busRow
 		ast.Inspect(f.decl.Body, func(n ast.Node) bool {
+			if what := kafkaRead(n); what != "" {
+				w.kafkaReads[f.site+" "+what]++
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -474,7 +579,7 @@ func walkCoreBus(t *testing.T) *busWalk {
 			w.sites[f.site] = append(w.sites[f.site], rows...)
 		}
 	}
-	return w
+	return w, nil
 }
 
 // subscription reads call as a subscription on the bus, which has three ways
