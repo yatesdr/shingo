@@ -33,6 +33,7 @@ package scenarios
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -956,7 +957,7 @@ func (c *w6Cell) counts(tn *w6Tenure) int64 {
 // cart of ALT's — is logged, and no cart's; nothing a cart did not take carries
 // to the next one. A part no style pins is the standing cart's: its draw is the
 // ledger's until a person Charges it there (read apart: the cart check skips a
-// position with an open row).
+// position holding such a row, cartsAgainstLine).
 func (c *w6Cell) share(tn *w6Tenure, ids []int64, span func(*w6Tenure) (int64, int64)) int64 {
 	in, out := span(tn)
 	var got int64
@@ -1146,13 +1147,15 @@ type w6Ledger struct {
 }
 
 // ledger reads the three ledgers and fails on the first disagreement with the
-// line: at each position, carts + logged + written off = loads (decision 55);
-// checkCarts is false for a position-by-position check the scenario makes
-// itself.
+// line: each cart against its own stream (cartStreams) and against the line
+// (cartsAgainstLine), then at each position carts + logged + written off =
+// loads (decision 55); checkCarts is false for a position-by-position check
+// the scenario makes itself.
 func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 	c.t.Helper()
 	c.flush()
 	c.noteCarts()
+	c.cartStreams(label)
 	st := c.plc.state()
 	h := c.holds()
 	l := w6Ledger{}
@@ -1177,6 +1180,9 @@ func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 			c.t.Fatalf("%s: %s: the seat holds %d of %q; a consume seat holds nothing (decision 55)", label, w6Pos[i],
 				rt.PendingUOPDelta, rt.PendingUOPPayload)
 		}
+		if checkCarts {
+			c.cartsAgainstLine(label, h, i)
+		}
 		logged := c.loggedAt(h, i)
 		got := drawn + logged
 		want := st.Loads
@@ -1186,29 +1192,158 @@ func (c *w6Cell) ledger(label string, checkCarts bool) w6Ledger {
 		if got != want {
 			c.dump(label)
 			c.t.Fatalf("%s: %s: carts drew %d and the ledger logged %d (= %d), the line counted %d at "+
-				"its counter (%d loads, %d in flight)", label, w6Pos[i], drawn, logged, got, want, st.Loads, st.InFlight)
+				"its counter (%d loads, %d in flight)\n%s", label, w6Pos[i], drawn, logged, got, want, st.Loads, st.InFlight,
+				c.cartDraws(i))
 		}
 		l.carts += drawn
 		l.logged += logged
 		l.loads += want
-		if !checkCarts || logged != 0 {
-			continue
-		}
-		for _, tn := range c.tenures[i] {
-			want := c.truth(tn)
-			if !c.station[i] {
-				want = c.counts(tn)
-			}
-			got := w6Full - c.count(tn)
-			if got != want {
-				c.dump(label)
-				c.t.Fatalf("%s: cart %s at %s drew %d, want %d (%d loads of its part, %d counts of its part)",
-					label, tn.label, w6Pos[i], got, want, c.truth(tn), c.counts(tn))
-			}
-		}
 	}
 	c.record(label, &l)
 	return l
+}
+
+// cartsAgainstLine fails unless every cart position i has held drew what the
+// line took from it: the strokes of its own part in its stay (share), loads at
+// the load station, counts at the cell counter. It runs before the position's
+// sum, so a draw on the wrong cart or a count applied twice names its cart.
+//
+// It does not read a position that holds a logged stroke of a part no style
+// pins (a row with no part, open or written off; at the cell counter the
+// node-0 row): share gives that stroke to the standing cart, and the Edge
+// holds it in the ledger until a person charges it there. Pin:
+// TestCatid4x2_S6_MixedCell, whose 1003 strokes are held that way, fails here
+// without this skip. A row of a part a style pins is no cart's in share as
+// it is no cart's draw at the Edge (off-plan, or no cart of its part standing),
+// so it does not stop the read. Until 2026-11-25 any logged row did, and in
+// docket G12's run that skipped the position whose outgoing cart was counted
+// twice (17 rows there).
+func (c *w6Cell) cartsAgainstLine(label string, h w6Holds, i int) {
+	c.t.Helper()
+	for _, r := range h.rows {
+		open := r.ResolvedAt == nil || r.Resolution == "written-off"
+		if open && r.PayloadCode == "" && (r.ProcessNodeID == c.nodes[i] || (r.ProcessNodeID == 0 && !c.station[i])) {
+			return
+		}
+	}
+	for _, tn := range c.tenures[i] {
+		want := c.truth(tn)
+		if !c.station[i] {
+			want = c.counts(tn)
+		}
+		if got := w6Full - c.count(tn); got != want {
+			c.dump(label)
+			c.t.Fatalf("%s: cart %s at %s drew %d, want %d (%d loads of its part, %d counts of its part)\n%s",
+				label, tn.label, w6Pos[i], got, want, c.truth(tn), c.counts(tn), c.cartDraws(i))
+		}
+	}
+}
+
+// w6Stream is one generation of a cart's count stream as each end holds it:
+// the Edge's last seq and running net of the windows it has flushed
+// (inventory_delta_seq), and Core's cursor for the same scope
+// (inventory_delta_dedup: the last seq and the net it has applied). core is
+// false when Core holds no cursor for it.
+type w6Stream struct {
+	epoch            int64
+	edgeSeq, edgeNet int64
+	core             bool
+	coreSeq, coreNet int64
+}
+
+// streams reads every generation of a cart's stream at both ends, by
+// generation. Call after a flush: the Edge's net is what it has flushed.
+func (c *w6Cell) streams(bin int64) []w6Stream {
+	c.t.Helper()
+	key := fmt.Sprint(bin)
+	var out []w6Stream
+	rows, err := c.edge.DB.Query(`SELECT epoch, next_seq, net FROM inventory_delta_seq
+		WHERE scope_kind = ? AND scope_key = ? ORDER BY epoch`, protocol.InvDeltaScopeBin, key)
+	mustNil(c.t, err, "the Edge's streams")
+	for rows.Next() {
+		var s w6Stream
+		mustNil(c.t, rows.Scan(&s.epoch, &s.edgeSeq, &s.edgeNet), "an Edge stream")
+		out = append(out, s)
+	}
+	mustNil(c.t, rows.Err(), "the Edge's streams")
+	mustNil(c.t, rows.Close(), "the Edge's streams")
+	for i := range out {
+		var net *int64
+		err := c.core.eng.DB().QueryRow(`SELECT last_seq, applied_net FROM inventory_delta_dedup
+			WHERE station_uid = $1 AND scope_kind = $2 AND scope_key = $3 AND epoch = $4`,
+			w6Edge, protocol.InvDeltaScopeBin, key, out[i].epoch).Scan(&out[i].coreSeq, &net)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		mustNil(c.t, err, "Core's cursor")
+		out[i].core = true
+		if net != nil {
+			out[i].coreNet = *net
+		}
+	}
+	return out
+}
+
+// cartStreams is the guard under the ledger (docket G12): at ledger time, in
+// every generation of a cart's stream, Core has applied exactly the net the
+// Edge flushed, and the cart's count at Core is its stated count plus that net
+// (every cart here is loaded once, at w6Full: seedCore). The ledger's sum adds
+// a position's carts up, so a count applied twice to one cart shows there only
+// as a sum that is off; this names the cart, at every position.
+//
+// The run it is for (docket G12, synth section 8): a stopped Edge engine's
+// release-intent floor released a cart beside the live engine's click with a
+// fence of net 0, for a seat count that already held the live engine's six
+// unflushed draws; Core wrote the count, then applied the six again on top.
+// Both ends' nets read -6 there, so the count is the read that fails, 12 under
+// full against a stream of 6.
+func (c *w6Cell) cartStreams(label string) {
+	c.t.Helper()
+	for i := range w6Pos {
+		for _, tn := range c.tenures[i] {
+			var net int64
+			for _, s := range c.streams(tn.bin) {
+				net += s.edgeNet
+				if s.edgeSeq > 0 && (!s.core || s.coreNet != s.edgeNet) {
+					c.dump(label)
+					c.t.Fatalf("%s: cart %s at %s, generation %d: the Edge flushed a net of %d through seq %d, Core applied %d "+
+						"through seq %d (cursor held: %t)\n%s", label, tn.label, w6Pos[i], s.epoch, s.edgeNet, s.edgeSeq,
+						s.coreNet, s.coreSeq, s.core, c.cartDraws(i))
+				}
+			}
+			if applied := c.count(tn) - w6Full; applied != net {
+				c.dump(label)
+				c.t.Fatalf("%s: cart %s at %s counts %d at Core, %d from its stated %d, and its stream nets %d at the Edge: "+
+					"Core applied %d the stream does not hold\n%s", label, tn.label, w6Pos[i], c.count(tn), applied, w6Full, net,
+					applied-net, c.cartDraws(i))
+			}
+		}
+	}
+}
+
+// cartDraws is position i's carts for a failure: each cart's count and draw at
+// Core, what the line took from it, and its stream at both ends.
+func (c *w6Cell) cartDraws(i int) string {
+	c.t.Helper()
+	var b strings.Builder
+	fmt.Fprintf(&b, "  the carts at %s:", w6Pos[i])
+	for _, tn := range c.tenures[i] {
+		state := "gone"
+		if tn.open {
+			state = "standing"
+		}
+		count, took := c.count(tn), c.truth(tn)
+		if !c.station[i] {
+			took = c.counts(tn)
+		}
+		fmt.Fprintf(&b, "\n    cart %s (bin %d, %s, %s): Core counts %d, drew %d; the line took %d (%d loads, %d counts of its part)",
+			tn.label, tn.bin, tn.part, state, count, w6Full-count, took, c.truth(tn), c.counts(tn))
+		for _, s := range c.streams(tn.bin) {
+			fmt.Fprintf(&b, "\n      generation %d: the Edge flushed net %d through seq %d; Core applied net %d through seq %d (cursor held: %t)",
+				s.epoch, s.edgeNet, s.edgeSeq, s.coreNet, s.coreSeq, s.core)
+		}
+	}
+	return b.String()
 }
 
 // record reads the production record three ways and checks it against the
