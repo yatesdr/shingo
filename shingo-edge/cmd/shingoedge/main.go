@@ -7,11 +7,13 @@
 // Startup sequence (main):
 //   flags → restore check → debug log → config → DB → engine →
 //   backup service → messaging → data sender → outbox drainer →
-//   Kafka subscribers → HTTP server → shutdown
+//   Kafka subscribers (on the kafka-connect-retry goroutine, beside
+//   what follows) → HTTP server → shutdown
 //
-// Kafka wiring lives in setupKafkaSubscribers() because it requires
-// a live connection. If Connect fails, the outbox drainer still runs
-// and will drain when connectivity returns.
+// Kafka wiring lives in setupKafkaSubscribers(), which needs the Kafka
+// writer Connect builds. Connect contacts no broker, so it fails only
+// on an empty broker list; the outbox drainer runs regardless and
+// drains when a broker answers.
 //
 // The file also contains the interactive restore flow (--restore flag)
 // and its prompt helpers at the bottom.
@@ -264,16 +266,18 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 // setupKafkaSubscribers wires protocol ingestor, heartbeater, and all handler
-// callbacks that require a live Kafka connection. Called only when Connect succeeds.
+// callbacks that need the Kafka writer. Called only when Connect succeeds, which
+// it does whenever a broker is configured (Connect contacts none).
 // plantClaimsPub hands the plant-claims publisher to the SubjectEdgeRegistered
 // handler, which lives in setupKafkaSubscribers while the publisher is built in
 // main().
 //
 // Package-level rather than a parameter because setupKafkaSubscribers already
 // takes seven. main stores it before the engine starts, ahead of the
-// subscribers (wired twice — once inline, once from the kafka-connect-retry
-// goroutine); atomic so that goroutine's read needs no other ordering, and a
-// test that builds the router alone reads nil.
+// subscribers (wired once: inline when the client is already connected, which
+// it is not at boot, else from the kafka-connect-retry goroutine); atomic so
+// that goroutine's read needs no other ordering, and a test that builds the
+// router alone reads nil.
 var plantClaimsPub atomic.Pointer[messaging.PlantClaimsPublisher]
 
 // cellCatalog is this Edge's cell catalog: the points that read a live
@@ -541,9 +545,9 @@ func main() {
 	// backup manifest are all this one value, and the previous arrangement
 	// derived it in four places at three points in the startup sequence.
 	//
-	// instanceID identifies this RUN. Drawn once, here, because
-	// setupKafkaSubscribers runs a second time on the Kafka-retry path below
-	// and a fresh value there would read to Core as a lease move.
+	// instanceID identifies this RUN. Drawn once, here, for the run: its one
+	// reader is setupKafkaSubscribers (the heartbeater), which runs once,
+	// inline or on the Kafka-retry goroutine below.
 	instanceID := config.NewInstanceID()
 	ensureIdentity(cfg, flags.configPath)
 	stationID := cfg.StationID()
@@ -792,7 +796,7 @@ func main() {
 	// THE FIRST PASS ON AN EXISTING PLANT IS IRREVERSIBLE AND NEEDS AN EXPORT
 	// FIRST. Everything else in this change deletes only rows Core already
 	// holds — but Core's cell_part_events archive starts 2026-06-08 and
-	// Springfield's counter_snapshots start 2026-04-22, so 34.8% of the rows
+	// one plant's counter_snapshots start 2026-04-22, so 34.8% of the rows
 	// on that Pi exist in exactly one place. The first purge after this
 	// deploys removes them. Take a copy before the first tick: the Edge is
 	// stopped during install-edge.sh, so a plain file copy of
@@ -803,7 +807,7 @@ func main() {
 	// only rows daily_counts already holds the total for, so no production
 	// disappears in aggregate — but the HOUR-LEVEL resolution does, and for
 	// dates before Core's 2026-06-08 archive start there is no second copy of
-	// it anywhere. Springfield's first pass takes 78 such rows, all from
+	// it anywhere. That plant's first pass takes 78 such rows, all from
 	// 2026-04-22..27. The same one file copy covers it; no separate step.
 	//
 	// Nothing here enforces that, deliberately — a switch to disable a purge
@@ -819,8 +823,8 @@ func main() {
 	//
 	// NO NEW VACUUM, AND THAT IS A DECISION. VacuumIfFragmented's 20% freelist
 	// threshold already covers both new cases. The hourly purge is far too
-	// small to move it — 78 rows, ~6 KB, measured on the restored Springfield
-	// database — so it correctly never fires on that account. Hopkinsville's
+	// small to move it — 78 rows, ~6 KB, measured on that plant's restored
+	// database — so it correctly never fires on that account. Another plant's
 	// standing 14.83 MB freelist (70.2% of a 21.13 MB file, measured 2026-07-30)
 	// is over the threshold and will be reclaimed on its first tick after this
 	// deploys, without anything new being written. Incremental vacuum was the

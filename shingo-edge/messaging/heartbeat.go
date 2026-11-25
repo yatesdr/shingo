@@ -101,8 +101,9 @@ type Heartbeater struct {
 // NewHeartbeater creates a heartbeater for the given edge identity.
 //
 // instance identifies ONE RUN of the edge process and must be generated ONCE
-// by the composition root, not here — this constructor runs again on the
-// Kafka-retry path. See config.NewInstanceID.
+// by the composition root, not here: this constructor runs inside
+// setupKafkaSubscribers, inline or on the Kafka-retry goroutine (cmd/shingoedge
+// main.go). See config.NewInstanceID.
 func NewHeartbeater(client *Client, stationID, version, instance string, ordersTopic string) *Heartbeater {
 	stopCh := make(chan struct{})
 	return &Heartbeater{
@@ -139,7 +140,8 @@ func (h *Heartbeater) SendBootBurst() {
 
 // Stop halts the heartbeat loop. Deliberately NOT called on any shutdown path:
 // the heartbeater is a process-lifetime component (main.go starts it and does
-// not defer Stop — the Kafka client close tears the goroutine down at exit).
+// not defer Stop; the loop ends only on Stop, so it runs until the process
+// exits).
 // Investigated as a possible missing-shutdown-call bug and resolved as
 // intentional, not a defect. Kept as a real method for a future graceful-
 // shutdown path that needs to stop heartbeats before process exit.
