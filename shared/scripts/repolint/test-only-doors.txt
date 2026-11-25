@@ -1,0 +1,89 @@
+# The exported store doors that nothing but tests calls, each with why it
+# stays. Read by the repolint rule test-only-doors
+# (shared/scripts/repolint/doors.go), which fails such a door this list does
+# not name, and a line here whose door is gone or has a product caller now.
+#
+# A door kept for tests drifts from the product: a test that reaches a state
+# through a door no product path uses builds a state no plant can have (docket
+# D27: Core's UpdateOrderStatus, deleted with its tests moved to the lifecycle).
+# A line marked UNAUDITED was test-only when the rule came in, and nothing past
+# that was established for it: it leaves when the door is deleted, its tests
+# moved to the seam the product uses (AGENTS.md's table), or when the door
+# gains a product caller. A new door written for a test is not added here; a
+# door kept on purpose says why, with no mark.
+#
+# door <store package dir> <DB.Method | Func> <reason>
+
+# Kept on purpose.
+door shingo-core/store/orders UpdateStatusFrom the store package's own tests reach the product's CAS statement (UpdateStatusFromWithReasonTx) through it, outside a transaction and with no outbox; production runs the Tx form through store.DB.UpdateOrderStatusFromWithReason. D27 moved the deleted id-only writer's tests here, so they pin the statement a plant runs
+
+# Test-only when the rule came in (2026-11-25), nothing more established.
+door shingo-core/store DB.AssignNodeToStation UNAUDITED: 6 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.BinQualityHold UNAUDITED: 5 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.ClaimBin UNAUDITED: 9 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.CountActiveOrdersByDeliveryNode UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.CountEmptyBinsOfTypeInGroupByTotes UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.DeleteSceneEdgesByArea UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.DeleteScenePointsByArea UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.EnsureHeartbeatPartitionsRange UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.EnsureRobotConfidencePartitionsRange UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.FailOrderAtomic UNAUDITED: 6 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.ListActiveTestCommands UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.ListNodeTypes UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.ListOrdersByOrigin UNAUDITED: 3 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.ListOrphanFindings UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.ListPayloadsForNode UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.MoveBinClearingStaging UNAUDITED: 30 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.MoveBinOffTransit UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.MoveBinToTransit UNAUDITED: 9 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.ReplacePlantClaims UNAUDITED: 11 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.RollUpRobotConfidence UNAUDITED: 31 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.SetNodeParent UNAUDITED: 17 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.UnassignNodeFromStation UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.UnassignPayloadFromNode UNAUDITED: no caller at all at the rule's start
+door shingo-core/store DB.UnconfirmBinManifest UNAUDITED: 3 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.UpsertSceneEdge UNAUDITED: 10 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.UpsertScenePoint UNAUDITED: 18 test reference(s), no product caller, at the rule's start
+door shingo-core/store DB.WipePlantClaims UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/audit List UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/bins GetManifest UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-core/store/cms GetPosting UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/demands ListRegistry UNAUDITED: 3 test reference(s), no product caller, at the rule's start
+door shingo-core/store/inventory BinDeltaCursor UNAUDITED: 6 test reference(s), no product caller, at the rule's start
+door shingo-core/store/nodes DeleteType UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/nodes GetType UNAUDITED: 3 test reference(s), no product caller, at the rule's start
+door shingo-core/store/nodes ResolveDotNameID UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/nodes UpdateType UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/orders CountInFlightByDeliveryNode UNAUDITED: 7 test reference(s), no product caller, at the rule's start
+door shingo-core/store/orders CountLiveByDeliveryNode UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-core/store/orders DwellStats UNAUDITED: 6 test reference(s), no product caller, at the rule's start
+door shingo-core/store/orders SetQueueDetail UNAUDITED: 13 test reference(s), no product caller, at the rule's start
+door shingo-core/store/orders UpdateRobotID UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/orders UpdateVendor UNAUDITED: 3 test reference(s), no product caller, at the rule's start
+door shingo-core/store/reservations AcquireLanes UNAUDITED: 56 test reference(s), no product caller, at the rule's start
+door shingo-core/store/reservations ReleaseByNode UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/reservations ReleaseOccupancy UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-core/store/schema IndexAbsent UNAUDITED: 1 test reference(s), no product caller, at the rule's start
+door shingo-core/store/sourceability AggregateTTEScores UNAUDITED: 6 test reference(s), no product caller, at the rule's start
+door shingo-core/store/sourceability ScoreTTE UNAUDITED: 9 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.BindLandingAt UNAUDITED: 8 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.ClearOrderSibling UNAUDITED: 4 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.ClearProcessNodeActiveBinAndCount UNAUDITED: 4 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.CountActiveOrders UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.CreateOrder UNAUDITED: 247 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.DeleteStyleNodeClaim UNAUDITED: 13 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.GetClaimBelowReorderSince UNAUDITED: 9 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.GetSupplyRefusal UNAUDITED: 20 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.ListUnsentOutboxByType UNAUDITED: 13 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.RestoreProcessNode UNAUDITED: no caller at all at the rule's start
+door shingo-edge/store DB.SetProcessNodeActiveBinID UNAUDITED: 72 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.SetProcessNodeCountFenced UNAUDITED: no caller at all at the rule's start
+door shingo-edge/store DB.SetProcessNodeRuntime UNAUDITED: 136 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.SetProcessNodeRuntimeWithBin UNAUDITED: 97 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.SetProcessNodeRuntimeWithBinAndEpoch UNAUDITED: 45 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.UpdateOrderDeliveryNode UNAUDITED: 2 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.UpdateOrderStepsAndFacts UNAUDITED: 6 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.UpdateOrderStepsJSON UNAUDITED: 23 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.UpdateProcessChangeoverState UNAUDITED: 10 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.UpdateProcessNodeUOP UNAUDITED: 22 test reference(s), no product caller, at the rule's start
+door shingo-edge/store DB.UpsertStyleNodeClaim UNAUDITED: 204 test reference(s), no product caller, at the rule's start

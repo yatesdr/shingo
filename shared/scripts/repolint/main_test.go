@@ -418,6 +418,52 @@ func goroutineCases() []ruleCase {
 	}
 }
 
+func doorCases() []ruleCase {
+	list := lines("# the list",
+		"door shingo-core/store DB.Kept a fixture door, and why it stays",
+		"door shingo-core/store DB.Used it had no caller", // 3: it has a product caller now
+		"door shingo-core/store DB.Gone it was deleted",
+		"door shingo-core/store DB.Kept named again",
+		"door shingo-core/store DB.NoReason",
+		"bogus")
+	facade := "package store\n\n" + lines(
+		"func (db *DB) Used() error       { return nil }",
+		"func (db *DB) TestOnly() error   { return nil }", // 4
+		"func (db *DB) Dead() error       { return nil }",
+		"func (db *DB) Kept() error       { return nil }",
+		"func (db *DB) Fixture() error    { return nil }", // 7: only a test-support package calls it
+		"func (db *DB) Shadowed() error   { return nil }", // another type's method has the name: it reads as called
+		"func (db *DB) unexported() error { return nil }",
+		"func Helper()                    {}") // the facade's own funcs are not doors
+	tr := treeOf(doorList, list,
+		"shingo-core/go.mod", "module shingocore\n",
+		"shingo-edge/go.mod", "module shingoedge\n",
+		"shingo-core/store/orders.go", facade,
+		"shingo-core/store/orders/orders.go", "package orders\n\n"+lines(
+			"func Live()      {}",
+			"func Lonely()    {}",
+			"func OnlyTests() {}", // 5
+			"func caller()    { Lonely() }"),
+		"shingo-core/store/internal/helpers/h.go", "package helpers\n\nfunc Internal() {}\n",
+		"shingo-core/messaging/m.go", "package messaging\n\nfunc (c *Client) Shadowed() {}\n",
+		"shingo-core/dispatch/d.go", "package dispatch\n\nimport (\n\t\"shingocore/store\"\n\t\"shingocore/store/orders\"\n)\n\n"+
+			"func run(db *store.DB, c *Client) { db.Used(); orders.Live(); c.Shadowed(); x.Cross() }\n",
+		"shingo-core/dispatch/d_test.go", "package dispatch\n\nimport \"shingocore/store/orders\"\n\n"+
+			"func TestX(t *testing.T) { db.TestOnly(); db.Shadowed(); orders.OnlyTests() }\n",
+		"shingo-core/internal/testdb/t.go", "package testdb\n\nfunc F(db *store.DB) { db.Fixture() }\n",
+		"integration/x/x_test.go", "package x\n\nfunc TestY(t *testing.T) { db.Kept() }\n",
+		// A Core call of the name is no caller of the Edge's door.
+		"shingo-edge/store/s.go", "package store\n\nfunc (db *DB) Cross() {}\n")
+	return []ruleCase{
+		{"test-only-doors", "unlisted test-only and dead doors fire, in both modules; listed, product-called, shadowed and internal ones pass; stale lines fire",
+			fixed(tr), []string{"shingo-core/store/orders.go:4", "shingo-core/store/orders.go:5", "shingo-core/store/orders.go:7",
+				"shingo-core/store/orders/orders.go:5", "shingo-edge/store/s.go:3",
+				doorList + ":3", doorList + ":4", doorList + ":5", doorList + ":6", doorList + ":7"}},
+		{"test-only-doors", "no list is a finding, not a pass", fixed(treeOf("shingo-core/store/orders.go", facade)),
+			[]string{doorList}},
+	}
+}
+
 // jsTree writes path, content pairs under a temp root, as node reads them from
 // disk. Without node it skips: the rule's own missing-node failure is pinned
 // by TestJSParse_MissingNodeFails.
@@ -506,7 +552,7 @@ func jsCases() []ruleCase {
 func allCases() []ruleCase {
 	var cs []ruleCase
 	for _, f := range []func() []ruleCase{busCases, commentRefCases, conflictCases, expiryCases, goroutineCases, jsCases, pathCaseCases,
-		plantCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, textFileCases} {
+		plantCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, doorCases, textFileCases} {
 		cs = append(cs, f()...)
 	}
 	return cs
