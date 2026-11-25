@@ -374,6 +374,50 @@ func busCases() []ruleCase {
 	}
 }
 
+func goroutineCases() []ruleCase {
+	list := lines("# the list",
+		"scope shingo-core/engine",
+		"scope shingo-core/dispatch",
+		"go shingo-core/engine/wiring.go:wire 2 the e-mail sends", // the tree has 3: fires at the tree
+		"AfterFunc shingo-core/engine/wiring.go:wire 1 the fault timer",
+		"go shingo-core/engine/stop.go:stopBounded 1 Stop's own waiter",
+		"go shingo-core/engine/gone.go:gone 1 it was renamed", // 7
+		"go shingo-core/engine/stop.go:stopBounded 1 named again",
+		"go shingo-core/engine/x.go:f two not a number",
+		"scope shingo-core/engine extra",
+		"go shingo-core/engine/y.go:g 1") // 11: no reason
+	wiring := "package engine\n\n" + lines(
+		"func (e *Engine) wire() {",
+		"\te.sub(func() { go func() { e.n.Send() }() })", // 4
+		"\te.sub(func() { go func() { e.n.Send() }() })",
+		"\te.sub(func() { go e.n.Send() })",
+		"\tt := time.AfterFunc(d, func() {})",
+		"}")
+	dispatch := "package eta\n\n" + lines(
+		"func (d *D) redrive() {",
+		"\tgo d.advance()", // 4: in a function the list does not name
+		"}",
+		"var t = clk.AfterFunc(d, f)") // 6: at package level
+	tr := treeOf(goroutineList, list,
+		"shingo-core/engine/wiring.go", wiring,
+		"shingo-core/engine/stop.go", "package engine\n\nfunc (e *Engine) stopBounded() { go func() { e.wait() }() }\n",
+		"shingo-core/dispatch/eta/loop.go", dispatch,
+		// Tests, testdata and directories out of scope are not read.
+		"shingo-core/engine/a_test.go", "package engine\n\nfunc TestX(t *testing.T) { go f() }\n",
+		"shingo-core/engine/testdata/b.go", "package b\n\nfunc f() { go g() }\n",
+		"shingo-core/www/c.go", "package www\n\nfunc f() { go g(); time.AfterFunc(d, h) }\n")
+	return []ruleCase{
+		{"bare-goroutines", "unlisted and over-count sites fire at the tree; gone, doubled, uncounted, unreasoned and misshapen lines fire at the list",
+			fixed(tr), []string{"shingo-core/dispatch/eta/loop.go:4", "shingo-core/dispatch/eta/loop.go:6", "shingo-core/engine/wiring.go:4",
+				goroutineList + ":7", goroutineList + ":8", goroutineList + ":9", goroutineList + ":10", goroutineList + ":11"}},
+		{"bare-goroutines", "no scope line reads nothing, and says so", fixed(treeOf(goroutineList,
+			"go shingo-core/engine/stop.go:stopBounded 1 Stop's own waiter\n", "shingo-core/engine/wiring.go", wiring)),
+			[]string{goroutineList}},
+		{"bare-goroutines", "no list is a finding, not a pass", fixed(treeOf("shingo-core/engine/wiring.go", wiring)),
+			[]string{goroutineList}},
+	}
+}
+
 // jsTree writes path, content pairs under a temp root, as node reads them from
 // disk. Without node it skips: the rule's own missing-node failure is pinned
 // by TestJSParse_MissingNodeFails.
@@ -461,7 +505,7 @@ func jsCases() []ruleCase {
 
 func allCases() []ruleCase {
 	var cs []ruleCase
-	for _, f := range []func() []ruleCase{busCases, commentRefCases, conflictCases, expiryCases, jsCases, pathCaseCases,
+	for _, f := range []func() []ruleCase{busCases, commentRefCases, conflictCases, expiryCases, goroutineCases, jsCases, pathCaseCases,
 		plantCases, serialCases, sliceCases, swapCases, syntheticCases, costCases, textFileCases} {
 		cs = append(cs, f()...)
 	}

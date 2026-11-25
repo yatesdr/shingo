@@ -11,6 +11,7 @@
 //
 // THE RULES, each in its own function with its reason beside it:
 //
+//	bare-goroutines         a goroutine in Core's engine or dispatch that Stop does not wait for is listed with its reason
 //	bus-subscriptions       every place that subscribes to an engine's event bus is listed with its reason
 //	comment-references      a file:line citation in a Go comment names a line that exists
 //	conflict-markers        no merge-conflict marker line in a tracked text file
@@ -121,6 +122,7 @@ type rule struct {
 
 // rules are run in parallel and printed in this order.
 var rules = []rule{
+	{"bare-goroutines", "Run it on the engine's tracked group (e.loops.spawn), which Stop waits for; dispatch keeps no goroutine of its own and hands the work to the engine (docket B4). If Stop must not wait for it (it waits on a mail server, say), add `go|AfterFunc <file>:<func> <count> <reason>` to shared/scripts/repolint/bare-goroutines.txt.", bareGoroutines},
 	{"bus-subscriptions", "A subscription's place is its delivery order. Subscribe inside a listed site (the engine registers its own reactions in wireEventHandlers), or add `site <file>:<func> <reason>` to shared/scripts/repolint/bus-subscriptions.txt; on Core the new site also takes its rows in coreBusSites (shingo-core/engine/subscriber_census_test.go) where it runs. Moving a subscription needs the owner's word first (AGENTS.md).", busSubscriptions},
 	{"comment-references", "Cite a SYMBOL for anything you expect to survive; line numbers drift silently.", commentReferences},
 	{"conflict-markers", "Resolve the merge: a marker line that is not Go source builds and ships silently.", conflictMarkers},

@@ -184,22 +184,18 @@ type Engine struct {
 	// loops tracks the engine's own loops and hand-offs, so Stop waits for
 	// them, up to its deadline: one still running after Stop reads a database
 	// its caller is about to close and logs through a logger whose owner may be
-	// gone (TestEngineStop_WaitsForItsGoroutines). It does not track these,
-	// and each says why:
-	//   - the SourceabilityMonitor.Run ticker: the monitor starts it. The
-	//     monitor counts each pass (begin) and its stop waits for one running
-	//     (TestSourceabilityMonitor_StopWaitsForARunningRecompute).
-	//   - the simulator's driver (SimulatorBackend.StartDriver): handed
-	//     context.Background, it lives as long as the process. Simulator only.
-	//   - the fault email's timer (faultTimers, wiring.go): it waits three
-	//     minutes, longer than Stop does. It and the other email sends can wait
-	//     on a mail server, and neither read the database nor log through the
-	//     engine.
-	// Two that were on this list are tracked since docket B4: the re-drive
-	// after a dig's last leg fails (the failure subscriber spawns it, wiring.go)
-	// and the eta cache's refresh loop (Start spawns eta.Cache.Run).
-	// Subscribers other packages register (www's EventHub, messaging's bins
-	// feed) start work of their own, which Stop does not know of.
+	// gone (TestEngineStop_WaitsForItsGoroutines). The goroutines in engine and
+	// dispatch that it does not track (the e-mail sends and the fault e-mail's
+	// timer among them) are listed, each with why, in
+	// shared/scripts/repolint/bare-goroutines.txt, and the repolint's
+	// bare-goroutines rule fails a new one until it is listed there. Outside
+	// those packages: the simulator's driver (SimulatorBackend.StartDriver) is
+	// handed context.Background and lives as long as the process (simulator
+	// only); subscribers other packages register (www's EventHub, messaging's
+	// bins feed) start work of their own, which Stop does not know of.
+	// Two that were untracked are tracked since docket B4: the re-drive after
+	// a dig's last leg fails (the failure subscriber spawns it, wiring.go) and
+	// the eta cache's refresh loop (Start spawns eta.Cache.Run).
 	loops goGroup[lockorder.EngineLoops]
 	// carriersClear is true when the last carrier-node sweep left no
 	// `_ROBOT:` node at all, so the 2 s robot tick has nothing to retire or
