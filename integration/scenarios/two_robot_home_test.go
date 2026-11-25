@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 
@@ -258,6 +259,107 @@ func labels(bs []*corebins.Bin) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// The brief's A1: the line swaps through its home on one RELEASE, with the
+// loader holding no buffer, a free buffer, and a buffer holding an empty. The
+// home holds a full, the line a part-used cart, two robots. Pinned as it runs
+// at 9c282051: in every cell the park keeps the old cart's drop on the home
+// (the full standing there is the one its sibling lifts), the one RELEASE sends
+// both legs on at once, and the line ends with the full and the home with the
+// old cart; the buffers are not touched.
+func TestScenario_TwoRobotLine_ThroughItsHome_SwapsOnOneRelease(t *testing.T) {
+	t.Parallel()
+	for _, lc := range []struct {
+		name           string
+		buffers, held  int
+		bufferHoldsBin string
+	}{
+		{"no buffer", 0, 0, ""},
+		{"a free buffer", 1, 0, ""},
+		{"its buffer holding an empty", 1, 1, "KSR-BUF-EMPTY-1"},
+	} {
+		t.Run(lc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newKsrCell(t, homeLine(lc.buffers, lc.held))
+			supply, evac := c.homeLineStaged("the request")
+			defer func() { c.coreRoute("at the end", c.rows()...) }()
+
+			start := time.Now()
+			ev := func(what string) {
+				t.Logf("+%s %s | %s holds %v, %s holds %v", time.Since(start).Round(time.Millisecond), what, ksrHomeA,
+					labels(c.binsAt(ksrHomeA)), ksrLine, labels(c.binsAt(ksrLine)))
+			}
+			ev("both robots at their waits")
+			mustNil(t, c.edge.Engine.ReleaseStagedOrders(c.nodeID, edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}),
+				"RELEASE")
+			c.settle()
+			c.eventually("the one RELEASE sends both legs on", func() bool {
+				_, s := c.fleetBlocks(supply)
+				_, e := c.fleetBlocks(evac)
+				return s && e
+			})
+			for _, l := range []struct {
+				name string
+				o    domain.Order
+			}{{"supply", supply}, {"evac", evac}} {
+				blocks, complete := c.fleetBlocks(l.o)
+				t.Logf("after RELEASE the %s's vendor order holds %v (complete=%v); Edge row %s, Core %s", l.name, blocks,
+					complete, c.edgeRow(l.o.ID).Status, c.coreOf(l.o).Status)
+			}
+			ev("RELEASE: both legs sent on")
+
+			if !c.pickupAt(c.coreOf(supply), ksrHomeA) {
+				t.Fatalf("the supply holds no pickup at %s", ksrHomeA)
+			}
+			ev("the supply lifts the full at the home")
+			if !c.pickupAt(c.coreOf(evac), ksrLine) {
+				t.Fatalf("the evac holds no pickup at %s", ksrLine)
+			}
+			bare := time.Now()
+			ev("the evac lifts the old cart off the line: the line bare")
+			c.drive(c.coreOf(evac), "RUNNING", "FINISHED")
+			ev("the evac sets the old cart down on the home")
+			c.drive(c.coreOf(supply), "RUNNING", "FINISHED")
+			ev("the supply sets the full down on the line")
+			t.Logf("the line stood bare for %s of harness time (no travel time here): from the evac's lift to the "+
+				"supply's set-down", time.Since(bare).Round(time.Millisecond))
+			c.driveUntil("both legs confirmed", func() bool {
+				done := true
+				for _, l := range []domain.Order{supply, evac} {
+					if c.edgeRow(l.ID).Status == protocol.StatusDelivered {
+						mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(l.ID, 1), "confirm")
+					}
+					if !protocol.IsTerminal(c.edgeRow(l.ID).Status) || !protocol.IsTerminal(c.coreOf(l).Status) {
+						done = false
+					}
+				}
+				return done
+			})
+			for _, l := range []domain.Order{supply, evac} {
+				if s := c.coreOf(l).Status; s != protocol.StatusConfirmed {
+					t.Errorf("leg %d ended %s at Core, want confirmed", l.ID, s)
+				}
+			}
+			c.lineHolds("after the swap", "KSR-HOME-A-FULL")
+			if got := labels(c.binsAt(ksrHomeA)); !slices.Equal(got, []string{"KSR-LINE-BIN"}) {
+				t.Errorf("after the swap the home holds %v, want the old cart alone", got)
+			}
+			for _, b := range c.binsAt(ksrHomeA) {
+				t.Logf("the loader operator's home %s holds %s: part %q, %d of %d left, status %s", ksrHomeA, b.Label,
+					b.PayloadCode, b.UOPRemaining, b.UOPCapacity, b.Status)
+			}
+			if lc.buffers > 0 {
+				want := []string{}
+				if lc.bufferHoldsBin != "" {
+					want = []string{lc.bufferHoldsBin}
+				}
+				if got := labels(c.binsAt("KSR-BUF-1")); !slices.Equal(got, want) {
+					t.Errorf("after the swap the buffer holds %v, want %v", got, want)
+				}
+			}
+		})
+	}
 }
 
 // loseRelease takes the order's release off the Edge's outbox before it is
