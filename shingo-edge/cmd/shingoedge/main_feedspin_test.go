@@ -51,6 +51,54 @@ func subjectClosures(t *testing.T) map[string]*ast.BlockStmt {
 	return out
 }
 
+// mainFunc parses main.go and returns the body of its top-level function name.
+func mainFunc(t *testing.T, name string) *ast.BlockStmt {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == name {
+			return fn.Body
+		}
+	}
+	t.Fatalf("main.go has no function %s: this pin lost its input; name the function that replaced it", name)
+	return nil
+}
+
+// TestBootWiring_TheHooksAWebHandlerCallsAreSetBeforeTheBurst: in
+// setupKafkaSubscribers, the three hooks a web handler calls through (the
+// Messaging save's reconnect, the two Sync buttons) are set before
+// hb.Start(). Start sends the boot burst on the caller, five messages at three
+// tries each: with the broker down, 70 s and more in which the Sync buttons,
+// set after it, answered ok and asked nothing (docket D31, ruling R53: the
+// two lines move up inside this function; nothing else in main's order).
+func TestBootWiring_TheHooksAWebHandlerCallsAreSetBeforeTheBurst(t *testing.T) {
+	t.Parallel()
+	steps := topLevelCalls(mainFunc(t, "setupKafkaSubscribers"))
+	at := map[string]int{}
+	for i, s := range steps {
+		if _, seen := at[s]; !seen {
+			at[s] = i
+		}
+	}
+	start, ok := at["hb.Start"]
+	if !ok {
+		t.Fatalf("setupKafkaSubscribers no longer calls hb.Start: steps %v", steps)
+	}
+	for _, hook := range []string{"eng.SetKafkaReconnectFunc", "eng.SetNodeSyncFunc", "eng.SetCatalogSyncFunc"} {
+		i, ok := at[hook]
+		switch {
+		case !ok:
+			t.Errorf("setupKafkaSubscribers no longer calls %s: steps %v", hook, steps)
+		case i > start:
+			t.Errorf("%s is step %d of setupKafkaSubscribers, after hb.Start (step %d): move it above hb.Start, "+
+				"or its web handler finds it unset for the whole boot burst", hook, i, start)
+		}
+	}
+}
+
 // topLevelCalls is the callee of every expression statement directly in the
 // block, in order — the closure's own steps, not its arguments' calls.
 func topLevelCalls(body *ast.BlockStmt) []string {
