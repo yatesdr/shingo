@@ -1040,12 +1040,15 @@ function firstValue(state, n, p) {
     return (p.key === 'parkOld' ? choices[1] || choices[0] : choices[0]) || '';
 }
 
+// firstHolds is what pick p runs with at n: the draft's, or as it would.
+function firstHolds(n, p) {
+    const cell = S.model.cells[n];
+    return (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
+}
+
 // firstWaitsAt is stagingWaitsAt for First style's position n.
 function firstWaitsAt(n) {
-    const cell = S.model.cells[n];
-    const src = FIRST_PICKS.find(p => p.key === 'source');
-    const source = (cell && cell.on ? cell.source : firstValue(S.model, n, src)) || '';
-    return stagingWaitsAt({ mode: firstEff(n).mode, source: source }, n);
+    return stagingWaitsAt({ mode: firstEff(n).mode, source: firstHolds(n, FIRST_PICKS[1]) }, n);
 }
 
 // buildFirstStyle is the step's draft as the composer's own actions on the
@@ -1157,11 +1160,8 @@ function firstPositionHTML(n, rows) {
     const picks = FIRST_PICKS.map(p => [p, firstUse(S.model, e.role, e.mode, p)])
         .filter(x => x[1] && (x[0].box !== 'staging' || x[1] === 'required')).map(x => {
         const p = x[0];
-        // What the position runs with, in the draft or (a position with no
-        // part yet, not in the draft) as it would. No colour on the box: the
-        // bar says what is missing.
-        const cell = S.model.cells[n];
-        const value = (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
+        // No colour on the box: the bar says what is missing.
+        const value = firstHolds(n, p);
         const shown = (p.key === 'staging' && value && value === firstWaitsAt(n) ? NO_STAGING : value) ||
             (x[1] === 'required' ? (firstChoices(p, n).length ? 'pick one'
             : p.box === 'partner' ? 'no other position on this line' : 'none in the ' + boxWord(p.box) + ' box') : p.box === 'partner' ? M().NO_PARTNER : 'none');
@@ -1342,7 +1342,7 @@ function openFirstPick(btn) {
     const p = FIRST_PICKS.find(x => x.key === btn.dataset.pick);
     const n = d && d.cur;
     if (!pop || !d || !p || !n || !S.model) return;
-    const at = p.key === 'staging' ? firstWaitsAt(n) : '';
+    const at = p.key === 'staging' || p.key === 'source' ? firstWaitsAt(n) : '';
     if (at && !S.coreNodes && !btn.dataset.nodesAsked) {
         btn.dataset.nodesAsked = '1';
         void loadCoreNodes().then(() => openFirstPick(btn));
@@ -1350,11 +1350,14 @@ function openFirstPick(btn) {
     }
     const e = firstEff(n);
     const use = firstUse(S.model, e.role, e.mode, p);
-    const wait = at && (firstValue(S.model, n, p) === at || oneNode(at)) ? at : '';
+    const wait = p.key === 'staging' && at && (firstValue(S.model, n, p) === at || oneNode(at)) ? at : '';
+    // NO_STAGING follows the source, as in apply().
+    const follows = p.key === 'source' && at && firstHolds(n, FIRST_PICKS[2]) === at;
     const rows = (use === 'used' ? [{ value: '-', label: p.box === 'partner' ? M().NO_PARTNER : 'none' }] : [])
         .concat(wait ? [{ value: wait, label: NO_STAGING, note: wait }] : [],
             firstChoices(p, n).filter(x => x !== wait).map(x => ({ value: x, label: x })));
     openRowPicker(pop, btn, rows, v => {
+        if (follows && v !== at) d.own[n].picks.staging = oneNode(v) ? v : '';
         d.own[n].picks[p.key] = v === '-' ? '' : v;
         // Its own pick: a copy pairing wrote is n's own now (firstRows).
         if (p.box === 'partner') { delete d.paired[n]; firstPartnered(n, v === '-' ? '' : v); }
@@ -2211,7 +2214,7 @@ function bindRailSearch() {
 
 // The model's own cell shape, in the shape renderFlowPicture draws — the same
 // adapter the station uses, from the same place, over the folded cell.
-function cellFromModel() { return M().pictureCells(S.model, foldedCell(draftCell(), S.model)); }
+function cellFromModel() { return M().pictureCells(pictureModel(S.model), foldedCell(draftCell(), S.model)); }
 
 // foldedCell is the cell the picture draws. FREE POSITIONS FOLD (owner,
 // 2026-11-14, as the Stop 1 render drew it): the positions the style uses
@@ -2281,14 +2284,17 @@ function stationCellOf(heads) {
 // deskSentences is the picture's card words on the desktop (F27, R3): a pair's
 // card says its field's name over "for <row>", as the staging cards and the
 // table's heading do, where the model's words, the HMI's, say "on deck for"
-// on a press index and "paired with" on a sequential.
-function deskSentences(sentences) {
+// on a press index and "paired with" on a sequential. A NO_STAGING row's card
+// says "waits at" (brief H H2).
+function deskSentences(model, relation) {
+    const sentences = sentencesFromModel(model, relation);
     if (!sentences || !sentences.cardLines) return sentences;
     const word = M().fieldLabel(S.model || { flowspec: window.FLOWSPEC || null }, 'paired_core_node');
     for (const n of Object.keys(sentences.cardLines)) {
         const lines = sentences.cardLines[n] || [];
         const m = lines.length === 1 && /^(?:on deck for|paired with) (.+)$/.exec(lines[0]);
         if (m) sentences.cardLines[n] = [word, 'for ' + m[1]];
+        else if (lines.length && waitsAtSource(model, n)) lines[0] = lines[0].replace('stages at', 'waits at');
     }
     return sentences;
 }
@@ -2333,7 +2339,7 @@ function drawPicture(pass) {
     const o = Object.assign({
         selected: S.selected, findings: byNode, editable: true, frame: { w: w },
     }, pictureOpts(), gp ? gp.opts : {});
-    o.sentences = gp ? gp.sentences : deskSentences(sentencesFromModel(S.model, !!relationPlacement(cell, o)));
+    o.sentences = gp ? gp.sentences : deskSentences(S.model, !!relationPlacement(cell, o));
     const markup = renderFlowPicture({ cell: cell, station: { name: p ? p.name : '' } }, o);
     const h = Math.round(o.height || PICTURE_H);
     // A RELATION GRID WIDER THAN THE COLUMN IS DRAWN WIDER, never shrunk: the
@@ -2825,13 +2831,13 @@ function groupPicture() {
         });
     });
     for (const v of Object.keys(feeds)) if (!lines[v]) lines[v] = ['feeds ' + feeds[v].join(' · ')];
-    const cell = M().pictureCells(m, foldedCell(draftCell(), m));
+    const cell = M().pictureCells(pictureModel(m), foldedCell(draftCell(), m));
     const here = new Set((cell.positions || []).map(p => p.core_node_name));
     for (const r of S.composer.presets || []) {
         if (d.recipe && String(r.id) === String(d.recipe.id)) continue;
         for (const n of Object.keys(r.cells || {})) if (here.has(n) && !lines[n]) lines[n] = ['in ' + r.name];
     }
-    const sentences = deskSentences(sentencesFromModel(m, !!relationPlacement(cell, pictureOpts())));
+    const sentences = deskSentences(m, !!relationPlacement(cell, pictureOpts()));
     if (sentences) sentences.cardLines = Object.assign({}, sentences.cardLines, lines);
     return { model: m, cell: cell, sentences: sentences, opts: { active: active, tags: tags, chevrons: chevrons } };
 }
@@ -4001,15 +4007,30 @@ function pairInTable(m, node) {
 // NO STAGING IS THE SOURCE NAMED AGAIN (brief G C2): a 2‑Robot Swap stores its
 // source as its inbound staging, and the Edge builds its supply as wait, pick
 // up and set down there (engine stageSteps' same-node arm). Nothing new is
-// stored. It does not follow a source changed later: the staging keeps the
-// old node, and the row reads that node. Pinned in table-bugs.txt, cold-start.txt.
+// stored. It follows a changed source, cleared where that is no one node
+// (apply, openFirstPick: brief H H2); the picture says "waits at", with no
+// staging card (deskSentences, pictureModel). Pinned in table-bugs.txt,
+// cold-start.txt.
 const NO_STAGING = 'No staging (waits at the source)';
 
 // stagingWaitsAt is a 2‑Robot Swap row's source, '' for another mode or a row
 // with a keep-staged spot (its carrier is lifted there: no wait at the source).
-function stagingWaitsAt(c, node) {
+function stagingWaitsAt(c, node, m) {
     if (!c || c.mode !== 'two_robot' || !c.source) return '';
-    return M().advancedFor(S.model, node).keep_staged_node ? '' : c.source;
+    return M().advancedFor(m || S.model, node).keep_staged_node ? '' : c.source;
+}
+
+// waitsAtSource: m's row n is a NO_STAGING row.
+function waitsAtSource(m, n) {
+    const c = m.cells[n];
+    return !!c && c.on && !!c.staging && c.staging === stagingWaitsAt(c, n, m);
+}
+
+// pictureModel: m with no staging on a NO_STAGING row, which stops nowhere.
+function pictureModel(m) {
+    const cells = Object.assign({}, m.cells);
+    for (const n of Object.keys(cells)) if (waitsAtSource(m, n)) cells[n] = Object.assign({}, cells[n], { staging: '' });
+    return Object.assign({}, m, { cells: cells });
 }
 
 // oneNode: Core's node list holds name, not as a group or a lane (isPickGroup's
@@ -4063,16 +4084,10 @@ function optionsFor(node, kind) {
             // keys used to share one list — the back positions plus every
             // other position of this process — and for `paired` and
             // `secondPaired` that is right: a press pairs with its own slots.
-            //
-            // For `staging` and `parkOld` it was wrong, and wrong in the way
-            // this page exists to prevent: the station's composer (since torn
-            // out, 681a912c) offered these two the routing set's staging rows
-            // plus the backs, so one field had two answers depending on which
-            // screen you asked. At Hopkinsville the 4x2's five positions are
-            // all `front`, so `backs` is empty and the desktop offered the
-            // other four ALNs as places to park a bin — none of which is a
-            // staging node, while the seven real ones sat switched off in the
-            // routing set where the station was correctly reporting them.
+            // For `staging` and `parkOld` it offered a line's other positions,
+            // none a staging node, where the station's composer (since torn
+            // out, 681a912c) offered the routing set's staging rows plus the
+            // backs: one field, two answers by screen.
             //
             // The back positions stay in the list because a press that parks
             // on its own back slot has staging without a routing row — the
@@ -4275,8 +4290,8 @@ function openPicker(btn) {
     }
     if (kind === 'part') { void openPartPop(btn, node); return; }
     if (kind === 'reorder') { openReorderPop(btn, node); return; }
-    // NO_STAGING asks Core's node list (oneNode): read it once first.
-    if (kind === 'col:staging:staging' && !S.coreNodes && !btn.dataset.nodesAsked &&
+    // NO_STAGING and the source it follows ask Core's node list once.
+    if ((kind === 'col:staging:staging' || kind === 'source') && !S.coreNodes && !btn.dataset.nodesAsked &&
         stagingWaitsAt(S.model.cells[node], node)) {
         btn.dataset.nodesAsked = '1';
         void loadCoreNodes().then(() => openPicker(btn));
@@ -4622,7 +4637,11 @@ const PAIRING_ACTS = new Set(['setPartner', 'setMode', 'addPosition', 'removePos
 function apply(action) {
     for (const a of (Array.isArray(action) ? action : [action])) {
         const before = S.model;
+        // A NO_STAGING row waits at its new source, or (no one node) none.
+        const c = a.type === 'setSource' && before.cells[a.node];
+        const waits = c && c.source !== a.source && waitsAtSource(before, a.node);
         S.model = M().reduce(S.model, a);
+        if (waits) S.model = M().reduce(S.model, { type: 'setStaging', node: a.node, staging: oneNode(a.source) ? a.source : '' });
         if (a.type === 'setMode') sayDropped(a.node, before, S.model);
         if (PAIRING_ACTS.has(a.type)) S.model = pairInTable(S.model, a.node);
         // A row moved to another position is paired under its new node: its
@@ -8801,12 +8820,12 @@ function recipePicture(card, moves, o) {
         const tag = { letter: (String(g.name || '').trim()[0] || '?').toUpperCase(), group: (i % 2) + 1 };
         for (const s of card.spots || []) if (s.group === g.name && s.job === 'spot') tags[at(s)] = tag;
     });
-    const cell = M().pictureCells(model, stationCellOf(heads));
+    const cell = M().pictureCells(pictureModel(model), stationCellOf(heads));
     const opts = {
         relation: true, frame: { w: o.w || SHEET_PIC_W }, editable: !!o.editable, pairs: pairs, tags: tags,
         active: [...new Set(placed.concat(o.lit || []))],
     };
-    opts.sentences = deskSentences(sentencesFromModel(model, !!relationPlacement(cell, opts)));
+    opts.sentences = deskSentences(model, !!relationPlacement(cell, opts));
     if (o.selected) {
         opts.selected = moves[o.selected] || o.selected;
         opts.selectCard = true;

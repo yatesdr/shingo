@@ -74,11 +74,11 @@ ok   picked: POS_A3 stores inbound staging "SRC_1"
 ok   the pick reads back as the choice
 ok   the row reads "InboundNo staging", all of the choice and its node in the title
 ok   SRC_1 is not offered twice
-BUG  the picture's POS_A3 card reads "Robot 1 waits at SRC_1": Robot 1 stages at SRC_1
-BUG  and no Inbound staging card is drawn for SRC_1: SRC_1 is drawn as a staging card
+ok   the picture's POS_A3 card reads "Robot 1 waits at SRC_1"
+ok   and no Inbound staging card is drawn for SRC_1
 ok   POS_A4's card, staging at STG_2, still reads "Robot 1 stages at STG_2"
-BUG  the source moved to SRC_2, one node: the staging follows, "SRC_1", the row reads "InboundSRC_1": it is left at the old node
-BUG  the source moved to GRP_A, a group: the staging is cleared, "SRC_1", the row reads "InboundSRC_1": a group is no place to wait
+ok   the source moved to SRC_2, one node: the staging follows, "SRC_2", the row reads "InboundNo staging"
+ok   the source moved to GRP_A, a group: the staging is cleared, "", the row reads "Inbound —"
 ok   POS_A4's staging, picked as STG_2, stays when its source moves to SRC_1: "STG_2", the row reads "InboundSTG_2"
 ok   with a keep-staged spot, POS_A3's staging at SRC_1 stays when its source moves to GRP_A: "SRC_1", the row reads "InboundSRC_1"
 
