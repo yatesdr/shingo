@@ -627,3 +627,172 @@ func TestScenario_TwoRobotLine_ThroughItsHome_OneRobotFree(t *testing.T) {
 		})
 	}
 }
+
+// The brief's A4: the part change on the two-robot line through its homes. A's
+// home and B's home stand on one loader; the changeover's pair (the supply
+// fetching B's full from B's home, the evac taking the line's old cart to A's
+// home) runs through them with A's home bare, holding A's spare with a free
+// buffer, and holding it with no buffer; the old cart empty (RELEASE EMPTY) and
+// part-used.
+//
+// Pinned as it runs at 9c282051. The park places the evac's drop before the
+// release, when the old cart still carries A whatever the release will say, so
+// an empty and a part-used cart go alike: A's home when it is bare; the free
+// buffer when A's spare stands on it; with no buffer both legs wait at Core,
+// loader-park-no-slot, nothing lifted, until A's home empties by another door
+// (here a person moves the spare off it), and the pair then runs to A's home.
+// B's home, which the supply empties, is never offered: it is pinned to B and
+// the cart reads A (loader_place.go homeAcceptsCarrier).
+func TestScenario_TwoRobotLine_ThroughItsHome_PartChange(t *testing.T) {
+	t.Parallel()
+	for _, hc := range []struct {
+		name     string
+		bare     bool
+		buffers  int
+		waits    bool
+		drop     string // the evac's drop as Core sends it
+		spareEnd string // where A's spare ends, "" for none
+	}{
+		{"the old part's home bare", true, 0, false, ksrHomeA, ""},
+		{"the old part's home holding its spare, a free buffer", false, 1, false, "KSR-BUF-1", ksrHomeA},
+		{"the old part's home holding its spare, no buffer", false, 0, true, ksrHomeA, ksrOutStg},
+	} {
+		for _, cart := range []struct {
+			name    string
+			empty   bool
+			payload string
+		}{{"an empty old cart", true, ""}, {"a part-used old cart", false, ksrPartA}} {
+			t.Run(hc.name+", "+cart.name, func(t *testing.T) {
+				t.Parallel()
+				o := homeLine(hc.buffers, 0)
+				o.bareHomeA = hc.bare
+				c := newKsrCell(t, o)
+				mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+				c.settle()
+				before := c.lastID()
+				if _, err := c.edge.Engine.StartProcessChangeover(c.processID, c.styleB, "ksr", ""); err != nil {
+					c.dump("START")
+					t.Fatalf("START refused: %v", err)
+				}
+				c.tick()
+				defer func() { c.coreRoute("at the end", c.rows()...) }()
+				var legs []domain.Order
+				for _, o := range c.newRows(before) {
+					if o.OrderType == protocol.OrderTypeComplex && o.ProcessNodeID != nil && *o.ProcessNodeID == c.nodeID {
+						legs = append(legs, o)
+					}
+				}
+				if len(legs) != 2 {
+					c.dump("START")
+					t.Fatalf("the changeover made %d legs at the line, want the two-robot pair", len(legs))
+				}
+				supply, evac := legs[0], legs[1]
+				if evac.DeliveryNode == ksrLine {
+					supply, evac = evac, supply
+				}
+				for i := 0; i < 3; i++ {
+					c.tick()
+				}
+				c.coreRoute("after START", supply, evac)
+				wantSupply := []string{"wait(" + ksrHomeB + ")", "pickup(" + ksrHomeB + ")", "dropoff(" + ksrLine + ")"}
+				if got := c.coreStops(c.coreOf(supply)); !slices.Equal(got, wantSupply) {
+					t.Errorf("Core stores the changeover's supply as %v, want %v", got, wantSupply)
+				}
+				if hc.waits {
+					c.partChangeWaits(supply, evac)
+				}
+				c.eventually("the pair with the fleet", func() bool {
+					return c.coreOf(supply).VendorOrderID != "" && c.coreOf(evac).VendorOrderID != ""
+				})
+				wantEvac := []string{"wait(" + ksrLine + ")", "pickup(" + ksrLine + ")", "dropoff(" + hc.drop + ")"}
+				if got := c.coreStops(c.coreOf(evac)); !slices.Equal(got, wantEvac) {
+					t.Errorf("Core sends the changeover's evac as %v, want %v", got, wantEvac)
+				}
+				c.drive(c.coreOf(supply), "RUNNING", "WAITING")
+				c.drive(c.coreOf(evac), "RUNNING", "WAITING")
+				c.eventually("both legs staged at the Edge", func() bool {
+					return c.edgeRow(supply.ID).Status == protocol.StatusStaged && c.edgeRow(evac.ID).Status == protocol.StatusStaged
+				})
+				disp := edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}
+				if cart.empty {
+					disp.Mode = edgeengine.DispositionCaptureLineside
+				}
+				if _, err := c.edge.Engine.ReleaseChangeoverWaitForNode(c.processID, c.nodeID, disp); err != nil {
+					c.dump("release")
+					t.Fatalf("the release at the line was refused: %v", err)
+				}
+				c.settle()
+				c.eventually("the one release sends both legs on", func() bool {
+					_, s := c.fleetBlocks(supply)
+					_, e := c.fleetBlocks(evac)
+					return s && e
+				})
+				if !c.pickupAt(c.coreOf(supply), ksrHomeB) || !c.pickupAt(c.coreOf(evac), ksrLine) {
+					t.Fatal("the pair holds no lift at B's home and the line")
+				}
+				c.drive(c.coreOf(evac), "RUNNING", "FINISHED")
+				c.drive(c.coreOf(supply), "RUNNING", "FINISHED")
+				c.eventually("both legs done", func() bool {
+					return protocol.IsTerminal(c.coreOf(supply).Status) && protocol.IsTerminal(c.coreOf(evac).Status)
+				})
+				t.Logf("end: line %v; A's home %v; B's home %v; buffer %v", labels(c.binsAt(ksrLine)),
+					labels(c.binsAt(ksrHomeA)), labels(c.binsAt(ksrHomeB)), labels(c.binsAt("KSR-BUF-1")))
+				c.lineHolds("after the part change", "KSR-HOME-B-FULL")
+				if at := c.binAt("KSR-LINE-BIN"); at != hc.drop {
+					t.Errorf("the old cart is at %q after the part change, want %s", at, hc.drop)
+				}
+				if at := c.binAt("KSR-HOME-A-FULL"); at != hc.spareEnd {
+					t.Errorf("A's spare is at %q after the part change, want %q", at, hc.spareEnd)
+				}
+				if got := labels(c.binsAt(ksrHomeB)); len(got) != 0 {
+					t.Errorf("B's home holds %v after the part change, want it bare", got)
+				}
+				for _, b := range c.binsAt(hc.drop) {
+					if b.Label == "KSR-LINE-BIN" {
+						t.Logf("the old cart on %s reads part %q, %d left", hc.drop, b.PayloadCode, b.UOPRemaining)
+						if b.PayloadCode != cart.payload {
+							t.Errorf("the old cart reads part %q, want %q", b.PayloadCode, cart.payload)
+						}
+					}
+				}
+				for _, l := range []domain.Order{supply, evac} {
+					if s := c.coreOf(l).Status; s != protocol.StatusConfirmed {
+						t.Errorf("leg %d ended %s at Core, want confirmed", l.ID, s)
+					}
+				}
+			})
+		}
+	}
+}
+
+// partChangeWaits is the part change with no spot for the old cart: both legs
+// wait at Core on the loader, saying which spot frees them, and nothing is
+// lifted; then a person moves A's spare off its home on Core's bins page.
+func (c *ksrCell) partChangeWaits(supply, evac domain.Order) {
+	c.t.Helper()
+	want := "Waiting for a slot at " + ksrHomeA + " — empty one of " + ksrHomeA + " and it goes"
+	for _, l := range []struct {
+		name string
+		o    domain.Order
+	}{{"supply", supply}, {"evac", evac}} {
+		c.t.Logf("after START: %s", c.legRow(l.name, l.o))
+		co, e := c.coreOf(l.o), c.edgeRow(l.o.ID)
+		if co.Status != protocol.StatusQueued || co.QueueCause != "loader-park-no-slot" || co.QueueReason != want ||
+			co.VendorOrderID != "" || e.Status != protocol.StatusQueued || e.QueueCode != "waiting_for_slot" ||
+			e.QueueReason != want {
+			c.t.Errorf("with no spot for the old cart the %s reads %s, want queued loader-park-no-slot %q at both",
+				l.name, c.legRow(l.name, l.o), want)
+		}
+	}
+	if c.binAt("KSR-LINE-BIN") != ksrLine || c.binAt("KSR-HOME-A-FULL") != ksrHomeA || c.binAt("KSR-HOME-B-FULL") != ksrHomeB {
+		c.t.Errorf("while the pair waits a cart moved: old cart %q, A's spare %q, B's full %q",
+			c.binAt("KSR-LINE-BIN"), c.binAt("KSR-HOME-A-FULL"), c.binAt("KSR-HOME-B-FULL"))
+	}
+	spare := c.binsAt(ksrHomeA)
+	if len(spare) != 1 {
+		c.t.Fatalf("A's home holds %v, want the spare alone", labels(spare))
+	}
+	out, err := c.core.eng.DB().GetNodeByDotName(ksrOutStg)
+	mustNil(c.t, err, "where the spare goes")
+	c.moveByHand(spare[0], out.ID, "move A's spare off its home")
+}
