@@ -20,6 +20,11 @@ func (db *DB) RecordInboundMessage(msgID, msgType string) (bool, error) {
 	return messaging.RecordInboundMessage(db.DB, msgID, msgType)
 }
 
+// InboundSeen reports whether an inbound envelope ID has its inbox row.
+func (db *DB) InboundSeen(msgID string) (bool, error) {
+	return messaging.InboundSeen(db.DB, msgID)
+}
+
 // PurgeOldInbox deletes processed-message records older than the given
 // duration, closing the retention gap against outbox's PurgeOldOutbox.
 func (db *DB) PurgeOldInbox(olderThan time.Duration) (int64, error) {

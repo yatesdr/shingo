@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 	"sync"
 	"testing"
@@ -270,36 +269,32 @@ func (noopEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID,
 func (noopEmitter) EmitBinHeld(int64)                                                            {}
 
 // TestCoreHandler_AnOrderCutInHalfIsCreatedOnceAfterRedelivery (docket B11).
-// Core writes an inbound message's inbox row, then runs its handler, then
-// commits its offset (middleware.NewInboxDedup, Client.readLoop). A message cut
-// after the inbox row and before the handler's work is delivered again, because
-// its offset never moved, and the dedup drops the redelivery as a duplicate: the
-// order the station sent never exists at Core. Each case cuts a first Core
-// there, then hands a second Core (the restart) what the first did not commit.
+// Core reads an inbound message's inbox row, runs its handler, writes the row,
+// then commits its offset (middleware.NewInboxDedup, Client.readLoop). A message
+// cut inside the handler is delivered again, because its offset never moved.
+// Until 2026-11-25 the row was written before the handler and the dedup dropped
+// that redelivery as a duplicate: the order the station sent never existed at
+// Core. Each case cuts a first Core there, then hands a second Core (the
+// restart) what the first did not commit.
 //
 //   - A stop with the message in hand. main stopped the engine, then closed the
 //     consumer, whose Close waited for no handler, then closed the database
 //     under the handler.
-//   - A crash between the inbox row and the order's INSERT. No order of the inbox
-//     row, the handler and the offset closes it: one of the two cuts either side
-//     of the handler's work loses or repeats. Skipped unless SHINGO_KNOWN_RED=1
-//     (the lane's NOTES.md, B11's design note, says what would close it).
+//   - A crash before the order's INSERT. The cut run leaves no inbox row, so the
+//     redelivery is handled. A crash after the INSERT is the order request's own
+//     repeat (dispatch's TestRunTwice_OrderRequest).
 func TestCoreHandler_AnOrderCutInHalfIsCreatedOnceAfterRedelivery(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name     string
-		knownRed bool
+		name string
 		// cut runs the message through the first Core and cuts it there, and
 		// reports whether the first Core committed the message's offset.
 		cut func(t *testing.T, first *store.DB, deliver func(on *store.DB, work func())) bool
 	}{
 		{name: "a stop with the message in hand", cut: cutByAStop},
-		{name: "a crash between the inbox row and the order", knownRed: true, cut: cutByACrash},
+		{name: "a crash before the order's INSERT", cut: cutByACrash},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.knownRed && os.Getenv("SHINGO_KNOWN_RED") == "" {
-				t.Skip("docket B11 red pin, red until the inbox row and the handler's work commit together; run with SHINGO_KNOWN_RED=1")
-			}
 			t.Parallel()
 			db, cfg := testdb.OpenWithConfig(t)
 			dest := &nodes.Node{Name: "LINE-CUT", Enabled: true}
@@ -389,9 +384,9 @@ func cutByAStop(t *testing.T, first *store.DB, deliver func(on *store.DB, work f
 	return part.committed() > 0
 }
 
-// cutByACrash ends the first Core inside the handler, after the inbox row and
-// before the order's INSERT: the goroutine ends there, as the process would, and
-// nothing is committed.
+// cutByACrash ends the first Core inside the handler, before the order's
+// INSERT: the goroutine ends there, as the process would, and nothing is
+// committed.
 func cutByACrash(t *testing.T, first *store.DB, deliver func(on *store.DB, work func())) bool {
 	done := make(chan struct{})
 	go func() {

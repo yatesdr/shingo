@@ -136,10 +136,12 @@ func (h *CoreHandler) Stop() {
 
 // Order message handlers delegate to the dispatcher. Inbox
 // deduplication is performed by the inbox-dedup router middleware
-// (NewInboxDedup in messaging/middleware/dedup.go) scoped to the 8
+// (NewInboxDedup in messaging/middleware/dedup.go) scoped to the 7
 // order-channel envelope types via UseFor in the composition root —
 // these methods assume the envelope has already cleared the dedup
-// guard.
+// guard. The guard writes its row after the handler, so a run cut short
+// reaches the handler again: each should be safe to run twice
+// (dispatch/run_twice_docker_test.go).
 
 func (h *CoreHandler) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	log.Printf("core_handler: order request from %s: uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)

@@ -196,6 +196,16 @@ func RecordInboundMessage(db *sql.DB, msgID, msgType string) (bool, error) {
 	return n == 1, nil
 }
 
+// InboundSeen reports whether an inbound envelope ID has its inbox row: one
+// read by primary key. The order channel's dedup asks it before the handler
+// and writes the row after (middleware.NewInboxDedup), so a row there means the
+// message was handled to the end.
+func InboundSeen(db *sql.DB, msgID string) (bool, error) {
+	var seen bool
+	err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM inbox WHERE msg_id = $1)`, msgID).Scan(&seen)
+	return seen, err
+}
+
 // InboxRetentionPeriod is how long processed inbound message IDs are kept.
 //
 // Ninety days, matching the heartbeat window, and generous by

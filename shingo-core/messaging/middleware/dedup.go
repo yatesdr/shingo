@@ -14,16 +14,25 @@ import (
 )
 
 // NewInboxDedup returns a router.Middleware that gates dispatch on the
-// inbox_messages table. Replicates the pre-router InboxDedup decorator's
-// shouldProcess contract exactly:
+// inbox table. A row means the message was handled to the end: it is
+// written after the handler returns (docket B11). A run cut short by a
+// crash or a kill leaves no row, so the redelivery Kafka makes of a
+// message whose offset never moved is handled again, and each gated
+// handler is safe to run again (dispatch/run_twice_docker_test.go). Until
+// 2026-11-25 the row was written before the handler and a cut run's
+// redelivery was dropped: the message was lost.
 //
 //   - nil envelope or empty ID: forward (no inbox row to write).
-//   - RecordInboundMessage error: drop and log. The alternative
-//     (forward on error) would risk double-execution if the inbox write
-//     later succeeds on retry.
-//   - already-seen (insert returned not-inserted): drop silently;
-//     dbg-log the replay if a logger was provided.
-//   - newly recorded: forward.
+//   - the row cannot be read: drop and log, as a failed record always
+//     dropped. Forwarding would run a handled message again on every
+//     failed read.
+//   - a row: drop silently; dbg-log the replay if a logger was provided.
+//   - no row: forward, then write the row. A failed write is logged; the
+//     message was handled, and a repeat of it is handled again.
+//
+// A handler that panics writes no row; the read loop still commits its
+// offset (messaging.Client.readLoop), so only a resend of the same
+// envelope reaches it again.
 //
 // Compose with router.UseFor scoped to the order-channel envelope
 // Types (TypeOrderRequest, TypeOrderCancel, TypeOrderReceipt,
@@ -39,17 +48,20 @@ func NewInboxDedup(db *store.DB, dbg func(string, ...any)) router.Middleware {
 			next()
 			return
 		}
-		inserted, err := db.RecordInboundMessage(env.ID, env.Type)
+		seen, err := db.InboundSeen(env.ID)
 		if err != nil {
-			log.Printf("inbox_dedup: record %s: %v", env.ID, err)
+			log.Printf("inbox_dedup: read %s: %v", env.ID, err)
 			return
 		}
-		if !inserted {
+		if seen {
 			if dbg != nil {
 				dbg("duplicate inbound ignored: id=%s type=%s from=%s", env.ID, env.Type, env.Src.Station)
 			}
 			return
 		}
 		next()
+		if _, err := db.RecordInboundMessage(env.ID, env.Type); err != nil {
+			log.Printf("inbox_dedup: record %s after its handler: %v (a repeat of it is handled again)", env.ID, err)
+		}
 	}
 }

@@ -311,9 +311,10 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 		// Fetch, handle, then commit. ReadMessage committed before returning,
 		// so a crash inside the handler lost the message; now the offset moves
 		// only after the handler has run, and a crash delivers it again. For
-		// the seven order-channel types that is not a second chance: the inbox
-		// dedup wrote its row before the handler ran and drops the redelivery
-		// (middleware.NewInboxDedup; docket B11, the crash half, still open).
+		// the seven order-channel types the inbox dedup writes its row after
+		// the handler, so that redelivery is handled again, and a repeat of a
+		// message handled to the end is dropped (middleware.NewInboxDedup;
+		// docket B11).
 		msg, err := reader.FetchMessage(context.Background())
 		if err != nil {
 			select {
