@@ -108,16 +108,31 @@ func (d *Dispatcher) GroupIDForLane(laneID int64) int64 { return d.groupOfLane(l
 // GateKeysForNode is the lane a node stands in (0 when it is not a lane slot)
 // and the group whose gate a change at it concerns: the lane's parent for a
 // lane slot, the node's own parent for a flat child of a group (groupOfNode's
-// walk), and for a lane named as a node, its parent. One LaneForNode read for a
-// lane slot.
+// walk), and for a lane named as a node, its parent. The node is read once and
+// its parent once (gateKeysOf); it was read up to three times, and its parent
+// twice, through LaneForNode and groupOfNode.
 func (d *Dispatcher) GateKeysForNode(nodeID int64) (laneID, groupID int64) {
 	if nodeID == 0 {
 		return 0, 0
 	}
-	if lane, err := d.db.LaneForNode(nodeID); err == nil && lane != nil {
+	node, err := d.db.GetNode(nodeID)
+	if err != nil || node == nil {
+		return 0, 0
+	}
+	return d.gateKeysOf(node)
+}
+
+// gateKeysOf is GateKeysForNode for a node in hand: its lane (LaneOf) and the
+// lane's group, or for a node in no lane, and one whose parent could not be
+// read, the node's own parent (groupOfNode's walk).
+func (d *Dispatcher) gateKeysOf(node *nodes.Node) (laneID, groupID int64) {
+	if lane, err := d.db.LaneOf(node); err == nil && lane != nil {
 		return lane.ID, groupIDOf(lane)
 	}
-	return 0, d.groupOfNode(nodeID)
+	if node.ParentID == nil {
+		return 0, 0
+	}
+	return 0, *node.ParentID
 }
 
 // takeGroupRoomByRank takes slot from the stranger whose groupRoom paper is on

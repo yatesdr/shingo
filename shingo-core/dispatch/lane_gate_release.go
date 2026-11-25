@@ -1358,7 +1358,11 @@ func (d *Dispatcher) LaneIDForNodeName(name string) int64 {
 	if err != nil || node == nil {
 		return 0
 	}
-	return d.LaneIDsForGateEvent(node.ID)
+	lane, err := d.db.LaneOf(node)
+	if err != nil || lane == nil {
+		return 0
+	}
+	return lane.ID
 }
 
 // LaneIDsForOrder returns the lanes an order touches (its source and its

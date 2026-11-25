@@ -830,17 +830,12 @@ func (d *Dispatcher) groupOfNode(nodeID int64) int64 {
 	if nodeID == 0 {
 		return 0
 	}
-	if lane, err := d.db.LaneForNode(nodeID); err == nil && lane != nil {
-		if lane.ParentID == nil {
-			return 0
-		}
-		return *lane.ParentID
-	}
 	node, err := d.db.GetNode(nodeID)
-	if err != nil || node == nil || node.ParentID == nil {
+	if err != nil || node == nil {
 		return 0
 	}
-	return *node.ParentID
+	_, group := d.gateKeysOf(node)
+	return group
 }
 
 // releaseOccupancyForLaneOf drops one order's occupancy on the lane containing
