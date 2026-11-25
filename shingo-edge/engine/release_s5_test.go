@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"shingo/protocol/testutil"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
+	"shingoedge/config"
 	"shingoedge/release"
+	"shingoedge/uop"
 )
 
 // release_s5_test.go — S5's pins: the intent, its wakes, and G7 over Core's
@@ -198,4 +202,148 @@ func TestReleaseS5Pins(t *testing.T) {
 			act:   seq(pairClick(dispEmpty), stagesAt("supply", 0), confirms("evac")),
 			probe: pIntents},
 	})
+}
+
+// ── A stopped engine ──────────────────────────────────────────────────────
+
+// engineLog collects an engine's log lines. A started engine logs from its own
+// goroutines, which can outlive the test that started it: t.Logf there would
+// panic the binary, so the lines are kept and a failure prints them.
+type engineLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *engineLog) logf(format string, args ...any) {
+	l.mu.Lock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+	l.mu.Unlock()
+}
+
+// holding is the lines that contain s.
+func (l *engineLog) holding(s string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, line := range l.lines {
+		if strings.Contains(line, s) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// startOn starts an engine on the harness's database the way a plant's
+// composition root does (engine.New, Start, then its own delta accumulator),
+// with the harness's fake Core and curtain script behind it. Stopped at the
+// test's end; a test that stops it sooner stops its accumulator first, as the
+// root does.
+func (h *relHarness) startOn() (*Engine, *uop.Mutator, *engineLog) {
+	h.t.Helper()
+	lg := &engineLog{}
+	eng := New(Config{
+		AppConfig: &config.Config{StationUID: "test.station", Web: config.WebConfig{AutoConfirm: true}},
+		DB:        h.db, LogFunc: lg.logf, Warlink: h.wl,
+	})
+	eng.SetReleasePointSource(h.core)
+	eng.Start()
+	h.t.Cleanup(eng.Stop)
+	bridgeCore(h.t, eng, h.core.srv.URL)
+	eng.cfg.SimCoreAPI = h.core.srv.URL
+	mut := uop.New(h.db, "test.station", h.db, h.db)
+	eng.SetInventoryDeltaSink(mut)
+	return eng, mut, lg
+}
+
+// intentWorkerRunning reports whether eng's release-intent worker goroutine is
+// still there to drain a wake.
+func intentWorkerRunning(eng *Engine) bool {
+	eng.intents.mu.Lock()
+	defer eng.intents.mu.Unlock()
+	return eng.intents.running
+}
+
+// TestIntentWorker_AStoppedEngineReleasesNothing: Stop ends the release-intent
+// worker and its 15 s floor, and a wake on a stopped engine does nothing.
+//
+// Engine A is started and stopped; engine B is started on the same database
+// with its own accumulator, counts six strokes at a consume seat, and holds
+// both legs of the seat's swap with an unsent intent (Core's point was
+// unreachable at the click, G3). A's floor then runs. A used to keep its
+// worker and its floor for the life of the process, so the wake re-planned the
+// held legs on A and A released the outgoing cart with a fence of net 0: the
+// six draws are in B's accumulator, which A's fence cannot see, and Core
+// applied them a second time on top of the declared count. That is docket
+// G12's double count (two engines on one database is the scenario rig's world,
+// every W6 cell's first Edge; a plant builds one).
+//
+// B's own floor is the control: it releases the same leg once, declaring the
+// seat's 36 as of net -6, so the leg A left alone was one a floor could send.
+func TestIntentWorker_AStoppedEngineReleasesNothing(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	pairAt(pairSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume},
+		"evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	style, err := h.db.GetActiveStyleID(h.processID)
+	testutil.MustNoErr(t, err, "read the active style")
+
+	a, aSink, aLog := h.startOn()
+	aSink.Stop()
+	a.Stop()
+
+	b, bSink, _ := h.startOn()
+	h.eng, h.mutator, h.handler = b, bSink, newEdgeHandlerFor(b)
+	for i := 0; i < 6; i++ {
+		b.handleCounterDelta(CounterDeltaEvent{ProcessID: h.processID, StyleID: *style, Delta: 1})
+	}
+	h.core.mu.Lock()
+	h.core.pointsDown = true
+	h.core.mu.Unlock()
+	h.mark()
+	clickErr := b.ReleaseStagedOrders(h.nodeID, ReleaseDisposition{Mode: DispositionSendPartialBack, CalledBy: "operator"})
+	var held *release.HeldError
+	if !errors.As(clickErr, &held) || held.Gate != release.G3 {
+		t.Fatalf("the click with Core's point unreachable = %v, want it held at G3", clickErr)
+	}
+	if got := intentOf(h, "evac"); got != "held@0" {
+		t.Fatalf("the evac's intent after the held click = %s, want held@0", got)
+	}
+	testutil.MustNoErr(t, coreBack(h), "Core's point back")
+
+	a.wakeIntentNodes("floor")
+	// A's worker leaves on the stop channel, and until Stop joins it that is
+	// off Stop's goroutine: wait for it to have left, or, where it never
+	// leaves, for the release it makes of this wake. Each ends on a fact.
+	deadline := time.Now().Add(10 * time.Second)
+	for intentWorkerRunning(a) && intentOf(h, "evac") == "held@0" {
+		if time.Now().After(deadline) {
+			t.Fatal("the stopped engine's worker neither left nor released in 10 s")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if intentWorkerRunning(a) {
+		t.Errorf("the stopped engine's release-intent worker is still running")
+	}
+	if lines := aLog.holding("release intent: order"); len(lines) != 0 {
+		t.Errorf("the stopped engine released on its floor: %q", lines)
+	}
+
+	b.wakeIntentNodes("floor")
+	for intentOf(h, "evac") == "held@0" {
+		if time.Now().After(deadline) {
+			t.Fatal("the running engine's floor did not release the held evac in 10 s")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	envs := h.releaseEnvelopes()["evac"]
+	if len(envs) != 1 {
+		t.Fatalf("the evac got %d OrderRelease envelopes, want 1 (the running engine's): %+v", len(envs), envs)
+	}
+	rel := envs[0]
+	if rel.AsOf == nil || rel.AsOf.AsOfNet != -6 {
+		t.Errorf("the evac's release fence = %+v, want as of net -6: the six draws the running engine holds unflushed", rel.AsOf)
+	}
+	if rel.RemainingUOP == nil || *rel.RemainingUOP != fxCount-6 {
+		t.Errorf("the evac's declared count = %d, want %d", deref(rel.RemainingUOP), fxCount-6)
+	}
 }
