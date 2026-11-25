@@ -75,6 +75,12 @@ const (
 	HookBinCount           Hook = "bin count"           // coreDataService.SetBinCountEmitter
 )
 
+// FeedHooks are the hooks of a cell on Core's real bins feed (the scenario
+// rig's StartBinsFeed): the feed's subscriptions and the doors main ties it to
+// (a station door's bin write, a refusal's rows, a levelled group's line, a
+// level save), and the ask kinds the heartbeat's ack names.
+var FeedHooks = []Hook{HookBinChanged, HookBinsRows, HookGroupLines, HookLevelChanged, HookBinsFeed, HookAskKinds}
+
 // CoreOption narrows NewCore's composition for one cell.
 type CoreOption func(*coreOptions)
 

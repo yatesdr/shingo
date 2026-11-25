@@ -153,19 +153,19 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	mustNil(t, edge.DB.SetProcessNodeRuntime(nodeID, &claimA, 30), "runtime claim")
 
 	// Core's tables as main builds them, less what this cell leaves out: every
-	// subject but the asks (its Edge also sends demand origins, never routed
-	// here) and every hook (the rig pushes the bins itself).
+	// subject but the asks, the watch list and the heartbeat (its Edge also
+	// sends demand origins, never routed here), and every hook but the bins
+	// feed's (FeedHooks): the Edge's bins come on Core's own feed.
 	coreSide := coreharness.NewCore(t, core.eng,
 		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel,
-			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.SubjectEdgeAsk),
-		coreharness.HooksOnly())
+			protocol.TypeOrderReceipt, protocol.TypeOrderRelease, protocol.SubjectEdgeAsk,
+			protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat),
+		coreharness.HooksOnly(coreharness.FeedHooks...))
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
-	push := harness.StartBinsPush(t, coreDB, edge.Engine)
-	bus.SetBinsPush(push)
-	push.AnswerAsks(coreSide.AskKinds)
+	harness.StartBinsFeed(t, bus, coreSide.Data, edge)
 	settle := func() {
 		for i := 0; i < 20; i++ {
 			if bus.PumpAll() == 0 {
