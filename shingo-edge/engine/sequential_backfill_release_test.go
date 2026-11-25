@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/release"
 )
@@ -326,4 +328,97 @@ func activePullWrites(h *relHarness) []string {
 		}
 	}
 	return out
+}
+
+// TestSequentialOneNode_CountsInTheGap is final brief 2c, point 6, pinned as it
+// is (a characterisation: no count behaviour was changed for it). HOP's
+// consume line on one node: the operator takes one package off the bin before
+// calling and the line runs on it from Order A's lift until Order B sets the
+// next bin down. Strokes before the RELEASE are the bin's; what the release
+// records for the outgoing bin is what the release says, three ways; and the
+// strokes in the gap are charged to no bin: they open a no-cart row, for a
+// person to settle, naming the outgoing bin and its count when the release
+// declared one.
+func TestSequentialOneNode_CountsInTheGap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		disp     ReleaseDisposition
+		sent     *int  // OrderRelease.RemainingUOP: the count the release syncs onto the outgoing bin, nil none
+		bin      int64 // the gap's no-cart row: the outgoing bin it names, 0 none
+		declared int64 // and the count it says that bin left with
+	}{
+		{"release empty", dispEmpty, domain.Ptr(0), fxBin, 0},
+		{"send partial back, the operator's 6", dispPartial(6), domain.Ptr(6), fxBin, 6},
+		// A plain RELEASE syncs no count: the outgoing bin keeps the count Core
+		// holds for it, and the gap's row names no bin (only a release that
+		// declares a count stamps the seat with the bin and its count).
+		{"a plain release", dispNone, nil, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newRelHarness(t)
+			h.seedNode(pairSpec{mode: protocol.SwapModeSequential, role: protocol.ClaimRoleConsume, onePosition: true})
+			proc, err := h.db.GetProcess(h.processID)
+			testutil.MustNoErr(t, err, "process")
+			tick := func(d int) {
+				h.eng.handleCounterDelta(CounterDeltaEvent{ProcessID: h.processID, StyleID: *proc.ActiveStyleID, Delta: int64(d)})
+			}
+			tick(3)
+			// The operator takes a package of 6 off the bin and calls: nothing
+			// records the package.
+			h.requestRemoval(protocol.ClaimRoleConsume)
+			coreWaybill(h, "removal", "AMR-1")
+			coreStagedAt(h, "removal", 0)
+			tick(2)
+			if got := runtimeOf(t, h.eng, h.nodeID).RemainingUOPCached; got != 37 {
+				t.Fatalf("before the release the station counts %d, want 37 (42 less the 5 strokes)", got)
+			}
+			h.mark()
+			testutil.MustNoErr(t, orderClick("removal", tc.disp)(h), "the RELEASE at the line")
+			rels := h.releaseEnvelopes()["removal"]
+			if len(rels) != 1 || !samePtr(rels[0].RemainingUOP, tc.sent) {
+				t.Fatalf("the release records %s for the outgoing bin, want %s", releaseCounts(rels), countWord(tc.sent))
+			}
+			h.pickedUp("removal")
+			if rt := runtimeOf(t, h.eng, h.nodeID); rt.ActiveBinID != nil {
+				t.Fatalf("after the lift the seat still holds bin %d", *rt.ActiveBinID)
+			}
+			tick(4) // the gap: the line runs on the package
+			holds, err := h.db.ListOpenCatidHolds(h.processID)
+			testutil.MustNoErr(t, err, "holds")
+			if len(holds) != 1 || holds[0].Reason != "no-cart" || holds[0].Qty != 4 ||
+				holds[0].LastBinID != tc.bin || holds[0].LastDeclared != tc.declared {
+				t.Errorf("the gap's strokes: %+v, want one open no-cart row of 4 naming bin %d at %d",
+					holds, tc.bin, tc.declared)
+			}
+			t.Logf("PIN %s: the release syncs %s onto the outgoing bin; the gap's 4 are a no-cart row on bin %d at %d",
+				tc.name, countWord(tc.sent), tc.bin, tc.declared)
+		})
+	}
+}
+
+// releaseCounts is a leg's releases' counts, for a failure message.
+func releaseCounts(rels []protocol.OrderRelease) string {
+	var out []string
+	for _, r := range rels {
+		if r.RemainingUOP == nil {
+			out = append(out, "none")
+			continue
+		}
+		out = append(out, strconv.Itoa(*r.RemainingUOP))
+	}
+	return "[" + strings.Join(out, " ") + "]"
+}
+
+// samePtr reports whether two optional counts say the same: both none, or the
+// same number.
+func samePtr(a, b *int) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+
+// countWord is an optional count as a failure message says it.
+func countWord(n *int) string {
+	if n == nil {
+		return "none"
+	}
+	return strconv.Itoa(*n)
 }
