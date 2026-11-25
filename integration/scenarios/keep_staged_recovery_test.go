@@ -112,7 +112,10 @@ type ksrCell struct {
 	core kscCore
 	// side is Core's composition around core's engine (testharness.NewCore),
 	// made once: a plant's Core runs on while its Edge restarts.
-	side      *coreharness.Core
+	side *coreharness.Core
+	// rigPush: the Edge's bins come from the rig's push (harness.BinsPush),
+	// not Core's own feed (ksrOpts.rigPush).
+	rigPush   bool
 	edge      *edgeharness.Edge
 	bus       *harness.Bus
 	kick      *kickTicker
@@ -215,6 +218,11 @@ type ksrOpts struct {
 	// counted: the Edge's draws, its production ticks and its claims reach
 	// Core over the wire, as the CATID cell routes them (w6Cell.wireBus).
 	counted bool
+	// rigPush: the Edge's bins come from the rig's push, not Core's own feed:
+	// for a cell that routes the Edge's heartbeat to a data service of its own
+	// (uop_ratio's catalog feed), which would answer the feed's heartbeat with
+	// another Core's ack.
+	rigPush bool
 	// dropB: style B claims nothing at the line, so a changeover to B drops
 	// it (its bin goes and nothing replaces it), and A's claim marks the line
 	// for a tool change, so the cutover waits for the line to be clear.
@@ -471,7 +479,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 
 	// Core's tables as main builds them, less what this cell leaves out: the
 	// redirect, every subject but these (its Edge also sends demand origins,
-	// never routed here) and every hook (the rig pushes the bins itself).
+	// never routed here) and every hook but the bins feed's (FeedHooks: the
+	// Edge's bins come on Core's own feed, unless the cell keeps the rig's
+	// push).
 	routes := []string{
 		protocol.TypeOrderRequest, protocol.TypeComplexOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt,
 		protocol.TypeOrderRelease,
@@ -492,15 +502,25 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	if o.counted {
 		routes = append(routes, protocol.SubjectBinUOPDelta, protocol.SubjectProductionTicks)
 	}
-	coreSide := coreharness.NewCore(t, c.core.eng, coreharness.RoutesOnly(routes...), coreharness.HooksOnly())
+	hooks := coreharness.FeedHooks
+	if c.rigPush = o.rigPush; c.rigPush {
+		hooks = nil
+	} else {
+		routes = append(routes, protocol.SubjectBinsWatch, protocol.SubjectEdgeHeartbeat)
+	}
+	coreSide := coreharness.NewCore(t, c.core.eng, coreharness.RoutesOnly(routes...), coreharness.HooksOnly(hooks...))
 	c.side = coreSide
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreSide.Ingestor},
 	)
-	push := harness.StartBinsPush(t, coreDB, edge.Engine)
-	c.bus.SetBinsPush(push)
-	push.AnswerAsks(coreSide.AskKinds)
+	if c.rigPush {
+		push := harness.StartBinsPush(t, coreDB, edge.Engine)
+		c.bus.SetBinsPush(push)
+		push.AnswerAsks(coreSide.AskKinds)
+	} else {
+		harness.StartBinsFeed(t, c.bus, coreSide.Data, edge)
+	}
 	c.registerEdge()
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),
@@ -555,9 +575,9 @@ func (c *ksrCell) breached() int {
 // a settle is only as good as it. Each settle pays it once: a recovery cell
 // settles about seventy times (69 in consume/two_robot/a), so at 10ms the
 // windows are under a second of a cell's several; the rest of a settle is the
-// pumps and the bins push after each (harness.BinsPush). A message the window
-// misses is not lost; the next tick pumps it, and the waits on an outcome go
-// through eventually.
+// pumps and Core's bins pushes after each (harness.BinsFeed). A message the
+// window misses is not lost; the next tick pumps it, and the waits on an
+// outcome go through eventually.
 func (c *ksrCell) settle() {
 	harness.RecorderFor(c.t).Inc("settle")
 	for i := 0; i < 40; i++ {
@@ -1568,8 +1588,8 @@ func (c *ksrCell) cancelPath(co ksrCO) string {
 // A store write, not Core's hand move (moveByHand): case h lifts the bin
 // while an order is dispatched on it, which the hand move refuses ("bin is
 // committed to order 1", BinService's orphaned-order guard, as Move's). So
-// Core is told of this move by no door, and a caller on the real bins feed
-// should push after it (Bus.PushBins).
+// Core is told of this move by no door, and the bins go to the Edge as a
+// fixture write's do (Bus.PushBins).
 func (c *ksrCell) takeLineBinOff() {
 	c.t.Helper()
 	coreDB := c.core.eng.DB()
@@ -1582,6 +1602,7 @@ func (c *ksrCell) takeLineBinOff() {
 			mustNil(c.t, coreDB.MoveBinClearingStaging(b.ID, slot.ID, true), "take "+b.Label+" off the line")
 		}
 	}
+	c.bus.PushBins()
 }
 
 // moveByHand is a person moving a bin on Core's bins page, as www binMove

@@ -80,7 +80,7 @@ const (
 // one cycle draws 1 kit.
 func TestUOP_OwnersExample_StoresPartsReadsUOP(t *testing.T) {
 	t.Parallel()
-	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobot, plain: true, counted: true})
+	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeTwoRobot, plain: true, counted: true, rigPush: true})
 	c.runningCell("setup")
 	w := &w6Cell{ksrCell: c}
 	w.wireBus()
