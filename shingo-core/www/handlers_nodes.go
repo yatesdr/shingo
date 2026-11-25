@@ -19,6 +19,11 @@ import (
 	"shingocore/service"
 )
 
+// nodeNeedsAName is the two form doors' answer to a node with no name (docket
+// B2): the store refuses one (service.IsNodeNameBlank), and a person fixes the
+// request by sending one.
+const nodeNeedsAName = "A node needs a name: the fleet, the stations and every order know a node by it."
+
 // parseNodeAssignments pulls the station + bin-type selections out of
 // an HTTP form into the shape NodeService.ApplyAssignments expects.
 func parseNodeAssignments(r *http.Request) service.NodeAssignments {
@@ -200,6 +205,10 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "A lane needs a waiting spot: give this group its waiting spots first.", http.StatusBadRequest)
 			return
 		}
+		if service.IsNodeNameBlank(err) {
+			http.Error(w, nodeNeedsAName, http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -284,14 +293,7 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	// THE OLD ASSIGNMENTS FIRST, for the audit rows below.
 	beforeAssign := h.nodeAssignmentSnapshot(node.ID)
 
-	if previous, err := h.engine.NodeService().GetNode(node.ID); err == nil {
-		if said, err := h.engine.NodeService().RenameWarnings(previous, node.Name); err != nil {
-			log.Printf("nodes: what joins %s by name: %v", previous.Name, err)
-		} else if len(said) > 0 {
-			log.Printf("nodes: %s", strings.Join(said, "; "))
-			_ = h.engine.AuditService().Append("node", node.ID, "rename_warning", previous.Name, strings.Join(said, "; "), h.kanbanActor(r))
-		}
-	}
+	sayRename := h.renameWarning(node, r)
 	if err := h.engine.NodeService().UpdateNode(node); err != nil {
 		// THIS is the path a parentage cycle can actually arrive by. The
 		// drag-and-drop reparent endpoint already refuses these shapes for
@@ -312,22 +314,27 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "A lane needs a waiting spot: give this group its waiting spots first.", http.StatusBadRequest)
 			return
 		}
+		if service.IsNodeNameBlank(err) {
+			http.Error(w, nodeNeedsAName, http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), code)
 		return
 	}
+	sayRename()
 
 	if err := h.engine.NodeService().ApplyAssignments(node.ID, a); err != nil {
 		log.Printf("node update: apply assignments for node %d: %v", node.ID, err)
 	}
 
-	// THE DISPLAY NAME: the only name this form may actually change. The
-	// `name` field above is round-tripped from a HIDDEN input - the node's
-	// name is the fleet's identity, and scenesync deletes a physical node
-	// whose name the current scene does not carry, so a crafted rename would
-	// be saved by UpdateNode and destroyed by the next sync. The display
-	// name is where a person's label goes, audited like every other write
-	// here. Absent field = untouched, so callers that predate the input are
-	// exactly as they were.
+	// THE DISPLAY NAME: the only name the page changes. The `name` field above
+	// is round-tripped from a HIDDEN input, because the node's name is the
+	// fleet's identity. A hand-made request that sends another name is saved,
+	// and the next scene sync then deletes a renamed top-level physical node,
+	// or keeps a renamed node in a group or lane and adds a second node under
+	// the fleet's name (scenesync.SyncFleetNodes). The display name is where a
+	// person's label goes, audited like every other write here. Absent field =
+	// untouched, so callers that predate the input are exactly as they were.
 	if _, sent := r.Form["display_name"]; sent {
 		if err := h.engine.NodeService().SetDisplayName(node.ID, r.FormValue("display_name"), h.getUsername(r)); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -354,6 +361,30 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 }
+
+// renameWarning reads, before a save writes node, what joins its stored name
+// by name, and returns the call that warns and audits it. The caller makes
+// that call once the store has taken the save: a save the store refuses (a
+// name with nothing in it, a parentage cycle) renamed nothing.
+func (h *Handlers) renameWarning(node *domain.Node, r *http.Request) func() {
+	previous, err := h.engine.NodeService().GetNode(node.ID)
+	if err != nil {
+		return func() {}
+	}
+	said, err := h.engine.NodeService().RenameWarnings(previous, node.Name)
+	if err != nil {
+		log.Printf("nodes: what joins %s by name: %v", previous.Name, err)
+		return func() {}
+	}
+	if len(said) == 0 {
+		return func() {}
+	}
+	return func() {
+		log.Printf("nodes: %s", strings.Join(said, "; "))
+		_ = h.engine.AuditService().Append("node", node.ID, "rename_warning", previous.Name, strings.Join(said, "; "), h.kanbanActor(r))
+	}
+}
+
 func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
 	if err != nil {

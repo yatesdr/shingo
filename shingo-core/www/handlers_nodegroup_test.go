@@ -285,14 +285,19 @@ func TestApiCreateNodeGroup_MissingName(t *testing.T) {
 }
 
 // TestNodeGroupDoors_ANameOfSpaces (docket B19): the group and lane doors
-// refuse a name that is "" and, TODAY, save one that is only spaces.
+// refuse a name that is only spaces as they refuse "" (400), by the one rule
+// the store holds (nodes.NameIsBlank), and save nothing. Before it both were
+// saved.
 func TestNodeGroupDoors_ANameOfSpaces(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
+	before, err := db.ListNodes()
+	testutil.MustNoErr(t, err, "list nodes")
+
 	rec := postJSON(t, h.apiCreateNodeGroup, "/api/node-group/create",
 		map[string]any{"name": "   "})
-	if rec.Code != http.StatusOK {
-		t.Errorf("a group named with spaces: %d; today it is saved (200); body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("a group named with spaces: %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 
 	grpID, err := db.CreateNodeGroup("GRP-SPACES")
@@ -300,8 +305,15 @@ func TestNodeGroupDoors_ANameOfSpaces(t *testing.T) {
 	testdb.MarkGroup(t, db, grpID)
 	rec = postJSON(t, h.apiAddLane, "/api/node-group/add-lane",
 		map[string]any{"group_id": grpID, "name": "  "})
-	if rec.Code != http.StatusOK {
-		t.Errorf("a lane named with spaces: %d; today it is saved (200); body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("a lane named with spaces: %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	after, err := db.ListNodes()
+	testutil.MustNoErr(t, err, "list nodes")
+	if len(after) != len(before)+1 {
+		t.Errorf("%d node(s) after, want %d: the group made here and nothing the refused requests sent",
+			len(after), len(before)+1)
 	}
 }
 

@@ -536,20 +536,36 @@ func TestSyncFleetNodes_UpdatesZoneOnExisting(t *testing.T) {
 	}
 }
 
-// TestSyncFleetNodes_AFleetLocationWithNoName (docket B2): TODAY a bin location
-// the fleet's map names "" is made a node with no name, beside the named one.
+// TestSyncFleetNodes_AFleetLocationWithNoName (docket B2): a bin location the
+// fleet's map gives no name is not made a node, and the sync says so in one
+// line naming its area; the named location beside it is made one as before.
+// Before the guard it was made a node with no name.
 func TestSyncFleetNodes_AFleetLocationWithNoName(t *testing.T) {
 	t.Parallel()
 	db := newFakeStore()
 	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 7, Code: "STAG"}
 	said := &recordingLog{}
 
-	created, _ := SyncFleetNodes(db, said.log, nil, map[string]string{"": "AreaA", "bin1": "AreaA"})
-	if created != 2 {
-		t.Errorf("created = %d; today the nameless location is made a node beside bin1 (2)", created)
+	created, _ := SyncFleetNodes(db, said.log, nil, map[string]string{" ": "AreaA", "bin1": "AreaB"})
+	if created != 1 {
+		t.Errorf("created = %d, want 1 (bin1 only)", created)
 	}
-	if _, err := db.GetNodeByName(""); err != nil {
-		t.Errorf("no node with no name after the sync (%v); today one is made", err)
+	if _, err := db.GetNodeByName("bin1"); err != nil {
+		t.Errorf("bin1 not made a node: %v", err)
+	}
+	for _, n := range db.nodes {
+		if nodes.NameIsBlank(n.Name) {
+			t.Errorf("node %d made with no name (%q)", n.ID, n.Name)
+		}
+	}
+	var lines []string
+	for _, l := range said.lines {
+		if strings.Contains(l, "has no name") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], `"AreaA"`) {
+		t.Errorf("the sync said %q about the nameless location, want one line naming area AreaA", lines)
 	}
 }
 

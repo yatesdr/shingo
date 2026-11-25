@@ -179,12 +179,27 @@ func UnclaimOrderSlots(db *sql.DB, orderID int64) error {
 	return err
 }
 
+// ErrNameBlank refuses a node, group or lane with no name (docket B2). The
+// fleet, the stations and every order know a node by its name, and "" is what
+// an order's source or delivery holds when it names no node, so a node with no
+// name could be the pickup or the drop of no order. Pinned by
+// TestNodeName_TheFourWritesOfANodesName.
+var ErrNameBlank = errors.New("a node needs a name: the fleet, the stations and every order know a node by it")
+
+// NameIsBlank is the one rule for a node's name: a name with nothing in it but
+// white space is none. The four statements that write a name refuse one
+// (Create, Update, CreateGroup, AddLane); scene sync skips a fleet location so
+// named; Core's boot report names a stored node so named.
+func NameIsBlank(name string) bool { return strings.TrimSpace(name) == "" }
+
 // Create inserts a new node and sets n.ID on success.
 func Create(db *sql.DB, n *Node) error {
-	// Defense-in-depth: callers should pass an already-trimmed name
-	// (admin handler trims at form ingress); this guards non-handler
-	// callers and the RDS/fleet-sync path. Silent — no warning log.
+	// Trimmed here as well as at the form: scene sync and the other
+	// non-handler callers write through this door too. Silent, no warning log.
 	n.Name = strings.TrimSpace(n.Name)
+	if NameIsBlank(n.Name) {
+		return fmt.Errorf("create node: %w", ErrNameBlank)
+	}
 	if err := requireMarkedGroup(db, n); err != nil {
 		return err
 	}
@@ -236,6 +251,9 @@ func flattenOffLane(q Execer, id int64) error {
 // run forever.
 func Update(db *sql.DB, n *Node) error {
 	n.Name = strings.TrimSpace(n.Name)
+	if NameIsBlank(n.Name) {
+		return fmt.Errorf("update node %d: %w", n.ID, ErrNameBlank)
+	}
 	if n.ParentID != nil {
 		if err := CheckParentage(db, n.ID, *n.ParentID); err != nil {
 			return err
@@ -546,11 +564,14 @@ func SetParent(db *sql.DB, nodeID, parentID int64) error {
 	return flattenOffLane(db, nodeID)
 }
 
-// SetDisplayName writes the node's person-readable name (domain.Node's doc
-// carries the design: the node's own Name is the fleet's identity and is not
-// editable from shingo - scenesync deletes a physical node whose name the
-// current scene does not carry). Empty clears, which renders the fleet's
-// name again. The fleet's name is never touched here, and that is the point.
+// SetDisplayName writes the node's person-readable name. The node's own Name
+// is the fleet's identity and should not be edited from shingo: the Nodes page
+// sends it back unchanged, though /nodes/update writes whatever name a request
+// sends. Renamed, a top-level physical node is deleted by the next scene sync;
+// a node in a group or lane is kept, and the sync adds a second node under the
+// fleet's name (scenesync.SyncFleetNodes). Empty clears, which renders the
+// fleet's name again. The fleet's name is never touched here, and that is the
+// point.
 func SetDisplayName(db *sql.DB, nodeID int64, displayName string) error {
 	_, err := db.Exec(`UPDATE nodes SET display_name=$1, updated_at=NOW() WHERE id=$2`, displayName, nodeID)
 	return err

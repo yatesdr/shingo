@@ -35,3 +35,8 @@ func IsSlotEnabledFollowsLane(err error) bool {
 // waiting spot (nodes.ErrLaneUnmarked), so an HTTP layer can answer 400: the
 // person fixes it by giving the group its waiting spots.
 func IsLaneUnmarked(err error) bool { return errors.Is(err, nodes.ErrLaneUnmarked) }
+
+// IsNodeNameBlank reports whether err is the store's refusal of a node, group
+// or lane with no name (nodes.ErrNameBlank), so an HTTP layer can answer 400:
+// the person fixes it by giving the node a name.
+func IsNodeNameBlank(err error) bool { return errors.Is(err, nodes.ErrNameBlank) }

@@ -11,6 +11,9 @@ import (
 // CreateGroup creates an empty NGRP node with the given name.
 // Lanes and direct children are added separately via AddLane and reparenting.
 func CreateGroup(db *sql.DB, name string) (int64, error) {
+	if NameIsBlank(name) {
+		return 0, fmt.Errorf("create node group: %w", ErrNameBlank)
+	}
 	grpType, err := GetTypeByCode(db, protocol.NodeClassNGRP)
 	if err != nil {
 		return 0, fmt.Errorf("NGRP node type not found")
@@ -25,6 +28,9 @@ func CreateGroup(db *sql.DB, name string) (int64, error) {
 
 // AddLane creates a LANE node as a child of the given node group.
 func AddLane(db *sql.DB, groupID int64, name string) (int64, error) {
+	if NameIsBlank(name) {
+		return 0, fmt.Errorf("create lane: %w", ErrNameBlank)
+	}
 	grpNode, err := Get(db, groupID)
 	if err != nil {
 		return 0, fmt.Errorf("node group not found: %w", err)

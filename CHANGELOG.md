@@ -20,6 +20,7 @@ Deploy: no migration; Core only.
 
 - At shutdown Core's engine lets the work it tracks finish before the database closes, drops what is still queued, and stops waiting for it after 30 s
 - At shutdown Core finishes the station message it is handling (an order, cancel, release, receipt or ingest) before its engine stops, waiting up to 30 s; the stop used to cut it, and after the restart Core ignored it as already seen, so an order sent as Core restarted could be lost. A crash at that moment still can
+- Core refuses to save a node, group or lane with no name or a name of only spaces, from any door: a request made by hand to the node form or the group and lane editor is answered with the reason and saves nothing, and a robot-map sync does not make a node for a fleet location with no name, and says so in its log. No order can name a node with no name
 
 ## v0.19.0 — 2026-11-22
 

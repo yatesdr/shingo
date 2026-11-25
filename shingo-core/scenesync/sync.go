@@ -221,6 +221,13 @@ func SyncFleetNodes(db Store, log LogFn, onChange NodeChangeFn, locationSet map[
 
 	// Create nodes for locations not yet in DB (matched by name).
 	for instanceName, areaName := range locationSet {
+		// A location the fleet's map gives no name is no node: no order could
+		// name it (nodes.NameIsBlank, docket B2). One line per sync, read with
+		// the sync's own "auto scene sync" line in Core's log.
+		if nodes.NameIsBlank(instanceName) {
+			log("scenesync: a bin location in area %q has no name in the fleet's map; it is not made a node", areaName)
+			continue
+		}
 		if existing, err := db.GetNodeByName(instanceName); err == nil {
 			// Node exists — update zone if needed
 			if existing.Zone != areaName && areaName != "" {

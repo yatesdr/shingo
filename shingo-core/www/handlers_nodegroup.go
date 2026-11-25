@@ -18,12 +18,14 @@ func (h *Handlers) apiCreateNodeGroup(w http.ResponseWriter, r *http.Request) {
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" {
+
+	// A name with nothing in it, spaces included, is the store's refusal
+	// (nodes.NameIsBlank, docket B19), answered here.
+	id, err := h.engine.NodeService().CreateNodeGroup(req.Name)
+	if service.IsNodeNameBlank(err) {
 		h.jsonError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-
-	id, err := h.engine.NodeService().CreateNodeGroup(req.Name)
 	if err != nil {
 		h.jsonError(w, "create node group: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -44,12 +46,17 @@ func (h *Handlers) apiAddLane(w http.ResponseWriter, r *http.Request) {
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if req.GroupID == 0 || req.Name == "" {
+	if req.GroupID == 0 {
 		h.jsonError(w, "group_id and name are required", http.StatusBadRequest)
 		return
 	}
 
+	// A blank name, as at the group door: the store's refusal.
 	id, err := h.engine.NodeService().AddLane(req.GroupID, req.Name)
+	if service.IsNodeNameBlank(err) {
+		h.jsonError(w, "group_id and name are required", http.StatusBadRequest)
+		return
+	}
 	if service.IsLaneUnmarked(err) {
 		h.jsonError(w, "A lane needs a waiting spot: give this group its waiting spots first.", http.StatusBadRequest)
 		return

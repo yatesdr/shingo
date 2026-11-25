@@ -856,16 +856,14 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	}
 }
 
-// blankNodeName leaves a node with no name, as a save that carries none does
-// today (store/nodes.Update writes the name it is handed). The one place the
-// set-up lives: when the store refuses a blank name, this becomes a raw UPDATE
-// and its callers stay as they are.
+// blankNodeName leaves a node with no name, as a row saved before the store
+// refused a blank name (store/nodes.ErrNameBlank) would be. Raw SQL, because
+// every store door now refuses one; the one place the set-up lives, so its
+// callers stay as they are.
 func blankNodeName(t *testing.T, db *store.DB, nodeID int64) {
 	t.Helper()
-	n, err := db.GetNode(nodeID)
-	testutil.MustNoErr(t, err, "read the node to blank")
-	n.Name = ""
-	testutil.MustNoErr(t, db.UpdateNode(n), "blank the node's name")
+	_, err := db.Exec(`UPDATE nodes SET name = '' WHERE id = $1`, nodeID)
+	testutil.MustNoErr(t, err, "blank the node's name")
 }
 
 // --- Test: a dig through a nameless slot in a lane (docket B1) ---

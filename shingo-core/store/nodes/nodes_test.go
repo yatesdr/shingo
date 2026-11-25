@@ -4,6 +4,7 @@ package nodes_test
 
 import (
 	"database/sql"
+	"errors"
 	"shingocore/store/nodes"
 	"strings"
 	"testing"
@@ -1162,10 +1163,10 @@ func TestParentage_LegalReparentSucceeds(t *testing.T) {
 
 // TestNodeName_TheFourWritesOfANodesName (docket B2, B19): the four statements
 // that write a node's name (Create, Update, CreateGroup, AddLane), each sent a
-// name with nothing in it. TODAY EACH TAKES IT: Create and Update trim it to
-// "", CreateGroup and AddLane store it as sent. The fleet, the stations and
-// every order know a node by its name, so a node with none is one no order can
-// name.
+// name with nothing in it, each refuse it (nodes.ErrNameBlank) and write
+// nothing. The fleet, the stations and every order know a node by its name,
+// so a node with none is one no order can name. Before the guard each took it:
+// Create and Update trimmed it to "", CreateGroup and AddLane stored it as sent.
 func TestNodeName_TheFourWritesOfANodesName(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -1175,50 +1176,44 @@ func TestNodeName_TheFourWritesOfANodesName(t *testing.T) {
 	testdb.MarkGroup(t, db, grpID)
 	named := &nodes.Node{Name: "NAMES-NODE", Enabled: true}
 	testutil.MustNoErr(t, nodes.Create(sdb, named), "create the node a save renames")
-
-	type door struct {
-		name  string
-		write func(blank string) (int64, error) // the id of the row written
-		undo  func(id int64) error              // a second blank name would collide on the unique name
+	count := func() (n int) {
+		testutil.MustNoErr(t, sdb.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&n), "count nodes")
+		return n
 	}
-	drop := func(id int64) error { return nodes.Delete(sdb, id) }
-	doors := []door{
-		{"Create", func(blank string) (int64, error) {
-			n := &nodes.Node{Name: blank, Enabled: true}
-			err := nodes.Create(sdb, n)
-			return n.ID, err
-		}, drop},
-		{"Update", func(blank string) (int64, error) {
+	before := count()
+
+	doors := []struct {
+		name  string
+		write func(blank string) error
+	}{
+		{"Create", func(blank string) error { return nodes.Create(sdb, &nodes.Node{Name: blank, Enabled: true}) }},
+		{"Update", func(blank string) error {
 			n, err := nodes.Get(sdb, named.ID)
-			if err != nil {
-				return 0, err
-			}
-			n.Name = blank
-			return n.ID, nodes.Update(sdb, n)
-		}, func(id int64) error {
-			n, err := nodes.Get(sdb, id)
 			if err != nil {
 				return err
 			}
-			n.Name = named.Name
+			n.Name = blank
 			return nodes.Update(sdb, n)
 		}},
-		{"CreateGroup", func(blank string) (int64, error) { return nodes.CreateGroup(sdb, blank) }, drop},
-		{"AddLane", func(blank string) (int64, error) { return nodes.AddLane(sdb, grpID, blank) }, drop},
+		{"CreateGroup", func(blank string) error { _, err := nodes.CreateGroup(sdb, blank); return err }},
+		{"AddLane", func(blank string) error { _, err := nodes.AddLane(sdb, grpID, blank); return err }},
 	}
 	for _, blank := range []string{"", " ", "\t"} {
 		for _, d := range doors {
-			id, err := d.write(blank)
-			if err != nil {
-				t.Errorf("%s(%q): %v; today it takes the name", d.name, blank, err)
-				continue
+			if err := d.write(blank); !errors.Is(err, nodes.ErrNameBlank) {
+				t.Errorf("%s(%q) = %v, want the refusal nodes.ErrNameBlank", d.name, blank, err)
 			}
-			got, err := nodes.Get(sdb, id)
-			testutil.MustNoErr(t, err, "read the row written")
-			if strings.TrimSpace(got.Name) != "" {
-				t.Errorf("%s(%q) stored name %q; today it stores one with nothing in it", d.name, blank, got.Name)
-			}
-			testutil.MustNoErr(t, d.undo(id), "put the row back")
 		}
+	}
+	if after := count(); after != before {
+		t.Errorf("%d node(s) after the refused writes, want %d: a refusal writes nothing", after, before)
+	}
+	got, err := nodes.Get(sdb, named.ID)
+	testutil.MustNoErr(t, err, "re-read the node the save renamed")
+	if got.Name != named.Name {
+		t.Errorf("the refused rename left name %q, want %q", got.Name, named.Name)
+	}
+	if !nodes.NameIsBlank(" \t ") || nodes.NameIsBlank(" A ") {
+		t.Error("nodes.NameIsBlank: a name of white space is none, and a padded name is a name")
 	}
 }

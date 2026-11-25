@@ -444,11 +444,27 @@ func TestHandleNodeUpdate_ThePagesOwnSaveKeepsNameTypeAndParent(t *testing.T) {
 }
 
 // TestNodeForms_ARequestWithNoName (docket B2, B15): the two form doors sent a
-// request made by hand, with a name of spaces or none. TODAY each saves a node
-// with no name, and an update that leaves the type and the parent out clears
-// them too, which takes a lane slot out of its lane.
+// request made by hand, with a name of spaces or none. Each answers 400 and
+// writes nothing: the store refuses a node with no name. Before the guard each
+// saved one, and an update that left the type and the parent out cleared them
+// too, which took a lane slot out of its lane.
 func TestNodeForms_ARequestWithNoName(t *testing.T) {
 	t.Parallel()
+	refused := func(t *testing.T, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "needs a name") {
+			t.Fatalf("%d %q; want 400 saying the node needs a name", rec.Code, rec.Body.String())
+		}
+	}
+	asItWas := func(t *testing.T, db *store.DB, slot *nodes.Node) {
+		t.Helper()
+		got, err := db.GetNode(slot.ID)
+		testutil.MustNoErr(t, err, "read the slot after the refused save")
+		if got.Name != slot.Name || idOf(got.NodeTypeID) != idOf(slot.NodeTypeID) || idOf(got.ParentID) != idOf(slot.ParentID) {
+			t.Errorf("after the refused save: name %q, type %s, parent %s; want %q, %s, %s as they were",
+				got.Name, idOf(got.NodeTypeID), idOf(got.ParentID), slot.Name, idOf(slot.NodeTypeID), idOf(slot.ParentID))
+		}
+	}
 
 	t.Run("a create whose name is spaces", func(t *testing.T) {
 		t.Parallel()
@@ -456,12 +472,9 @@ func TestNodeForms_ARequestWithNoName(t *testing.T) {
 		form := url.Values{}
 		form.Set("name", "   ")
 		form.Set("enabled", "on")
-		rec := postForm(t, h.handleNodeCreate, "/nodes/create", form)
-		if rec.Code != http.StatusSeeOther {
-			t.Fatalf("create: %d; today it saves (303); body=%s", rec.Code, rec.Body.String())
-		}
-		if _, err := db.GetNodeByName(""); err != nil {
-			t.Errorf("no node with no name after the create (%v); today one is saved", err)
+		refused(t, postForm(t, h.handleNodeCreate, "/nodes/create", form))
+		if n, err := db.GetNodeByName(""); err == nil {
+			t.Errorf("node %d with no name after the refused create", n.ID)
 		}
 	})
 
@@ -471,15 +484,8 @@ func TestNodeForms_ARequestWithNoName(t *testing.T) {
 		slot := typedLaneSlot(t, db, "SPACESAVE")
 		form := pageSaveForm(slot)
 		form.Set("name", "   ")
-		rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
-		if rec.Code != http.StatusSeeOther {
-			t.Fatalf("update: %d; today it saves (303); body=%s", rec.Code, rec.Body.String())
-		}
-		got, err := db.GetNode(slot.ID)
-		testutil.MustNoErr(t, err, "read the slot after the save")
-		if got.Name != "" {
-			t.Errorf("name %q; today the save stores none", got.Name)
-		}
+		refused(t, postForm(t, h.handleNodeUpdate, "/nodes/update", form))
+		asItWas(t, db, slot)
 	})
 
 	t.Run("an update that sends only the id and the enabled box", func(t *testing.T) {
@@ -489,15 +495,7 @@ func TestNodeForms_ARequestWithNoName(t *testing.T) {
 		form := url.Values{}
 		form.Set("id", strconv.FormatInt(slot.ID, 10))
 		form.Set("enabled", "on")
-		rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
-		if rec.Code != http.StatusSeeOther {
-			t.Fatalf("update: %d; today it saves (303); body=%s", rec.Code, rec.Body.String())
-		}
-		got, err := db.GetNode(slot.ID)
-		testutil.MustNoErr(t, err, "read the slot after the save")
-		if got.Name != "" || got.NodeTypeID != nil || got.ParentID != nil {
-			t.Errorf("stored name %q, type %s, parent %s; today the save clears all three",
-				got.Name, idOf(got.NodeTypeID), idOf(got.ParentID))
-		}
+		refused(t, postForm(t, h.handleNodeUpdate, "/nodes/update", form))
+		asItWas(t, db, slot)
 	})
 }
