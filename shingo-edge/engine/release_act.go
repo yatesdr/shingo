@@ -310,7 +310,7 @@ type intentQueue struct {
 	mu      lockcheck.Mutex[lockorder.IntentQueue]
 	order   []int64
 	why     map[int64]string
-	running bool          // a worker goroutine drains it
+	running bool          // a worker goroutine drains it: true from start until the worker leaves at Stop
 	signal  chan struct{} // the worker's wake
 }
 
@@ -391,8 +391,24 @@ func (e *Engine) lockOrderNode(orderID int64) func() {
 	return e.lockNodes(nil)
 }
 
-// wakeIntents asks the worker to re-plan a node's held intents.
+// stopping reports whether Stop has begun: the stop channel is closed.
+func (e *Engine) stopping() bool {
+	select {
+	case <-e.stopChan:
+		return true
+	default:
+		return false
+	}
+}
+
+// wakeIntents asks the worker to re-plan a node's held intents. On a stopped
+// engine it does nothing: the intents are rows, and the next start's boot
+// sweep wakes every node that holds one (startIntentWorker). Pinned by
+// TestIntentWorker_AStoppedEngineReleasesNothing.
 func (e *Engine) wakeIntents(nodeID int64, why string) {
+	if e.stopping() {
+		return
+	}
 	q := &e.intents
 	q.mu.Lock()
 	if q.why == nil {
@@ -420,7 +436,8 @@ func (e *Engine) wakeIntents(nodeID int64, why string) {
 }
 
 // drainIntentsInline runs the queued wakes on this goroutine, when no worker
-// goroutine runs them (tests, and an engine not started).
+// goroutine runs them (tests, and an engine not started). On a stopped engine
+// nothing is queued (wakeIntents) and the drain returns at once.
 func (e *Engine) drainIntentsInline() {
 	q := &e.intents
 	q.mu.Lock()
@@ -432,9 +449,15 @@ func (e *Engine) drainIntentsInline() {
 	e.drainIntents()
 }
 
+// drainIntents re-plans each queued node in turn. A stop ends it between
+// nodes: the act in flight finishes, and the wakes still queued are dropped
+// with the process (the next start's boot sweep wakes those nodes again).
 func (e *Engine) drainIntents() {
 	q := &e.intents
 	for {
+		if e.stopping() {
+			return
+		}
 		q.mu.Lock()
 		if len(q.order) == 0 {
 			q.mu.Unlock()
@@ -454,7 +477,13 @@ func (e *Engine) drainIntents() {
 const intentFloor = 15 * time.Second
 
 // startIntentWorker runs the worker goroutine, the 15 s floor, and the boot
-// sweep of every node holding an intent.
+// sweep of every node holding an intent. Both goroutines leave on the stop
+// channel (the worker's leaving is pinned by
+// TestIntentWorker_AStoppedEngineReleasesNothing; the floor should leave the
+// same way). Until 2026-11-24 neither did, and a stopped engine went on
+// releasing held legs from its floor (docket B5; in the scenario rig, where a
+// stopped engine shares its database with the next one, docket G12's double
+// count).
 func (e *Engine) startIntentWorker() {
 	q := &e.intents
 	q.mu.Lock()
@@ -467,15 +496,31 @@ func (e *Engine) startIntentWorker() {
 		turnover = e.watch.Loop("the release intent worker")
 	}
 	go func() {
-		for range q.signal {
-			turnover.Turn(e.drainIntents)
+		// Gone with the stop: no goroutine drains the queue from here on.
+		defer func() {
+			q.mu.Lock()
+			q.running = false
+			q.mu.Unlock()
+		}()
+		for {
+			select {
+			case <-e.stopChan:
+				return
+			case <-q.signal:
+				turnover.Turn(e.drainIntents)
+			}
 		}
 	}()
 	go func() {
 		t := time.NewTicker(intentFloor)
 		defer t.Stop()
-		for range t.C {
-			e.wakeIntentNodes("floor")
+		for {
+			select {
+			case <-e.stopChan:
+				return
+			case <-t.C:
+				e.wakeIntentNodes("floor")
+			}
 		}
 	}()
 	e.wakeIntentNodes("boot")

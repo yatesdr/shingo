@@ -335,6 +335,10 @@ func TestIntentWorker_AStoppedEngineReleasesNothing(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+	// The intent is marked sent inside the act, under the node's lock: taking
+	// the lock once waits the rest of the act out, so the test does not end
+	// under it.
+	b.lockNode(h.nodeID)()
 	envs := h.releaseEnvelopes()["evac"]
 	if len(envs) != 1 {
 		t.Fatalf("the evac got %d OrderRelease envelopes, want 1 (the running engine's): %+v", len(envs), envs)
