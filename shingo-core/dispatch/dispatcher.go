@@ -193,8 +193,37 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	d.door(func() { d.handleOrderRequest(env, p) })
 }
 
+// requestHeld reports whether Core already holds the order a request names for
+// the station that sent it, and logs the repeat. The same station and the same
+// order uuid are the same order (docket B11): the inbox row is written after
+// the handler (middleware.NewInboxDedup), so a request whose first run was cut
+// by a crash is delivered again and meets the order that run issued. Refused,
+// it was answered internal_error (its INSERT collides on idx_orders_uuid), and
+// an Edge that had heard nothing else of the order yet ended its row as failed
+// while Core ran it. Answered with nothing instead: the order's own writes tell
+// its station, a terminal one included (store/order_tell.go), and an order cut
+// before its apply is pending, for the scanner's next pass. Another station's
+// order under the uuid is not this one: that request goes on to its refusal, as
+// before. One read on idx_orders_uuid per request. Pinned by
+// TestRunTwice_OrderRequest.
+func (d *Dispatcher) requestHeld(env *protocol.Envelope, orderUUID, what string) bool {
+	if orderUUID == "" {
+		return false
+	}
+	o, err := d.db.GetOrderByUUID(orderUUID)
+	if err != nil || o == nil || o.ParentOrderID != nil || o.Requester() != env.Src.Station {
+		return false
+	}
+	log.Printf("dispatch: %s %s from %s is order %d, which Core holds (%s): a repeat, nothing done",
+		what, orderUUID, env.Src.Station, o.ID, o.Status)
+	return true
+}
+
 func (d *Dispatcher) handleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	stationID := env.Src.Station
+	if d.requestHeld(env, p.OrderUUID, "order request") {
+		return
+	}
 	// The planner decides before the row is born, so the pick rides the INSERT
 	// (orders.plan) and the scanner does not pick again (B3's first item). The
 	// decision is applied to the born row below, as planTransport applied it.

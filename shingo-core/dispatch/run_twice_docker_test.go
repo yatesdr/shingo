@@ -237,7 +237,6 @@ func TestRunTwice_OrderRequest(t *testing.T) {
 		return r, env, &protocol.OrderRequest{OrderUUID: uuid, OrderType: OrderTypeRetrieve,
 			PayloadCode: bp.Code, DeliveryNode: line.Name, Quantity: 1}
 	}
-	const until = "a request under the same station and uuid is the same order (the handler returns)"
 
 	t.Run("the station is told on a first run", func(t *testing.T) {
 		t.Parallel()
@@ -252,7 +251,6 @@ func TestRunTwice_OrderRequest(t *testing.T) {
 
 	t.Run("run, cut, run again", func(t *testing.T) {
 		t.Parallel()
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-or-cut")
 		cutting := true
 		r.d.SetPostBirthHook(func(int64) {
@@ -278,7 +276,6 @@ func TestRunTwice_OrderRequest(t *testing.T) {
 
 	t.Run("run, finish, run again", func(t *testing.T) {
 		t.Parallel()
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-or-finish")
 		r.d.HandleOrderRequest(env, req)
 		mark := outboxMark(t, r.db)
@@ -300,7 +297,6 @@ func TestRunTwice_OrderRequest(t *testing.T) {
 	// repeat returns as for a live order: the station already holds Core's word.
 	t.Run("a first run that failed the order, then the repeat", func(t *testing.T) {
 		t.Parallel()
-		b11KnownRed(t, until)
 		r, env, req := setup(t, "rt-or-failed")
 		req.OrderType, req.SourceNode = OrderTypeMove, ""
 		r.d.HandleOrderRequest(env, req)
