@@ -155,6 +155,10 @@ type Reservation struct {
 	BinID  int64 // bins.id for a bin reservation; 0 for slot/mouth
 	NodeID int64 // nodes.id for a slot/mouth reservation; 0 for bin
 	State  State
+	// NodeName is NodeID's name, read with the row (ListByOrder); "" for a bin
+	// row. Its reader is the plan-time reconcile, which matches a held slot to a
+	// need by name (dispatch.Allocator.resolveHeldReservations).
+	NodeName string
 }
 
 // ErrReservationConflict is returned by Acquire/AcquireSlot when another order
@@ -703,10 +707,14 @@ func ReleaseByNode(db Execer, nodeID int64) error {
 // keep / release / acquire — the owner-aware step that dodges the per-resource
 // unique-index self-conflict documented on Acquire. Kind-threaded: each row carries
 // its Kind, and exactly one of BinID/NodeID is set (the other is 0) so the reconcile
-// can match a slot row by node and a bin row by bin.
+// can match a slot row by node and a bin row by bin. A node row carries its node's
+// name, read in the same statement: reservations_node_id_fkey keeps node_id
+// naming a row, so it is the name a read of the node by id answers.
 func ListByOrder(db Queryer, orderID int64) ([]Reservation, error) {
 	rows, err := db.Query(
-		`SELECT resource_kind, bin_id, node_id, state FROM reservations WHERE order_id=$1 ORDER BY id`,
+		`SELECT r.resource_kind, r.bin_id, r.node_id, r.state, COALESCE(n.name, '')
+		   FROM reservations r LEFT JOIN nodes n ON n.id = r.node_id
+		  WHERE r.order_id=$1 ORDER BY r.id`,
 		orderID,
 	)
 	if err != nil {
@@ -717,7 +725,7 @@ func ListByOrder(db Queryer, orderID int64) ([]Reservation, error) {
 	for rows.Next() {
 		var r Reservation
 		var binID, nodeID sql.NullInt64
-		if err := rows.Scan(&r.Kind, &binID, &nodeID, &r.State); err != nil {
+		if err := rows.Scan(&r.Kind, &binID, &nodeID, &r.State, &r.NodeName); err != nil {
 			return nil, fmt.Errorf("reservations list-by-order scan: %w", err)
 		}
 		r.BinID = binID.Int64   // 0 when NULL (slot/mouth rows)

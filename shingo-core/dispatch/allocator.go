@@ -799,14 +799,12 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 		// not mistaken for a legitimate re-resolution.
 		switch r.Kind {
 		case reservations.KindSlot:
-			// A slot row matches a need by node directly — no bin lookup.
+			// A slot row matches a need by node directly — no bin lookup. The
+			// node's name is read with the row: reservations.ListByOrder joins it
+			// on node_id, which reservations_node_id_fkey keeps naming a row (pin:
+			// TestResolveHeldReservations_AgreesWithTheRowsOneAtATime).
 			hb.nodeID = r.NodeID
-			node, nerr := a.db.GetNode(r.NodeID)
-			if nerr != nil {
-				log.Printf("dispatch: resolveHeld slot node=%d lookup failed: %v (degrading to stray)", r.NodeID, nerr)
-			} else if node != nil {
-				hb.nodeName = node.Name
-			}
+			hb.nodeName = r.NodeName
 		default: // bin
 			hb.binID = r.BinID
 			b, err := a.db.GetBin(r.BinID)

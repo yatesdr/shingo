@@ -101,7 +101,8 @@ func TestReserveReconcile_AStockPickupKeepsNoHeldEmpty(t *testing.T) {
 // bin does not exist and a slot row whose node does not exist, every field it
 // answers is what the doors answer one row at a time: the bin by id (GetBin),
 // then the bin's node or the slot's by id (GetNode). It is asked twice: of rows
-// as written here, and of an order's rows as the store lists them
+// as written here, each carrying what the listing reads with it (a slot row's
+// node name), and of an order's rows as the store lists them
 // (ListReservationsByOrder), which the reconcile is handed. The want column
 // names each row's node, so a fixture that stops building what it says fails
 // here rather than agreeing vacuously.
@@ -170,8 +171,8 @@ func TestResolveHeldReservations_AgreesWithTheRowsOneAtATime(t *testing.T) {
 
 	const gone = int64(1) << 40 // no bin and no node has this id
 	check("rows as written", []reservations.Reservation{
-		{Kind: reservations.KindSlot, NodeID: slotA.ID, State: reservations.StatePending},
-		{Kind: reservations.KindSlot, NodeID: slotB.ID, State: reservations.StateConfirmed},
+		{Kind: reservations.KindSlot, NodeID: slotA.ID, State: reservations.StatePending, NodeName: slotA.Name},
+		{Kind: reservations.KindSlot, NodeID: slotB.ID, State: reservations.StateConfirmed, NodeName: slotB.Name},
 		{Kind: reservations.KindBin, BinID: fullBin.ID, State: reservations.StatePending},
 		{Kind: reservations.KindBin, BinID: emptyBin.ID, State: reservations.StateConfirmed},
 		{Kind: reservations.KindBin, BinID: nowhere.ID, State: reservations.StatePending},
