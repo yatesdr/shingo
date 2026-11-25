@@ -163,9 +163,10 @@ func (e *Engine) Start() {
 	// global p70 (also empty on cold start) and then to the static
 	// default. Plant runs as before, just without per-route ETAs until
 	// the next refresh succeeds.
-	if err := e.etaCache.Start(e.stopChan); err != nil {
+	if err := e.etaCache.Start(); err != nil {
 		e.logFn("engine: eta cache initial refresh failed: %v (will retry in %s)", err, "10m")
 	}
+	e.loops.spawn(func() { e.etaCache.Run(e.stopChan) })
 	e.backfillETAsForInTransitOrders()
 
 	// UOP-threshold monitor: startup sweep + ongoing subscription via

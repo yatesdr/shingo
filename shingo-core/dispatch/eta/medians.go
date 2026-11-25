@@ -100,21 +100,19 @@ func (c *Cache) Lookup(source, delivery string) (time.Duration, bool) {
 	return defaultTransit, false
 }
 
-// Start launches the background refresher. Runs an initial refresh
-// synchronously so the first lookup after Start returns real data.
-// Returns the refresh error so the engine can log it; the goroutine is
-// kicked off unconditionally so a cold-start failure (e.g. fresh DB
-// with no completed orders yet) still leaves the cache healthy for
-// later refreshes. Stop the loop by closing stopChan.
-func (c *Cache) Start(stopChan <-chan struct{}) error {
-	ctx := context.Background()
-	err := c.Refresh(ctx)
-	go c.run(stopChan)
-	return err
+// Start runs the initial refresh synchronously so the first lookup after
+// Start returns real data, and returns its error so the engine can log it.
+// It starts nothing: the background refresher is Run, which the caller
+// spawns where its stop can wait for it (the engine's tracked group,
+// docket B4), whatever Start returned, so a cold-start failure (e.g. fresh
+// DB with no completed orders yet) still leaves the cache healthy for later
+// refreshes.
+func (c *Cache) Start() error {
+	return c.Refresh(context.Background())
 }
 
-// run refreshes the cache every refreshInterval until stopChan closes.
-func (c *Cache) run(stopChan <-chan struct{}) {
+// Run refreshes the cache every refreshInterval until stopChan closes.
+func (c *Cache) Run(stopChan <-chan struct{}) {
 	t := clock.Default().NewTicker(refreshInterval)
 	defer t.Stop()
 	for {

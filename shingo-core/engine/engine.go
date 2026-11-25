@@ -186,8 +186,6 @@ type Engine struct {
 	// its caller is about to close and logs through a logger whose owner may be
 	// gone (TestEngineStop_WaitsForItsGoroutines). It does not track these,
 	// and each says why:
-	//   - eta.Cache.run: the cache starts it and it returns on stopChan. A
-	//     refresh in flight reads only, and logs through the log package.
 	//   - the SourceabilityMonitor.Run ticker: the monitor starts it. The
 	//     monitor counts each pass (begin) and its stop waits for one running
 	//     (TestSourceabilityMonitor_StopWaitsForARunningRecompute).
@@ -197,9 +195,9 @@ type Engine struct {
 	//     minutes, longer than Stop does. It and the other email sends can wait
 	//     on a mail server, and neither read the database nor log through the
 	//     engine.
-	// The re-drive after a dig's last leg fails is tracked: the failure
-	// subscriber spawns it here (wiring.go), where the dispatcher used to start
-	// it bare (docket B4).
+	// Two that were on this list are tracked since docket B4: the re-drive
+	// after a dig's last leg fails (the failure subscriber spawns it, wiring.go)
+	// and the eta cache's refresh loop (Start spawns eta.Cache.Run).
 	// Subscribers other packages register (www's EventHub, messaging's bins
 	// feed) start work of their own, which Stop does not know of.
 	loops goGroup[lockorder.EngineLoops]
