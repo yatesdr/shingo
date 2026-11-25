@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"shingoedge/plc"
 	"strings"
 	"sync"
@@ -216,6 +217,93 @@ func TestEngine_ReconnectKafka(t *testing.T) {
 	}
 	if err == nil || err.Error() != "boom" {
 		t.Errorf("ReconnectKafka err = %v, want boom", err)
+	}
+}
+
+// TestEngine_HooksAreSetAndReadOnTwoGoroutines pins docket D31, step one. The
+// composition root (cmd/shingoedge main.go) sets each of these hooks after
+// Start: three on the kafka-connect-retry goroutine, the rest on main beside
+// the goroutines Start has running. A web handler, the heartbeater or one of
+// the engine's own loops reads it from another goroutine. So each should be
+// stored as heartbeatBodyFn is, in a sync/atomic type, and a set and a read
+// then need no other ordering.
+//
+// Each hook gets two checks. The field's type, by reflection, fails with or
+// without the race detector. The two goroutines, one on the setter and one on
+// the reader, fail only under it. The dev tier runs no -race: that half is run
+// by CI's docker-race job (.github/workflows/edge.yml), and by hand with -race
+// and -run TestEngine_HooksAreSetAndReadOnTwoGoroutines (tags lockcheck).
+// A healthy boot under -race is no evidence either way: it has no reader in
+// the window.
+//
+// Not parallel: the detector fails every test running when it reports, so
+// this one runs alone.
+func TestEngine_HooksAreSetAndReadOnTwoGoroutines(t *testing.T) {
+	hooks := []struct {
+		field string
+		set   func(e *Engine)
+		read  func(e *Engine)
+	}{
+		// The control: atomic before this pin was written.
+		{"heartbeatBodyFn",
+			func(e *Engine) { e.SetHeartbeatBodyFunc(func() *protocol.EdgeHeartbeat { return nil }) },
+			func(e *Engine) { _ = e.HeartbeatBody() }},
+		{"kafkaReconnFn",
+			func(e *Engine) { e.SetKafkaReconnectFunc(func() error { return nil }) },
+			func(e *Engine) { _ = e.ReconnectKafka() }},
+		{"nodeSyncFn",
+			func(e *Engine) { e.SetNodeSyncFunc(func() {}) },
+			func(e *Engine) { e.RequestNodeSync() }},
+		{"catalogSyncFn",
+			func(e *Engine) { e.SetCatalogSyncFunc(func() {}) },
+			func(e *Engine) { e.RequestCatalogSync() }},
+		{"sendFn",
+			func(e *Engine) { e.SetSendFunc(func(*protocol.Envelope) error { return nil }) },
+			func(e *Engine) { _ = e.SendEnvelope(&protocol.Envelope{}) }},
+		{"plantClaimsFn",
+			func(e *Engine) { e.SetPlantClaimsFunc(func(int64) {}) },
+			func(e *Engine) { e.publishPlantClaims(1) }},
+		{"kafkaConnFn",
+			func(e *Engine) { e.SetKafkaConnFunc(func() bool { return true }) },
+			func(e *Engine) { _ = e.KafkaConnected() }},
+		{"kafkaLastPublishFn",
+			func(e *Engine) {
+				e.SetKafkaLastPublishFunc(func() (bool, time.Time, bool) { return true, time.Time{}, true })
+			},
+			func(e *Engine) { _, _, _ = e.KafkaLastPublish() }},
+		{"productionTickLagFn",
+			func(e *Engine) { e.SetProductionTickLagFunc(func() (int64, int64, error) { return 0, 0, nil }) },
+			func(e *Engine) { _, _, _ = e.ProductionTickLag() }},
+	}
+	engineType := reflect.TypeOf((*Engine)(nil)).Elem()
+	for _, h := range hooks {
+		t.Run(h.field, func(t *testing.T) {
+			f, ok := engineType.FieldByName(h.field)
+			if !ok {
+				t.Fatalf("Engine has no field %s: this pin lost its input; name the field that replaced it", h.field)
+			}
+			if f.Type.PkgPath() != "sync/atomic" {
+				t.Errorf("Engine.%s is a plain %s: store it in a sync/atomic type and read it with Load, as heartbeatBodyFn is; "+
+					"main.go sets it while another goroutine may read it", h.field, f.Type)
+			}
+			const passes = 200
+			e := &Engine{}
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < passes; i++ {
+					h.set(e)
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				for i := 0; i < passes; i++ {
+					h.read(e)
+				}
+			}()
+			wg.Wait()
+		})
 	}
 }
 
