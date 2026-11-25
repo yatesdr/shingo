@@ -28,7 +28,6 @@ import (
 	"shingo/protocol/debuglog"
 	"shingo/protocol/router"
 
-	coremessaging "shingocore/messaging"
 	"shingocore/service"
 	corestore "shingocore/store"
 	corenodes "shingocore/store/nodes"
@@ -68,17 +67,6 @@ type debugRig struct {
 	acks    int            // heartbeat acks the Edge took
 }
 
-// countIn routes subject to handle on Core's subjects, counting each message
-// that reaches it.
-func countIn[T any](r *debugRig, subjects *router.SubjectRouter, subject string, handle func(*protocol.Envelope, *T)) {
-	router.RegisterSubject(subjects, subject, func(env *protocol.Envelope, body *T) {
-		r.mu.Lock()
-		r.reached[subject]++
-		r.mu.Unlock()
-		handle(env, body)
-	})
-}
-
 func newDebugRig(t *testing.T) *debugRig {
 	t.Helper()
 	r := &debugRig{t: t, reached: map[string]int{}}
@@ -86,24 +74,20 @@ func newDebugRig(t *testing.T) *debugRig {
 	r.sd = coreharness.SetupStandardData(t, r.core)
 	_, err := r.core.EnrollEdge(debugStation, "")
 	mustNil(t, err, "enroll the station")
-	svc := coremessaging.NewCoreDataService(r.core,
-		coremessaging.NewCoreHandler(r.core, nil, "core", "shingo.dispatch", nil), service.EpochAnnounce{})
+
+	// Core: main's tables with no engine, routing what a boot, its heartbeats
+	// and the page send, each counted on the way in.
+	sent := []string{protocol.SubjectEdgeRegister, protocol.SubjectEdgeHeartbeat, protocol.SubjectBinsWatch,
+		protocol.SubjectPlantClaims, protocol.SubjectEdgeCells}
+	core := coreharness.NewTables(t, r.core, nil, coreharness.RoutesOnly(sent...),
+		coreharness.Tap(func(_ *protocol.Envelope, subject string) {
+			r.mu.Lock()
+			r.reached[subject]++
+			r.mu.Unlock()
+		}, sent...))
 	// The ack names the kinds Core answers, as cmd/shingocore hands it its ask
 	// server's (SetAskKinds).
-	svc.SetAskKinds(protocol.AskKinds)
-
-	// Core: what a boot, its heartbeats and the page send, as cmd/shingocore
-	// buildSubjectRouter routes them, each counted on the way in.
-	coreSubjects := router.NewSubject()
-	countIn(r, coreSubjects, protocol.SubjectEdgeRegister, svc.HandleEdgeRegister)
-	countIn(r, coreSubjects, protocol.SubjectEdgeHeartbeat, svc.HandleEdgeHeartbeat)
-	countIn(r, coreSubjects, protocol.SubjectBinsWatch, svc.HandleBinWatch)
-	countIn(r, coreSubjects, protocol.SubjectPlantClaims, svc.HandlePlantClaims)
-	countIn(r, coreSubjects, protocol.SubjectEdgeCells, svc.HandleEdgeCells)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { coreSubjects.Dispatch(env, p) })
-	coreIngestor := protocol.NewIngestor(nil)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	core.Data.SetAskKinds(protocol.AskKinds)
 
 	// The Edge: a process claiming Core's line node, so the node is on its bins
 	// watch list (a process node) and in its plant claims, and a counted
@@ -196,7 +180,7 @@ func newDebugRig(t *testing.T) *debugRig {
 	edgeIngestor.Dispatch = func(env *protocol.Envelope) { edgeRouter.Dispatch(env, env.Type) }
 	r.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: db, EdgeIngestor: edgeIngestor},
-		harness.CoreSide{CoreStore: r.core, CoreIngestor: coreIngestor})
+		harness.CoreSide{CoreStore: r.core, CoreIngestor: core.Ingestor})
 
 	// The Edge's web server, as main.go starts it, and an admin signed in: the
 	// page is an admin page.
