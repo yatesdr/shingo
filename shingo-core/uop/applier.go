@@ -480,8 +480,9 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		return err
 	}
 	if !applied {
-		// The bin lock makes this unreachable for one station; kept so a
-		// broken invariant skips rather than double-applies.
+		// Reachable: a delta that waited behind a fenced release finds its
+		// sequence claimed (TestRelease_ADeltaWaitingBehindAFencedRelease, the
+		// case at or below the fence). It skips rather than double-applies.
 		return fmt.Errorf("%w: seq %d did not advance its scope past last_seq", ErrInventoryDeltaSkipped, d.SequenceID)
 	}
 
@@ -508,7 +509,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// Produce-tick identity binding: a produce tick is physical proof of what
 	// the press is filling the bin with — stronger evidence than any label
 	// typed at a load screen — and a produce count must never freeze on a
-	// label disagreement (HK 2026-07-16: stale hand-typed labels on the
+	// label disagreement (a plant, 2026-07-16: stale hand-typed labels on the
 	// press fronts froze counting for 480+544 parts after cutover). Two
 	// cases when the wire payload differs from the bin's label:
 	//
@@ -531,7 +532,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// (repairEpoch), but the reason not to bump here is unchanged and is the
 	// stronger one: nothing about this path starts the carrier a new life.
 	// Non-produce reasons keep the hard reject below — a consume drain
-	// against a wrong-labeled bin is the ALN_001 corruption case.
+	// against a wrong-labeled bin is the corruption case a plant's line node saw.
 	if d.Reason == protocol.ReasonProduceTick && d.PayloadCode != "" &&
 		havePayloadCode != d.PayloadCode {
 		if valueBefore == 0 {
@@ -579,7 +580,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	if d.PayloadCode != "" && havePayloadCode != "" && d.PayloadCode != havePayloadCode {
 		// Non-produce mismatch: dropping the count is correct — never let a
 		// consume/capture delta land on inventory it doesn't describe
-		// (ALN_001). But make the drop VISIBLE: pre-fix the only signal was
+		// (that line node's case). But make the drop VISIBLE: pre-fix the only signal was
 		// this returned error in the core_handler log. The observability
 		// writes go through s.db, NOT this tx, and the tx is rolled back
 		// FIRST: it holds the bins-row lock readBinScope took, which the
@@ -1137,8 +1138,12 @@ func stampOrNone(t sql.NullTime) string {
 // readBinScope reads the bin's current generation and Core's cursor in the
 // message's own scope, (station, bin, wire epoch), in one statement, and locks
 // the bin row. The lock is what the apply takes anyway at its UPDATE; taking
-// it here serializes applies for the bin across this read and the claim, so
-// the cursor the apply rule uses is the one the claim advances.
+// it here should serialize applies for the bin across this read and the claim.
+// The cursor is joined, not locked, so a read that waited on the bin's lock can
+// read the cursor from before the other apply's claim: B18, the
+// past-the-fence case of TestRelease_ADeltaWaitingBehindAFencedRelease, red and
+// skipped unless SHINGO_KNOWN_RED=1 (one inbound reader a topic keeps it from a
+// plant today).
 func readBinScope(tx *sql.Tx, station, scopeKey string, d *protocol.BinUOPDelta) (int64, scopeCursor, error) {
 	var (
 		epoch   int64
