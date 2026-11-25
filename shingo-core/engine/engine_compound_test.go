@@ -1057,6 +1057,49 @@ func TestCompound_ANamelessFrontSlotFailsTheOrderAtItsFirstMove(t *testing.T) {
 	testdb.AssertBinUnclaimed(t, db, sc.TargetBin.ID)
 }
 
+// --- Test: no bin is moved for a dig through a nameless slot (docket B1, point 5) ---
+//
+// The lane pin's lane: three deep, a bin on every slot, the wanted bin deepest,
+// the middle slot with no name before the bin is asked for. A dig through it
+// cannot finish (its unbury would copy the blank), so the planner refuses it,
+// as it refuses a blocker on a switched-off node, and the order fails at once
+// naming the slot by id: no leg is written and no blocker is carried out for a
+// dig that would fail behind it.
+func TestCompound_NoBinIsMovedForADigThroughANamelessSlot(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "NOPLAN", NumSlots: 3, NumShuffles: 2})
+	nameless := sc.Slots[1]
+	blankNodeName(t, db, nameless.ID)
+
+	eng := newTestEngine(t, db, simulator.New())
+	eng.Dispatcher().HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
+		OrderUUID:    "noplan-dig-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+
+	sentence := dplan.ConfigFailureID("name of source node", nameless.ID)
+	order := testdb.RequireOrder(t, db, "noplan-dig-1")
+	if order.Status != dispatch.StatusFailed || order.ErrorDetail != sentence {
+		t.Errorf("the order is %q (%q), want failed with %q", order.Status, order.ErrorDetail, sentence)
+	}
+	if legs := legsByID(t, db, order.ID); len(legs) != 0 {
+		t.Errorf("the order has %d legs, want none: a dig that cannot finish is not planned", len(legs))
+	}
+	if eng.Dispatcher().LaneLock().IsLocked(sc.Lane.ID) {
+		t.Errorf("lane %s is held for a dig that was not planned", sc.Lane.Name)
+	}
+	for i, b := range sc.Blockers {
+		testdb.AssertBinAtNode(t, db, b.ID, sc.Slots[i].ID)
+		testdb.AssertBinUnclaimed(t, db, b.ID)
+	}
+}
+
 // legsByID lists a compound's legs oldest first. ListChildOrders orders by
 // sequence, which restarts with every plan, so the plans of a re-planned
 // parent interleave there.
