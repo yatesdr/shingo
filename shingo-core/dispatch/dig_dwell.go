@@ -188,7 +188,7 @@ func (d *Dispatcher) digDwellPlan(order *orders.Order, sourceNode *nodes.Node) (
 	if !awaitsReleaseTimeDestination(order) || sourceNode == nil {
 		return nil, laneGateTarget{}, false, nil
 	}
-	lane, err := d.db.LaneForNode(sourceNode.ID)
+	lane, err := d.db.LaneOf(sourceNode)
 	if err != nil {
 		return nil, laneGateTarget{}, false, fmt.Errorf("dwell plan: resolve lane for %s: %w", sourceNode.Name, err)
 	}
@@ -854,7 +854,7 @@ func (d *Dispatcher) releaseOccupancyForLaneOf(orderID int64, node *nodes.Node) 
 	if node == nil {
 		return
 	}
-	lane, err := d.db.LaneForNode(node.ID)
+	lane, err := d.db.LaneOf(node)
 	if err != nil || lane == nil {
 		return
 	}

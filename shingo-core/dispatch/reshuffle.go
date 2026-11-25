@@ -405,7 +405,7 @@ func (d *Dispatcher) MoveDigFits(bin *bins.Bin, source, dest *nodes.Node) error 
 	if bin == nil || source == nil {
 		return nil
 	}
-	lane, err := d.db.LaneForNode(source.ID)
+	lane, err := d.db.LaneOf(source)
 	if err != nil || lane == nil || lane.ParentID == nil {
 		return nil
 	}

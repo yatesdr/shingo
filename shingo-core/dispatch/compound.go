@@ -1874,7 +1874,7 @@ func (d *Dispatcher) obstructionIsSpokenFor(leg *orders.Order, sourceNode *nodes
 	if sourceNode == nil {
 		return false, fmt.Errorf("stale-dig disposition: leg %d has no source node", leg.ID)
 	}
-	lane, err := d.db.LaneForNode(sourceNode.ID)
+	lane, err := d.db.LaneOf(sourceNode)
 	if err != nil {
 		return false, fmt.Errorf("stale-dig disposition: resolve lane for node %d: %w", sourceNode.ID, err)
 	}

@@ -282,7 +282,7 @@ func (d *Dispatcher) turnNodeShapeRefusal(node *nodes.Node) error {
 	case "NGRP", "LANE":
 		return fmt.Errorf("%w: %s is a %s — a table turns at a physical spot", ErrTableTurnRefused, node.Name, node.NodeTypeCode)
 	}
-	lane, err := d.db.LaneForNode(node.ID)
+	lane, err := d.db.LaneOf(node)
 	if err != nil {
 		return fmt.Errorf("%w: could not read whether %s is a lane slot: %v", ErrTableTurnRefused, node.Name, err)
 	}

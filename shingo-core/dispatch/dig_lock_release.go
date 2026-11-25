@@ -652,7 +652,7 @@ func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) 
 	if dest == nil {
 		return false, ""
 	}
-	lane, err := d.db.LaneForNode(dest.ID)
+	lane, err := d.db.LaneOf(dest)
 	if err != nil {
 		return true, "has a destination whose lane could not be resolved"
 	}

@@ -509,7 +509,7 @@ func (d *Dispatcher) ClearTradeRefusal(loaderID int64, home, spot *nodes.Node, e
 		return fmt.Sprintf("%s does not take %s's carrier type %s", home.Name, p.Label, p.BinTypeCode), nil
 	}
 	for _, n := range []*nodes.Node{home, spot} {
-		lane, err := d.db.LaneForNode(n.ID)
+		lane, err := d.db.LaneOf(n)
 		if err != nil {
 			return "", err
 		}
