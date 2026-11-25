@@ -87,9 +87,9 @@
                      where it went (returning / returned / held). Display only. */}}
                 {{if $.BinReturns}}{{with index $.BinReturns .ID}}<div class="orders-subtext">{{.}}</div>{{end}}{{end}}
                 {{/* Core's sentence when it answered that it cannot cancel the order
-                     (domain.Order.CancelRefused): the row keeps Core's status, and
-                     offers what that status allows. */}}
-                {{with .CancelRefused}}<div class="orders-subtext orders-reason">Not cancelled: {{.}}</div>{{end}}
+                     (domain.Order.CancelRefused), as Core sent it ("Not cancelled: ..."):
+                     the row keeps Core's status, and offers what that status allows. */}}
+                {{with .CancelRefused}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}
             </td>
             <td class="orders-time">{{formatTime .CreatedAt}}</td>
             <td class="orders-time">{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>

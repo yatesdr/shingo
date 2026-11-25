@@ -91,7 +91,7 @@ func TestEdgeOrders_ACancelSentWaitsForCoreOnTheRow(t *testing.T) {
 				Status: protocol.StatusInTransit, DeliveryNode: "ALN_001", Quantity: 1, CancelSent: true, CancelSentAt: &at},
 			{ID: 42, UUID: "edge-cancel-refused", OrderType: protocol.OrderTypeRetrieve,
 				Status: protocol.StatusDelivered, DeliveryNode: "ALN_002", Quantity: 1,
-				CancelRefused: "the cart was set down at ALN_002"},
+				CancelRefused: "Not cancelled: its cart was set down at ALN_002 on 2026-11-25 at 12:00. Confirm it at the station."},
 		},
 		"WaitSince": map[int64]string{},
 	})
@@ -103,7 +103,8 @@ func TestEdgeOrders_ACancelSentWaitsForCoreOnTheRow(t *testing.T) {
 		{`Cancel sent · <span class="tnum" data-since="2026-11-25T12:00:00Z"></span>`, true},
 		{`data-action="cancelOrder:42"`, false},
 		{`data-action="confirmDelivery:42:1"`, true},
-		{`Not cancelled: the cart was set down at ALN_002`, true},
+		{`Not cancelled: its cart was set down at ALN_002 on 2026-11-25 at 12:00. Confirm it at the station.`, true},
+		{`Not cancelled: Not cancelled`, false},
 	} {
 		if got := strings.Contains(html, c.text); got != c.want {
 			t.Errorf("the rows carry %s: %v, want %v\n%s", c.text, got, c.want, html)

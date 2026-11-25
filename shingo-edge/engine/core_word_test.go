@@ -1001,7 +1001,8 @@ func TestCoreWord_ANotFoundToTheCancelEndsTheRow(t *testing.T) {
 // cancel_refused_ended, its CorID the cancel's envelope) writes Core's sentence
 // onto the cancel and nothing else: the status stays Core's, no history row,
 // no toast, no hold; Core's own word then moves the row. A refusal of another
-// envelope, or a second one, changes nothing; neither fails the order, which
+// envelope, or the identical one again (Core resends it for a redelivered
+// cancel), changes nothing and announces nothing; neither fails the order, which
 // an order.error with another code does on a row with no versioned word.
 func TestCoreWord_ARefusalWritesOnlyTheSentence(t *testing.T) {
 	t.Parallel()
@@ -1013,17 +1014,23 @@ func TestCoreWord_ARefusalWritesOnlyTheSentence(t *testing.T) {
 			r.live("refused-leg", protocol.StatusInTransit, 2)
 			r.askCancelByHand(id, domain.CancelByPerson, "env-1")
 			before := len(r.history(id))
-			const sentence = "The cart was set down at TEST-NODE. CONFIRM it at the station."
+			const sentence = "Not cancelled: its cart was set down at TEST-NODE on 2026-11-25 at 12:00. Confirm it at the station."
 
 			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-0"}, &protocol.OrderError{OrderUUID: "refused-leg",
 				ErrorCode: code, Detail: "stale"})
 			if o := r.row(id); o.CancelRefused != "" || !o.CancelSent {
 				t.Errorf("a refusal of another envelope: the row reads sent=%v refused=%q, want it still sent", o.CancelSent, o.CancelRefused)
 			}
-			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, &protocol.OrderError{OrderUUID: "refused-leg",
-				ErrorCode: code, Detail: sentence})
-			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, &protocol.OrderError{OrderUUID: "refused-leg",
-				ErrorCode: code, Detail: "a second answer"})
+			refusal := &protocol.OrderError{OrderUUID: "refused-leg", ErrorCode: code, Detail: sentence}
+			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, refusal)
+			// Core sends its refusal again when the same envelope is delivered
+			// twice (it keeps no record of one): the identical second changes
+			// nothing and announces nothing.
+			events, updated := len(r.events), r.row(id).UpdatedAt
+			r.h.HandleOrderError(&protocol.Envelope{CorID: "env-1"}, refusal)
+			if len(r.events) != events || !r.row(id).UpdatedAt.Equal(updated) {
+				t.Errorf("the identical second refusal fired %q and wrote the row, want a no-op", r.events[events:])
+			}
 
 			o := r.at("the refusal", id, protocol.StatusInTransit, 2)
 			if o.CancelSent || o.CancelRefused != sentence {
