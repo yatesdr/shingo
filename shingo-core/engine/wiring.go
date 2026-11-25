@@ -160,7 +160,24 @@ func (e *Engine) wireEventHandlers() {
 			// post-dispatch window; HandleSwapPeerTerminal self-gates on the
 			// durable sibling link, so it is a no-op for non-swap orders).
 			if order.ParentOrderID != nil && e.dispatcher != nil {
-				e.dispatcher.HandleChildOrderFailure(*order.ParentOrderID, ev.OrderID)
+				// A LEG THAT LEFT NOTHING TO CANCEL IS RE-DRIVEN HERE: the cancels'
+				// own events re-drive the parent when there are any (the
+				// cancelled-leg arm below), so none means nothing else will. The
+				// advance writes, so it runs on the engine's tracked group, off the
+				// emitter's goroutine: Stop waits for it
+				// (TestEngineStop_WaitsForTheAdvanceAfterALastLegFails), and a
+				// stopped engine starts none (goGroup.spawn), which
+				// AdvanceStuckReshuffleParents (at boot, and on the reconciliation
+				// loop) makes up for.
+				parentID := *order.ParentOrderID
+				if e.dispatcher.HandleChildOrderFailure(parentID, ev.OrderID) {
+					e.loops.spawn(func() {
+						if err := e.dispatcher.AdvanceCompoundOrder(parentID); err != nil {
+							e.logFn("engine: advance compound %d after its last leg %d failed: %v",
+								parentID, ev.OrderID, err)
+						}
+					})
+				}
 			} else if e.dispatcher != nil {
 				e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalFailed)
 			}

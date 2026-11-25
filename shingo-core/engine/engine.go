@@ -197,9 +197,9 @@ type Engine struct {
 	//     minutes, longer than Stop does. It and the other email sends can wait
 	//     on a mail server, and neither read the database nor log through the
 	//     engine.
-	//   - the re-drive in Dispatcher.HandleChildOrderFailure: the dispatcher
-	//     has no handle on this group. It writes, so it can meet a closed
-	//     database; AdvanceStuckReshuffleParents re-drives that parent at boot.
+	// The re-drive after a dig's last leg fails is tracked: the failure
+	// subscriber spawns it here (wiring.go), where the dispatcher used to start
+	// it bare (docket B4).
 	// Subscribers other packages register (www's EventHub, messaging's bins
 	// feed) start work of their own, which Stop does not know of.
 	loops goGroup[lockorder.EngineLoops]

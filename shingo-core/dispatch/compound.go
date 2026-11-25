@@ -2178,9 +2178,14 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 }
 
 // HandleChildOrderFailure closes the chapter a failed leg belonged to. It
-// cancels every remaining non-terminal child and hands the parent's disposition
-// to AdvanceCompoundOrder. Uses lifecycle.CancelOrder so fleet orders are
+// cancels every remaining non-terminal child; the parent's disposition is
+// AdvanceCompoundOrder's. Uses lifecycle.CancelOrder so fleet orders are
 // cancelled and bins unclaimed — same approach as cancelCompoundChildren.
+//
+// redrive reports that it cancelled nothing, so nothing else will re-drive the
+// parent and the caller must, off this goroutine (see the tail below). Its one
+// caller is the engine's failure subscriber, which spawns the advance on the
+// engine's tracked group (docket B4).
 //
 // ── GATE 1: IT NO LONGER FAILS THE PARENT (§R.91) ─────────────────────────
 //
@@ -2212,20 +2217,20 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 // cancelled-but-still-moving leg is inside is the re-burial window Hold A
 // exists to close. The disposition arm releases it, and the reconciliation
 // sweep is the backstop it always was.
-func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) {
+func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) (redrive bool) {
 	log.Printf("dispatch: child order %d failed in compound %d — closing the chapter, the demand re-plans",
 		childOrderID, parentOrderID)
 
 	children, err := d.db.ListChildOrders(parentOrderID)
 	if err != nil {
 		log.Printf("dispatch: list children for failed compound %d: %v", parentOrderID, err)
-		return
+		return false
 	}
 
 	parent, err := d.db.GetOrder(parentOrderID)
 	if err != nil {
 		log.Printf("dispatch: load parent for failed compound %d: %v", parentOrderID, err)
-		return
+		return false
 	}
 
 	// A HOME CLEAR IS NOT A DIG: a lost empty's move is its re-run's, a lost
@@ -2233,7 +2238,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	// would take the partial's move down with a failed empty's move.
 	if IsClearParent(parent) {
 		d.clearLegFailed(parent, childOrderID)
-		return
+		return false
 	}
 
 	// A SIBLING CARRYING ITS BIN IS NOT CANCELLED (splitLiftedLegs): it sets the
@@ -2251,7 +2256,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
 	if err != nil {
 		log.Printf("dispatch: failed compound %d: %v (cancelling no leg)", parentOrderID, err)
-		return
+		return false
 	}
 	for _, leg := range kept {
 		log.Printf("dispatch: compound %d keeps leg %d after leg %d failed — it is carrying its bin, "+
@@ -2266,15 +2271,11 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	// NOTHING LEFT TO CANCEL MEANS NOTHING LEFT TO WAKE US. The cancels are what
 	// re-drive the compound (engine wiring, on the chapter-end marker), so a
 	// chapter whose last leg was the one that failed would otherwise sit until
-	// the reconciliation sweep noticed. Re-drive it directly — asynchronously,
-	// for the scanMu reason in this function's header.
-	if cancelled == 0 {
-		go func() {
-			if err := d.AdvanceCompoundOrder(parentOrderID); err != nil {
-				log.Printf("dispatch: advance compound %d after its last leg failed: %v", parentOrderID, err)
-			}
-		}()
-	}
+	// the reconciliation sweep noticed. The caller re-drives it, off this
+	// goroutine for the scanMu reason in this function's header. It used to be
+	// a bare `go` here, which Engine.Stop could not wait for (docket B4,
+	// TestEngineStop_WaitsForTheAdvanceAfterALastLegFails).
+	return cancelled == 0
 }
 
 // CancelOrderWithCascade is THE cancel door. Both entry points that cancel an
