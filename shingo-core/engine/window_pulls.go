@@ -28,8 +28,8 @@ package engine
 
 import (
 	"strings"
-	"sync"
 
+	"shingo/protocol/gogroup"
 	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
 	"shingocore/internal/lockorder"
@@ -56,36 +56,17 @@ type stage2Puller = goGroup[lockorder.Stage2Pulls]
 
 // goGroup tracks goroutines so a stop can wait for them: the window pulls'
 // (stage2Puller) and every loop and hand-off the engine starts (Engine.loops).
-// The zero value is ready. R ranks its lock (internal/lockorder); the lock is
-// held only across the Add and the go statement, so it is a leaf.
-type goGroup[R lockcheck.Ranked] struct {
-	mu      lockcheck.Mutex[R]
-	stopped bool
-	wg      sync.WaitGroup
-}
+// It is protocol/gogroup's Group under the names this package and the docs
+// generator read (shared/scripts/docgen loops.go takes a spawn on a goGroup
+// for a go statement). The zero value is ready; R ranks its lock
+// (internal/lockorder), a leaf.
+type goGroup[R lockcheck.Ranked] struct{ g gogroup.Group[R] }
 
-// spawn runs fn on a tracked goroutine, or not at all once stopped. The Add is
-// under mu, the lock stop sets stopped under, so it is ordered before the Wait.
-func (p *goGroup[R]) spawn(fn func()) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.stopped {
-		return
-	}
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		fn()
-	}()
-}
+// spawn runs fn on a tracked goroutine, or not at all once stopped.
+func (p *goGroup[R]) spawn(fn func()) { p.g.Spawn(fn) }
 
 // stop refuses new goroutines and waits for the running ones.
-func (p *goGroup[R]) stop() {
-	p.mu.Lock()
-	p.stopped = true
-	p.mu.Unlock()
-	p.wg.Wait()
-}
+func (p *goGroup[R]) stop() { p.g.Stop() }
 
 // SaveLoader saves a loader's settings (service.LoaderService.Update) and, when
 // the save leaves a drain box on, drains at once: ticking a box is the crew
