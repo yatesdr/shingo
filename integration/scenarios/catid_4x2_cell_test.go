@@ -682,8 +682,9 @@ func (c *w6Cell) anyStation() bool {
 
 // restart stops the Edge and boots another on the same database, as a
 // process restart does: what was in memory is gone, the database stays. The
-// shutdown is the composition root's: the delta sink's final flush, then the
-// engine.
+// shutdown here flushes the delta sink, then stops the engine; the composition
+// root does the reverse (cmd/shingoedge main.go stops the engine first, so its
+// last ticks reach the deferred flush).
 func (c *w6Cell) restart(label string) {
 	c.t.Helper()
 	c.sink.Stop()
@@ -1083,8 +1084,10 @@ func (c *w6Cell) loggedAt(h w6Holds, i int) int64 {
 	return n
 }
 
-// w6Ledger is the run's three ledgers, read at one instant: the carts' draws
-// and the ledger's logged strokes, against the loads.
+// w6Ledger is the run's three ledgers: the carts' draws and the ledger's logged
+// strokes, against the loads. They are read one after another, after a flush
+// (ledger), and agree as one instant's would only because nothing ticks while
+// they are read.
 type w6Ledger struct {
 	carts, logged, loads int64
 	// holdsOpen is the open held and off-plan shares (shares); noCart the

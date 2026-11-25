@@ -247,7 +247,7 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 
 	consume := func(epoch int64, delta int, seq int64) error {
 		now := time.Now().UTC()
-		// "ALN_001" is the envelope source now, not a payload field.
+		// The station is the envelope source now, not a payload field.
 		return inv.ApplyBinUOPDelta("ALN_001", &protocol.BinUOPDelta{
 			BinID:       bin.ID,
 			PayloadCode: sd.Payload.Code,
