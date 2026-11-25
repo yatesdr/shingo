@@ -47,6 +47,11 @@
 #  16. a guard marked `# side: linux` (a gate-tooling pin) is skipped by a
 #      Windows-side run, which names it in the sentence; the Linux side and a
 #      gate off Windows with no mirror (GitHub) run it (R49)
+#  17. the gate's tier (GATE_TIER) is in the environment of a test binary it
+#      runs, read off case 12's green run. One test reads it:
+#      shingo-core/internal/schemadump's releaseCacheForTests builds every old
+#      release when the tier is cert, so nothing between gate.sh and a test
+#      binary may drop it
 #
 # A process costs 0.1-0.7 s on the loaded Windows laptop (2026-11-24), so this
 # pin took about 227 s there and takes seconds on the Linux side; a Windows-side
@@ -61,15 +66,19 @@ trap 'rm -f "$TMP/stop"; touch "$TMP/stop"; sleep 0.3; rm -rf "$TMP"' EXIT
 fails=0
 fail() { echo "  FAIL gate-mirror: $*"; fails=$((fails + 1)); }
 
-# Nothing of a gate this pin may be running inside reaches the fixture's.
+# Nothing of a gate this pin may be running inside reaches the fixture's. Its
+# tier too: an inherited GATE_TIER is exported already, so a fixture gate that
+# set it without exporting it would still hand it on, and case 17 would pass.
 unset GATE_SIDE GATE_LOCK_HELD GATE_NO_LOCK GATE_IN_MIRROR GATE_MIRROR_TREE GATE_MIRROR_SOURCE \
       GATE_TIMING_TOKEN GATE_LINUX_SETUP GATETIME_BIN GATETIME_MANIFESTS GATETIME_IDENTITY \
-      GATE_MODULES GATE_TEST_LOG_DIR GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_RUN_KEPT
+      GATE_MODULES GATE_TEST_LOG_DIR GATE_DOCKER_ORDER_LOG GATE_MANIFEST_DIR GATE_RUN_KEPT GATE_TIER
 export GATE_LINUX_EXEC=local
 export GATE_MIRROR_ROOT="$TMP/mirrors"
 export GATE_LINUX_ENV="$TMP/env.sh"
 export GATE_LOCK_DIR="$TMP/gate.lock" GATE_TIMING_DIR="$TMP/gate.timing-free"
 export GATE_STEPS_LOG= GATE_EXEC=off
+# Case 17: where the fixture's tier_test.go writes the tier its binary read.
+export GATE_FIXTURE_TIER="$TMP/tier"
 export GATE_LOCK_HEARTBEAT=1 GATE_LOCK_STALE=4 GATE_LOCK_POLL=0.3 GATE_LOCK_REPORT=1 GATE_LOCK_TIMEOUT=20
 export GIT_AUTHOR_NAME=pin GIT_AUTHOR_EMAIL=pin@example.invalid GIT_COMMITTER_NAME=pin GIT_COMMITTER_EMAIL=pin@example.invalid
 printf 'touch %q\n' "$TMP/env-sourced" >"$GATE_LINUX_ENV"
@@ -92,6 +101,26 @@ EOF
 printf 'module fixture/protocol\n\ngo 1.25.0\n' >"$C/protocol/go.mod"
 printf 'package protocol\n\n// Answer is the answer.\nfunc Answer() int { return 42 }\n' >"$C/protocol/p.go"
 printf 'package protocol\n\nimport "testing"\n\nfunc TestAnswer(t *testing.T) {\n\tif Answer() != 42 {\n\t\tt.Fatal("wrong answer")\n\t}\n}\n' >"$C/protocol/p_test.go"
+cat >"$C/protocol/tier_test.go" <<'EOF'
+package protocol
+
+import (
+	"os"
+	"testing"
+)
+
+// TestTierReachesTheBinary writes the gate's tier, as this binary's
+// environment holds it, to the file GATE_FIXTURE_TIER names (case 17).
+func TestTierReachesTheBinary(t *testing.T) {
+	f := os.Getenv("GATE_FIXTURE_TIER")
+	if f == "" {
+		return
+	}
+	if err := os.WriteFile(f, []byte(os.Getenv("GATE_TIER")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+EOF
 printf 'module fixture/core\n\ngo 1.25.0\n' >"$C/shingo-core/go.mod"
 printf '.gate/\n*.secret\n' >"$C/.gitignore"
 printf '* text=auto eol=lf\n' >"$C/.gitattributes"
@@ -322,8 +351,14 @@ if command -v go >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     fail "the next run overwrote the first red run's kept log ($log1)"
   fi
   sed -i 's/!= 40/!= 42/' "$W/protocol/p_test.go"
+  rm -f "$GATE_FIXTURE_TIER"
   out3="$(gate test protocol)"; rc3=$?
   [ "$rc3" -eq 0 ] || fail "the green run after the red ones went red (exit $rc3): $(printf '%s\n' "$out3" | tail -3)"
+  # 17. The tier that run's gate set (`test` is one step: "step") is what its
+  # test binary read from its environment (2> first: no file is no error to print).
+  tier=""; read -r tier 2>/dev/null <"$GATE_FIXTURE_TIER"
+  [ "$tier" = step ] \
+    || fail "the gate's tier did not reach a test binary: it read GATE_TIER='$tier', want 'step'. Keep scripts/gate.sh exporting GATE_TIER ahead of its test steps, and have whatever runs the test binaries hand it on: schemadump's release cache reads it"
   runs="$(kept_runs)"
   [ "$(printf '%s\n' "$runs" | grep -c .)" -eq 10 ] || fail "not the newest 10 runs kept: $(printf '%s\n' "$runs" | sed 's#.*/##' | tr '\n' ' ')"
   printf '%s\n' "$runs" | grep -q '20000101T000001Z\|20000101T000002Z\|20000101T000003Z' \
