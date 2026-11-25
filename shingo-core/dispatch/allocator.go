@@ -817,13 +817,14 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 					// nodeID is carried for bin rows too, not just slot rows: the
 					// window-4 reachability re-check asks whether the held bin is
 					// still gettable, and that is a question about its NODE.
+					//
+					// The name is the bin read's own: bins.BinFromClause joins the
+					// bin's node on b.node_id, which bins_node_id_fkey keeps naming
+					// a row, so it is the name a second read by id answered, in the
+					// same statement as the bin (pin:
+					// TestResolveHeldReservations_AgreesWithTheRowsOneAtATime).
 					hb.nodeID = *b.NodeID
-					node, nerr := a.db.GetNode(*b.NodeID)
-					if nerr != nil {
-						log.Printf("dispatch: resolveHeld bin=%d node=%d lookup failed: %v", r.BinID, *b.NodeID, nerr)
-					} else if node != nil {
-						hb.nodeName = node.Name
-					}
+					hb.nodeName = b.NodeName
 				}
 			}
 		}
