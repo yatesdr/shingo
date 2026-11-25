@@ -267,8 +267,13 @@ func fixtureCells() []fixtureCell {
 		fxAt("SYN-HL-03", 3, 3.0, 0, 1, fxSwap("SYN-SLN-03", hlMkt, hlMkt)),
 	}
 	homeFresh := []domain.CellPosition{fxAt("SYN-HF-01", 1, 0, 0, 1, nil)}
-	homeRouting := func(staging bool) []domain.RoutingNodeInput {
+	// more are further homes in the Inbound box: First style's source is
+	// changed to one (brief H H2).
+	homeRouting := func(staging bool, more ...string) []domain.RoutingNodeInput {
 		rows := []domain.RoutingNodeInput{{CoreNodeName: hlHome, Role: domain.RoutingRoleSource}}
+		for _, n := range more {
+			rows = append(rows, domain.RoutingNodeInput{CoreNodeName: n, Role: domain.RoutingRoleSource})
+		}
 		if staging {
 			rows = append(rows, domain.RoutingNodeInput{CoreNodeName: hlHome, Role: domain.RoutingRoleStaging})
 		}
@@ -320,11 +325,16 @@ func fixtureCells() []fixtureCell {
 			shots: homeLineShots,
 		},
 		{
-			key: "homefresh", title: "A line with no flow yet, its home in the inbound, staging and outbound boxes, for Setup's First style (brief G C)",
+			key: "homefresh", title: "A line with no flow yet, its home in the inbound, staging and outbound boxes, for Setup's First style (brief G C); " +
+				"a second home, SYN-HOME-02, in the inbound box (brief H H2)",
 			cell: fxCell("HF", homeFresh, nil, nil),
 			opts: seedOpts{name: fxNames("Home line, fresh"), role: consume, parts: []string{"SYN-HF-P1"},
-				routing: homeRouting(true)},
-			shots: homeFreshShots,
+				routing: homeRouting(true, hlHome2)},
+			shots: func(t *testing.T, sc seededCell, c realCell) []shotSpec {
+				return append(homeFreshShots(t, sc, c), homeFreshFirst(sc, "first-style-source-1440",
+					"Setup › First style: SYN-HF-01 a 2‑Robot Swap with no staging, its source then changed to SYN-HOME-02",
+					`[data-act="fs-pick"][data-pick="source"]`, `#pd-pop .picker-row[data-value="SYN-HOME-02"]`))
+			},
 		},
 		{
 			key: "homefresh-nostage", title: "The same, its home in the inbound and outbound boxes only (brief G C)",
@@ -525,7 +535,8 @@ func freshLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 }
 
 // homeLineShots is the Styles tab of the line through its home, and each
-// 2‑Robot Swap row's inbound staging pick open (brief G C).
+// 2‑Robot Swap row's inbound staging pick open (brief G C); then the tab
+// after SYN-HL-01's source is changed to one node and to a group (brief H H2).
 func homeLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 	const mock = "no mock: brief G C"
 	desk := func(state, what, want string, clicks ...string) shotSpec {
@@ -535,6 +546,10 @@ func homeLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 	chip := func(node string) string {
 		return fmt.Sprintf(`.pd-postbl [data-act="pick"][data-node="%s"][data-kind="col:staging:staging"]`, node)
 	}
+	// SYN-HL-01's source picked again (brief H H2): its picker's rows are the
+	// Inbound box's, in order (SYN-HOME-01, SYN-HOME-02, SYN-HL-MKT).
+	const source = `.pd-postbl [data-act="pick"][data-node="SYN-HL-01"][data-kind="source"]`
+	row := func(i int) string { return fmt.Sprintf(`#pd-pop .picker-row[data-value="%d"]`, i) }
 	return []shotSpec{
 		desk("styles-1440", "the Styles tab: SYN-HL-01 from its home with no staging hop, SYN-HL-02 from one node "+
 			"through a lane, SYN-HL-03 from a group", "SYN-HL-03"),
@@ -543,6 +558,10 @@ func homeLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 			"used by", chip("SYN-HL-02")),
 		desk("staging-pick-group-1440", "SYN-HL-03's inbound staging pick open: its source is a group",
 			"used by", chip("SYN-HL-03")),
+		desk("styles-source-one-1440", "the Styles tab after SYN-HL-01's source is changed to SYN-HOME-02, one node",
+			"Unsaved changes", source, row(1)),
+		desk("styles-source-group-1440", "the Styles tab after SYN-HL-01's source is changed to the group SYN-HL-MKT",
+			"Unsaved changes", source, row(2)),
 	}
 }
 
@@ -550,20 +569,20 @@ func homeLineShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
 // its one position set to 2‑Robot Swap, and its inbound staging pick open
 // (brief G C).
 func homeFreshShots(t *testing.T, sc seededCell, c realCell) []shotSpec {
-	const (
-		mock = "no mock: brief G C"
-		todo = "First style draws no cell picture, so the frame driver cannot measure it: shot unmeasured"
-	)
-	first := func(state, what string, clicks ...string) shotSpec {
-		return pageShot(frame{src: fmt.Sprintf("/processes?process=%d#tab=setup", sc.processID), w: 1440, h: 900,
-			svg: "#pd-svg", want: "Inbound staging",
-			clicks: append([]string{`[data-act="setup-style"]`, `[data-act="fs-mode"][data-mode="two_robot"]`}, clicks...)},
-			state, what, mock, todo)
-	}
 	return []shotSpec{
-		first("first-style-1440", "Setup › First style: SYN-HF-01 set to 2‑Robot Swap"),
-		first("staging-pick-1440", "the same, its Inbound staging pick open", `[data-act="fs-pick"][data-pick="staging"]`),
+		homeFreshFirst(sc, "first-style-1440", "Setup › First style: SYN-HF-01 set to 2‑Robot Swap"),
+		homeFreshFirst(sc, "staging-pick-1440", "the same, its Inbound staging pick open", `[data-act="fs-pick"][data-pick="staging"]`),
 	}
+}
+
+// homeFreshFirst is one First style state: SYN-HF-01 set to 2‑Robot Swap,
+// then the clicks.
+func homeFreshFirst(sc seededCell, state, what string, clicks ...string) shotSpec {
+	const todo = "First style draws no cell picture, so the frame driver cannot measure it: shot unmeasured"
+	return pageShot(frame{src: fmt.Sprintf("/processes?process=%d#tab=setup", sc.processID), w: 1440, h: 900,
+		svg: "#pd-svg", want: "Inbound staging",
+		clicks: append([]string{`[data-act="setup-style"]`, `[data-act="fs-mode"][data-mode="two_robot"]`}, clicks...)},
+		state, what, "no mock: brief G C", todo)
 }
 
 // ── plant A, before and after ──────────────────────────────────────────────
