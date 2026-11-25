@@ -12,6 +12,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/nodes"
 )
 
@@ -360,4 +361,143 @@ func TestHandleNodeDelete_NotFoundReturns404(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+// --- a node's name, type and parent through the two form doors (docket B2, B15) ---
+
+// pageSaveForm is what the Nodes page's node form posts for n
+// (www/templates/nodes.html, #node-form, filled by nodes-detail.js when the box
+// opens and submitted whole by handleNodeSave): the id, type and parent in
+// hidden inputs, the node's own name in the hidden name input, the display
+// name, the enabled box (sent only when ticked) and the two assignment modes.
+func pageSaveForm(n *nodes.Node) url.Values {
+	form := url.Values{}
+	form.Set("id", strconv.FormatInt(n.ID, 10))
+	form.Set("node_type_id", "")
+	if n.NodeTypeID != nil {
+		form.Set("node_type_id", strconv.FormatInt(*n.NodeTypeID, 10))
+	}
+	form.Set("parent_id", "")
+	if n.ParentID != nil {
+		form.Set("parent_id", strconv.FormatInt(*n.ParentID, 10))
+	}
+	form.Set("name", n.Name)
+	form.Set("display_name", n.DisplayName)
+	if n.Enabled {
+		form.Set("enabled", "on")
+	}
+	form.Set("station_mode", "all")
+	form.Set("bin_type_mode", "all")
+	return form
+}
+
+// idOf prints a nullable id.
+func idOf(p *int64) string {
+	if p == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*p, 10)
+}
+
+// typedLaneSlot is the back slot of a fresh two-slot lane, given a node type:
+// a save that drops its parent takes it out of its lane, and one that drops
+// its type clears it.
+func typedLaneSlot(t *testing.T, db *store.DB, prefix string) *nodes.Node {
+	t.Helper()
+	fx := setupNodeGroupFixture(t, db, prefix, 2)
+	nt := &nodes.NodeType{Code: prefix + "-T", Name: prefix + " type"}
+	testutil.MustNoErr(t, db.CreateNodeType(nt), "create a node type")
+	slot, err := db.GetNode(fx.Slots[1].ID)
+	testutil.MustNoErr(t, err, "read the slot")
+	slot.NodeTypeID = &nt.ID
+	testutil.MustNoErr(t, db.UpdateNode(slot), "give the slot a type")
+	slot, err = db.GetNode(slot.ID)
+	testutil.MustNoErr(t, err, "re-read the slot")
+	return slot
+}
+
+// TestHandleNodeUpdate_ThePagesOwnSaveKeepsNameTypeAndParent: the Nodes page
+// posts a lane slot's own name, type and parent back beside its display name;
+// the save stores the display name and leaves the rest as they were.
+func TestHandleNodeUpdate_ThePagesOwnSaveKeepsNameTypeAndParent(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	slot := typedLaneSlot(t, db, "PAGESAVE")
+
+	form := pageSaveForm(slot)
+	form.Set("display_name", "Back slot")
+	rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("the page's save: %d, want 303; body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := db.GetNode(slot.ID)
+	testutil.MustNoErr(t, err, "read the slot after the save")
+	if got.Name != slot.Name || idOf(got.NodeTypeID) != idOf(slot.NodeTypeID) ||
+		idOf(got.ParentID) != idOf(slot.ParentID) || got.Enabled != slot.Enabled {
+		t.Errorf("the page's save stored name %q, type %s, parent %s, enabled %v; want %q, %s, %s, %v as they were",
+			got.Name, idOf(got.NodeTypeID), idOf(got.ParentID), got.Enabled,
+			slot.Name, idOf(slot.NodeTypeID), idOf(slot.ParentID), slot.Enabled)
+	}
+	if got.DisplayName != "Back slot" {
+		t.Errorf("display name %q, want %q", got.DisplayName, "Back slot")
+	}
+}
+
+// TestNodeForms_ARequestWithNoName (docket B2, B15): the two form doors sent a
+// request made by hand, with a name of spaces or none. TODAY each saves a node
+// with no name, and an update that leaves the type and the parent out clears
+// them too, which takes a lane slot out of its lane.
+func TestNodeForms_ARequestWithNoName(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a create whose name is spaces", func(t *testing.T) {
+		t.Parallel()
+		h, db := testHandlers(t)
+		form := url.Values{}
+		form.Set("name", "   ")
+		form.Set("enabled", "on")
+		rec := postForm(t, h.handleNodeCreate, "/nodes/create", form)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("create: %d; today it saves (303); body=%s", rec.Code, rec.Body.String())
+		}
+		if _, err := db.GetNodeByName(""); err != nil {
+			t.Errorf("no node with no name after the create (%v); today one is saved", err)
+		}
+	})
+
+	t.Run("an update whose name is spaces", func(t *testing.T) {
+		t.Parallel()
+		h, db := testHandlers(t)
+		slot := typedLaneSlot(t, db, "SPACESAVE")
+		form := pageSaveForm(slot)
+		form.Set("name", "   ")
+		rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("update: %d; today it saves (303); body=%s", rec.Code, rec.Body.String())
+		}
+		got, err := db.GetNode(slot.ID)
+		testutil.MustNoErr(t, err, "read the slot after the save")
+		if got.Name != "" {
+			t.Errorf("name %q; today the save stores none", got.Name)
+		}
+	})
+
+	t.Run("an update that sends only the id and the enabled box", func(t *testing.T) {
+		t.Parallel()
+		h, db := testHandlers(t)
+		slot := typedLaneSlot(t, db, "BARESAVE")
+		form := url.Values{}
+		form.Set("id", strconv.FormatInt(slot.ID, 10))
+		form.Set("enabled", "on")
+		rec := postForm(t, h.handleNodeUpdate, "/nodes/update", form)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("update: %d; today it saves (303); body=%s", rec.Code, rec.Body.String())
+		}
+		got, err := db.GetNode(slot.ID)
+		testutil.MustNoErr(t, err, "read the slot after the save")
+		if got.Name != "" || got.NodeTypeID != nil || got.ParentID != nil {
+			t.Errorf("stored name %q, type %s, parent %s; today the save clears all three",
+				got.Name, idOf(got.NodeTypeID), idOf(got.ParentID))
+		}
+	})
 }

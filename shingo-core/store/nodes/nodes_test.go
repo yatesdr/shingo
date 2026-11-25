@@ -1159,3 +1159,66 @@ func TestParentage_LegalReparentSucceeds(t *testing.T) {
 	testutil.MustNoErr(t, nodes.Create(sdb, sib), "create sib")
 	testutil.MustNoErr(t, nodes.SetParent(sdb, sib.ID, child.ID), "sib under child")
 }
+
+// TestNodeName_TheFourWritesOfANodesName (docket B2, B19): the four statements
+// that write a node's name (Create, Update, CreateGroup, AddLane), each sent a
+// name with nothing in it. TODAY EACH TAKES IT: Create and Update trim it to
+// "", CreateGroup and AddLane store it as sent. The fleet, the stations and
+// every order know a node by its name, so a node with none is one no order can
+// name.
+func TestNodeName_TheFourWritesOfANodesName(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+	grpID, err := nodes.CreateGroup(sdb, "NAMES-GRP")
+	testutil.MustNoErr(t, err, "create the lane's group")
+	testdb.MarkGroup(t, db, grpID)
+	named := &nodes.Node{Name: "NAMES-NODE", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, named), "create the node a save renames")
+
+	type door struct {
+		name  string
+		write func(blank string) (int64, error) // the id of the row written
+		undo  func(id int64) error              // a second blank name would collide on the unique name
+	}
+	drop := func(id int64) error { return nodes.Delete(sdb, id) }
+	doors := []door{
+		{"Create", func(blank string) (int64, error) {
+			n := &nodes.Node{Name: blank, Enabled: true}
+			err := nodes.Create(sdb, n)
+			return n.ID, err
+		}, drop},
+		{"Update", func(blank string) (int64, error) {
+			n, err := nodes.Get(sdb, named.ID)
+			if err != nil {
+				return 0, err
+			}
+			n.Name = blank
+			return n.ID, nodes.Update(sdb, n)
+		}, func(id int64) error {
+			n, err := nodes.Get(sdb, id)
+			if err != nil {
+				return err
+			}
+			n.Name = named.Name
+			return nodes.Update(sdb, n)
+		}},
+		{"CreateGroup", func(blank string) (int64, error) { return nodes.CreateGroup(sdb, blank) }, drop},
+		{"AddLane", func(blank string) (int64, error) { return nodes.AddLane(sdb, grpID, blank) }, drop},
+	}
+	for _, blank := range []string{"", " ", "\t"} {
+		for _, d := range doors {
+			id, err := d.write(blank)
+			if err != nil {
+				t.Errorf("%s(%q): %v; today it takes the name", d.name, blank, err)
+				continue
+			}
+			got, err := nodes.Get(sdb, id)
+			testutil.MustNoErr(t, err, "read the row written")
+			if strings.TrimSpace(got.Name) != "" {
+				t.Errorf("%s(%q) stored name %q; today it stores one with nothing in it", d.name, blank, got.Name)
+			}
+			testutil.MustNoErr(t, d.undo(id), "put the row back")
+		}
+	}
+}

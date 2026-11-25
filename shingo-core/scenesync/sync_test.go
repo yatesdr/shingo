@@ -536,6 +536,23 @@ func TestSyncFleetNodes_UpdatesZoneOnExisting(t *testing.T) {
 	}
 }
 
+// TestSyncFleetNodes_AFleetLocationWithNoName (docket B2): TODAY a bin location
+// the fleet's map names "" is made a node with no name, beside the named one.
+func TestSyncFleetNodes_AFleetLocationWithNoName(t *testing.T) {
+	t.Parallel()
+	db := newFakeStore()
+	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 7, Code: "STAG"}
+	said := &recordingLog{}
+
+	created, _ := SyncFleetNodes(db, said.log, nil, map[string]string{"": "AreaA", "bin1": "AreaA"})
+	if created != 2 {
+		t.Errorf("created = %d; today the nameless location is made a node beside bin1 (2)", created)
+	}
+	if _, err := db.GetNodeByName(""); err != nil {
+		t.Errorf("no node with no name after the sync (%v); today one is made", err)
+	}
+}
+
 func TestSyncFleetNodes_DeletesNodesNotInScene(t *testing.T) {
 	t.Parallel()
 	db := newFakeStore()

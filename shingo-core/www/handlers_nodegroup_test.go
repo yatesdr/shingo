@@ -284,6 +284,27 @@ func TestApiCreateNodeGroup_MissingName(t *testing.T) {
 	}
 }
 
+// TestNodeGroupDoors_ANameOfSpaces (docket B19): the group and lane doors
+// refuse a name that is "" and, TODAY, save one that is only spaces.
+func TestNodeGroupDoors_ANameOfSpaces(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	rec := postJSON(t, h.apiCreateNodeGroup, "/api/node-group/create",
+		map[string]any{"name": "   "})
+	if rec.Code != http.StatusOK {
+		t.Errorf("a group named with spaces: %d; today it is saved (200); body=%s", rec.Code, rec.Body.String())
+	}
+
+	grpID, err := db.CreateNodeGroup("GRP-SPACES")
+	testutil.MustNoErr(t, err, "create the lane's group")
+	testdb.MarkGroup(t, db, grpID)
+	rec = postJSON(t, h.apiAddLane, "/api/node-group/add-lane",
+		map[string]any{"group_id": grpID, "name": "  "})
+	if rec.Code != http.StatusOK {
+		t.Errorf("a lane named with spaces: %d; today it is saved (200); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // --- apiAddLane -------------------------------------------------------------
 
 // A lane needs a waiting spot: adding one to a group without any is a 400 that
