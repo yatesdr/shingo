@@ -28,14 +28,14 @@ import (
 
 	"shingo/integration/harness"
 	"shingo/protocol"
-	"shingo/protocol/router"
+	"shingo/protocol/debuglog"
 
 	coreconfig "shingocore/config"
 	coreengine "shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
-	coremessaging "shingocore/messaging"
 	coreharness "shingocore/testharness"
+	"shingocore/www"
 
 	edgeorders "shingoedge/orders"
 	edgeharness "shingoedge/testharness"
@@ -88,16 +88,23 @@ func TestRefusalLoop_TheStationHoldsQueuedInsideEachCreate(t *testing.T) {
 	coreharness.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "CWR-BIN")
 
 	edge := edgeharness.NewEdge(t, cwrStation)
-	coreHandler := coremessaging.NewCoreHandler(db, nil, "core", "shingo.dispatch", eng.Dispatcher())
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
-	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
-	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	// Core's web layer, as main builds it after the rest: its doors are what
+	// the ask server answers through.
+	dbg, err := debuglog.New(64, nil)
+	mustNil(t, err, "debuglog")
+	doors := www.NewDoors(eng)
+	_, stopWeb, err := www.NewRouter(eng, doors, dbg)
+	mustNil(t, err, "core router")
+	t.Cleanup(stopWeb)
+	// Core's tables as main builds them, less what this cell leaves out: every
+	// data subject, the complex request, the redirect, the release and the
+	// ingest, and every hook.
+	coreSide := coreharness.NewCore(t, eng, doors,
+		coreharness.RoutesOnly(protocol.TypeOrderRequest, protocol.TypeOrderCancel, protocol.TypeOrderReceipt),
+		coreharness.HooksOnly())
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
-		harness.CoreSide{CoreStore: db, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: db, CoreIngestor: coreSide.Ingestor},
 	)
 	settle := func() {
 		for i := 0; i < 20; i++ {
