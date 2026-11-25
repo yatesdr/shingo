@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/planttime"
 	"shingocore/cms/client"
 	"shingocore/cms/poster"
 	"shingocore/config"
@@ -541,6 +542,9 @@ func (e *Engine) newDispatcher(emitter dispatch.Emitter, resolver *dispatch.Defa
 		resolver,
 	)
 	d.SetBinsRowsFunc(e.nodeService.BinsRows)
+	// A refusal's sentence writes its time on the plant's clock: the zone Core's
+	// screens use (www's plantLocation), resolved the same way.
+	d.SetPlantZone(planttime.ResolveZone(e.cfg.Timezone).Loc)
 	// The table turn: the fleet's turner, if it has one, and the robot status
 	// from the poll robotRefreshLoop already makes (dispatch/table_turn.go).
 	if t, ok := e.fleet.(fleet.TableTurner); ok {

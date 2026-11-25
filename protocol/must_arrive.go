@@ -203,7 +203,7 @@ var mustArrive = []MustArrive{
 	{
 		Name: TypeOrderCancel, Type: true, Sender: SentByEdge, NeverExpires: true, NeverDeadLetters: true,
 		Lost: "a robot keeps working an order its operator ended",
-		Late: "it cancels what is still live, and is a no-op at Core on an order that has ended (dispatch.HandleOrderCancel)",
+		Late: "one that does not ask cancels what is still live, and one that asks (OrderCancel.Intent) only an order still on its way; either writes nothing at Core on an order that has ended (dispatch.HandleOrderCancel)",
 	},
 	// A confirm (final brief 5i). It expired at 30 minutes, so one lost in a
 	// longer outage left Core reading delivered until its sweep confirmed the

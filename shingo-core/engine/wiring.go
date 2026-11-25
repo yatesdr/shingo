@@ -273,11 +273,14 @@ func (e *Engine) wireEventHandlers() {
 		e.db.AppendAudit("order", ev.OrderID, "cancelled", "", ev.Reason, "system")
 
 		// Notify ShinGo Edge so it can transition the order locally.
-		// The dispatcher path (edge-initiated cancel) sends its own reply via
-		// ReplySender.SendCancelled, but engine-initiated cancellations (web UI
-		// terminate, fleet status change, recovery) go through this event handler.
-		// The edge handler (HandleOrderCancelled) is idempotent — a duplicate
-		// cancellation for an already-cancelled order is harmless.
+		// Every cancel is told here, a station's own included, with the status
+		// Core held (PreviousStatus). A station's cancel that does not ask is
+		// also answered by the dispatcher's own order.cancelled, which carries
+		// none (ReplySender.SendCancelled); one that asks is not
+		// (dispatch.HandleOrderCancel, final brief 5b; pinned by
+		// TestStatusTellPin_AStationsCancel). The edge handler
+		// (HandleOrderCancelled) is idempotent — a duplicate cancellation for an
+		// already-cancelled order is harmless.
 		if ev.StationID != "" && ev.EdgeUUID != "" && !e.stationUnaware(ev.OrderID) {
 			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
 				&protocol.OrderCancelled{

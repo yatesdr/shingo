@@ -422,14 +422,16 @@ type OrderCancel struct {
 	// and codes every cancel a person's, as it always has.
 	Actor string `json:"actor,omitempty"`
 	// Intent marks a cancel that asks: the station has not ended its row and
-	// waits for Core's word. Core should decide it by where the order's cart is:
-	// an order still on its way is cancelled, and the terminal write's own
-	// order.update is the answer; an order whose cart is set down, or that had
-	// already ended, is not, and the answer is one order.error carrying
-	// CancelRefusedSetDown or CancelRefusedEnded and a sentence a person reads.
-	// False: the station ended its row before it sent (an older Edge, or a raw
-	// Kafka Direct envelope), and Core follows it as it always has. Additive:
-	// an older Core ignores it.
+	// waits for Core's word. Core decides it by where the order's cart is
+	// (shingo-core dispatch.HandleOrderCancel; pinned by
+	// TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs): an order still on
+	// its way is cancelled, and the terminal write's own order.update is the
+	// answer; an order whose cart is set down, or that had already ended, is
+	// not, and the answer is one order.error carrying CancelRefusedSetDown or
+	// CancelRefusedEnded and a sentence a person reads. False: the station
+	// ended its row before it sent (an older Edge, or a raw Kafka Direct
+	// envelope), and Core follows it as it always has. Additive: an older Core
+	// ignores it.
 	Intent bool `json:"intent,omitempty"`
 }
 

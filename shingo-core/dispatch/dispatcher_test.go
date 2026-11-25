@@ -1485,3 +1485,158 @@ func TestHandleOrderCancel_CodedByWhoDecidedIt(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs pins final brief 5b, one
+// row of its table each. A station's cancel that asks (OrderCancel.Intent) is
+// decided by Core on the order's row and where its cart is
+// (store.DB.OrderTrips, 1b): an order not lifted or carried is cancelled (a
+// station may stop a carrying robot) and answered by the write's own tell
+// alone; a cart set down, also before its delivered write, is "cannot"; an
+// order already cancelled is done, and nothing is told again; one that ended
+// another way is "cannot"; a trip that cannot be read cancels. A "cannot" is
+// one order.error, its sentence for a person, and nothing is written. Beside
+// each row the same cancel not asking is today's door (1f: an older Edge,
+// Kafka Direct), unchanged. Each case asserts what the station is told, the
+// order's status, version and history after, the fleet stops, and the
+// cancelled events with the status the engine's notice carries as
+// PreviousStatus.
+func TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs(t *testing.T) {
+	t.Parallel()
+	type line func(uuid string) string
+	tell := func(v int) line {
+		return func(uuid string) string {
+			return fmt.Sprintf(`order.update to line-1: {"detail":"cancelled by operator","order_uuid":%q,"status":"cancelled","version":%d}`, uuid, v)
+		}
+	}
+	reply := func(uuid string) string {
+		return fmt.Sprintf(`order.cancelled to line-1: {"order_uuid":%q,"reason":"cancelled by operator"}`, uuid)
+	}
+	refusal := func(station, code, detail string) line {
+		return func(uuid string) string {
+			return fmt.Sprintf(`order.error to %s: {"detail":%q,"error_code":%q,"order_uuid":%q}`, station, detail, code, uuid)
+		}
+	}
+	notFound := func(station string) line {
+		return refusal(station, "not_found", "order not found or access denied")
+	}
+	setDown := func(clock string) line {
+		return refusal("line-1", protocol.CancelRefusedSetDown, "Not cancelled: its cart was set down at LINE1-IN on Nov 25 at "+
+			clock+" CST. Confirm it at the station.")
+	}
+	ended := func(status, why string) line {
+		return refusal("line-1", protocol.CancelRefusedEnded, "Not cancelled: the order had already ended, "+status+
+			" on Nov 25 at 08:35 CST ("+why+").")
+	}
+	type answer struct {
+		told  []line          // what the station is told, in order
+		after protocol.Status // the order's status after; "" for no order
+		stops int             // fleet jobs the cancel stops
+		from  protocol.Status // the cancelled event's PreviousStatus; "" for none
+	}
+	for _, c := range []struct {
+		row, shape string
+		station    string // who sends the cancel; "" is the order's own station
+		asking     answer // final brief 5b
+		notAsking  answer // today's door, 1f
+	}{
+		{row: "not found",
+			asking:    answer{told: []line{notFound("line-1")}},
+			notAsking: answer{told: []line{notFound("line-1")}}},
+		{row: "not owned", shape: "not lifted", station: "line-2",
+			asking:    answer{told: []line{notFound("line-2")}, after: StatusDispatched},
+			notAsking: answer{told: []line{notFound("line-2")}, after: StatusDispatched}},
+		{row: "not lifted", shape: "not lifted",
+			asking:    answer{told: []line{tell(2)}, after: StatusCancelled, stops: 1, from: StatusDispatched},
+			notAsking: answer{told: []line{tell(2), reply}, after: StatusCancelled, stops: 1, from: StatusDispatched}},
+		{row: "carried", shape: "carried",
+			asking:    answer{told: []line{tell(3)}, after: StatusCancelled, stops: 1, from: StatusInTransit},
+			notAsking: answer{told: []line{tell(3), reply}, after: StatusCancelled, stops: 1, from: StatusInTransit}},
+		{row: "set down before its delivered write", shape: "landed",
+			asking:    answer{told: []line{setDown("08:31")}, after: StatusInTransit},
+			notAsking: answer{told: []line{tell(3), reply}, after: StatusCancelled, stops: 1, from: StatusInTransit}},
+		{row: "set down and delivered", shape: "delivered",
+			asking:    answer{told: []line{setDown("08:32")}, after: StatusDelivered},
+			notAsking: answer{told: []line{tell(4), reply}, after: StatusCancelled, stops: 1, from: StatusDelivered}},
+		{row: "already cancelled", shape: "cancelled",
+			asking:    answer{after: StatusCancelled},
+			notAsking: answer{after: StatusCancelled}},
+		{row: "ended confirmed", shape: "confirmed",
+			asking:    answer{told: []line{ended("confirmed", "receipt: confirmed, count: 1")}, after: StatusConfirmed},
+			notAsking: answer{told: []line{reply}, after: StatusConfirmed}},
+		{row: "ended failed", shape: "failed",
+			asking:    answer{told: []line{ended("failed", "the fleet failed the order")}, after: StatusFailed},
+			notAsking: answer{told: []line{reply}, after: StatusFailed}},
+		{row: "ended skipped", shape: "skipped",
+			asking:    answer{told: []line{ended("skipped", "no bins at any pickup node")}, after: StatusSkipped},
+			notAsking: answer{told: []line{reply}, after: StatusSkipped}},
+		{row: "trip unreadable", shape: "unreadable",
+			asking:    answer{told: []line{tell(2)}, after: StatusCancelled, stops: 1, from: StatusDispatched},
+			notAsking: answer{told: []line{tell(2), reply}, after: StatusCancelled, stops: 1, from: StatusDispatched}},
+	} {
+		for _, asking := range []bool{true, false} {
+			want := c.notAsking
+			name := c.row + ", not asking"
+			if asking {
+				want, name = c.asking, c.row+", asking"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				r := newTwiceRig(t)
+				r.d.SetPlantZone(plantZone(t))
+				uuid := "hoc-" + strings.ReplaceAll(name, " ", "-")
+				var before *orders.Order
+				var history int
+				if c.shape != "" {
+					before = plainCancelOrder(t, r, uuid, c.shape)
+					history = len(historyOf(t, r, before.ID))
+				}
+				env := testEnvelope()
+				env.ID, env.Type = "env-"+uuid, protocol.TypeOrderCancel
+				if c.station != "" {
+					env.Src.Station = c.station
+				}
+				mark, stopped, events := outboxMark(t, r.db), len(r.backend.CancelRequests()), len(r.e.cancelledFrom)
+
+				r.d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: uuid, Reason: "cancelled by operator",
+					Intent: asking})
+
+				var told []string
+				for _, l := range want.told {
+					told = append(told, l(uuid))
+				}
+				assertTold(t, "what the station is told", toldSince(t, r.db, mark), told)
+				// Every order.error answers the asking envelope: its CorID is that
+				// envelope's ID, by which the station knows what it answers.
+				msgs, err := r.db.ListPendingOutbox(500)
+				testutil.MustNoErr(t, err, "list outbox")
+				for _, m := range msgs {
+					var sent protocol.Envelope
+					testutil.MustNoErr(t, json.Unmarshal(m.Payload, &sent), "unmarshal envelope")
+					if m.ID > mark && m.MsgType == protocol.TypeOrderError && sent.CorID != env.ID {
+						t.Errorf("the order.error answers %q, want the cancel's envelope %q", sent.CorID, env.ID)
+					}
+				}
+				if n := len(r.backend.CancelRequests()) - stopped; n != want.stops {
+					t.Errorf("the cancel stopped %d fleet job(s), want %d", n, want.stops)
+				}
+				if got := strings.Join(r.e.cancelledFrom[events:], ","); got != string(want.from) {
+					t.Errorf("cancelled events from %q, want %q", got, want.from)
+				}
+				if before == nil {
+					return
+				}
+				got := testdb.AssertOrderStatus(t, r.db, uuid, want.after)
+				if want.after != before.Status {
+					return
+				}
+				if got != nil && got.Version != before.Version {
+					t.Errorf("the order's version moved %d -> %d: an answer that ends nothing writes nothing",
+						before.Version, got.Version)
+				}
+				if n := len(historyOf(t, r, before.ID)); n != history {
+					t.Errorf("history rows %d -> %d: an answer that ends nothing writes nothing", history, n)
+				}
+			})
+		}
+	}
+}

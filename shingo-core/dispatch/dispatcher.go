@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"log"
 	"shingocore/dispatch/plan"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/lockcheck"
+	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/internal/lockorder"
 	"shingocore/service"
@@ -111,6 +115,11 @@ type Dispatcher struct {
 	// to carry (protocol.OrderError.Rows); wired by the engine
 	// (SetBinsRowsFunc). Nil reads nothing.
 	binsRows func(names ...string) []protocol.NodeBinsRow
+
+	// plantZone is the plant's zone, in which a sentence for a person at the
+	// station writes a time (cancelRefusal's); wired by the engine
+	// (SetPlantZone) from the zone Core's screens use. Nil writes UTC.
+	plantZone *time.Location
 
 	// acquirer is the fulfillment scanner, wired by the engine (SetAcquirer):
 	// the lock a door holds and the one acquire it asks for (door.go).
@@ -1199,9 +1208,20 @@ func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*o
 }
 
 // HandleOrderCancel processes a cancellation request from ShinGo Edge.
+//
+// TWO KINDS OF CANCEL (final brief 5b). One that asks (OrderCancel.Intent)
+// comes from a station that has not ended its row and waits for Core's word:
+// Core decides it (cancelRefusal), and its answer is the terminal write's own
+// tell when it cancels, or one order.error when it does not; the dispatcher's
+// own order.cancelled is not sent. One that does not ask comes from a station
+// that ended its row before it sent (an older Edge) or from a raw Kafka Direct
+// envelope: a decision already applied, which Core follows as it always has,
+// answer and all (final brief 1f). Both are pinned, one row each, by
+// TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs, and run twice by
+// TestRunTwice_Cancel.
 func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
 	stationID := env.Src.Station
-	d.dbg("cancel request: station=%s uuid=%s reason=%s", stationID, p.OrderUUID, p.Reason)
+	d.dbg("cancel request: station=%s uuid=%s reason=%s asks=%t", stationID, p.OrderUUID, p.Reason, p.Intent)
 
 	order, ok := d.getOwnedOrder(env, p.OrderUUID)
 	if !ok {
@@ -1225,6 +1245,13 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 		}
 		d.dbg("cancel request: uuid=%s already cancelled", p.OrderUUID)
 		return
+	}
+	if p.Intent {
+		if code, why, refused := d.cancelRefusal(order); refused {
+			d.dbg("cancel request: uuid=%s refused (%s): %s", p.OrderUUID, code, why)
+			d.replies.SendError(env, p.OrderUUID, code, why)
+			return
+		}
 	}
 
 	// THE PARENT GOES FIRST, and the order is load-bearing rather than stylistic.
@@ -1261,7 +1288,9 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	// order. See CancelOrderWithCascade for why both orderings matter and why
 	// they are in tension.
 	d.CancelOrderWithCascade(order, stationID, p.Reason, cause)
-	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
+	if !p.Intent {
+		d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
+	}
 }
 
 // finishCutCascade finishes a cancel cut inside its cascade, for a parent the
@@ -1274,11 +1303,12 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 // advance, whose terminal-parent arm cancels them (AdvanceCompoundOrder). When
 // the cascade has a leg to cancel, it runs as the first run's would have, with
 // the lanes the parent still holds, and the station is answered as that run
-// would have answered it. A leg whose bin has left its pickup, carried or set
-// down, is kept, as the cascade keeps it (splitLiftedLegs), so the repeat of a
-// cancel that finished has nothing to cancel and does nothing: no fleet stop,
-// no second answer. Pinned by TestRunTwice_CancelCutInsideTheCascade and
-// TestDeliveredLeg_CutCascade.
+// would have answered it: order.cancelled to a cancel that does not ask, and
+// to one that asks nothing beyond the legs' own tells (final brief 5b). A leg
+// whose bin has left its pickup, carried or set down, is kept, as the cascade
+// keeps it (splitLiftedLegs), so the repeat of a cancel that finished has
+// nothing to cancel and does nothing: no fleet stop, no second answer. Pinned
+// by TestRunTwice_CancelCutInsideTheCascade and TestDeliveredLeg_CutCascade.
 func (d *Dispatcher) finishCutCascade(env *protocol.Envelope, parent *orders.Order, p *protocol.OrderCancel, cause CancelCause) bool {
 	children, err := d.db.ListChildOrders(parent.ID)
 	if err != nil {
@@ -1302,8 +1332,105 @@ func (d *Dispatcher) finishCutCascade(env *protocol.Envelope, parent *orders.Ord
 	log.Printf("dispatch: cancel %s from %s: order %d is cancelled with %d leg(s) live: a cancel cut inside its cascade, finished now",
 		p.OrderUUID, env.Src.Station, parent.ID, len(cancel))
 	d.cancelCompoundChildren(parent, env.Src.Station, p.Reason, cause, d.digLanesHeld(parent.ID))
-	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
+	if !p.Intent {
+		d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
+	}
 	return true
+}
+
+// cancelRefusal is Core's "cannot" to a cancel that asks (OrderCancel.Intent,
+// final brief 5b): the order.error code and the sentence a person reads, or
+// refused=false when the cancel goes ahead. It decides on the order's row and
+// where its cart is (store.DB.OrderTrips, final brief 1b); the station's own
+// copy of the status is not a vote. An order already cancelled never reaches
+// it (HandleOrderCancel answers that one as done).
+//   - Ended another way (confirmed, failed, skipped): CancelRefusedEnded.
+//   - Its cart set down where the order takes it (delivered, or landed with its
+//     claim released while the order still reads in_transit):
+//     CancelRefusedSetDown. There is nothing left to stop; the order ends by
+//     its confirm.
+//   - Not lifted, or carried: no refusal. A station may stop a carrying robot.
+//   - A trip that cannot be read: no refusal. Core never refuses the cancel of
+//     an order it cannot show is set down, so one still on its way is not
+//     refused.
+//
+// Pinned, one row each, by TestHandleOrderCancel_AskingIsDecidedByWhereTheCartIs.
+// The trip read costs one statement, only for a live order that is not
+// delivered and carries a cart (OrderTrips answers the rest from the row); a
+// refusal reads one more, for its sentence's time.
+func (d *Dispatcher) cancelRefusal(order *orders.Order) (code, why string, refused bool) {
+	if protocol.IsTerminal(order.Status) {
+		return protocol.CancelRefusedEnded, d.endedSentence(order), true
+	}
+	trips, err := d.db.OrderTrips([]*orders.Order{order})
+	if err != nil {
+		log.Printf("dispatch: cancel %s: where its cart is: %v (the cancel goes ahead)", order.EdgeUUID, err)
+		return "", "", false
+	}
+	if trips[order.ID] != domain.TripSetDown {
+		return "", "", false
+	}
+	return protocol.CancelRefusedSetDown, d.setDownSentence(order), true
+}
+
+// setDownSentence is a set-down refusal's sentence: where the order set its
+// cart down (the plan's final drop of each cart; the delivery node for an order
+// whose carts the row does not hold) and when (the delivered row's time, or,
+// for an order whose delivered write has not landed, the landing's write of
+// its cart), and what to do instead.
+func (d *Dispatcher) setDownSentence(order *orders.Order) string {
+	var where []string
+	for _, c := range order.FinalDrops() {
+		if n := domain.StepNode(order, *c.DropStep); n != "" && !slices.Contains(where, n) {
+			where = append(where, n)
+		}
+	}
+	if len(where) == 0 {
+		where = []string{order.DeliveryNode}
+	}
+	at := order.UpdatedAt
+	if order.Status == StatusDelivered {
+		if h, err := d.db.LatestOrderHistoryForStatus(order.ID, StatusDelivered); err == nil && h != nil {
+			at = h.CreatedAt
+		}
+	} else if carts, err := d.db.CartsOfOrder(order.ID); err == nil {
+		for i, b := range carts {
+			if i == 0 || b.UpdatedAt.After(at) {
+				at = b.UpdatedAt
+			}
+		}
+	}
+	return fmt.Sprintf("Not cancelled: its cart was set down at %s on %s. Confirm it at the station.",
+		strings.Join(where, " and "), d.plantTime(at))
+}
+
+// endedSentence is an ended order's refusal sentence: how it ended, when, and
+// Core's reason, from the ending's history row (the order's own row when there
+// is none).
+func (d *Dispatcher) endedSentence(order *orders.Order) string {
+	at, why := order.UpdatedAt, order.ErrorDetail
+	if order.CompletedAt != nil {
+		at = *order.CompletedAt
+	}
+	if h, err := d.db.LatestOrderHistoryForStatus(order.ID, order.Status); err == nil && h != nil {
+		at, why = h.CreatedAt, h.Detail
+	}
+	s := fmt.Sprintf("Not cancelled: the order had already ended, %s on %s", order.Status, d.plantTime(at))
+	if why != "" {
+		s += " (" + why + ")"
+	}
+	return s + "."
+}
+
+// plantTime writes a time for a person at the plant: its date and clock in the
+// plant's zone, with the zone, so a Core with no zone set says UTC rather than
+// passing for local time (shared/planttime's rule).
+func (d *Dispatcher) plantTime(at time.Time) string {
+	loc := d.plantZone
+	if loc == nil {
+		loc = time.UTC
+	}
+	return at.In(loc).Format("Jan 2 at 15:04 MST")
 }
 
 // HandleOrderReceipt processes a delivery confirmation from ShinGo Edge.
@@ -1606,4 +1733,10 @@ func (d *Dispatcher) InstallFutilityDetector(cfg FutilityConfig, logFn func(stri
 // built.
 func (d *Dispatcher) SetBinsRowsFunc(fn func(names ...string) []protocol.NodeBinsRow) {
 	d.binsRows = fn
+}
+
+// SetPlantZone wires the plant's zone, in which a refusal's sentence writes a
+// time (cancelRefusal). Set once, by the engine, when the dispatcher is built.
+func (d *Dispatcher) SetPlantZone(loc *time.Location) {
+	d.plantZone = loc
 }

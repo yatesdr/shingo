@@ -755,3 +755,77 @@ func TestStatusTellPin_BootETABackfillCarriesTheETAOnly(t *testing.T) {
 		t.Fatalf("the second order is %s, want staged", s)
 	}
 }
+
+// TestStatusTellPin_AStationsCancel: what a station is told when it cancels its
+// order on its way (dispatch.HandleOrderCancel), through the engine, so the
+// cancellation notice the engine's subscriber sends is on the outbox beside the
+// dispatcher's own rows. Each order.cancelled row shows the status it carries
+// as PreviousStatus ("-" for none). Not asking (today's door, final brief 1f):
+// the write's tell, the notice, then the dispatcher's own answer, which carries
+// no PreviousStatus. Asking (OrderCancel.Intent, final brief 5b): the tell and
+// the notice; the dispatcher's own answer is not sent.
+func TestStatusTellPin_AStationsCancel(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		intent bool
+		want   []string
+	}{
+		{"not asking", false, []string{
+			"order.update cancelled line-1",
+			"order.cancelled from dispatched line-1",
+			"order.cancelled from - line-1",
+		}},
+		{"asking", true, []string{
+			"order.update cancelled line-1",
+			"order.cancelled from dispatched line-1",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			uuid := "tell-station-cancel-" + strings.ReplaceAll(c.name, " ", "-")
+			db, eng, _, _, _ := pinRetrieve(t, uuid)
+			mark := outboxMark(t, db)
+			eng.Dispatcher().HandleOrderCancel(testEnvelope(), &protocol.OrderCancel{OrderUUID: uuid,
+				Reason: "cancelled by operator", Intent: c.intent})
+			eng.after.settle()
+			testdb.RequireOrderStatus(t, db, uuid, dispatch.StatusCancelled)
+
+			rows, err := db.DB.Query(`SELECT msg_type, dst_station, payload FROM outbox WHERE id > $1 ORDER BY id`, mark)
+			testutil.MustNoErr(t, err, "read outbox")
+			defer rows.Close()
+			var got []string
+			for rows.Next() {
+				var msgType, station string
+				var payload []byte
+				testutil.MustNoErr(t, rows.Scan(&msgType, &station, &payload), "scan outbox row")
+				var env struct {
+					P struct {
+						OrderUUID      string `json:"order_uuid"`
+						Status         string `json:"status"`
+						PreviousStatus string `json:"previous_status"`
+					} `json:"p"`
+				}
+				if json.Unmarshal(payload, &env) != nil || env.P.OrderUUID != uuid {
+					continue
+				}
+				switch msgType {
+				case protocol.TypeOrderUpdate:
+					got = append(got, fmt.Sprintf("%s %s %s", msgType, env.P.Status, station))
+				case protocol.TypeOrderCancelled:
+					from := env.P.PreviousStatus
+					if from == "" {
+						from = "-"
+					}
+					got = append(got, fmt.Sprintf("%s from %s %s", msgType, from, station))
+				default:
+					got = append(got, msgType+" "+station)
+				}
+			}
+			testutil.MustNoErr(t, rows.Err(), "read outbox rows")
+			if strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+				t.Errorf("outbox rows for %s:\n got  %q\n want %q", uuid, got, c.want)
+			}
+		})
+	}
+}
