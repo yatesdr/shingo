@@ -72,7 +72,7 @@ func (h *Handlers) apiRobotRetryFailed(w http.ResponseWriter, r *http.Request) {
 // robot is on a Shingo order: Core reads a forced finish exactly as a real one
 // (rds.StateFinished maps to delivered), so it would record the bin at the
 // destination whether or not it moved. That order is ended from the order
-// itself (Terminate), which cancels it through Core. Parking and charging
+// itself (Cancel Order), which cancels it through Core. Parking and charging
 // orders are the fleet's own and carry no bin, which is what this is for.
 func (h *Handlers) apiRobotForceComplete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -82,7 +82,7 @@ func (h *Handlers) apiRobotForceComplete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if line := robotOrderLines(h.engine.OrderService(), h.engine.AppConfig())[req.VehicleID]; line.OrderID != 0 {
-		h.jsonError(w, fmt.Sprintf("%s is on order #%d: force complete would record it delivered whether or not the bin moved. Terminate the order instead.",
+		h.jsonError(w, fmt.Sprintf("%s is on order #%d: force complete would record it delivered whether or not the bin moved. Cancel the order instead.",
 			req.VehicleID, line.OrderID), http.StatusConflict)
 		return
 	}

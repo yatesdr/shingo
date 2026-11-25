@@ -79,19 +79,25 @@ async function terminateOrder(id, el) {
   // dispatch; the Go handler decodes order_id as int64 and rejects string
   // JSON values with "invalid request".
   var oid = parseInt(id, 10);
-  if (!await uiConfirm('Terminate order #' + oid + '? This cannot be undone.')) return;
+  if (!await uiConfirm('Cancel order #' + oid + '? This cannot be undone.', CANCEL_ORDER_CHOICE)) return;
   orderControlPost('/api/orders/terminate', {order_id: oid}, el);
 }
 
+// CANCEL_ORDER_CHOICE is the cancel dialog's two buttons. The operator's word
+// is Cancel (the owner, 2026-11-25: one word for Terminate and Abort), so the
+// dialog's own plain Cancel beside "Cancel order #N?" would read as the
+// order's cancel; its buttons name the choice instead. The functions, the
+// routes and the data-actions keep the word terminate for now.
+var CANCEL_ORDER_CHOICE = { ok: 'Cancel order', cancel: 'Keep order' };
+
 // cancelOrderFromRow is the operator-facing cancel action surfaced on
 // the orders list table. Backed by the same /api/orders/terminate
-// endpoint as the detail-page button — the verb difference is operator
-// vocabulary, not a separate code path. The row's click handler
-// (openOrderModal) is suppressed implicitly because delegateActions
+// endpoint as the pop-up's Cancel Order: the same code path. The row's click
+// handler (openOrderModal) is suppressed implicitly because delegateActions
 // dispatches to the nearest [data-action] ancestor and stops there.
 async function cancelOrderFromRow(id, el) {
   var oid = parseInt(id, 10);
-  if (!await uiConfirm('Cancel order #' + oid + '? This will abort any in-flight robot work and release claimed bins.')) return;
+  if (!await uiConfirm('Cancel order #' + oid + '? Any robot working on it is stopped, and its claimed bins are released.', CANCEL_ORDER_CHOICE)) return;
   // From a list row there is no manifest to re-render, so fall back to the
   // reload the list has always done.
   apiPost('/api/orders/terminate', {order_id: oid})
@@ -631,9 +637,9 @@ function buildManifest(data, opts) {
     // can_cancel comes from the server (www.canCancelStatus), the same gate
     // engine.TerminateOrder applies — never re-derived from a status list here.
     if (data.can_cancel) {
-      out += '<button class="btn btn-danger btn-sm" data-action="terminateOrder:' + o.id + '">Terminate Order</button>';
+      out += '<button class="btn btn-danger btn-sm" data-action="terminateOrder:' + o.id + '">Cancel Order</button>';
     }
-    // Hard release (W3), beside Terminate because it is the same class of verb:
+    // Hard release (W3), beside Cancel Order because it is the same class of verb:
     // an engineer overriding the machinery. can_hard_release comes from the
     // server — TRUE only for a wait CORE owns — for the same reason can_cancel
     // does: never re-derive a gate in JS that the handler also applies. A

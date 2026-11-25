@@ -415,7 +415,7 @@ func TestApiRobotForceComplete_RefusedOnAShingoOrder(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Terminate the order") {
+	if !strings.Contains(rec.Body.String(), "Cancel the order") {
 		t.Errorf("the refusal must say what to do instead; body=%s", rec.Body.String())
 	}
 	sim.mu.Lock()

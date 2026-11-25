@@ -81,7 +81,7 @@ function fillRobotModal(el) {
 
 // showForceComplete offers Force complete only when the robot is not on a
 // Shingo order. Core reads a forced finish as a real one and would record the
-// bin delivered; that order is ended from the order (Terminate) instead.
+// bin delivered; that order is ended from the order (Cancel Order) instead.
 // The server refuses it too, for a pop-up opened before the order started.
 function showForceComplete(orderID) {
   var btn = document.getElementById('rm-btn-force');
@@ -91,7 +91,7 @@ function showForceComplete(orderID) {
   note.hidden = !orderID;
   note.textContent = '';
   if (!orderID) return;
-  note.appendChild(document.createTextNode('On order #' + orderID + '. To end it, open the order and Terminate it: '));
+  note.appendChild(document.createTextNode('On order #' + orderID + '. To end it, open the order and cancel it: '));
   var a = document.createElement('a');
   a.href = '/orders?open=' + encodeURIComponent(orderID);
   a.textContent = 'open #' + orderID;

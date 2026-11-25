@@ -736,13 +736,19 @@ someone looking for the wrong problem.
 
 ### Cancel (an order)
 
-The operator's one word for ending an order before it is done (the owner, 2026-11-25: "abort = cancel too"),
-in rendered text: the Edge Orders page's **Cancel**, its dialog (**Cancel order** / **Keep order**) and its toast,
-and the reason a person's cancel carries, `cancelled by operator`. Never *Abort*. A delivered order is not
-cancelled, its cart being set down: it is confirmed, and the Edge refuses a cancel of it (`orders.ErrDelivered`).
-Code names, routes and data-actions keep their old word for now (`AbortOrder`, `/api/orders/{id}/abort`,
-`abortOrder`). An older Edge sends `aborted by operator`, which Core classifies as a person's cancel, as it does
-the new text.
+The operator's one word for ending an order before it is done, for Abort and Terminate alike (the owner,
+2026-11-25: "abort = cancel too", "one word cancel replaces terminate and abort"), in rendered text: the Edge
+Orders page's **Cancel**, its dialog (**Cancel order** / **Keep order**) and its toast; Core's order pop-up's
+**Cancel Order** and the list row's **Cancel**, with the same dialog; and the reason a person's cancel carries,
+`cancelled by operator`. A cancel button takes the casing of the confirm beside it: **CANCEL** beside
+**CONFIRM** on a station screen, **Cancel** beside **Confirm**. Never *Abort* or *Terminate*, except where the
+word is the fleet's own command: the RDS explorer, the Test Orders page's terminate command, and Core's **Re-send
+Terminate** with its note **Terminate re-sent**, which re-send the fleet's terminate for an order Core has
+already ended. A delivered order is not cancelled, its cart being set down: it is confirmed, and the Edge refuses
+a cancel of it (`orders.ErrDelivered`). Code names, routes and data-actions keep their old words for now
+(`AbortOrder`, `/api/orders/{id}/abort`, `abortOrder`; `TerminateOrder`, `/api/orders/terminate`,
+`terminateOrder`). An older Edge sends `aborted by operator`, which Core classifies as a person's cancel, as it
+does the new text.
 
 ### State words
 

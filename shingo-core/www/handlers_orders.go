@@ -677,7 +677,7 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// bin back off the robot's deck. The other direction needs no lookup:
 		// a return order carries recovers_order_id on its own row.
 		RecoveredBy *domain.Order `json:"recovered_by,omitempty"`
-		// CanCancel drives the manifest's Terminate button. Computed here
+		// CanCancel drives the manifest's Cancel Order button. Computed here
 		// rather than re-derived in JS so the client-rendered controls use
 		// the same gate as the server-rendered list rows — a status list
 		// duplicated into JS is exactly how the old template denylists

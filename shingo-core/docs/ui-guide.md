@@ -105,7 +105,7 @@ refresh. Logged in, **Manual Order** submits a transport, staged or move-robot
 order.
 
 The modal's **Controls** (logged in) are offered only where the server says the
-action applies: **Terminate Order** (cancels with the fleet and releases its
+action applies: **Cancel Order** (cancels with the fleet and releases its
 bins), **Hard Release** (a wait Core owns), **Re-send Terminate** (the fleet
 still runs an order Core ended), **Force Confirm** (a delivered order), and
 **Set Priority**.
