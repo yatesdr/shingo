@@ -59,11 +59,14 @@ func b11KnownRed(t *testing.T, until string) {
 
 // cutEmitter is the mock emitter with a cut: cut, when set, is called at each
 // event below, and a first run ends where it calls runtime.Goexit. It keeps the
-// projections, which reach a station as a message.
+// projections, which reach a station as a message, and the status each
+// cancelled event names (cancelledFrom): the engine's cancellation notice
+// carries it to the station as PreviousStatus.
 type cutEmitter struct {
 	*mockEmitter
-	cut         func(event string, orderID int64)
-	projections []string
+	cut           func(event string, orderID int64)
+	projections   []string
+	cancelledFrom []string
 }
 
 func (e *cutEmitter) at(event string, orderID int64) {
@@ -84,6 +87,7 @@ func (e *cutEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, sourceNod
 
 func (e *cutEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64) {
 	e.mockEmitter.EmitOrderCancelled(orderID, edgeUUID, stationID, reason, previousStatus, recovers)
+	e.cancelledFrom = append(e.cancelledFrom, previousStatus)
 	e.at("cancelled", orderID)
 }
 
@@ -670,6 +674,139 @@ func TestRunTwice_CancelCutInsideTheCascade(t *testing.T) {
 			t.Errorf("legs live after the repeat %v, want the kept one %v", live, kept)
 		}
 	})
+}
+
+// ── cancel, a plain order ───────────────────────────────────────────────────
+
+// plainCancelOrder is a plain retrieve of testEnvelope's station, storage to
+// line, carrying one cart, where a cancel can find it: "not lifted" (the fleet
+// has the job, the cart claimed at its pickup) or "delivered" (the fleet ran
+// it, the cart set down at the line and its claim released, the order written
+// delivered). Each status is reached through the lifecycle's own writers, so
+// each has its history row and its tell, before the test's outbox mark.
+func plainCancelOrder(t *testing.T, r twiceRig, uuid, shape string) *orders.Order {
+	t.Helper()
+	storage, line, bp := testdb.SetupTestData(t, r.db)
+	o := testdb.CreateOrder(t, r.db, testdb.FleetHas("job-"+uuid), func(o *orders.Order) {
+		o.EdgeUUID, o.StationUID = uuid, testEnvelope().Src.Station
+		o.SourceNode, o.DeliveryNode, o.PayloadCode = storage.Name, line.Name, bp.Code
+	})
+	bin := testdb.CreateBinAtNode(t, r.db, bp.Code, storage.ID, uuid+"-BIN")
+	testdb.SeedCartRow(t, r.db, o.ID, bin.ID, 0, 1)
+	testdb.ClaimBinForTest(t, r.db, bin.ID, o.ID)
+	switch shape {
+	case "not lifted":
+	case "delivered":
+		testutil.MustNoErr(t, r.d.lifecycle.MarkInTransit(reloadOrder(t, r.db, o.ID), "", "fleet", protocol.OrderUpdate{}),
+			"the fleet reports the order running")
+		transit, err := r.db.GetNodeByDotName("_TRANSIT")
+		testutil.MustNoErr(t, err, "resolve _TRANSIT")
+		testutil.MustNoErr(t, r.db.MoveBinToTransit(bin.ID, transit.ID), "the robot lifts the cart")
+		_, err = r.db.ApplyMultiBinArrival(o.ID, []orders.BinArrivalInstruction{{BinID: bin.ID, ToNodeID: line.ID}}, nil)
+		testutil.MustNoErr(t, err, "the robot sets the cart down at the line")
+		testutil.MustNoErr(t, r.d.lifecycle.MarkDelivered(reloadOrder(t, r.db, o.ID), "fleet",
+			protocol.OrderUpdate{Detail: "fleet state: FINISHED"}), "the fleet reports the order delivered")
+	default:
+		t.Fatalf("plainCancelOrder: no shape %q", shape)
+	}
+	return reloadOrder(t, r.db, o.ID)
+}
+
+// TestRunTwice_Cancel: a station cancels a plain order (one cart, no legs) by
+// today's door, a cancel that does not ask (an older Edge's, or Kafka Direct's:
+// final brief 1f). Its first run stops the fleet's job, ends the order cancelled
+// (the write's own tell), and answers the station order.cancelled
+// (HandleOrderCancel). Two shapes: an order on its way, and one whose cart is
+// set down, which this door cancels too, its finished job stopped. The cut is
+// the order's cancelled event: the ending and its tell are written, the answer
+// is not.
+func TestRunTwice_Cancel(t *testing.T) {
+	t.Parallel()
+	setup := func(t *testing.T, uuid, shape string) (twiceRig, *protocol.Envelope, *protocol.OrderCancel) {
+		t.Helper()
+		r := newTwiceRig(t)
+		plainCancelOrder(t, r, uuid, shape)
+		env := testEnvelope()
+		env.ID, env.Type = "env-"+uuid, protocol.TypeOrderCancel
+		return r, env, &protocol.OrderCancel{OrderUUID: uuid, Reason: "cancelled by operator"}
+	}
+	for _, c := range []struct {
+		shape, uuid string
+		from        protocol.Status // what the order read when the cancel ended it
+		told        []string        // what a first run tells, byte for byte
+	}{
+		{"not lifted", "rt-cn-on-its-way", StatusDispatched, []string{
+			`order.update to line-1: {"detail":"cancelled by operator","order_uuid":"rt-cn-on-its-way","status":"cancelled","version":2}`,
+			`order.cancelled to line-1: {"order_uuid":"rt-cn-on-its-way","reason":"cancelled by operator"}`,
+		}},
+		{"delivered", "rt-cn-set-down", StatusDelivered, []string{
+			`order.update to line-1: {"detail":"cancelled by operator","order_uuid":"rt-cn-set-down","status":"cancelled","version":4}`,
+			`order.cancelled to line-1: {"order_uuid":"rt-cn-set-down","reason":"cancelled by operator"}`,
+		}},
+	} {
+		t.Run(c.shape, func(t *testing.T) {
+			t.Parallel()
+			t.Run("the station is told on a first run", func(t *testing.T) {
+				t.Parallel()
+				r, env, req := setup(t, c.uuid, c.shape)
+				mark := outboxMark(t, r.db)
+				r.d.HandleOrderCancel(env, req)
+				assertTold(t, "what a first run tells", append(r.e.projections, toldSince(t, r.db, mark)...), c.told)
+				testdb.AssertOrderStatus(t, r.db, req.OrderUUID, StatusCancelled)
+				if got := r.backend.CancelRequests(); len(got) != 1 || got[0] != "job-"+c.uuid {
+					t.Errorf("fleet stops %v, want the order's job once", got)
+				}
+				if got := strings.Join(r.e.cancelledFrom, ","); got != string(c.from) {
+					t.Errorf("cancelled events from %q, want one, from %q", got, c.from)
+				}
+			})
+
+			// The redelivery meets a cancelled order with no legs and does
+			// nothing, so the answer the cut run did not send is never sent: the
+			// station hears the tell alone. Should be harmless: the tell ends
+			// the station's row, and on a row Core versions the answer writes
+			// nothing (shingo-edge orders.HandleCancelledNotice).
+			t.Run("run, cut, run again", func(t *testing.T) {
+				t.Parallel()
+				r, env, req := setup(t, c.uuid, c.shape)
+				r.e.cut = func(event string, _ int64) {
+					if event == "cancelled" {
+						runtime.Goexit()
+					}
+				}
+				mark := outboxMark(t, r.db)
+				cutRun(t, func() { r.d.HandleOrderCancel(env, req) })
+				r.e.cut = nil
+				testdb.AssertOrderStatus(t, r.db, req.OrderUUID, StatusCancelled)
+				r.d.HandleOrderCancel(env, req)
+
+				assertTold(t, "the cut run and the redelivery told the station", toldSince(t, r.db, mark), c.told[:1])
+				if n := len(r.backend.CancelRequests()); n != 1 {
+					t.Errorf("the fleet was told to stop %d jobs, want 1", n)
+				}
+				if n := len(r.e.cancelledFrom); n != 1 {
+					t.Errorf("cancelled announced %d times, want 1", n)
+				}
+			})
+
+			t.Run("run, finish, run again", func(t *testing.T) {
+				t.Parallel()
+				r, env, req := setup(t, c.uuid, c.shape)
+				r.d.HandleOrderCancel(env, req)
+				mark := outboxMark(t, r.db)
+				r.d.HandleOrderCancel(env, req)
+
+				assertTold(t, "the repeat told the station", toldSince(t, r.db, mark), nil)
+				if n := len(r.backend.CancelRequests()); n != 1 {
+					t.Errorf("the fleet was told to stop %d jobs, want 1", n)
+				}
+				if n := len(r.e.cancelledFrom); n != 1 {
+					t.Errorf("cancelled announced %d times, want 1", n)
+				}
+				testdb.AssertOrderStatus(t, r.db, req.OrderUUID, StatusCancelled)
+			})
+		})
+	}
 }
 
 // ── receipt and release: safe run twice today, characterised ────────────────
