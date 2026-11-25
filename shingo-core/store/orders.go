@@ -1244,7 +1244,8 @@ func (db *DB) RetireReshuffleRestoreOrders() (int, error) {
 	return cancelled, nil
 }
 
-// GetNextChildOrder returns the next pending child order for a parent.
+// GetNextChildOrder returns the next child a compound has not yet handed to the
+// fleet (orders.AwaitingFleetSQL, which is not the same as `pending`).
 func (db *DB) GetNextChildOrder(parentOrderID int64) (*orders.Order, error) {
 	return orders.GetNextChild(db.DB, parentOrderID)
 }
