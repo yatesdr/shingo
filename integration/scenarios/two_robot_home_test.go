@@ -418,8 +418,9 @@ func TestScenario_TwoRobotLine_ThroughItsHome_HoldsTheOldCartOffTheFull(t *testi
 	}{{"the supply's release does not reach Core", true}, {"the supply's robot stands faulted at the home", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			if os.Getenv("SHINGO_KNOWN_RED") == "" {
-				t.Skip("brief G A2 red pin, red until Core holds a set-down on a spot until the cart standing " +
-					"there is lifted; run with SHINGO_KNOWN_RED=1")
+				t.Skip("brief G A2 red pin, kept skipped by the owner's ruling of 2026-11-25: no hold between a " +
+					"lift and a set-down; with both robots holding orders the fleet manager sequences them, to be " +
+					"watched on the floor (DOCKET R177); run with SHINGO_KNOWN_RED=1")
 			}
 			t.Parallel()
 			c := newKsrCell(t, homeLine(0, 0))
