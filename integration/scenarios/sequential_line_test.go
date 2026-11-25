@@ -545,15 +545,19 @@ func (c *ksrCell) coreRoute(label string, ords ...domain.Order) {
 // be loaded, and the backfill (Order B) brings the home's full. On a paired A/B
 // side and on a one-node line, with one home and a free buffer, its buffer
 // holding an empty, no buffer, and a second home for the part standing bare,
-// the steady-state swap should run to the end: confirmed at both ends, the
-// home's full on the line and the old cart on a spot of the loader.
+// the steady-state swap should run to the end wherever the loader has a spot
+// for the line's cart: confirmed at both ends, the home's full on the line and
+// the old cart on a spot of the loader.
 //
-// With a buffer free it runs to the end, on both shapes: A's drop moves off the
-// occupied home to the buffer and A goes; B, made at A's release, lifts the
-// home's full and sets it on the line. Red at 7a7d9a25 until brief H: the loader
-// park's Pattern A moved B's drop from the line onto the home it lifts from (a
-// no-wait leg off a loader spot read as a return there), B ran circular and the
-// line was left bare (TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched).
+// With a buffer free, or a second home of the part bare, it runs to the end, on
+// both shapes: A's drop moves off the occupied home to the bare second home, else
+// the buffer, and A goes; B, made at A's release, lifts the home's full and sets
+// it on the line. Red at 7a7d9a25 until brief H: the loader park's Pattern A
+// moved B's drop from the line onto the home it lifts from (a no-wait leg off a
+// loader spot read as a return there), B ran circular and the line was left
+// bare (TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched); and
+// with no buffer the bare second home was never offered, though Core's wait
+// sentence named it.
 //
 // WITH ONE HOME AND NO BUFFER FREE IT WAITS, on both shapes, and that is the
 // mode's rule, as a full market's wait is (B22 and the owner's "this isnt a code
@@ -565,11 +569,6 @@ func (c *ksrCell) coreRoute(label string, ords ...domain.Order) {
 // lets A go to the buffer and the swap runs to its end. With no buffer at all
 // the sentence names only the home, which holds the full B comes for. Before
 // brief H these four cells were skipped reds.
-//
-// THE TWO-HOMES CASE WITH NO BUFFER STILL FAILS, on both shapes, and is skipped
-// unless SHINGO_KNOWN_RED=1 (lane f-home's notes have the trace and the red
-// output): A waits the same way, and the bare second home is never offered
-// (Core's sentence names it all the same).
 func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 	t.Parallel()
 	for _, shape := range []struct {
@@ -579,21 +578,16 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 		for _, lc := range []struct {
 			name                      string
 			extraHomes, buffers, held int
-			red                       bool
 			// waits is the spots the removal's wait sentence names when it waits.
 			waits string
 		}{
-			{"one home, a free buffer", 0, 1, 0, false, ""},
-			{"one home, its buffer holding an empty", 0, 1, 1, false, ksrHomeA + ", KSR-BUF-1"},
-			{"one home, no buffer", 0, 0, 0, false, ksrHomeA},
-			{"two homes, the second bare, no buffer", 1, 0, 0, true, ""},
-			{"two homes, the second bare, a free buffer", 1, 1, 0, false, ""},
+			{"one home, a free buffer", 0, 1, 0, ""},
+			{"one home, its buffer holding an empty", 0, 1, 1, ksrHomeA + ", KSR-BUF-1"},
+			{"one home, no buffer", 0, 0, 0, ksrHomeA},
+			{"two homes, the second bare, no buffer", 1, 0, 0, ""},
+			{"two homes, the second bare, a free buffer", 1, 1, 0, ""},
 		} {
 			t.Run(shape.name+", "+lc.name, func(t *testing.T) {
-				if lc.red && os.Getenv("SHINGO_KNOWN_RED") == "" {
-					t.Skip("final brief 2e (lane f-home) red pin, red until a sequential swap through its own home " +
-						"with no buffer free brings the line its cart; run with SHINGO_KNOWN_RED=1")
-				}
 				t.Parallel()
 				c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential,
 					plain: true, bareSpot: true, pair: shape.pair, home: true,

@@ -483,12 +483,14 @@ type Claim struct {
 	// is the loader's spare parking, and is what a returning partial falls back to
 	// when the home it belongs to is busy.
 	//
-	// WITHOUT A FREE BUFFER A RETURN TO A BUSY HOME WAITS. placeForLoader walks
-	// only the positions whose kind is buffer, so a loader declared with homes
-	// alone has no fallback: a return pointed at its occupied home is queued
-	// loader-park-no-slot until the home or a buffer frees (shingo-core/dispatch
-	// TestLoaderPark_TheBriefsRows, "Sequential removal through its home, no
-	// buffer free"; TestPlaceForDedicatedLoader_ForeignCarrier_BufferFull_Waits).
+	// WITHOUT A FREE BUFFER A RETURN TO A BUSY HOME WAITS. placeForLoader offers
+	// another free home pinned to the cart's payload first (since brief H), then
+	// only the positions whose kind is buffer, so a loader declared with one home
+	// per payload and no buffer has no fallback: a return pointed at its occupied
+	// home is queued loader-park-no-slot until the home or a buffer frees
+	// (shingo-core/dispatch TestLoaderPark_TheBriefsRows, "Sequential removal
+	// through its home, no buffer free", and the two-homes rows;
+	// TestPlaceForDedicatedLoader_ForeignCarrier_BufferFull_Waits).
 	// It used to be dispatched onto the home, where the arrival evicted the record
 	// already there (2026-08-26). Springfield's loader 7 runs 22 pinned homes
 	// against 11 buffer slots for this reason.

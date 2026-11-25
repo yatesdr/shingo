@@ -16,7 +16,8 @@ import (
 // loader_place.go — the PARK side of the dedicated home loader, the inverse of the
 // source side (loader_source.go). When a dedicated-loader changeover returns a bin
 // from a home position, Core decides where it lands: its HOME if provably free,
-// else a free buffer slot (home_kind='buffer', the M1 representation the source side
+// else another free home pinned to its part, else a free buffer slot
+// (home_kind='buffer', the M1 representation the source side
 // already pools). Source and park use the SAME Core representation, so a parked
 // partial is re-sourced by the same pool and the loop closes end-to-end.
 //
@@ -33,8 +34,9 @@ import (
 // the partner's committed lift takes first is a destination too
 // (placeVacated, vacated_slot.go). SPR 2026-09-28, pairs 7060/7061 and 7062/7063:
 // the supply was widened onto a buffer partial, every buffer was full, and the
-// return parked every pass beside the buffer being emptied. Order: free buffer,
-// drain, vacated, wait. The release fence holds the drop until the lift is real.
+// return parked every pass beside the buffer being emptied. Order: another home
+// of the part, free buffer, drain, vacated, wait. The release fence holds the
+// drop until the lift is real.
 //
 // LOCUS — Core is the single authority. The Edge ships the evac order with
 // DeliveryNode="" and holds no authoritative bin-landing record; Core resolves the
@@ -447,18 +449,38 @@ func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64,
 	return d.placeForLoader(order, loaderID, homeName, pl)
 }
 
-// placeForLoader routes to a free buffer slot for the given loader. Shared by
-// Pattern A and Pattern B after the home-first check fails.
+// placeForLoader routes to another free home of the cart's part, else a free
+// buffer slot, for the given loader. Shared by Pattern A and Pattern B after the
+// home-first check fails.
 //
-// Returns homeName when the order must WAIT: no buffer is free and the only
-// destination left is the home the caller just found unable to take the bin.
-// Returns "" when the order has somewhere to go — a buffer, or a drain to a
-// different node it was already pointed at.
+// Returns homeName when the order must WAIT: no other home of the part and no
+// buffer is free, and the only destination left is the home the caller just
+// found unable to take the bin. Returns "" when the order has somewhere to go —
+// another home, a buffer, or a drain to a different node it was already pointed
+// at.
+//
+// ANOTHER HOME OF THE CART'S PART BEFORE A BUFFER (brief H): a loader may pin
+// one part on two homes (plantspec HomeOf), and the cart belongs on either; a
+// buffer is the fallback, and a cart parked there waits to be moved again. The
+// part is the cart's own, or the order's when the cart is empty or cannot be
+// read, as an empty belongs on its part's home (homeAcceptsCarrier). The wait's
+// sentence has always named such a home as a spot to empty (spotsThatTake);
+// this is what makes that true (TestLoaderPark_TheBriefsRows, the two-homes
+// rows).
 //
 // The members come from the placement's one read of the loader
 // (LoaderMembersForPlacement), which also says whether another order holds each
-// one by reservation or hard claim. A held buffer is skipped like a full one.
+// one by reservation or hard claim. A held home or buffer is skipped like a
+// full one.
 func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string, pl placement) (waitHome string) {
+	part, known := d.carrierPayloadFor(order, pl.steps)
+	if !known || part == "" {
+		part = order.PayloadCode
+	}
+	if other := d.homeForPayload(pl.members, part, order.ID); other != "" && other != homeName {
+		d.setParkDestination(order, pl.steps, other, "home")
+		return ""
+	}
 	for _, m := range pl.members {
 		if m.Kind != loaders.HomeKindBuffer || m.HeldByStranger {
 			continue
@@ -499,9 +521,10 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	// Waiting cannot recreate the 2026-08-31 reverted attempt. That one gated a
 	// leg whose only option was its home, so a queued leg — invisible to the
 	// replenishment yield because it holds no claim — let the loop refill the home
-	// and then waited on the refill forever. Here the wait ends at ANY free buffer
-	// as well as the home, and a return whose home is free (or held only by this
-	// swap's own supply carrier) never reaches this branch at all.
+	// and then waited on the refill forever. Here the wait ends at another home of
+	// the part or ANY free buffer as well as the home, and a return whose home is
+	// free (or held only by this swap's own supply carrier) never reaches this
+	// branch at all.
 	//
 	// VACATED, BEFORE THE WAIT: a member of this loader — home or buffer — whose
 	// only bin the partner's committed lift takes first (vacated_slot.go). SPR
@@ -924,9 +947,10 @@ func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string, pc
 // nil, and the pick is plain FIFO, when this leg has no sibling returning to a
 // dedicated-loader home (or it cannot be read), when spotsThatTake has nothing
 // to say, or when one of those spots stands free: the return has room without
-// the supply's help, unless the free spot is a second home of its part, which
-// the return does not land on (see spotsThatTake). Otherwise the spots
-// themselves; why names them, for the record a changed pick writes.
+// the supply's help (a free second home of its part included, since brief H;
+// a free home with no part pinned is the one spot named here it does not land
+// on, see spotsThatTake). Otherwise the spots themselves; why names them, for
+// the record a changed pick writes.
 func (d *Dispatcher) returnLiftFrom(supply *orders.Order) (liftFrom []int64, why string) {
 	ret, retSteps, ok := d.swapSiblingPlan(supply, nil)
 	if !ok || protocol.IsTerminal(ret.Status) || !d.legReturnsToHome(ret, retSteps) {
@@ -950,15 +974,17 @@ func (d *Dispatcher) returnLiftFrom(supply *orders.Order) (liftFrom []int64, why
 // spotsThatTake is the members of the dedicated loader a return leg parks at
 // that take its carrier: every buffer, and any home the carrier belongs on
 // (homeAcceptsCarrier). They are what the wait's sentence names
-// (parkNoSlotParams) and what returnLiftFrom asks about. NOT EVERY ONE OF THEM
-// LETS A WAITING RETURN GO: the placement chain lands the carrier on its own
-// home, a buffer, or a member a partner empties (placeForLoader), never on
-// another home of its part, so a second home named here frees nothing
-// (TestLoaderPark_TheBriefsRows, "Sequential removal, two homes (the second
-// bare), no buffer free": it waits naming HOME2 while HOME2 stands bare). ok is
-// false, with nothing to say, when the leg does not park at a dedicated loader,
-// or its carrier's part cannot be read or it carries none (every member takes it
-// then).
+// (parkNoSlotParams) and what returnLiftFrom asks about. The placement chain
+// lands the carrier on its own home, another home pinned to its part, a buffer
+// (placeForLoader), or a member a partner empties (placeVacated), so emptying
+// any of them should let a waiting return go (TestLoaderPark_TheBriefsRows, the
+// two-homes rows: a bare second home takes it, since brief H). One exception: a
+// home with no part pinned takes any carrier here, but placeForLoader offers
+// only a home pinned to the carrier's part (homeForPayload) and placeVacated
+// only a member a lift empties (plan.Vacated), so such a home standing bare is
+// named and not taken. ok is false, with nothing to say, when the leg does not
+// park at a dedicated loader, or its carrier's part cannot be read or it carries
+// none (every member takes it then).
 func (d *Dispatcher) spotsThatTake(ret *orders.Order, retSteps []resolvedStep) (spots []store.LoaderPlacementMember, carrier string, ok bool) {
 	target := ret.DeliveryNode
 	if f := lastDropIndex(retSteps); f >= 0 && retSteps[f].Anchor != "" {
@@ -992,9 +1018,8 @@ func (d *Dispatcher) spotsThatTake(ret *orders.Order, retSteps []resolvedStep) (
 }
 
 // parkNoSlotParams is the wait a return parks under when its loader has no spot
-// for it: the home it waits at, and the spots spotsThatTake names. Emptying a
-// second home of the carrier's part among them does not let it go (see
-// spotsThatTake).
+// for it: the home it waits at, and the spots spotsThatTake names (a bare home
+// with no part pinned among them is not taken; see spotsThatTake).
 func (d *Dispatcher) parkNoSlotParams(ret *orders.Order, retSteps []resolvedStep, waitHome string) QueueParams {
 	params := QueueParams{Destination: waitHome}
 	if spots, _, ok := d.spotsThatTake(ret, retSteps); ok {

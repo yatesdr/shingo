@@ -1058,12 +1058,22 @@ var parkBriefRows = []parkRow{
 			w.addHome2(t, db)
 			w.fillBuffers(t, db)
 		},
+		// brief H H1 (b): was pending:loader-park-no-slot drops=HOME, waiting
+		// "... empty one of HOME, BUF, BUF2, HOME2 and it goes" with HOME2 bare.
+		want: []string{"sent drops=HOME2"}},
+	{name: "Sequential removal, two homes (the second holding a cart), no buffer free",
+		legs: []string{"staged/sequential/steady/A"},
+		world: func(t *testing.T, db *store.DB, w *parkWorld) {
+			w.addHome2(t, db)
+			w.put(t, db, "HOME2", "PART-X", "pv-home2-full", 10)
+			w.fillBuffers(t, db)
+		},
 		want:     []string{"pending:loader-park-no-slot drops=HOME"},
 		sentence: "Waiting for a slot at HOME — empty one of HOME, BUF, BUF2, HOME2 and it goes"},
 	{name: "Sequential removal, two homes (the second bare), a buffer free",
 		legs:  []string{"staged/sequential/steady/A"},
 		world: func(t *testing.T, db *store.DB, w *parkWorld) { w.addHome2(t, db) },
-		want:  []string{"sent drops=BUF"}},
+		want:  []string{"sent drops=HOME2"}}, // brief H H1 (b): was BUF
 	{name: "Sequential backfill after its removal landed in a buffer (B23)",
 		legs: []string{"staged/sequential/steady/backfill"},
 		world: func(t *testing.T, db *store.DB, w *parkWorld) {
