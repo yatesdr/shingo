@@ -10,13 +10,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/shared/scenefixtures"
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/internal/testdb"
+	"shingoedge/orders"
+	"shingoedge/store/processes"
 )
 
 // toast_shots_test.go — the station's toasts on the real station page, at the
@@ -143,6 +147,206 @@ func TestStationToastShots(t *testing.T) {
 	}
 }
 
+// TestOrdersCancelShots — the Edge's Orders page (/orders) at 1280x800, for the
+// final brief's no cancel on a delivered order (1e) and the word Cancel (its
+// Part 3), taken before and after the change by the same command. Two orders
+// to synthetic lines: one whose cart is on its way (in_transit) and one whose
+// cart is set down (delivered).
+//
+//	edge-orders-<tag>-1280.png          the two rows and what each offers
+//	edge-orders-prompt-<tag>-1280.png   the first row's cancel pressed: its dialog
+//	edge-orders-refused-<tag>-1280.png  a page drawn while the first order was
+//	                                    on its way, its cancel pressed after the
+//	                                    order was delivered, and what it answers
+//
+// <tag> is ORDERS_SHOTS_TAG (before, after; "shot" when unset). The page and
+// its doors are the real ones (the engine's router, its template, orders.js
+// and the abort door); two things are the harness's. /__shots/deliver writes
+// the first order delivered, as Core's word would, without redrawing the page.
+// And the driver, put after the page's last tag, presses the row's cancel and
+// the dialog's OK once the page has drawn, then marks the page done.
+//
+// Run:
+//
+//	cd shingo-edge && ORDERS_SHOTS_OUT=<dir> ORDERS_SHOTS_TAG=after go test -tags shots \
+//	    -count=1 -run '^TestOrdersCancelShots$' -v ./www/
+func TestOrdersCancelShots(t *testing.T) {
+	t.Parallel()
+	out := os.Getenv("ORDERS_SHOTS_OUT")
+	if out == "" {
+		t.Skip("ORDERS_SHOTS_OUT not set")
+	}
+	tag := os.Getenv("ORDERS_SHOTS_TAG")
+	if tag == "" {
+		tag = "shot"
+	}
+	chrome := chromeBinary()
+	if chrome == "" {
+		t.Fatal("no Chrome binary: set COMPOSER_SHOTS_CHROME")
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", out, err)
+	}
+
+	db := testdb.Open(t)
+	procID, err := db.CreateProcess("SYN-PROC-1", "synthetic process", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	order := func(uuid, line string, seq int, status protocol.Status) int64 {
+		nodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: line, Code: line,
+			Name: line, Sequence: seq, Enabled: true})
+		if err != nil {
+			t.Fatalf("create node %s: %v", line, err)
+		}
+		id, err := db.CreateOrder(uuid, orders.TypeRetrieve, &nodeID, false, 1, line, "", "SYN-MARKET-1",
+			protocol.Height{}, false, "SYN-PART-A", "", "")
+		if err != nil {
+			t.Fatalf("create order to %s: %v", line, err)
+		}
+		if err := db.UpdateOrderStatus(id, string(status)); err != nil {
+			t.Fatalf("order to %s %s: %v", line, status, err)
+		}
+		return id
+	}
+	moving := order("5a1f0c2e-0000-4000-8000-000000000001", "SYN-LINE-01", 1, protocol.StatusInTransit)
+	order("9b7d3e61-0000-4000-8000-000000000002", "SYN-LINE-02", 2, protocol.StatusDelivered)
+
+	cfg := config.Defaults()
+	cfg.StationUID = "shots.orders"
+	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
+	eng.SetPayloadBinTypes(nil)
+	eng.Start()
+	t.Cleanup(eng.Stop)
+	router := shotsRouter(t, eng)
+
+	srv := shotsServer(t, router, func(mux *http.ServeMux) {
+		mux.HandleFunc("/__shots/orders-driver.js", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			fmt.Fprintf(w, ordersShotDriver, r.URL.Query().Get("shot"), strconv.FormatInt(moving, 10))
+		})
+		mux.HandleFunc("/__shots/deliver", func(w http.ResponseWriter, _ *http.Request) {
+			if err := db.UpdateOrderStatus(moving, string(protocol.StatusDelivered)); err != nil {
+				t.Errorf("deliver order %d: %v", moving, err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+		// The Orders page with the driver after its last tag. Each load starts
+		// with the first order on its way again: every shot runs the page twice
+		// (the picture, then the DOM), and the refused shot delivers it.
+		mux.HandleFunc("/orders", func(w http.ResponseWriter, r *http.Request) {
+			if err := db.UpdateOrderStatus(moving, string(protocol.StatusInTransit)); err != nil {
+				t.Errorf("order %d back on its way: %v", moving, err)
+			}
+			plain := r.Clone(r.Context())
+			plain.Header.Del("Accept-Encoding")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, plain)
+			page := rec.Body.String()
+			if !strings.Contains(page, "</body>") {
+				t.Errorf("the Orders page has no </body> to put the driver before:\n%.400s", page)
+			}
+			page = strings.Replace(page, "</body>",
+				`<script src="/__shots/orders-driver.js?shot=`+r.URL.Query().Get("shot")+`"></script></body>`, 1)
+			for k, v := range rec.Header() {
+				if k != "Content-Length" && k != "Etag" {
+					w.Header()[k] = v
+				}
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write([]byte(page))
+		})
+	})
+
+	for _, s := range []struct{ shot, file string }{
+		{"rows", "edge-orders-" + tag + "-1280.png"},
+		{"prompt", "edge-orders-prompt-" + tag + "-1280.png"},
+		{"refused", "edge-orders-refused-" + tag + "-1280.png"},
+	} {
+		u := fmt.Sprintf("%s/orders?shot=%s", srv.URL, s.shot)
+		target := filepath.Join(out, s.file)
+		_ = os.Remove(target)
+		shotChrome(t, chrome, out, u, "--screenshot="+target)
+		info, err := os.Stat(target)
+		if err != nil || info.Size() < 10_000 {
+			t.Fatalf("%s missing or blank: %v", target, err)
+		}
+		dom := shotChrome(t, chrome, out, u, "--dump-dom")
+		if !strings.Contains(dom, `data-shot-done="`+s.shot+`"`) {
+			t.Errorf("%s: the driver did not finish (no data-shot-done)", s.shot)
+		}
+		t.Logf("wrote %s (%d bytes); rows offer: %s; toasts up: %s", target, info.Size(), rowActions(dom), toastsUp(dom))
+	}
+}
+
+// rowActions is each Orders row's buttons in a dumped DOM: the row's order id
+// and the words on its buttons.
+func rowActions(dom string) string {
+	var out []string
+	for _, part := range strings.Split(dom, `<tr data-order-id="`)[1:] {
+		row := part
+		if i := strings.Index(row, "</tr>"); i >= 0 {
+			row = row[:i]
+		}
+		id := row[:strings.Index(row, `"`)]
+		var words []string
+		for _, b := range strings.Split(row, "<button ")[1:] {
+			if i, j := strings.Index(b, ">"), strings.Index(b, "</button>"); i >= 0 && j > i {
+				words = append(words, strings.TrimSpace(b[i+1:j]))
+			}
+		}
+		out = append(out, id+": "+strings.Join(words, ", "))
+	}
+	return "[" + strings.Join(out, " | ") + "]"
+}
+
+// shotStream is the stand-in event stream a driver puts in a page before its
+// modules run: it says connected once and then nothing. An open EventSource
+// keeps headless Chrome's virtual time from ever running out, and a closed one
+// puts the lost-connection banner up. It holds no %: the drivers it starts are
+// format strings.
+const shotStream = `(function () {
+  function Stream(url) { this.url = url; this.l = {}; var s = this;
+    setTimeout(function () { s.emit('connected', { build: '' }); }, 50); }
+  Stream.prototype.addEventListener = function (t, fn) { (this.l[t] = this.l[t] || []).push(fn); };
+  Stream.prototype.removeEventListener = function () {};
+  Stream.prototype.close = function () {};
+  Stream.prototype.emit = function (t, d) {
+    (this.l[t] || []).forEach(function (fn) { fn({ type: t, data: JSON.stringify(d), lastEventId: '' }); });
+  };
+  window.EventSource = Stream;
+})();
+`
+
+// ordersShotDriver is the Orders page's shot (after the stand-in stream), with
+// the shot's name at %[1]q and the first order's id at %[2]q. Each waits for the
+// page's modules (1.5 s of virtual time). The rows shot only marks the page
+// done; the prompt shot presses the first row's cancel and leaves its dialog
+// open; the refused shot has the harness deliver the first order, presses that
+// row's cancel and then the dialog's OK, and marks the page done once the
+// answer is in.
+const ordersShotDriver = shotStream + `(function () {
+  var still = document.createElement('style');
+  still.textContent = '.notice-toast { animation: none !important; }';
+  document.head.appendChild(still);
+  var shot = %[1]q, id = %[2]q;
+  var done = function () { document.body.setAttribute('data-shot-done', shot); };
+  if (shot === 'rows') { setTimeout(done, 1500); return; }
+  setTimeout(async function () {
+    if (shot === 'refused') await fetch('/__shots/deliver', { method: 'POST' });
+    var btn = document.querySelector('[data-action="abortOrder:' + id + '"]');
+    if (!btn) { document.body.setAttribute('data-shot-done', 'no-cancel-button'); return; }
+    btn.click();
+    setTimeout(function () {
+      if (shot === 'prompt') { done(); return; }
+      var ok = document.querySelector('[data-layer-ok]');
+      if (ok) ok.click();
+      setTimeout(done, 1500);
+    }, 300);
+  }, 1500);
+})();
+`
+
 // shotChrome runs headless Chrome at the kiosk's size on u and returns its
 // stdout (the DOM, for --dump-dom).
 func shotChrome(t *testing.T, chrome, dir, u string, flags ...string) string {
@@ -183,16 +387,7 @@ func toastsUp(dom string) string {
 // Once the board has drawn (1.5 s of virtual time), the shot's toasts are
 // raised through the station's own module instances, which a dynamic import
 // from the page reaches, and the page is marked done.
-const toastShotDriver = `(function () {
-  function Stream(url) { this.url = url; this.l = {}; var s = this;
-    setTimeout(function () { s.emit('connected', { build: '' }); }, 50); }
-  Stream.prototype.addEventListener = function (t, fn) { (this.l[t] = this.l[t] || []).push(fn); };
-  Stream.prototype.removeEventListener = function () {};
-  Stream.prototype.close = function () {};
-  Stream.prototype.emit = function (t, d) {
-    (this.l[t] || []).forEach(function (fn) { fn({ type: t, data: JSON.stringify(d), lastEventId: '' }); });
-  };
-  window.EventSource = Stream;
+const toastShotDriver = shotStream + `(function () {
   // A toast's fade-in is a CSS animation, which headless Chrome's virtual
   // time does not run: without this the picture catches it at its start.
   var still = document.createElement('style');
