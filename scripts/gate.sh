@@ -1305,11 +1305,17 @@ step_scope() {
 sharedPG="shingo-gate-docker-$$"
 SHARED_PG_MARK="$ROOT/.gate/docker-pg.$$"
 
-# pg_up starts one such server as container $1 and prints its address once it
-# answers. NAMED, so gate_on_exit can take it down by name: the race step's
-# server is started inside `full`'s side job, a subshell whose variables the
-# parent never sees, and $$ is the gate's pid in both. PG_IMAGE is a floating
-# tag, and no gate records the image id it named (docket G14).
+# pg_up NAME ROLE starts one such server as container NAME and prints its
+# address once it answers. NAMED, so gate_on_exit can take it down by name: the
+# race step's server is started inside `full`'s side job, a subshell whose
+# variables the parent never sees, and $$ is the gate's pid in both.
+#
+# PG_IMAGE is a floating tag, so once the server has started pg_up writes the
+# image id its container runs, as docker reports it, into .gate/pg-ROLE.log
+# (ROLE is the step whose server it is: docker, race), and the run's kept logs
+# take that file (gate_keep_run). One line, for a person reading a run's logs;
+# nothing in the gate reads it (docket G14). Pinned by
+# scripts/check-gate-exec.sh.
 #
 # ON A HOST PORT PG_UP PICKS, ABOVE THE PORTS LINUX HANDS A CLIENT (docket
 # G23). Docker Desktop opens a published port inside WSL once, when the
@@ -1338,7 +1344,7 @@ SHARED_PG_MARK="$ROOT/.gate/docker-pg.$$"
 # the rule can go if Docker Desktop comes to retry that listen.
 PG_IMAGE="postgres:16-alpine"
 pg_up() {
-  local name=$1 port="" deadline first try
+  local name=$1 role=$2 port="" deadline first try img
   first=$(( RANDOM % 4536 ))
   for try in 0 1 2 3 4 5 6 7; do
     port=$(( 61000 + (first + try * 257) % 4536 ))
@@ -1355,6 +1361,9 @@ pg_up() {
     docker rm -f "$name" >/dev/null 2>&1
   done
   [ -n "$port" ] || return 1
+  img="$(docker container inspect --format '{{.Image}}' "$name" 2>/dev/null | tr -d '\r')"
+  echo "$role: $name runs $PG_IMAGE, image ${img:-unknown (docker container inspect answered nothing)}" \
+    >"$ROOT/.gate/pg-$role.log"
 
   deadline=$(( $(date +%s) + 60 ))
   until docker exec "$name" pg_isready -U test -q 2>/dev/null; do
@@ -1374,7 +1383,7 @@ start_shared_pg() {
   # variables the parent's exit trap never sees.
   sharedPG="shingo-gate-docker-$$"
   : >"$SHARED_PG_MARK"
-  addr="$(pg_up "$sharedPG")" || return 1
+  addr="$(pg_up "$sharedPG" docker)" || return 1
   export SHINGO_TEST_PG="$addr"
   export SHINGO_TEST_PG_TEMPLATE="template_gate_$$"
   return 0
@@ -1649,7 +1658,7 @@ RACE_PKGS="./engine/... ./www/..."
 step_race() {
   local rrc addr pgenv="" inner racego=""
   touch "$RACE_PG_MARK" 2>/dev/null
-  if addr="$(pg_up "$RACE_PG")"; then
+  if addr="$(pg_up "$RACE_PG" race)"; then
     pgenv="SHINGO_TEST_PG=$addr SHINGO_TEST_PG_TEMPLATE=template_gate_race_$$"
   else
     # As in step_docker: a speedup, not a gate. testdb starts a container per
