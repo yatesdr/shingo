@@ -5,6 +5,7 @@ package engine
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -229,6 +230,82 @@ func TestResume_TheParentGoesBackToPendingAndAcquiresOnce(t *testing.T) {
 	told := strings.Join(statusUpdates(t, db, parent.EdgeUUID), " ")
 	if want := string(protocol.StatusPending) + " " + string(protocol.StatusQueued); told != want {
 		t.Errorf("the station was told %q for the resumed parent, want %q (the restart's write, then where it landed)", told, want)
+	}
+}
+
+// TestResume_AnAcquireDroppedAtStopIsAskedAndToldByTheNextEngine (docket B7,
+// closed as not a bug): a resumed parent's acquire runs on the after-queue
+// (wiring.go's resume handler), which drops work still queued when the engine
+// stops (afterQueue.run). That costs the station nothing. The restart's own
+// write has already told it `pending`, the next engine's boot scan asks every
+// acquiring order (startBootScan), and where the acquire lands tells the
+// station from that write. The B7 row read after.go's comment, which described
+// resumeAcquire's own "dispatched" notice from before the tell rode the write
+// (7b048958).
+//
+// Engine A's after-queue is held by one piece of work, so the acquire is still
+// queued at its Stop; engine B then starts on the same database. The fixture is
+// the sibling's above, whose acquire parks the parent under ngrp-resolve.
+func TestResume_AnAcquireDroppedAtStopIsAskedAndToldByTheNextEngine(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	grp, _, _ := closedGroup(t, db, "B7RS", sd.Payload.Code, 1)
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "B7RS-STORED")
+
+	a := newUnstartedEngine(t, db, simulator.New())
+	a.Start()
+	held, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHold := func() { releaseOnce.Do(func() { close(release) }) }
+	stopA := sync.OnceFunc(a.Stop)
+	t.Cleanup(func() { releaseHold(); stopA() })
+	select {
+	case <-a.bootScanned:
+	case <-time.After(30 * time.Second):
+		t.Fatal("engine A's boot scan did not finish in 30 s")
+	}
+	a.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("b7rs-shape", sd, grp))
+	shape := testdb.RequireOrder(t, db, "b7rs-shape")
+	a.after.later(func() { close(held); <-release })
+	<-held // running: everything handed over before it has run
+
+	parent := &orders.Order{EdgeUUID: "b7rs-parent", StationUID: shape.StationUID, OrderType: shape.OrderType,
+		Status: protocol.StatusReshuffling, Quantity: 1, PayloadCode: shape.PayloadCode,
+		SourceNode: shape.SourceNode, DeliveryNode: shape.DeliveryNode, StepsJSON: shape.StepsJSON,
+		Coordinated: true}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "the parent in reshuffling")
+	testutil.MustNoErr(t, a.Dispatcher().Lifecycle().ResumeCompound(parent), "resume the parent")
+	if d := a.AfterQueueDepth(); d < 2 {
+		t.Fatalf("engine A's after-queue holds %d piece(s) of work, want the hold and the resumed parent's acquire", d)
+	}
+
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); stopA() }()
+	<-a.stopChan
+	releaseHold()
+	select {
+	case <-stopped:
+	case <-time.After(60 * time.Second):
+		t.Fatal("engine A did not stop in 60 s")
+	}
+	if o := testdb.RequireOrder(t, db, "b7rs-parent"); o.Status != protocol.StatusPending {
+		t.Fatalf("after engine A stopped the parent is %s, want pending: its acquire ran, so this pin lost its input", o.Status)
+	}
+	if told := strings.Join(statusUpdates(t, db, parent.EdgeUUID), " "); told != string(protocol.StatusPending) {
+		t.Fatalf("after engine A stopped the station was told %q, want %q from the restart's own write", told, protocol.StatusPending)
+	}
+
+	newTestEngine(t, db, simulator.New()) // engine B: returns once its boot scan has run
+	after := testdb.RequireOrder(t, db, "b7rs-parent")
+	if after.Status != protocol.StatusQueued || after.QueueCause != string(dispatch.CauseNGRPResolve) {
+		t.Errorf("after engine B's boot scan the parent is %s under %q, want queued under %q: the acquire "+
+			"engine A dropped was not asked again", after.Status, after.QueueCause, dispatch.CauseNGRPResolve)
+	}
+	told := strings.Join(statusUpdates(t, db, parent.EdgeUUID), " ")
+	if want := string(protocol.StatusPending) + " " + string(protocol.StatusQueued); told != want {
+		t.Errorf("the station was told %q for the parent, want %q: the restart's write, then where engine B's "+
+			"acquire landed", told, want)
 	}
 }
 
