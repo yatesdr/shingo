@@ -772,6 +772,13 @@ func parkPinKey(name string, withProcess bool) string {
 // TestLoaderPark_EveryBuilderLeg pins where today's park lands every builder
 // leg, in the world stock stands (each part's full on its home, the buffers
 // free), with the process node the builders' callers send and without it.
+//
+// cost: 102 leaves, every builder leg (or swap pair) with and without a process
+// node, each its own cloned database, loader and stock, sent through Core's
+// intake and one dispatch pass. The park reads the loader's members, the bins
+// and the in-flight orders through the store (LoaderMembersForPlacement,
+// CheckDropoffCapacity), which the plan package's fakes do not stand in for,
+// and the pin is the whole pass's answer for each leg.
 func TestLoaderPark_EveryBuilderLeg(t *testing.T) {
 	t.Parallel()
 	cases, err := parkvectors.Cases()
