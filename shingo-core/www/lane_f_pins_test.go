@@ -227,3 +227,51 @@ func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
 		}
 	}
 }
+
+// TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown: Terminate's refusal
+// is keyed on where the order's cart is (final brief 1e), not on its status
+// alone. An order that has set its cart down at its drop, its claim released,
+// still reads in_transit until its delivered write lands (the landed half), and
+// is refused like a delivered one: 409, nothing written. An order whose robot
+// is carrying its cart is still cancelled: a person can stop a carrying robot.
+func TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	transit, err := db.GetNodeByName("_TRANSIT")
+	testutil.MustNoErr(t, err, "find _TRANSIT")
+	order := func(uuid string, at *nodes.Node, claimed bool) *orders.Order {
+		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID, o.Status = uuid, protocol.StatusInTransit
+			o.SourceNode, o.DeliveryNode = sd.StorageNode.Name, sd.LineNode.Name
+		})
+		b := testdb.CreateBinAtNode(t, db, sd.Payload.Code, at.ID, uuid+"-BIN")
+		testdb.SeedCartRow(t, db, o.ID, b.ID, 0, 1)
+		if claimed {
+			testdb.ClaimBinForTest(t, db, b.ID, o.ID)
+		}
+		return o
+	}
+
+	landed := order("term-landed", sd.LineNode, false)
+	rec := postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": landed.ID})
+	var resp struct {
+		Error string `json:"error"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode")
+	after, err := db.GetOrder(landed.ID)
+	testutil.MustNoErr(t, err, "reload the landed order")
+	const want = "cannot cancel this order: its cart is already set down"
+	if rec.Code != http.StatusConflict || resp.Error != want || after.Status != protocol.StatusInTransit {
+		t.Errorf("landed order = %d %q, then %q; want 409 %q and the order untouched", rec.Code, resp.Error,
+			after.Status, want)
+	}
+
+	carried := order("term-carried", transit, true)
+	rec = postJSON(t, h.apiTerminateOrder, "/api/orders/terminate", map[string]any{"order_id": carried.ID})
+	after, err = db.GetOrder(carried.ID)
+	testutil.MustNoErr(t, err, "reload the carried order")
+	if rec.Code != http.StatusOK || after.Status != protocol.StatusCancelled {
+		t.Errorf("carried order = %d %s, then %q; want 200 and cancelled", rec.Code, rec.Body.String(), after.Status)
+	}
+}
