@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	"shingo/protocol/debuglog"
 	"shingocore/config"
 	"shingocore/dispatch"
+	"shingocore/dispatch/eta"
 	"shingocore/engine"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -141,6 +143,96 @@ func TestBusOrder_ADeliveryAndACancel(t *testing.T) {
 			"(AGENTS.md, Stop and ask before); with it, re-record busOrderTranscript from the got column. An event "+
 			"added or dropped is a behaviour change of its own: name it in the commit, then re-record.\n%s",
 			sideBySide(busOrderTranscript, got))
+	}
+}
+
+// TestBusOrder_InTransitSendsItsETA pins that an order the fleet puts in
+// transit sends a tab its eta_update frame (www/sse.go, the status-changed
+// subscriber's in_transit arm), on the wiring main makes, with the simulator
+// as the fleet. The route has no history, so the ETA is the cache's fallback
+// (eta.Cache.Lookup), which is never empty; the test checks that first.
+//
+// Red at 45d020d1 for the arm's comparison: it compares the event's NewStatus
+// with "in_transit", and both emitters (rds/poller.go, the simulator's
+// DriveState) fill NewStatus with the vendor's state, RUNNING here, which Core
+// maps to in_transit (rds.OrderState.CoreStatus). Skipped unless
+// SHINGO_KNOWN_RED=1: no page reads the frame (no .js names eta_update or
+// reads its eta), so whether the arm is mended for a reader or the frame
+// deleted is open (brief C item 3).
+func TestBusOrder_InTransitSendsItsETA(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("brief C item 3 red pin, red until the eta_update arm reads Core's status, not the vendor's; run with SHINGO_KNOWN_RED=1")
+	}
+	db := testdb.Open(t)
+	storage, line, payload := testdb.SetupTestData(t, db)
+	testdb.CreateBinAtNode(t, db, payload.Code, storage.ID, "BIN-ETA")
+
+	sim := simulator.New()
+	eng := engine.New(engine.Config{AppConfig: config.Defaults(), DB: db, Fleet: sim, LogFunc: t.Logf})
+	eng.Start()
+	t.Cleanup(eng.Stop)
+	dbg, err := debuglog.New(64, nil)
+	if err != nil {
+		t.Fatalf("debug log: %v", err)
+	}
+	dbg.SetStderr(nil)
+	handler, stopWeb, err := www.NewRouter(eng, www.NewDoors(eng), dbg)
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	t.Cleanup(stopWeb)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	frames := openTab(t, srv.URL+"/events?topics=order-update")
+
+	eng.Dispatcher().HandleOrderRequest(testdb.Envelope(), &protocol.OrderRequest{OrderUUID: "eta-run",
+		OrderType: dispatch.OrderTypeRetrieve, PayloadCode: payload.Code, DeliveryNode: line.Name, Quantity: 1})
+	o := testdb.RequireOrderStatus(t, db, "eta-run", protocol.StatusDispatched)
+	if s := eta.Stamp(eng.EtaCache(), o.SourceNode, o.DeliveryNode); s == "" {
+		t.Fatalf("precondition: the engine's cache stamps no ETA for %s -> %s, so no frame could carry one", o.SourceNode, o.DeliveryNode)
+	}
+	sim.DriveState(o.VendorOrderID, "RUNNING")
+	testdb.RequireOrderStatus(t, db, "eta-run", protocol.StatusInTransit)
+
+	// The frame comes from a goroutine of its own, after the status_changed
+	// frame of the same subscriber: wait for it, and keep what the tab heard.
+	var heard []string
+	sawChange := false
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case f, ok := <-frames:
+			if !ok {
+				t.Fatalf("the tab closed before an eta_update frame; it heard:\n  %s", strings.Join(heard, "\n  "))
+			}
+			heard = append(heard, f.data)
+			var m map[string]any
+			if err := json.Unmarshal([]byte(f.data), &m); err != nil {
+				t.Fatalf("frame %s: data is not JSON: %v (%s)", f.event, err, f.data)
+			}
+			if id, _ := m["order_id"].(float64); int64(id) != o.ID {
+				continue
+			}
+			switch m["type"] {
+			case "status_changed":
+				sawChange = true
+			case "eta_update":
+				s, _ := m["eta"].(string)
+				if _, err := time.Parse(time.RFC3339, s); err != nil {
+					t.Fatalf("the eta_update frame's eta = %q, want an RFC 3339 instant (eta.Stamp): %v", s, err)
+				}
+				return
+			}
+		case <-deadline:
+			if !sawChange {
+				t.Fatalf("the tab heard no status_changed frame for order %d in 10 s, so it could not have heard "+
+					"its eta_update either: the pin had no input. It heard:\n  %s", o.ID, strings.Join(heard, "\n  "))
+			}
+			t.Fatalf("order %d went in transit and its tab heard the status change but no eta_update frame in 10 s. "+
+				"www/sse.go's status-changed subscriber sends it only when the event's NewStatus is \"in_transit\"; "+
+				"the emitters fill NewStatus with the vendor's state (RUNNING), so map it to Core's status first, "+
+				"as handleVendorStatusChange does. It heard:\n  %s", o.ID, strings.Join(heard, "\n  "))
+		}
 	}
 }
 
