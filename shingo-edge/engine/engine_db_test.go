@@ -278,7 +278,11 @@ func TestEngine_HooksAreSetAndReadOnTwoGoroutines(t *testing.T) {
 			func(e *Engine) { _, _, _ = e.KafkaLastPublish() }},
 		{"productionTickLagFn",
 			func(e *Engine) { e.SetProductionTickLagFunc(func() (int64, int64, error) { return 0, 0, nil }) },
-			func(e *Engine) { _, _, _ = e.ProductionTickLag() }},
+			func(e *Engine) {
+				if _, _, err := e.ProductionTickLag(); err != nil {
+					return // the read raced the setter; its value is not the pin's question
+				}
+			}},
 	}
 	engineType := reflect.TypeOf((*Engine)(nil)).Elem()
 	for _, h := range hooks {

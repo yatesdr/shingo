@@ -146,15 +146,24 @@ func (b *fakeBroker) RoundTrip(_ context.Context, _ net.Addr, req kafkago.Reques
 					if err != nil {
 						break
 					}
-					raw, _ := io.ReadAll(rec.Value)
 					var env struct {
 						P struct {
 							Subject string `json:"subject"`
 						} `json:"p"`
 					}
-					_ = json.Unmarshal(raw, &env)
+					// A record the fake cannot read is kept as a subject
+					// that names why, so a count over the subjects fails
+					// with the reason instead of reading as an empty one.
+					subject := ""
+					if raw, err := io.ReadAll(rec.Value); err != nil {
+						subject = fmt.Sprintf("<unreadable record: %v>", err)
+					} else if err := json.Unmarshal(raw, &env); err != nil {
+						subject = fmt.Sprintf("<undecodable record: %v>", err)
+					} else {
+						subject = env.P.Subject
+					}
 					b.mu.Lock()
-					b.subjects = append(b.subjects, env.P.Subject)
+					b.subjects = append(b.subjects, subject)
 					b.mu.Unlock()
 				}
 				rt.Partitions = append(rt.Partitions, produceAPI.ResponsePartition{Partition: p.Partition})
