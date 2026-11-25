@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -225,6 +226,53 @@ func TestPlaceForDedicatedLoader_SupplyFromHome_Untouched(t *testing.T) {
 
 	if supply.DeliveryNode != line.Name {
 		t.Fatalf("supply-from-home leg DeliveryNode = %q, want UNCHANGED line %q (Pattern A must not touch supply legs)", supply.DeliveryNode, line.Name)
+	}
+}
+
+// (g') The same guard for the supply leg that carries NO wait: a Sequential A/B
+// line's backfill whose inbound source is a dedicated home, pickup home then
+// dropoff line (the Edge's BuildSequentialBackfillSteps), made at its removal's
+// release, holding the home's full. Pattern A must not reroute it either.
+//
+// IT DOES, and the pin skips unless SHINGO_KNOWN_RED=1 (final brief 2e, lane
+// f-home). The wait step is Pattern A's only guard (hasWaitStep), so this leg
+// is read as a return from the home: nothing is in flight there, and its drop
+// at the line is moved onto the home it lifts from. The order runs circular and
+// the line never gets its cart (TestScenario_SequentialLine_SwapsThroughItsOwnHome,
+// end to end).
+func TestPlaceForDedicatedLoader_SequentialBackfillFromHome_Untouched(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("final brief 2e (lane f-home) red pin, red until a supply leg with no wait is left alone by " +
+			"Pattern A; run with SHINGO_KNOWN_RED=1")
+	}
+	t.Parallel()
+	db := testDB(t)
+	home, _, _, _ := parkFixture(t, db)
+	makeLoaderBin(t, db, "PART-X", home.ID, "home-full", 10, time.Now().UTC())
+	line := &nodes.Node{Name: "ALN-SEQ", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line: %v", err)
+	}
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	backfill := &orders.Order{
+		EdgeUUID: "seq-backfill-1", StationUID: "test", OrderType: protocol.OrderTypeComplex, Status: "pending",
+		Quantity: 1, SourceNode: home.Name, DeliveryNode: line.Name, PayloadCode: "PART-X", ProcessNode: line.Name,
+	}
+	if err := db.CreateOrder(backfill); err != nil {
+		t.Fatalf("create backfill order: %v", err)
+	}
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: home.Name},
+		{Action: protocol.ActionDropoff, Node: line.Name},
+	}
+	if wait := d.placeForDedicatedLoader(backfill, steps, nil); wait != "" {
+		t.Fatalf("the backfill was told to wait for %s, want it left alone", wait)
+	}
+
+	if backfill.DeliveryNode != line.Name || steps[1].Node != line.Name {
+		t.Fatalf("sequential backfill DeliveryNode = %q, its drop %q, want both UNCHANGED line %q "+
+			"(Pattern A must not touch a supply leg, waited or not)", backfill.DeliveryNode, steps[1].Node, line.Name)
 	}
 }
 
