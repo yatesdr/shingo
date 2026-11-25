@@ -3,14 +3,17 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/orders"
 )
 
@@ -348,26 +351,6 @@ func TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob(t *testing.T) {
 	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
 	testutil.MustNoErr(t, err, "resolve dest")
 
-	// waiting returns once n of this database's sessions wait on a lock: the
-	// fact each step below waits for.
-	waiting := func(n int) error {
-		deadline := time.Now().Add(10 * time.Second)
-		for {
-			var got int
-			if err := db.DB.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity
-				WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&got); err != nil {
-				return err
-			}
-			if got == n {
-				return nil
-			}
-			if time.Now().After(deadline) {
-				return fmt.Errorf("%d session(s) wait on a lock, want %d", got, n)
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-	}
-
 	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"}}
 	queued := make(chan error, 1)
 	cancelDone := make(chan struct{})
@@ -382,13 +365,13 @@ func TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob(t *testing.T) {
 			return
 		}
 		go func() {
-			err := waiting(1) // the yes waits for the row
+			err := lockWaiters(db, 1) // the yes waits for the row
 			if err == nil {
 				go func() {
 					d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: o.EdgeUUID, Reason: "aborted by operator"})
 					close(cancelDone)
 				}()
-				err = waiting(2) // the cancel has read the order, and its ending waits behind the yes
+				err = lockWaiters(db, 2) // the cancel has read the order, and its ending waits behind the yes
 			}
 			if cerr := hold.Commit(); err == nil {
 				err = cerr
@@ -425,6 +408,139 @@ func TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob(t *testing.T) {
 	t.Errorf("order %d ended cancelled naming fleet job %s, and no stop was sent to the fleet for it "+
 		"(stops sent: %v). HandleOrderCancel read the order before the yes and ended it after: the "+
 		"cancel must stop the job its ending finds on the row", o.ID, job, backend.CancelRequests())
+}
+
+// lockWaiters returns once n of db's sessions wait on a lock, the fact each
+// step of the held-row pins here waits for, or an error after 10 s.
+func lockWaiters(db *store.DB, n int) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var got int
+		if err := db.DB.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&got); err != nil {
+			return err
+		}
+		if got == n {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d session(s) wait on a lock, want %d", got, n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob is the rule of the
+// pins above for the parent-cancel cascade (cancelCompoundChildren), which lists
+// a compound's legs once and then ends them one by one: a leg whose yes lands
+// after the list was read has its job stopped too.
+//
+// A leg of a compound parent is handed to the fleet. Inside its create, a
+// transaction of the test's own takes the leg's row and the yes waits for it.
+// The parent's cancel is started through CancelOrderWithCascade, the door
+// HandleOrderCancel and engine.TerminateOrder share: it ends the parent, lists
+// the legs (this one `queued`, its ask open, no fleet job) and its ending of the
+// leg waits behind the yes. The test lets the row go; the yes commits, and the
+// leg's ending lands on a `dispatched` row.
+//
+// RED AT a63768f5 (docket B20): the cascade ends each leg through
+// LifecycleService.CancelOrder with the copy its list read, and CancelOrder
+// decides the stop from that copy. Skipped unless SHINGO_KNOWN_RED is set; the
+// fix removes the skip.
+func TestHandover_AParentCancelListedBeforeTheYesStopsTheLegsJob(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
+			"run with SHINGO_KNOWN_RED=1")
+	}
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	parent := &orders.Order{
+		EdgeUUID: "HANDOVER-cascade-parent", StationUID: "line-1",
+		OrderType: OrderTypeRetrieve, Status: StatusReshuffling, Quantity: 1,
+		PayloadCode: sd.Payload.Code, DeliveryNode: sd.LineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "create the compound parent")
+	leg := &orders.Order{
+		EdgeUUID: "HANDOVER-cascade-leg", StationUID: "line-1",
+		OrderType: OrderTypeMove, Status: StatusQueued, Quantity: 1,
+		ParentOrderID: &parent.ID, Sequence: 1,
+		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(leg), "create the leg")
+	hand, err := db.GetOrder(leg.ID)
+	testutil.MustNoErr(t, err, "load the dispatcher's copy of the leg")
+	src, err := db.GetNodeByDotName(sd.StorageNode.Name)
+	testutil.MustNoErr(t, err, "resolve source")
+	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
+	testutil.MustNoErr(t, err, "resolve dest")
+
+	queued := make(chan error, 1)
+	cascaded := make(chan error, 1)
+	backend.SetOnCreate(func() {
+		// Inside the leg's create: the hand has committed and the yes is next.
+		hold, err := db.DB.Begin()
+		if err != nil {
+			queued <- fmt.Errorf("begin the hold: %w", err)
+			return
+		}
+		if _, err := hold.Exec(`SELECT 1 FROM orders WHERE id=$1 FOR UPDATE`, leg.ID); err != nil {
+			queued <- errors.Join(fmt.Errorf("take the leg's row: %w", err), hold.Rollback())
+			return
+		}
+		go func() {
+			err := lockWaiters(db, 1) // the yes waits for the leg's row
+			if err == nil {
+				go func() {
+					p, perr := db.GetOrder(parent.ID) // the door's read of the parent
+					if perr == nil {
+						d.CancelOrderWithCascade(p, "line-1", "aborted by operator",
+							CancelCause{Code: protocol.TermOperatorCancelled})
+					}
+					cascaded <- perr
+				}()
+				err = lockWaiters(db, 2) // the cascade has listed the legs, and its ending of this one waits behind the yes
+			}
+			if cerr := hold.Commit(); err == nil {
+				err = cerr
+			}
+			queued <- err
+		}()
+	})
+
+	if _, err := d.dispatchToFleetCore(hand, src, dst, Hand{}); err != nil {
+		t.Fatalf("the dispatcher should have handed the leg to the fleet: %v", err)
+	}
+	testutil.MustNoErr(t, <-queued, "queue the yes and the cascade's ending of the leg behind the held row")
+	select {
+	case err := <-cascaded:
+		testutil.MustNoErr(t, err, "the cancel door's read of the parent")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the parent's cancel never returned (fixture broken)")
+	}
+	if len(backend.CreateRequests()) != 1 {
+		t.Fatalf("expected exactly one create, got %d (fixture broken)", len(backend.CreateRequests()))
+	}
+	job := backend.CreateRequests()[0].OrderID
+
+	gotParent, err := db.GetOrder(parent.ID)
+	testutil.MustNoErr(t, err, "reload the parent")
+	after, err := db.GetOrder(leg.ID)
+	testutil.MustNoErr(t, err, "reload the leg")
+	if gotParent.Status != StatusCancelled || after.Status != StatusCancelled || after.VendorOrderID != job {
+		t.Fatalf("the parent reads %s and the leg %s naming fleet job %q, want both cancelled and the leg "+
+			"naming %q: the yes did not land ahead of the cascade's ending of the leg (fixture broken)",
+			gotParent.Status, after.Status, after.VendorOrderID, job)
+	}
+	if slices.Contains(backend.CancelRequests(), job) {
+		return
+	}
+	t.Errorf("leg %d ended cancelled naming fleet job %s, and no stop was sent to the fleet for it "+
+		"(stops sent: %v). The parent's cancel listed its legs before the yes and ended this one after: "+
+		"the cascade must stop the job its ending finds on the row", leg.ID, job, backend.CancelRequests())
 }
 
 // TestHandover_RequestShapesUnchanged is the pin a careless extraction breaks.
