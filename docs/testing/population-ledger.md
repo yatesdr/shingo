@@ -2806,3 +2806,21 @@ No assertion read any of the twelve.
 - coverage Δ: not measured (no before/after profile was taken)
 - citations rewritten: `shingo-core/store/orders/orders.go` (`UpdateStatusFrom`'s doc names the new test); the new test's doc says the old one is gone
 - verified at: the commit that adds this row
+
+### STALE — `TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch`
+- test: `TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch` · pkg `shingoedge/engine` · run `-run '^TestBuildSwapChangeoverSteps_SequentialUnpaired_OneLegAtItsNode$'` · `shingo-edge/engine/step_builders_test.go:458` @ `6bd55616` · tags `none`
+- code: STALE (final brief 2b, point 2, the owner's "blank partner": a Sequential A/B claim with no partner is a one-node line, so the refusal it pinned is gone; the test was flipped and renamed)
+- assertion map: the empty dispatch it asserted for an unpaired sequential claim → `TestBuildSwapChangeoverSteps_SequentialUnpaired_OneLegAtItsNode` (`shingo-edge/engine/step_builders_test.go:464`): one leg at the node, consume and produce (wait, lift, drop at the outbound destination, fetch, set down), no second leg, delivered at the node, auto-confirmed, carrying the from-payload
+- mutation: the builder's old guard put back (`buildSequentialPerPositionSwap`, `if fromClaim.PairedCoreNode == "" || inactiveNode == ""`) → `step_builders_test.go:483: consume: StepsA = [], want [...]` (and produce); the current guard → pass
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `flowspec.go`'s sequential row and `buildSequentialPerPositionSwap`'s doc name the new test
+- verified at: the commit that adds this row
+
+### STALE — `TestPlanNodeAction_Sequential_RequiresPairedCoreNode`
+- test: `TestPlanNodeAction_Sequential_RequiresPairedCoreNode` · pkg `shingoedge/engine` · run `-run '^TestPlanNodeAction_Sequential_NoPartnerPlansOneLeg$'` · `shingo-edge/engine/changeover_planner_test.go:388` @ `6bd55616` · tags `none`
+- code: STALE (final brief 2b, point 2: the planner's "sequential changeover requires from-claim Paired core node" is gone with the requirement; the test was flipped and renamed)
+- assertion map: the NodeAction.Err naming "Paired core node", for Swap and Evacuate → `TestPlanNodeAction_Sequential_NoPartnerPlansOneLeg` (`shingo-edge/engine/changeover_planner_test.go:393`): for Swap and Evacuate, no error, one complex order (`wait@N1 pickup@N1 dropoff@ODST_N1 pickup@SRC_N1 dropoff@N1`), no second, log tag `swap_sequential`
+- mutation: the builder's old guard put back (above) → `changeover_planner_test.go:410: situation=swap: a one-node line was refused: cannot build swap steps for node N1 (mode "sequential")` (and evacuate); the current guard → pass
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
