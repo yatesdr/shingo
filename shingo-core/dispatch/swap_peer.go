@@ -135,11 +135,12 @@ func (d *Dispatcher) HandleSwapPeerTerminal(deadOrderID int64, terminalKind stri
 
 	// ── THE DEATH RULE, WHOLE ─────────────────────────────────────────────
 	//
-	// A leg that goes terminal takes its sibling with it. ONE action, taken the
-	// same way whichever leg died and whatever mode the swap is — the role below
-	// chooses the SENTENCE, never the outcome, because the two hazards are
-	// genuinely different things to tell an operator and the same thing to do
-	// about them.
+	// A leg that goes terminal takes its sibling with it, unless the sibling has
+	// already set its bin down: that half is done, and resolveSwapPeer surfaces
+	// it instead. ONE action, taken the same way whichever leg died and whatever
+	// mode the swap is — the role below chooses the SENTENCE, never the outcome,
+	// because the two hazards are genuinely different things to tell an operator
+	// and the same thing to do about them.
 	//
 	// THE SPARE IS GONE. It used to keep alive a supply parked on a dry source
 	// whose evac had died, so an operator could stock the payload and let the
@@ -216,12 +217,32 @@ func deadLegWhy(dead *orders.Order) string {
 	return " (" + why + ")"
 }
 
-// resolveSwapPeer cancels the peer if it is still live, or surfaces the
-// half-swap if the peer already delivered its bin. A peer that also failed/
-// cancelled/skipped is a clean double-abort (or moot) with nothing half-done to
-// unwind.
+// resolveSwapPeer acts on the peer of a dead swap leg by where the peer's bin
+// is on its trip (store.DB.OrderTrips). A live peer whose bin has not been set
+// down, not lifted or carried, is cancelled with reason. A peer that has set
+// its bin down, live (delivered, or landed and still in_transit) or confirmed,
+// has done its half: the half-swap is surfaced, and a live one is left to its
+// CONFIRM (TestSwapPeerTerminal_EvacDies_ASupplyThatSetItsBinDownIsSurfaced).
+// A peer that also failed, was cancelled or was skipped is a clean
+// double-abort (or moot) with nothing half-done to unwind.
+//
+// Statements: one trip read, only for a live peer that is not delivered and
+// carries a cart; the row answers the rest.
 func (d *Dispatcher) resolveSwapPeer(peer, dead *orders.Order, reason string) {
+	setDown := peer.Status == protocol.StatusConfirmed
 	if !protocol.IsTerminal(peer.Status) {
+		trips, err := d.db.OrderTrips([]*orders.Order{peer})
+		if err != nil {
+			// Unreadable is not set down: the peer is cancelled, as every live
+			// peer was before the question was asked.
+			log.Printf("dispatch: swap peer %d of dead leg %d: %v (cancelling it)", peer.ID, dead.ID, err)
+		}
+		setDown = err == nil && trips[peer.ID] == domain.TripSetDown
+	}
+	if !setDown {
+		if protocol.IsTerminal(peer.Status) {
+			return
+		}
 		// TermPeerTerminal is declared for exactly this and had no producer:
 		// "a swap sibling died and this leg was unwound with it". It is already
 		// in ClassifyTermCode's deliberate bucket, so coding it moves nothing —
@@ -232,17 +253,16 @@ func (d *Dispatcher) resolveSwapPeer(peer, dead *orders.Order, reason string) {
 			CancelCause{Code: protocol.TermPeerTerminal})
 		return
 	}
-	// Peer already terminal. If it physically delivered (its bin moved) the
-	// half-swap already happened with its sibling now dead — surface so the
-	// operator rebalances the line. We deliberately do NOT auto-re-create a
-	// replacement supply (give-up / re-issue is operator-driven, and an
-	// auto-re-create risks a spin loop against an empty supermarket).
-	if peer.Status == protocol.StatusDelivered || peer.Status == protocol.StatusConfirmed {
-		log.Printf("dispatch: two-robot swap HALF-COMPLETED — order %d is %s but sibling %d is %s; line needs operator rebalance (%s)",
-			peer.ID, peer.Status, dead.ID, dead.Status, reason)
-		d.db.AppendAudit("order", peer.ID, "swap_half_completed", "",
-			fmt.Sprintf("sibling %d terminal (%s) while this leg reached %s — %s", dead.ID, dead.Status, peer.Status, reason), "system")
-	}
+	// The peer has set its bin down, so the half-swap already happened with its
+	// sibling now dead: surface it, so the operator checks the line. reason is
+	// the cancel's sentence and says this leg is being cancelled, so it is not
+	// written here. We deliberately do NOT auto-re-create a replacement supply
+	// (give-up / re-issue is operator-driven, and an auto-re-create risks a spin
+	// loop against an empty supermarket).
+	log.Printf("dispatch: two-robot swap HALF-COMPLETED — order %d had set its bin down (%s) when sibling %d ended %s%s; "+
+		"the line needs an operator to check it", peer.ID, peer.Status, dead.ID, dead.Status, deadLegWhy(dead))
+	d.db.AppendAudit("order", peer.ID, "swap_half_completed", "",
+		fmt.Sprintf("sibling %d ended %s%s after this leg had set its bin down", dead.ID, dead.Status, deadLegWhy(dead)), "system")
 }
 
 // swapTerminalKind maps a terminal order status to the SwapTerminal* kind

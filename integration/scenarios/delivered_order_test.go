@@ -330,15 +330,20 @@ func (r *dloRig) edgeEnding(id int64) []string {
 // order in line: it waits for CONFIRM or the reconciliation sweep. Then the
 // fleet stops the evac's job (RDS STOPPED) with the old bin on its robot.
 //
-// Recorded today: Core cancels the evac with the fleet's words, and the
-// swap-peer rule its cancel runs cancels the delivered supply, in a sentence
-// that says the supply has yet to drop; the fleet is asked to stop the
-// supply's finished job; the station is told the supply cancelled and the Edge
-// ends its row; the tile no longer lists the supply, so the board draws no
-// CONFIRM for it; the new bin stays on the line, unclaimed, still the seat's
-// bin with its count, and Core's sourcing predicate refuses it; nothing names
-// the half-swap: no swap_half_completed audit, and the Edge announces the
-// evac's cancel alone.
+// Final brief 1d: Core cancels the evac with the fleet's words, and the
+// swap-peer rule its cancel runs leaves the delivered supply alone: it has set
+// its bin down, so it stays delivered, waiting for CONFIRM, and the half-swap
+// is audited (swap_half_completed) on it. The fleet is not asked to stop the
+// supply's finished job and the station is told nothing about it; the Edge's
+// row stays delivered; the tile still lists the supply delivered and needing a
+// receipt, so the board draws its CONFIRM; the position's pause note is the
+// evac's cancel. The new bin stays on the line, unclaimed, still the seat's
+// bin with its count, and Core's sourcing predicate refuses it. What the
+// station is shown names the evac alone: the Edge's one announcement (the
+// toast) is the evac's cancel, and no toast names the supply, which was not
+// cancelled. (Before: the supply was cancelled with a sentence saying it had
+// yet to drop, its finished job stopped, the station told, the Edge's row
+// ended, no CONFIRM drawn, the pause note the supply's, no half-swap audit.)
 func TestDeliveredOrder_SwapPeer(t *testing.T) {
 	t.Parallel()
 	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, plain: true, bareSpot: true})
@@ -414,21 +419,17 @@ func TestDeliveredOrder_SwapPeer(t *testing.T) {
 		t.Errorf("the evac is %q (%q), want cancelled with the fleet's words", ev.Status, ev.ErrorDetail)
 	}
 
-	// The partner's end.
+	// The partner's end: none. It has set its bin down and waits for CONFIRM.
 	sp = c.coreOf(supply)
 	steps, code := r.ended(sp.ID)
-	want := fmt.Sprintf("coordinated swap evac (order %d) cancelled (fleet order stopped); "+
-		"cancelling supply so it cannot drop onto an un-cleared line", ev.ID)
 	t.Logf("record: supply %d %s (%q) completed=%v last=%v code=%q", sp.ID, sp.Status, sp.ErrorDetail,
 		sp.CompletedAt != nil, steps, code)
-	if sp.Status != protocol.StatusCancelled || sp.ErrorDetail != want || sp.CompletedAt != nil {
-		t.Errorf("the supply is %q (%q) completed=%v, want cancelled with %q", sp.Status, sp.ErrorDetail,
-			sp.CompletedAt != nil, want)
+	if sp.Status != protocol.StatusDelivered || sp.CompletedAt != nil {
+		t.Errorf("the supply is %q (%q) completed=%v, want delivered, waiting for its receipt", sp.Status,
+			sp.ErrorDetail, sp.CompletedAt != nil)
 	}
-	if !slices.Equal(steps, []protocol.Status{protocol.StatusDelivered, protocol.StatusCancelled}) ||
-		code != string(protocol.TermPeerTerminal) {
-		t.Errorf("the supply's history ends %v coded %q, want delivered then cancelled, coded %s", steps, code,
-			protocol.TermPeerTerminal)
+	if len(steps) == 0 || steps[len(steps)-1] != protocol.StatusDelivered || code != "" {
+		t.Errorf("the supply's history ends %v coded %q, want it to end delivered, uncoded", steps, code)
 	}
 
 	// Its bin, and whether Core would hand it on.
@@ -441,40 +442,42 @@ func TestDeliveredOrder_SwapPeer(t *testing.T) {
 	}
 
 	// The fleet and the station.
-	if st := c.vendorState(sp.VendorOrderID); st != "STOPPED" {
-		t.Errorf("the supply's finished job reads %q at the fleet, want STOPPED: Core stops the job of the order it cancels", st)
+	if st := c.vendorState(sp.VendorOrderID); st != "FINISHED" {
+		t.Errorf("the supply's finished job reads %q at the fleet, want FINISHED: Core stops no job of an order "+
+			"that has set its bin down", st)
 	}
 	told := r.toldSince(m, supply.UUID)
 	t.Logf("record: told the station about the supply: %v", told)
-	if len(told) != 2 || told[0].Type != protocol.TypeOrderUpdate || told[0].Status != string(protocol.StatusCancelled) ||
-		told[0].Detail != want || told[1].Type != protocol.TypeOrderCancelled || told[1].Reason != want {
-		t.Errorf("the station was told %v about the supply, want order.update cancelled and order.cancelled, both %q", told, want)
+	if len(told) != 0 {
+		t.Errorf("the station was told %v about the supply, want nothing: Core did not end it", told)
 	}
 
-	// The Edge's row and the line's tile.
-	if row := c.edgeRow(supply.ID); row.Status != protocol.StatusCancelled {
-		t.Errorf("the Edge's supply row is %q, want cancelled", row.Status)
+	// The Edge's row and the line's tile: what the station is shown.
+	if row := c.edgeRow(supply.ID); row.Status != protocol.StatusDelivered || row.AutoConfirm {
+		t.Errorf("the Edge's supply row is %q auto_confirm=%v, want delivered and needing a receipt", row.Status,
+			row.AutoConfirm)
 	}
-	t.Logf("record: the Edge's supply row from its cancel: %v", r.edgeEnding(supply.ID))
 	post := r.tile()
 	postSeat, postCount := post.seat()
 	t.Logf("after: tile %s", post)
-	if len(post.Orders) != 0 || postSeat != *newBin || postCount != preCount ||
-		!strings.Contains(post.AutoReorderNote, "Core cancelled order") {
-		t.Errorf("the tile after: %s; want no order drawn, the seat still bin %d at %d (it was bin %d at %d), "+
-			"and the position paused by Core's cancel", post, *newBin, preCount, preSeat, preCount)
+	evacNote := fmt.Sprintf("Core cancelled order %d", ev.ID)
+	if len(post.Orders) != 1 || !post.lists(supply.ID, protocol.StatusDelivered) || post.Orders[0].AutoConfirm ||
+		postSeat != *newBin || postCount != preCount || !strings.Contains(post.AutoReorderNote, evacNote) {
+		t.Errorf("the tile after: %s; want the supply alone, delivered and needing a receipt (the board draws its "+
+			"CONFIRM), the seat still bin %d at %d (it was bin %d at %d), and the pause note the evac's (%q)",
+			post, *newBin, preCount, preSeat, preCount, evacNote)
 	}
 
-	// Whether anything names the half-swap.
+	// What names the half-swap: Core's audit on the supply. The Edge's one
+	// announcement (the toast) is the evac's cancel; none names the supply.
 	audits := r.audits(sp.ID)
 	announced := r.announcedSince(m)
 	t.Logf("record: supply audit %v; the Edge announced %+v", audits, announced)
-	if slices.Contains(audits, "swap_half_completed") {
-		t.Errorf("the supply's audit %v names a half-swap, want none: the cancel arm takes a delivered partner", audits)
+	if !slices.Contains(audits, "swap_half_completed") {
+		t.Errorf("the supply's audit %v names no half-swap, want swap_half_completed", audits)
 	}
 	if len(announced) != 1 || announced[0].OrderID != evac.ID {
-		t.Errorf("the Edge announced %+v, want the evac's cancel alone: a partner whose sibling already ended is "+
-			"not toasted", announced)
+		t.Errorf("the Edge announced %+v, want the evac's cancel alone", announced)
 	}
 }
 
