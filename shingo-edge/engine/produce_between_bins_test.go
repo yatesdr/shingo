@@ -6,11 +6,14 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
+	"shingoedge/config"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -854,6 +857,83 @@ func TestShutdown_AnOpenNoCartStretchIsWritten(t *testing.T) {
 	assertDrops(t, eng.db, shutdown)
 	eng.Stop()
 	assertDrops(t, eng.db, shutdown)
+}
+
+// TestShutdown_TheStretchIsWrittenAfterThePollJoins — on a started engine
+// Stop writes the open no-cart stretch only after the PLC poll has joined: a
+// stroke the poll's last pass is counting as Stop begins joins the row (5, by
+// edge:shutdown), and does not open a stretch Stop has already passed, which
+// nothing would write. The poll's pass is held, by a subscriber delivered ahead
+// of the engine's own, before the engine counts its 2. A characterisation of
+// what the stop's join must keep (synth study-round5 section 5, point 3).
+func TestShutdown_TheStretchIsWrittenAfterThePollJoins(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, claimID := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, nil, 0), "empty the seat")
+	testutil.MustNoErr(t, db.SetProcessCounter(processID, "plc", "COUNTER", true, "", true), "the counter")
+	poll := clock.NewManual(time.Now())
+	eng := New(Config{AppConfig: &config.Config{StationUID: "edge.a"}, DB: db, PollClock: poll})
+	held, release := make(chan struct{}), make(chan struct{})
+	var hold atomic.Bool
+	eng.Events.Subscribe(func(ev Event) { // before Start: delivered first
+		if ev.Type == EventCounterDelta && hold.CompareAndSwap(true, false) {
+			close(held)
+			<-release
+		}
+	})
+	eng.Start()
+	t.Cleanup(eng.Stop)
+	testutil.MustNoErr(t, eng.syncPrimaryPoint(processID, "", ""), "the counter's point")
+	open := func() int64 {
+		eng.countMu.Lock()
+		defer eng.countMu.Unlock()
+		var n int64
+		for _, r := range eng.noBinStrokes[nodeID] {
+			n += r.Qty
+		}
+		return n
+	}
+	// pass reads v off the PLC on the poll's next pass, a poll period at a
+	// time until done (the poll takes its ticker as its loop starts).
+	pass := func(what string, v float64, done func() bool) {
+		t.Helper()
+		eng.PLCManager().SetTagValueForTest("plc", "COUNTER", v)
+		for deadline := time.Now().Add(10 * time.Second); !done(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: the poll's pass did not come in 10 s", what)
+			}
+			poll.Advance(config.DefaultPollRate)
+		}
+	}
+	pass("the first read", 100, func() bool {
+		rp, err := db.GetReportingPointByTag("plc", "COUNTER")
+		return err == nil && rp.LastPollAt != nil
+	})
+	pass("three strokes", 103, func() bool { return open() == 3 })
+	hold.Store(true)
+	pass("the last pass", 105, func() bool {
+		select {
+		case <-held:
+			return true
+		default:
+			return false
+		}
+	})
+	stopped := make(chan struct{})
+	go func() {
+		eng.Stop()
+		close(stopped)
+	}()
+	time.Sleep(50 * time.Millisecond) // a Stop that wrote before the poll joined would have written by now
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Stop did not return once the poll's last pass was let go")
+	}
+	assertDrops(t, db, protocol.HoldDropped{Reason: protocol.HoldDropNoBin, Qty: 5, PayloadCode: "WIDGET-A",
+		Node: "PRODUCE-NODE", CalledBy: "edge:shutdown"})
 }
 
 // ── E7: a departure only when a carrier left ──

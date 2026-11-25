@@ -134,6 +134,74 @@ func TestDemandReconciler_TheDefaultClock(t *testing.T) {
 	}
 }
 
+// TestEngineStart_EveryLoopKeepsItsCadence: the period of each loop Start
+// launches. The five that take their ticker from the process clock are read
+// from the tickers they take, on an engine started with no clock given: the
+// PLC poll (config.DefaultPollRate), the CATID monitor's read (plcPollInterval)
+// and three a minute apart (the slot watch, the demand reconciler, the parked-
+// ticks monitor). The three on a wall-clock ticker or timer of their own are
+// their constants. A characterisation of what the stop's join must keep (synth
+// study-round5 section 5, point 3).
+//
+// Not parallel: it installs a default clock and restores it before any
+// parallel test in this package runs.
+func TestEngineStart_EveryLoopKeepsItsCadence(t *testing.T) {
+	def := &tickerTaker{Clock: clock.Real(), took: make(chan time.Duration, 32)}
+	prev := clock.Default()
+	clock.SetDefault(def)
+	t.Cleanup(func() { clock.SetDefault(prev) })
+	eng := New(Config{AppConfig: &config.Config{StationUID: "edge.a"}, DB: testEngineDB(t)})
+	eng.Start()
+	t.Cleanup(eng.Stop)
+
+	want := map[time.Duration]int{config.DefaultPollRate: 1, plcPollInterval: 1, time.Minute: 3}
+	got := map[time.Duration]int{}
+	seen := func() bool {
+		for d, n := range want {
+			if got[d] < n {
+				return false
+			}
+		}
+		return true
+	}
+	for deadline := time.After(10 * time.Second); !seen(); {
+		select {
+		case d := <-def.took:
+			got[d]++
+		case <-deadline:
+			t.Fatalf("the loops on the process clock took tickers %v in 10 s, want %v", got, want)
+		}
+	}
+	for drained := false; !drained; {
+		select {
+		case d := <-def.took:
+			got[d]++
+		default:
+			drained = true
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("the loops on the process clock took tickers %v, want %v", got, want)
+	}
+	for d, n := range want {
+		if got[d] != n {
+			t.Errorf("the loops on the process clock took %d ticker(s) of %v, want %d (all: %v)", got[d], d, n, got)
+		}
+	}
+	for _, c := range []struct {
+		name      string
+		got, want time.Duration
+	}{
+		{"the lineside report (linesideReportInterval)", linesideReportInterval, time.Minute},
+		{"the release-intent floor (intentFloor)", intentFloor, 15 * time.Second},
+		{"the robot watch's resend (protocol.RobotWatchInterval)", protocol.RobotWatchInterval, 5 * time.Second},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
+		}
+	}
+}
+
 // THE FIRST THING TO GET RIGHT IS NOT CLOSING THINGS.
 //
 // A reconciler that closes live episodes is worse than no reconciler: the

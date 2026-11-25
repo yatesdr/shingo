@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"shingo/protocol/testutil"
@@ -349,5 +350,44 @@ func TestIntentWorker_AStoppedEngineReleasesNothing(t *testing.T) {
 	}
 	if rel.RemainingUOP == nil || *rel.RemainingUOP != fxCount-6 {
 		t.Errorf("the evac's declared count = %d, want %d", deref(rel.RemainingUOP), fxCount-6)
+	}
+}
+
+// TestEngineStop_TheLastFlushCarriesEveryCount: the delta accumulator is its
+// owner's, and the flush the owner runs after Stop carries every count the
+// engine took before it (cmd/shingoedge main stops the engine, then the
+// deferred accumulator stop flushes, uop.Mutator.Stop). A characterisation of
+// what the stop's join must keep (synth study-round5 section 5, point 3).
+func TestEngineStop_TheLastFlushCarriesEveryCount(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	pairAt(pairSpec{mode: protocol.SwapModeTwoRobot, role: protocol.ClaimRoleConsume},
+		"evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	style, err := h.db.GetActiveStyleID(h.processID)
+	testutil.MustNoErr(t, err, "read the active style")
+	eng, sink, _ := h.startOn()
+	h.mark()
+	for i := 0; i < 6; i++ {
+		eng.handleCounterDelta(CounterDeltaEvent{ProcessID: h.processID, StyleID: *style, Delta: 1})
+	}
+	eng.Stop()
+	sink.Stop()
+	var net int
+	for _, m := range h.sinceMark() {
+		if m.MsgType != protocol.SubjectBinUOPDelta {
+			continue
+		}
+		var env struct {
+			P struct {
+				Data protocol.BinUOPDelta `json:"data"`
+			} `json:"p"`
+		}
+		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode BinUOPDelta envelope")
+		if env.P.Data.BinID == fxBin {
+			net += env.P.Data.Delta
+		}
+	}
+	if net != -6 {
+		t.Errorf("the flush after Stop sent bin %d a net of %d, want -6: every count taken before Stop", fxBin, net)
 	}
 }
