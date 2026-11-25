@@ -271,7 +271,7 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for terminal status")
 	}
-	if !strings.Contains(err.Error(), "cannot terminate") {
+	if !strings.Contains(err.Error(), "cannot cancel") {
 		t.Errorf("err = %v, want guard message", err)
 	}
 }

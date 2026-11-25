@@ -516,8 +516,8 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 
 	actor := h.getUsername(r)
 	if err := h.orchestration.TerminateOrder(req.OrderID, actor); err != nil {
-		// An order that already finished is a refusal, not a fault: 409, its
-		// sentence naming the status.
+		// An order that already finished (ended, or its cart set down) is a
+		// refusal, not a fault: 409, with its sentence.
 		status := http.StatusInternalServerError
 		var finished *engine.OrderFinishedError
 		if errors.As(err, &finished) {

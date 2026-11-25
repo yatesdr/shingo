@@ -6,6 +6,8 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/domain"
+	"shingocore/store/orders"
 )
 
 // ErrDestinationOccupied is returned when a move is refused because something
@@ -49,16 +51,23 @@ func (e *Engine) HardReleaseOrder(orderID int64, actor string) error {
 	return e.dispatcher.HardReleaseStagedOrder(orderID, actor)
 }
 
-// OrderFinishedError is TerminateOrder's refusal of an order that has already
-// finished: its bin is at the destination (delivered, confirmed) or the order is
-// terminal. It is a refusal, not a fault, so a door answers 409 with the order's
-// status (www apiTerminateOrder; pinned by TestPinOrders_TerminateFailureAnswers).
+// OrderFinishedError is TerminateOrder's refusal of an order with nothing left
+// to stop: it has ended (Status is terminal), or its cart is set down where
+// the order takes it (SetDown: delivered, or landed and still in_transit,
+// store.DB.OrderTrips). It is a refusal, not a fault, so a door answers 409
+// with its sentence (www apiTerminateOrder; pinned by
+// TestPinOrders_TerminateFailureAnswers and
+// TestPinOrders_TerminateRefusesAnOrderWhoseCartIsSetDown).
 type OrderFinishedError struct {
-	Status protocol.Status
+	Status  protocol.Status
+	SetDown bool
 }
 
 func (e *OrderFinishedError) Error() string {
-	return fmt.Sprintf("cannot terminate order in status %q", e.Status)
+	if e.SetDown {
+		return "cannot cancel this order: its cart is already set down"
+	}
+	return fmt.Sprintf("cannot cancel this order: it has already ended (%s)", e.Status)
 }
 
 // TerminateOrder cancels an order, unclaims any payloads, and emits a cancellation event.
@@ -68,11 +77,21 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 		return fmt.Errorf("order not found")
 	}
 
-	// Refuse terminal AND post-delivery statuses: once the bin is at the
-	// destination (delivered, confirmed) or the order is terminal there is
-	// nothing left to stop, and nothing is written.
-	if dispatch.IsPostDelivery(order.Status) || protocol.IsTerminal(order.Status) {
+	// Refuse an ended order, and one whose cart is set down: there is nothing
+	// left to stop, and nothing is written. Set down is asked of where the cart
+	// is, not the status: the landing puts the cart down and releases its claim
+	// before the delivered write, so a landed order still reads in_transit. A
+	// cart a robot is carrying is still cancelled. One trip read, only for a
+	// live order that is not delivered and carries a cart.
+	if protocol.IsTerminal(order.Status) {
 		return &OrderFinishedError{Status: order.Status}
+	}
+	trips, err := e.db.OrderTrips([]*orders.Order{order})
+	if err != nil {
+		return fmt.Errorf("order %d: %w", orderID, err)
+	}
+	if trips[order.ID] == domain.TripSetDown {
+		return &OrderFinishedError{Status: order.Status, SetDown: true}
 	}
 
 	// ── THE UI DOOR CASCADES NOW, LIKE THE WIRE DOOR ─────────────────────────

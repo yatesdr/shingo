@@ -203,8 +203,10 @@ func TestPinTestOrders_ComplexSubmitWithNoRowAnswersFailure(t *testing.T) {
 // /api/orders/terminate (orders.js:85-93) and only console.errors a failure.
 // The server answers the failure; it is the row that hides it. An unknown order
 // is a 500 with the reason; a finished one (delivered, confirmed or terminal) is
-// a refusal, not a fault: 409, its sentence naming the order's status. It was a
-// 500 (proof runs on 8aa5bf8c, order 158).
+// a refusal, not a fault: 409, its sentence saying the cart is set down or the
+// order has ended, with the word cancel (final brief Part 3 addition; it read
+// "cannot terminate order in status ..."). It was a 500 (proof runs on
+// 8aa5bf8c, order 158).
 func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
@@ -221,7 +223,10 @@ func TestPinOrders_TerminateFailureAnswers(t *testing.T) {
 			Error string `json:"error"`
 		}
 		testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode")
-		want := fmt.Sprintf("cannot terminate order in status %q", status)
+		want := fmt.Sprintf("cannot cancel this order: it has already ended (%s)", status)
+		if status == protocol.StatusDelivered {
+			want = "cannot cancel this order: its cart is already set down"
+		}
 		if rec.Code != http.StatusConflict || resp.Error != want {
 			t.Errorf("%s order = %d %q, want 409 %q", status, rec.Code, resp.Error, want)
 		}
