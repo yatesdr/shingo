@@ -89,7 +89,7 @@ func TestTagsFor_TheFirstTagSetTheFileBuildsUnder(t *testing.T) {
 		"p/plain_test.go":    "package p\n",
 		"p/docker_test.go":   "//go:build docker\n\npackage p\n",
 		"p/sim_test.go":      "//go:build sim\n\npackage p\n",
-		"p/probe_test.go":    "//go:build reuseprobe\n\npackage p\n",
+		"p/shots_test.go":    "//go:build shots\n\npackage p\n",
 		"p/nolock_test.go":   "//go:build !lockcheck\n\npackage p\n",
 		"p/os_linux_test.go": "package p\n",
 	}
@@ -110,7 +110,7 @@ func TestTagsFor_TheFirstTagSetTheFileBuildsUnder(t *testing.T) {
 		"p/plain_test.go":    {"lockcheck"},
 		"p/docker_test.go":   {"docker", "lockcheck"},
 		"p/sim_test.go":      {"sim", "lockcheck"},
-		"p/probe_test.go":    nil,
+		"p/shots_test.go":    nil,
 		"p/nolock_test.go":   nil,
 		"p/os_linux_test.go": linux,
 	} {
