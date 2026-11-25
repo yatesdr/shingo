@@ -750,11 +750,11 @@ func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource 
 		return Admitted(), nil // this move does not touch a lane here
 	}
 
-	// RESOLVED, NOT SKIPPED. lanesFor logs a LaneForNode failure and continues,
+	// RESOLVED, NOT SKIPPED. lanesFor logs a lane-read failure and continues,
 	// which means an unresolvable lane contributes no checks and the move is
 	// admitted — the exact fail-open shape this type exists to make unreachable.
 	// Admission resolves it itself and propagates.
-	lane, err := d.db.LaneForNode(node.ID)
+	lane, err := d.db.LaneOf(node)
 	if err != nil {
 		return GateVerdict{}, fmt.Errorf("admission: resolve lane for node %d: %w", node.ID, err)
 	}

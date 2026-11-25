@@ -268,7 +268,7 @@ func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.Cr
 		if node.IsSynthetic {
 			return SyntheticLocation{OrderID: orderID, Location: b.Location}
 		}
-		lane, err := d.db.LaneForNode(node.ID)
+		lane, err := d.db.LaneOf(node)
 		if err != nil {
 			// An unreadable lane is a lane we cannot prove we declared. Fail closed:
 			// the same rule TakeLaneOccupancy applies to a presence it could not

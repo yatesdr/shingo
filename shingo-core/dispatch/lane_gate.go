@@ -128,7 +128,7 @@ type laneHold struct {
 
 // resolveOrderLaneHolds computes the mouth hold a plain order takes at dispatch:
 // the full lane lock on the lane it picks from (§R.101, see laneHold). A source
-// that is not a direct lane slot (LaneForNode == nil) contributes no hold.
+// that is not a direct lane slot (LaneOf == nil) contributes no hold.
 //
 // ── THE SOURCE ONLY ───────────────────────────────────────────────────────
 //
@@ -148,7 +148,7 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode *nodes.Node) ([]laneHold, 
 	if sourceNode == nil {
 		return nil, nil
 	}
-	lane, err := d.db.LaneForNode(sourceNode.ID)
+	lane, err := d.db.LaneOf(sourceNode)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +551,7 @@ func (d *Dispatcher) lanesFor(ns ...*nodes.Node) []int64 {
 		if n == nil {
 			continue
 		}
-		lane, err := d.db.LaneForNode(n.ID)
+		lane, err := d.db.LaneOf(n)
 		if err != nil {
 			log.Printf("lanegate: resolve lane for node %d: %v", n.ID, err)
 			continue
