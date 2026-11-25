@@ -110,7 +110,7 @@ func (c *ksrCell) runningCell(label string) {
 	mustNil(c.t, err, "bins")
 	for _, b := range bins {
 		if c.nodeName(b.NodeID) == ksrSpot {
-			mustNil(c.t, coreDB.MoveBinClearingStaging(b.ID, free.ID, true), label+": "+b.Label+" off the spot")
+			c.moveByHand(b, free.ID, label+": "+b.Label+" off the spot")
 		}
 	}
 	if c.mode != protocol.SwapModeTwoRobotPressIndex {

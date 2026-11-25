@@ -121,7 +121,7 @@ func TestScenario_LineInbound_FromASiblingStation(t *testing.T) {
 			if sp := c.spareOnSpot(); sp != nil {
 				slot, err := c.core.eng.DB().GetNodeByName(ksrMktA + "-5")
 				mustNil(t, err, "a free slot of A's market")
-				mustNil(t, c.core.eng.DB().MoveBinClearingStaging(sp.ID, slot.ID, true), "the spare off the spot")
+				c.moveByHand(sp, slot.ID, "the spare off the spot")
 			}
 			c.swap(d.name+" with the sibling's bin delivered", func() {
 				if err := pressAt(c, d.name, c.nodeID); err != nil {

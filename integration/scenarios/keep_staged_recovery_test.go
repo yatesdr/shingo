@@ -1564,6 +1564,12 @@ func (c *ksrCell) cancelPath(co ksrCO) string {
 
 // takeLineBinOff is a person lifting the line's bin off by hand and setting it
 // down in the outbound destination: Core then reports the line bare.
+//
+// A store write, not Core's hand move (moveByHand): case h lifts the bin
+// while an order is dispatched on it, which the hand move refuses ("bin is
+// committed to order 1", BinService's orphaned-order guard, as Move's). So
+// Core is told of this move by no door, and a caller on the real bins feed
+// should push after it (Bus.PushBins).
 func (c *ksrCell) takeLineBinOff() {
 	c.t.Helper()
 	coreDB := c.core.eng.DB()
@@ -1576,6 +1582,26 @@ func (c *ksrCell) takeLineBinOff() {
 			mustNil(c.t, coreDB.MoveBinClearingStaging(b.ID, slot.ID, true), "take "+b.Label+" off the line")
 		}
 	}
+}
+
+// moveByHand is a person moving a bin on Core's bins page, as www binMove
+// moves it: BinService.MoveByHand (the move, with the landing at the new node
+// and the Released at the old in its transaction), then the bus's
+// EventBinUpdated (moved), which the engine's subscribers and the bins feed
+// hear. The page's audit row and stranded-note reset are left out.
+func (c *ksrCell) moveByHand(b *corebins.Bin, to int64, what string) {
+	c.t.Helper()
+	eng := c.core.eng
+	_, err := eng.BinService().MoveByHand(b, to)
+	mustNil(c.t, err, what)
+	var from int64
+	if b.NodeID != nil {
+		from = *b.NodeID
+	}
+	eng.EventBus().Emit(coreengine.Event{Type: coreengine.EventBinUpdated, Payload: coreengine.BinUpdatedEvent{
+		BinID: b.ID, NodeID: to, Action: coreengine.BinActionMoved, PayloadCode: b.PayloadCode,
+		FromNodeID: from, ToNodeID: to,
+	}})
 }
 
 // ksrParkedMoment runs the single-robot changeover leg past its park: the
