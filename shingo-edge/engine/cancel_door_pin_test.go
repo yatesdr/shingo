@@ -452,8 +452,11 @@ func TestCancelDoorPin_CancelSendBack(t *testing.T) {
 
 // TestCancelDoorPin_StartCancels: a changeover START cancels the order not yet
 // with the fleet at a node the changeover acts on (startCancel.abort), clears
-// the slot it held, and goes on to create its legs. Today the order ends at
-// the tap; Core's word moves nothing on the ended row.
+// the slot it held, and goes on to create its legs. The cancel asks Core
+// (final brief 5g), as the start's own (by a deciding flow): after START the
+// order keeps Core's status with its cancel sent, first in the outbox ahead
+// of the start's legs, and Core's word ends it. Until 2026-11-25 the order
+// ended at the tap, and Core's word moved nothing.
 func TestCancelDoorPin_StartCancels(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -468,11 +471,16 @@ func TestCancelDoorPin_StartCancels(t *testing.T) {
 	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "")
 	testutil.MustNoErr(t, err, "START")
 
-	if s := p.row(id).Status; s != orders.StatusCancelled {
-		t.Errorf("the queued order reads %s after START, want cancelled", s)
+	if after := p.row(id); after.Status != orders.StatusQueued || !after.CancelSent {
+		t.Errorf("the queued order reads %s sent=%v after START, want queued with its cancel sent", after.Status, after.CancelSent)
+	}
+	in, err := domain.DecodeCancelIntent(p.row(id).CancelIntent)
+	testutil.MustNoErr(t, err, "decode the cancel")
+	if in == nil || in.By != domain.CancelByDecided {
+		t.Errorf("the start's cancel is %+v, want one asked by a deciding flow", in)
 	}
 	sent := p.sent()
-	first := cancelOf(o.UUID, changeoverStartCancelReason, "")
+	first := askOf(o.UUID, changeoverStartCancelReason, "")
 	if len(sent) == 0 || fmt.Sprint(sent[0]) != fmt.Sprint(first) {
 		t.Errorf("START queued %v first, want the queued order's cancel %v", sent, first)
 	}

@@ -16,6 +16,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
@@ -308,16 +309,21 @@ func (e *Engine) newStartCancel() *startCancel {
 	return &startCancel{e: e, seen: map[int64]bool{}}
 }
 
+// abort asks Core to cancel the order (orders.Manager.AskCancel), as a flow
+// that decides the order's spot (domain.CancelByDecided: its completion leaves
+// the keep-staged keeper's pass to the start). An order already ended, or
+// whose cancel is already out (an earlier pass of this start asked it), is
+// not counted again.
 func (c *startCancel) abort(orderID int64, why string) {
 	if c.seen[orderID] {
 		return
 	}
 	c.seen[orderID] = true
 	order, err := c.e.db.GetOrder(orderID)
-	if err != nil || order == nil || protocol.IsTerminal(order.Status) {
+	if err != nil || order == nil || protocol.IsTerminal(order.Status) || order.CancelSent {
 		return
 	}
-	if err := c.e.orderMgr.CancelOrderWithReason(orderID, why); err != nil {
+	if err := c.e.orderMgr.AskCancel(orderID, ordermgr.CancelAsk{Reason: why, By: domain.CancelByDecided}); err != nil {
 		c.e.logFn("changeover: cancel %s order %d at start: %v", order.Status, orderID, err)
 		return
 	}
