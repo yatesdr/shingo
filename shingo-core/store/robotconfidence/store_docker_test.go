@@ -43,11 +43,20 @@ func rollUpCfg() robotconfidence.RollUpConfig {
 func openWithWindow(t *testing.T) *store.DB {
 	t.Helper()
 	db := testdb.Open(t)
-	if err := robotconfidence.EnsurePartitionsRange(db.DB,
-		testDay.AddDate(0, 0, -20), testDay.AddDate(0, 0, 1)); err != nil {
-		t.Fatalf("ensure partitions: %v", err)
-	}
+	partitionDays(t, db, testDay.AddDate(0, 0, -20), testDay.AddDate(0, 0, 1))
 	return db
+}
+
+// partitionDays makes the day partitions of [start, end], start before end, on
+// both tables the way the product makes them: EnsurePartitions (that day and
+// the next), one day at a time.
+func partitionDays(t *testing.T, db *store.DB, start, end time.Time) {
+	t.Helper()
+	for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
+		if err := robotconfidence.EnsurePartitions(db.DB, d); err != nil {
+			t.Fatalf("ensure partitions for %s: %v", d.Format("2006-01-02"), err)
+		}
+	}
 }
 
 // addSegment inserts a properly named scene edge, deriving both endpoint
@@ -676,10 +685,7 @@ func TestPartitions_CreateInsertAndDrop(t *testing.T) {
 func TestPartitions_DropTakesOnlyAgedDays(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	if err := robotconfidence.EnsurePartitionsRange(db.DB,
-		testDay.AddDate(0, 0, -5), testDay); err != nil {
-		t.Fatalf("ensure range: %v", err)
-	}
+	partitionDays(t, db, testDay.AddDate(0, 0, -5), testDay)
 
 	// Keep 3 days as of testDay: the cutoff falls at 08-02, so 07-31 and
 	// 08-01 go and 08-02 onward stay.

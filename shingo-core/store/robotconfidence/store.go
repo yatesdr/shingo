@@ -184,23 +184,6 @@ func EnsurePartitions(db *sql.DB, ref time.Time) error {
 	return nil
 }
 
-// EnsurePartitionsRange creates partitions for every day in [start, end] on
-// both tables. Used by sim startup to pre-create a fast-forward window so
-// inserts never fail during catch-up. Idempotent.
-func EnsurePartitionsRange(db *sql.DB, start, end time.Time) error {
-	d := start.UTC().Truncate(24 * time.Hour)
-	last := end.UTC().Truncate(24 * time.Hour)
-	for !d.After(last) {
-		for _, table := range []string{TableSamples, TableLow} {
-			if err := createDayPartition(db, table, d); err != nil {
-				return err
-			}
-		}
-		d = d.AddDate(0, 0, 1)
-	}
-	return nil
-}
-
 func createDayPartition(db *sql.DB, table string, day time.Time) error {
 	if !partitionedTables[table] {
 		return fmt.Errorf("robot confidence: not a partitioned table: %q", table)

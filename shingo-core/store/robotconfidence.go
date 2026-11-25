@@ -17,10 +17,6 @@ func (db *DB) EnsureRobotConfidencePartitions(ref time.Time) error {
 	return robotconfidence.EnsurePartitions(db.DB, ref)
 }
 
-func (db *DB) EnsureRobotConfidencePartitionsRange(start, end time.Time) error {
-	return robotconfidence.EnsurePartitionsRange(db.DB, start, end)
-}
-
 // DropOldRobotConfidencePartitions expires the raw sample table. The low-
 // confidence trail has its own, much longer retention and is dropped
 // separately — see DropOldRobotConfidenceLowPartitions.
