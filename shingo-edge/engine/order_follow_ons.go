@@ -32,7 +32,7 @@ func (e *Engine) onCancelledMessage(orderID int64, previous protocol.Status) {
 		return
 	}
 	if p, ok := e.carrierLeftWaitingBy(orderID, true); ok {
-		go e.sendCarrierBack(p)
+		e.loops.spawn(func() { e.sendCarrierBack(p) })
 	}
 }
 

@@ -28,7 +28,7 @@ type strandedMonitor struct {
 
 func (e *Engine) startStrandedMonitor() {
 	sm := &strandedMonitor{eng: e}
-	go sm.run()
+	e.loops.spawn(sm.run)
 }
 
 // strandedMonitorClock is the clock the monitor's loop takes its ticker from:

@@ -29,6 +29,7 @@ Deploy: no migration; Core and Edges in either order.
 - An order that has to move bins out of a lane to reach its cart, where one of the moves names a slot that no longer exists, now fails saying which slot wherever that move falls, and frees the lane only after a robot still carrying a bin out of it has set the bin down; it used to plan the moves again, or free the lane under the robot
 - An order that has to move bins out of a lane to reach its cart, where one of those bins or the cart stands on a slot with no name, now fails at once naming the slot by its id, before any robot moves a bin for it; it used to plan the same moves again and again
 - An Edge that is shutting down no longer sends on a cart it was holding at its wait (for the light curtain, a lift or Core's answer): the hold stays on the order, and the cart goes when the Edge is back up
+- At shutdown an Edge lets its background work, and the message from Core it is handling, finish before its database closes, and stops waiting for them after 20 s
 
 ## v0.19.0 — 2026-11-22
 

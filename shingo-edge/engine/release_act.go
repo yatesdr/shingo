@@ -477,13 +477,13 @@ func (e *Engine) drainIntents() {
 const intentFloor = 15 * time.Second
 
 // startIntentWorker runs the worker goroutine, the 15 s floor, and the boot
-// sweep of every node holding an intent. Both goroutines leave on the stop
-// channel (the worker's leaving is pinned by
-// TestIntentWorker_AStoppedEngineReleasesNothing; the floor should leave the
-// same way). Until 2026-11-24 neither did, and a stopped engine went on
-// releasing held legs from its floor (docket B5; in the scenario rig, where a
-// stopped engine shares its database with the next one, docket G12's double
-// count).
+// sweep of every node holding an intent. Both goroutines run on the engine's
+// group and leave on the stop channel, and Stop waits for them (the worker's
+// leaving is pinned by TestIntentWorker_AStoppedEngineReleasesNothing, the
+// wait by TestEngineStop_WaitsForTheLoopsStartLaunched). Until 2026-11-24
+// neither left, and a stopped engine went on releasing held legs from its
+// floor (docket B5; in the scenario rig, where a stopped engine shares its
+// database with the next one, docket G12's double count).
 func (e *Engine) startIntentWorker() {
 	q := &e.intents
 	q.mu.Lock()
@@ -495,7 +495,7 @@ func (e *Engine) startIntentWorker() {
 	if e.watch != nil {
 		turnover = e.watch.Loop("the release intent worker")
 	}
-	go func() {
+	e.loops.spawn(func() {
 		// Gone with the stop: no goroutine drains the queue from here on.
 		defer func() {
 			q.mu.Lock()
@@ -510,8 +510,8 @@ func (e *Engine) startIntentWorker() {
 				turnover.Turn(e.drainIntents)
 			}
 		}
-	}()
-	go func() {
+	})
+	e.loops.spawn(func() {
 		t := time.NewTicker(intentFloor)
 		defer t.Stop()
 		for {
@@ -522,7 +522,7 @@ func (e *Engine) startIntentWorker() {
 				e.wakeIntentNodes("floor")
 			}
 		}
-	}()
+	})
 	e.wakeIntentNodes("boot")
 }
 

@@ -169,6 +169,62 @@ func TestEngineStop_WaitsForTheLoopsStartLaunched(t *testing.T) {
 	}
 }
 
+// TestEngineStop_OneDeadlineOverEveryWait: Stop's limit covers its waits: a
+// goroutine on the engine's group that never leaves holds Stop for the limit
+// and no longer (engineStopLimit).
+func TestEngineStop_OneDeadlineOverEveryWait(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	eng.loops.spawn(func() { <-release })
+	done := make(chan struct{})
+	go func() {
+		eng.stopBounded(100 * time.Millisecond)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop was still waiting on a wedged goroutine long after its limit")
+	}
+}
+
+// TestEngineStop_WaitsForAnInboundHandler: a Stop begun while a message from
+// Core is being handled (Inbound) returns only once the handler has, and a
+// message taken after Stop is still handled, outside the wait.
+func TestEngineStop_WaitsForAnInboundHandler(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	in, out := make(chan struct{}), make(chan struct{})
+	go eng.Inbound(func() {
+		close(in)
+		<-out
+	})
+	<-in
+	stopped := make(chan struct{})
+	go func() {
+		eng.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while an inbound handler was running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(out)
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return once the handler had")
+	}
+	handled := false
+	eng.Inbound(func() { handled = true })
+	if !handled {
+		t.Error("a message taken after Stop was not handled")
+	}
+}
+
 // ── Core node sync ──────────────────────────────────────────────────
 
 func TestEngine_SetCoreNodesEmitsEvent(t *testing.T) {

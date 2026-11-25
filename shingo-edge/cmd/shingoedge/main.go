@@ -390,7 +390,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		protoRouter.Dispatch(env, env.Type)
 	}
 	if err := msgClient.Subscribe(cfg.Messaging.DispatchTopic, func(data []byte) {
-		ingestor.HandleRaw(data)
+		eng.Inbound(func() { ingestor.HandleRaw(data) }) // inside the engine's stop wait
 	}); err != nil {
 		log.Printf("protocol ingestor subscribe: %v", err)
 	} else {

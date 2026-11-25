@@ -45,7 +45,7 @@ import (
 var demandReconcileInterval = 60 * time.Second
 
 func (e *Engine) startDemandReconciler() {
-	go e.runDemandReconciler()
+	e.loops.spawn(e.runDemandReconciler)
 }
 
 // reconcilerClock is the clock the reconciler's loop takes its ticker from:

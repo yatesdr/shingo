@@ -297,8 +297,8 @@ func (e *Engine) startCatidMonitor() {
 	cm.prime()
 	e.catidMon = cm
 	e.tickMonitor.Store(cm)
-	go cm.run()
-	go cm.runSlotWatch()
+	e.loops.spawn(cm.run)
+	e.loops.spawn(cm.runSlotWatch)
 }
 
 // prime enumerates the processes with an identity tag (identityTagOf: none for

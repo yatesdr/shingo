@@ -85,7 +85,7 @@ type robotWatch struct {
 // (protocol.RobotWatchInterval; a test passes a shorter one).
 func (e *Engine) startRobotWatchLoop(every time.Duration) {
 	e.robotWatch.poke = make(chan struct{}, 1)
-	go e.robotWatchLoop(every)
+	e.loops.spawn(func() { e.robotWatchLoop(every) })
 }
 
 // pokeRobotWatch wakes the loop without blocking.

@@ -28,6 +28,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/gogroup"
 	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
@@ -286,8 +287,24 @@ type Engine struct {
 	// shows on /status and Diagnostics. Alarm only.
 	watch *liveness.Watch
 
-	Events           *EventBus
-	stopChan         chan struct{}
+	Events   *EventBus
+	stopChan chan struct{}
+	stopOnce sync.Once
+	// loops tracks the goroutines Start launches and the engine's hand-offs,
+	// and an inbound handler in flight (Inbound), so Stop waits for them up to
+	// its deadline: one still running after Stop writes to a database its
+	// caller is about to close (TestEngineStop_WaitsForTheLoopsStartLaunched).
+	// It does not track these, and each says why:
+	//   - the PLC manager's goroutines: plcMgr.Stop joins them, inside Stop's
+	//     deadline, before the no-cart stretches are written (stopAndWait).
+	//   - the goroutine stopBounded waits on: it is Stop's own.
+	//   - the simulator operator's (sim_operator.go): a sim build only.
+	//   - main's: the messaging client's consumer, the heartbeater, the
+	//     shippers, the web server's handlers, and the push sweeps a
+	//     registration ack starts (cmd/shingoedge goSafe). Main starts them;
+	//     the sweeps write orders, so a stop can still cut one.
+	loops goGroup[lockorder.EngineLoops]
+
 	startedAt        time.Time
 	subscribersWired atomic.Bool
 	// sweepingUnloaders / sweepingLoaders guard the startup push sweeps
@@ -561,7 +578,7 @@ func (e *Engine) Start() {
 	e.watch = liveness.New(e.logFn)
 	e.plcMgr.Turnover = e.watch.Loop("the PLC poll")
 	e.plcMgr.StartPolling()
-	go e.watch.Run(e.stopChan)
+	e.loops.spawn(func() { e.watch.Run(e.stopChan) })
 
 	// Parked-ticks monitor (P2-C7): watches every consume node for
 	// pending_uop_delta growing across consecutive flush intervals while
@@ -751,18 +768,96 @@ func (e *Engine) CountDeadLetterOutbox() (int, error) {
 	return e.db.CountDeadLetterOutbox()
 }
 
-// Stop shuts down all subsystems gracefully.
-func (e *Engine) Stop() {
-	select {
-	case <-e.stopChan:
-	default:
-		close(e.stopChan)
-	}
+// engineStopLimit is the one deadline over every wait in Stop. A safety net,
+// as Core's engineStopDrainLimit is: each loop returns on stopChan and each
+// hand-off or inbound handler is one pass, so a wait this long means one is
+// wedged, and returning is better than holding the shutdown.
+//
+// It has to fit inside the installer's stop. install-edge.sh stops the unit
+// (systemctl stop) and gives up when it is still active 45 s on; the web
+// server's shutdown spends up to 10 s first (cmd/shingoedge awaitShutdown),
+// which leaves 35 s; the accumulator's last flush, the outbox drainer, the
+// Kafka client and the database close after the engine and outside this
+// limit, and 20 s leaves them 15. The unit (shingo-edge/deploy/
+// shingo-edge.service) sets no TimeoutStopSec, so systemd's own limit is its
+// default, 90 s unless the host changes it. Pinned by
+// TestEngineStop_OneDeadlineOverEveryWait.
+const engineStopLimit = 20 * time.Second
+
+// Stop ends the engine: it takes no new work, what is running finishes, and it
+// returns once every goroutine it tracks has left (Engine.loops), or by
+// engineStopLimit whatever is still running. A second call returns when the
+// first has.
+func (e *Engine) Stop() { e.stopBounded(engineStopLimit) }
+
+// stopBounded is Stop with its limit given.
+func (e *Engine) stopBounded(limit time.Duration) {
+	e.stopOnce.Do(func() {
+		select {
+		case <-e.stopChan:
+		default:
+			close(e.stopChan)
+		}
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			e.stopAndWait()
+		}()
+		deadline := time.NewTimer(limit)
+		defer deadline.Stop()
+		select {
+		case <-drained:
+		case <-deadline.C:
+			e.logFn("Engine stop: work was still running after %s; not waiting longer", limit)
+		}
+		e.logFn("Engine stopped")
+	})
+}
+
+// stopAndWait stops each part and waits for what it had running, in the order
+// the shutdown rests on: the PLC poll joins first, and a tick is handled
+// inside its pass, so the counts are quiet after it; the open no-cart
+// stretches are written then, so no stroke joins one afterwards
+// (TestShutdown_TheStretchIsWrittenAfterThePollJoins); last the loops, the
+// hand-offs and an inbound handler in flight leave (Engine.loops). No wait
+// here has a limit of its own: stopBounded's covers them all.
+func (e *Engine) stopAndWait() {
 	if e.plcMgr != nil {
 		e.plcMgr.Stop()
 	}
 	e.sendNoCartStretches()
-	e.logFn("Engine stopped")
+	e.loops.stop()
+}
+
+// goGroup tracks the engine's goroutines so Stop can wait for them. It is
+// protocol/gogroup's Group, Core's engine's too, under the names the docs
+// generator reads (shared/scripts/docgen loops.go takes a spawn on a goGroup
+// for a go statement). The zero value is ready; R ranks its lock
+// (internal/lockorder), a leaf.
+type goGroup[R lockcheck.Ranked] struct{ g gogroup.Group[R] }
+
+// spawn runs fn on a tracked goroutine, or not at all once stopped.
+func (p *goGroup[R]) spawn(fn func()) { p.g.Spawn(fn) }
+
+// run runs fn on the caller's goroutine inside the group; false, having run
+// nothing, once stopped.
+func (p *goGroup[R]) run(fn func()) bool { return p.g.Run(fn) }
+
+// stop refuses new goroutines and waits for the running ones.
+func (p *goGroup[R]) stop() { p.g.Stop() }
+
+// Inbound runs fn, the handling of one message the Edge took off its dispatch
+// topic, inside the engine's stop wait: a Stop begun while fn runs waits for
+// it (within engineStopLimit), so the handler that writes most is not cut
+// between two writes by what closes after Stop. A message taken once Stop has
+// begun is still handled, outside the wait, as before: the Kafka client goes
+// on reading until main closes it, after the engine, and commits each offset
+// as it reads (messaging.Client.readLoop), so a message refused here would be
+// lost. Pinned by TestEngineStop_WaitsForAnInboundHandler.
+func (e *Engine) Inbound(fn func()) {
+	if !e.loops.run(fn) {
+		fn()
+	}
 }
 
 // sendNoCartStretches writes every open no-cart stretch as its one no_bin row

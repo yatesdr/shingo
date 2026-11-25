@@ -71,6 +71,8 @@ type (
 	SimOperator   struct{}
 	SimStatements struct{}
 	SimPLC        struct{}
+
+	EngineLoops struct{}
 )
 
 func (ConfigSave) Rank() int      { return 5 }
@@ -110,6 +112,12 @@ func (QueryCount) Rank() int      { return 990 }
 func (SimOperator) Rank() int   { return 180 }
 func (SimStatements) Rank() int { return 991 }
 func (SimPLC) Rank() int        { return 184 }
+
+// EngineLoops is the lock of the engine's goroutine group (protocol/gogroup),
+// held only across an Add and a go statement. It should rank above every lock
+// a caller of spawn holds: the sim's are the highest such; QueryCount and
+// SimStatements are taken only inside the database driver.
+func (EngineLoops) Rank() int { return 190 }
 
 func (Node) Nests() bool  { return true }
 func (Prime) Nests() bool { return true }
@@ -151,3 +159,5 @@ func (QueryCount) Name() string      { return "store.queryCount.mu" }
 func (SimOperator) Name() string   { return "engine.simOperator.mu" }
 func (SimStatements) Name() string { return "main.stmtObserver.mu" }
 func (SimPLC) Name() string        { return "simwarlink.FakeClient.mu" }
+
+func (EngineLoops) Name() string { return "engine.Engine.loops.mu" }

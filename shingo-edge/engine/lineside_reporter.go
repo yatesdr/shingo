@@ -36,7 +36,7 @@ const linesideReportInterval = 60 * time.Second
 
 // startLinesideReporter spawns the lineside reporter goroutine.
 func (e *Engine) startLinesideReporter() {
-	go e.runLinesideReporter()
+	e.loops.spawn(e.runLinesideReporter)
 }
 
 // runLinesideReporter sends this Edge's lineside report every

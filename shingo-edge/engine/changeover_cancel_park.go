@@ -404,7 +404,7 @@ func (e *Engine) returnCarrierLeftWaiting(changed OrderStatusChangedEvent) {
 	if !ok {
 		return
 	}
-	go e.sendCarrierBack(p)
+	e.loops.spawn(func() { e.sendCarrierBack(p) })
 }
 
 func (e *Engine) sendCarrierBack(p parkedBin) {

@@ -1,6 +1,7 @@
-// Package gogroup tracks goroutines so a stop can wait for them: an engine's
-// loops and hand-offs (shingo-core engine.Engine.loops and its window pulls),
-// which its Stop waits on under one deadline of its own.
+// Package gogroup tracks goroutines so a stop can wait for them: each engine's
+// loops and hand-offs (shingo-core and shingo-edge engine.Engine.loops, and
+// Core's window pulls), which its Stop waits on under one deadline of its own,
+// and the Edge's inbound handler in flight (Run).
 package gogroup
 
 import (
