@@ -591,9 +591,10 @@ func (d *Dispatcher) issueClearTrade(f ClearFacts) error {
 	return nil
 }
 
-// EndClear ends a clear that has nowhere to go: every live child not carrying
-// its bin is cancelled, and the parent with them when none is carrying (a
-// carrying child sets its bin down and the chapter's end closes the parent).
+// EndClear ends a clear that has nowhere to go: every live child whose bin has
+// not left its pickup is cancelled, and the parent with them when none is kept
+// (a carrying child sets its bin down and a child that has set its bin down
+// confirms; the clear's chapter end then closes the parent, clearChapterEnd).
 // The home keeps the zero; nothing else is undone.
 func (d *Dispatcher) EndClear(parent *orders.Order, why string) {
 	children, err := d.db.ListChildOrders(parent.ID)

@@ -1274,9 +1274,11 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 // advance, whose terminal-parent arm cancels them (AdvanceCompoundOrder). When
 // the cascade has a leg to cancel, it runs as the first run's would have, with
 // the lanes the parent still holds, and the station is answered as that run
-// would have answered it. A leg carrying its bin is kept, as the cascade keeps
-// it (splitLiftedLegs), so the repeat of a cancel that finished has nothing to
-// cancel and does nothing. Pinned by TestRunTwice_CancelCutInsideTheCascade.
+// would have answered it. A leg whose bin has left its pickup, carried or set
+// down, is kept, as the cascade keeps it (splitLiftedLegs), so the repeat of a
+// cancel that finished has nothing to cancel and does nothing: no fleet stop,
+// no second answer. Pinned by TestRunTwice_CancelCutInsideTheCascade and
+// TestDeliveredLeg_CutCascade.
 func (d *Dispatcher) finishCutCascade(env *protocol.Envelope, parent *orders.Order, p *protocol.OrderCancel, cause CancelCause) bool {
 	children, err := d.db.ListChildOrders(parent.ID)
 	if err != nil {
@@ -1290,7 +1292,7 @@ func (d *Dispatcher) finishCutCascade(env *protocol.Envelope, parent *orders.Ord
 			live = append(live, child)
 		}
 	}
-	cancel, _, err := d.splitLiftedLegs(parent.ID, live)
+	cancel, _, _, err := d.splitLiftedLegs(live)
 	if err != nil {
 		cancel = live // the cascade's own rule: unreadable cancels every live leg
 	}

@@ -18,6 +18,8 @@ binary is built from has changed since the last tag, the section opens with
 
 Deploy: no migration; Core and Edges in either order.
 
+- An order that has to move bins out of a lane to reach its cart, cancelled or re-planned while one of those moves is setting its bin down, lets that move finish and confirm; it used to cancel it and ask the fleet to stop its finished job, and a second cancel of the order answered the station twice
+- When one of those moves is cancelled by a person or stopped by the fleet and the order re-plans, its history now names that move, where it read "a dig leg failed" or "the dig's plan went stale"
 - An Edge's Refresh nodes, Refresh catalog, Sync Nodes and Sync catalog buttons ask Core from the start of a boot (while the Edge was still sending its start-up messages, 70 s or more with Kafka down, they answered ok and asked for nothing), and say nothing was sent while the Edge's messaging is not set up yet, as on an Edge with no Kafka broker configured
 - With Kafka down, the same four buttons answer at once that nothing was sent ("Kafka did not take it"); they used to wait about 14 s and then say ok. The Processes page's Sync from Core now says the catalog sync was requested, not that the catalog was synced: the catalog arrives with Core's answer
 - An Edge's boot log no longer says "WARNING messaging not connected at boot" on every start: it says so, with the reason, only when messaging cannot be set up (no Kafka broker configured), and "kafka connect succeeded", which printed with Kafka down, now reads "kafka writer built"

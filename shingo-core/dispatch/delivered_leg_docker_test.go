@@ -5,7 +5,6 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -18,17 +17,19 @@ import (
 	"shingocore/store/orders"
 )
 
-// delivered_leg_docker_test.go: brief C item 5 (docket R87), data only.
+// delivered_leg_docker_test.go: brief C item 5 (docket R87), ruled in the final
+// brief's 1c (docket section 25, B21).
 //
-// CHARACTERISATION FOR BRIEF C ITEM 5, NOT A RULING. Each test runs one of the
-// doors that closes a dig's chapter by cancelling its live legs (the callers of
-// splitLiftedLegs) while a leg has set its bin down and is not yet confirmed,
-// and asserts what the door does today: the leg's end, its bin's row, the
-// events, what reaches the fleet and the station, any order made, and where the
-// chapter and the parent go. Where today's answer looks wrong it is still what
-// is asserted. The orc and the owner rule on it; a change that fails one of
-// these changes the behaviour it records, and the test is re-read against that
-// ruling, never loosened to pass.
+// Each test runs one of the doors that closes a dig's chapter by cancelling its
+// live legs (the callers of splitLiftedLegs) while a leg has set its bin down
+// and is not yet confirmed, and asserts what the door does: the leg's end, its
+// bin's row, the events, what reaches the fleet and the station, any order
+// made, and where the chapter and the parent go. They were characterisations
+// of the doors cancelling such a leg; the ruling (a leg is finished when it
+// puts its bin down, and it confirms) turned each into a pin of the door
+// keeping it, and every flipped assertion is named in that commit. A change
+// that fails one of these changes the behaviour it records, and the test is
+// re-read against the ruling, never loosened to pass.
 //
 // THE LEG IS DELIVERED AS THE ENGINE DELIVERS IT (engine/wiring_vendor_status.go,
 // the delivered arm), in two halves, because a door can run in either:
@@ -90,13 +91,10 @@ func reloadLeg(t *testing.T, r twiceRig, id int64) *orders.Order {
 	return o
 }
 
-// The statuses a leg passes through: cancelled after its bin landed but before
-// its delivered write, cancelled after it, or confirmed.
-var (
-	landedThenCancelled    = []protocol.Status{StatusPending, StatusDispatched, StatusInTransit, StatusCancelled}
-	deliveredThenCancelled = []protocol.Status{StatusPending, StatusDispatched, StatusInTransit, StatusDelivered, StatusCancelled}
-	deliveredThenConfirmed = []protocol.Status{StatusPending, StatusDispatched, StatusInTransit, StatusDelivered, StatusConfirmed}
-)
+// The statuses a kept leg passes through: delivered, then confirmed. (Before
+// final brief 1c the doors cancelled it, after its bin landed or after its
+// delivered write.)
+var deliveredThenConfirmed = []protocol.Status{StatusPending, StatusDispatched, StatusInTransit, StatusDelivered, StatusConfirmed}
 
 // historyOf is an order's statuses, oldest first.
 func historyOf(t *testing.T, r twiceRig, id int64) []protocol.Status {
@@ -265,10 +263,12 @@ func TestDeliveredLeg_Dissolve(t *testing.T) {
 
 	// The hauler stops before leg 1 sets its bin down, so the first to re-ask
 	// leg 2 is leg 1's own landing: its bin's move re-drives the held legs of
-	// the lane it left, before the delivered write. Recorded: leg 1 is
-	// cancelled under the dissolve marker while it reads in_transit, the
-	// delivered write and the confirm are both refused, the fleet is asked to
-	// stop leg 1's job (which has finished), and the demand re-plans.
+	// the lane it left, before the delivered write. Final brief 1c: the dissolve
+	// keeps leg 1, which reads in_transit with its bin down, and holds the lane
+	// and the parent; its delivered write and confirm land, the fleet is not
+	// asked to stop its finished job, and the confirm's re-drive lets the lane
+	// go and the demand re-plans. (It was cancelled under the dissolve marker,
+	// both writes refused, its finished job stopped.)
 	t.Run("landed, not yet marked delivered", func(t *testing.T) {
 		t.Parallel()
 		r := newTwiceRig(t)
@@ -279,18 +279,18 @@ func TestDeliveredLeg_Dissolve(t *testing.T) {
 
 		c := cutNow(t, r)
 		r.d.RedriveHeldCompoundLegs(lane.ID) // the landing's lane-gate re-drive
+		assertHeldForTheKeptLeg(t, r, parent, lane, legs[1])
 		deliveredErr := markLegDelivered(r, leg1)
 		confirmErr := autoConfirmLeg(r, leg1)
-		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the dissolve marker's re-drive")
+		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the confirm's re-drive")
 
-		assertLegEnded(t, r, leg1.ID, StatusCancelled, reshuffleDissolveDetail, landedThenCancelled, leg1.DeliveryNode)
+		assertLegEnded(t, r, leg1.ID, StatusConfirmed, "", deliveredThenConfirmed, leg1.DeliveryNode)
 		assertDissolved(t, r, c, parent, lane, leg1, legs[1])
-		if !IsConcurrentTransition(deliveredErr) || !IsIllegalTransition(confirmErr) {
-			t.Errorf("the engine's delivered write returned %v and its confirm %v, want a concurrent "+
-				"transition and an illegal in_transit -> confirmed", deliveredErr, confirmErr)
+		if deliveredErr != nil || confirmErr != nil {
+			t.Errorf("the engine's delivered write returned %v and its confirm %v, want both to land", deliveredErr, confirmErr)
 		}
-		if n := completionsOf(r.e.mockEmitter, leg1.ID); n != 0 {
-			t.Errorf("leg 1 announced completed %d times, want 0: neither of its writes landed", n)
+		if n := completionsOf(r.e.mockEmitter, leg1.ID); n != 2 {
+			t.Errorf("leg 1 announced completed %d times, want 2: its delivered write and its confirm", n)
 		}
 	})
 
@@ -298,8 +298,11 @@ func TestDeliveredLeg_Dissolve(t *testing.T) {
 	// landing and its delivery re-ask leg 2 and hold it. Core then stops before
 	// the confirm, so leg 1 stays delivered. The hauler stops; the next to
 	// re-ask leg 2 is the lane's floor (lane_floor.go) or any event in the lane.
-	// Recorded: leg 1 is cancelled under the dissolve marker from delivered,
-	// the fleet is asked to stop its finished job, and the demand re-plans.
+	// Final brief 1c: the dissolve keeps leg 1 and holds the lane and the parent
+	// until the reconciliation sweep confirms it (5 to 10 min in life); the
+	// fleet is not asked to stop its finished job; the sweep's confirm lets the
+	// lane go and the demand re-plans. (It was cancelled under the dissolve
+	// marker from delivered, its finished job stopped.)
 	t.Run("delivered, not yet confirmed", func(t *testing.T) {
 		t.Parallel()
 		r := newTwiceRig(t)
@@ -317,31 +320,56 @@ func TestDeliveredLeg_Dissolve(t *testing.T) {
 		c := cutNow(t, r)
 		r.d.RedriveHeldCompoundLegs(lane.ID) // the floor, or the lane's next event
 		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the dissolve marker's re-drive")
+		assertHeldForTheKeptLeg(t, r, parent, lane, legs[1])
+		if got := reloadLeg(t, r, leg1.ID); got.Status != StatusDelivered {
+			t.Errorf("leg 1 is %q (%q) before the sweep, want delivered", got.Status, got.ErrorDetail)
+		}
+		_, err := r.d.lifecycle.ConfirmReceipt(reloadLeg(t, r, leg1.ID), leg1.Requester(), "auto_confirm_timeout", 0)
+		testutil.MustNoErr(t, err, "the reconciliation sweep's confirm")
+		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the confirm's re-drive")
 
-		assertLegEnded(t, r, leg1.ID, StatusCancelled, reshuffleDissolveDetail, deliveredThenCancelled, leg1.DeliveryNode)
+		assertLegEnded(t, r, leg1.ID, StatusConfirmed, "", deliveredThenConfirmed, leg1.DeliveryNode)
 		assertDissolved(t, r, c, parent, lane, leg1, legs[1])
-		if n := completionsOf(r.e.mockEmitter, leg1.ID); n != 1 {
-			t.Errorf("leg 1 announced completed %d times, want 1: its delivered write", n)
+		if n := completionsOf(r.e.mockEmitter, leg1.ID); n != 2 {
+			t.Errorf("leg 1 announced completed %d times, want 2: its delivered write and the sweep's confirm", n)
 		}
 	})
 }
 
-// assertDissolved is what both halves of the dissolve record past the leg: the
-// dissolve marker emitted for leg 1, a fleet stop for its job, its station told
-// it cancelled, leg 2 cancelled too, the lane let go, no order made, and the
-// parent back at pending after the marker's re-drive.
+// assertHeldForTheKeptLeg: the dissolve kept leg 1, which has set its bin down
+// and not yet confirmed, so leg 2 is cancelled under the dissolve marker while
+// the lane stays held and the parent stays reshuffling until leg 1's confirm.
+func assertHeldForTheKeptLeg(t *testing.T, r twiceRig, parent *orders.Order, lane *nodes.Node, leg2 *orders.Order) {
+	t.Helper()
+	if got := reloadLeg(t, r, leg2.ID); got.Status != StatusCancelled || got.ErrorDetail != reshuffleDissolveDetail {
+		t.Errorf("leg 2 is %q (%q) at the dissolve, want cancelled under the dissolve marker", got.Status, got.ErrorDetail)
+	}
+	if !r.d.laneLock.IsLocked(lane.ID) {
+		t.Errorf("lane %s was let go at the dissolve, before leg 1 confirmed", lane.Name)
+	}
+	if got := reloadLeg(t, r, parent.ID); got.Status != StatusReshuffling {
+		t.Errorf("parent is %q before leg 1 confirmed, want reshuffling", got.Status)
+	}
+}
+
+// assertDissolved is what both halves of the dissolve record past the leg once
+// leg 1 has confirmed (final brief 1c): no cancel emitted for leg 1 and no
+// fleet stop for its finished job, its station told it confirmed and never
+// cancelled, leg 2 cancelled under the dissolve marker, the lane let go, no
+// order made, and the parent back at pending after the confirm's re-drive.
 func assertDissolved(t *testing.T, r twiceRig, c cut, parent *orders.Order, lane *nodes.Node, leg1, leg2 *orders.Order) {
 	t.Helper()
-	if got := cancelsOf(r.e.mockEmitter, leg1.ID); !slices.Equal(got, []string{reshuffleDissolveDetail}) {
-		t.Errorf("cancels emitted for leg 1: %q, want the dissolve marker once", got)
+	if got := cancelsOf(r.e.mockEmitter, leg1.ID); len(got) != 0 {
+		t.Errorf("cancels emitted for leg 1: %q, want none: it had set its bin down", got)
 	}
-	if got := c.stopsSince(r); !slices.Equal(got, []string{leg1.VendorOrderID}) {
-		t.Errorf("fleet stops since the landing: %v, want leg 1's job %s alone", got, leg1.VendorOrderID)
+	if got := c.stopsSince(r); len(got) != 0 {
+		t.Errorf("fleet stops since the landing: %v, want none: leg 1's job had finished and leg 2 was never sent", got)
 	}
 	told := c.toldAbout(t, r, leg1.EdgeUUID)
 	t.Logf("told about leg 1: %v", told)
-	if len(told) != 1 || !strings.Contains(told[0], `"status":"cancelled"`) {
-		t.Errorf("the station was told %v about leg 1, want one cancelled update", told)
+	if len(told) == 0 || !strings.Contains(told[len(told)-1], `"status":"confirmed"`) ||
+		slices.ContainsFunc(told, func(m string) bool { return strings.Contains(m, `"status":"cancelled"`) }) {
+		t.Errorf("the station was told %v about leg 1, want it confirmed and never cancelled", told)
 	}
 	if got := reloadLeg(t, r, leg2.ID); got.Status != StatusCancelled || got.ErrorDetail != reshuffleDissolveDetail {
 		t.Errorf("leg 2 is %q (%q), want cancelled under the dissolve marker", got.Status, got.ErrorDetail)
@@ -380,12 +408,13 @@ func TestDeliveredLeg_FailureDoor(t *testing.T) {
 	t.Parallel()
 
 	// Leg 2's drop (the line) is renamed. Its pickup still names a slot of the
-	// lane, so leg 1's landing re-drives it, before the delivered write: the
-	// door's IsPostDelivery filter reads in_transit and lets leg 1 through, and
-	// leg 1 is not carrying, so it is cancelled. Recorded: leg 1 cancelled with
-	// the leg-failed marker, both engine writes after it refused, the fleet
-	// asked to stop its finished job, and the order failed on the config fault
-	// once the chapter closes.
+	// lane, so leg 1's landing re-drives it, before the delivered write: leg 1
+	// reads in_transit with its bin down. Final brief 1c: the splitter keeps it
+	// as it keeps a delivered one (the door's IsPostDelivery filter, which let
+	// this half through, is folded into it), both engine writes land, the fleet
+	// is not asked to stop its finished job, and the order fails on the config
+	// fault once the chapter closes. (It was cancelled with the leg-failed
+	// marker, both writes refused, its finished job stopped.)
 	t.Run("landed, not yet marked delivered", func(t *testing.T) {
 		t.Parallel()
 		r := newTwiceRig(t)
@@ -400,22 +429,25 @@ func TestDeliveredLeg_FailureDoor(t *testing.T) {
 		engineReDrive(t, r.d, r.e.mockEmitter, parent, failed)
 		deliveredErr := markLegDelivered(r, leg1)
 		confirmErr := autoConfirmLeg(r, leg1)
-		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the leg-failed marker's re-drive")
+		testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the confirm's re-drive")
 
-		assertLegEnded(t, r, leg1.ID, StatusCancelled, reshuffleLegFailedDetail, landedThenCancelled, leg1.DeliveryNode)
-		if !IsConcurrentTransition(deliveredErr) || !IsIllegalTransition(confirmErr) {
-			t.Errorf("the engine's delivered write returned %v and its confirm %v, want a concurrent "+
-				"transition and an illegal in_transit -> confirmed", deliveredErr, confirmErr)
+		assertLegEnded(t, r, leg1.ID, StatusConfirmed, "", deliveredThenConfirmed, leg1.DeliveryNode)
+		if deliveredErr != nil || confirmErr != nil {
+			t.Errorf("the engine's delivered write returned %v and its confirm %v, want both to land", deliveredErr, confirmErr)
 		}
-		if got := c.stopsSince(r); !slices.Equal(got, []string{leg1.VendorOrderID}) {
-			t.Errorf("fleet stops since the landing: %v, want leg 1's job %s alone", got, leg1.VendorOrderID)
+		if got := cancelsOf(r.e.mockEmitter, leg1.ID); len(got) != 0 {
+			t.Errorf("cancels emitted for leg 1: %q, want none", got)
+		}
+		if got := c.stopsSince(r); len(got) != 0 {
+			t.Errorf("fleet stops since the landing: %v, want none: leg 1's job had finished", got)
 		}
 		assertParentFailedOnConfig(t, r, parent, failed)
 	})
 
 	// Leg 2's pickup slot is renamed. The leg no longer names a slot of the
 	// lane, so leg 1's landing does not reach it; the delivery's own advance
-	// does, with leg 1 delivered. Recorded: the filter keeps leg 1 and the
+	// does, with leg 1 delivered. Recorded: the splitter keeps leg 1 (its row
+	// reads delivered; the door's own filter kept it before the fold) and the
 	// engine's confirm then confirms it; the order fails on the config fault.
 	t.Run("delivered, not yet confirmed", func(t *testing.T) {
 		t.Parallel()
@@ -484,12 +516,12 @@ func assertParentFailedOnConfig(t *testing.T, r twiceRig, parent, failed *orders
 // of cancel), which re-drives nothing (no marker). Leg 1 delivers, and its own
 // advance is the chapter end.
 //
-// Recorded: the delivery's advance cancels leg 1 with the leg-failed marker,
-// the fleet is asked to stop its finished job, the engine's confirm loses its
-// compare-and-swap, and the marker's re-drive returns the parent to pending
-// naming leg 2 as the leg that was cancelled (final brief 1c: the restart row
-// names what happened; it read the bare leg-failed sentence, though no leg
-// failed).
+// Final brief 1c: the delivery's advance keeps leg 1, which has set its bin
+// down, and waits for it; the engine's confirm lands, the fleet is not asked to
+// stop its finished job, and the confirm's re-drive returns the parent to
+// pending naming leg 2 as the leg that was cancelled. (Leg 1 was cancelled
+// with the leg-failed marker, its finished job stopped, the confirm refused,
+// and the row read the bare leg-failed sentence, though no leg failed.)
 func TestDeliveredLeg_ChapterEnd(t *testing.T) {
 	t.Parallel()
 	r := newTwiceRig(t)
@@ -511,17 +543,17 @@ func TestDeliveredLeg_ChapterEnd(t *testing.T) {
 	c := cutNow(t, r)
 	r.d.HandleChildOrderComplete(leg1) // the delivery's own advance: the chapter end
 	confirmErr := autoConfirmLeg(r, leg1)
-	testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the leg-failed marker's re-drive")
+	testutil.MustNoErr(t, r.d.AdvanceCompoundOrder(parent.ID), "the confirm's re-drive")
 
-	assertLegEnded(t, r, leg1.ID, StatusCancelled, reshuffleLegFailedDetail, deliveredThenCancelled, leg1.DeliveryNode)
-	if !IsConcurrentTransition(confirmErr) {
-		t.Errorf("the engine's confirm returned %v, want a concurrent transition", confirmErr)
+	assertLegEnded(t, r, leg1.ID, StatusConfirmed, "", deliveredThenConfirmed, leg1.DeliveryNode)
+	if confirmErr != nil {
+		t.Errorf("the engine's confirm returned %v, want it to land", confirmErr)
 	}
-	if got := cancelsOf(r.e.mockEmitter, leg1.ID); !slices.Equal(got, []string{reshuffleLegFailedDetail}) {
-		t.Errorf("cancels emitted for leg 1: %q, want the leg-failed marker once", got)
+	if got := cancelsOf(r.e.mockEmitter, leg1.ID); len(got) != 0 {
+		t.Errorf("cancels emitted for leg 1: %q, want none: it had set its bin down", got)
 	}
-	if got := c.stopsSince(r); !slices.Equal(got, []string{leg1.VendorOrderID}) {
-		t.Errorf("fleet stops since the delivery: %v, want leg 1's job %s alone", got, leg1.VendorOrderID)
+	if got := c.stopsSince(r); len(got) != 0 {
+		t.Errorf("fleet stops since the delivery: %v, want none: leg 1's job had finished", got)
 	}
 	t.Logf("told about leg 1: %v", c.toldAbout(t, r, leg1.EdgeUUID))
 	if n := c.ordersSince(t, r); n != 0 {
@@ -541,10 +573,12 @@ func TestDeliveredLeg_ChapterEnd(t *testing.T) {
 // CancelOrderWithCascade); its post-delivery guard reads the parent, which is
 // reshuffling. The cancel lands while leg 1 is delivered and not confirmed.
 //
-// Recorded: leg 1 is cancelled with the parent's reason and cause, the fleet
-// is asked to stop its finished job and leg 2's, the station is told leg 1
-// cancelled, the engine's confirm loses its compare-and-swap, the lane is let
-// go and no order is made.
+// Final brief 1c: leg 1, which has set its bin down, is kept and the engine's
+// confirm lands; the fleet is asked to stop leg 2's job alone; the station is
+// told leg 1 confirmed, never cancelled; the parent is cancelled, the lane let
+// go and no order made. (Leg 1 was cancelled with the parent's reason and
+// cause, its finished job stopped, the station told it cancelled, the confirm
+// refused.)
 func TestDeliveredLeg_ParentCancel(t *testing.T) {
 	t.Parallel()
 	r := newTwiceRig(t)
@@ -561,30 +595,28 @@ func TestDeliveredLeg_ParentCancel(t *testing.T) {
 	r.d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: parent.EdgeUUID, Reason: "operator abort"})
 	confirmErr := autoConfirmLeg(r, leg1)
 
-	assertLegEnded(t, r, leg1.ID, StatusCancelled, "parent order cancelled: operator abort", deliveredThenCancelled,
-		leg1.DeliveryNode)
-	if !IsConcurrentTransition(confirmErr) {
-		t.Errorf("the engine's confirm returned %v, want a concurrent transition", confirmErr)
+	assertLegEnded(t, r, leg1.ID, StatusConfirmed, "", deliveredThenConfirmed, leg1.DeliveryNode)
+	if confirmErr != nil {
+		t.Errorf("the engine's confirm returned %v, want it to land", confirmErr)
 	}
-	if got := cancelsOf(r.e.mockEmitter, leg1.ID); !slices.Equal(got, []string{"parent order cancelled: operator abort"}) {
-		t.Errorf("cancels emitted for leg 1: %q, want the parent's reason once", got)
+	if got := cancelsOf(r.e.mockEmitter, leg1.ID); len(got) != 0 {
+		t.Errorf("cancels emitted for leg 1: %q, want none: it had set its bin down", got)
 	}
-	if got := c.stopsSince(r); !slices.Equal(got, []string{leg1.VendorOrderID, leg2.VendorOrderID}) {
-		t.Errorf("fleet stops since the delivery: %v, want leg 1's finished job %s and leg 2's %s",
-			got, leg1.VendorOrderID, leg2.VendorOrderID)
+	if got := c.stopsSince(r); !slices.Equal(got, []string{leg2.VendorOrderID}) {
+		t.Errorf("fleet stops since the delivery: %v, want leg 2's job %s alone", got, leg2.VendorOrderID)
 	}
 	if got := reloadLeg(t, r, leg2.ID); got.Status != StatusCancelled {
 		t.Errorf("leg 2 is %q, want cancelled by the cascade", got.Status)
 	}
 	told := c.toldAbout(t, r, leg1.EdgeUUID)
-	if len(told) != 1 || !strings.Contains(told[0], `"status":"cancelled"`) {
-		t.Errorf("the station was told %v about leg 1, want one cancelled update", told)
+	if len(told) != 1 || !strings.Contains(told[0], `"status":"confirmed"`) {
+		t.Errorf("the station was told %v about leg 1, want one confirmed update", told)
 	}
 	assertTold(t, "what the cancel told the station", toldSince(t, r.db, c.outbox), []string{
 		`order.update to test: {"detail":"operator abort","order_uuid":"DL-PC-parent","status":"cancelled","version":3}`,
-		`order.update to test: {"detail":"parent order cancelled: operator abort","order_uuid":"<uuid>","status":"cancelled","version":5}`,
 		`order.update to test: {"detail":"parent order cancelled: operator abort","order_uuid":"<uuid>","status":"cancelled","version":4}`,
 		`order.cancelled to test: {"order_uuid":"DL-PC-parent","reason":"operator abort"}`,
+		`order.update to test: {"detail":"receipt: auto_confirm_internal, count: 0","order_uuid":"<uuid>","status":"confirmed","version":5}`,
 	})
 	if got := reloadLeg(t, r, parent.ID); got.Status != StatusCancelled {
 		t.Errorf("parent is %q, want cancelled", got.Status)
@@ -604,9 +636,11 @@ func TestDeliveredLeg_ParentCancel(t *testing.T) {
 // its last case). Leg 1 then sets its bin down and is delivered, its own advance
 // finds the parent cancelled, and the cancel arrives again before the confirm.
 //
-// Recorded: the repeat finds leg 1 live and not carrying, so it runs the
-// cascade again: leg 1 is cancelled with the parent's reason, the fleet is
-// asked to stop its finished job, and the station is answered a second time.
+// Final brief 1c: the repeat finds leg 1 live with its bin set down, so it has
+// nothing to cancel and does nothing: no fleet stop, no second answer; the
+// engine's confirm lands and the station is told leg 1 confirmed. (It ran the
+// cascade again: leg 1 cancelled with the parent's reason, its finished job
+// stopped, the station answered order.cancelled a second time.)
 func TestDeliveredLeg_CutCascade(t *testing.T) {
 	t.Parallel()
 	r := newTwiceRig(t)
@@ -627,17 +661,15 @@ func TestDeliveredLeg_CutCascade(t *testing.T) {
 	r.d.HandleOrderCancel(env, req) // the same cancel, delivered again
 	confirmErr := autoConfirmLeg(r, leg1)
 
-	assertLegEnded(t, r, leg1.ID, StatusCancelled, "parent order cancelled: operator abort", deliveredThenCancelled,
-		leg1.DeliveryNode)
-	if !IsConcurrentTransition(confirmErr) {
-		t.Errorf("the engine's confirm returned %v, want a concurrent transition", confirmErr)
+	assertLegEnded(t, r, leg1.ID, StatusConfirmed, "", deliveredThenConfirmed, leg1.DeliveryNode)
+	if confirmErr != nil {
+		t.Errorf("the engine's confirm returned %v, want it to land", confirmErr)
 	}
-	if got := c.stopsSince(r); !slices.Equal(got, []string{leg1.VendorOrderID}) {
-		t.Errorf("fleet stops since the repeat: %v, want leg 1's job %s alone", got, leg1.VendorOrderID)
+	if got := c.stopsSince(r); len(got) != 0 {
+		t.Errorf("fleet stops since the repeat: %v, want none: leg 1's job had finished", got)
 	}
-	assertTold(t, "what the repeat told the station", toldSince(t, r.db, c.outbox), []string{
-		`order.update to test: {"detail":"parent order cancelled: operator abort","order_uuid":"<uuid>","status":"cancelled","version":5}`,
-		`order.cancelled to test: {"order_uuid":"DL-CC-parent","reason":"operator abort"}`,
+	assertTold(t, "what the repeat and the confirm told the station", toldSince(t, r.db, c.outbox), []string{
+		`order.update to test: {"detail":"receipt: auto_confirm_internal, count: 0","order_uuid":"<uuid>","status":"confirmed","version":5}`,
 	})
 	if got := reloadLeg(t, r, parent.ID); got.Status != StatusCancelled {
 		t.Errorf("parent is %q, want cancelled", got.Status)
@@ -719,10 +751,6 @@ func assertOwnersExample(t *testing.T, r twiceRig, c cut, legs []*orders.Order) 
 // (TestDeliveredLeg_EndClear).
 func TestDeliveredLeg_FourLegDigClosedAsLeg2SetsDown(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("SHINGO_KNOWN_RED") == "" {
-		t.Skip("final brief 1c red pin, red until splitLiftedLegs keeps a leg that has set its bin down; " +
-			"run with SHINGO_KNOWN_RED=1")
-	}
 	cancelEnv := func(parent *orders.Order) *protocol.Envelope {
 		return &protocol.Envelope{ID: "env-" + parent.EdgeUUID, Type: protocol.TypeOrderCancel,
 			Src: protocol.Address{Role: protocol.RoleEdge, Station: parent.Requester()},
