@@ -372,7 +372,12 @@ function modulesOf(cell, usedOnly) {
         if (m === 'two_robot_press_index') mods.push({ kind: 'index', name: n, names: [n] });
         else if (m === 'two_robot') mods.push({ kind: 'two', name: n, names: [n] });
         else if (m === 'single_robot') mods.push({ kind: 'single', name: n, names: [n] });
-        else mods.push({ kind: 'free', name: n, names: [n], on: true });   // a legacy mode word: a card, not a crash
+        // A Sequential A/B position with no partner is a one-node line (final
+        // brief 2b): one card, its moves in and out.
+        else if (m === 'sequential' && !p.claim.paired_core_node) mods.push({ kind: 'seqone', name: n, names: [n] });
+        // A legacy mode word, or a sequential position whose partner does not
+        // name it back: a card, not a crash.
+        else mods.push({ kind: 'free', name: n, names: [n], on: true });
     }
     const slotted = new Set();   // positions some module draws as a slot
     for (const mod of mods) {
@@ -586,6 +591,21 @@ function drawModule(mod, at, ctx) {
         s.push(move([bx + CARD_W / 2, cy + CARD_H + GAP], [bx + CARD_W / 2, cy + CARD_H], inR, mod.a, mod.b)); // B pulls the finished part up from A
         s.push(move([bx + CARD_W, cy + 46], [bx + CARD_W + INSET, cy + 46], outR, mod.b, 'dock'));            // it leaves B for the dock
         return { svg: s.join(''), w: w, h: cy + CARD_H + GAP };
+    }
+
+    // A ONE-NODE SEQUENTIAL A/B LINE (final brief 2b): the pair's B card alone,
+    // one module wide. The old bin leaves it for the dock (Order A) and the new
+    // one comes up into it from the dock (Order B, made at A's release), each
+    // in its robot's colour; the card carries both marks.
+    if (mod.kind === 'seqone') {
+        const pos = ctx.byName[mod.name];
+        const inR = dockRobot(ctx.sentences, mod.name, 'in'), outR = dockRobot(ctx.sentences, mod.name, 'out');
+        s.push(bar(cx, my, CARD_W));
+        s.push(posCard(cx, cy, mod.name, cardLinesFor(pos, ctx.sentences), pos.claim.payload_code || null,
+            { in: inR, out: outR }, true, selOf(mod.name), findings[mod.name], true, tap()));
+        s.push(move([cx + CARD_W / 2, cy + CARD_H + GAP], [cx + CARD_W / 2, cy + CARD_H], inR, 'dock', mod.name)); // the new bin up, from the dock
+        s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outR, mod.name, 'dock'));                       // the old bin out, to the dock
+        return { svg: s.join(''), w: M_W, h: cy + CARD_H + GAP };
     }
 
     const pos = ctx.byName[mod.name];
@@ -1107,7 +1127,9 @@ function drawRelation(cell, sentences, lay, opts, width) {
                 const park = (sentences.legs || []).find(L => L.kind === 'park' && L.from === h && L.to === lout);
                 add(lout, (park && park.robot) || dockRobot(sentences, h, 'out'), dirOf(h, lout), h);
             }
-        } else if (c.swap_mode === 'sequential' && seqB[h]) {
+        } else if (c.swap_mode === 'sequential' && (seqB[h] || !c.paired_core_node)) {
+            // A pair's B card, or a one-node line's one card (final brief 2b):
+            // the new bin up into it.
             add(h, inR, 'u', h);
         }
     }
@@ -1171,7 +1193,7 @@ function drawRelation(cell, sentences, lay, opts, width) {
             if (c.swap_mode === 'two_robot_press_index') {
                 marks = [legRobot(sentences, n, 'index', outR), outR];
             } else if (c.swap_mode === 'sequential') {
-                marks = seqB[n] ? [dockRobot(sentences, n, 'in'), outR] : [];
+                marks = seqB[n] || !c.paired_core_node ? [dockRobot(sentences, n, 'in'), outR] : [];
             } else {
                 const park = c.swap_mode === 'single_robot' && c.outbound_staging ? (sentences.legs || []).find(L =>
                     L.kind === 'park' && L.from === n && L.to === c.outbound_staging) : null;

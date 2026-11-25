@@ -119,6 +119,25 @@ function dockOf(svg) {
     return { x1: +ln[1], y: y, x2: +ln[3], rows: rows, deepest: Math.max(...rows) };
 }
 
+// ── a one-node Sequential A/B line ──────────────────────────────────────────
+//
+// A Sequential A/B position with no partner (final brief 2b) is one card with
+// the pair's B moves: the new bin up into it from the dock, Order B's (Robot
+// 2), and the old one out to the dock, Order A's (Robot 1). It drew a plain
+// card with no move, a legacy mode word's, until then.
+console.log('a one-node Sequential A/B line: one card, its moves in and out');
+{
+    const one = { geometry: false, positions: [{ core_node_name: 'ALN_01', sequence: 1, kind: 'front',
+        claim: { swap_mode: 'sequential', payload_code: 'PA', inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT' } }] };
+    const svg = m.renderFlowPicture({ cell: one, station: { name: 'SCREEN' } }, {});
+    const mods = modulesOf(svg);
+    check('one node: one module of one card', mods.length === 1 && mods[0].names.join() === 'ALN_01', JSON.stringify(mods));
+    const moves = [...svg.matchAll(/<g class="mv" data-from="([^"]+)" data-to="([^"]+)"><path class="sc r(\d)"/g)]
+        .map(x => x[1] + '>' + x[2] + '@' + x[3]);
+    check('one node: the new bin in from the dock on Robot 2, the old one out to it on Robot 1',
+        moves.join(' ') === 'dock>ALN_01@2 ALN_01>dock@1', moves.join(' '));
+}
+
 // ── style 7 — PART SYN-A-S003, two index pairs ──────────────────────────────
 console.log('style 7 — PART SYN-A-S003, two index pairs');
 {

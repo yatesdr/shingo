@@ -894,6 +894,11 @@ console.log('relation picture: chevrons on the card doing the action');
         station: { name: 'PIN' } }, {}));
     check('Sequential A/B: B carries Robot 2 up, A none', cvs(nodeCard(sq, 'ALN_02')) === '2u' && cvs(nodeCard(sq, 'ALN_01')) === '',
         cvs(nodeCard(sq, 'ALN_02')) + ' / ' + cvs(nodeCard(sq, 'ALN_01')));
+    // A one-node line (final brief 2b): its one card carries the B card's
+    // move, Robot 2 up, where it drew none.
+    const sq1 = parse(m.renderFlowPicture({ cell: weldDrift({ ALN_02: Object.assign({ swap_mode: 'sequential', payload_code: 'B' }, IO) }),
+        station: { name: 'PIN' } }, {}));
+    check('Sequential A/B, one node: its card carries Robot 2 up', cvs(nodeCard(sq1, 'ALN_02')) === '2u', cvs(nodeCard(sq1, 'ALN_02')));
     // ROBOT COLOUR FROM THE MODEL'S LEGS, never a template: the same cell with
     // the model's index leg made Robot 1's draws the index in Robot 1.
     if (m.sentencesFromView) {

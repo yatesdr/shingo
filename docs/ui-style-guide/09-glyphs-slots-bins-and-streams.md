@@ -96,7 +96,7 @@ template names a robot.
 | 1‑Robot Swap | position card over a row of two staging slots, inbound left and outbound right; the new bin rises from the inbound slot and the old bin parks down into the outbound slot, both Robot 1. No move to the dock beside the park: the out-stub by the card's side is only for an old bin that leaves with no park leg drawn |
 | 2‑Robot Swap | position card over its inbound staging slot; the old bin leaves by the side (Robot 2's out-stub). **No outbound slot**, even when the claim names one: Robot 2 takes the old bin straight to the dock, and a slot would draw a trip this choreography never makes |
 | Index Swap | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. An inbound staging the claim names is a slot under the on-deck card (under the press card when there is no deck), captioned `Inbound staging`, with **no chevron**: the running choreography has no leg to it, and its tooltip says it is used at changeover. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
-| Sequential A/B | A and B side by side in one double-width module under one line-side bar |
+| Sequential A/B | A and B side by side in one double-width module under one line-side bar; a position with no partner, a one-node line, is the B card alone in one module: the new bin up into it from the dock and the old one out to it |
 | no claim | the position card, dashed, its bar dimmed. The bar of a position not in the flow is the only thing in the picture that is ever dimmed |
 
 **A staging place is the module's slot, whether or not it is a position.** At
@@ -257,7 +257,7 @@ move is drawn on the card that makes it, centred under its words, and nothing
 is drawn in the gaps**: the on-deck card carries Robot 1 up and Robot 2
 toward its press spot, the press card one Robot 2 from the deck's side, a
 lane Robot 1 up and its spot Robot 1 from the lane's side, a 1‑Robot Swap's
-out-lane the old bin from its spot, a Sequential B card Robot 1 up. The
+out-lane the old bin from its spot, a Sequential B card, or a one-node line's one card, Robot 2 up. The
 direction is the grid's (horizontal when the columns between the two cards
 are at least the rows), the robot the model's. **What is not in play fades**
 (`.faint`, opacity .3, dashed; a target never does), a position nothing names
