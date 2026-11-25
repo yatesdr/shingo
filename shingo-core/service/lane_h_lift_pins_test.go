@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -82,6 +83,106 @@ func TestRelease_FencedReleaseSkipsALatePreReleaseDelta(t *testing.T) {
 	}
 	if n := ledgerOps(t, db, bin.ID, "stale_epoch_dropped"); n != 0 {
 		t.Errorf("stale_epoch_dropped = %d, want 0", n)
+	}
+}
+
+// TestRelease_ADeltaWaitingBehindAFencedRelease is docket B18:
+// TestRelease_FencedReleaseSkipsALatePreReleaseDelta's books with the delta's
+// apply started while the release's transaction is open, on a second
+// connection. The apply reads its cursor through a join and locks only the bin
+// row (uop.readBinScope): a read that waited for that row gets the bin as the
+// release left it and the cursor as it stood before the release moved it.
+//
+// Both doors are the product's. A third transaction holds the bin row so the
+// order is forced: the release writes its fence and waits at its bin UPDATE,
+// the apply's read queues behind it, the holder lets go, the release commits,
+// the read returns. The count must be what the two give one after the other:
+// the declared 94 for a window at or below the fence, 92 for the window past
+// it (net -8 against the fence's -6).
+//
+//   - At or below the fence: green. The stale cursor lets the window past the
+//     high-water check and the claim's own statement, which reads the committed
+//     row, refuses it (uop.claimDeltaSequence: last_seq < EXCLUDED.last_seq).
+//   - Past the fence, with Core's cursor behind the fence before the release
+//     (seq 2 not yet applied): RED, 88. The apply subtracts the stale cursor's
+//     net (-2) where the fence's (-6) stands, so the draws between the two,
+//     which the declared count already holds, are taken a second time. Skipped
+//     unless SHINGO_KNOWN_RED=1: no fix in this brief.
+//
+// Core applies both on its one inbound reader today, so the two overlap only
+// across a messaging re-configure (Engine.ReconfigureMessaging), where the old
+// reader may still be inside a handler when the new one starts.
+func TestRelease_ADeltaWaitingBehindAFencedRelease(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	manifest := announcingService(db)
+	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
+	now := time.Now().UTC()
+
+	// lockWaiters is how many of this database's connections wait on a lock.
+	lockWaiters := func() int {
+		var n int
+		testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n), "lock waiters")
+		return n
+	}
+
+	for _, tc := range []struct {
+		name, label string
+		seq         int64
+		delta       int
+		net         int64
+		wantSkipped bool
+		want        int
+		knownRed    bool
+	}{
+		{"a window at or below the fence is skipped", "BIN-BEHIND-AT", 2, -3, -5, true, 94, false},
+		{"a window past the fence applies only what is past it", "BIN-BEHIND-PAST", 3, -2, -8, false, 92, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.knownRed && os.Getenv("SHINGO_KNOWN_RED") == "" {
+				t.Skip("docket B18 red pin, red until the apply reads its cursor after the bin row is locked; run with SHINGO_KNOWN_RED=1")
+			}
+			bin := createTestBin(t, db, sd.LineNode.ID, tc.label, "PART-A", 100)
+			order := createTestOrder(t, db, sd.StorageNode.ID)
+			claimBinForTest(t, db, bin.ID, order.ID)
+			e := binEpoch(t, db, bin.ID)
+			testutil.MustNoErr(t, deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, 1, -2, -2, now)), "seq 1")
+
+			holder, err := db.Begin()
+			testutil.MustNoErr(t, err, "begin the holder")
+			defer holder.Rollback()
+			_, err = holder.Exec(`SELECT 1 FROM bins WHERE id=$1 FOR UPDATE`, bin.ID)
+			testutil.MustNoErr(t, err, "hold the bin row")
+
+			// The operator declares 94 as of seq 2 and one unflushed tick (net -6).
+			declared := 94
+			released := make(chan error, 1)
+			go func() {
+				released <- manifest.SyncOrClearForReleasedFenced(bin.ID, order.ID, &declared,
+					protocol.DispositionReleasePartial, "operator",
+					&ReleaseFence{Station: pinStation, ReleaseFence: protocol.ReleaseFence{BinID: bin.ID, Epoch: e, AsOfSeq: 2, AsOfNet: -6, AsOfAt: now.Add(2 * time.Second)}})
+			}()
+			testutil.EventuallyWithInterval(t, 5*time.Millisecond, 10*time.Second, func() bool { return lockWaiters() == 1 })
+			applied := make(chan error, 1)
+			go func() {
+				applied <- deltas.ApplyBinUOPDelta(pinStation, liftNetDelta(bin.ID, e, tc.seq, tc.delta, tc.net, now.Add(time.Duration(tc.seq-1)*time.Second)))
+			}()
+			testutil.EventuallyWithInterval(t, 5*time.Millisecond, 10*time.Second, func() bool { return lockWaiters() == 2 })
+			testutil.MustNoErr(t, holder.Commit(), "let go of the bin row")
+
+			testutil.MustNoErr(t, <-released, "the fenced release")
+			applyErr := <-applied
+			t.Logf("the apply that waited answered: %v", applyErr)
+			if skipped := errors.Is(applyErr, ErrInventoryDeltaSkipped); skipped != tc.wantSkipped || (applyErr != nil && !skipped) {
+				t.Errorf("the apply that waited behind the release: err = %v, want skipped=%v", applyErr, tc.wantSkipped)
+			}
+			if got := binRemaining(t, db, bin.ID); got != tc.want {
+				t.Errorf("uop_remaining = %d, want %d: the apply's read began before the release committed and used the cursor "+
+					"of before it; read the cursor after the bin row is locked (uop.readBinScope)", got, tc.want)
+			}
+		})
 	}
 }
 
