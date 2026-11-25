@@ -5,6 +5,7 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1544,6 +1545,66 @@ func TestNodeIDsForOrder_IncludesTheLaneItWaitedOn(t *testing.T) {
 	t.Errorf("NodeIDsForOrder(%d) = %v, which omits lane %s (%d) — the lane this order's robot is "+
 		"parked outside. When it goes terminal, the one place that certainly wants re-asking is "+
 		"the lane whose queue just got shorter", dweller.ID, got, wall.Name, wall.ID)
+}
+
+// TestGateKeysForOrder_AgreesWithTheKeysOneAtATime pins the terminal triggers'
+// one read (GateKeysForOrder) to the keys as the gate made them one at a time:
+// LaneIDsForOrder's lanes, each with GroupIDForLane, then NodeIDsForOrder's
+// nodes, each through GateKeysForNode, in that order. Over a gate-staged store
+// (a lane slot drop and a wait on its lane), the order staged deeper in the same
+// lane, an order bound for a name Core has not got, and an order that does not
+// exist. The want column names the dweller's wait lane among its keys, so a
+// fixture that stops building a wait fails here rather than agreeing vacuously.
+func TestGateKeysForOrder_AgreesWithTheKeysOneAtATime(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, _ := clearLaneFixture(t, db, "GKFO")
+	line := lineNode(t, db, "GKFO-LINE")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "gkfo-deep")
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
+	if !IsGateStaged(dweller) {
+		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	nowhere := mkPlainOrder(t, db, "gkfo-nowhere", protocol.OrderTypeStore, "", "GKFO-NOPE")
+
+	oneAtATime := func(orderID int64) (lanes, keys []GateKey) {
+		for _, laneID := range d.LaneIDsForOrder(orderID) {
+			lanes = append(lanes, GateKey{Lane: laneID, Group: d.GroupIDForLane(laneID)})
+		}
+		for _, nodeID := range d.NodeIDsForOrder(orderID) {
+			l, g := d.GateKeysForNode(nodeID)
+			keys = append(keys, GateKey{Lane: l, Group: g})
+		}
+		return lanes, keys
+	}
+	for _, c := range []struct {
+		name     string
+		id       int64
+		wantLane int64 // a lane the lane keys must name; 0: none asked
+	}{
+		{"the dweller", dweller.ID, wall.ID},
+		{"the deeper store", deep.ID, 0},
+		{"bound for nowhere", nowhere.ID, 0},
+		{"no such order", 1 << 40, 0},
+	} {
+		wantLanes, wantKeys := oneAtATime(c.id)
+		gotLanes, gotKeys := d.GateKeysForOrder(c.id)
+		if !reflect.DeepEqual(gotLanes, wantLanes) || !reflect.DeepEqual(gotKeys, wantKeys) {
+			t.Errorf("%s: GateKeysForOrder = %v, %v; one at a time %v, %v", c.name, gotLanes, gotKeys, wantLanes, wantKeys)
+		}
+		if c.wantLane == 0 {
+			continue
+		}
+		named := false
+		for _, k := range gotLanes {
+			named = named || k.Lane == c.wantLane
+		}
+		if !named {
+			t.Errorf("%s: the lane keys %v do not name lane %d", c.name, gotLanes, c.wantLane)
+		}
+	}
 }
 
 // afterEntryWait checks a dig leg's plan opens with the gate's wait at the mark

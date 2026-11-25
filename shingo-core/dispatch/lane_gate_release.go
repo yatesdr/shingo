@@ -1475,6 +1475,137 @@ func (d *Dispatcher) NodeIDsForOrder(orderID int64) []int64 {
 	return out
 }
 
+// GateKey is one key of the lane gate's event pass (engine/wiring_lane_gate.go):
+// the group whose gate it evaluates and the lane whose held legs it redrives
+// (0: none).
+type GateKey struct {
+	Lane, Group int64
+}
+
+// GateKeysForOrder is the terminal triggers' keys for orderID: lanes as
+// LaneIDsForOrder lists them, each with GroupIDForLane's group, then nodes as
+// NodeIDsForOrder lists them, each keyed as GateKeysForNode keys it. The order
+// is read once, each end once by its name with its lane (LaneOf), and a wait's
+// lane once: the two lists and their keys read the order twice, each end three
+// times and its lane twice. Pinned to the keys one at a time:
+// TestGateKeysForOrder_AgreesWithTheKeysOneAtATime.
+func (d *Dispatcher) GateKeysForOrder(orderID int64) (lanes, nodeKeys []GateKey) {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return nil, nil
+	}
+	var waitLanes []int64
+	var steps []resolvedStep
+	if order.StepsJSON != "" && json.Unmarshal([]byte(order.StepsJSON), &steps) == nil {
+		for _, s := range steps {
+			if s.Action == protocol.ActionWait && s.WaitKind == WaitKindLane {
+				waitLanes = append(waitLanes, s.WaitLane)
+			}
+		}
+	}
+	r := &orderGateReads{d: d, ends: map[string]gateEnd{}, waits: map[int64]*nodes.Node{}}
+	ends := []gateEnd{r.end(order.DeliveryNode), r.end(order.SourceNode)}
+	return r.laneKeys(ends, waitLanes), r.nodeKeys(ends, waitLanes)
+}
+
+// gateEnd is an order's end as GateKeysForOrder read it: the node by its name
+// and the lane it stands in (nil for none, or for a lane that could not be
+// read, which LaneIDForNodeName and GateKeysForNode both read as none).
+type gateEnd struct{ node, lane *nodes.Node }
+
+// orderGateReads is one GateKeysForOrder's reads: each end once by its name,
+// each wait's lane row once. Made per call and dropped with it.
+type orderGateReads struct {
+	d     *Dispatcher
+	ends  map[string]gateEnd
+	waits map[int64]*nodes.Node
+}
+
+func (r *orderGateReads) end(name string) gateEnd {
+	if e, ok := r.ends[name]; ok || name == "" {
+		return e
+	}
+	var e gateEnd
+	if n, err := r.d.db.GetNodeByDotName(name); err == nil && n != nil {
+		e.node = n
+		if l, lErr := r.d.db.LaneOf(n); lErr == nil {
+			e.lane = l
+		}
+	}
+	r.ends[name] = e
+	return e
+}
+
+func (r *orderGateReads) waitRow(laneID int64) *nodes.Node {
+	if n, ok := r.waits[laneID]; ok {
+		return n
+	}
+	n, err := r.d.db.GetNode(laneID)
+	if err != nil {
+		n = nil
+	}
+	r.waits[laneID] = n
+	return n
+}
+
+// laneKeys is LaneIDsForOrder's lanes (the ends', then the waits', each once,
+// none for 0), each with GroupIDForLane's group.
+func (r *orderGateReads) laneKeys(ends []gateEnd, waitLanes []int64) []GateKey {
+	var out []GateKey
+	seen := map[int64]bool{}
+	for _, e := range ends {
+		if e.lane != nil && !seen[e.lane.ID] {
+			seen[e.lane.ID] = true
+			out = append(out, GateKey{Lane: e.lane.ID, Group: groupIDOf(e.lane)})
+		}
+	}
+	for _, laneID := range waitLanes {
+		if laneID == 0 || seen[laneID] {
+			continue // a lane already keyed is not read for its group again
+		}
+		seen[laneID] = true
+		k := GateKey{Lane: laneID}
+		if row := r.waitRow(laneID); row != nil && row.ParentID != nil {
+			k.Group = *row.ParentID
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// nodeKeys is NodeIDsForOrder's nodes (the ends' nodes, then the waits' lanes,
+// each id once), each keyed as GateKeysForNode keys it.
+func (r *orderGateReads) nodeKeys(ends []gateEnd, waitLanes []int64) []GateKey {
+	var out []GateKey
+	seen := map[int64]bool{}
+	for _, e := range ends {
+		if e.node == nil || seen[e.node.ID] {
+			continue
+		}
+		seen[e.node.ID] = true
+		k := GateKey{}
+		switch {
+		case e.lane != nil:
+			k = GateKey{Lane: e.lane.ID, Group: groupIDOf(e.lane)}
+		case e.node.ParentID != nil:
+			k.Group = *e.node.ParentID
+		}
+		out = append(out, k)
+	}
+	for _, laneID := range waitLanes {
+		if laneID == 0 || seen[laneID] {
+			continue
+		}
+		seen[laneID] = true
+		k := GateKey{}
+		if row := r.waitRow(laneID); row != nil {
+			k.Lane, k.Group = r.d.gateKeysOf(row)
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
 // EvaluateWaitLaneForStagedOrder re-asks the gate question for the lane an order
 // has just PARKED at — the arrival trigger.
 //
