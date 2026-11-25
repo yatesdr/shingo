@@ -15,8 +15,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/router"
 
-	coremessaging "shingocore/messaging"
-	"shingocore/service"
 	"shingocore/store/scene"
 	coreharness "shingocore/testharness"
 
@@ -58,16 +56,7 @@ func TestScenario_SceneGeometryRoundTripsAndTheRevisionShortCircuits(t *testing.
 		t.Fatalf("upsert straight: %v", err)
 	}
 
-	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", nil)
-	svc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{})
-	coreSubjects := router.NewSubject()
-	router.RegisterSubject(coreSubjects, protocol.SubjectNodeListRequest, svc.HandleNodeListRequest)
-	coreIngestor := protocol.NewIngestor(nil)
-	coreRouter := router.New[string]()
-	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-		coreSubjects.Dispatch(env, p)
-	})
-	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
+	core := coreharness.NewTables(t, coreDB, nil, coreharness.RoutesOnly(protocol.SubjectNodeListRequest))
 
 	// ── Edge: a real engine, with the response wired the way main.go wires it ──
 	edge := edgeharness.NewEdge(t, stationID)
@@ -89,7 +78,7 @@ func TestScenario_SceneGeometryRoundTripsAndTheRevisionShortCircuits(t *testing.
 
 	bus := harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edgeIngestor},
-		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
+		harness.CoreSide{CoreStore: coreDB, CoreIngestor: core.Ingestor},
 	)
 	drainOutbox(t, edge)
 
