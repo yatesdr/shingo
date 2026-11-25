@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -239,4 +240,90 @@ func TestSequentialBackfill_FollowsTheReleaseAtTheLineNotAnEarlierWait(t *testin
 	if b := backfills(h); len(b) != 1 {
 		t.Errorf("after the release at the line: backfills %v, want one", b)
 	}
+}
+
+// TestSequentialOneNode_SteadyState: a Sequential A/B position with no
+// partner, a one-node line (final brief 2a, point 1): HOP's consume line, and
+// its produce dual, through the doors a plant uses. Every tick is charged to
+// the one node's bin whatever its active_pull bit reads (it is set dark, where
+// the parked-side skip would bite on a pair); Order B does not exist when Core
+// names A's robot or when A waits at the line, and the station's RELEASE there
+// makes exactly one, linked to A; and nothing on the way writes active_pull.
+// The paired press is the control: its release moves the line, so the
+// statement scan sees a write where there is one.
+func TestSequentialOneNode_SteadyState(t *testing.T) {
+	t.Parallel()
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		t.Run(string(role), func(t *testing.T) {
+			t.Parallel()
+			h := newRelHarness(t)
+			claim := h.seedNode(pairSpec{mode: protocol.SwapModeSequential, role: role, onePosition: true})
+			if claim.PairedCoreNode != "" {
+				t.Fatalf("fixture: the claim names partner %q, want none", claim.PairedCoreNode)
+			}
+			testutil.MustNoErr(t, h.db.SetActivePull(h.nodeID, false), "the node's bit dark")
+			proc, err := h.db.GetProcess(h.processID)
+			testutil.MustNoErr(t, err, "process")
+			sign := -1
+			if role == protocol.ClaimRoleProduce {
+				sign = 1
+			}
+			want := fxCount
+			tick := func(label string, d int) {
+				t.Helper()
+				h.eng.handleCounterDelta(CounterDeltaEvent{ProcessID: h.processID, StyleID: *proc.ActiveStyleID, Delta: int64(d)})
+				want += sign * d
+				if got := runtimeOf(t, h.eng, h.nodeID).RemainingUOPCached; got != want {
+					t.Errorf("%s: the node's count is %d, want %d: a one-node line charges every tick to its one bin",
+						label, got, want)
+				}
+			}
+			h.counter.Reset()
+
+			tick("a stroke before the request", 3)
+			h.requestRemoval(role)
+			coreWaybill(h, "removal", "AMR-1")
+			coreStagedAt(h, "removal", 0)
+			if b := backfills(h); len(b) != 0 {
+				t.Fatalf("Order A waits at the line, not released: backfills %v, want none", b)
+			}
+			tick("a stroke while Order A waits at the line", 2)
+			testutil.MustNoErr(t, orderClick("removal", dispEmpty)(h), "the station's RELEASE at the line")
+
+			b := backfills(h)
+			if len(b) != 1 {
+				t.Fatalf("after the release at the line: backfills %v, want exactly one", b)
+			}
+			if bo := backfillOf(h); bo == nil || bo.ID != b[0] {
+				t.Errorf("B %v is not the one A names as its sibling", bo)
+			}
+			if w := activePullWrites(h); len(w) != 0 {
+				t.Errorf("a one-node line wrote active_pull %d times:\n%s", len(w), strings.Join(w, "\n"))
+			}
+		})
+	}
+	t.Run("control: a paired side's release moves the line", func(t *testing.T) {
+		t.Parallel()
+		h := newRelHarness(t)
+		h.sequentialAB(protocol.ClaimRoleConsume, true)
+		h.counter.Reset()
+		coreWaybill(h, "removal", "AMR-1")
+		coreStagedAt(h, "removal", 0)
+		testutil.MustNoErr(t, orderClick("removal", dispEmpty)(h), "the station's RELEASE at the line")
+		if w := activePullWrites(h); len(w) == 0 {
+			t.Errorf("the pair's release wrote no active_pull: the scan cannot see the flip's write")
+		}
+	})
+}
+
+// activePullWrites is every statement the harness's store sent since its last
+// Reset that writes the active_pull bit.
+func activePullWrites(h *relHarness) []string {
+	var out []string
+	for _, s := range h.counter.Statements() {
+		if strings.Contains(s, "SET active_pull") {
+			out = append(out, s)
+		}
+	}
+	return out
 }

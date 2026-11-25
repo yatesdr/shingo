@@ -44,6 +44,9 @@ type pairSpec struct {
 	threePos  bool               // press-index with a second paired position
 	flipped   bool               // RefillBy: Robot 2
 	unstamped bool               // the node's first cycle: runtime.active_claim_id never written
+	// onePosition: a sequential claim with no partner, a one-node line (final
+	// brief 2a): paired_core_node left blank.
+	onePosition bool
 }
 
 func (s pairSpec) claimRole() protocol.ClaimRole {
@@ -74,7 +77,9 @@ func (s pairSpec) claimInput(styleID int64, payload string) processes.NodeClaimI
 	switch s.mode {
 	case protocol.SwapModeSingleRobot:
 	case protocol.SwapModeSequential:
-		in.PairedCoreNode = fxPressB
+		if !s.onePosition {
+			in.PairedCoreNode = fxPressB
+		}
 	default:
 		in.PairedCoreNode = fxPressB
 		if s.threePos {

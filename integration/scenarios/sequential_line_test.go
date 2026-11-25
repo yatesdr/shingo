@@ -7,9 +7,16 @@
 package scenarios
 
 import (
+	"fmt"
+	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
+
+	corebins "shingocore/store/bins"
+	coreorders "shingocore/store/orders"
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
@@ -201,4 +208,224 @@ func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
 			c.seqConfirm("the next request", next, backfill)
 		})
 	}
+}
+
+// TestScenario_SequentialLine_OneNodeHoldsOneBinAtEveryStep: a Sequential A/B
+// position with no partner, a one-node line (final brief 2a, point 1), consume
+// as HOP runs it. At every step of a swap the line holds at most one bin, and
+// the new one is set down on an empty line: in steady state (Order A lifts the
+// old bin, Order B made at A's release brings the next) and at a changeover
+// that changes the part (its one leg lifts, drops at the outbound destination,
+// fetches the new part and sets it down). After each, the line holds exactly
+// one bin, the new one, and the old one stands in the outbound destination.
+// The steady state's two orders ride one robot, back to back, as a plant with
+// one robot runs them (point 5).
+//
+// The changeover half is refused at 37146992: the planner asks for the partner
+// and leaves the line's task in error. It is a known red until the
+// save-and-changeover commit, and runs only under SHINGO_KNOWN_RED=1.
+func TestScenario_SequentialLine_OneNodeHoldsOneBinAtEveryStep(t *testing.T) {
+	t.Parallel()
+	t.Run("steady state", func(t *testing.T) {
+		t.Parallel()
+		c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential, plain: true})
+		mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+		c.settle()
+		c.lineHolds("before the request", "KSR-LINE-BIN")
+		removal := c.seqRemoval("the request", seqDoors[0].press)
+		c.seqAtTheLine("the request", removal)
+		c.lineHolds("the removal waits at the line", "KSR-LINE-BIN")
+		backfill := c.seqRelease("the request", removal)
+		c.lineHolds("the removal released, not yet lifted", "KSR-LINE-BIN")
+		a := c.pastItsWait("the removal", removal)
+		c.drive(a, "RUNNING")
+		if !c.pickupAt(a, ksrLine) {
+			c.notReached("the removal has no pickup block at " + ksrLine)
+		}
+		c.lineHolds("the removal lifted the old bin")
+		c.drive(c.coreOf(removal), "FINISHED")
+		c.eventually("the removal set the old bin down", func() bool {
+			return c.binAtDest("KSR-LINE-BIN")
+		})
+		// ONE ROBOT: the backfill rides the removal's robot (point 5).
+		var b *coreorders.Order
+		c.eventually("the backfill with the fleet", func() bool {
+			b = c.coreOf(backfill)
+			return b.VendorOrderID != ""
+		})
+		c.robots[b.VendorOrderID] = c.robotFor(a.VendorOrderID)
+		c.lineHolds("the backfill on its way")
+		c.drive(b, "RUNNING", "FINISHED")
+		c.driveUntil("the cycle delivered", func() bool {
+			if c.edgeRow(removal.ID).Status == protocol.StatusDelivered {
+				mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(removal.ID, 1), "confirm the removal")
+			}
+			return c.edgeRow(backfill.ID).Status == protocol.StatusDelivered
+		})
+		c.lineHoldsOneNew("the backfill set the next bin down", c.typeA)
+		c.seqConfirm("the cycle", removal, backfill)
+		if ra, rb := c.robotFor(a.VendorOrderID), c.robotFor(b.VendorOrderID); ra != rb {
+			t.Errorf("the removal rode %s and the backfill %s, want one robot for both", ra, rb)
+		}
+	})
+	t.Run("changeover", func(t *testing.T) {
+		if os.Getenv("SHINGO_KNOWN_RED") == "" {
+			t.Skip("final brief 2a red pin, red until a Sequential A/B position runs with no partner; " +
+				"run with SHINGO_KNOWN_RED=1")
+		}
+		t.Parallel()
+		c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential, plain: true})
+		c.lineHolds("before the changeover", "KSR-LINE-BIN")
+		before := c.lastID()
+		co, err := c.edge.Engine.StartProcessChangeover(c.processID, c.styleB, "ksr", "")
+		if err != nil {
+			c.dump("START")
+			t.Fatalf("START refused: %v", err)
+		}
+		c.tick()
+		var leg domain.Order
+		for _, o := range c.newRows(before) {
+			if o.OrderType == protocol.OrderTypeComplex && o.ProcessNodeID != nil && *o.ProcessNodeID == c.nodeID {
+				leg = o
+			}
+		}
+		if leg.ID == 0 {
+			task, err := c.edge.DB.GetChangeoverNodeTaskByNode(co.ID, c.nodeID)
+			mustNil(t, err, "the line's task")
+			c.dump("no leg")
+			t.Fatalf("the changeover made no leg for the one-node line: its task is a %s at %s",
+				task.Situation, task.State)
+		}
+		c.eventually("the leg with the fleet", func() bool { return c.coreOf(leg).VendorOrderID != "" })
+		c.drive(c.coreOf(leg), "RUNNING", "WAITING")
+		c.eventually("the leg waits at the line", func() bool {
+			return c.edgeRow(leg.ID).Status == protocol.StatusStaged
+		})
+		c.lineHolds("the leg waits at the line", "KSR-LINE-BIN")
+		if _, err := c.edge.Engine.ReleaseChangeoverWaitForNode(c.processID, c.nodeID,
+			edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}); err != nil {
+			c.dump("release")
+			t.Fatalf("the release at the line was refused: %v", err)
+		}
+		l := c.pastItsWait("the leg", leg)
+		c.drive(l, "RUNNING")
+		if !c.pickupAt(l, ksrLine) {
+			c.notReached("the leg has no pickup block at " + ksrLine)
+		}
+		c.lineHolds("the leg lifted the old bin")
+		c.drive(c.coreOf(leg), "FINISHED")
+		c.driveUntil("the leg done", func() bool {
+			if c.edgeRow(leg.ID).Status == protocol.StatusDelivered {
+				mustNil(t, c.edge.Engine.OrderManager().ConfirmDelivery(leg.ID, 1), "confirm the leg")
+			}
+			return protocol.IsTerminal(c.edgeRow(leg.ID).Status) && protocol.IsTerminal(c.coreOf(leg).Status)
+		})
+		if !c.binAtDest("KSR-LINE-BIN") {
+			c.dump("old bin")
+			t.Errorf("the old bin is not in the outbound destination")
+		}
+		c.lineHoldsOneNew("the leg set B's bin down", c.typeB)
+		c.driveUntil("the cutover gate open", func() bool {
+			ok, _, err := c.edge.Engine.ChangeoverGateStatus(c.processID)
+			return err == nil && ok
+		})
+		mustNil(t, c.edge.Engine.CompleteProcessProductionCutover(c.processID), "CUTOVER")
+		c.settle()
+		proc, err := c.edge.DB.GetProcess(c.processID)
+		mustNil(t, err, "process")
+		if proc.ActiveStyleID == nil || *proc.ActiveStyleID != c.styleB {
+			t.Errorf("the process is on style %v after CUTOVER, want %d", proc.ActiveStyleID, c.styleB)
+		}
+		c.lineHoldsOneNew("after CUTOVER", c.typeB)
+	})
+}
+
+// binsAt is the bins Core holds at node.
+func (c *ksrCell) binsAt(node string) []*corebins.Bin {
+	c.t.Helper()
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	var out []*corebins.Bin
+	for _, b := range bins {
+		if c.nodeName(b.NodeID) == node {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// lineHolds asserts the line holds exactly the bins labelled, and none when
+// none is named.
+func (c *ksrCell) lineHolds(label string, want ...string) {
+	c.t.Helper()
+	var got []string
+	for _, b := range c.binsAt(ksrLine) {
+		got = append(got, b.Label)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		c.dump(label)
+		c.t.Errorf("%s: the line holds %v, want %v", label, got, want)
+	}
+}
+
+// lineHoldsOneNew asserts the line holds one bin, of type bt, and not the one
+// it started with.
+func (c *ksrCell) lineHoldsOneNew(label string, bt *corebins.BinType) {
+	c.t.Helper()
+	on := c.binsAt(ksrLine)
+	if len(on) != 1 || on[0].Label == "KSR-LINE-BIN" || on[0].BinTypeID != bt.ID {
+		var got []string
+		for _, b := range on {
+			got = append(got, fmt.Sprintf("%s (type %d)", b.Label, b.BinTypeID))
+		}
+		c.dump(label)
+		c.t.Errorf("%s: the line holds %v, want one new bin of %s", label, got, bt.Code)
+	}
+}
+
+// binAtDest reports whether the bin labelled stands in the outbound
+// destination's slots.
+func (c *ksrCell) binAtDest(label string) bool {
+	c.t.Helper()
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	for _, b := range bins {
+		if b.Label == label {
+			return strings.HasPrefix(c.nodeName(b.NodeID), ksrDest+"-")
+		}
+	}
+	return false
+}
+
+// pastItsWait waits until Core has let the order's robot past its station wait
+// (every block of the order is with the fleet) and returns Core's row.
+func (c *ksrCell) pastItsWait(label string, o domain.Order) *coreorders.Order {
+	c.t.Helper()
+	c.eventually(label+": Core lets the robot past its wait", func() bool {
+		v := c.core.sim.GetOrder(c.coreOf(o).VendorOrderID)
+		return v != nil && v.Complete
+	})
+	return c.coreOf(o)
+}
+
+// pickupAt is the fleet reporting the order's pickup block at node done, as
+// the real poller does mid-order, and the messages that follow pumped. liftAt
+// takes the first block at the node, which on a sequential leg is its station
+// wait there.
+func (c *ksrCell) pickupAt(o *coreorders.Order, node string) bool {
+	c.t.Helper()
+	v := c.core.sim.GetOrder(o.VendorOrderID)
+	if v == nil {
+		return false
+	}
+	for _, b := range v.Blocks {
+		if b.Location == node && b.Action == protocol.ActionPickup {
+			ok := c.core.sim.CompleteBlock(o.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0)
+			c.settle()
+			return ok
+		}
+	}
+	return false
 }
