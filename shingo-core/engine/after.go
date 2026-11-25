@@ -59,13 +59,17 @@ func (q *afterQueue) later(fn func()) {
 }
 
 // run serves the queue until stop closes. Work still queued at stop is dropped;
-// the engine is going down. What a restart does about each kind:
+// the engine is going down. Four kinds are handed here (every later call:
+// wiring.go and wiring_lane_gate.go); what the next engine does about each:
+//   - a resumed parent's acquire (resumeAcquire): the parent is left
+//     `pending`, which the restart's own write has told its station; the boot
+//     scan (startBootScan) asks it, and the write where it lands tells the
+//     station. PIN: TestResume_AnAcquireDroppedAtStopIsAskedAndToldByTheNextEngine;
 //   - a threshold recheck (BinUpdated): the monitor's startup sweep evaluates
 //     every binding;
 //   - a swap request's contradiction note: lost; it is a log line and a chip;
-//   - a resumed parent's acquire: the boot pass and the sweep ask it, but its
-//     station notice ("dispatched", resumeAcquire) is not sent again by
-//     anything here.
+//   - a home clear's re-run (RerunClearsFor): the lane liveness floor's 60 s
+//     tick runs it again (dispatch sweepVacateWaiters).
 func (q *afterQueue) run(stop <-chan struct{}) {
 	for {
 		select {
