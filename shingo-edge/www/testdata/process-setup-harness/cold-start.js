@@ -962,6 +962,49 @@ async function bugNothingBelow() {
         foot || !/below/.test(bar), 'no "+ Add a position" is drawn');
 }
 
+// NO STAGING ON FIRST STYLE (brief G C2): a 2-Robot Swap whose source is one
+// node (SRC_1) is offered "No staging (waits at the source)" first on its
+// Inbound staging pick, its node beside it and not listed again; picked, the
+// draft's staging is the source and the pick reads as the choice. From the
+// group GRP_A it is offered none. The mode is found by its card's name.
+async function pinFirstStyleNoStaging() {
+    L.push('', '## Setup › First style on Press A: a 2-Robot Swap with no staging');
+    const page = await T.openPage(pressA(NO_FLOW, NOT_RUN));
+    page.click('root', { act: 'setup-style' });
+    await page.settle();
+    const labels = page.pd('M')().modeLabels();
+    const two = Object.keys(labels).find(m => labels[m].replace('‑', '-') === '2-Robot Swap');
+    const word = page.pd('NO_STAGING');
+    const html = () => page.root.innerHTML;
+    const shown = key => T.decode((new RegExp('data-pick="' + key + '"><span class="t">([^<]*)</span>').exec(html()) || [])[1] || '');
+    const rows = async () => {
+        page.click('root', { act: 'fs-pick', pick: 'staging' });
+        await page.settle();
+        return (page.byId('pd-pop') ? page.byId('pd-pop').querySelectorAll('.picker-row') : [])
+            .map(r => r.getAttribute('data-value') + '=' + T.text(r.innerHTML));
+    };
+    page.click('root', { act: 'fs-mode', mode: two });
+    await page.settle();
+    const fromGroup = await rows();
+    L.push('  from ' + shown('source') + ', Inbound staging offers: ' + fromGroup.join(' · '));
+    check('from a group, no such choice', !fromGroup.some(r => r.indexOf(word) >= 0), fromGroup.join(' · '));
+    page.click('root', { act: 'fs-pick', pick: 'source' });
+    await page.settle();
+    T.pickerRow(page, 'pd-pop', 'SRC_1');
+    await page.settle();
+    const fromOne = await rows();
+    L.push('  from ' + shown('source') + ', Inbound staging offers: ' + fromOne.join(' · '));
+    check('from SRC_1, the choice comes first and stores SRC_1, which is not listed again',
+        (fromOne[0] || '').indexOf('SRC_1=' + word) === 0 && fromOne.filter(r => r.indexOf('SRC_1=') === 0).length === 1,
+        fromOne.join(' · '));
+    if (!fromOne.some(r => r.indexOf(word) >= 0)) return;
+    T.pickerRow(page, 'pd-pop', 'SRC_1');
+    await page.settle();
+    const cell = page.S.model.cells[page.S.firstStyle.cur] || {};
+    check('picked, the draft stages at its source and the pick reads ' + JSON.stringify(shown('staging')),
+        cell.staging === 'SRC_1' && shown('staging') === word, 'staging=' + JSON.stringify(cell.staging || ''));
+}
+
 async function run(t) {
     T = t;
     T.setCurrent('cold-start.txt');
@@ -980,6 +1023,7 @@ async function run(t) {
     await pinFirstStyle();
     await pinFirstStylePartner();
     await pinFirstStyleRepick();
+    await pinFirstStyleNoStaging();
     await pinEditProcess();
     await pinAddProcess();
     T.out['cold-start.txt'] = L.join('\n') + '\n';

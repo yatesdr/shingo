@@ -324,6 +324,57 @@ const BUGS = [
         },
     },
     {
+        // NO STAGING IS THE SOURCE NAMED AGAIN (brief G C2): a 2-Robot Swap
+        // whose source is one node offers "No staging (waits at the source)"
+        // first on its inbound staging pick, which stores the source; a
+        // staging equal to the source reads back as that choice, on the pick
+        // and on the row; a group source is offered none. Changing the
+        // source later leaves the staging naming the old node, and the row
+        // then reads that node. The fixture's POS_A3 and POS_A4 are 2-Robot
+        // Swaps from GRP_A (a group), POS_A3 staging at STG_1; SRC_1 is one
+        // node.
+        title: 'No staging · a 2-Robot Swap from one node may wait at its source instead of staging',
+        run: async page => {
+            const apply = page.pd('apply'), optionsFor = page.pd('optionsFor');
+            await page.pd('loadCoreNodes')();
+            const word = page.pd('typeof NO_STAGING === "string" ? NO_STAGING : ""') || 'No staging (waits at the source)';
+            const choice = n => optionsFor(n, 'col:staging:staging').find(o => o.label === word);
+            const cellText = n => String(page.pd('columnCell')(n, 'staging')).replace(/<[^>]*>/g, '');
+            const out = [];
+            out.push(['POS_A4, from the group GRP_A, is offered no such choice', !choice('POS_A4'),
+                JSON.stringify(choice('POS_A4'))]);
+            apply({ type: 'setSource', node: 'POS_A3', source: 'SRC_1' });
+            await page.settle();
+            const c = choice('POS_A3');
+            out.push(['POS_A3 from SRC_1: its staging pick offers ' + JSON.stringify(word) + ' storing SRC_1, not picked',
+                !!c && c.value === 'SRC_1' && !c.on && !!c.action && c.action.type === 'setStaging' && c.action.staging === 'SRC_1',
+                JSON.stringify(c)]);
+            const first = optionsFor('POS_A3', 'col:staging:staging').filter(o => !o.note)[0];
+            out.push(['and offers it first', !!first && first.label === word, JSON.stringify(first)]);
+            if (!c) return out;
+            T.pickChip(page, 'POS_A3', 'col:staging:staging', 'SRC_1');
+            await page.settle();
+            const cell = page.S.model.cells.POS_A3;
+            out.push(['picked: POS_A3 stores inbound staging ' + JSON.stringify(cell.staging), cell.staging === 'SRC_1', '']);
+            out.push(['the pick reads back as the choice', !!choice('POS_A3') && choice('POS_A3').on,
+                JSON.stringify(choice('POS_A3'))]);
+            const short = word.split(' (')[0];
+            out.push(['the row reads ' + JSON.stringify(cellText('POS_A3')) + ', all of the choice and its node in the title',
+                cellText('POS_A3').indexOf(short) >= 0 &&
+                String(page.pd('columnCell')('POS_A3', 'staging')).indexOf('SRC_1: ' + word) >= 0,
+                'the row names the node, not the choice']);
+            out.push(['SRC_1 is not offered twice', optionsFor('POS_A3', 'col:staging:staging').filter(o => o.value === 'SRC_1').length === 1,
+                JSON.stringify(optionsFor('POS_A3', 'col:staging:staging').map(o => o.value))]);
+            apply({ type: 'setSource', node: 'POS_A3', source: 'GRP_A' });
+            await page.settle();
+            out.push(['the source moved to GRP_A: the staging is left at ' + JSON.stringify(page.S.model.cells.POS_A3.staging) +
+                ' and the row reads ' + JSON.stringify(cellText('POS_A3')),
+                page.S.model.cells.POS_A3.staging === 'SRC_1' && cellText('POS_A3').indexOf(short) < 0,
+                'the row still reads the choice']);
+            return out;
+        },
+    },
+    {
         title: 'F24 · R3 · the desktop\'s bar never says "Tap the position" or "use a preset"',
         run: async page => {
             const M = page.pd('M')(), apply = page.pd('apply');

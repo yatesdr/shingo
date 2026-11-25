@@ -66,6 +66,16 @@ ok   POS_A7's partner cell reads "No partner (one node)"
 ok   the mode menu's Sequential A/B glyph: POS_A7 1 slot(s), POS_A9 2
 ok   POS_A9 given a swap with no partner: POS_A9 names none · POS_A10 names none
 
+## No staging · a 2-Robot Swap from one node may wait at its source instead of staging
+ok   POS_A4, from the group GRP_A, is offered no such choice
+ok   POS_A3 from SRC_1: its staging pick offers "No staging (waits at the source)" storing SRC_1, not picked
+ok   and offers it first
+ok   picked: POS_A3 stores inbound staging "SRC_1"
+ok   the pick reads back as the choice
+ok   the row reads "InboundNo staging", all of the choice and its node in the title
+ok   SRC_1 is not offered twice
+ok   the source moved to GRP_A: the staging is left at "SRC_1" and the row reads "InboundSRC_1"
+
 ## F24 · R3 · the desktop's bar never says "Tap the position" or "use a preset"
 ok   a position with no swap mode: "1 to fix POS_A11 · how does it swap? — Pick its swap mode on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) No unsaved changes"
 ok   a position with no part: "1 to fix POS_A11 · which part runs here? — Pick it on its row. · note: STG_1 is staged at by 2 positions (POS_A3, POS_A5); STG_2 is staged at by 3 positions (POS_A4, POS_A5, POS_A6) Unsaved changes"

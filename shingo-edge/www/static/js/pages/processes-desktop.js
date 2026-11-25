@@ -1040,6 +1040,14 @@ function firstValue(state, n, p) {
     return (p.key === 'parkOld' ? choices[1] || choices[0] : choices[0]) || '';
 }
 
+// firstWaitsAt is stagingWaitsAt for First style's position n.
+function firstWaitsAt(n) {
+    const cell = S.model.cells[n];
+    const src = FIRST_PICKS.find(p => p.key === 'source');
+    const source = (cell && cell.on ? cell.source : firstValue(S.model, n, src)) || '';
+    return stagingWaitsAt({ mode: firstEff(n).mode, source: source }, n);
+}
+
 // buildFirstStyle is the step's draft as the composer's own actions on the
 // style: each position with a part, not left free, added in its swap, its
 // role, its part, and each pick its swap uses.
@@ -1154,7 +1162,8 @@ function firstPositionHTML(n, rows) {
         // bar says what is missing.
         const cell = S.model.cells[n];
         const value = (cell && cell.on ? cell[p.key] : firstValue(S.model, n, p)) || '';
-        const shown = value || (x[1] === 'required' ? (firstChoices(p, n).length ? 'pick one'
+        const shown = (p.key === 'staging' && value && value === firstWaitsAt(n) ? NO_STAGING : value) ||
+            (x[1] === 'required' ? (firstChoices(p, n).length ? 'pick one'
             : p.box === 'partner' ? 'no other position on this line' : 'none in the ' + boxWord(p.box) + ' box') : p.box === 'partner' ? M().NO_PARTNER : 'none');
         // The partner pick's one line: a back's part, and where it went.
         const note = p.box === 'partner' ? firstBackNote(n) : '';
@@ -1325,16 +1334,26 @@ async function openFirstAddPart(btn) {
 }
 
 // openFirstPick is one of the open position's picks: its routing box's names,
-// and "none" for a field its swap may go without.
+// and "none" for a field its swap may go without; NO_STAGING as on the Styles
+// table.
 function openFirstPick(btn) {
     const pop = $('pd-pop');
     const d = S.firstStyle;
     const p = FIRST_PICKS.find(x => x.key === btn.dataset.pick);
     const n = d && d.cur;
     if (!pop || !d || !p || !n || !S.model) return;
+    const at = p.key === 'staging' ? firstWaitsAt(n) : '';
+    if (at && !S.coreNodes && !btn.dataset.nodesAsked) {
+        btn.dataset.nodesAsked = '1';
+        void loadCoreNodes().then(() => openFirstPick(btn));
+        return;
+    }
     const e = firstEff(n);
     const use = firstUse(S.model, e.role, e.mode, p);
-    const rows = (use === 'used' ? [{ value: '-', label: p.box === 'partner' ? M().NO_PARTNER : 'none' }] : []).concat(firstChoices(p, n).map(x => ({ value: x, label: x })));
+    const wait = at && (firstValue(S.model, n, p) === at || oneNode(at)) ? at : '';
+    const rows = (use === 'used' ? [{ value: '-', label: p.box === 'partner' ? M().NO_PARTNER : 'none' }] : [])
+        .concat(wait ? [{ value: wait, label: NO_STAGING, note: wait }] : [],
+            firstChoices(p, n).filter(x => x !== wait).map(x => ({ value: x, label: x })));
     openRowPicker(pop, btn, rows, v => {
         d.own[n].picks[p.key] = v === '-' ? '' : v;
         // Its own pick: a copy pairing wrote is n's own now (firstRows).
@@ -3486,8 +3505,15 @@ function columnCell(node, column) {
         // it, so neither is cut: the word is not inside the narrow chip.
         if (chip.required || chip.value || isOpen(node, kind)) {
             const above = column === 'staging' && chip.value && word ? '<small class="pd-cellk">' + esc(word) + '</small>' : '';
-            return above + picker(node, kind, chip.value ? esc(chip.value) : k + '—',
-                chip.required && !chip.value ? 'bad' : '', chip.label + ' ' + (chip.value || 'not set'));
+            // A staging that is the source reads as NO_STAGING: its first
+            // words (all of it widened the table past 1440 px), the rest in
+            // the title.
+            const waits = chip.key === 'staging' && chip.value &&
+                chip.value === stagingWaitsAt(S.model.cells[node], node);
+            const shown = waits ? NO_STAGING.split(' (')[0] : chip.value;
+            return above + picker(node, kind, shown ? esc(shown) : k + '—',
+                chip.required && !chip.value ? 'bad' : '',
+                chip.label + ' ' + (chip.value || 'not set') + (waits ? ': ' + NO_STAGING : ''));
         }
         return blank(node, kind, k + '<span class="pd-dim">—</span>', chip.label + ' not set');
     }).join('<i class="pd-cellsep"></i>');
@@ -3972,6 +3998,27 @@ function pairInTable(m, node) {
     return m;
 }
 
+// NO STAGING IS THE SOURCE NAMED AGAIN (brief G C2): a 2‑Robot Swap stores its
+// source as its inbound staging, and the Edge builds its supply as wait, pick
+// up and set down there (engine stageSteps' same-node arm). Nothing new is
+// stored. It does not follow a source changed later: the staging keeps the
+// old node, and the row reads that node. Pinned in table-bugs.txt, cold-start.txt.
+const NO_STAGING = 'No staging (waits at the source)';
+
+// stagingWaitsAt is a 2‑Robot Swap row's source, '' for another mode or a row
+// with a keep-staged spot (its carrier is lifted there: no wait at the source).
+function stagingWaitsAt(c, node) {
+    if (!c || c.mode !== 'two_robot' || !c.source) return '';
+    return M().advancedFor(S.model, node).keep_staged_node ? '' : c.source;
+}
+
+// oneNode: Core's node list holds name, not as a group or a lane (isPickGroup's
+// test). A list not read yet holds nothing.
+function oneNode(name) {
+    const n = (S.coreNodes || []).find(x => x.name === name);
+    return !!n && n.node_type !== 'NGRP' && n.node_type !== 'LANE' && !isGroupRow(n);
+}
+
 function optionsFor(node, kind) {
     const c = S.model.cells[node];
     const routing = S.composer.routing;
@@ -4054,7 +4101,15 @@ function optionsFor(node, kind) {
             // so as a note), so a node another active position uses for
             // either staging field stays a choice and is marked with who.
             const usedBy = partnering ? {} : stagingUsers(node);
-            return clear.concat(list.map(n => ({
+            // NO_STAGING first, where the source is one node or is the
+            // staging already; its node is not listed again.
+            const at = key === 'staging' ? stagingWaitsAt(c, node) : '';
+            const wait = at && (chip.value === at || oneNode(at)) ? at : '';
+            const waits = wait ? [{
+                value: wait, label: NO_STAGING, on: chip.value === wait, where: wait, waits: true,
+                use: usedBy[wait] || '', action: { type: act, node: node, staging: wait },
+            }] : [];
+            return clear.concat(waits, list.filter(n => n !== wait).map(n => ({
                 value: n, label: n, on: chip.value === n, use: usedBy[n] || '',
                 action: Object.assign({ type: act, node: node }, { [arg]: n }),
             })));
@@ -4220,6 +4275,13 @@ function openPicker(btn) {
     }
     if (kind === 'part') { void openPartPop(btn, node); return; }
     if (kind === 'reorder') { openReorderPop(btn, node); return; }
+    // NO_STAGING asks Core's node list (oneNode): read it once first.
+    if (kind === 'col:staging:staging' && !S.coreNodes && !btn.dataset.nodesAsked &&
+        stagingWaitsAt(S.model.cells[node], node)) {
+        btn.dataset.nodesAsked = '1';
+        void loadCoreNodes().then(() => openPicker(btn));
+        return;
+    }
     const opts = optionsFor(node, kind);
     const pop = $('pd-pop');
     if (!pop) return;
@@ -4237,8 +4299,9 @@ function openPicker(btn) {
     // `none` entry to clear it, so a role with nothing to offer still drew one
     // button and so never counted as empty — which would have left the staging
     // picker below silently offering a single `none` where the station says
-    // why. The note is keyed on the options that carry a VALUE.
-    const note = opts.some(o => o.value) ? '' : pickerEmptyWord(kind);
+    // why. The note is keyed on the options that carry a VALUE, NO_STAGING
+    // aside: an empty box still says why and offers Add and use.
+    const note = opts.some(o => o.value && !o.waits) ? '' : pickerEmptyWord(kind);
     // A NODE CHIP IS THE SHARED PICKER (slice 5): a search over the model's own
     // choices, the one on marked, what another position already takes said on
     // its row. Role and swap mode stay the menus below: two to four answers,

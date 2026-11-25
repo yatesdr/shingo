@@ -55,6 +55,7 @@ Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either ord
 - A script that cancels an Edge order at /api/orders/{id}/abort still works for this release; the address is /api/orders/{id}/cancel, and /abort goes in the next
 - Core's "Not cancelled" for an order that had already ended says how and when it ended, and no longer the history words after it, such as "(receipt: auto_confirm_timeout, count: 0)"; they stay in the order's history on Core's order page
 - The Edge's Orders page shows Core's "Not cancelled" as Core's answer, an amber note with no "Error:" in front of it; a cancel the Edge itself refuses, or one with no answer, still reads as an error
+- Setting up a 2-Robot Swap on the Processes page (its row on Styles, or Setup's First style), when its bins come from one node and not a group the inbound staging pick offers "No staging (waits at the source)" first: the robot bringing the new bin waits at that node, with no stop on the way, and the node no longer has to be added to the Staging box. A position already staging at its own source reads "No staging". Changing the source later leaves the staging at the old node, which the row then names
 
 ## v0.19.0 — 2026-11-22
 

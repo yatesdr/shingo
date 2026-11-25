@@ -262,6 +262,13 @@ ok   and is a row of its own again, with the swap it had before it was paired (2
 ok   a swap with no partner unpairs both: POS_A3 no longer names POS_A1
 ok   Sequential A/B again pairs the kept pick both ways, as if picked
 
+## Setup › First style on Press A: a 2-Robot Swap with no staging
+  from GRP_A, Inbound staging offers: STG_1=STG_1 · STG_2=STG_2 · STG_3=STG_3
+ok   from a group, no such choice
+  from SRC_1, Inbound staging offers: SRC_1=No staging (waits at the source) SRC_1 · STG_1=STG_1 · STG_2=STG_2 · STG_3=STG_3
+ok   from SRC_1, the choice comes first and stores SRC_1, which is not listed again
+ok   picked, the draft stages at its source and the pick reads "No staging (waits at the source)"
+
 ## Setup › Change… (Edit process): Save writes only what moved, through Settings' doors
   the sheet: "Edit process" · boxes hold positions 16, source 2, staging 3, destination 2 · name "Press A" · screens "Operator screens each set on Settings Screen A · Unloader A "
   nothing changed, Save: no write · sheet closed · notices ["Nothing had changed."]
