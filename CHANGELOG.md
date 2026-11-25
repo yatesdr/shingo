@@ -60,6 +60,7 @@ Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either ord
 - CLEAR BIN is refused on a cart a robot is staged at to take: with a line's robot waiting at the loader home under the cart, Core answers "Not cleared: a robot is staged at ‹home› to take ‹cart› to ‹line›." It used to empty the cart under the waiting robot, which then took it to the line empty. The loader board still offers CLEAR BIN there, and a cart whose robot is still on its way clears as before
 - A Sequential A/B line whose carts come from a loader's home now gets the cart its backfill fetches there: the robot sets it on the line. It used to set it back down on the home it had just lifted it from, and the line was left without a cart. The same for a part change's delivery from a staging spot that is a loader's home
 - A cart coming back to a loader that has two homes for its part goes to the second home when its own home is taken and the second stands empty, before any buffer. It used to go to a buffer, or, with every buffer full, wait while Core's message named that empty home as a spot to clear
+- A part change, a tool change or an index press's Robot 1 that sets the old cart down at a loader's home on its way now sends it to a free buffer when that home already holds a cart, or waits for a spot when every buffer is full ("Waiting for a slot at" the home). It used to send the robot to set the cart down on the occupied home, and Core then read the cart standing there as in transit
 
 ## v0.19.0 — 2026-11-22
 

@@ -527,16 +527,18 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 	// own process node (Pattern A), which takes a part change's stage off a home
 	// and sets it back down there; the Sequential backfill, which fills its line,
 	// is left to go to the line (B23, brief H; TestLoaderPark_EveryBuilderLeg's
-	// stage and backfill rows). A set-down before the last is asked nothing (B24,
-	// the same test). The park moves the drop in the plan this pass sends and in
-	// the stored one (repoint), so the create carries it. An order that lifts and
-	// sets down at no dedicated-loader member is left untouched.
+	// stage and backfill rows). A set-down before the last at a loader member is
+	// asked first, the physical gate, and moved to a free buffer when refused
+	// (placeEarlierDrops, B24, brief H). The park moves a drop in the plan this
+	// pass sends and in the stored one (repoint), so the create carries it. An
+	// order that lifts and sets down at no dedicated-loader member is left
+	// untouched.
 	//
 	// When neither can take the bin and the only destination left is the home just
 	// found unavailable, the order WAITS here rather than being dispatched onto it.
-	// Only a leg whose last drop is a loader member can reach that answer; Pattern
-	// A, finding no buffer, keeps the drop it was pointed at, so a supply bound for
-	// the line is never held here.
+	// Only a leg that sets down at a loader member, last or before, can reach that
+	// answer; Pattern A, finding no buffer, keeps the drop it was pointed at, so a
+	// supply bound for the line is never held here for its last drop.
 	if waitHome := d.placeForDedicatedLoader(order, resolvedSteps, pc); waitHome != "" {
 		if d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLoaderParkNoSlot,
 			d.parkNoSlotParams(order, resolvedSteps, waitHome)) {

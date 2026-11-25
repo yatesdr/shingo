@@ -97,8 +97,9 @@ import (
 // Returns the name of the home the order must WAIT for, or "" when placement
 // left it with a destination it can drive to. A non-empty return means neither
 // the home nor any buffer can take the bin and the only destination left is the
-// home just found occupied; the caller queues the order rather than dispatching
-// it there (see placeForLoader).
+// home just found occupied (for a set-down before the last, the member it was
+// pointed at: placeEarlierDrops); the caller queues the order rather than
+// dispatching it there (see placeForLoader).
 func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep, pc *pairPass) (waitHome string) {
 	// Pattern A: SourceNode is a home position, the plan holds no wait and the leg
 	// does not set its cart down at its own process node (legPlacesLineBin), read
@@ -117,8 +118,12 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 	// differ in their first question: Pattern A asks the in-flight count and its
 	// own plan (orderDeliversTo); Pattern B asks a return's home clear
 	// (homeClearForReturn) and everything else the physical gate. Only Pattern A
-	// can reach the drain (it points at a node other than the home). Neither asks
-	// about a set-down before the plan's last (B24, the same test).
+	// can reach the drain (it points at a node other than the home). A set-down
+	// before the plan's last is asked first, on its own (placeEarlierDrops, B24,
+	// brief H): it used to be asked nothing.
+	if wait := d.placeEarlierDrops(order, steps); wait != "" {
+		return wait
+	}
 
 	// Pattern A DECLINING must fall through to Pattern B, not end placement.
 	// Before this was extracted, Pattern A's three lookup failures each
@@ -242,6 +247,102 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			return d.placeForLoader(order, home.LoaderID, homeName, pl)
 		}
 		d.setParkDestination(order, steps, homeName, "home")
+	}
+	return ""
+}
+
+// placeEarlierDrops asks the park's question of every set-down before the
+// plan's last that lands on a dedicated-loader member (B24, brief H): may the
+// cart go down there now? It takes the gate a supply to a home takes in Pattern
+// B, the physical one (CheckDropoffCapacity), and another order's reservation
+// or hard claim. Refused, the set-down moves to the loader's first free buffer
+// the plan does not already set down at; with none, the order waits on the
+// member, as a last drop does (placeForLoader), and is asked again every pass.
+// The plan's last drop is placeForDedicatedLoader's own question. Before this,
+// a part change's old cart, a tool change's leg and an index press's Robot 1
+// were sent to set down on an occupied home (TestLoaderPark_EveryBuilderLeg's
+// tooling, part-change and press-index rows), and the part change's landing
+// evicted the record of the spare standing there
+// (TestScenario_SequentialLine_PartChangeThroughItsHomes).
+//
+// A SET-DOWN AT A NODE THE PLAN LIFTS FROM EARLIER IS NOT ASKED, as before. The
+// cart standing there is the one the plan lifts first, which the gate cannot
+// tell from a stranger's, and a set-down the plan lifts from again later would
+// be moved away from that lift (the Manual Order page's order staged at a home:
+// TestLoaderPark_TheBriefsRows, "Manual Order page: staged at HOME, delivered
+// to the line"; TestLoaderPlacementPicks row 02).
+func (d *Dispatcher) placeEarlierDrops(order *orders.Order, steps []resolvedStep) (waitAt string) {
+	last := lastDropIndex(steps)
+	for i := 0; i < last; i++ {
+		if steps[i].Action != protocol.ActionDropoff || steps[i].Node == "" || liftsAtBefore(steps, i) {
+			continue
+		}
+		members, name, refused := d.earlierDropRefused(order, steps[i].Node)
+		if !refused {
+			continue
+		}
+		buffer := d.earlierDropBuffer(members, steps, order.ID)
+		if buffer == "" {
+			d.dbg("place: order %d set-down %d at %s cannot go down and no buffer is free — it waits", order.ID, i, name)
+			return name
+		}
+		if _, err := d.repoint(order, steps, stepMove{at: i, action: protocol.ActionDropoff, node: buffer}, nil); err != nil {
+			log.Printf("dispatch: place order %d set-down %d at %s → %s: %v", order.ID, i, name, buffer, err)
+			return name
+		}
+		d.dbg("place: order %d set-down %d at %s cannot go down — moved to buffer %s", order.ID, i, name, buffer)
+	}
+	return ""
+}
+
+// liftsAtBefore reports whether the plan picks up at step i's node before step i.
+func liftsAtBefore(steps []resolvedStep, i int) bool {
+	for _, s := range steps[:i] {
+		if s.Action == protocol.ActionPickup && s.Node == steps[i].Node {
+			return true
+		}
+	}
+	return false
+}
+
+// earlierDropRefused reports whether a set-down at node may not be made now:
+// node is a member of a dedicated-positions loader, and another order holds it
+// or the physical gate finds it taken. It returns the loader's members for the
+// buffer walk and the member's name. A node that is no such member, or cannot
+// be read, is not refused (it was asked nothing before brief H).
+func (d *Dispatcher) earlierDropRefused(order *orders.Order, node string) (members []store.LoaderPlacementMember, name string, refused bool) {
+	n, err := d.db.GetNodeByDotName(node)
+	if err != nil || n == nil {
+		return nil, "", false
+	}
+	members, err = d.db.LoaderMembersForPlacement(n.ID, order.ID)
+	m := memberAt(members, n.ID)
+	if err != nil || m == nil {
+		return nil, "", false
+	}
+	if l, err := d.db.GetLoader(m.LoaderID); err != nil || l == nil || l.Layout != loaders.LayoutDedicatedPositions {
+		return nil, "", false
+	}
+	if m.HeldByStranger {
+		return members, n.Name, true
+	}
+	blocked, _ := CheckDropoffCapacity(d.db, n.Name, order.ID)
+	return members, n.Name, blocked
+}
+
+// earlierDropBuffer is the first buffer of the loader, in member order, that
+// takes a set-down now (unheld, and clear by the full capacity gate, as
+// placeForLoader walks them) and that the plan does not already set down at:
+// the gate does not count the asker's own drops. "" when there is none.
+func (d *Dispatcher) earlierDropBuffer(members []store.LoaderPlacementMember, steps []resolvedStep, orderID int64) string {
+	for _, m := range members {
+		if m.Kind != loaders.HomeKindBuffer || m.HeldByStranger || orderDeliversTo(steps, m.NodeName) {
+			continue
+		}
+		if blocked, _ := CheckDropoffCapacity(d.db, m.NodeName, orderID); blocked {
+			continue
+		}
+		return m.NodeName
 	}
 	return ""
 }

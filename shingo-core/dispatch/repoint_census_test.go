@@ -21,6 +21,7 @@ func TestCensus_RepointIsTheOneStepNodeWriter(t *testing.T) {
 		"dispatch/lane_gate_choose.go:patchChosenDrop":    "after the splice: the lane gate's slot of its group, chosen when the robot stands at the group's spot",
 		"dispatch/lane_gate_release.go:rebindGatedPickup": "after the splice: a dug bin's pickup, moved to the slot of the same lane it stands in",
 		"dispatch/loader_place.go:setParkDestination":     "before the splice: a dedicated loader's return, parked at its home, a buffer or a vacated slot",
+		"dispatch/loader_place.go:placeEarlierDrops":      "before the splice: a set-down before the plan's last, moved off a loader member that cannot take it to a free buffer",
 		"dispatch/loader_place.go:placeForContainment":    "before the splice: a contained part's drop, diverted to containment",
 	}, "A new door that moves a step goes through repoint and is named here; a step moved any other way after the "+
 		"splice keeps waits spliced for where it was (the lane gate refuses that plan on every pass).")

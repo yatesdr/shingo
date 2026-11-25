@@ -201,6 +201,8 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 		"dispatch/loader_place.go:tryPlaceFromHomeSource":             "dedicated loader: a home-sourced placement",
 		"dispatch/loader_place.go:homeForPayload":                     "dedicated loader: choosing a home for a payload",
 		"dispatch/loader_place.go:placeForLoader":                     "loader: choosing a buffer",
+		"dispatch/loader_place.go:earlierDropRefused":                 "dedicated loader: whether a set-down before the plan's last may go down on a member (brief H; it was asked nothing before)",
+		"dispatch/loader_place.go:earlierDropBuffer":                  "dedicated loader: choosing a buffer for a set-down before the plan's last, as placeForLoader walks them",
 		"dispatch/loader_place.go:returnLiftFrom":                     "a swap's supply, before its pick: whether a spot that takes the returning carrier stands free (asks placement's own gate, so it moves exactly when placement's answer does)",
 		"dispatch/planning_service.go:decideTransport":                "wire intake: the plain path's gate, asked before the row is born (B3)",
 		"dispatch/preview.go:PreviewDropoffCapacity":                  "the read-only preview the UI shows",

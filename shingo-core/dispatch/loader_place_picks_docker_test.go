@@ -32,8 +32,12 @@ import (
 //     is clear, or by the full capacity gate otherwise (placeForDedicatedLoader);
 //   - the carrier's own home, when it does not belong where it was pointed
 //     (homeForPayload);
-//   - the buffers, in member order, then drain or wait (placeForLoader);
+//   - another free home of the cart's part (homeForPayload), then the buffers,
+//     in member order, then drain or wait (placeForLoader);
 //   - the member a partner's committed lift empties (placeVacated);
+//   - a set-down before the plan's last at a member, by the full capacity gate,
+//     then the buffers the plan does not already use, then wait
+//     (placeEarlierDrops; TestLoaderPark_EveryBuilderLeg's B24 rows);
 //   - quality containment's divert to a concrete node (placeForContainment).
 //
 // Each row puts one hold on the node the choose point would otherwise take, and
@@ -189,6 +193,32 @@ func placeVacatedPair(hold func(t *testing.T, db *store.DB, fx *pickFixture)) fu
 		pc := vsLift(t, db, supply, partial.ID, fx.buffer.Name)
 		wait := d.placeForDedicatedLoader(ret, steps, pc)
 		return fx.landed(ret, wait, nil)
+	}
+}
+
+// placeEarlierDrop: a part change's shape, which sets the line's cart down at
+// the home on its way (pickup line, dropoff home, pickup stage, then its last
+// drop: the outbound, or lastAt). Where the set-down at the home landed.
+func placeEarlierDrop(lastAt func(fx *pickFixture) *nodes.Node, hold func(t *testing.T, db *store.DB, fx *pickFixture)) func(*testing.T, *store.DB, *Dispatcher, *pickFixture) string {
+	return func(t *testing.T, db *store.DB, d *Dispatcher, fx *pickFixture) string {
+		line, stage := prNode(t, db, "PICK-ED-LINE"), prNode(t, db, "PICK-ED-STAGE")
+		if hold != nil {
+			hold(t, db, fx)
+		}
+		last := fx.outbound
+		if lastAt != nil {
+			last = lastAt(fx)
+		}
+		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID, o.StationUID, o.OrderType, o.Status = "pick-earlier", "test", OrderTypeComplex, "staged"
+			o.SourceNode, o.DeliveryNode, o.PayloadCode, o.ProcessNode = line.Name, last.Name, "PART-X", line.Name
+		})
+		steps := []resolvedStep{vsWait(line.Name), vsPick(line.Name), vsDrop(fx.home.Name), vsPick(stage.Name),
+			vsDrop(last.Name)}
+		if wait := d.placeForDedicatedLoader(o, steps, nil); wait != "" {
+			return "wait:" + fx.role(wait, nil)
+		}
+		return fx.role(steps[2].Node, nil)
 	}
 }
 
@@ -362,6 +392,20 @@ var loaderPickCases = []pickCase{
 		place: placeHomeSource(evacSteps, both(inFlightTo(homeOf), both(binOn(buffer2Of), namedBy(bufferOf))))},
 	{point: "vacated", hold: "vacated buffer named by a live order", want: "buffer",
 		place: placeVacatedPair(namedBy(bufferOf))},
+
+	// placeEarlierDrops (brief H): a set-down before the plan's last, at a
+	// member, by the full capacity gate; then the buffers the plan does not
+	// already set down at, in member order; then wait on the member.
+	{point: "earlier-drop", hold: "none", want: "home",
+		place: placeEarlierDrop(nil, nil)},
+	{point: "earlier-drop", hold: "bin on home", want: "buffer",
+		place: placeEarlierDrop(nil, binOn(homeOf))},
+	{point: "earlier-drop", hold: "in-flight to home", want: "buffer",
+		place: placeEarlierDrop(nil, inFlightTo(homeOf))},
+	{point: "earlier-drop", hold: "bin on home, the plan's last drop on the first buffer", want: "buffer2",
+		place: placeEarlierDrop(bufferOf, binOn(homeOf))},
+	{point: "earlier-drop", hold: "bin on home and on both buffers", want: "wait:home",
+		place: placeEarlierDrop(nil, both(binOn(homeOf), both(binOn(bufferOf), binOn(buffer2Of))))},
 }
 
 // TestLoaderPlacementPicks pins every loader-placement pick as it stands, so a
@@ -873,10 +917,10 @@ var parkBuilderPins = map[string]string{
 	"home-return/any/changeover/stage pn=none":                    "sent drops=STAGE",
 	"home-return/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",
 	"home-return/any/changeover/staged-deliver pn=none":           "sent drops=LINE",
-	"home-return/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-return/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-return/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
-	"home-return/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"home-return/any/changeover/tooling pn=LINE":                  "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-return/any/changeover/tooling pn=none":                  "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-return/sequential/changeover/A pn=LINE":                 "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-return/sequential/changeover/A pn=none":                 "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"home-return/sequential/steady/A pn=LINE":                     "sent drops=BUF",
 	"home-return/sequential/steady/A pn=none":                     "sent drops=BUF",
 	"home-return/sequential/steady/backfill pn=LINE":              "sent drops=LINE",
@@ -893,23 +937,23 @@ var parkBuilderPins = map[string]string{
 	"home-return/two_robot/steady/A pn=none":                      "sent drops=STAGE,LINE",
 	"home-return/two_robot/steady/B pn=LINE":                      "sent drops=BUF",
 	"home-return/two_robot/steady/B pn=none":                      "sent drops=BUF",
-	"home-return/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-return/two_robot_press_index/changeover/evac pn=none":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-return/two_robot_press_index/changeover/evac pn=none":   "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"home-return/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
 	"home-return/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
-	"home-return/two_robot_press_index/steady/A pn=LINE":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-return/two_robot_press_index/steady/A pn=none":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-return/two_robot_press_index/steady/A pn=LINE":          "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-return/two_robot_press_index/steady/A pn=none":          "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"home-return/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
 	"home-return/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
 
 	"home-staging/any/changeover/drop-release pn=LINE":             "sent drops=BUF",
 	"home-staging/any/changeover/drop-release pn=none":             "sent drops=BUF",
-	"home-staging/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",      // moved by brief H H1 (a): B23's class closed, a leg that fills its line is left to go there
-	"home-staging/any/changeover/staged-deliver pn=none":           "sent drops=HOME-B",    // B23's class, kept: with no process node (no builder sends one) legPlacesLineBin cannot read it
-	"home-staging/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-staging/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-staging/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
-	"home-staging/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"home-staging/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",     // moved by brief H H1 (a): B23's class closed, a leg that fills its line is left to go there
+	"home-staging/any/changeover/staged-deliver pn=none":           "sent drops=HOME-B",   // B23's class, kept: with no process node (no builder sends one) legPlacesLineBin cannot read it
+	"home-staging/any/changeover/tooling pn=LINE":                  "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-staging/any/changeover/tooling pn=none":                  "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-staging/sequential/changeover/A pn=LINE":                 "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-staging/sequential/changeover/A pn=none":                 "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"home-staging/sequential/steady/A pn=LINE":                     "sent drops=BUF",
 	"home-staging/sequential/steady/A pn=none":                     "sent drops=BUF",
 	"home-staging/sequential/steady/backfill pn=LINE":              "sent drops=LINE",            // moved by brief H H1 (a): B23 closed, a leg that fills its line is left to go there
@@ -924,14 +968,14 @@ var parkBuilderPins = map[string]string{
 	"home-staging/two_robot/changeover/supply pn=none":             "sent drops=LINE",
 	"home-staging/two_robot/steady/A pn=LINE":                      "sent drops=LINE",
 	"home-staging/two_robot/steady/A pn=none":                      "sent drops=LINE",
-	"home-staging/two_robot/steady/B pn=LINE":                      "sent drops=HOME",      // A2's row: HOME, no stamp, so nothing holds its release
-	"home-staging/two_robot/steady/B pn=none":                      "sent drops=BUF",       // the wait proxy reads this return as no return
-	"home-staging/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-staging/two_robot_press_index/changeover/evac pn=none":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/two_robot/steady/B pn=LINE":                      "sent drops=HOME",     // A2's row: HOME, no stamp, so nothing holds its release
+	"home-staging/two_robot/steady/B pn=none":                      "sent drops=BUF",      // the wait proxy reads this return as no return
+	"home-staging/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-staging/two_robot_press_index/changeover/evac pn=none":   "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"home-staging/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
 	"home-staging/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
-	"home-staging/two_robot_press_index/steady/A pn=LINE":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
-	"home-staging/two_robot_press_index/steady/A pn=none":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"home-staging/two_robot_press_index/steady/A pn=LINE":          "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"home-staging/two_robot_press_index/steady/A pn=none":          "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"home-staging/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
 	"home-staging/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
 
@@ -941,10 +985,10 @@ var parkBuilderPins = map[string]string{
 	"staged/any/changeover/stage pn=none":                    "sent drops=HOME-B", // B23's class: a supply with no wait, set back down where it lifts
 	"staged/any/changeover/staged-deliver pn=LINE":           "sent drops=LINE",
 	"staged/any/changeover/staged-deliver pn=none":           "sent drops=LINE",
-	"staged/any/changeover/tooling pn=LINE":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
-	"staged/any/changeover/tooling pn=none":                  "sent drops=HOME,LINE", // B24's class: the drop on an occupied HOME is asked nothing
-	"staged/sequential/changeover/A pn=LINE":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
-	"staged/sequential/changeover/A pn=none":                 "sent drops=HOME,LINE", // B24: the drop on HOME (holding the old part's spare) is asked nothing
+	"staged/any/changeover/tooling pn=LINE":                  "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"staged/any/changeover/tooling pn=none":                  "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"staged/sequential/changeover/A pn=LINE":                 "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"staged/sequential/changeover/A pn=none":                 "sent drops=BUF,LINE", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"staged/sequential/steady/A pn=LINE":                     "sent drops=BUF",
 	"staged/sequential/steady/A pn=none":                     "sent drops=BUF",
 	"staged/sequential/steady/backfill pn=LINE":              "sent drops=LINE",                  // moved by brief H H1 (a): B23 closed, a leg that fills its line is left to go there
@@ -960,13 +1004,13 @@ var parkBuilderPins = map[string]string{
 	"staged/two_robot/steady/A pn=LINE":                      "sent drops=STAGE,LINE",
 	"staged/two_robot/steady/A pn=none":                      "sent drops=STAGE,LINE",
 	"staged/two_robot/steady/B pn=LINE":                      "sent drops=HOME",
-	"staged/two_robot/steady/B pn=none":                      "sent drops=BUF",       // the wait proxy reads this return as no return
-	"staged/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
-	"staged/two_robot_press_index/changeover/evac pn=none":   "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/two_robot/steady/B pn=none":                      "sent drops=BUF",      // the wait proxy reads this return as no return
+	"staged/two_robot_press_index/changeover/evac pn=LINE":   "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"staged/two_robot_press_index/changeover/evac pn=none":   "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"staged/two_robot_press_index/changeover/supply pn=LINE": "sent drops=LINE",
 	"staged/two_robot_press_index/changeover/supply pn=none": "sent drops=LINE",
-	"staged/two_robot_press_index/steady/A pn=LINE":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
-	"staged/two_robot_press_index/steady/A pn=none":          "sent drops=HOME,PAIR", // B24's class: the drop on an occupied HOME is asked nothing
+	"staged/two_robot_press_index/steady/A pn=LINE":          "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
+	"staged/two_robot_press_index/steady/A pn=none":          "sent drops=BUF,PAIR", // moved by brief H H1 (c): B24 closed, the drop on the occupied HOME goes to a free buffer
 	"staged/two_robot_press_index/steady/B pn=LINE":          "sent drops=LINE",
 	"staged/two_robot_press_index/steady/B pn=none":          "sent drops=LINE",
 }

@@ -9,7 +9,6 @@ package scenarios
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -655,13 +654,13 @@ func TestScenario_SequentialLine_SwapsThroughItsOwnHome(t *testing.T) {
 // home bare, the old cart lands there. With it holding the old part's spare
 // full, the old cart should go to the free buffer and the spare stay put.
 //
-// THE SPARE CASE FAILS at 7a7d9a25 and is skipped unless SHINGO_KNOWN_RED=1
-// (lane f-home's notes): nothing asks about the leg's drop at the old part's
-// home. Core reads the leg's delivery as the line (its last stop), so the
-// loader park never sees the home; the final-drop gate asks the line; the
-// home is neither storage nor a drop the Edge declares exclusive. The leg is
-// sent to set the old cart down on the occupied home, and the landing evicts
-// the spare's record to _TRANSIT.
+// The spare case was red from 7a7d9a25 until brief H (lane f-home's notes):
+// nothing asked about the leg's drop at the old part's home. Core reads the
+// leg's delivery as the line (its last stop), so the loader park asked only
+// the line; the home is neither storage nor a drop the Edge declares
+// exclusive. The leg was sent to set the old cart down on the occupied home,
+// and the landing evicted the spare's record to _TRANSIT. The park now asks
+// every set-down before the last at a loader member (placeEarlierDrops).
 func TestScenario_SequentialLine_PartChangeThroughItsHomes(t *testing.T) {
 	t.Parallel()
 	for _, hc := range []struct {
@@ -669,10 +668,6 @@ func TestScenario_SequentialLine_PartChangeThroughItsHomes(t *testing.T) {
 		bare bool
 	}{{"the old part's home bare", true}, {"the old part's home holding its spare", false}} {
 		t.Run(hc.name, func(t *testing.T) {
-			if !hc.bare && os.Getenv("SHINGO_KNOWN_RED") == "" {
-				t.Skip("final brief 2e (lane f-home) red pin, red until a part change's drop at an occupied home " +
-					"goes elsewhere; run with SHINGO_KNOWN_RED=1")
-			}
 			t.Parallel()
 			c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSequential,
 				plain: true, bareSpot: true, home: true, bareHomeA: hc.bare, buffers: 1})
