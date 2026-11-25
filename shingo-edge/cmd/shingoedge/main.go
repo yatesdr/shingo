@@ -683,21 +683,28 @@ func main() {
 
 	// ── Kafka connect & subscribe ───────────────────────────────────────
 	//
-	// Background retry-with-backoff: if Connect fails at boot, Edge
-	// would otherwise run "deaf to inbound messages" until a process
-	// restart. The retry loop self-heals on Kafka availability changes.
+	// Background retry-with-backoff. Connect builds the Kafka writer and
+	// contacts no broker (messaging Client.Connect), so it fails only on an
+	// empty broker list, and this loop retries until one is configured; a
+	// broker down at boot is waited out by the reader's backoff and the
+	// senders' tries, not here. IsConnected should read false here (no
+	// Connect has run), so the wiring runs on the retry goroutine.
 	//
-	// /status exposes kafka_connected and subscribers_wired so
-	// operators can see the deaf-but-running state. Log loudly at
-	// startup so operators notice from the boot log too.
+	// /status exposes kafka_connected and subscribers_wired so operators can
+	// see the deaf-but-running state. The boot log says so loudly, once, when
+	// Connect fails. PIN: TestBootWiring_TheWarningPrintsOnlyWhenConnectFails.
 	if msgClient.IsConnected() {
 		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db)
 	} else {
-		log.Printf("WARNING messaging not connected at boot — Edge will run deaf to inbound (orders, demand, stale) until Kafka is reachable. Outbox drainer is active and will flush when connected.")
 		goSafe("kafka-connect-retry", func() {
 			backoff := 5 * time.Second
+			warned := false
 			for {
 				if err := msgClient.Connect(); err != nil {
+					if !warned {
+						warned = true
+						log.Printf("WARNING messaging not connected at boot: %v — Edge will run deaf to inbound (orders, demand, stale) until it connects. Outbox drainer is active and will flush when connected.", err)
+					}
 					log.Printf("kafka connect failed: %v — retrying in %s; edge still DEAF to inbound messages", err, backoff)
 					time.Sleep(backoff)
 					if backoff < 60*time.Second {
@@ -708,7 +715,7 @@ func main() {
 					}
 					continue
 				}
-				log.Printf("kafka connect succeeded — wiring subscribers")
+				log.Printf("kafka writer built — wiring subscribers (Connect contacts no broker)")
 				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db)
 				return
 			}
