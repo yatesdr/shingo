@@ -607,13 +607,9 @@ func (d *Dispatcher) EndClear(parent *orders.Order, why string) {
 			live = append(live, c)
 		}
 	}
-	cancel, kept, err := d.splitLiftedLegs(parent.ID, live)
-	if err != nil {
-		cancel, kept = live, nil
-	}
-	for _, c := range cancel {
-		d.lifecycle.CancelOrder(c, parent.Requester(), "clear ended: "+why, CancelCause{})
-	}
+	// The unreadable split is logged by the loop, which then cancels every live child.
+	_, kept, _ := d.cancelLiveLegs(parent.ID, live, parent.Requester(), "clear ended: "+why, CancelCause{},
+		unreadableCancelsAll)
 	if len(kept) == 0 {
 		d.lifecycle.CancelOrder(parent, parent.Requester(), why, CancelCause{})
 	}

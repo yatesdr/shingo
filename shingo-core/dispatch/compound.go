@@ -2077,11 +2077,14 @@ func (d *Dispatcher) endDissolve(parentID int64) {
 // Dispatched is never preempted (v4 §2.6); the kept leg sets its bin down and its
 // chapter closes when it lands.
 //
-// Every door that closes a chapter by cancelling its legs asks here (the
-// dissolve, a leg failing, the chapter-end arm, and the parent's cancel), so the
-// rule is spelled once.
+// Every door that closes a dig's chapter by cancelling its legs asks here: the
+// five whose cancel loop is cancelLiveLegs (EndClear, the dissolve, a leg
+// failing, the chapter-end arm, the parent's cancel) and finishCutCascade, which
+// only probes. A leg delivered and not yet confirmed is not carrying, so it is
+// cancelled at every door but a leg failing, whose own live filter keeps it
+// (HandleChildOrderFailure).
 // One SELECT, and none when no leg is live. An error means the answer is
-// unknown, and each caller cancels nothing on it.
+// unknown; what a door does then is its own rule (unreadableSplit).
 func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) (cancel, kept []*orders.Order, err error) {
 	if len(live) == 0 {
 		return nil, nil, nil
@@ -2098,6 +2101,53 @@ func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) 
 		}
 	}
 	return cancel, kept, nil
+}
+
+// unreadableSplit is a door's rule for live legs whose split cannot be read
+// (cancelLiveLegs). The doors differ on purpose, and each passes its own.
+type unreadableSplit int
+
+const (
+	// unreadableCancelsNone: a chapter closes and the demand goes on (the
+	// dissolve, which then holds the dig; the failure door; the chapter end).
+	// The next event asks again.
+	unreadableCancelsNone unreadableSplit = iota
+	// unreadableCancelsAll: the job is ending (the parent's cascade, a clear's
+	// end), and holding the cancel on a read would leave legs running under an
+	// ended parent. A lifted leg among them is then a cancelled carrier, which
+	// the cancel-return watch returns to a declared source.
+	unreadableCancelsAll
+)
+
+// cancelLiveLegs is the cancel loop of the five doors that close a dig's
+// chapter by cancelling its live legs: EndClear, the dissolve, the failure door,
+// the parent's cascade and the chapter end. It splits live (splitLiftedLegs),
+// applies the door's rule when the split cannot be read, says once per kept leg
+// why it is kept, and cancels the rest with CancelOrder's station, reason and
+// cause. finishCutCascade asks the splitter alone: it only probes.
+//
+// cancelled is every leg it asked CancelOrder to end (a refused transition is
+// CancelOrder's to log); err is the unreadable split, after the rule has run.
+// Statements: the splitter's.
+func (d *Dispatcher) cancelLiveLegs(parentOrderID int64, live []*orders.Order, stationID, reason string,
+	cause CancelCause, unreadable unreadableSplit) (cancelled, kept []*orders.Order, err error) {
+	cancelled, kept, err = d.splitLiftedLegs(parentOrderID, live)
+	if err != nil {
+		cancelled, kept = nil, nil
+		what := "cancelling no leg"
+		if unreadable == unreadableCancelsAll {
+			cancelled, what = live, "cancelling every live leg"
+		}
+		log.Printf("dispatch: compound %d: %v — %s (%s)", parentOrderID, err, what, reason)
+	}
+	for _, leg := range kept {
+		log.Printf("dispatch: compound %d keeps leg %d — it is carrying its bin, so it sets it down first (%s)",
+			parentOrderID, leg.ID, reason)
+	}
+	for _, leg := range cancelled {
+		d.lifecycle.CancelOrder(leg, stationID, reason, cause)
+	}
+	return cancelled, kept, err
 }
 
 // dissolveCompound abandons a dig without terminating the demand behind it.
@@ -2221,37 +2271,29 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 			live = append(live, child)
 		}
 	}
-	cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
+	// UNCODED DELIBERATELY. The honest code for a dissolve is
+	// TermReshuffleError, which ClassifyTermCode buckets as FAILED — and these
+	// rows read as cancelled today, because the demand survives and re-plans.
+	// Stamping it would move a dashboard number as a side effect of an
+	// attribution change. That is its own decision, with its own before/after
+	// count. Same at every teardown below.
+	cancelled, kept, err := d.cancelLiveLegs(parentOrderID, live, parent.Requester(), reshuffleDissolveDetail,
+		CancelCause{}, unreadableCancelsNone)
 	if err != nil {
-		log.Printf("dispatch: dissolve compound %d: %v (leaving the dig held)", parentOrderID, err)
 		return err
 	}
-	if len(cancel) == 0 {
+	if len(cancelled) == 0 {
 		d.dbg("dispatch: not dissolving compound %d — no leg is left to cancel (%d carrying a bin), "+
 			"so another pass already has", parentOrderID, len(kept))
 		return nil
 	}
 
-	log.Printf("dispatch: DISSOLVING dig %d — %s. Cancelling its remaining legs and re-planning against "+
+	log.Printf("dispatch: DISSOLVED dig %d — %s. Its remaining legs are cancelled and it re-plans against "+
 		"the lane as it now stands; the demand survives.", parentOrderID, why)
-
-	for _, child := range cancel {
-		// UNCODED DELIBERATELY. The honest code for a dissolve is
-		// TermReshuffleError, which ClassifyTermCode buckets as FAILED — and
-		// these rows read as cancelled today, because the demand survives and
-		// re-plans. Stamping it would move a dashboard number as a side effect
-		// of an attribution change. That is its own decision, with its own
-		// before/after count. Same at every teardown below.
-		d.lifecycle.CancelOrder(child, parent.Requester(), reshuffleDissolveDetail, CancelCause{})
-	}
 
 	// A KEPT LEG KEEPS THE LANE: its robot is still in it. The chapter-end arm
 	// releases it when the leg lands (see the header).
 	if len(kept) > 0 {
-		for _, leg := range kept {
-			log.Printf("dispatch: dissolve of dig %d keeps leg %d — it is carrying its bin, so it sets "+
-				"it down first; the lane is released when it lands", parentOrderID, leg.ID)
-		}
 		return nil
 	}
 
@@ -2284,9 +2326,10 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 }
 
 // HandleChildOrderFailure closes the chapter a failed leg belonged to. It
-// cancels the remaining live children but a leg carrying its bin and one
-// delivered and not yet confirmed (splitLiftedLegs, below), and leaves a home
-// clear's legs to clearLegFailed; the parent's disposition is
+// cancels the remaining live children but a leg carrying its bin
+// (splitLiftedLegs) and one delivered and not yet confirmed (its own live
+// filter, below), and leaves a home clear's legs to clearLegFailed; the
+// parent's disposition is
 // AdvanceCompoundOrder's. Uses lifecycle.CancelOrder so fleet orders are
 // cancelled and bins unclaimed — same approach as cancelCompoundChildren.
 //
@@ -2370,19 +2413,10 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 			live = append(live, child)
 		}
 	}
-	cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
+	cancelled, _, err := d.cancelLiveLegs(parentOrderID, live, parent.Requester(), reshuffleLegFailedDetail,
+		CancelCause{}, unreadableCancelsNone)
 	if err != nil {
-		log.Printf("dispatch: failed compound %d: %v (cancelling no leg)", parentOrderID, err)
 		return false
-	}
-	for _, leg := range kept {
-		log.Printf("dispatch: compound %d keeps leg %d after leg %d failed — it is carrying its bin, "+
-			"so it sets it down first; the chapter closes when it lands", parentOrderID, leg.ID, childOrderID)
-	}
-	cancelled := 0
-	for _, child := range cancel {
-		d.lifecycle.CancelOrder(child, parent.Requester(), reshuffleLegFailedDetail, CancelCause{})
-		cancelled++
 	}
 
 	// NOTHING LEFT TO CANCEL MEANS NOTHING LEFT TO WAKE US. The cancels are what
@@ -2392,7 +2426,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	// goroutine for the scanMu reason in this function's header. It used to be
 	// a bare `go` here, which Engine.Stop could not wait for (docket B4,
 	// TestEngineStop_WaitsForTheAdvanceAfterALastLegFails).
-	return cancelled == 0
+	return len(cancelled) == 0
 }
 
 // CancelOrderWithCascade is THE cancel door. Both entry points that cancel an
@@ -2483,19 +2517,9 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 			live = append(live, child)
 		}
 	}
-	cancel, kept, err := d.splitLiftedLegs(parent.ID, live)
-	if err != nil {
-		log.Printf("dispatch: cancel compound children for order %d: %v (cancelling every live leg)", parent.ID, err)
-		cancel, kept = live, nil
-	}
-	for _, leg := range kept {
-		log.Printf("dispatch: compound %d is cancelled; leg %d is carrying its bin, so it finishes "+
-			"its store", parent.ID, leg.ID)
-	}
-	cancelReason := fmt.Sprintf("parent order cancelled: %s", reason)
-	for _, child := range cancel {
-		d.lifecycle.CancelOrder(child, stationID, cancelReason, cause)
-	}
+	// The unreadable split is logged by the loop, which then cancels every live leg.
+	_, _, _ = d.cancelLiveLegs(parent.ID, live, stationID, fmt.Sprintf("parent order cancelled: %s", reason), cause,
+		unreadableCancelsAll)
 
 	d.unlockLaneForCompound(parent.ID, heldLanes)
 }
@@ -2691,17 +2715,9 @@ func (d *Dispatcher) chapterStoppedShort(
 				live = append(live, c)
 			}
 		}
-		cancel, kept, err := d.splitLiftedLegs(parentOrderID, live)
-		if err != nil {
-			log.Printf("dispatch: compound order %d: %v (cancelling no leg)", parentOrderID, err)
-		}
-		for _, leg := range kept {
-			log.Printf("dispatch: compound order %d keeps leg %d — it is carrying its bin, so it sets "+
-				"it down first; the chapter closes when it lands", parentOrderID, leg.ID)
-		}
-		for _, c := range cancel {
-			d.lifecycle.CancelOrder(c, parent.Requester(), reshuffleLegFailedDetail, CancelCause{})
-		}
+		// The unreadable split is logged by the loop, which then cancels no leg.
+		_, _, _ = d.cancelLiveLegs(parentOrderID, live, parent.Requester(), reshuffleLegFailedDetail,
+			CancelCause{}, unreadableCancelsNone)
 	}
 
 	// WAIT FOR THE LEGS THAT ARE STILL MOVING. A dissolve cancels every
