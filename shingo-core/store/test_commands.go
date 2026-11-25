@@ -25,7 +25,3 @@ func (db *DB) GetTestCommand(id int64) (*diagnostics.TestCommand, error) {
 func (db *DB) ListTestCommands(limit int) ([]*diagnostics.TestCommand, error) {
 	return diagnostics.List(db.DB, limit)
 }
-
-func (db *DB) ListActiveTestCommands() ([]*diagnostics.TestCommand, error) {
-	return diagnostics.ListActive(db.DB)
-}

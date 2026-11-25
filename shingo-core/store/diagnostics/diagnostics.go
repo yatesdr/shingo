@@ -90,13 +90,3 @@ func List(db *sql.DB, limit int) ([]*TestCommand, error) {
 	defer rows.Close()
 	return scanTestCommands(rows)
 }
-
-// ListActive returns test_commands rows that have not completed.
-func ListActive(db *sql.DB) ([]*TestCommand, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM test_commands WHERE completed_at IS NULL ORDER BY id DESC`, testCommandCols))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanTestCommands(rows)
-}

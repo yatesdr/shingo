@@ -24,7 +24,6 @@ door shingo-core/store DB.ClaimBin UNAUDITED: 9 test reference(s), no product ca
 door shingo-core/store DB.CountActiveOrdersByDeliveryNode UNAUDITED: 1 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.CountEmptyBinsOfTypeInGroupByTotes UNAUDITED: 2 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.FailOrderAtomic UNAUDITED: 6 test reference(s), no product caller, at the rule's start
-door shingo-core/store DB.ListActiveTestCommands UNAUDITED: no caller at all at the rule's start
 door shingo-core/store DB.ListNodeTypes UNAUDITED: 2 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.ListOrdersByOrigin UNAUDITED: 3 test reference(s), no product caller, at the rule's start
 door shingo-core/store DB.ListOrphanFindings UNAUDITED: 2 test reference(s), no product caller, at the rule's start

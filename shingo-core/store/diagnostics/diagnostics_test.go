@@ -95,19 +95,4 @@ func TestCoverage_ListTestCommands(t *testing.T) {
 	if len(two) != 2 {
 		t.Errorf("limited len = %d, want 2", len(two))
 	}
-	active, err := diagnostics.ListActive(db.DB)
-	if err != nil {
-		t.Fatalf("ListActive: %v", err)
-	}
-	if len(active) != 2 {
-		t.Fatalf("active len = %d, want 2", len(active))
-	}
-	for _, c := range active {
-		if c.CompletedAt != nil {
-			t.Errorf("active row %d has CompletedAt set", c.ID)
-		}
-		if c.ID == cmds[1].ID {
-			t.Errorf("completed command %d should not appear in active list", c.ID)
-		}
-	}
 }
