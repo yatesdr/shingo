@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -77,6 +78,21 @@ type Heartbeater struct {
 	// Start (and on a Kafka reconnect, with the other one-shots), so the list
 	// rides the boot burst. Nil sends none: the first ack asks instead.
 	BinWatchFn func(publish func(*protocol.BinWatchList) error)
+	// AfterOwedBurst, when set, runs after a burst the loop sent because the
+	// boot's did not get out (sendOwedBoot): the boot's order reconcile
+	// (cmd/shingoedge setupKafkaSubscribers). An error keeps the boot owed.
+	// Set post-construction, before Start.
+	AfterOwedBurst func() error
+
+	// bootOwed is whether this Edge's boot still owes Core its burst: a
+	// register the broker refused (the boot's, a reconnect's, or one Core
+	// asked for), or a boot reconcile it refused (OweBoot). heartbeatOut is
+	// whether the last heartbeat got out. The loop's first heartbeat that gets
+	// out while the boot is owed sends the burst again, then AfterOwedBurst,
+	// once (docket B14). PIN:
+	// TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers.
+	bootOwed     atomic.Bool
+	heartbeatOut atomic.Bool
 
 	DebugLog DebugLogFunc
 }
@@ -110,7 +126,8 @@ func (h *Heartbeater) Start() {
 // trip after the burst rather than at the loop's first tick 60 s later, and no
 // decision is actable before a first ack (engine Actable, NotActableNoAck).
 // It goes last so its feed digests are read after the watch list is out. A
-// Kafka reconnect re-fires the whole burst.
+// Kafka reconnect re-fires the whole burst, and so does the loop, once, after
+// a register the broker refused (sendOwedBoot).
 func (h *Heartbeater) SendBootBurst() {
 	h.sendRegister()
 	h.sendNodeListRequest()
@@ -168,7 +185,8 @@ func (h *Heartbeater) sendRegister() {
 		return
 	}
 	if err := h.sender.PublishEnvelope(env, "register"); err != nil {
-		log.Printf("heartbeater: send register failed after retries: %v", err)
+		log.Printf("heartbeater: send register failed after retries: %v — sent again with the first heartbeat that gets out", err)
+		h.bootOwed.Store(true)
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
 		h.DebugLog.Log("register sent station=%s", h.stationID)
@@ -264,12 +282,43 @@ func (h *Heartbeater) sendHeartbeat() {
 	)
 	if err != nil {
 		log.Printf("heartbeater: build heartbeat: %v", err)
+		h.heartbeatOut.Store(false)
 		return
 	}
-	if err := h.sender.PublishEnvelope(env, "heartbeat"); err != nil {
+	err = h.sender.PublishEnvelope(env, "heartbeat")
+	h.heartbeatOut.Store(err == nil)
+	if err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
 		h.DebugLog.Log("heartbeat sent station=%s", body.StationID)
+	}
+}
+
+// OweBoot records that this boot's work did not all reach Core (main: the boot
+// reconcile was refused): the loop's next heartbeat that gets out sends the
+// burst again, then AfterOwedBurst.
+func (h *Heartbeater) OweBoot() {
+	h.bootOwed.Store(true)
+}
+
+// sendOwedBoot sends what a boot the broker refused still owes Core, once a
+// heartbeat has got out: the burst again, then AfterOwedBurst. A refusal of
+// either leaves the boot owed for the next heartbeat that gets out. The loop
+// calls it after every tick's heartbeat; it does nothing unless both hold.
+func (h *Heartbeater) sendOwedBoot() {
+	if !h.heartbeatOut.Load() || !h.bootOwed.CompareAndSwap(true, false) {
+		return
+	}
+	log.Printf("heartbeater: Kafka answers again: re-sending the boot burst it refused (station=%s)", h.stationID)
+	h.SendBootBurst()
+	if h.bootOwed.Load() {
+		return // the register was refused again
+	}
+	if h.AfterOwedBurst != nil {
+		if err := h.AfterOwedBurst(); err != nil {
+			log.Printf("heartbeater: after the late boot burst: %v — owed until the next heartbeat that gets out", err)
+			h.bootOwed.Store(true)
+		}
 	}
 }
 
@@ -314,6 +363,9 @@ func (h *Heartbeater) loop() {
 						h.sendNodeListRequest()
 						h.sendCatalogRequest()
 					}
+					// A boot the broker refused: its burst again, and
+					// what main owes after it, once this heartbeat got out.
+					h.sendOwedBoot()
 				}
 			}
 		}()

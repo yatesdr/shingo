@@ -202,6 +202,8 @@ func TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers(t *testing.T)
 	h.sender = NewDataSender(c, "shingo.orders", oneTry)
 	h.interval = 5 * time.Millisecond
 	h.CoreSpeaksFeedsFn = func() bool { return true }
+	var afterBursts atomic.Int64
+	h.AfterOwedBurst = func() error { afterBursts.Add(1); return nil }
 
 	h.Start()
 	t.Cleanup(h.Stop)
@@ -227,6 +229,10 @@ func TestHeartbeater_ABootBurstThatMetNoBrokerGoesOutWhenItAnswers(t *testing.T)
 			t.Errorf("after the broker came back it took %d %s, want 1: the boot burst it refused goes out "+
 				"with the loop's first heartbeat that gets out, once", took[s], s)
 		}
+	}
+	// What main owes after the burst (its boot reconcile), once, after it.
+	if n := afterBursts.Load(); n != 1 {
+		t.Errorf("AfterOwedBurst ran %d times, want once, after the late burst", n)
 	}
 }
 

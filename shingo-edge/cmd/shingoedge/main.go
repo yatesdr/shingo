@@ -363,6 +363,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// The bins watch list rides the boot burst, so a restarted Edge has its
 	// bins one round trip after it starts.
 	hb.BinWatchFn = eng.PublishBinWatchAtBoot
+	// A boot whose register or reconcile the broker refused owes them: the
+	// heartbeater's first heartbeat that gets out sends the burst again, then
+	// this reconcile, once (docket B14). PIN:
+	// TestBootWiring_ABootThatMetNoBrokerOwesItsReconcile.
+	hb.AfterOwedBurst = eng.StartupReconcile
 
 	protoRouter := buildInboundRouter(eng, edgeHandler, hb, dataDbg)
 	protoRouter.LogRegistration(log.Printf)
@@ -397,12 +402,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// Heartbeater.Start() sends it (register, node list and catalog requests,
 	// bins watch, one heartbeat) once at process start; if Kafka was
 	// unreachable then (or the client got wedged during a long outage), those
-	// one-shots failed. The periodic loop never re-sends them: it sends a
-	// heartbeat every minute, and re-asks the node list and catalog every two
-	// minutes only while Core does not answer feeds (messaging Heartbeater
-	// loop). A failed burst left an Edge unregistered until a manual restart
-	// at Shelbyville, 2026-05-21. This makes the "Save Messaging" button a
-	// self-heal action.
+	// one-shots failed. The periodic loop sends a heartbeat every minute, and
+	// re-asks the node list and catalog every two minutes only while Core does
+	// not answer feeds (messaging Heartbeater loop); since docket B14 it also
+	// re-sends a burst whose register was refused, once, with its first
+	// heartbeat that gets out (AfterOwedBurst above). Before that, a failed
+	// burst left an Edge unregistered until a manual restart at Shelbyville,
+	// 2026-05-21. This makes the "Save Messaging" button a self-heal action
+	// that does not wait for the next heartbeat.
 	eng.SetKafkaReconnectFunc(func() error {
 		if err := msgClient.Reconnect(); err != nil {
 			return err
@@ -436,7 +443,8 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	log.Printf("threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the threshold demand-signal route is gone entirely — an unloader U1 comes from its own auto_push gates, the startup sweep, and a produce release posting capture_lineside)")
 
 	if err := eng.StartupReconcile(); err != nil {
-		log.Printf("initial startup reconcile: %v", err)
+		log.Printf("initial startup reconcile: %v — run again after the first heartbeat that gets out", err)
+		hb.OweBoot()
 	}
 
 	// Mark subscribers wired so /status reports the operational
