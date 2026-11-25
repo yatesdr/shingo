@@ -15,15 +15,10 @@
 //	gatetime exec BINARY ARGS...   go test -exec's program: runs one test
 //	                               binary in a job object of its own and, when
 //	                               $GATETIME_MANIFESTS is set, writes one JSON
-//	                               manifest of what that run read (exec.go).
-//	                               With $GATETIME_REUSE set it is package
-//	                               reuse's instead (record, reuse or audit)
+//	                               manifest of what that run read (exec.go)
 //	gatetime testset -tags T -record F  go test -json in, the text out, each
 //	                               verdict appended to F (testset.go; the
 //	                               gate with GATE_TESTSET=on)
-//	gatetime canary -root DIR      reuse's canary: run its known binary
-//	                               through `exec` and check the record
-//	gatetime seccomp-shim ...      the Linux tracer's shim (not for hands)
 //	gatetime host                  the Windows host's readings for a gatetime
 //	                               inside WSL, one JSON request a line (host.go;
 //	                               not for hands)
@@ -38,21 +33,17 @@ package main
 import (
 	"fmt"
 	"os"
-
-	"shingo/shared/scripts/gatetime/reuse"
 )
 
 // commands are the subcommands, by name. Each returns the process exit code.
 var commands = map[string]func(args []string) int{
-	"exec":            execMain,
-	"run":             runMain,
-	"compare":         compareMain,
-	"stamp":           stampMain,
-	"report":          reportMain,
-	"testset":         testsetMain,
-	"canary":          reuse.CanaryMain,
-	"host":            hostMain,
-	reuse.ShimCommand: reuse.ShimMain,
+	"exec":    execMain,
+	"run":     runMain,
+	"compare": compareMain,
+	"stamp":   stampMain,
+	"report":  reportMain,
+	"testset": testsetMain,
+	"host":    hostMain,
 }
 
 func usage() int {
@@ -62,7 +53,6 @@ func usage() int {
 	fmt.Fprintln(os.Stderr, "       gatetime report MANIFEST_DIR...")
 	fmt.Fprintln(os.Stderr, "       gatetime exec BINARY ARGS...")
 	fmt.Fprintln(os.Stderr, "       go test -json ... | gatetime testset -tags TAGS -record FILE")
-	fmt.Fprintln(os.Stderr, "       gatetime canary -root DIR [-identity FILE]")
 	return 2
 }
 

@@ -42,7 +42,8 @@ while read -r pkg test side _; do
 done <"$LIST"
 [ "$n" -ge 5 ] || fail "gate-os-tests.txt names $n tests; R31 found five"
 
-# The shapes R31 saw, as gatetime testset records them.
+# The shapes R31 saw, as gatetime testset records them. Its fifth difference
+# was a test of the reuse wrapper's Linux tracer, which went with reuse.
 T=$'\t'
 base() {
   printf '%s\n' \
@@ -50,7 +51,6 @@ base() {
     "lockcheck${T}shingo/protocol/debuglog${T}TestRotate${T}pass" \
     "lockcheck${T}shingo/shared/scripts/gatetime${T}-${T}pass" \
     "lockcheck${T}shingo/shared/scripts/gatetime${T}TestStamps${T}pass" \
-    "lockcheck${T}shingo/shared/scripts/gatetime/reuse${T}-${T}pass" \
     "docker,lockcheck${T}shingo/shingo-core/store${T}TestBins${T}pass"
 }
 win() {
@@ -65,20 +65,19 @@ lin() {
   printf '%s\n' \
     "lockcheck${T}shingo/protocol/debuglog${T}TestOpenUsesAppendMode${T}pass" \
     "lockcheck${T}shingo/protocol/debuglog${T}TestOpenUsesAppendMode/rotated${T}pass" \
-    "lockcheck${T}shingo/shared/scripts/gatetime${T}TestOtherMachine_SaysWhatItCannotRead${T}pass" \
-    "lockcheck${T}shingo/shared/scripts/gatetime/reuse${T}TestFilterProgram_EveryJumpLandsOnAReturn${T}pass"
+    "lockcheck${T}shingo/shared/scripts/gatetime${T}TestOtherMachine_SaysWhatItCannotRead${T}pass"
 }
 cmp_sets() { testsets_compare "$TMP/w" "$TMP/l" "${1:-$LIST}" 2>&1; }
 
 # ── 2. what agrees ──────────────────────────────────────────────────────
 base >"$TMP/w"; base >"$TMP/l"
 out="$(cmp_sets)"; rc=$?
-{ [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   testsets (6 verdicts compared; they differ only in the 0 tests'; } \
+{ [ "$rc" -eq 0 ] && echo "$out" | grep -q '^ok   testsets (5 verdicts compared; they differ only in the 0 tests'; } \
   || fail "two equal sets did not agree (exit $rc): $out"
 win >"$TMP/w"; lin >"$TMP/l"
 out="$(cmp_sets)"; rc=$?
-{ [ "$rc" -eq 0 ] && echo "$out" | grep -q 'differ only in the 5 tests named in gate-os-tests.txt'; } \
-  || fail "the five named differences were not excused, or not counted (exit $rc): $out"
+{ [ "$rc" -eq 0 ] && echo "$out" | grep -q 'differ only in the 4 tests named in gate-os-tests.txt'; } \
+  || fail "the four named differences were not excused, or not counted (exit $rc): $out"
 
 # ── 3. what does not ────────────────────────────────────────────────────
 # red_on LABEL WANT-IN-OUTPUT — the sets in $TMP/w and $TMP/l must not agree,

@@ -44,8 +44,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"time"
-
-	"shingo/shared/scripts/gatetime/reuse"
 )
 
 // execMain runs go test's binary: args[0] is the binary, the rest its
@@ -54,11 +52,6 @@ func execMain(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gatetime exec BINARY ARGS...   (go test -exec's program)")
 		return 2
-	}
-	// Reuse (phase 3) is a separate path, taken only when switched on: with
-	// $GATETIME_REUSE unset, nothing below this line changes.
-	if os.Getenv("GATETIME_REUSE") != "" {
-		return reuse.Main(args, reuseRunner)
 	}
 	// The binary decides what an interrupt means, as it did with no wrapper:
 	// the console delivers it to both, and the wrapper waits for the binary.

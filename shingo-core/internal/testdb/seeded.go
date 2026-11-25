@@ -19,9 +19,10 @@ package testdb
 // t.Parallel(), wherever it is declared
 // (TestSeeded_ASerialSiblingEndsBeforeAParallelOneGoesOn). The build is then
 // paid once, before the leaves, and no leaf holds a slot waiting on it. Not
-// from TestMain: what a TestMain does before m.Run is outside the test log,
-// and the reuse wrapper keys any package that declares one on the whole tree
-// (shared/scripts/gatetime/reuse/testmain.go).
+// from TestMain: what a TestMain does before m.Run is outside the test log.
+// That decided it while the gate reused test results, which keyed a package
+// that declares a TestMain on the whole tree; reuse was removed on 2026-11-24
+// and the build stayed in a test.
 //
 // A test that asks for a seed nobody built yet (a -run that leaves the build
 // test out) builds it itself, and the tests that ask for it meanwhile wait.
