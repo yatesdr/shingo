@@ -746,6 +746,23 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
+	// ── no partner on Sequential A/B: a WARNING, never a refusal ────────
+	//
+	// Blank is a one-node line since final brief 2b: its two orders work its
+	// own node, which stands empty from Order A's lift until Order B sets the
+	// next bin down. A partner forgotten on a real A/B line reads exactly the
+	// same, and nothing on the claim tells the two apart (the owner chose a
+	// blank partner over a switch column), so the save says in one line what
+	// the blank means and saves. The composer shows it through the preview
+	// (engine's flowWarnings); TestValidateNodeClaim_SequentialWithNoPartnerSaves.
+	if in.SwapMode == protocol.SwapModeSequential && in.PairedCoreNode == "" && in.CoreNodeName != "" {
+		out = append(out, FieldError{
+			Field:    "paired_core_node",
+			Message:  in.CoreNodeName + " has no partner: one node, empty from each lift until the next bin is set down",
+			Severity: SeverityWarning,
+		})
+	}
+
 	// ── membership: a WARNING, never a refusal ──────────────────────────
 	//
 	// A claim pointing at a node that is not on its style's process is very

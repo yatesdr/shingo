@@ -2299,9 +2299,8 @@ function drawPicture(pass) {
     // and the table come to more than the window, the main column scrolls.
     const frameEl = svg.parentNode;
     const w = Math.round((frameEl && frameEl.clientWidth) || PICTURE_W_FALLBACK);
-    const fs = M().findings(S.model);
-    const byNode = {};
-    for (const f of fs) if (f.node && !byNode[f.node]) byNode[f.node] = f.short;
+    // A card marks its errors only (cardFindings): a warning is the bar's note.
+    const byNode = M().cardFindings(S.model);
     const p = process();
     // A DRAFT WITH GROUPS DRAWS THE GROUPS (groupPicture): every spot they
     // list as a card the floor could run, faded, tagged and given its

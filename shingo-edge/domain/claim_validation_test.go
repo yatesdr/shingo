@@ -143,14 +143,26 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 // TestValidateNodeClaim_SequentialWithNoPartnerSaves: a Sequential A/B claim
 // with no paired position is a one-node line (final brief 2b), and the save
 // takes it: no error, as the planner plans its changeover. Until then it was
-// refused, "Sequential A/B requires a paired core node".
+// refused, "Sequential A/B requires a paired core node". It carries one
+// warning on the partner field, one line naming the position (point 3); a
+// claim with its partner carries none.
 func TestValidateNodeClaim_SequentialWithNoPartnerSaves(t *testing.T) {
 	t.Parallel()
 	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
 		c := validClaim()
 		c.Role, c.SwapMode, c.PairedCoreNode = role, protocol.SwapModeSequential, ""
-		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+		got := ValidateNodeClaim(c, ClaimNodeContext{})
+		if HasErrors(got) {
 			t.Errorf("%s: a sequential claim with no partner was refused: %+v", role, got)
+		}
+		want := "PRESS has no partner: one node, empty from each lift until the next bin is set down"
+		if len(got) != 1 || got[0].Field != "paired_core_node" || got[0].Severity != SeverityWarning ||
+			got[0].Message != want || strings.Contains(got[0].Message, "\n") {
+			t.Errorf("%s: findings %+v, want one warning on paired_core_node: %q", role, got, want)
+		}
+		c.PairedCoreNode = "PARTNER"
+		if got := ValidateNodeClaim(c, ClaimNodeContext{}); len(got) != 0 {
+			t.Errorf("%s: a sequential claim with its partner has findings %+v, want none", role, got)
 		}
 	}
 }

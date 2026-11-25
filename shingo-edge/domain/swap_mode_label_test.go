@@ -10,7 +10,9 @@ import (
 
 // TestRefusalsSayTheModeWordTheScreensSay: a refusal names the swap mode with
 // SwapModeWord, the same word the chip and the strip card show, so an operator
-// reading the finding sees the mode they picked. One table, one spelling.
+// reading the finding sees the mode they picked. One table, one spelling. A
+// warning on a routing field is no refusal and not read here (Sequential A/B's
+// "has no partner", final brief 2b, point 3).
 func TestRefusalsSayTheModeWordTheScreensSay(t *testing.T) {
 	t.Parallel()
 	routing := map[string]bool{}
@@ -28,7 +30,7 @@ func TestRefusalsSayTheModeWordTheScreensSay(t *testing.T) {
 		}
 		seen := 0
 		for _, f := range ValidateNodeClaim(in, ClaimNodeContext{}) {
-			if !routing[f.Field] {
+			if !routing[f.Field] || f.Severity != SeverityError {
 				continue
 			}
 			seen++

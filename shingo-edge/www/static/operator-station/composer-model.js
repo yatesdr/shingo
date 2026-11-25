@@ -1186,6 +1186,20 @@ function findings(state) {
     return out;
 }
 
+// cardFindings is what the picture marks on a card: each node's first ERROR,
+// by its short text — the card outlines alarm and its red pill takes the part
+// chip's slot. A WARNING is not a card's alarm: it rides the bar's note and
+// never blocks (the server's "PLN_01 has no partner" on a one-node line, final
+// brief 2b), and drawn red on the card it would read as a refusal of a flow
+// the save takes.
+function cardFindings(state) {
+    const byNode = {};
+    for (const f of findings(state)) {
+        if (f.node && f.severity !== 'warning' && !byNode[f.node]) byNode[f.node] = f.short;
+    }
+    return byNode;
+}
+
 function findingShort(f) {
     if (!f) return '';
     const s = FINDING_SHORT[f.field];
@@ -2600,7 +2614,7 @@ function savedBody(styleId, stationId) {
     const api = {
         init, reduce, toCells, takenOff, applyPreview,
         legs, dockNotes, cellRobots, cardLines, pictureCells, relationLayout, hasCoords, bar,
-        findings, findingShort,
+        findings, findingShort, cardFindings,
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,

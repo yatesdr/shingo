@@ -45,6 +45,7 @@ Deploy: no migration; Core and Edges in either order.
 - The Edge's Orders page says Cancel, not Abort: its button, its question (Keep order or Cancel order) and its toast. A person's cancel now reads "cancelled by operator" (it read "aborted by operator")
 - Core's order page says Cancel too: Terminate Order is now Cancel Order, and it and the list's Cancel ask Keep order or Cancel order; the Robots page says to cancel the order instead of force-completing it. Re-send Terminate keeps its name: it re-sends the fleet's own terminate for an order already ended
 - A Sequential A/B position can run on one node with no partner (its paired core node left blank): each swap takes the old bin out, then brings the next, and a changeover takes the old part out and brings the new one
+- On the Processes page a Sequential A/B position with no partner carries one note in the bar beside Save, "PLN_01 has no partner: one node, empty from each lift until the next bin is set down", and the style still saves: the guard against a partner forgotten on a real A/B line
 
 ## v0.19.0 — 2026-11-22
 

@@ -381,9 +381,9 @@ func (e *Engine) claimContext(processID int64) (domain.ClaimContextSet, error) {
 }
 
 // validateFlowInputs runs the save-time validator over every input and
-// returns its ERRORS as node findings on the to side. Warnings are advice
-// the composer cannot act on and do not block a save, so they are not
-// findings here.
+// returns its ERRORS as node findings on the to side. Warnings do not block a
+// save, so they are not findings here; the ones on a routing field, which the
+// composer can act on, reach the preview through flowWarnings.
 func validateFlowInputs(ctx domain.ClaimContextSet, inputs []domain.NodeClaimInput) []domain.NodeFinding {
 	var out []domain.NodeFinding
 	for _, in := range inputs {
@@ -394,6 +394,34 @@ func validateFlowInputs(ctx domain.ClaimContextSet, inputs []domain.NodeClaimInp
 			out = append(out, domain.NodeFinding{
 				CoreNodeName: in.CoreNodeName, Side: flowspec.SideTo, Field: flowspec.Field(f.Field),
 				Severity: domain.SeverityError, Message: f.Message,
+			})
+		}
+	}
+	return out
+}
+
+// flowWarnings is the save-time validator's WARNINGS on a routing field, as
+// node findings on the to side, for the preview alone. A routing field is a
+// chip the engineer can act on, so its warning is drawn as the composer bar's
+// note and never blocks the save: SaveFlow refuses on validateFlowInputs'
+// errors only. One rides today: a Sequential A/B position with no partner, a
+// one-node line (final brief 2b, point 3). A warning about the node itself
+// (the membership warning) or the plant map (a key route not checked) is the
+// advice validateFlowInputs keeps off the composer, and stays off it.
+func flowWarnings(ctx domain.ClaimContextSet, inputs []domain.NodeClaimInput) []domain.NodeFinding {
+	routing := map[string]bool{}
+	for _, f := range flowspec.RoutingFields() {
+		routing[string(f)] = true
+	}
+	var out []domain.NodeFinding
+	for _, in := range inputs {
+		for _, f := range domain.ValidateNodeClaim(in, ctx.ForNode(in.CoreNodeName)) {
+			if f.Severity != domain.SeverityWarning || !routing[f.Field] {
+				continue
+			}
+			out = append(out, domain.NodeFinding{
+				CoreNodeName: in.CoreNodeName, Side: flowspec.SideTo, Field: flowspec.Field(f.Field),
+				Severity: domain.SeverityWarning, Message: f.Message,
 			})
 		}
 	}
@@ -511,6 +539,7 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 		return nil, err
 	}
 	findings := validateFlowInputs(claimCtx, draft.inputs())
+	findings = append(findings, flowWarnings(claimCtx, draft.inputs())...)
 	findings = append(findings, domain.ValidateFlowPartsPlaced(stored, toClaims, req.TakenOff)...)
 
 	// THE RUNNING STYLE IS NOT PLANNED (owner ruling R3, 2026-09-12).

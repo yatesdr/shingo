@@ -12,6 +12,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingo/shared/scenefixtures"
 	"shingoedge/domain"
+	"shingoedge/domain/flowspec"
 	"shingoedge/engine/changeover"
 	"shingoedge/internal/testdb"
 	"shingoedge/orders"
@@ -788,7 +789,7 @@ func TestSaveFlow_APartLeftWithNoPositionIsAFindingAndStillSaves(t *testing.T) {
 		}
 	}
 	if loose.Severity != domain.SeverityError {
-		t.Errorf("severity = %q; the composer shows errors only", loose.Severity)
+		t.Errorf("severity = %q; an unplaced part takes START away, so it is an error", loose.Severity)
 	}
 
 	// AND IT SAVES. The rows the request named are written and the rest are
@@ -826,6 +827,64 @@ func TestSaveFlow_APartLeftWithNoPositionIsAFindingAndStillSaves(t *testing.T) {
 		if f.CoreNodeName == "" {
 			t.Errorf("the saved flow still reports a part with no position: %q", f.Message)
 		}
+	}
+}
+
+// TestPreviewFlow_ANoPartnerPositionIsAWarningAndSaves: a Sequential A/B cell
+// with no partner is a one-node line (final brief 2b), and the save warns in
+// one line (point 3). The preview carries the validator's warning on the
+// cell's partner field, to side, the only finding of the draft; the save,
+// which refuses on errors only, takes the flow. A cell given its partner
+// previews with no warning.
+func TestPreviewFlow_ANoPartnerPositionIsAWarningAndSaves(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, toStyleID := seedFlowScenario(t, db)
+	eng := testEngine(t, db)
+	enableComposer(t, db, processID)
+	cells := cellsOf(t, db, toStyleID)
+	for i := range cells {
+		if cells[i].CoreNodeName == "FLOW-SWAP" {
+			cells[i].SwapMode = protocol.SwapModeSequential
+		}
+	}
+	preview := func(cells []domain.FlowCell) *FlowPreview {
+		t.Helper()
+		p, err := eng.PreviewFlow(context.Background(), processID, FlowPreviewRequest{ToStyleID: toStyleID, Cells: cells})
+		if err != nil {
+			var noOrders *FlowNoOrdersError
+			if !errors.As(err, &noOrders) {
+				t.Fatalf("preview: %v", err)
+			}
+			p = noOrders.Preview
+		}
+		return p
+	}
+	p := preview(cells)
+	want := domain.NodeFinding{CoreNodeName: "FLOW-SWAP", Side: flowspec.SideTo, Field: flowspec.PairedCoreNode,
+		Severity: domain.SeverityWarning,
+		Message:  "FLOW-SWAP has no partner: one node, empty from each lift until the next bin is set down"}
+	if len(p.Findings) != 1 || p.Findings[0] != want {
+		t.Errorf("findings %+v, want only %+v", p.Findings, want)
+	}
+	if _, err := eng.SaveFlow(processID, FlowSaveRequest{
+		Source: domain.ClaimSourceAdmin, CalledBy: "one-node", ToStyleID: toStyleID,
+		Cells: cells, Fingerprint: p.Fingerprint,
+	}); err != nil {
+		t.Fatalf("a flow with a one-node line was refused: %v", err)
+	}
+	saved, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SWAP")
+	testutil.MustNoErr(t, err, "the saved claim")
+	if saved.SwapMode != protocol.SwapModeSequential || saved.PairedCoreNode != "" {
+		t.Errorf("saved %s with partner %q, want sequential with none", saved.SwapMode, saved.PairedCoreNode)
+	}
+	for i := range cells {
+		if cells[i].CoreNodeName == "FLOW-SWAP" {
+			cells[i].PairedCoreNode = "FLOW-GONE"
+		}
+	}
+	if p := preview(cells); len(p.Findings) != 0 {
+		t.Errorf("a cell with its partner previews findings %+v, want none", p.Findings)
 	}
 }
 

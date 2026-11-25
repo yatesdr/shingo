@@ -739,6 +739,29 @@ test('bar: one server finding reads 1 to fix and its sentence once', () => {
     assert.strictEqual(f.detail, '');
 });
 
+// A ONE-NODE LINE'S SAVE WARNING IS A NOTE, NOT A FIX (final brief 2b, point
+// 3). The server's warning on a Sequential A/B position with no partner rides
+// the bar's ok arm as its note and leaves the flow saveable, and it marks no
+// card: cardFindings is the errors only, so a card's red pill is a refusal's.
+test('bar: a no-partner warning is a note, the flow saveable, and no card alarm', () => {
+    let s = initStyle(7);
+    const warn = 'PLN_01 has no partner: one node, empty from each lift until the next bin is set down';
+    const warning = { core_node_name: 'PLN_01', field: 'paired_core_node', side: 'to', severity: 'warning', message: warn };
+    const preview = findings => ({
+        order_count: 2, unresolved: [], actions: [], fingerprint: 'abc',
+        preflight: { state: 'ok', missing: [] }, findings: findings,
+    });
+    s = M.applyPreview(s, preview([warning]));
+    const b = M.bar(s);
+    assert.strictEqual(b.tone, 'ok');
+    assert.strictEqual(b.button.enabled, true);
+    assert.ok(b.detail.indexOf('note: ' + warn) >= 0, 'the bar does not carry the warning: ' + b.detail);
+    assert.deepStrictEqual(M.cardFindings(s), {});
+    s = M.applyPreview(s, preview([warning,
+        { core_node_name: 'PLN_01', field: 'payload_code', side: 'to', severity: 'error', message: 'which part?' }]));
+    assert.deepStrictEqual(M.cardFindings(s), { PLN_01: 'which part?' });
+});
+
 // TWO THINGS, and the second one is the point. Clearing PLN_01's swap mode
 // takes it out of the DRAFT — toCells skips a cell with no choreography — so
 // the part that was on it has nowhere to go, and the server says so
