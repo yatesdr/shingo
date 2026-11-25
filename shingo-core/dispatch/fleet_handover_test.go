@@ -3,8 +3,10 @@
 package dispatch
 
 import (
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -304,6 +306,125 @@ func TestHandover_ACancelReadBeforeTheYesStopsTheFleetJob(t *testing.T) {
 		"(stops sent: %v). The job is live at the fleet under an order Core has ended: the cancel must "+
 		"stop the job its ending finds on the row, not only the one its caller's copy named",
 		o.ID, job, backend.CancelRequests())
+}
+
+// TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob is the rule above with
+// both doors live and nothing handed over by the test: HandleOrderCancel does
+// its own read, and a dispatcher its own handover.
+//
+// A transaction of the test's own takes the order's row from inside the create,
+// so the two writes that want the row queue behind it in the order they come:
+// the handover's yes, then the ending of a cancel that HandleOrderCancel began
+// after it. The door's read does not wait for the row, and sees the order as it
+// rests: `queued`, no fleet job. The test lets the row go, the yes commits, and
+// the ending lands on a `dispatched` row.
+//
+// RED AT 93bd3cd6 for the reason the pin above gives. This is the pin a narrowed
+// window does not pass: a fix that reads the order once more before it decides
+// stays red here, because every read made before the ending predates the yes.
+// Only the ending itself, or a read after it, can learn of the job. Skipped
+// unless SHINGO_KNOWN_RED is set; the fix removes the skip.
+func TestHandover_ACancelQueuedBehindTheYesStopsTheFleetJob(t *testing.T) {
+	if os.Getenv("SHINGO_KNOWN_RED") == "" {
+		t.Skip("docket B20 red pin, red until a cancel stops the fleet job its ending finds on the row; " +
+			"run with SHINGO_KNOWN_RED=1")
+	}
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	o := &orders.Order{
+		EdgeUUID: "HANDOVER-cancel-behind-yes", StationUID: "line-1",
+		OrderType: OrderTypeRetrieve, Status: StatusQueued, Quantity: 1,
+		SourceNode: sd.StorageNode.Name, DeliveryNode: sd.LineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	hand, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "load the dispatcher's copy")
+	src, err := db.GetNodeByDotName(sd.StorageNode.Name)
+	testutil.MustNoErr(t, err, "resolve source")
+	dst, err := db.GetNodeByDotName(sd.LineNode.Name)
+	testutil.MustNoErr(t, err, "resolve dest")
+
+	// waiting returns once n of this database's sessions wait on a lock: the
+	// fact each step below waits for.
+	waiting := func(n int) error {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			var got int
+			if err := db.DB.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity
+				WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&got); err != nil {
+				return err
+			}
+			if got == n {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%d session(s) wait on a lock, want %d", got, n)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"}}
+	queued := make(chan error, 1)
+	cancelDone := make(chan struct{})
+	backend.SetOnCreate(func() {
+		// Inside the create: the hand has committed and the yes is next.
+		hold, err := db.DB.Begin()
+		if err == nil {
+			_, err = hold.Exec(`SELECT 1 FROM orders WHERE id=$1 FOR UPDATE`, o.ID)
+		}
+		if err != nil {
+			queued <- fmt.Errorf("take the order's row: %w", err)
+			return
+		}
+		go func() {
+			err := waiting(1) // the yes waits for the row
+			if err == nil {
+				go func() {
+					d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: o.EdgeUUID, Reason: "aborted by operator"})
+					close(cancelDone)
+				}()
+				err = waiting(2) // the cancel has read the order, and its ending waits behind the yes
+			}
+			if cerr := hold.Commit(); err == nil {
+				err = cerr
+			}
+			queued <- err
+		}()
+	})
+
+	if _, err := d.dispatchToFleetCore(hand, src, dst, Hand{}); err != nil {
+		t.Fatalf("the dispatcher should have handed the order to the fleet: %v", err)
+	}
+	testutil.MustNoErr(t, <-queued, "queue the yes and the cancel's ending behind the held row")
+	select {
+	case <-cancelDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cancel door never returned (fixture broken)")
+	}
+	if len(backend.CreateRequests()) != 1 {
+		t.Fatalf("expected exactly one create, got %d (fixture broken)", len(backend.CreateRequests()))
+	}
+	job := backend.CreateRequests()[0].OrderID
+
+	after, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if after.Status != StatusCancelled || after.VendorOrderID != job {
+		t.Fatalf("the row reads %s naming fleet job %q, want cancelled naming %q: the yes did not land "+
+			"ahead of the ending (fixture broken)", after.Status, after.VendorOrderID, job)
+	}
+	for _, stopped := range backend.CancelRequests() {
+		if stopped == job {
+			return
+		}
+	}
+	t.Errorf("order %d ended cancelled naming fleet job %s, and no stop was sent to the fleet for it "+
+		"(stops sent: %v). HandleOrderCancel read the order before the yes and ended it after: the "+
+		"cancel must stop the job its ending finds on the row", o.ID, job, backend.CancelRequests())
 }
 
 // TestHandover_RequestShapesUnchanged is the pin a careless extraction breaks.
