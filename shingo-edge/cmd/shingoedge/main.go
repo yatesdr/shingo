@@ -412,12 +412,18 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return nil
 	})
 
+	// The two Sync buttons ask through these. Set before Start, whose boot
+	// burst sends on this goroutine at three tries a message: set after it,
+	// both answered ok and asked nothing for the whole burst, 70 s and more
+	// with the broker down (docket D31). PIN:
+	// TestBootWiring_TheHooksAWebHandlerCallsAreSetBeforeTheBurst.
+	eng.SetNodeSyncFunc(hb.RequestNodeSync)
+	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+
 	hb.Start()
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.
 
-	eng.SetNodeSyncFunc(hb.RequestNodeSync)
-	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
 	// The debug page's edge.heartbeat is this heartbeater's body: Core's ack to
 	// it reaches this Edge as the answer to its own digests (engine
 	// HeartbeatBody).
