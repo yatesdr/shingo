@@ -272,10 +272,12 @@ func (e *Engine) SetReleasePointSource(src interface {
 
 // ── The intent worker ─────────────────────────────────────────────────────
 
-// heldIntent is one leg a node's intents hold, with its choices.
+// heldIntent is one leg a node's intents hold, with its choices and the row
+// they were read from, which the act takes instead of reading it again (P5).
 type heldIntent struct {
 	orderID int64
 	disp    ReleaseDisposition
+	order   *storeorders.Order
 }
 
 func (e *Engine) heldIntentLegs(nodeID int64) []heldIntent {
@@ -297,7 +299,7 @@ func (e *Engine) heldIntentLegs(nodeID int64) []heldIntent {
 		if err != nil || in == nil || in.Sent() {
 			continue
 		}
-		out = append(out, heldIntent{orderID: id, disp: ReleaseDisposition{
+		out = append(out, heldIntent{orderID: id, order: o, disp: ReleaseDisposition{
 			Mode: ReleaseDispositionMode(in.Choices.Mode), LinesideCapture: in.Choices.Captures,
 			PartialCount: in.Choices.PartialCount, CalledBy: in.CalledBy,
 		}})

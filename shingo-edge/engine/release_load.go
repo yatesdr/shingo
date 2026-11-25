@@ -241,17 +241,7 @@ func (e *Engine) loadLeg(act *releaseAct, ll *legLoad, need release.Need) {
 			s.ReadErr = err
 			break
 		}
-		ll.order = order
-		s.Status, s.QueueReason, s.QueueCode = order.Status, order.QueueReason, order.QueueCode
-		if order.ProcessNodeID != nil {
-			s.HasProcessNode, s.ProcessNodeID = true, *order.ProcessNodeID
-		}
-		in, ierr := release.DecodeIntent(order.ReleaseIntent)
-		if ierr != nil {
-			e.logRelease("order=%d: release intent unreadable (%v) — read as none", order.ID, ierr)
-		}
-		s.Intent = in
-		ll.point = release.PointOf(order.Status, order.StationWait, order.WaitKind, in, e.legFactsOf(act, order).facts.Purposes)
+		e.takeOrder(act, ll, order)
 	case release.NeedCurtain:
 		if pt, ok := act.actFacts.Points[s.OrderID]; ok && pt.Found {
 			s.Curtain = e.curtainForNodes(act, ll.order, pt.Enters)
@@ -311,6 +301,25 @@ func (e *Engine) loadLeg(act *releaseAct, ll *legLoad, need release.Need) {
 		s.Flip, ll.partner = e.loadFlip(ll.node)
 	}
 	s.Loaded |= need
+}
+
+// takeOrder is the order group (release.NeedOrder) from the leg's row: what
+// the plan reads of it, and the point it is at. loadLeg reads the row first; a
+// door that already read it (the intent worker, heldIntentLegs) hands it to
+// runAct, which takes it here without a second read.
+func (e *Engine) takeOrder(act *releaseAct, ll *legLoad, order *storeorders.Order) {
+	s := &ll.snap
+	ll.order = order
+	s.Status, s.QueueReason, s.QueueCode = order.Status, order.QueueReason, order.QueueCode
+	if order.ProcessNodeID != nil {
+		s.HasProcessNode, s.ProcessNodeID = true, *order.ProcessNodeID
+	}
+	in, ierr := release.DecodeIntent(order.ReleaseIntent)
+	if ierr != nil {
+		e.logRelease("order=%d: release intent unreadable (%v) — read as none", order.ID, ierr)
+	}
+	s.Intent = in
+	ll.point = release.PointOf(order.Status, order.StationWait, order.WaitKind, in, e.legFactsOf(act, order).facts.Purposes)
 }
 
 // loadFlip reads the sequential partner a release on the feeding side moves

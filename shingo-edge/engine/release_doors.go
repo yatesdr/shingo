@@ -39,15 +39,25 @@ type actLeg struct {
 	taskNode string
 	press    string
 	disp     ReleaseDisposition
+	// order is the leg's row when the door has read it already (the intent
+	// worker); nil, and the loader reads it.
+	order *storeorders.Order
 }
 
 // runAct plans an act over its legs, loading what the plan asks for, and
-// commits it. The plan is returned for the door's account.
+// commits it. The plan is returned for the door's account. A leg whose row the
+// door handed in has its order group taken from it (takeOrder), as the
+// loader would have from its own read: the plan asks every leg's order group
+// before any gate (release.PlanAct).
 func (e *Engine) runAct(act *releaseAct, in []actLeg) (release.ActPlan, []*legLoad, error) {
 	lls := make([]*legLoad, len(in))
 	for i, l := range in {
 		lls[i] = newLegLoad(l.orderID, l.label, l.taskNode, l.disp)
 		lls[i].press = l.press
+		if l.order != nil {
+			e.takeOrder(act, lls[i], l.order)
+			lls[i].snap.Loaded |= release.NeedOrder
+		}
 	}
 	p := release.PlanAct(act.Act, act.actFacts, actLegsOf(lls))
 	for p.Need != 0 {
@@ -336,7 +346,7 @@ func (e *Engine) fireIntents(nodeID int64, why string) {
 	act.Reevaluation = true
 	legs := make([]actLeg, 0, len(held))
 	for _, h := range held {
-		legs = append(legs, actLeg{orderID: h.orderID, label: "intent", press: fmt.Sprintf("intent:%d", nodeID), disp: h.disp})
+		legs = append(legs, actLeg{orderID: h.orderID, label: "intent", press: fmt.Sprintf("intent:%d", nodeID), disp: h.disp, order: h.order})
 	}
 	p, _, err := e.runAct(act, legs)
 	if err != nil {
