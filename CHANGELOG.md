@@ -31,6 +31,7 @@ Deploy: no migration; Core and Edges in either order.
 - An Edge that is shutting down no longer sends on a cart it was holding at its wait (for the light curtain, a lift or Core's answer): the hold stays on the order, and the cart goes when the Edge is back up
 - At shutdown an Edge lets its background work, and the message from Core it is handling, finish before its database closes, and stops waiting for them after 20 s
 - A carrier left on staging by an order cancelled at its wait is sent back by the Edge's once-a-minute check when the send-back at the cancel did not happen (the Edge restarted first, or could not read Core's bins at that moment), as long as no other order of that line has been made since
+- An order the Edge cannot queue for Core is no longer left on the screens as pending and never sent: the request that made it reports that it failed
 
 ## v0.19.0 — 2026-11-22
 

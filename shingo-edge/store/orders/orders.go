@@ -21,6 +21,13 @@ import (
 	"shingoedge/store/internal/helpers"
 )
 
+// Execer is what a writer that a create runs in one transaction takes: the
+// database, or the transaction (Create, UpdateStepsJSON, UpdateStepsAndFacts,
+// UpdateBinID).
+type Execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // Order and History are the edge-order data types. The structs live
 // in shingoedge/domain (Stage 2A.2); these aliases keep the
 // orders.Order / orders.History names used by every scan helper,
@@ -349,7 +356,10 @@ func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
 // shingoedge/orders. An order stamped no_demand carries a class and no id, and
 // that pair means "belongs to no demand episode by construction". A row with
 // both blank is a row written before this column list named them.
-func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode string, want protocol.Height, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
+//
+// db is the database or a transaction: a create writes its row and its message
+// to Core in one (shingoedge/orders createAndQueue).
+func Create(db Execer, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode string, want protocol.Height, autoConfirm bool, payloadCode, originID, originClass string) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, want, auto_confirm, payload_code, origin_id, origin_class)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -609,7 +619,7 @@ func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
 
 // UpdateStepsJSON stores the per-order steps document used by the
 // scenesync runtime.
-func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
+func UpdateStepsJSON(db Execer, id int64, stepsJSON string) error {
 	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now') WHERE id=?`, stepsJSON, id)
 	return err
 }
@@ -617,7 +627,7 @@ func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
 // UpdateStepsAndFacts stores an order's steps with the release facts computed
 // from them (release.Facts), in one statement: the facts never describe steps
 // the row does not hold.
-func UpdateStepsAndFacts(db *sql.DB, id int64, stepsJSON, factsJSON string) error {
+func UpdateStepsAndFacts(db Execer, id int64, stepsJSON, factsJSON string) error {
 	_, err := db.Exec(`UPDATE orders SET steps_json=?, release_facts=?, updated_at=datetime('now') WHERE id=?`,
 		stepsJSON, factsJSON, id)
 	return err
@@ -651,7 +661,7 @@ func UpdateStagedExpireAt(db *sql.DB, id int64, stagedExpireAt *time.Time) error
 // envelope. PLC tick attribution at consume/produce time looks up
 // the active order's BinID for delta envelope routing. nil clears
 // the column (multi-bin orders, older Core builds).
-func UpdateBinID(db *sql.DB, id int64, binID *int64) error {
+func UpdateBinID(db Execer, id int64, binID *int64) error {
 	if binID == nil {
 		_, err := db.Exec(`UPDATE orders SET bin_id=NULL, updated_at=datetime('now') WHERE id=?`, id)
 		return err

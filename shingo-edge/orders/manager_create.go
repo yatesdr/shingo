@@ -1,6 +1,7 @@
 package orders
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -69,14 +70,6 @@ func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 		press = pressOf(claim)
 	}
 
-	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
-		s.Process, s.Empty,
-		s.Quantity, s.Delivery, s.Staging, s.Source, s.Want, s.AutoConfirm, payloadCode,
-		s.Origin.ID, s.Origin.Class)
-	if err != nil {
-		return nil, fmt.Errorf("create order: %w", err)
-	}
-
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:       orderUUID,
 		OrderType:       TypeRetrieve,
@@ -92,7 +85,16 @@ func (m *Manager) CreateRetrieveOrder(s RetrieveSpec) (*orders.Order, error) {
 		OriginID:        s.Origin.ID,
 		OriginClass:     s.Origin.Class,
 	})
-	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
+	orderID, err := m.createAndQueue(env, envErr, func(tx *sql.Tx) (int64, error) {
+		return orders.Create(tx, orderUUID, TypeRetrieve,
+			s.Process, s.Empty,
+			s.Quantity, s.Delivery, s.Staging, s.Source, s.Want, s.AutoConfirm, payloadCode,
+			s.Origin.ID, s.Origin.Class)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create order: %w", err)
+	}
+	m.autoSubmit(orderID, orderUUID)
 
 	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s press=%s want=%q", TypeRetrieve, orderID, orderUUID, s.Delivery, press, s.Want)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, s.Process)
@@ -232,23 +234,6 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 		press = pressOf(claim)
 	}
 
-	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
-		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, protocol.Height{}, autoConfirm, payloadCode,
-		origin.ID, origin.Class)
-	if err != nil {
-		return nil, fmt.Errorf("create move order: %w", err)
-	}
-	// A move that names its bin carries it from its birth, not from its delivery
-	// (HandleDelivered): the unloader's double-tap guard asks for a live move
-	// carrying the cart (emptyOutInFlight), and an empty-out is live long before
-	// it is delivered.
-	if bin.id != 0 {
-		if err := m.db.UpdateOrderBinID(orderID, &bin.id); err != nil {
-			log.Printf("create move order %d: record bin %d: %v", orderID, bin.id, err)
-		}
-	}
-
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:     orderUUID,
 		OrderType:     TypeMove,
@@ -264,7 +249,29 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 		BinID:         bin.id,
 		QualityHoldBy: bin.holdBy,
 	})
-	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
+	orderID, err := m.createAndQueue(env, envErr, func(tx *sql.Tx) (int64, error) {
+		id, err := orders.Create(tx, orderUUID, TypeMove,
+			processNodeID, false,
+			quantity, deliveryNode, "", sourceNode, protocol.Height{}, autoConfirm, payloadCode,
+			origin.ID, origin.Class)
+		if err != nil {
+			return 0, err
+		}
+		// A move that names its bin carries it from its birth, not from its
+		// delivery (HandleDelivered): the unloader's double-tap guard asks for a
+		// live move carrying the cart (emptyOutInFlight), and an empty-out is
+		// live long before it is delivered.
+		if bin.id != 0 {
+			if err := orders.UpdateBinID(tx, id, &bin.id); err != nil {
+				log.Printf("create move order %d: record bin %d: %v", id, bin.id, err)
+			}
+		}
+		return id, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create move order: %w", err)
+	}
+	m.autoSubmit(orderID, orderUUID)
 
 	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s payload=%s remainingUOP=%v bin=%d hold=%q press=%s origin=%s",
 		TypeMove, orderID, orderUUID, sourceNode, deliveryNode, payloadCode, remainingUOP, bin.id, bin.holdBy, press, origin.ID)
@@ -366,29 +373,14 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadOverride)
 
-	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
-		processNodeID, false,
-		quantity, deliveryNode, "", "", protocol.Height{}, autoConfirm, payloadCode,
-		origin.ID, origin.Class)
-	if err != nil {
-		return nil, fmt.Errorf("create complex order: %w", err)
-	}
-
 	// The release facts are the steps' answers to what a release of this leg
 	// moves (release.Facts), computed once, here, where the steps are authored.
 	// A leg with no steps stores none: the release reads it as it reads any
 	// order with no plan (the curtain gates its process node).
-	if len(steps) == 0 {
-		if err := m.db.UpdateOrderStepsJSON(orderID, string(stepsJSON)); err != nil {
-			return nil, fmt.Errorf("store steps: %w", err)
-		}
-	} else {
-		facts, err := release.FactsFromSteps(steps, processNodeName).Encode()
-		if err != nil {
+	var facts string
+	if len(steps) > 0 {
+		if facts, err = release.FactsFromSteps(steps, processNodeName).Encode(); err != nil {
 			return nil, err
-		}
-		if err := m.db.UpdateOrderStepsAndFacts(orderID, string(stepsJSON), facts); err != nil {
-			return nil, fmt.Errorf("store steps: %w", err)
 		}
 	}
 
@@ -409,7 +401,28 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		OriginID:         origin.ID,
 		OriginClass:      origin.Class,
 	})
-	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
+	orderID, err := m.createAndQueue(env, envErr, func(tx *sql.Tx) (int64, error) {
+		id, err := orders.Create(tx, orderUUID, TypeComplex,
+			processNodeID, false,
+			quantity, deliveryNode, "", "", protocol.Height{}, autoConfirm, payloadCode,
+			origin.ID, origin.Class)
+		if err != nil {
+			return 0, err
+		}
+		if len(steps) == 0 {
+			err = orders.UpdateStepsJSON(tx, id, string(stepsJSON))
+		} else {
+			err = orders.UpdateStepsAndFacts(tx, id, string(stepsJSON), facts)
+		}
+		if err != nil {
+			return 0, fmt.Errorf("store steps: %w", err)
+		}
+		return id, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create complex order: %w", err)
+	}
+	m.autoSubmit(orderID, orderUUID)
 
 	m.DebugLog.Log("create: type=%s id=%d uuid=%s steps=%d", TypeComplex, orderID, orderUUID, len(steps))
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex, nil, processNodeID)

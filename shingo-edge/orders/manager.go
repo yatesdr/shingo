@@ -1,6 +1,9 @@
 package orders
 
 import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 
@@ -8,6 +11,7 @@ import (
 	"shingo/protocol/types"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
+	storemessaging "shingoedge/store/messaging"
 	"shingoedge/store/processes"
 )
 
@@ -53,10 +57,6 @@ func NewManager(db *store.DB, emitter EventEmitter, stationID string) *Manager {
 		lifecycle: newLifecycleService(db, emitter, nil),
 		sender:    newOrderSender(db, stationID),
 	}
-}
-
-func (m *Manager) enqueueEnvelope(env *protocol.Envelope) error {
-	return m.sender.enqueue(env)
 }
 
 // lookupPayloadMeta returns description and payload code from the active style
@@ -195,25 +195,50 @@ func (m *Manager) payloadDesc(payloadCode string) string {
 	return ""
 }
 
-// enqueueAndAutoSubmit enqueues a protocol envelope and transitions the order
-// to submitted. Used by order types that auto-submit at creation (retrieve,
-// move, complex, ingest). Store orders do NOT auto-submit — they wait for
-// count confirmation.
+// createAndQueue writes a new order and its message to Core in one
+// transaction: write adds the row, and its steps or its bin, in tx, and the
+// envelope goes into the outbox in the same tx (store.EnqueueOutboxIn). Both
+// commit or neither does, so no order row stands that Core never hears of
+// (docket B12; TestCreate_ARefusedMessageLeavesNoOrderCoreNeverHearsOf). An
+// envelope that will not build or marshal makes no row. The drainer is woken
+// after the commit.
 //
-// If the envelope fails to build or enqueue, the order stays in pending so
-// the operator sees an actionable state rather than a stuck "submitted" order
-// that Core never received.
-func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *protocol.Envelope, envErr error) {
+// Until 2026-11-25 the row, the outbox and the status were written one after
+// another, and an envelope or outbox failure left a pending row with nothing
+// sent while the create answered as if it had worked.
+func (m *Manager) createAndQueue(env *protocol.Envelope, envErr error, write func(tx *sql.Tx) (int64, error)) (int64, error) {
 	if envErr != nil {
-		log.Printf("ERROR: build envelope for order %s: %v (order stays pending)", orderUUID, envErr)
-		m.DebugLog.Log("enqueue failed: order %s envelope build error: %v", orderUUID, envErr)
-		return
+		return 0, fmt.Errorf("build envelope: %w", envErr)
 	}
-	if err := m.enqueueEnvelope(env); err != nil {
-		log.Printf("ERROR: enqueue order %s: %v (order stays pending)", orderUUID, err)
-		m.DebugLog.Log("enqueue failed: order %s outbox write error: %v", orderUUID, err)
-		return
+	data, err := json.Marshal(env)
+	if err != nil {
+		return 0, fmt.Errorf("marshal envelope: %w", err)
 	}
+	var orderID int64
+	if err := m.db.InTx(func(tx *sql.Tx) error {
+		id, err := write(tx)
+		if err != nil {
+			return err
+		}
+		if _, err := store.EnqueueOutboxIn(tx, data, env.Type); err != nil {
+			return fmt.Errorf("enqueue %s: %w", env.Type, err)
+		}
+		orderID = id
+		return nil
+	}); err != nil {
+		m.DebugLog.Log("create failed: %s: %v (no row, nothing queued)", env.Type, err)
+		return 0, err
+	}
+	storemessaging.NotifyEnqueued()
+	return orderID, nil
+}
+
+// autoSubmit moves a new order to submitted, its message already queued with
+// its row (createAndQueue). Used by the order types that submit at creation
+// (retrieve, move, complex). The move goes through the lifecycle, which has no
+// transactional door, so it runs after the commit: a failure here leaves a
+// pending row whose message is queued, which Core's replies reconcile.
+func (m *Manager) autoSubmit(orderID int64, orderUUID string) {
 	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
 		log.Printf("auto-submit order %s: %v (enqueued to outbox but status stayed pending; reconciles when Core replies)", orderUUID, err)
 	}

@@ -23,7 +23,7 @@ import (
 //   CreateMoveOrderWithUOP, CreateComplexOrder). Every
 //   happy path is asserted
 //   against both DB state AND the outbox envelope that was queued, since
-//   the whole reason enqueueAndAutoSubmit is non-trivial is that the two
+//   the whole reason createAndQueue is non-trivial is that the two
 //   must stay consistent.
 //
 // PR 3.2 — HandleDispatchReply's 8-way switch (ack/waybill/queued/update/

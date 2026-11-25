@@ -277,7 +277,10 @@ func (m *Manager) abortOrder(orderID int64, reason, actor string) error {
 	return nil
 }
 
-// SubmitOrder transitions a pending order to submitted and enqueues it.
+// SubmitOrder moves a pending order to submitted. It sends nothing: an order's
+// message to Core is queued with its row when it is made (createAndQueue), so a
+// pending row made since should have its message in the outbox already, and
+// Core's replies move it on. Until 2026-11-25 this said it enqueued the order.
 func (m *Manager) SubmitOrder(orderID int64) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
