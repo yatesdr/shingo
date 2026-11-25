@@ -504,10 +504,14 @@ func TestCancelDoorPin_StartCancels(t *testing.T) {
 
 // TestCancelDoorPin_ChangeoverCancel: a changeover's CANCEL with its swap's
 // two legs live (cancelProcessChangeoverInternal: the task cancelled first,
-// then taskLeftOnStaging's abort of each leg). Its own work: the position's
+// then taskLeftOnStaging's cancel of each leg). Its own work: the position's
 // slots cleared, the changeover row cancelled, the style back; and with a
-// redirect, the next changeover started at once. Today the legs end at the
-// tap; Core's word moves nothing on the ended rows.
+// redirect, the next changeover started at once. The legs' cancels ask Core
+// (final brief 5g), as the CANCEL's own: after the tap they keep Core's
+// status with their cancels sent, and the CANCEL's own work is done as
+// before; a redirect's START reads them as leaving, not blocking. Core's word
+// ends each. Until 2026-11-25 the legs ended at the tap, and Core's word moved
+// nothing.
 func TestCancelDoorPin_ChangeoverCancel(t *testing.T) {
 	t.Parallel()
 	for _, redirect := range []bool{false, true} {
@@ -535,8 +539,9 @@ func TestCancelDoorPin_ChangeoverCancel(t *testing.T) {
 			testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(protocol.StatusStaged)), "the evac waits")
 			p.version(supplyID, evacID)
 			p.drain()
-			want := []map[string]any{cancelOf(p.row(supplyID).UUID, "cancelled by operator", ""),
-				cancelOf(p.row(evacID).UUID, "cancelled by operator", "")}
+			want := []map[string]any{askOf(p.row(supplyID).UUID, "cancelled by operator", ""),
+				askOf(p.row(evacID).UUID, "cancelled by operator", "")}
+			statusAt := map[int64]protocol.Status{supplyID: protocol.StatusInTransit, evacID: protocol.StatusStaged}
 
 			if redirect {
 				testutil.MustNoErr(t, eng.CancelProcessChangeoverRedirect(processID, &thirdID), "CANCEL and redirect")
@@ -544,9 +549,9 @@ func TestCancelDoorPin_ChangeoverCancel(t *testing.T) {
 				testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "CANCEL")
 			}
 
-			for _, id := range []int64{supplyID, evacID} {
-				if s := p.row(id).Status; s != orders.StatusCancelled {
-					t.Errorf("leg %d reads %s after the tap, want cancelled", id, s)
+			for id, s := range statusAt {
+				if o := p.row(id); o.Status != s || !o.CancelSent {
+					t.Errorf("leg %d reads %s sent=%v after the tap, want %s with its cancel sent", id, o.Status, o.CancelSent, s)
 				}
 			}
 			sent := p.sent()
@@ -586,6 +591,11 @@ func TestCancelDoorPin_ChangeoverCancel(t *testing.T) {
 				}
 			}
 			expectLines(t, "the toasts", p.toasts)
+			if redirect {
+				if next, err := db.GetActiveProcessChangeover(processID); err != nil || next == nil || next.ToStyleID != thirdID {
+					t.Errorf("after Core's word the open changeover is %+v (%v), want the redirect's still", next, err)
+				}
+			}
 		})
 	}
 }

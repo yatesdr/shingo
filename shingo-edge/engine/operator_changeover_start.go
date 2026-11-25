@@ -466,7 +466,13 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 	var blockers []string
 	for i := range live {
 		o := live[i]
-		if !protocol.BlocksChangeoverStart(o.Status) {
+		// A row whose cancel this station sent is leaving: the cancel is ahead of
+		// this start's orders on the wire, and Core never refuses the cancel of an
+		// order still on its way (a cart it set down reads delivered, which does
+		// not block). Read as blocking, a CANCEL and redirect would be refused on
+		// the legs its own CANCEL had just asked Core to cancel. Pinned by
+		// TestCancelDoorPin_ChangeoverCancel.
+		if !protocol.BlocksChangeoverStart(o.Status) || o.CancelSent {
 			continue
 		}
 		if e.orderPlacesBinAtAny(&o, nodes) {

@@ -188,13 +188,14 @@ func (e *Engine) leftOnStaging(order *domain.Order, processNodeID int64, aborted
 }
 
 // taskLeftOnStaging collects what one changeover task's orders left standing,
-// aborting the live ones as it goes. A park counts only for a leg the abort
-// took: a delivered leg's abort is refused (orders.ErrDelivered; its cart is
-// set down and it is confirmed by its own auto-confirm or Core's sweep), and a
-// failed abort leaves the leg live to carry its bin on, so neither counts. A
-// stage counts only beside a park: the leg that would have collected the
-// staged bin was aborted now, so the bin is still waiting, and the read that
-// answers for the park answers for it too. Without a live leg the stage was
+// cancelling the live ones as it goes (asking Core for an order whose status
+// is Core's word: orders.Manager.AskCancel). A park counts only for a leg the
+// cancel took: a delivered leg's cancel is refused (orders.ErrDelivered; its
+// cart is set down and it is confirmed by its own auto-confirm or Core's
+// sweep), and a failed one leaves the leg live to carry its bin on, so neither
+// counts. A stage counts only beside a park: the leg that would have collected
+// the staged bin was cancelled now, so the bin is still waiting, and the read
+// that answers for the park answers for it too. Without a live leg the stage was
 // collected, or its leg ended earlier. TestSingleRobotCancel_ADeliveredLeg
 // pins the delivered leg.
 func (e *Engine) taskLeftOnStaging(task processes.NodeTask) []parkedBin {
@@ -211,7 +212,7 @@ func (e *Engine) taskLeftOnStaging(task processes.NodeTask) []parkedBin {
 			order.Status != protocol.StatusCancelled && order.Status != protocol.StatusFailed
 		aborted := false
 		if !ordermgr.IsTerminal(order.Status) {
-			if err := e.orderMgr.CancelOrder(order.ID); err != nil {
+			if err := e.orderMgr.AskCancel(order.ID, ordermgr.CancelAsk{By: domain.CancelByDecided}); err != nil {
 				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
 			} else {
 				aborted = true

@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
@@ -68,13 +69,17 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	}
 	defer release()
 
-	// THE TASKS ARE CANCELLED BEFORE ANY ORDER IS ABORTED. Each abort runs the
-	// completion cascade on this goroutine, under the cells' locks. A task still
-	// open there reads to the orphan handler as an operator cancelling one order,
-	// and that handler runs the changeover's completion, which confirms delivered
-	// legs; a confirm's keep-spot kick takes a cell's lock, which this goroutine
-	// already holds, and waits for itself (LOCKS.md, E2). A cancelled task is the
-	// cancel's own, and the orphan handler leaves it alone.
+	// THE TASKS ARE CANCELLED BEFORE ANY ORDER IS CANCELLED. A cancel of an order
+	// with no versioned word of Core's ends it here, running the completion
+	// cascade on this goroutine, under the cells' locks. A task still open there
+	// reads to the orphan handler as an operator cancelling one order, and that
+	// handler runs the changeover's completion, which confirms delivered legs; a
+	// confirm's keep-spot kick takes a cell's lock, which this goroutine already
+	// holds, and waits for itself (LOCKS.md, E2). A cancelled task is the
+	// cancel's own, and the orphan handler leaves it alone. A cancel of an order
+	// whose status is Core's word asks Core (orders.Manager.AskCancel) and does
+	// not wait: its completion runs at Core's word, after this CANCEL, and finds
+	// the task cancelled and the changeover ended.
 	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
 	for _, task := range nodeTasks {
 		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
@@ -260,8 +265,8 @@ func (e *Engine) abortCarriersComingBehindFronts(tasks []processes.NodeTask) {
 			}
 			for _, c := range claims {
 				if comingToAnotherPosition(o, c) && !isSpotRefill(o, c) {
-					if err := e.orderMgr.CancelOrderWithReason(o.ID,
-						"changeover cancelled: the carrier coming to "+o.DeliveryNode+" was for the incoming style"); err != nil {
+					if err := e.orderMgr.AskCancel(o.ID, ordermgr.CancelAsk{By: domain.CancelByDecided,
+						Reason: "changeover cancelled: the carrier coming to " + o.DeliveryNode + " was for the incoming style"}); err != nil {
 						log.Printf("changeover cancel: abort order %d to %s: %v", o.ID, o.DeliveryNode, err)
 					}
 					break
