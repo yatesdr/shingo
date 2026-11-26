@@ -793,13 +793,17 @@ const toastShotDriver = shotStream + `(function () {
 
 // TestLoaderHomeStagedShots — the loader board's card for a dedicated loader's
 // home whose cart a line's robot is staged under (brief H H3), at the kiosk's
-// 1280x800, and what its CLEAR BIN answers there.
+// 1280x800, and what its CLEAR BIN answers there; then the same with the robot
+// on its way (brief I I1).
 //
 //	h3-loader-home-card-staged-1280.png    the home's card: LOADED (40 UoP), No
 //	                                       active orders, CLEAR BIN; nothing on
 //	                                       it says a robot stands under the cart
 //	h3-loader-home-clear-refused-1280.png  CLEAR BIN pressed: Core's refusal, as
 //	                                       the Edge's door answers it
+//	i1-loader-home-clear-refused-on-its-way-1280.png
+//	                                       the supply in transit, CLEAR BIN
+//	                                       pressed: Core's on-its-way refusal
 //
 // The page, the view and the card are the real ones: the engine's router, the
 // loader's screen made by its own door (CreateLoaderBoard) from Core's node
@@ -809,8 +813,9 @@ const toastShotDriver = shotStream + `(function () {
 // complex orders are). One thing is the harness's: no Core answers here, so
 // the CLEAR BIN's door is answered as the Edge's door answers when Core
 // refuses; TestScenario_TwoRobotLine_ThroughItsHome_LoaderCardWhileStaged
-// (integration/scenarios) holds that answer across the two modules. The
-// stand-in event stream is TestStationToastShots's. Synthetic names only.
+// (integration/scenarios) holds the staged answer across the two modules, and
+// Core's TestBinClearDoor_Arms both sentences. The stand-in event stream is
+// TestStationToastShots's. Synthetic names only.
 //
 // Run:
 //
@@ -909,7 +914,10 @@ func TestLoaderHomeStagedShots(t *testing.T) {
 		t.Fatalf("Core's bins copy: %v", err)
 	}
 
-	const refusal = "clear bin: Not cleared: a robot is staged at " + home + " to take " + cart + " to " + line + "."
+	const staged = "clear bin: Not cleared: a robot is staged at " + home + " to take " + cart + " to " + line + "."
+	const onItsWay = "clear bin: Not cleared: a robot is on its way to take " + cart + " to " + line + "."
+	var refusal atomic.Value // the shot's answer, read by the stand-in door below
+	refusal.Store(staged)
 	router := shotsRouter(t, eng)
 	srv := shotsServer(t, router, func(mux *http.ServeMux) {
 		mux.HandleFunc("/__shots/loader-driver.js", func(w http.ResponseWriter, r *http.Request) {
@@ -919,7 +927,7 @@ func TestLoaderHomeStagedShots(t *testing.T) {
 		mux.HandleFunc(fmt.Sprintf("/api/process-nodes/%d/clear-bin", homeID), func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "{\"error\":%q}\n", refusal)
+			fmt.Fprintf(w, "{\"error\":%q}\n", refusal.Load().(string))
 		})
 		mux.HandleFunc("/operator/station/", func(w http.ResponseWriter, r *http.Request) {
 			plain := r.Clone(r.Context())
@@ -942,10 +950,19 @@ func TestLoaderHomeStagedShots(t *testing.T) {
 		})
 	})
 
-	for _, s := range []struct{ shot, file string }{
-		{"card", "h3-loader-home-card-staged-1280.png"},
-		{"refused", "h3-loader-home-clear-refused-1280.png"},
+	for _, s := range []struct {
+		shot, file string
+		supply     protocol.Status
+		refusal    string
+	}{
+		{"card", "h3-loader-home-card-staged-1280.png", protocol.StatusStaged, staged},
+		{"refused", "h3-loader-home-clear-refused-1280.png", protocol.StatusStaged, staged},
+		{"refused", "i1-loader-home-clear-refused-on-its-way-1280.png", protocol.StatusInTransit, onItsWay},
 	} {
+		if err := db.UpdateOrderStatus(supply, string(s.supply)); err != nil {
+			t.Fatalf("the supply %s: %v", s.supply, err)
+		}
+		refusal.Store(s.refusal)
 		u := fmt.Sprintf("%s/operator/station/%d?shot=%s", srv.URL, station, s.shot)
 		target := filepath.Join(out, s.file)
 		_ = os.Remove(target)
@@ -963,7 +980,7 @@ func TestLoaderHomeStagedShots(t *testing.T) {
 				t.Errorf("%s: the card does not say %q", s.shot, want)
 			}
 		}
-		if up := toastsUp(dom); s.shot == "refused" && !strings.Contains(up, refusal) {
+		if up := toastsUp(dom); s.shot == "refused" && !strings.Contains(up, s.refusal) {
 			t.Errorf("refused: the toasts read %s, want the door's refusal", up)
 		}
 		t.Logf("wrote %s (%d bytes); toasts up: %s", target, info.Size(), toastsUp(dom))
