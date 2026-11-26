@@ -714,13 +714,15 @@ func TestBinClearDoor_Arms(t *testing.T) {
 			},
 			answer: refusedAt(storage, http.StatusConflict, "bin CL-HELD holds 7 of CL-PPH, unfinished and held here to be called "+
 				"back to its line; UNLOAD to clear it anyway")},
-		// A cart a robot is staged at the node to lift next is not cleared:
-		// the owner ruled on a staged robot (brief H H3, 2026-11-25: "a robot
-		// staging should not invite loader interaction"; stagedCartRefusal).
-		// Every other hold clears, as it did before the ruling: a cart claimed
-		// by a robot on its way, or by one staged elsewhere, is left for a
-		// ruling (clearing it is probably harmful, but an operator's CLEAR on it
-		// works today); a queued order's reservation is no claim.
+		// A cart a robot is coming for is not cleared: its claimant is an order
+		// the fleet holds whose plan lifts it here (robotComingRefusal). Staged
+		// at the node to lift it next, H3's sentence (brief H H3, 2026-11-25:
+		// "a robot staging should not invite loader interaction"); on its way or
+		// staged elsewhere, the other (brief I I1, the owner 2026-11-25 18:02:
+		// "shouldnt it not allow a clear because active in transit order?").
+		// A cart its claimant set down here and does not lift again, a claim the
+		// fleet has not taken yet, a queued order's reservation, a claim an
+		// ended order left and a claimant that cannot be read clear.
 		{name: "a cart a robot staged at the node is to lift is refused",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "CL-STAGED")
@@ -732,24 +734,83 @@ func TestBinClearDoor_Arms(t *testing.T) {
 				return refusalAt(t, f, storage(f), http.StatusConflict,
 					"Not cleared: a robot is staged at "+storage(f)+" to take CL-STAGED to CL-LINE.")
 			}},
-		{name: "a cart a robot staged elsewhere has claimed still clears",
+		{name: "a cart a robot staged elsewhere is to lift is refused",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "CL-STAGED-AWAY")
 				o := testdb.CreateOrder(t, f.db, stagedFor("CL-AWAY", storage(f)))
 				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
 				return clearBody(f, nil), []int64{b.ID}
 			},
-			answer: cleared("CL-STAGED-AWAY", "PART-A", 100, "DEFAULT"),
-			wrote:  wroteClear("CL-STAGED-AWAY")},
-		{name: "a cart an order in transit has claimed still clears",
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict,
+					"Not cleared: a robot is on its way to take CL-STAGED-AWAY to CL-LINE.")
+			}},
+		{name: "a cart an order in transit has claimed is refused",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "CL-TRANSIT")
-				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusInTransit })
+				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) {
+					o.Status, o.SourceNode, o.DeliveryNode = protocol.StatusInTransit, storage(f), "CL-LINE"
+				})
 				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
 				return clearBody(f, nil), []int64{b.ID}
 			},
-			answer: cleared("CL-TRANSIT", "PART-A", 100, "DEFAULT"),
-			wrote:  wroteClear("CL-TRANSIT")},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict,
+					"Not cleared: a robot is on its way to take CL-TRANSIT to CL-LINE.")
+			}},
+		// A single-robot swap fed from the node: the cart goes to the line by
+		// way of inbound staging; the order's last stop is the old cart's.
+		{name: "the refusal names where the cart is set down, not the order's last stop",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-RELAY")
+				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) {
+					o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeComplex, protocol.StatusInTransit, "CL-OUT"
+					o.StepsJSON = fmt.Sprintf(`[{"action":"pickup","node":%q},{"action":"dropoff","node":"CL-STAGE"},`+
+						`{"action":"wait","node":"CL-LINE"},{"action":"pickup","node":"CL-LINE"},`+
+						`{"action":"dropoff","node":"CL-OUTSTAGE"},{"action":"pickup","node":"CL-STAGE"},`+
+						`{"action":"dropoff","node":"CL-LINE"},{"action":"pickup","node":"CL-OUTSTAGE"},`+
+						`{"action":"dropoff","node":"CL-OUT"}]`, storage(f))
+				})
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				testdb.SeedCartRow(t, f.db, o.ID, b.ID, 0, 1)
+				testdb.SeedCartRow(t, f.db, o.ID, b.ID, 5, 6)
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict,
+					"Not cleared: a robot is on its way to take CL-RELAY to CL-LINE.")
+			}},
+		// An index press's Robot 1 that also refills: the press's cart set down
+		// at its outbound (here, an unloader's window), the refill still to
+		// fetch, the claim kept to its end (ApplyIntermediateStore). The
+		// unloader's CLEAR of that cart is its ordinary step.
+		{name: "a cart its claimant set down here and does not lift again still clears",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-SET-DOWN")
+				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) {
+					o.OrderType, o.Status, o.DeliveryNode = protocol.OrderTypeComplex, protocol.StatusInTransit, "CL-BACK"
+					o.StepsJSON = fmt.Sprintf(`[{"action":"wait","node":"CL-FRONT"},{"action":"pickup","node":"CL-FRONT"},`+
+						`{"action":"dropoff","node":%q},{"action":"pickup","node":"CL-SOURCE"},`+
+						`{"action":"dropoff","node":"CL-BACK"}]`, storage(f))
+				})
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				testdb.SeedCartRow(t, f.db, o.ID, b.ID, 1, 2)
+				testutil.MustNoErr(t, f.db.AdvanceOrderStepsDone(o.ID, 3), "its set-down done")
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-SET-DOWN", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-SET-DOWN")},
+		{name: "a cart claimed while Core asks the fleet still clears",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-ASKING")
+				o := testdb.CreateOrder(t, f.db, testdb.AskingFor(protocol.StatusPending, "CL-JOB"), func(o *orders.Order) {
+					o.SourceNode, o.DeliveryNode = storage(f), "CL-LINE"
+				})
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-ASKING", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-ASKING")},
 		{name: "a cart a queued order has only reserved clears",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "CL-SOFT")
@@ -800,6 +861,16 @@ func TestBinClearDoor_Arms(t *testing.T) {
 			},
 			answer: cleared("CL-ENDED", "PART-A", 100, "DEFAULT"),
 			wrote:  wroteClear("CL-ENDED")},
+		{name: "a claim whose order cannot be read is no hold: the clear empties it",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "CL-UNREAD")
+				// Written straight to the row: no order 987654321 exists to read.
+				_, err := f.db.Exec(`UPDATE bins SET claimed_by = 987654321 WHERE id = $1`, b.ID)
+				testutil.MustNoErr(t, err, "a claim naming no order")
+				return clearBody(f, nil), []int64{b.ID}
+			},
+			answer: cleared("CL-UNREAD", "PART-A", 100, "DEFAULT"),
+			wrote:  wroteClear("CL-UNREAD")},
 		{name: "UNLOAD clears a held partial",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := heldPartial(t, f, "CL-HELD-UNLOAD")
